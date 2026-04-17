@@ -773,15 +773,27 @@ def render_active_icons(storms: list[dict], extent) -> str:
         color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
         label = sshs_label(cls)
         name = storm.get("name") or ""
-        # An SVG <use> referencing the pre-defined swirl symbol, wrapped
-        # in a group that handles positioning + glow. The spin animation
-        # is on the symbol itself (CSS class "spin").
+        # Placement: outer <g> translates to storm position.
+        # Sizing: <use> MUST have width/height/x/y as SVG attributes —
+        # CSS-based sizing on <use> renders unreliably across browsers
+        # (was showing massive + SE-displaced).
+        # Spin: wrap the <use> in a <g> with <animateTransform> (SVG
+        # native; always works). Don't try to CSS-rotate the <use> itself.
+        size = 48            # overall icon size in map units
+        half = size / 2
         parts.append(
             f'<g class="active-icon" transform="translate({x:.1f},{y:.1f})" '
             f'style="--glow:{color};">'
-            f'<use href="#tc-swirl" class="swirl" style="color:{color};"/>'
-            f'<text class="label" y="6" text-anchor="middle">{label}</text>'
-            f'<text class="name" x="32" y="4" text-anchor="start">{name}</text>'
+            f'<g class="spin-wrap" style="filter:drop-shadow(0 0 10px {color});">'
+            f'<use href="#tc-swirl" x="{-half}" y="{-half}" '
+            f'width="{size}" height="{size}" style="color:{color};"/>'
+            f'<animateTransform attributeName="transform" attributeType="XML" '
+            f'type="rotate" from="0" to="360" dur="2.4s" '
+            f'repeatCount="indefinite"/>'
+            f'</g>'
+            f'<text class="label" y="5" text-anchor="middle" '
+            f'font-size="15" font-weight="800" fill="#07101c">{label}</text>'
+            f'<text class="name" x="{half + 6}" y="4" text-anchor="start">{name}</text>'
             f'</g>'
         )
     parts.append('</g>')
@@ -850,27 +862,18 @@ HTML_TEMPLATE = """<!doctype html>
   .map-svg-wrap {{ position: relative; }}
   svg.map {{ width: 100%; height: auto; display: block; background: #0b2a48; }}
 
-  /* Active-storm animated icon */
-  .active-icon .swirl {{ width: 56px; height: 56px;
-    transform-origin: center; transform-box: fill-box;
-    animation: spin 2.2s linear infinite;
-    filter: drop-shadow(0 0 12px var(--glow));
-    x: -28; y: -28; overflow: visible; }}
-  .active-icon .label {{ font-weight: 800; font-size: 13px;
-    fill: #07101c; paint-order: stroke; stroke: #07101c; stroke-width: 0;
-    text-anchor: middle; dominant-baseline: middle;
-    pointer-events: none; }}
+  /* Active-storm animated icon.
+     Size + rotation come from SVG attributes / <animateTransform>
+     (more reliable than CSS for <use> elements). Only the glow and
+     label text styling stay in CSS. */
+  .active-icon .label {{
+    dominant-baseline: middle;
+    pointer-events: none;
+    paint-order: stroke; stroke: #07101c; stroke-width: 0;
+  }}
   .active-icon .name {{ fill: #f1f7fd; font-size: 12px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }}
-  .active-icon .pulse {{
-    animation: pulse 2.4s ease-in-out infinite;
-    transform-origin: center; transform-box: fill-box; }}
-  @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-  @keyframes pulse {{
-    0%, 100% {{ transform: scale(1); opacity: 0.20; }}
-    50%      {{ transform: scale(1.25); opacity: 0.05; }}
-  }}
 
   /* Sidebar */
   .side {{ flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }}
