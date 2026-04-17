@@ -96,7 +96,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Western North Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-17 19:40 UTC</div>
+        <div class="sub">As of 2026-04-17 19:48 UTC</div>
       </div>
       <div class="stats">
         <b>3</b> named storms · <b>1</b> typhoons ·
@@ -106,28 +106,6 @@
     <div class="map-svg-wrap">
       <svg class="map" viewBox="0 0 1400 900" preserveAspectRatio="xMidYMid meet">
         
-<defs>
-  <!-- Reusable cyclone-swirl icon. Three curved arms around a center,
-       viewBox -50..50 so transform translate() places the center. -->
-  <symbol id="tc-swirl" viewBox="-50 -50 100 100" overflow="visible">
-    <!-- Soft halo ring (pulses) -->
-    <circle cx="0" cy="0" r="34" fill="currentColor" fill-opacity="0.12"
-            class="pulse"/>
-    <!-- Swirl arms -->
-    <g class="arms" fill="currentColor">
-      <path d="M 0,-24 C 14,-24 24,-14 24,0 C 24,-8 18,-14 10,-14
-               C 2,-14 -4,-8 -4,0 L -12,0 C -12,-13 -4,-24 0,-24 Z"
-            opacity="0.95"/>
-      <path d="M 0,24 C -14,24 -24,14 -24,0 C -24,8 -18,14 -10,14
-               C -2,14 4,8 4,0 L 12,0 C 12,13 4,24 0,24 Z"
-            opacity="0.95"/>
-    </g>
-    <!-- Eye -->
-    <circle cx="0" cy="0" r="10" fill="#07101c" stroke="currentColor"
-            stroke-width="1.5"/>
-  </symbol>
-</defs>
-
         <rect x="0" y="0" width="1400" height="900" fill="#0b2a48"/>
 <g class="land" fill="#3a4f3b" stroke="none">
 <path d="M 1400.0,1122.5 L 1400.0,1129.2 L 1388.9,1132.6 L 1377.7,1135.6 L 1375.4,1130.4 L 1384.2,1127.5 L 1389.7,1126.8 L 1400.0,1122.5" />
@@ -469,7 +447,17 @@
 <circle cx="668.5" cy="764.3" r="3" fill="#3fa4ff" stroke="#081220" stroke-width="0.8"/>
 </g>
         <g class="active-storms">
-<g class="active-icon" transform="translate(777.0,663.2)" style="--glow:#ff4d3b;"><g class="spin-wrap" style="filter:drop-shadow(0 0 10px #ff4d3b);"><use href="#tc-swirl" x="-24.0" y="-24.0" width="48" height="48" style="color:#ff4d3b;"/><animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0" to="360" dur="2.4s" repeatCount="indefinite"/></g><text class="label" y="5" text-anchor="middle" font-size="15" font-weight="800" fill="#07101c">3</text><text class="name" x="30.0" y="4" text-anchor="start">SINLAKU</text></g>
+<g class="active-icon" transform="translate(777.0,663.2)" style="filter:drop-shadow(0 0 10px #ff4d3b);">
+  <circle r="22" fill="#ff4d3b" fill-opacity="0.18"/>
+  <g class="spin-wrap">
+    <path d="M 0,-16 C 9,-16 16,-9 16,0 C 16,-5 12,-9 7,-9 C 2,-9 -2,-5 -2,0 L -8,0 C -8,-9 -2,-16 0,-16 Z" fill="#ff4d3b" opacity="0.95"/>
+    <path d="M 0,16 C -9,16 -16,9 -16,0 C -16,5 -12,9 -7,9 C -2,9 2,5 2,0 L 8,0 C 8,9 2,16 0,16 Z" fill="#ff4d3b" opacity="0.95"/>
+    <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0" to="360" dur="2.4s" repeatCount="indefinite"/>
+  </g>
+  <circle r="7" fill="#07101c" stroke="#ff4d3b" stroke-width="1.4"/>
+  <text class="label" y="4" text-anchor="middle" font-size="11" font-weight="800" fill="#ff4d3b">3</text>
+  <text class="name" x="28" y="4" text-anchor="start">SINLAKU</text>
+</g>
 </g>
         <text class="wm" x="1380" y="40" text-anchor="end">@WeathermanAAA_</text>
       </svg>
