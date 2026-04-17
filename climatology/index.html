@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Climatology · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Western North Pacific tropical cyclone climatology. ACE vs. 1991–2020 normals, updated every 6 hours.">
-<meta property="og:title" content="WPac Climatology · Triple-A-Tropics">
-<meta property="og:description" content="Western North Pacific Accumulated Cyclone Energy vs. climatology.">
+<meta name="description" content="Tropical cyclone climatology by basin: Atlantic, West Pacific, and East Pacific.">
+<meta property="og:title" content="Climatology · Triple-A-Tropics">
+<meta property="og:description" content="Tropical cyclone climatology by basin.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
 <link rel="stylesheet" href="/styles.css">
@@ -28,31 +28,31 @@
 </nav>
 
 <header class="page-head">
-  <h1>West Pacific Climatology</h1>
-  <p>Accumulated Cyclone Energy: current season vs. 1991–2020 normals, updated every 6 hours.</p>
+  <h1>Climatology</h1>
+  <p>Tropical cyclone activity by basin, current season vs. 1991–2020 normals.</p>
 </header>
 
-<section class="chart-section">
-  <div class="chart-card">
-    <iframe
-      id="aceChart"
-      class="chart-iframe"
-      src="/wp_ace.html"
-      title="West Pacific Accumulated Cyclone Energy chart"
-      loading="lazy"
-      scrolling="no"
-    ></iframe>
+<section class="cards">
+  <div class="card soon">
+    <span class="emoji">🌊</span>
+    <h2>Atlantic</h2>
+    <p>North Atlantic basin: Gulf of Mexico, Caribbean Sea, and the broader Atlantic tropics (NHC area of responsibility).</p>
+    <span class="badge">Coming soon</span>
   </div>
-</section>
 
-<section class="about">
-  <h2>What am I looking at?</h2>
-  <p>Accumulated Cyclone Energy (ACE) measures the total energy released by tropical cyclones during a season. It's the sum of a storm's sustained wind speed squared, taken every six hours while the storm is at tropical-storm strength or stronger.</p>
-  <p>The blue bands show the statistical envelope of the last 30 years: the outer band is every season's min-to-max range, the middle band is the 10th–90th percentiles, and the inner band is the interquartile range (25th–75th percentile). The dashed cyan line is the 30-year climatological mean.</p>
-  <p>The solid amber line is the current season. The violet line is the prior season for reference. The ranking table on the right shows where the current year stands versus every year back to 1945 at this same point in the calendar. <b>Click any year in the table</b> to overlay that season's trajectory on the chart in hot pink.</p>
+  <a class="card live" href="/climatology/west-pacific/">
+    <span class="emoji">🌀</span>
+    <h2>West Pacific</h2>
+    <p>Northwest Pacific basin (JTWC area of responsibility). Home to the most active tropical cyclone basin on Earth.</p>
+    <span class="badge">● Live</span>
+  </a>
 
-  <h2>Where does the data come from?</h2>
-  <p>Historical and provisional track data come from NOAA NCEI's <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS v04r01</a> dataset. During an active season, the current-season line is kept fresh from live <a href="https://www.metoc.navy.mil/jtwc/" target="_blank" rel="noopener">JTWC</a> best-track files as soon as they're issued.</p>
+  <div class="card soon">
+    <span class="emoji">🏝️</span>
+    <h2>East Pacific</h2>
+    <p>Northeast Pacific basin, from the Americas westward past 140°W (NHC area of responsibility).</p>
+    <span class="badge">Coming soon</span>
+  </div>
 </section>
 
 <footer>
@@ -64,22 +64,6 @@
 
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
-
-  const frame = document.getElementById('aceChart');
-  function resizeFrame() {
-    try {
-      const doc = frame.contentDocument || frame.contentWindow.document;
-      if (!doc || !doc.body) return;
-      const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
-      if (h > 200) frame.style.height = (h + 16) + 'px';
-    } catch (e) {}
-  }
-  frame.addEventListener('load', () => {
-    resizeFrame();
-    setTimeout(resizeFrame, 200);
-    setTimeout(resizeFrame, 800);
-  });
-  window.addEventListener('resize', resizeFrame);
 </script>
 
 </body>
