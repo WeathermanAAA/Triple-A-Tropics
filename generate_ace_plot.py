@@ -147,19 +147,43 @@ def _best_wind(row: pd.Series, preference: list[tuple[str, float]]) -> float:
     return np.nan
 
 
-def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict) -> pd.DataFrame:
+def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
+                           log_prefix: str = "") -> pd.DataFrame:
     """Return a dataframe with columns [season, doy, ace_increment, SID, NAME]
-    at 6-hourly resolution for one basin."""
+    at 6-hourly resolution for one basin. Logs per-step row counts so we can
+    see which filter drops everything if something goes wrong."""
+    def step(label: str, d: pd.DataFrame) -> pd.DataFrame:
+        print(f"{log_prefix}   after {label}: {len(d):,} rows")
+        return d
+
     d = df.copy()
-    d = d[d["BASIN"] == basin_cfg["ibtracs_basin_col"]]
-    d = d[d["TRACK_TYPE"].isin(["main", "PROVISIONAL"])]
+    print(f"{log_prefix}   raw rows: {len(d):,}")
+
+    # BASIN column filter. We accept a list of codes to handle IBTrACS's
+    # occasional basin-labeling quirks (crossover storms, alternate codes).
+    basin_codes = basin_cfg["ibtracs_basin_col"]
+    if isinstance(basin_codes, str):
+        basin_codes = [basin_codes]
+    # If BASIN filter drops everything, fall back to accepting all rows
+    # (the file itself is already basin-scoped).
+    before_basin = len(d)
+    d_basin = d[d["BASIN"].isin(basin_codes)]
+    if len(d_basin) == 0 and before_basin > 0:
+        print(f"{log_prefix}   WARN: BASIN filter {basin_codes} matched 0 rows; "
+              f"found values {sorted(d['BASIN'].dropna().unique().tolist())}. "
+              f"Falling back to whole file.")
+    else:
+        d = d_basin
+    d = step(f"BASIN in {basin_codes}", d)
+
+    d = step("TRACK_TYPE filter", d[d["TRACK_TYPE"].isin(["main", "PROVISIONAL"])])
     d["ISO_TIME"] = pd.to_datetime(d["ISO_TIME"], errors="coerce")
-    d = d.dropna(subset=["ISO_TIME"])
+    d = step("ISO_TIME parse", d.dropna(subset=["ISO_TIME"]))
 
     # Standard ACE convention: 00/06/12/18 UTC only
     hours = d["ISO_TIME"].dt.hour
     minutes = d["ISO_TIME"].dt.minute
-    d = d[hours.isin(SIX_HOURLY) & (minutes == 0)]
+    d = step("6-hourly synoptic", d[hours.isin(SIX_HOURLY) & (minutes == 0)])
 
     # Convert wind columns to numeric
     for col, _ in basin_cfg["wind_preference"]:
@@ -172,8 +196,8 @@ def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict) -> pd.DataFrame:
     is_tropical = d["NATURE"].isin(ACE_NATURES) | (
         (d["TRACK_TYPE"] == "PROVISIONAL") & d["NATURE"].isin(ACE_NATURES | {"NR"})
     )
-    d = d[is_tropical]
-    d = d[d["WIND_KT"] >= 34]
+    d = step("NATURE == TS (+NR on provisional)", d[is_tropical])
+    d = step("WIND_KT >= 34", d[d["WIND_KT"] >= 34])
 
     d["ACE"] = (d["WIND_KT"] ** 2) / 10_000.0
     d["doy"] = d["ISO_TIME"].dt.dayofyear
@@ -895,7 +919,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     df = pd.read_csv(csv_path, skiprows=[1], low_memory=False, na_values=[" ", ""])
     print(f"{log} {len(df):,} rows")
 
-    points = compute_ace_timeseries(df, basin_cfg)
+    points = compute_ace_timeseries(df, basin_cfg, log_prefix=log)
     if points.empty:
         print(f"{log} ERROR: no ACE-eligible points found after filtering.", file=sys.stderr)
         return 3
