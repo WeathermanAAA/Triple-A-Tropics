@@ -754,8 +754,8 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
 
 def render_active_icons(storms: list[dict], extent) -> str:
     """For each active storm, place a spinning+glowing cyclone-swirl icon
-    at its most recent position. Non-active storms get a small labeled
-    badge at their last known point instead."""
+    at its most recent position. Geometry is drawn inline (no <symbol>/<use>
+    indirection) for maximum rendering reliability across browsers."""
     project, _ = build_projection(extent)
     parts = ['<g class="active-storms">']
     for storm in storms:
@@ -773,56 +773,26 @@ def render_active_icons(storms: list[dict], extent) -> str:
         color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
         label = sshs_label(cls)
         name = storm.get("name") or ""
-        # Placement: outer <g> translates to storm position.
-        # Sizing: <use> MUST have width/height/x/y as SVG attributes —
-        # CSS-based sizing on <use> renders unreliably across browsers
-        # (was showing massive + SE-displaced).
-        # Spin: wrap the <use> in a <g> with <animateTransform> (SVG
-        # native; always works). Don't try to CSS-rotate the <use> itself.
-        size = 48            # overall icon size in map units
-        half = size / 2
-        parts.append(
-            f'<g class="active-icon" transform="translate({x:.1f},{y:.1f})" '
-            f'style="--glow:{color};">'
-            f'<g class="spin-wrap" style="filter:drop-shadow(0 0 10px {color});">'
-            f'<use href="#tc-swirl" x="{-half}" y="{-half}" '
-            f'width="{size}" height="{size}" style="color:{color};"/>'
-            f'<animateTransform attributeName="transform" attributeType="XML" '
-            f'type="rotate" from="0" to="360" dur="2.4s" '
-            f'repeatCount="indefinite"/>'
-            f'</g>'
-            f'<text class="label" y="5" text-anchor="middle" '
-            f'font-size="15" font-weight="800" fill="#07101c">{label}</text>'
-            f'<text class="name" x="{half + 6}" y="4" text-anchor="start">{name}</text>'
-            f'</g>'
-        )
+        # Inline geometry drawn at real coordinates (no viewport scaling),
+        # sized to ~22 map-unit radius. Halo sits outside the spinner so
+        # only the arms rotate. <animateTransform> on the spinner group.
+        parts.append(f'''<g class="active-icon" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 10px {color});">
+  <circle r="22" fill="{color}" fill-opacity="0.18"/>
+  <g class="spin-wrap">
+    <path d="M 0,-16 C 9,-16 16,-9 16,0 C 16,-5 12,-9 7,-9 C 2,-9 -2,-5 -2,0 L -8,0 C -8,-9 -2,-16 0,-16 Z" fill="{color}" opacity="0.95"/>
+    <path d="M 0,16 C -9,16 -16,9 -16,0 C -16,5 -12,9 -7,9 C -2,9 2,5 2,0 L 8,0 C 8,9 2,16 0,16 Z" fill="{color}" opacity="0.95"/>
+    <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0" to="360" dur="2.4s" repeatCount="indefinite"/>
+  </g>
+  <circle r="7" fill="#07101c" stroke="{color}" stroke-width="1.4"/>
+  <text class="label" y="4" text-anchor="middle" font-size="11" font-weight="800" fill="{color}">{label}</text>
+  <text class="name" x="28" y="4" text-anchor="start">{name}</text>
+</g>''')
     parts.append('</g>')
     return "\n".join(parts)
 
 
-SVG_DEFS = """
-<defs>
-  <!-- Reusable cyclone-swirl icon. Three curved arms around a center,
-       viewBox -50..50 so transform translate() places the center. -->
-  <symbol id="tc-swirl" viewBox="-50 -50 100 100" overflow="visible">
-    <!-- Soft halo ring (pulses) -->
-    <circle cx="0" cy="0" r="34" fill="currentColor" fill-opacity="0.12"
-            class="pulse"/>
-    <!-- Swirl arms -->
-    <g class="arms" fill="currentColor">
-      <path d="M 0,-24 C 14,-24 24,-14 24,0 C 24,-8 18,-14 10,-14
-               C 2,-14 -4,-8 -4,0 L -12,0 C -12,-13 -4,-24 0,-24 Z"
-            opacity="0.95"/>
-      <path d="M 0,24 C -14,24 -24,14 -24,0 C -24,8 -18,14 -10,14
-               C -2,14 4,8 4,0 L 12,0 C 12,13 4,24 0,24 Z"
-            opacity="0.95"/>
-    </g>
-    <!-- Eye -->
-    <circle cx="0" cy="0" r="10" fill="#07101c" stroke="currentColor"
-            stroke-width="1.5"/>
-  </symbol>
-</defs>
-"""
+# No <defs>/<symbol> needed — geometry is drawn inline in render_active_icons.
+SVG_DEFS = ""
 
 
 # ---------------------------------------------------------------------------
