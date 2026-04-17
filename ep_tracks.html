@@ -31,27 +31,18 @@
   .map-svg-wrap { position: relative; }
   svg.map { width: 100%; height: auto; display: block; background: #0b2a48; }
 
-  /* Active-storm animated icon */
-  .active-icon .swirl { width: 56px; height: 56px;
-    transform-origin: center; transform-box: fill-box;
-    animation: spin 2.2s linear infinite;
-    filter: drop-shadow(0 0 12px var(--glow));
-    x: -28; y: -28; overflow: visible; }
-  .active-icon .label { font-weight: 800; font-size: 13px;
-    fill: #07101c; paint-order: stroke; stroke: #07101c; stroke-width: 0;
-    text-anchor: middle; dominant-baseline: middle;
-    pointer-events: none; }
+  /* Active-storm animated icon.
+     Size + rotation come from SVG attributes / <animateTransform>
+     (more reliable than CSS for <use> elements). Only the glow and
+     label text styling stay in CSS. */
+  .active-icon .label {
+    dominant-baseline: middle;
+    pointer-events: none;
+    paint-order: stroke; stroke: #07101c; stroke-width: 0;
+  }
   .active-icon .name { fill: #f1f7fd; font-size: 12px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }
-  .active-icon .pulse {
-    animation: pulse 2.4s ease-in-out infinite;
-    transform-origin: center; transform-box: fill-box; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes pulse {
-    0%, 100% { transform: scale(1); opacity: 0.20; }
-    50%      { transform: scale(1.25); opacity: 0.05; }
-  }
 
   /* Sidebar */
   .side { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }
@@ -105,7 +96,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Northeast Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-17 19:33 UTC</div>
+        <div class="sub">As of 2026-04-17 19:40 UTC</div>
       </div>
       <div class="stats">
         <b>0</b> named storms · <b>0</b> hurricanes ·
