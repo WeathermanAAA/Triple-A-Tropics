@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>West Pacific TC ACE — 2026</title>
+<title>Western North Pacific TC ACE · 2026</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   :root {
@@ -84,12 +84,9 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Western North Pacific — Accumulated Cyclone Energy</h1>
-  <div class="sub">Season 2026 vs 1991–2020 climatology · last updated 2026-04-17 13:57 UTC</div>
+  <h1>Western North Pacific · Accumulated Cyclone Energy</h1>
+  <div class="sub">Season 2026 vs 1991–2020 climatology · last updated 2026-04-17 16:40 UTC</div>
   <div class="legend">
-    <span><span class="sw" style="background:var(--band-wide)"></span>Historical range</span>
-    <span><span class="sw" style="background:var(--band-mid)"></span>10–90th pct</span>
-    <span><span class="sw" style="background:var(--band-narrow)"></span>25–75th pct</span>
     <span><span class="ln" style="border-color:var(--climo);border-style:dashed"></span>Climo mean (1991–2020)</span>
     <span><span class="ln" style="border-color:var(--prior)"></span><span id="priorLabel">prior</span></span>
     <span><span class="ln" style="border-color:var(--current);border-width:3px"></span><b style="color:var(--current)" id="currentLabel">current</b></span>
@@ -140,7 +137,7 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     DATA.climo.max[DATA.climo.max.length - 1],
     DATA.current.values[DATA.current.values.length - 1] || 0,
     (DATA.prior_year.values ? DATA.prior_year.values[DATA.prior_year.values.length - 1] : 0)
-  ) * 1.05;
+  ) * 1.05 || 1;
 
   const xs = d => M.l + (d - xMin) / (xMax - xMin) * PW;
   const ys = v => M.t + PH - (v / yMax) * PH;
@@ -153,7 +150,6 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     return e;
   };
 
-  // Gridlines + y-axis ticks
   const ySteps = 5;
   const yStep = niceStep(yMax / ySteps);
   for (let v = 0; v <= yMax; v += yStep) {
@@ -162,13 +158,11 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     el('text', { x: M.l - 8, y: ys(v) + 4, 'text-anchor': 'end',
       'font-size': 11, fill: '#8ea2bd' }).textContent = Math.round(v);
   }
-  // Y-axis label
   el('text', { x: 14, y: M.t + PH / 2, 'text-anchor': 'middle',
     'font-size': 12, fill: '#a8b8d1',
     transform: `rotate(-90 14 ${M.t + PH / 2})` })
     .textContent = 'Cumulative ACE (×10⁴ kt²)';
 
-  // Month ticks
   const monthStarts = [1,32,60,91,121,152,182,213,244,274,305,335];
   const monthLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   monthStarts.forEach((d, i) => {
@@ -177,11 +171,9 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     el('text', { x: xs(d + 15), y: M.t + PH + 18, 'text-anchor': 'middle',
       'font-size': 11, fill: '#8ea2bd' }).textContent = monthLabels[i];
   });
-  // X-axis baseline
   el('line', { x1: M.l, x2: M.l + PW, y1: M.t + PH, y2: M.t + PH,
     stroke: '#2f4666', 'stroke-width': 1 });
 
-  // Filled band helper
   function band(upper, lower, fill) {
     let d = '';
     for (let i = 0; i < DATA.doy.length; i++)
@@ -191,13 +183,10 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     d += 'Z';
     el('path', { d, fill, stroke: 'none' });
   }
-  // Percentile bands — glowy blue fills that work on dark
   band(DATA.climo.max, DATA.climo.min, 'rgba(70,140,200,0.12)');
   band(DATA.climo.p90, DATA.climo.p10, 'rgba(70,180,220,0.20)');
   band(DATA.climo.p75, DATA.climo.p25, 'rgba(80,210,240,0.30)');
 
-  // Percentile contour isopleths — thin solid lines at every percentile
-  // boundary so the statistical envelope reads like a weather chart
   function linePath(xs_arr, ys_arr, stroke, width, dash, opacity) {
     let d = '';
     for (let i = 0; i < xs_arr.length; i++)
@@ -208,17 +197,13 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     if (opacity != null) attrs['stroke-opacity'] = opacity;
     el('path', attrs);
   }
-  // Outer envelope (min/max)
   linePath(DATA.doy, DATA.climo.min, '#567894', 0.9, null, 0.55);
   linePath(DATA.doy, DATA.climo.max, '#567894', 0.9, null, 0.55);
-  // 10th / 90th
   linePath(DATA.doy, DATA.climo.p10, '#4db8e0', 1.0, null, 0.70);
   linePath(DATA.doy, DATA.climo.p90, '#4db8e0', 1.0, null, 0.70);
-  // 25th / 75th — brightest + slightly thicker so IQR reads as the core
   linePath(DATA.doy, DATA.climo.p25, '#8ce3ff', 1.4, null, 0.90);
   linePath(DATA.doy, DATA.climo.p75, '#8ce3ff', 1.4, null, 0.90);
 
-  // Line helper
   function line(xs_arr, ys_arr, stroke, width, dash) {
     let d = '';
     for (let i = 0; i < xs_arr.length; i++)
@@ -233,19 +218,16 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
   if (DATA.prior_year.values)
     line(DATA.doy, DATA.prior_year.values, '#c084fc', 2);
 
-  // Dedicated group for the user-selected year so we can swap it easily
   const selGroup = el('g', { id: 'selGroup' });
   let selectedYear = null;
 
   line(DATA.current.doy, DATA.current.values, '#ffb83a', 3);
 
-  // "Today" marker
   if (DATA.today_doy) {
     el('circle', { cx: xs(DATA.today_doy), cy: ys(DATA.current.latest_value),
       r: 5, fill: '#ffb83a', stroke: '#07101c', 'stroke-width': 2 });
   }
 
-  // Watermark — large, semi-transparent, top-right corner of the plot area
   el('text', {
     x: M.l + PW - 10, y: M.t + 28,
     'text-anchor': 'end', 'font-size': 26, 'font-weight': 700,
@@ -253,7 +235,6 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
     'font-family': '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif'
   }).textContent = '@WeathermanAAA_';
 
-  // Hover crosshair + dots
   const cross = el('line', { x1: 0, x2: 0, y1: M.t, y2: M.t + PH,
     stroke: '#8ea2bd', 'stroke-width': 1, 'stroke-dasharray': '3 3',
     opacity: 0 });
@@ -266,10 +247,8 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
   const dotSel = el('circle', { r: 4, fill: '#ff4dd2',
     stroke: '#07101c', 'stroke-width': 1.5, opacity: 0 });
 
-  // ---- Public API: let the rank table toggle a selected-year overlay ----
   window.WPAceChart = {
     setSelectedYear(year) {
-      // Clear previous selection
       while (selGroup.firstChild) selGroup.removeChild(selGroup.firstChild);
       selectedYear = null;
       dotSel.setAttribute('opacity', 0);
@@ -277,7 +256,6 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
       const vals = DATA.all_years && DATA.all_years[year];
       if (!vals) return;
       selectedYear = year;
-      // Draw the selected-year line inside the group, pink to stand out
       let d = '';
       for (let i = 0; i < vals.length; i++)
         d += (i === 0 ? 'M' : 'L') + xs(DATA.doy[i]) + ',' + ys(vals[i]) + ' ';
@@ -289,7 +267,6 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
       p.setAttribute('stroke-linejoin', 'round');
       p.setAttribute('stroke-linecap', 'round');
       selGroup.appendChild(p);
-      // End-of-year label dot so it's obvious which curve is which
       const lastIdx = vals.length - 1;
       const endDot = document.createElementNS(NS, 'circle');
       endDot.setAttribute('cx', xs(DATA.doy[lastIdx]));
@@ -399,6 +376,7 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
   svg.addEventListener('touchend', onLeave);
 
   function niceStep(x) {
+    if (!isFinite(x) || x <= 0) return 1;
     const pow = Math.pow(10, Math.floor(Math.log10(x)));
     const n = x / pow;
     let step;
@@ -410,7 +388,6 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
   }
 })();
 
-// ---- Side table: season ranking + click-to-overlay a year ----
 (function () {
   const body = document.getElementById('rankBody');
   const lbl = document.getElementById('currentRankLbl');
@@ -468,7 +445,6 @@ const DATA = {"doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23
 
   applyRankLabel(null);
 
-  // Auto-scroll the current-year row into the middle of the scroll area
   if (currentRow) {
     requestAnimationFrame(() => {
       const topOffset = currentRow.offsetTop - scroll.clientHeight / 2 +
