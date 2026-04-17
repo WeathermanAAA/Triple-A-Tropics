@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Triple-A-Tropics — West Pacific Tropical Cyclone Tracking</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Real-time Accumulated Cyclone Energy (ACE) tracking for the Western North Pacific. Live season vs. 1991–2020 climatology, plus historical ranking.">
+<meta property="og:title" content="Triple-A-Tropics — West Pacific TC ACE">
+<meta property="og:description" content="Real-time Western Pacific Accumulated Cyclone Energy tracking.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
+<style>
+  :root {
+    --bg: #07101c;
+    --panel: #0f1a2a;
+    --border: #1a2840;
+    --fg: #e5edf6;
+    --muted: #8ea2bd;
+    --accent: #ffb83a;     /* amber — main highlight */
+    --accent-2: #5dd3ff;   /* cyan — secondary */
+    --accent-3: #c084fc;   /* violet — tertiary */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.55;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Top nav */
+  .nav {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(7, 16, 28, 0.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1180px; margin: 0 auto;
+    padding: 14px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px;
+  }
+  .brand {
+    font-weight: 800; font-size: 17px; letter-spacing: 0.3px;
+    display: flex; align-items: center; gap: 8px; color: var(--fg);
+  }
+  .brand .logo { font-size: 22px; }
+  .nav-links { display: flex; gap: 22px; font-size: 14px; }
+  .nav-links a { color: var(--muted); }
+  .nav-links a:hover { color: var(--fg); text-decoration: none; }
+
+  /* Hero */
+  .hero {
+    max-width: 1180px; margin: 0 auto;
+    padding: 48px 20px 24px;
+    text-align: center;
+  }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 44px);
+    margin: 0 0 12px;
+    line-height: 1.15;
+    font-weight: 800;
+    background: linear-gradient(135deg, #5dd3ff 0%, #c084fc 55%, #ffb83a 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero p {
+    color: var(--muted);
+    font-size: 16px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .hero .handle {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .hero .handle b { color: var(--fg); }
+
+  /* Chart section */
+  section.chart-section {
+    max-width: 1180px; margin: 0 auto;
+    padding: 12px 20px 48px;
+  }
+  .chart-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  }
+  .chart-iframe {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: var(--bg);
+    /* Will be overridden on load via JS for auto-height */
+    height: 820px;
+  }
+  @media (max-width: 760px) {
+    .chart-iframe { height: 1100px; }
+  }
+
+  /* About / explainer */
+  .about {
+    max-width: 860px; margin: 0 auto;
+    padding: 32px 20px 80px;
+    color: var(--muted);
+    font-size: 15px;
+  }
+  .about h2 {
+    color: var(--fg);
+    font-size: 20px; margin: 32px 0 10px;
+    font-weight: 700;
+  }
+  .about h2:first-child { margin-top: 0; }
+  .about p { margin: 0 0 12px; }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    background: #050b14;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .footer-inner {
+    max-width: 1180px; margin: 0 auto;
+    padding: 24px 20px;
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="brand">
+      <span class="logo">🌀</span>
+      <span>Triple-A-Tropics</span>
+    </div>
+    <div class="nav-links">
+      <a href="#chart">Live chart</a>
+      <a href="#about">About</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <h1>West Pacific<br>Tropical Cyclone Activity</h1>
+  <p>Live Accumulated Cyclone Energy (ACE) tracking for the Western North Pacific basin — current season versus the 1991–2020 climatology, updated every six hours.</p>
+  <div class="handle">Tracking by <b>@WeathermanAAA_</b></div>
+</header>
+
+<section class="chart-section" id="chart">
+  <div class="chart-card">
+    <iframe
+      id="aceChart"
+      class="chart-iframe"
+      src="wp_ace.html"
+      title="West Pacific Accumulated Cyclone Energy chart"
+      loading="lazy"
+      scrolling="no"
+    ></iframe>
+  </div>
+</section>
+
+<section class="about" id="about">
+  <h2>What am I looking at?</h2>
+  <p>Accumulated Cyclone Energy (ACE) is a measure of the total energy released by tropical cyclones during a season. It's the sum of the square of a storm's sustained winds, taken every six hours while the storm is at tropical-storm strength or stronger.</p>
+  <p>The blue bands show the statistical envelope of the last 30 years: the outer band is every season's min-to-max range, the middle band is the 10th–90th percentiles, and the inner band is the interquartile range (25th–75th percentile). The dashed blue line is the 30-year climatological mean.</p>
+  <p>The solid red line is the current season. The green line is the prior season for reference. The ranking table on the right shows where the current year stands versus every year back to 1945 at this same point in the calendar.</p>
+
+  <h2>Where does the data come from?</h2>
+  <p>Historical and provisional track data are from NOAA NCEI's <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS v04r01</a> dataset. During an active season, the current-season line is kept fresh from live <a href="https://www.metoc.navy.mil/jtwc/" target="_blank" rel="noopener">JTWC</a> best-track files as soon as they're issued.</p>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> @WeathermanAAA_ · All analysis is for research and educational purposes.</div>
+    <div>Data: <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS</a> · <a href="https://www.metoc.navy.mil/jtwc/" target="_blank" rel="noopener">JTWC</a></div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  // Auto-size the iframe to its content so no inner scrollbar appears
+  const frame = document.getElementById('aceChart');
+  function resizeFrame() {
+    try {
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      if (!doc || !doc.body) return;
+      const h = Math.max(
+        doc.body.scrollHeight,
+        doc.documentElement.scrollHeight
+      );
+      if (h > 200) frame.style.height = (h + 16) + 'px';
+    } catch (e) {
+      // Cross-origin safety; fine to silently ignore
+    }
+  }
+  frame.addEventListener('load', () => {
+    resizeFrame();
+    setTimeout(resizeFrame, 200);
+    setTimeout(resizeFrame, 800);
+  });
+  window.addEventListener('resize', resizeFrame);
+</script>
+
+</body>
+</html>

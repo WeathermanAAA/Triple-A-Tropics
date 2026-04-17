@@ -1,0 +1,56 @@
+name: Update WP ACE chart
+
+# Runs every 6 hours (matches the 6-hourly resolution of tropical cyclone data).
+# You can also click "Run workflow" manually from the Actions tab.
+on:
+  schedule:
+    - cron: "15 */6 * * *"   # 00:15, 06:15, 12:15, 18:15 UTC every day
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # allow the action to commit the updated HTML back
+
+concurrency:
+  group: update-ace
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Download latest IBTrACS West Pacific data
+        run: |
+          curl -fSL --retry 3 --retry-delay 10 \
+            -o ibtracs.WP.list.v04r01.csv \
+            "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.WP.list.v04r01.csv"
+          ls -lh ibtracs.WP.list.v04r01.csv
+
+      - name: Regenerate chart
+        run: python generate_wp_ace_plot.py
+
+      - name: Commit and push if anything changed
+        run: |
+          git config --local user.name  "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add wp_ace.html wp_ace_data.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: refresh WP ACE chart ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi
