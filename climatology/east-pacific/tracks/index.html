@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>East Pacific Tracks · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="2026 Northeast Pacific tropical cyclone tracks with active storm positions and intensity. Updated every 6 hours.">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <span class="logo">🌀</span>
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/climatology/">← All basins</a></p>
+  <h1>East Pacific</h1>
+  <p>Tropical cyclone analysis for the Northeast Pacific basin.</p>
+</header>
+
+<nav class="tabs">
+  <a href="/climatology/east-pacific/">ACE Climatology</a>
+  <a href="/climatology/east-pacific/tracks/" class="active">Tracks</a>
+</nav>
+
+<section class="chart-section">
+  <div class="chart-card">
+    <iframe id="tracksFrame" class="chart-iframe" src="/ep_tracks.html"
+      title="2026 Northeast Pacific tropical cyclone tracks map" loading="lazy" scrolling="no"></iframe>
+  </div>
+</section>
+
+<section class="about">
+  <h2>How to read this map</h2>
+  <p>Every 6-hour observation of every tropical or subtropical cyclone this year is plotted as a colored dot: blue for depressions (&lt;34 kt), green for tropical storms (34–63 kt), yellow through purple for Saffir-Simpson categories 1–5. Thin dark lines connect a storm's observations so you can see the track.</p>
+  <p>Storms currently being warned on by NHC get a <b>spinning, glowing cyclone icon</b> at their most recent position, colored by current intensity. The number (1–5) or letter (S for tropical storm, D for depression) inside the icon shows the current SSHWS category.</p>
+  <p>The side panel lists every storm of the year with peak wind, minimum pressure, and individual ACE contribution. Active storms are highlighted at the top.</p>
+
+  <h2>Data sources</h2>
+  <p>Historical tracks come from NOAA NCEI's <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS v04r01</a>. Active and very-recent tracks are pulled from <a href="https://ftp.nhc.noaa.gov/atcf/btk/" target="_blank" rel="noopener">NHC's ATCF best-track archive</a> as soon as each advisory is issued.</p>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Data: <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS</a> · <a href="https://www.nhc.noaa.gov/" target="_blank" rel="noopener">NHC</a></div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+  const frame = document.getElementById('tracksFrame');
+  function resizeFrame() {
+    try {
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      if (!doc || !doc.body) return;
+      const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+      if (h > 200) frame.style.height = (h + 16) + 'px';
+    } catch (e) {}
+  }
+  frame.addEventListener('load', () => { resizeFrame(); setTimeout(resizeFrame, 200); setTimeout(resizeFrame, 800); });
+  window.addEventListener('resize', resizeFrame);
+</script>
+
+</body>
+</html>
