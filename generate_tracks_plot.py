@@ -753,9 +753,10 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
 
 
 def render_active_icons(storms: list[dict], extent) -> str:
-    """For each active storm, place a spinning+glowing cyclone-swirl icon
-    at its most recent position. Geometry is drawn inline (no <symbol>/<use>
-    indirection) for maximum rendering reliability across browsers."""
+    """For each active storm, place a spinning+glowing hurricane-symbol
+    icon at its most recent position. Two comma-shaped arms in S-curve
+    (NHC classic), rotating counterclockwise (NH cyclone direction),
+    with a bold white category number in the center."""
     project, _ = build_projection(extent)
     parts = ['<g class="active-storms">']
     for storm in storms:
@@ -773,19 +774,19 @@ def render_active_icons(storms: list[dict], extent) -> str:
         color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
         label = sshs_label(cls)
         name = storm.get("name") or ""
-        # Inline geometry drawn at real coordinates (no viewport scaling),
-        # sized to ~22 map-unit radius. Halo sits outside the spinner so
-        # only the arms rotate. <animateTransform> on the spinner group.
-        parts.append(f'''<g class="active-icon" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 10px {color});">
-  <circle r="22" fill="{color}" fill-opacity="0.18"/>
+        # Classic two-comma hurricane symbol. Arms are cubic Béziers,
+        # 180° rotational symmetry. Spin is counterclockwise (from=360
+        # to=0) to match real NH cyclone rotation. White bold number
+        # sits on top of the spinning arms, not rotating.
+        parts.append(f'''<g class="active-icon" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 14px {color}) drop-shadow(0 0 6px {color});">
+  <circle r="28" fill="{color}" fill-opacity="0.14"/>
   <g class="spin-wrap">
-    <path d="M 0,-16 C 9,-16 16,-9 16,0 C 16,-5 12,-9 7,-9 C 2,-9 -2,-5 -2,0 L -8,0 C -8,-9 -2,-16 0,-16 Z" fill="{color}" opacity="0.95"/>
-    <path d="M 0,16 C -9,16 -16,9 -16,0 C -16,5 -12,9 -7,9 C -2,9 2,5 2,0 L 8,0 C 8,9 2,16 0,16 Z" fill="{color}" opacity="0.95"/>
-    <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0" to="360" dur="2.4s" repeatCount="indefinite"/>
+    <path d="M -3,-24 C 14,-24 24,-14 24,-2 C 24,-10 18,-10 12,-6 C 6,-3 -2,-6 -4,-12 C -6,-18 -6,-22 -3,-24 Z" fill="{color}"/>
+    <path d="M 3,24 C -14,24 -24,14 -24,2 C -24,10 -18,10 -12,6 C -6,3 2,6 4,12 C 6,18 6,22 3,24 Z" fill="{color}"/>
+    <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>
   </g>
-  <circle r="7" fill="#07101c" stroke="{color}" stroke-width="1.4"/>
-  <text class="label" y="4" text-anchor="middle" font-size="11" font-weight="800" fill="{color}">{label}</text>
-  <text class="name" x="28" y="4" text-anchor="start">{name}</text>
+  <text class="label" y="6" text-anchor="middle" font-size="20" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.2" stroke-linejoin="round">{label}</text>
+  <text class="name" x="36" y="5" text-anchor="start">{name}</text>
 </g>''')
     parts.append('</g>')
     return "\n".join(parts)
