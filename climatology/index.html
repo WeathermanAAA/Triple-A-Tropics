@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Climatology — Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Western North Pacific tropical cyclone climatology — ACE vs. 1991–2020 normals, updated every 6 hours.">
+<meta property="og:title" content="WPac Climatology — Triple-A-Tropics">
+<meta property="og:description" content="Western North Pacific Accumulated Cyclone Energy vs. climatology.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <span class="logo">🌀</span>
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>West Pacific Climatology</h1>
+  <p>Accumulated Cyclone Energy — current season vs. 1991–2020 normals, updated every 6 hours.</p>
+</header>
+
+<section class="chart-section">
+  <div class="chart-card">
+    <iframe
+      id="aceChart"
+      class="chart-iframe"
+      src="/wp_ace.html"
+      title="West Pacific Accumulated Cyclone Energy chart"
+      loading="lazy"
+      scrolling="no"
+    ></iframe>
+  </div>
+</section>
+
+<section class="about">
+  <h2>What am I looking at?</h2>
+  <p>Accumulated Cyclone Energy (ACE) measures the total energy released by tropical cyclones during a season. It's the sum of a storm's sustained wind speed squared, taken every six hours while the storm is at tropical-storm strength or stronger.</p>
+  <p>The blue bands show the statistical envelope of the last 30 years: the outer band is every season's min-to-max range, the middle band is the 10th–90th percentiles, and the inner band is the interquartile range (25th–75th percentile). The dashed cyan line is the 30-year climatological mean.</p>
+  <p>The solid amber line is the current season. The violet line is the prior season for reference. The ranking table on the right shows where the current year stands versus every year back to 1945 at this same point in the calendar. <b>Click any year in the table</b> to overlay that season's trajectory on the chart in hot pink.</p>
+
+  <h2>Where does the data come from?</h2>
+  <p>Historical and provisional track data come from NOAA NCEI's <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS v04r01</a> dataset. During an active season, the current-season line is kept fresh from live <a href="https://www.metoc.navy.mil/jtwc/" target="_blank" rel="noopener">JTWC</a> best-track files as soon as they're issued.</p>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Data: <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS</a> · <a href="https://www.metoc.navy.mil/jtwc/" target="_blank" rel="noopener">JTWC</a></div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  // Auto-size the iframe to its content so no inner scrollbar appears
+  const frame = document.getElementById('aceChart');
+  function resizeFrame() {
+    try {
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      if (!doc || !doc.body) return;
+      const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+      if (h > 200) frame.style.height = (h + 16) + 'px';
+    } catch (e) {}
+  }
+  frame.addEventListener('load', () => {
+    resizeFrame();
+    setTimeout(resizeFrame, 200);
+    setTimeout(resizeFrame, 800);
+  });
+  window.addEventListener('resize', resizeFrame);
+</script>
+
+</body>
+</html>
