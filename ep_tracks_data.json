@@ -1,0 +1,20 @@
+{
+  "basin": "ep",
+  "basin_name": "Northeast Pacific",
+  "year": 2026,
+  "updated": "2026-04-17 19:04 UTC",
+  "header": {
+    "named": 0,
+    "cat1plus": 0,
+    "cat3plus": 0,
+    "cat5": 0,
+    "total_ace": 0
+  },
+  "vocab": {
+    "named": "named storms",
+    "cat1plus": "hurricanes",
+    "cat3plus": "major hurricanes",
+    "cat5": "category 5s"
+  },
+  "storms": []
+}
