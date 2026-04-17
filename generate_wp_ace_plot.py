@@ -67,11 +67,23 @@ FETCH_TIMEOUT = 10  # seconds per request
 # a stable directory index, so we try several known patterns. The first
 # one that returns storms wins. If none work, we just skip the fetch.
 JTWC_ATCF_PATTERNS = [
-    # JTWC public ATCF btk directory (numbered 01..40 covers any realistic season)
+    # Official JTWC public ATCF btk directory
     "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{yy}.dat",
-    # NRL mirror
+    # NRL mirror variants
     "https://www.nrlmry.navy.mil/atcf_web/docs/tracks/{year}/bwp{nn}{yy}.dat",
+    "https://www.nrlmry.navy.mil/atcf_web/docs/tracks/{year}/WP{nn}{year}/bwp{nn}{yy}.dat",
+    # University of Wisconsin CIMSS real-time ATCF mirror
+    "https://tropic.ssec.wisc.edu/real-time/atcf/btk/bwp{nn}{yy}.dat",
+    # NOAA SSD mirror
+    "https://www.ssd.noaa.gov/PS/TROP/DATA/ATCF/JTWC/bwp{nn}{yy}.dat",
 ]
+
+# Browser-like User-Agent — plain "python-urllib" gets blocked by many
+# .mil and .gov sites. Mimicking a browser is what every real-world
+# tropical cyclone data scraper has to do.
+FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            "Version/17.0 Safari/605.1.15")
 
 # ---------------------------------------------------------------------------
 # ACE helpers
@@ -233,8 +245,9 @@ def _parse_atcf(text: str, season: int) -> pd.DataFrame:
 
 
 def fetch_live_season(season: int) -> pd.DataFrame:
-    """Try to pull current-season b-deck files from JTWC/NRL. Returns an
-    empty frame on any failure."""
+    """Try to pull current-season b-deck files from JTWC/NRL/mirrors.
+    Returns an empty frame if no source is reachable. Logs a one-line
+    diagnostic for each pattern so you can see exactly why it failed."""
     try:
         import urllib.request
     except Exception:
@@ -242,27 +255,54 @@ def fetch_live_season(season: int) -> pd.DataFrame:
 
     yy = season % 100
     frames = []
-    # JTWC numbers storms sequentially; 40 is a safely generous upper bound.
+    # Per-pattern diagnostic: fail type -> count, sample URL/error
+    pattern_stats: dict[str, dict] = {p: {"ok": 0, "errors": {}} for p in JTWC_ATCF_PATTERNS}
+
+    # Consecutive-miss short-circuit: if we go 3 storms in a row with no
+    # file found on ANY pattern, assume there aren't more active storms.
+    consecutive_misses = 0
+
     for nn in range(1, 41):
-        got = False
+        hit_this_nn = False
         for pattern in JTWC_ATCF_PATTERNS:
             url = pattern.format(nn=f"{nn:02d}", yy=f"{yy:02d}", year=season)
+            err_key = None
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "wp-ace-bot/1.0"})
+                req = urllib.request.Request(url, headers={"User-Agent": FETCH_UA})
                 with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as r:
                     if r.status != 200:
-                        continue
-                    text = r.read().decode("utf-8", errors="ignore")
-            except Exception:
-                continue
-            if "BEST" not in text:
-                continue
-            frames.append(_parse_atcf(text, season))
-            got = True
+                        err_key = f"http_{r.status}"
+                    else:
+                        text = r.read().decode("utf-8", errors="ignore")
+                        if "BEST" not in text:
+                            err_key = "no_BEST_lines"
+                        else:
+                            frames.append(_parse_atcf(text, season))
+                            pattern_stats[pattern]["ok"] += 1
+                            hit_this_nn = True
+                            break  # got this storm, move to next nn
+            except urllib.error.HTTPError as e:
+                err_key = f"http_{e.code}"
+            except Exception as e:
+                err_key = type(e).__name__
+            if err_key:
+                stats = pattern_stats[pattern]["errors"]
+                stats[err_key] = stats.get(err_key, 0) + 1
+        consecutive_misses = 0 if hit_this_nn else consecutive_misses + 1
+        if consecutive_misses >= 3:
             break
-        if not got:
-            # Stop once we hit a gap of ~3 consecutive missing numbers
-            pass
+
+    # Print a diagnostic so the GitHub Actions log shows what's going on
+    total_hits = sum(s["ok"] for s in pattern_stats.values())
+    print(f"[wp-ace]   live fetch results: {total_hits} storm file(s) found")
+    for pattern, s in pattern_stats.items():
+        host = pattern.split("/")[2]
+        if s["ok"]:
+            print(f"[wp-ace]     {host}: ✓ {s['ok']} ok")
+        elif s["errors"]:
+            err_summary = ", ".join(f"{k}×{v}" for k, v in s["errors"].items())
+            print(f"[wp-ace]     {host}: {err_summary}")
+
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
