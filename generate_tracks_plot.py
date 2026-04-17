@@ -774,18 +774,20 @@ def render_active_icons(storms: list[dict], extent) -> str:
         color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
         label = sshs_label(cls)
         name = storm.get("name") or ""
-        # Two crescent-shaped arms in 180° rotational symmetry — the
-        # classic NHC hurricane symbol. Each arm is a clean cubic curve
-        # without overlap. Counterclockwise spin for NH cyclones. White
-        # bold number sits on top and doesn't rotate.
+        # Classic NHC hurricane symbol — two teardrop-shaped arms in
+        # 180° rotational symmetry. Each is a circular bulb (radius 26)
+        # with a tapering tail extending to the diagonally-opposite
+        # corner. Tangent points + arc computed so the tail flows
+        # smoothly into the bulb without a visible seam. Counter-
+        # clockwise spin for NH cyclones.
         parts.append(f'''<g class="active-icon" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">
   <g class="spin-wrap">
-    <path d="M 2,-20 C 16,-20 24,-10 20,2 C 16,10 10,8 8,2 C 6,-6 4,-12 2,-20 Z" fill="{color}"/>
-    <path d="M -2,20 C -16,20 -24,10 -20,-2 C -16,-10 -10,-8 -8,-2 C -6,6 -4,12 -2,20 Z" fill="{color}"/>
+    <path d="M -19.5,-13.8 A 26,26 0 1 1 11.3,20.2 L -36,32 Z" fill="{color}"/>
+    <path d="M 19.5,13.8 A 26,26 0 1 1 -11.3,-20.2 L 36,-32 Z" fill="{color}"/>
     <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>
   </g>
-  <text y="6" text-anchor="middle" font-size="18" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.6)" stroke-width="2" stroke-linejoin="round">{label}</text>
-  <text class="name" x="32" y="5" text-anchor="start">{name}</text>
+  <text y="6" text-anchor="middle" font-size="20" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="2" stroke-linejoin="round">{label}</text>
+  <text class="name" x="42" y="5" text-anchor="start">{name}</text>
 </g>''')
     parts.append('</g>')
     return "\n".join(parts)
