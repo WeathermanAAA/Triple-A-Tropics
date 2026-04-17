@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-04-17 19:04 UTC",
+  "updated": "2026-04-17 19:24 UTC",
   "header": {
     "named": 3,
     "cat1plus": 1,
@@ -28,7 +28,7 @@
       "ace": 32.26,
       "max_category": "C5",
       "current_category": "C3",
-      "is_active": false,
+      "is_active": true,
       "points": [
         {
           "t": "2026-04-09T00:00:00",
