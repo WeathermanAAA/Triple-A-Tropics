@@ -97,7 +97,17 @@ a:hover { text-decoration: underline; }
   margin: 0;
   font-size: 15px;
 }
-
+.page-head .crumb {
+     margin: 0 0 10px;
+     font-size: 13px;
+   }
+   .page-head .crumb a {
+     color: var(--muted);
+     text-decoration: none;
+   }
+   .page-head .crumb a:hover {
+     color: var(--accent-2);
+   }
 /* ---- Section cards (homepage grid) ---- */
 .cards {
   max-width: 1180px; margin: 0 auto;
