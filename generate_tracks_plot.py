@@ -135,7 +135,10 @@ FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
             "Version/17.0 Safari/605.1.15")
 
 SIX_HOURLY = {0, 6, 12, 18}
-ACTIVE_WINDOW_HOURS = 24  # storm is "active" if last obs is within N hours
+# A storm is "active" if its last observation is within this many hours of
+# "now" AND it still has tropical-storm-strength winds. 60 hours covers the
+# typical 1–2 day IBTrACS provisional lag plus some slack for weekends.
+ACTIVE_WINDOW_HOURS = 60
 
 # Saffir-Simpson Hurricane Wind Scale thresholds (1-min sustained, kt)
 SSHS_COLORS = {
@@ -477,11 +480,17 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 if math.isnan(peak_pres) or pr < peak_pres:
                     peak_pres = float(pr)
 
-        is_active = (
-            len(points) > 0
-            and points[-1]["time"] >= active_cutoff
-            and pd.notna(points[-1]["wind_kt"])
-        )
+        # Active = (1) last observation is recent, AND (2) it still shows
+        # a valid tropical-storm-strength wind, AND (3) nature hasn't gone
+        # extratropical. Otherwise the storm has weakened/dissipated and
+        # shouldn't get the spinning icon.
+        is_active = False
+        if len(points) > 0:
+            last = points[-1]
+            recent = last["time"] >= active_cutoff
+            strong = pd.notna(last["wind_kt"]) and last["wind_kt"] >= 34
+            tropical = (last["nature"] or "") not in {"ET", "DS"}
+            is_active = recent and strong and tropical
         # Current intensity = SSHWS of the most recent observation
         last_wind = points[-1]["wind_kt"] if points else float("nan")
         current_cls = sshs_class(last_wind)
