@@ -47,12 +47,11 @@ BASINS: dict[str, dict] = {
         "short": "wp",
         "name": "West Pacific",
         "full_name": "Western North Pacific",
-        "ibtracs_file_code": "WP",   # filename segment: ibtracs.WP.list.v04r01.csv
-        "ibtracs_basin_col": "WP",   # BASIN column value in the CSV
-        "atcf_prefix": "bwp",        # b-deck filename prefix
+        "ibtracs_file_code": "WP",
+        "ibtracs_basin_col": ["WP"],    # accepted BASIN column values
+        "atcf_prefix": "bwp",
         "agency_name": "JTWC",
         "agency_url": "https://www.metoc.navy.mil/jtwc/",
-        # JTWC's own ATCF btk directory plus several mirrors
         "atcf_patterns": [
             "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{yy}.dat",
             "https://www.nrlmry.navy.mil/atcf_web/docs/tracks/{year}/bwp{nn}{yy}.dat",
@@ -60,24 +59,29 @@ BASINS: dict[str, dict] = {
             "https://tropic.ssec.wisc.edu/real-time/atcf/btk/bwp{nn}{yy}.dat",
             "https://www.ssd.noaa.gov/PS/TROP/DATA/ATCF/JTWC/bwp{nn}{yy}.dat",
         ],
-        # Wind preference: JTWC USA_WIND (1-min) → WMO → Tokyo (both 10-min, ÷0.88)
+        # JTWC: USA_WIND (1-min) → WMO → Tokyo (both 10-min, ÷0.88)
         "wind_preference": [
             ("USA_WIND", 1.0),
             ("WMO_WIND", 1.0 / 0.88),
             ("TOKYO_WIND", 1.0 / 0.88),
         ],
+        # JTWC methodology: ACE counts TROPICAL phase only (not subtropical).
+        "ace_natures": {"TS"},
+        # ATCF dev-level codes that qualify for ACE (tropical, at TS+)
+        "atcf_dev_levels": {"TS", "TY", "STY", "HU"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.WP.list.v04r01.csv",
     },
     "al": {
         "short": "al",
         "name": "Atlantic",
         "full_name": "North Atlantic",
-        "ibtracs_file_code": "NA",   # NCEI uses NA for North Atlantic
-        "ibtracs_basin_col": "NA",
+        "ibtracs_file_code": "NA",
+        # Accept multiple basin codes — some IBTrACS files use 'NA',
+        # some may use 'AL' (ATCF-style).
+        "ibtracs_basin_col": ["NA", "AL"],
         "atcf_prefix": "bal",
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
-        # NHC publishes ATCF btk at ftp.nhc.noaa.gov — open, no auth, rock-solid
         "atcf_patterns": [
             "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{yy}.dat",
             "https://www.nhc.noaa.gov/archive/btk/bal{nn}{yy}.dat",
@@ -86,6 +90,11 @@ BASINS: dict[str, dict] = {
             ("USA_WIND", 1.0),
             ("WMO_WIND", 1.0 / 0.88),
         ],
+        # NHC methodology: ACE counts tropical AND subtropical storms at
+        # 34 kt+. This matches the official published numbers (e.g. 2005
+        # Atlantic ACE = 245.47 which counts Subtropical Storm Arlene).
+        "ace_natures": {"TS", "SS"},
+        "atcf_dev_levels": {"TS", "HU", "SS", "SD"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.NA.list.v04r01.csv",
     },
     "ep": {
@@ -93,7 +102,7 @@ BASINS: dict[str, dict] = {
         "name": "East Pacific",
         "full_name": "Northeast Pacific",
         "ibtracs_file_code": "EP",
-        "ibtracs_basin_col": "EP",
+        "ibtracs_basin_col": ["EP"],
         "atcf_prefix": "bep",
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
@@ -105,6 +114,9 @@ BASINS: dict[str, dict] = {
             ("USA_WIND", 1.0),
             ("WMO_WIND", 1.0 / 0.88),
         ],
+        # NHC methodology — same as Atlantic
+        "ace_natures": {"TS", "SS"},
+        "atcf_dev_levels": {"TS", "HU", "SS", "SD"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.EP.list.v04r01.csv",
     },
 }
@@ -128,8 +140,6 @@ FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
             "Version/17.0 Safari/605.1.15")
 
 SIX_HOURLY = {0, 6, 12, 18}
-# ACE counts tropical-phase points at TS strength or greater.
-ACE_NATURES = {"TS"}
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +184,9 @@ def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
               f"Falling back to whole file.")
     else:
         d = d_basin
-    d = step(f"BASIN in {basin_codes}", d)
+    d = step(f"BASIN in {basin_codes}", d.copy())
 
-    d = step("TRACK_TYPE filter", d[d["TRACK_TYPE"].isin(["main", "PROVISIONAL"])])
+    d = step("TRACK_TYPE filter", d[d["TRACK_TYPE"].isin(["main", "PROVISIONAL"])].copy())
     d["ISO_TIME"] = pd.to_datetime(d["ISO_TIME"], errors="coerce")
     d = step("ISO_TIME parse", d.dropna(subset=["ISO_TIME"]))
 
@@ -191,12 +201,16 @@ def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
             d[col] = pd.to_numeric(d[col], errors="coerce")
     d["WIND_KT"] = d.apply(lambda r: _best_wind(r, basin_cfg["wind_preference"]), axis=1)
 
-    # Tropical-phase filter. IBTrACS backfills NATURE="NR" to "TS" only
-    # after post-season QC, so for PROVISIONAL rows accept NR too.
-    is_tropical = d["NATURE"].isin(ACE_NATURES) | (
-        (d["TRACK_TYPE"] == "PROVISIONAL") & d["NATURE"].isin(ACE_NATURES | {"NR"})
+    # Nature filter. Basin-specific: JTWC WPac counts TS only; NHC basins
+    # (Atlantic, EPac) count both tropical and subtropical (matches the
+    # official published ACE methodology).
+    # IBTrACS backfills NATURE="NR" to "TS" only after post-season QC, so
+    # for PROVISIONAL rows we also accept NR.
+    ace_natures = set(basin_cfg["ace_natures"])
+    is_tropical = d["NATURE"].isin(ace_natures) | (
+        (d["TRACK_TYPE"] == "PROVISIONAL") & d["NATURE"].isin(ace_natures | {"NR"})
     )
-    d = step("NATURE == TS (+NR on provisional)", d[is_tropical])
+    d = step(f"NATURE in {sorted(ace_natures)} (+NR on provisional)", d[is_tropical])
     d = step("WIND_KT >= 34", d[d["WIND_KT"] >= 34])
 
     d["ACE"] = (d["WIND_KT"] ** 2) / 10_000.0
@@ -221,9 +235,22 @@ def cumulative_by_doy(points: pd.DataFrame) -> pd.DataFrame:
     return cum
 
 
-def climatology(cum: pd.DataFrame, start: int, end: int) -> pd.DataFrame:
-    cols = [s for s in cum.columns if start <= s <= end]
-    climo = cum[cols]
+def climatology(cum: pd.DataFrame, start: int, end: int,
+                exclude_years: set[int] | None = None) -> pd.DataFrame:
+    """Percentile bands + mean come from the climatology window (1991-2020,
+    matches NHC official normals). Min/max come from ALL past seasons so
+    the outer envelope actually bounds historical extremes like Atlantic
+    1933 or 2005.
+
+    Excludes `exclude_years` (typically the current/in-progress year) from
+    both, so a partial season's zeroes after today don't pull the min
+    envelope down to zero."""
+    exclude_years = exclude_years or set()
+    climo_cols = [s for s in cum.columns
+                  if start <= s <= end and s not in exclude_years]
+    minmax_cols = [s for s in cum.columns if s not in exclude_years]
+    climo = cum[climo_cols] if climo_cols else cum
+    all_seasons = cum[minmax_cols] if minmax_cols else cum
     out = pd.DataFrame(index=cum.index)
     out["p10"] = climo.quantile(0.10, axis=1)
     out["p25"] = climo.quantile(0.25, axis=1)
@@ -231,8 +258,8 @@ def climatology(cum: pd.DataFrame, start: int, end: int) -> pd.DataFrame:
     out["p75"] = climo.quantile(0.75, axis=1)
     out["p90"] = climo.quantile(0.90, axis=1)
     out["mean"] = climo.mean(axis=1)
-    out["min"] = climo.min(axis=1)
-    out["max"] = climo.max(axis=1)
+    out["min"] = all_seasons.min(axis=1)
+    out["max"] = all_seasons.max(axis=1)
     return out
 
 
@@ -269,9 +296,10 @@ def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             continue
         if vmax < 34:
             continue
-        # Development level — "TS" / "TY" / "STY" / "HU" are tropical.
-        # Skip "TD" (too weak), "EX" (extratropical), "SD/SS" (subtropical).
-        if devlvl not in {"TS", "TY", "STY", "HU"}:
+        # Basin-specific dev-level filter. Skip "TD" (too weak) and "EX"
+        # (extratropical). JTWC WPac excludes subtropical; NHC basins
+        # include them.
+        if devlvl not in basin_cfg["atcf_dev_levels"]:
             continue
         rows.append({
             "season": season,
@@ -926,7 +954,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     print(f"{log} {len(points):,} 6-hour points contribute to ACE "
           f"(seasons {points['season'].min()}–{points['season'].max()})")
 
-    current_year = int(points["season"].max())
+    # "Current year" = actual calendar year, not just the latest year with
+    # data. This matters for basins like AL/EP that don't see any tropical
+    # activity until June — in April we want the chart to say "2026 · 0.0
+    # ACE so far", not relabel last year's finished season as "current".
+    current_year = dt.date.today().year
     prior_year = current_year - 1
 
     live_used = False
@@ -942,7 +974,15 @@ def main(argv: Iterable[str] | None = None) -> int:
             print(f"{log} live fetch returned nothing — using IBTrACS provisional data only")
 
     cum = cumulative_by_doy(points)
-    climo = climatology(cum, CLIMO_START, CLIMO_END)
+
+    # Ensure the current calendar year exists as a column even if IBTrACS
+    # has no activity for it yet (pre-season). Keeps the chart honest.
+    if current_year not in cum.columns:
+        cum[current_year] = 0.0
+        cum = cum.reindex(columns=sorted(cum.columns))
+
+    climo = climatology(cum, CLIMO_START, CLIMO_END,
+                        exclude_years={current_year})
 
     last_obs_doy = points.groupby("season")["doy"].max().to_dict()
     payload = build_payload(cum, climo, current_year, prior_year, last_obs_doy)
