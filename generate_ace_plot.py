@@ -68,12 +68,11 @@ BASINS: dict[str, dict] = {
         ],
         # JTWC methodology: ACE counts TROPICAL phase only (not subtropical).
         "ace_natures": {"TS"},
-        # Dev levels to EXCLUDE from ACE (disturbance/low/wave/depression/
-        # extratropical/subtropical-depression). Everything else at
-        # TS-strength winds counts. Matches the GoldStandardBot reference
-        # implementation. For JTWC we also exclude subtropical (SS/SD)
-        # since JTWC convention is tropical-only.
-        "atcf_dev_exclude": {"DB", "EX", "LO", "WV", "MD", "TD", "SD", "SS"},
+        # Exclude only explicitly non-tropical codes. TD is caught by the
+        # wind >= 34 kt filter. SS/SD excluded because JTWC is tropical-
+        # only. Anything else JTWC might label (TS/TY/STY/HU/TD/etc.)
+        # passes and is counted if wind >= 34.
+        "atcf_dev_exclude": {"EX", "SS", "SD"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.WP.list.v04r01.csv",
     },
     "al": {
@@ -100,9 +99,9 @@ BASINS: dict[str, dict] = {
         # 34 kt+. This matches the official published numbers (e.g. 2005
         # Atlantic ACE = 245.47 which counts Subtropical Storm Arlene).
         "ace_natures": {"TS", "SS"},
-        # Exclude only depressions/disturbances/extratropical. SS and
-        # higher are counted.
-        "atcf_dev_exclude": {"DB", "EX", "LO", "WV", "MD", "TD", "SD"},
+        # Exclude only extratropical. SS/SD stay included; TD filtered by
+        # wind >= 34.
+        "atcf_dev_exclude": {"EX"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.NA.list.v04r01.csv",
     },
     "ep": {
@@ -125,7 +124,7 @@ BASINS: dict[str, dict] = {
         ],
         # NHC methodology — same as Atlantic
         "ace_natures": {"TS", "SS"},
-        "atcf_dev_exclude": {"DB", "EX", "LO", "WV", "MD", "TD", "SD"},
+        "atcf_dev_exclude": {"EX"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.EP.list.v04r01.csv",
     },
 }
@@ -279,16 +278,36 @@ def climatology(cum: pd.DataFrame, start: int, end: int,
 def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
     """Parse an ATCF b-deck file. Works identically for JTWC and NHC.
 
-    ATCF b-decks contain multiple BEST lines per timestamp — one for each
-    wind-radius threshold (34, 50, 64 kt). All share the same vmax/mslp
-    for that observation; only RAD and the radii fields differ. Filtering
-    to RAD=='34' keeps exactly one line per observation (the 34 kt line
-    always exists whenever vmax >= 34 kt)."""
+    ATCF b-decks have multiple BEST lines per timestamp (one per
+    wind-radius threshold 34/50/64 kt) for observations with radii data;
+    earlier/weaker observations may have fewer columns. Dedupe with BOTH
+    RAD=='34' filter AND (storm_num, tstamp) fallback so we accept
+    shorter lines too. Exclude list matches what the tracks generator
+    effectively does — only truly non-tropical codes."""
     rows = []
-    exclude = set(basin_cfg.get("atcf_dev_exclude", {"DB", "EX", "LO", "WV", "MD", "TD", "SD"}))
+    name_by_storm: dict[int, str] = {}
+    exclude = set(basin_cfg.get("atcf_dev_exclude", {"EX"}))
+    # First pass: extract storm name from column 27 (if any line has it)
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 12:
+        if len(parts) < 28:
+            continue
+        try:
+            storm_num = int(parts[1])
+            tech = parts[4]
+            name_col = parts[27]
+        except (IndexError, ValueError):
+            continue
+        if tech != "BEST":
+            continue
+        if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
+            name_by_storm[storm_num] = name_col
+
+    # Second pass: extract observations
+    seen: set[tuple[int, str]] = set()
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 11:
             continue
         try:
             storm_num = int(parts[1])
@@ -296,13 +315,21 @@ def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             tech = parts[4]
             vmax_s = parts[8]
             devlvl = parts[10]
-            rad = parts[11]
+            rad = parts[11] if len(parts) > 11 else ""
         except (IndexError, ValueError):
             continue
         if tech != "BEST":
             continue
-        if rad != "34":              # skip 50/64 kt radius duplicates
+        # Skip 50/64 kt radius duplicates. Accept blank RAD (lines with
+        # no radii column) — those are single-observation lines.
+        if rad not in ("", "34"):
             continue
+        # Belt-and-suspenders dedupe: if two lines made it through the
+        # RAD filter at the same (storm, tstamp), count only the first.
+        key = (storm_num, tstamp)
+        if key in seen:
+            continue
+        seen.add(key)
         try:
             t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
         except ValueError:
@@ -323,7 +350,7 @@ def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             "ace_increment": (vmax ** 2) / 10_000.0,
             "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
                    f"{storm_num:02d}{season}",
-            "NAME": "",
+            "NAME": name_by_storm.get(storm_num, ""),
         })
     return pd.DataFrame(rows)
 
@@ -983,7 +1010,30 @@ def main(argv: Iterable[str] | None = None) -> int:
         live = fetch_live_season(current_year, basin_cfg, log)
         if not live.empty:
             print(f"{log} pulled {len(live)} live 6-hour points from {basin_cfg['agency_name']}")
-            points = points[points["season"] != current_year]
+            # Merge strategy: only drop IBTrACS rows for storms whose NAMES
+            # are in live data. This preserves IBTrACS storms that live
+            # didn't pick up (e.g., early-season storms whose ATCF files
+            # got archived). Matches the tracks generator's behavior so
+            # the two charts stay consistent.
+            live_names = {
+                str(n).strip().upper()
+                for n in live["NAME"].unique()
+                if pd.notna(n) and str(n).strip()
+                and str(n).strip().upper() not in {"", "UNNAMED", "INVEST", "NAMELESS"}
+            }
+            if live_names:
+                current_year_mask = points["season"] == current_year
+                name_mask = points["NAME"].fillna("").str.strip().str.upper().isin(live_names)
+                drop_mask = current_year_mask & name_mask
+                dropped = int(drop_mask.sum())
+                if dropped:
+                    print(f"{log}   merge: dropped {dropped} IBTrACS row(s) "
+                          f"for storms covered by live: {sorted(live_names)}")
+                points = points[~drop_mask].copy()
+            else:
+                # Live has unnamed storms only — drop the whole current
+                # year from IBTrACS to avoid duplicates anyway.
+                points = points[points["season"] != current_year]
             points = pd.concat([points, live], ignore_index=True)
             live_used = True
         else:
