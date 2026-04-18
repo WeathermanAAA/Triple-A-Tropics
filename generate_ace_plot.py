@@ -271,8 +271,15 @@ def climatology(cum: pd.DataFrame, start: int, end: int,
 # ---------------------------------------------------------------------------
 
 def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
-    """Parse an ATCF b-deck file. Works identically for JTWC and NHC."""
+    """Parse an ATCF b-deck file. Works identically for JTWC and NHC.
+
+    NOTE: ATCF b-decks contain MULTIPLE BEST lines per timestamp — one
+    for each wind-radius threshold (34 kt, 50 kt, 64 kt). Each line shares
+    the same storm_num, timestamp, vmax, and mslp; only the RAD/radii
+    fields differ. We must dedupe by (storm_num, timestamp) or ACE gets
+    double- or triple-counted for intense storms."""
     rows = []
+    seen: set[tuple[int, str]] = set()
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 11:
@@ -287,6 +294,10 @@ def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             continue
         if tech != "BEST":
             continue
+        key = (storm_num, tstamp)
+        if key in seen:
+            continue          # dedupe duplicate-radius lines for this obs
+        seen.add(key)
         try:
             t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
         except ValueError:
@@ -299,9 +310,6 @@ def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             continue
         if vmax < 34:
             continue
-        # Basin-specific dev-level filter. Skip "TD" (too weak) and "EX"
-        # (extratropical). JTWC WPac excludes subtropical; NHC basins
-        # include them.
         if devlvl not in basin_cfg["atcf_dev_levels"]:
             continue
         rows.append({
