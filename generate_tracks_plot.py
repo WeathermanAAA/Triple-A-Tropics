@@ -326,9 +326,10 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
         if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
             name_by_storm[storm_num] = name_col
 
+    seen: set[tuple[int, str]] = set()
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 12:
+        if len(parts) < 11:
             continue
         try:
             storm_num = int(parts[1])
@@ -339,13 +340,22 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             vmax = parts[8]
             mslp = parts[9]
             devlvl = parts[10]
-            rad = parts[11]
+            rad = parts[11] if len(parts) > 11 else ""
         except (IndexError, ValueError):
             continue
         if tech != "BEST":
             continue
-        if rad != "34":              # dedupe multi-radius lines
+        # Accept blank RAD (pre-radii observations) or "34"; skip 50/64
+        # kt radii (they're duplicates of the 34 kt row for the same obs)
+        if rad not in ("", "34"):
             continue
+        # Belt-and-suspenders dedupe by (storm, timestamp) in case a file
+        # ever has both a short 11-col line and a 12-col RAD=34 line for
+        # the same obs.
+        key = (storm_num, tstamp)
+        if key in seen:
+            continue
+        seen.add(key)
         try:
             t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
         except ValueError:
