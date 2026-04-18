@@ -254,8 +254,10 @@ footer {
   position: relative;
   border-radius: 12px;
   padding: 14px 86px 14px 20px;
-  box-shadow: 0 0 0 2px rgba(255, 184, 58, 0.18),
-              0 8px 22px rgba(0, 0, 0, 0.42);
+  /* No outer amber ring — it read as a hard border and the rotating
+     corner spinner's fins were cutting against it. Just the soft
+     drop shadow remains for depth. */
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
 }
 .active-banner + .active-banner { margin-top: 12px; }
 .active-banner .ab-spinner {
