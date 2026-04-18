@@ -75,9 +75,10 @@ OISST_BASE = (
     "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-"
     "interpolation/v2.1/access/avhrr"
 )
-# OISST v2.1 has a ~1-day latency.  We try today-1 first and fall back
-# through a few earlier days if the latest file isn't up yet.
-LATENCY_TRIES = 4
+# OISST v2.1 has a ~1-day latency. We try today-1 first and fall back
+# through earlier days if the latest file isn't up yet. 7 days of runway
+# covers holiday gaps in NCEI's publishing schedule.
+LATENCY_TRIES = 7
 
 # Baseline & records window
 CLIMO_START = 1991
@@ -96,50 +97,74 @@ FETCH_TIMEOUT = 45
 FETCH_RETRIES = 3
 
 
-def oisst_url(yyyymmdd: dt.date) -> str:
-    return (
-        f"{OISST_BASE}/{yyyymmdd.year:04d}{yyyymmdd.month:02d}/"
-        f"oisst-avhrr-v02r01.{yyyymmdd.year:04d}"
-        f"{yyyymmdd.month:02d}{yyyymmdd.day:02d}.nc"
-    )
+def oisst_url_candidates(d: dt.date) -> list[str]:
+    """Return candidate URLs for a given UTC day.
+
+    NCEI publishes OISST v2.1 in two flavors — the preliminary file
+    (available within ~1-2 days of observation) and the final file
+    (typically 1-2 weeks later, replacing the preliminary). For recent
+    dates only the preliminary exists; for older dates only the final.
+    We try both and take the first that returns 200.
+    """
+    base = f"{OISST_BASE}/{d.year:04d}{d.month:02d}"
+    stamp = f"{d.year:04d}{d.month:02d}{d.day:02d}"
+    return [
+        f"{base}/oisst-avhrr-v02r01.{stamp}.nc",
+        f"{base}/oisst-avhrr-v02r01.{stamp}_preliminary.nc",
+    ]
 
 
 def cache_path(d: dt.date) -> Path:
     return CACHE_DIR / f"oisst.{d:%Y%m%d}.nc"
 
 
-def fetch_day(d: dt.date, log_prefix: str = "[sst]") -> Path | None:
-    """Download the OISST NetCDF for a specific UTC day, cache-hit, with retries."""
+def fetch_day(d: dt.date, log_prefix: str = "[sst]",
+              verbose: bool = False) -> Path | None:
+    """Download the OISST NetCDF for a specific UTC day. Cache-hit fast-path;
+    falls back to the preliminary filename if the final one 404s."""
     cp = cache_path(d)
     if cp.exists() and cp.stat().st_size > 100_000:
         return cp
-    url = oisst_url(d)
-    for attempt in range(FETCH_RETRIES):
-        try:
-            r = requests.get(url, timeout=FETCH_TIMEOUT)
-            if r.status_code == 404:
-                return None
-            r.raise_for_status()
-            cp.write_bytes(r.content)
-            return cp
-        except Exception as e:  # noqa: BLE001
-            if attempt == FETCH_RETRIES - 1:
-                print(
-                    f"{log_prefix}   fetch failed {d}: "
-                    f"{type(e).__name__}: {e}",
-                    file=sys.stderr,
-                )
-                return None
+    last_status = None
+    for url in oisst_url_candidates(d):
+        for attempt in range(FETCH_RETRIES):
+            try:
+                r = requests.get(url, timeout=FETCH_TIMEOUT)
+                last_status = r.status_code
+                if r.status_code == 404:
+                    break  # try next URL flavor
+                r.raise_for_status()
+                if len(r.content) < 100_000:
+                    # Likely a redirect or error page, not a real NetCDF
+                    break
+                cp.write_bytes(r.content)
+                if verbose:
+                    print(f"{log_prefix}   ✓ {d} ← {url.split('/')[-1]}")
+                return cp
+            except Exception as e:  # noqa: BLE001
+                if attempt == FETCH_RETRIES - 1:
+                    if verbose:
+                        print(
+                            f"{log_prefix}   fetch error {d} ({url.split('/')[-1]}): "
+                            f"{type(e).__name__}: {e}",
+                            file=sys.stderr,
+                        )
+                    break
+    if verbose and last_status is not None:
+        print(f"{log_prefix}   ✗ {d} (last HTTP {last_status})")
     return None
 
 
 def latest_available_day(log_prefix: str = "[sst]") -> tuple[dt.date, Path]:
-    """Start at yesterday UTC and walk back until a day's file exists."""
+    """Start at yesterday UTC and walk back until a day's file exists.
+
+    Both the `.nc` (final) and `_preliminary.nc` flavors are tried per date;
+    logs each URL attempt so a run's failure mode is inspectable."""
     today = dt.datetime.utcnow().date()
     for back in range(1, LATENCY_TRIES + 1):
         d = today - dt.timedelta(days=back)
         print(f"{log_prefix} trying {d} ...")
-        p = fetch_day(d, log_prefix)
+        p = fetch_day(d, log_prefix, verbose=True)
         if p is not None:
             print(f"{log_prefix} latest available: {d}")
             return d, p
