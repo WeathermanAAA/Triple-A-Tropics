@@ -333,3 +333,38 @@ footer {
   padding: 8px 4px 2px;
   text-align: center;
 }
+
+/* ---- SST region dropdown ---- */
+.sst-controls {
+  max-width: 1180px; margin: 0 auto;
+  padding: 4px 20px 14px;
+}
+.sst-select {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 10px 6px 14px;
+}
+.sst-select-label {
+  color: var(--muted);
+  font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px;
+}
+.sst-select select {
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  outline: 0;
+  font-size: 14px; font-weight: 600;
+  padding: 4px 26px 4px 4px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='%238ea2bd'><path d='M6 8 0 0h12z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px;
+}
+.sst-select select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
+.sst-select select optgroup { color: var(--muted); font-style: normal; }
+.sst-select select option { background: var(--panel); color: var(--fg); }
