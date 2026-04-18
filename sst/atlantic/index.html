@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlantic SST · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Daily Atlantic sea-surface temperature, anomalies vs 1991–2020, and daily records since 1982. NOAA OISST v2.1.">
+<meta property="og:title" content="Atlantic SST · Triple-A-Tropics">
+<meta property="og:description" content="Daily Atlantic SST, anomalies, and records.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <span class="logo">🌀</span>
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/" class="active">SST</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/sst/">← All SST maps</a></p>
+  <h1>Atlantic SST</h1>
+  <p>Sea-surface temperature across the North Atlantic basin, from the Gulf of Mexico and Caribbean out to the main development region off West Africa.</p>
+  <p class="muted" id="dataDate">Loading latest valid date…</p>
+</header>
+
+<nav class="tabs" id="sstTabs">
+  <a href="#" data-variant="actual" class="active">Actual</a>
+  <a href="#" data-variant="anomaly">Anomaly</a>
+  <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
+</nav>
+
+<section class="chart-section">
+  <div class="chart-card sst-chart">
+    <img id="sstImage"
+         class="sst-image"
+         src="/sst/atlantic_actual.png"
+         alt="Atlantic sea-surface temperature map">
+    <div class="sst-caption" id="sstCaption">Atlantic actual sea-surface temperature.</div>
+  </div>
+</section>
+
+<section class="about">
+  <h2>About</h2>
+  <p>Atlantic SST directly fuels tropical cyclone intensification. Waters above ~26.5 °C can support tropical development; the Atlantic main development region (the belt from 10–20 °N across the central Atlantic) warms through summer and peaks in September, matching the climatological peak of hurricane activity.</p>
+  <p>Source: NOAA OISST v2.1 daily analysis. Baseline for anomalies is the 1991–2020 mean; records are compared against the full OISST era (1982–present).</p>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Data: <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">NOAA OISST v2.1</a></div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  const REGION = "atlantic";
+  const CAPTIONS = {
+    actual:            "Atlantic actual sea-surface temperature.",
+    anomaly:           "Atlantic SST anomaly vs 1991–2020 climatology.",
+    anomaly_records:   "Atlantic SST anomaly with stippling where today meets or exceeds the 1982-present record."
+  };
+  const img = document.getElementById('sstImage');
+  const caption = document.getElementById('sstCaption');
+  const tabs = document.querySelectorAll('#sstTabs a');
+  tabs.forEach(t => {
+    t.addEventListener('click', e => {
+      e.preventDefault();
+      tabs.forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      const v = t.dataset.variant;
+      img.src = `/sst/${REGION}_${v}.png?t=${Date.now()}`;
+      caption.textContent = CAPTIONS[v] || '';
+    });
+  });
+
+  fetch('/sst/sst_meta.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(m => {
+      if (!m || !m.date) return;
+      const d = new Date(m.date + 'T00:00:00Z');
+      const txt = d.toLocaleDateString('en-US', {
+        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+      });
+      document.getElementById('dataDate').textContent =
+        `Valid ${txt}  ·  updated ${m.updated_utc}`;
+    })
+    .catch(() => {});
+</script>
+
+</body>
+</html>
