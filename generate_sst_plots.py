@@ -289,7 +289,7 @@ REGIONS: dict[str, dict] = {
     "enso": {
         "label": "ENSO Regions",
         "extent": (120.0, 290.0, -15.0, 15.0),
-        "figsize": (15.0, 4.5),
+        "figsize": (15.0, 3.8),
     },
 
     # --- Atlantic ---
@@ -400,29 +400,33 @@ def _sst_actual_cmap() -> mcolors.LinearSegmentedColormap:
 
 
 def _sst_anom_cmap() -> mcolors.LinearSegmentedColormap:
-    """Diverging cool-to-warm, warm side skewed toward saturated red.
+    """Diverging cool-to-warm, tuned so small anomalies are already
+    visibly colored (light blue below 0, light yellow above) while
+    larger anomalies ramp through red for warm and indigo for cold.
 
-    Cold side: light blue → mid blue → royal blue → indigo at ≤ -5 °C.
-    Zero: razor-thin white band.
-    Warm side: pale salmon → coral → red → deep red → oxblood →
-    hot-pink magenta at ≥ +5 °C. Orange barely appears — +1 to +3 °C
-    reads as unmistakable red."""
+    Cold: indigo ≤ -5 → royal blue → blue → mid blue → light blue →
+           pale sky blue around -0.4 → very faint → zero.
+    Warm: zero → pale yellow (+0.2) → light yellow (+0.5) → gold (+1) →
+           coral (+1.8) → red (+2.6) → dark red (+3.4) → oxblood →
+           hot-pink magenta ≥ +5.
+    """
     stops = [
         (0.00, "#1a0c5f"),  # deep indigo (≤ -5)
-        (0.06, "#1a1f9e"),  # royal blue-violet
-        (0.14, "#2254c7"),  # blue
-        (0.24, "#3a87d9"),  # mid blue
-        (0.35, "#78b6e6"),  # light blue
-        (0.43, "#bcdcef"),  # very light blue
-        (0.485, "#e8f2f8"), # near-zero cool
+        (0.08, "#1a2b9e"),  # royal blue-violet
+        (0.18, "#2261c7"),  # blue (-3)
+        (0.30, "#4695db"),  # mid blue (-2)
+        (0.40, "#8bc0ea"),  # light blue (-1)
+        (0.47, "#cde5f5"),  # pale sky blue (-0.3)
+        (0.495, "#f2f7fb"), # near-zero cool
         (0.50, "#ffffff"),  # zero (thin)
-        (0.515, "#fbe3d8"), # very pale peach
-        (0.55, "#f5b39a"),  # pale salmon (+0.5)
-        (0.60, "#ed8568"),  # coral (+1)
-        (0.68, "#dc4a33"),  # red (+1.8)
-        (0.78, "#b01e22"),  # deep red (+2.8)
-        (0.86, "#7d1520"),  # dark red (+3.6)
-        (0.94, "#4d0d1e"),  # oxblood
+        (0.505, "#fffbea"), # near-zero warm
+        (0.53, "#fff1a8"),  # light yellow (+0.3)
+        (0.58, "#ffd95e"),  # gold yellow (+0.8)
+        (0.64, "#f9a74a"),  # light orange (+1.4)
+        (0.72, "#e6613a"),  # coral (+2.2)
+        (0.80, "#c32e2a"),  # red (+3)
+        (0.88, "#841722"),  # dark red (+3.8)
+        (0.96, "#4a0c28"),  # oxblood (+4.6)
         (1.00, "#ef37b8"),  # hot-pink magenta (≥ +5)
     ]
     return mcolors.LinearSegmentedColormap.from_list(
@@ -523,6 +527,33 @@ def _draw_basemap(ax, extent: tuple, countries, coast) -> None:
                 ax.plot(xs, ys, color=COAST_COLOR, linewidth=0.8, zorder=3)
 
 
+def _lon_tick_label(x: float, _pos) -> str:
+    """Format a longitude tick value.
+
+    OISST uses 0–360° longitudes internally; for dateline-crossing
+    extents we therefore pass tick values that can be >180. Convert
+    those to the more familiar −180…+180 convention and append E/W."""
+    v = float(x)
+    # Fold >180 into the negative hemisphere for display
+    while v > 180:
+        v -= 360
+    while v < -180:
+        v += 360
+    iv = int(round(v))
+    if iv == 0 or iv == 180 or iv == -180:
+        return f"{abs(iv)}°"
+    if iv > 0:
+        return f"{iv}°E"
+    return f"{-iv}°W"
+
+
+def _lat_tick_label(y: float, _pos) -> str:
+    iv = int(round(float(y)))
+    if iv == 0:
+        return "0°"
+    return f"{abs(iv)}°{'N' if iv > 0 else 'S'}"
+
+
 def _style_axes(ax, extent, title, subtitle):
     lon_min, lon_max, lat_min, lat_max = extent
     ax.set_xlim(lon_min, lon_max)
@@ -532,6 +563,10 @@ def _style_axes(ax, extent, title, subtitle):
     # Lat/lon gridlines
     ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
     ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
+    # Proper geographic formatting: -140°W, 120°E, etc. — even for
+    # dateline-crossing extents that use >180 coordinates internally.
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(_lon_tick_label))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_lat_tick_label))
     ax.grid(True, linewidth=0.3, color="#2a3e5c", alpha=0.5, zorder=1)
     ax.tick_params(colors=MUTED_COLOR, labelsize=9)
     for spine in ax.spines.values():
