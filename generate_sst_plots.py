@@ -419,14 +419,14 @@ def _sst_anom_cmap() -> mcolors.LinearSegmentedColormap:
         (0.47, "#cde5f5"),  # pale sky blue (-0.3)
         (0.495, "#f2f7fb"), # near-zero cool
         (0.50, "#ffffff"),  # zero (thin)
-        (0.505, "#fffbea"), # near-zero warm
-        (0.53, "#fff1a8"),  # light yellow (+0.3)
-        (0.58, "#ffd95e"),  # gold yellow (+0.8)
-        (0.64, "#f9a74a"),  # light orange (+1.4)
-        (0.72, "#e6613a"),  # coral (+2.2)
-        (0.80, "#c32e2a"),  # red (+3)
-        (0.88, "#841722"),  # dark red (+3.8)
-        (0.96, "#4a0c28"),  # oxblood (+4.6)
+        (0.506, "#fdf4ea"), # near-zero warm (barely)
+        (0.53, "#f8d5b8"),  # pale peach (+0.3)
+        (0.58, "#efac86"),  # light salmon (+0.8)
+        (0.65, "#df815f"),  # coral (+1.5)
+        (0.73, "#cc4836"),  # warm red (+2.3)
+        (0.82, "#9f1e26"),  # red (+3.2)
+        (0.90, "#6d1321"),  # dark red (+4)
+        (0.96, "#3f0c23"),  # oxblood (+4.6)
         (1.00, "#ef37b8"),  # hot-pink magenta (≥ +5)
     ]
     return mcolors.LinearSegmentedColormap.from_list(
