@@ -56,12 +56,36 @@ jobs:
 
       - name: Commit and push if anything changed
         run: |
+          set -eo pipefail
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add sst/*.png sst/sst_meta.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No SST changes to commit."
-          else
-            git commit -m "chore: refresh SST maps ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-            git push
+            exit 0
           fi
+          git commit -m "chore: refresh SST maps ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+
+          # Rebase-and-push loop. This workflow takes 10+ minutes to run,
+          # so commits on main from other sources (you, or the ACE
+          # workflow) are very likely to land while we're rendering.
+          # Instead of failing outright, fetch their work, replay our
+          # commit on top, and push again. Our changes touch only
+          # sst/*.png + sst/sst_meta.json, so conflicts are nearly
+          # impossible in practice.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected on attempt $attempt — fetching + rebasing..."
+            git fetch origin main
+            git rebase origin/main || {
+              echo "Rebase failed (unexpected conflict)." >&2
+              git rebase --abort || true
+              exit 1
+            }
+            sleep $((attempt * 2))
+          done
+          echo "Push still failing after 5 attempts." >&2
+          exit 1
