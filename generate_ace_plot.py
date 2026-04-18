@@ -52,12 +52,13 @@ BASINS: dict[str, dict] = {
         "atcf_prefix": "bwp",
         "agency_name": "JTWC",
         "agency_url": "https://www.metoc.navy.mil/jtwc/",
+        # Primary is our Cloudflare Worker proxy (bypasses IP blocks).
+        # Filename convention uses a 4-digit year (bXX##YYYY.dat), which
+        # is how natyphoon.top / NHC FTP actually serve these files.
         "atcf_patterns": [
-            "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{yy}.dat",
-            "https://www.nrlmry.navy.mil/atcf_web/docs/tracks/{year}/bwp{nn}{yy}.dat",
-            "https://www.nrlmry.navy.mil/atcf_web/docs/tracks/{year}/WP{nn}{year}/bwp{nn}{yy}.dat",
-            "https://tropic.ssec.wisc.edu/real-time/atcf/btk/bwp{nn}{yy}.dat",
-            "https://www.ssd.noaa.gov/PS/TROP/DATA/ATCF/JTWC/bwp{nn}{yy}.dat",
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bwp{nn}{year}.dat",
+            "https://www.natyphoon.top/atcf/temp/bwp{nn}{year}.dat",
+            "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{year}.dat",
         ],
         # JTWC: USA_WIND (1-min) → WMO → Tokyo (both 10-min, ÷0.88)
         "wind_preference": [
@@ -83,8 +84,9 @@ BASINS: dict[str, dict] = {
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
-            "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{yy}.dat",
-            "https://www.nhc.noaa.gov/archive/btk/bal{nn}{yy}.dat",
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bal{nn}{year}.dat",
+            "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{year}.dat",
+            "https://www.natyphoon.top/atcf/temp/bal{nn}{year}.dat",
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
@@ -107,8 +109,9 @@ BASINS: dict[str, dict] = {
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
-            "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{yy}.dat",
-            "https://www.nhc.noaa.gov/archive/btk/bep{nn}{yy}.dat",
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bep{nn}{year}.dat",
+            "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
+            "https://www.natyphoon.top/atcf/temp/bep{nn}{year}.dat",
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
