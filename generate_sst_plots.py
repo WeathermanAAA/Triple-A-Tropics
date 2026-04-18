@@ -56,6 +56,11 @@ from pathlib import Path
 import matplotlib as mpl
 
 mpl.use("Agg")
+# Black diagonal hatching for the records overlay (applied via contourf
+# with colors="none" and hatches=["///"]). These rcParams set the lines'
+# color and thickness globally — matplotlib picks them up at plot time.
+mpl.rcParams["hatch.color"] = "#000000"
+mpl.rcParams["hatch.linewidth"] = 0.7
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
@@ -616,36 +621,35 @@ def plot_anomaly(
     except Exception:
         pass
 
-    # Optional: records stippling (where today broke the 1982–present envelope)
-    if records_high is not None:
-        rh_sub, _, _ = _subset_to_extent(records_high, lat, lon, extent)
-        if rh_sub.shape == sub.shape:
-            mask = np.where(rh_sub, 1.0, np.nan)
-            # Stipple using hatched scatter of small dots
-            lat_step = max(1, la.size // 110)
-            lon_step = max(1, lo.size // 220)
-            yy, xx = np.where(~np.isnan(mask))
-            # sub-sample to keep the dots sparse
-            pick = (yy % lat_step == 0) & (xx % lon_step == 0)
-            if pick.any():
-                ax.scatter(
-                    lo[xx[pick]], la[yy[pick]],
-                    s=1.6, c="#2a0033", alpha=0.75, marker=".",
-                    linewidths=0, zorder=1.8,
-                )
-    if records_low is not None:
-        rl_sub, _, _ = _subset_to_extent(records_low, lat, lon, extent)
-        if rl_sub.shape == sub.shape:
-            lat_step = max(1, la.size // 110)
-            lon_step = max(1, lo.size // 220)
-            yy, xx = np.where(rl_sub)
-            pick = (yy % lat_step == 0) & (xx % lon_step == 0)
-            if pick.any():
-                ax.scatter(
-                    lo[xx[pick]], la[yy[pick]],
-                    s=1.6, c="#00144d", alpha=0.75, marker=".",
-                    linewidths=0, zorder=1.8,
-                )
+    # Records overlay — diagonal hatching with a black outline, matching
+    # the DCAreaWx / Coral Reef Watch visual style. Both highs and lows
+    # use the same forward-diagonal pattern; the underlying anomaly color
+    # (red for record highs, blue for record lows) communicates which.
+    for rm in (records_high, records_low):
+        if rm is None:
+            continue
+        rm_sub, _, _ = _subset_to_extent(rm, lat, lon, extent)
+        if rm_sub.shape != sub.shape:
+            continue
+        mask_float = np.where(rm_sub, 1.0, 0.0)
+        if not (mask_float > 0.5).any():
+            continue
+        # contourf with colors='none' + hatches=['///'] paints only the
+        # hatch pattern. Hatch color & line width come from rcParams.
+        ax.contourf(
+            LON2, LAT2, mask_float,
+            levels=[0.5, 1.5],
+            colors="none",
+            hatches=["///"],
+            zorder=1.8,
+        )
+        # Thin black outline around each record region
+        ax.contour(
+            LON2, LAT2, mask_float,
+            levels=[0.5],
+            colors="#000000", linewidths=0.7,
+            zorder=1.9,
+        )
 
     _draw_basemap(ax, extent, countries, coast)
     _style_axes(ax, extent, title, subtitle)
