@@ -68,8 +68,12 @@ BASINS: dict[str, dict] = {
         ],
         # JTWC methodology: ACE counts TROPICAL phase only (not subtropical).
         "ace_natures": {"TS"},
-        # ATCF dev-level codes that qualify for ACE (tropical, at TS+)
-        "atcf_dev_levels": {"TS", "TY", "STY", "HU"},
+        # Dev levels to EXCLUDE from ACE (disturbance/low/wave/depression/
+        # extratropical/subtropical-depression). Everything else at
+        # TS-strength winds counts. Matches the GoldStandardBot reference
+        # implementation. For JTWC we also exclude subtropical (SS/SD)
+        # since JTWC convention is tropical-only.
+        "atcf_dev_exclude": {"DB", "EX", "LO", "WV", "MD", "TD", "SD", "SS"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.WP.list.v04r01.csv",
     },
     "al": {
@@ -96,7 +100,9 @@ BASINS: dict[str, dict] = {
         # 34 kt+. This matches the official published numbers (e.g. 2005
         # Atlantic ACE = 245.47 which counts Subtropical Storm Arlene).
         "ace_natures": {"TS", "SS"},
-        "atcf_dev_levels": {"TS", "HU", "SS", "SD"},
+        # Exclude only depressions/disturbances/extratropical. SS and
+        # higher are counted.
+        "atcf_dev_exclude": {"DB", "EX", "LO", "WV", "MD", "TD", "SD"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.NA.list.v04r01.csv",
     },
     "ep": {
@@ -119,7 +125,7 @@ BASINS: dict[str, dict] = {
         ],
         # NHC methodology — same as Atlantic
         "ace_natures": {"TS", "SS"},
-        "atcf_dev_levels": {"TS", "HU", "SS", "SD"},
+        "atcf_dev_exclude": {"DB", "EX", "LO", "WV", "MD", "TD", "SD"},
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.EP.list.v04r01.csv",
     },
 }
@@ -273,31 +279,30 @@ def climatology(cum: pd.DataFrame, start: int, end: int,
 def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
     """Parse an ATCF b-deck file. Works identically for JTWC and NHC.
 
-    NOTE: ATCF b-decks contain MULTIPLE BEST lines per timestamp — one
-    for each wind-radius threshold (34 kt, 50 kt, 64 kt). Each line shares
-    the same storm_num, timestamp, vmax, and mslp; only the RAD/radii
-    fields differ. We must dedupe by (storm_num, timestamp) or ACE gets
-    double- or triple-counted for intense storms."""
+    ATCF b-decks contain multiple BEST lines per timestamp — one for each
+    wind-radius threshold (34, 50, 64 kt). All share the same vmax/mslp
+    for that observation; only RAD and the radii fields differ. Filtering
+    to RAD=='34' keeps exactly one line per observation (the 34 kt line
+    always exists whenever vmax >= 34 kt)."""
     rows = []
-    seen: set[tuple[int, str]] = set()
+    exclude = set(basin_cfg.get("atcf_dev_exclude", {"DB", "EX", "LO", "WV", "MD", "TD", "SD"}))
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 11:
+        if len(parts) < 12:
             continue
         try:
             storm_num = int(parts[1])
             tstamp = parts[2]
             tech = parts[4]
-            vmax = parts[8]
+            vmax_s = parts[8]
             devlvl = parts[10]
+            rad = parts[11]
         except (IndexError, ValueError):
             continue
         if tech != "BEST":
             continue
-        key = (storm_num, tstamp)
-        if key in seen:
-            continue          # dedupe duplicate-radius lines for this obs
-        seen.add(key)
+        if rad != "34":              # skip 50/64 kt radius duplicates
+            continue
         try:
             t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
         except ValueError:
@@ -305,12 +310,12 @@ def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
         if t.hour not in SIX_HOURLY:
             continue
         try:
-            vmax = float(vmax)
+            vmax = float(vmax_s)
         except ValueError:
             continue
         if vmax < 34:
             continue
-        if devlvl not in basin_cfg["atcf_dev_levels"]:
+        if devlvl in exclude:
             continue
         rows.append({
             "season": season,
