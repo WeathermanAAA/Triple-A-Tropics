@@ -241,25 +241,101 @@ def _feature_linestrings(feat: dict) -> list[list[tuple[float, float]]]:
 # --- Region definitions -------------------------------------------------
 
 REGIONS: dict[str, dict] = {
+    # Full-earth overview
     "global": {
-        "label": "Global Tropics",
-        "extent": (-180.0, 180.0, -55.0, 60.0),
-        "figsize": (14.5, 6.2),
+        "label": "Global",
+        "extent": (-180.0, 180.0, -75.0, 75.0),
+        "figsize": (14.5, 7.2),
     },
-    "atlantic": {
-        "label": "Atlantic",
-        "extent": (-100.0, 0.0, 0.0, 60.0),
+    # Tropical belt (narrower latitude band than Global)
+    "global-tropics": {
+        "label": "Global Tropics",
+        "extent": (-180.0, 180.0, -45.0, 45.0),
+        "figsize": (14.5, 5.6),
+    },
+    # ENSO monitoring view — tropical Pacific spanning the dateline
+    # (120°E through 70°W). `extent` longitudes use the 0-360 convention
+    # so the subset code wraps cleanly across the dateline.
+    "enso": {
+        "label": "ENSO Regions",
+        "extent": (120.0, 290.0, -15.0, 15.0),
+        "figsize": (15.0, 4.5),
+    },
+
+    # --- Atlantic ---
+    "north-atlantic": {
+        "label": "North Atlantic",
+        "extent": (-100.0, 0.0, 0.0, 65.0),
         "figsize": (10.5, 7.0),
     },
-    "west-pacific": {
-        "label": "West Pacific",
-        "extent": (100.0, 180.0, 0.0, 60.0),
-        "figsize": (10.5, 7.5),
+    "tropical-atlantic": {
+        "label": "Tropical Atlantic",
+        "extent": (-90.0, -10.0, 0.0, 30.0),
+        "figsize": (11.5, 5.4),
+    },
+    "western-atlantic": {
+        "label": "Western Atlantic",
+        "extent": (-100.0, -55.0, 8.0, 42.0),
+        "figsize": (8.8, 7.0),
+    },
+    "equatorial-atlantic": {
+        "label": "Equatorial Atlantic",
+        "extent": (-50.0, 15.0, -10.0, 15.0),
+        "figsize": (11.0, 5.2),
+    },
+    "south-atlantic": {
+        "label": "South Atlantic",
+        "extent": (-70.0, 20.0, -55.0, 0.0),
+        "figsize": (10.5, 7.0),
+    },
+
+    # --- Pacific ---
+    "northeast-pacific": {
+        "label": "Northeast Pacific",
+        "extent": (-160.0, -80.0, 0.0, 50.0),
+        "figsize": (11.0, 7.0),
     },
     "east-pacific": {
         "label": "East Pacific",
-        "extent": (-180.0, -80.0, 0.0, 50.0),
-        "figsize": (12.0, 6.5),
+        "extent": (-140.0, -80.0, 5.0, 35.0),
+        "figsize": (11.0, 5.8),
+    },
+    "central-pacific": {
+        "label": "Central Pacific",
+        "extent": (-180.0, -140.0, 0.0, 35.0),
+        "figsize": (8.0, 7.0),
+    },
+    "northwest-pacific": {
+        "label": "Northwest Pacific",
+        "extent": (100.0, 180.0, 0.0, 60.0),
+        "figsize": (10.5, 7.5),
+    },
+    "north-pacific": {
+        "label": "North Pacific",
+        "extent": (100.0, 260.0, 0.0, 65.0),   # crosses dateline
+        "figsize": (14.5, 6.5),
+    },
+    "southwest-pacific": {
+        "label": "Southwest Pacific",
+        "extent": (140.0, 220.0, -45.0, 0.0),  # crosses dateline
+        "figsize": (11.0, 6.5),
+    },
+    "southeast-pacific": {
+        "label": "Southeast Pacific",
+        "extent": (-140.0, -70.0, -50.0, 0.0),
+        "figsize": (10.5, 7.5),
+    },
+
+    # --- Other basins ---
+    "indian-ocean": {
+        "label": "Indian Ocean",
+        "extent": (30.0, 130.0, -40.0, 30.0),
+        "figsize": (11.0, 7.0),
+    },
+    "mediterranean": {
+        "label": "Mediterranean",
+        "extent": (-10.0, 42.0, 28.0, 48.0),
+        "figsize": (11.5, 4.8),
     },
 }
 
