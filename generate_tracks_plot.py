@@ -1430,7 +1430,10 @@ HTML_TEMPLATE = """<!doctype html>
   .placard-banner .placard-spinner {{ position: absolute; top: 10px; right: 12px;
     width: 38px; height: 38px; opacity: 0.95;
     filter: drop-shadow(0 0 3px rgba(0,0,0,0.35)); }}
-  .placard-banner .placard-spinner svg {{ width: 100%; height: 100%; }}
+  /* overflow:visible is the real fix — SVGs default to overflow:hidden,
+     which was clipping the spinning fins at the viewBox corners. */
+  .placard-banner .placard-spinner svg {{ width: 100%; height: 100%;
+    overflow: visible; }}
   .placard-banner .pl-row1 {{ font-size: 12px; font-weight: 800;
     letter-spacing: 0.4px; display: flex; align-items: center; gap: 8px;
     text-transform: uppercase; }}
