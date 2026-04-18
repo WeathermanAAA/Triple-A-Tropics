@@ -117,16 +117,37 @@
     border-radius: 999px; font-size: 10px; font-weight: 700;
     color: #07101c; margin-top: 2px; }
 
-  /* Clickable active-storm card + detail placard */
+  /* Clickable storm cards (every card is clickable now) */
   .storm-card.clickable { cursor: pointer; transition: background 0.15s; }
-  .storm-card.clickable:hover { background: rgba(255,184,58,0.14); }
-  .click-hint { font-size: 10px; color: var(--c1); margin-top: 4px;
+  .storm-card.clickable:hover { background: rgba(255,255,255,0.04); }
+  .storm-card.clickable.active:hover { background: rgba(255,184,58,0.14); }
+  .click-hint { font-size: 10px; color: var(--muted); margin-top: 4px;
     text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
-    opacity: 0.72; }
-  .storm-card.clickable.open .click-hint { opacity: 0; }
+    opacity: 0.6; }
+  .storm-card.clickable.active .click-hint { color: var(--c1); opacity: 0.75; }
+  .storm-card.clickable.open .click-hint { opacity: 0.25; }
+
+  /* Pinned "Active Now" placard at the top of the sidebar */
+  .panel-title-sub { margin-top: 8px; }
+  .pinned-active { background: var(--panel); border: 1px solid #3a5178;
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 0 0 2px rgba(255, 184, 58, 0.15), 0 6px 16px rgba(0,0,0,0.35); }
+  .pinned-active[hidden] { display: none; }
+
+  /* Shared placard styling (inline + pinned) */
   .storm-placard { margin-top: 10px; background: #0a1324;
     border: 1px solid #243452; border-radius: 8px; overflow: hidden; }
-  .placard-banner { padding: 10px 12px; }
+  .placard-banner { padding: 10px 12px; position: relative; }
+  .placard-banner .placard-spinner { position: absolute; top: 10px; right: 12px;
+    width: 34px; height: 34px; opacity: 0.85;
+    filter: drop-shadow(0 0 3px rgba(0,0,0,0.35)); }
+  .placard-banner .placard-spinner svg { width: 100%; height: 100%;
+    animation: placard-spin 2.6s linear infinite;
+    transform-origin: 50% 50%; }
+  @keyframes placard-spin {
+    from { transform: rotate(360deg); }
+    to { transform: rotate(0deg); }
+  }
   .placard-banner .pl-row1 { font-size: 12px; font-weight: 800;
     letter-spacing: 0.4px; display: flex; align-items: center; gap: 8px;
     text-transform: uppercase; }
@@ -157,7 +178,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Western North Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-18 04:02 UTC</div>
+        <div class="sub">As of 2026-04-18 04:27 UTC</div>
       </div>
       <div class="stats">
         <b>3</b> named storms · <b>1</b> typhoons ·
@@ -2618,10 +2639,15 @@
   </div>
 
   <div class="side">
-    <div class="panel-title">2026 Season · 4 Storms</div>
+    <div class="panel-title">Active Now</div>
+    <div class="pinned-active" id="pinned-active" hidden>
+      <div id="pinned-active-body"></div>
+    </div>
+
+    <div class="panel-title panel-title-sub">2026 Season · 4 Storms</div>
     <div class="storm-list" id="storms">
       
-<div class="storm-card active clickable" id="card-JTWC_WP042026" data-sid="JTWC_WP042026">
+<div class="storm-card clickable active" id="card-JTWC_WP042026" data-sid="JTWC_WP042026">
   <div class="storm-top">
     <div class="storm-name">SINLAKU<span class="storm-active">Active</span></div>
     <div class="storm-cat" style="background:#b03bff">Cat 5</div>
@@ -2637,7 +2663,7 @@
 </div>
 
 
-<div class="storm-card" id="card-2026015N10130" data-sid="2026015N10130">
+<div class="storm-card clickable" id="card-2026015N10130" data-sid="2026015N10130">
   <div class="storm-top">
     <div class="storm-name">NOKAEN</div>
     <div class="storm-cat" style="background:#46c56a">TS</div>
@@ -2648,12 +2674,12 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">992.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">2.29</span></div>
   </div>
-  
-  
+  <div class="click-hint">▸ Click for peak intensity</div>
+  <div class="storm-placard" id="placard-2026015N10130" hidden></div>
 </div>
 
 
-<div class="storm-card" id="card-2026035N09133" data-sid="2026035N09133">
+<div class="storm-card clickable" id="card-2026035N09133" data-sid="2026035N09133">
   <div class="storm-top">
     <div class="storm-name">PENHA</div>
     <div class="storm-cat" style="background:#46c56a">TS</div>
@@ -2664,12 +2690,12 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">999.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">0.55</span></div>
   </div>
-  
-  
+  <div class="click-hint">▸ Click for peak intensity</div>
+  <div class="storm-placard" id="placard-2026035N09133" hidden></div>
 </div>
 
 
-<div class="storm-card" id="card-2026070N10137" data-sid="2026070N10137">
+<div class="storm-card clickable" id="card-2026070N10137" data-sid="2026070N10137">
   <div class="storm-top">
     <div class="storm-name">NURI</div>
     <div class="storm-cat" style="background:#3fa4ff">TD</div>
@@ -2680,8 +2706,8 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">1000.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">0.00</span></div>
   </div>
-  
-  
+  <div class="click-hint">▸ Click for peak intensity</div>
+  <div class="storm-placard" id="placard-2026070N10137" hidden></div>
 </div>
 
     </div>
@@ -2690,7 +2716,7 @@
 
 <div id="dot-tooltip" hidden></div>
 
-<script id="storms-payload" type="application/json">{"storms":[{"sid":"JTWC_WP042026","name":"SINLAKU","is_active":true,"current_category":"C1","points":[{"t":"2026-04-09T18:00:00","lat":8.3,"lon":151.5,"wind_kt":35.0,"pressure_mb":995.0,"cls":"TS"},{"t":"2026-04-10T00:00:00","lat":8.2,"lon":151.2,"wind_kt":40.0,"pressure_mb":993.0,"cls":"TS"},{"t":"2026-04-10T06:00:00","lat":8.2,"lon":151.0,"wind_kt":45.0,"pressure_mb":989.0,"cls":"TS"},{"t":"2026-04-10T12:00:00","lat":8.0,"lon":150.9,"wind_kt":55.0,"pressure_mb":986.0,"cls":"TS"},{"t":"2026-04-10T18:00:00","lat":8.1,"lon":151.3,"wind_kt":65.0,"pressure_mb":983.0,"cls":"C1"},{"t":"2026-04-11T00:00:00","lat":8.5,"lon":151.6,"wind_kt":75.0,"pressure_mb":972.0,"cls":"C1"},{"t":"2026-04-11T06:00:00","lat":8.8,"lon":151.6,"wind_kt":80.0,"pressure_mb":968.0,"cls":"C1"},{"t":"2026-04-11T12:00:00","lat":8.9,"lon":151.4,"wind_kt":85.0,"pressure_mb":965.0,"cls":"C2"},{"t":"2026-04-11T18:00:00","lat":9.2,"lon":151.4,"wind_kt":95.0,"pressure_mb":957.0,"cls":"C2"},{"t":"2026-04-12T00:00:00","lat":9.8,"lon":151.2,"wind_kt":115.0,"pressure_mb":939.0,"cls":"C4"},{"t":"2026-04-12T06:00:00","lat":10.3,"lon":150.6,"wind_kt":130.0,"pressure_mb":921.0,"cls":"C4"},{"t":"2026-04-12T12:00:00","lat":11.1,"lon":150.2,"wind_kt":150.0,"pressure_mb":902.0,"cls":"C5"},{"t":"2026-04-12T18:00:00","lat":11.6,"lon":149.5,"wind_kt":160.0,"pressure_mb":890.0,"cls":"C5"},{"t":"2026-04-13T00:00:00","lat":12.2,"lon":148.8,"wind_kt":155.0,"pressure_mb":897.0,"cls":"C5"},{"t":"2026-04-13T06:00:00","lat":12.7,"lon":148.0,"wind_kt":150.0,"pressure_mb":903.0,"cls":"C5"},{"t":"2026-04-13T12:00:00","lat":13.1,"lon":147.4,"wind_kt":150.0,"pressure_mb":904.0,"cls":"C5"},{"t":"2026-04-13T18:00:00","lat":13.7,"lon":147.0,"wind_kt":145.0,"pressure_mb":906.0,"cls":"C5"},{"t":"2026-04-14T00:00:00","lat":14.3,"lon":146.5,"wind_kt":135.0,"pressure_mb":919.0,"cls":"C4"},{"t":"2026-04-14T06:00:00","lat":14.6,"lon":146.0,"wind_kt":130.0,"pressure_mb":925.0,"cls":"C4"},{"t":"2026-04-14T12:00:00","lat":14.9,"lon":145.8,"wind_kt":125.0,"pressure_mb":930.0,"cls":"C4"},{"t":"2026-04-14T18:00:00","lat":15.2,"lon":145.5,"wind_kt":115.0,"pressure_mb":939.0,"cls":"C4"},{"t":"2026-04-15T00:00:00","lat":15.6,"lon":145.2,"wind_kt":110.0,"pressure_mb":944.0,"cls":"C3"},{"t":"2026-04-15T06:00:00","lat":16.0,"lon":144.9,"wind_kt":110.0,"pressure_mb":944.0,"cls":"C3"},{"t":"2026-04-15T12:00:00","lat":16.2,"lon":144.6,"wind_kt":110.0,"pressure_mb":943.0,"cls":"C3"},{"t":"2026-04-15T18:00:00","lat":16.7,"lon":144.4,"wind_kt":105.0,"pressure_mb":942.0,"cls":"C3"},{"t":"2026-04-16T00:00:00","lat":17.1,"lon":144.4,"wind_kt":100.0,"pressure_mb":955.0,"cls":"C3"},{"t":"2026-04-16T06:00:00","lat":17.7,"lon":144.5,"wind_kt":100.0,"pressure_mb":953.0,"cls":"C3"},{"t":"2026-04-16T12:00:00","lat":18.4,"lon":144.8,"wind_kt":90.0,"pressure_mb":963.0,"cls":"C2"},{"t":"2026-04-16T18:00:00","lat":19.0,"lon":145.0,"wind_kt":85.0,"pressure_mb":966.0,"cls":"C2"},{"t":"2026-04-17T00:00:00","lat":19.5,"lon":145.3,"wind_kt":80.0,"pressure_mb":971.0,"cls":"C1"},{"t":"2026-04-17T06:00:00","lat":20.1,"lon":145.7,"wind_kt":80.0,"pressure_mb":971.0,"cls":"C1"},{"t":"2026-04-17T12:00:00","lat":20.8,"lon":146.1,"wind_kt":75.0,"pressure_mb":974.0,"cls":"C1"},{"t":"2026-04-17T18:00:00","lat":21.4,"lon":146.3,"wind_kt":70.0,"pressure_mb":974.0,"cls":"C1"},{"t":"2026-04-18T00:00:00","lat":22.3,"lon":146.4,"wind_kt":65.0,"pressure_mb":979.0,"cls":"C1"}]},{"sid":"2026015N10130","name":"NOKAEN","is_active":false,"current_category":"TD","points":[{"t":"2026-01-14T18:00:00","lat":9.5,"lon":130.2,"wind_kt":25.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-15T00:00:00","lat":9.3,"lon":129.7,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-15T06:00:00","lat":10.0,"lon":128.9,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-15T12:00:00","lat":10.0,"lon":128.9,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-15T18:00:00","lat":10.2,"lon":129.0,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-16T00:00:00","lat":11.2,"lon":128.9,"wind_kt":35.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-01-16T06:00:00","lat":12.0,"lon":128.0,"wind_kt":35.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-16T12:00:00","lat":12.2,"lon":127.0,"wind_kt":39.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-16T18:00:00","lat":12.8,"lon":125.7,"wind_kt":45.0,"pressure_mb":992.0,"cls":"TS"},{"t":"2026-01-17T00:00:00","lat":13.5,"lon":125.0,"wind_kt":45.0,"pressure_mb":996.0,"cls":"TS"},{"t":"2026-01-17T06:00:00","lat":14.1,"lon":124.4,"wind_kt":51.0,"pressure_mb":994.0,"cls":"TS"},{"t":"2026-01-17T12:00:00","lat":15.0,"lon":124.1,"wind_kt":51.0,"pressure_mb":993.0,"cls":"TS"},{"t":"2026-01-17T18:00:00","lat":14.3,"lon":125.0,"wind_kt":45.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-18T00:00:00","lat":14.4,"lon":125.2,"wind_kt":39.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-01-18T06:00:00","lat":14.6,"lon":125.5,"wind_kt":35.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-18T12:00:00","lat":15.3,"lon":125.7,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-18T18:00:00","lat":16.1,"lon":125.7,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-01-19T00:00:00","lat":16.6,"lon":126.5,"wind_kt":35.0,"pressure_mb":1002.0,"cls":"TS"},{"t":"2026-01-19T06:00:00","lat":16.7,"lon":126.6,"wind_kt":35.0,"pressure_mb":998.0,"cls":"TS"},{"t":"2026-01-19T12:00:00","lat":17.0,"lon":127.0,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-01-19T18:00:00","lat":17.0,"lon":128.1,"wind_kt":29.0,"pressure_mb":999.0,"cls":"TD"},{"t":"2026-01-20T00:00:00","lat":17.3,"lon":129.1,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-20T06:00:00","lat":17.7,"lon":130.3,"wind_kt":35.0,"pressure_mb":1000.0,"cls":"TS"},{"t":"2026-01-20T12:00:00","lat":17.7,"lon":131.9,"wind_kt":35.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-01-20T18:00:00","lat":17.1,"lon":133.0,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"}]},{"sid":"2026035N09133","name":"PENHA","is_active":false,"current_category":"TD","points":[{"t":"2026-02-04T00:00:00","lat":8.8,"lon":133.1,"wind_kt":29.0,"pressure_mb":1003.0,"cls":"TD"},{"t":"2026-02-04T06:00:00","lat":8.7,"lon":132.6,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-04T12:00:00","lat":8.7,"lon":131.5,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-04T18:00:00","lat":8.3,"lon":130.4,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-02-05T00:00:00","lat":8.0,"lon":129.3,"wind_kt":35.0,"pressure_mb":1000.0,"cls":"TS"},{"t":"2026-02-05T06:00:00","lat":8.2,"lon":127.9,"wind_kt":39.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-02-05T12:00:00","lat":8.5,"lon":127.0,"wind_kt":39.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-02-05T18:00:00","lat":9.3,"lon":125.8,"wind_kt":35.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-02-06T00:00:00","lat":9.8,"lon":124.8,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-06T06:00:00","lat":9.9,"lon":123.6,"wind_kt":29.0,"pressure_mb":1004.0,"cls":"TD"},{"t":"2026-02-06T12:00:00","lat":10.1,"lon":122.8,"wind_kt":25.0,"pressure_mb":1004.0,"cls":"TD"}]},{"sid":"2026070N10137","name":"NURI","is_active":false,"current_category":"TD","points":[{"t":"2026-03-11T00:00:00","lat":10.4,"lon":136.8,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-03-11T06:00:00","lat":10.5,"lon":137.4,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-03-11T12:00:00","lat":11.0,"lon":138.1,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-03-11T18:00:00","lat":11.0,"lon":138.5,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-03-12T00:00:00","lat":10.3,"lon":138.1,"wind_kt":25.0,"pressure_mb":1003.0,"cls":"TD"},{"t":"2026-03-12T06:00:00","lat":9.8,"lon":138.2,"wind_kt":19.0,"pressure_mb":1001.0,"cls":"TD"}]}]}</script>
+<script id="storms-payload" type="application/json">{"storms":[{"sid":"JTWC_WP042026","name":"SINLAKU","is_active":true,"current_category":"C1","max_category":"C5","ace":38.28,"points":[{"t":"2026-04-09T18:00:00","lat":8.3,"lon":151.5,"wind_kt":35.0,"pressure_mb":995.0,"cls":"TS"},{"t":"2026-04-10T00:00:00","lat":8.2,"lon":151.2,"wind_kt":40.0,"pressure_mb":993.0,"cls":"TS"},{"t":"2026-04-10T06:00:00","lat":8.2,"lon":151.0,"wind_kt":45.0,"pressure_mb":989.0,"cls":"TS"},{"t":"2026-04-10T12:00:00","lat":8.0,"lon":150.9,"wind_kt":55.0,"pressure_mb":986.0,"cls":"TS"},{"t":"2026-04-10T18:00:00","lat":8.1,"lon":151.3,"wind_kt":65.0,"pressure_mb":983.0,"cls":"C1"},{"t":"2026-04-11T00:00:00","lat":8.5,"lon":151.6,"wind_kt":75.0,"pressure_mb":972.0,"cls":"C1"},{"t":"2026-04-11T06:00:00","lat":8.8,"lon":151.6,"wind_kt":80.0,"pressure_mb":968.0,"cls":"C1"},{"t":"2026-04-11T12:00:00","lat":8.9,"lon":151.4,"wind_kt":85.0,"pressure_mb":965.0,"cls":"C2"},{"t":"2026-04-11T18:00:00","lat":9.2,"lon":151.4,"wind_kt":95.0,"pressure_mb":957.0,"cls":"C2"},{"t":"2026-04-12T00:00:00","lat":9.8,"lon":151.2,"wind_kt":115.0,"pressure_mb":939.0,"cls":"C4"},{"t":"2026-04-12T06:00:00","lat":10.3,"lon":150.6,"wind_kt":130.0,"pressure_mb":921.0,"cls":"C4"},{"t":"2026-04-12T12:00:00","lat":11.1,"lon":150.2,"wind_kt":150.0,"pressure_mb":902.0,"cls":"C5"},{"t":"2026-04-12T18:00:00","lat":11.6,"lon":149.5,"wind_kt":160.0,"pressure_mb":890.0,"cls":"C5"},{"t":"2026-04-13T00:00:00","lat":12.2,"lon":148.8,"wind_kt":155.0,"pressure_mb":897.0,"cls":"C5"},{"t":"2026-04-13T06:00:00","lat":12.7,"lon":148.0,"wind_kt":150.0,"pressure_mb":903.0,"cls":"C5"},{"t":"2026-04-13T12:00:00","lat":13.1,"lon":147.4,"wind_kt":150.0,"pressure_mb":904.0,"cls":"C5"},{"t":"2026-04-13T18:00:00","lat":13.7,"lon":147.0,"wind_kt":145.0,"pressure_mb":906.0,"cls":"C5"},{"t":"2026-04-14T00:00:00","lat":14.3,"lon":146.5,"wind_kt":135.0,"pressure_mb":919.0,"cls":"C4"},{"t":"2026-04-14T06:00:00","lat":14.6,"lon":146.0,"wind_kt":130.0,"pressure_mb":925.0,"cls":"C4"},{"t":"2026-04-14T12:00:00","lat":14.9,"lon":145.8,"wind_kt":125.0,"pressure_mb":930.0,"cls":"C4"},{"t":"2026-04-14T18:00:00","lat":15.2,"lon":145.5,"wind_kt":115.0,"pressure_mb":939.0,"cls":"C4"},{"t":"2026-04-15T00:00:00","lat":15.6,"lon":145.2,"wind_kt":110.0,"pressure_mb":944.0,"cls":"C3"},{"t":"2026-04-15T06:00:00","lat":16.0,"lon":144.9,"wind_kt":110.0,"pressure_mb":944.0,"cls":"C3"},{"t":"2026-04-15T12:00:00","lat":16.2,"lon":144.6,"wind_kt":110.0,"pressure_mb":943.0,"cls":"C3"},{"t":"2026-04-15T18:00:00","lat":16.7,"lon":144.4,"wind_kt":105.0,"pressure_mb":942.0,"cls":"C3"},{"t":"2026-04-16T00:00:00","lat":17.1,"lon":144.4,"wind_kt":100.0,"pressure_mb":955.0,"cls":"C3"},{"t":"2026-04-16T06:00:00","lat":17.7,"lon":144.5,"wind_kt":100.0,"pressure_mb":953.0,"cls":"C3"},{"t":"2026-04-16T12:00:00","lat":18.4,"lon":144.8,"wind_kt":90.0,"pressure_mb":963.0,"cls":"C2"},{"t":"2026-04-16T18:00:00","lat":19.0,"lon":145.0,"wind_kt":85.0,"pressure_mb":966.0,"cls":"C2"},{"t":"2026-04-17T00:00:00","lat":19.5,"lon":145.3,"wind_kt":80.0,"pressure_mb":971.0,"cls":"C1"},{"t":"2026-04-17T06:00:00","lat":20.1,"lon":145.7,"wind_kt":80.0,"pressure_mb":971.0,"cls":"C1"},{"t":"2026-04-17T12:00:00","lat":20.8,"lon":146.1,"wind_kt":75.0,"pressure_mb":974.0,"cls":"C1"},{"t":"2026-04-17T18:00:00","lat":21.4,"lon":146.3,"wind_kt":70.0,"pressure_mb":974.0,"cls":"C1"},{"t":"2026-04-18T00:00:00","lat":22.3,"lon":146.4,"wind_kt":65.0,"pressure_mb":979.0,"cls":"C1"}]},{"sid":"2026015N10130","name":"NOKAEN","is_active":false,"current_category":"TD","max_category":"TS","ace":2.29,"points":[{"t":"2026-01-14T18:00:00","lat":9.5,"lon":130.2,"wind_kt":25.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-15T00:00:00","lat":9.3,"lon":129.7,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-15T06:00:00","lat":10.0,"lon":128.9,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-15T12:00:00","lat":10.0,"lon":128.9,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-15T18:00:00","lat":10.2,"lon":129.0,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-16T00:00:00","lat":11.2,"lon":128.9,"wind_kt":35.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-01-16T06:00:00","lat":12.0,"lon":128.0,"wind_kt":35.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-16T12:00:00","lat":12.2,"lon":127.0,"wind_kt":39.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-16T18:00:00","lat":12.8,"lon":125.7,"wind_kt":45.0,"pressure_mb":992.0,"cls":"TS"},{"t":"2026-01-17T00:00:00","lat":13.5,"lon":125.0,"wind_kt":45.0,"pressure_mb":996.0,"cls":"TS"},{"t":"2026-01-17T06:00:00","lat":14.1,"lon":124.4,"wind_kt":51.0,"pressure_mb":994.0,"cls":"TS"},{"t":"2026-01-17T12:00:00","lat":15.0,"lon":124.1,"wind_kt":51.0,"pressure_mb":993.0,"cls":"TS"},{"t":"2026-01-17T18:00:00","lat":14.3,"lon":125.0,"wind_kt":45.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-18T00:00:00","lat":14.4,"lon":125.2,"wind_kt":39.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-01-18T06:00:00","lat":14.6,"lon":125.5,"wind_kt":35.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-18T12:00:00","lat":15.3,"lon":125.7,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-18T18:00:00","lat":16.1,"lon":125.7,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-01-19T00:00:00","lat":16.6,"lon":126.5,"wind_kt":35.0,"pressure_mb":1002.0,"cls":"TS"},{"t":"2026-01-19T06:00:00","lat":16.7,"lon":126.6,"wind_kt":35.0,"pressure_mb":998.0,"cls":"TS"},{"t":"2026-01-19T12:00:00","lat":17.0,"lon":127.0,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-01-19T18:00:00","lat":17.0,"lon":128.1,"wind_kt":29.0,"pressure_mb":999.0,"cls":"TD"},{"t":"2026-01-20T00:00:00","lat":17.3,"lon":129.1,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-20T06:00:00","lat":17.7,"lon":130.3,"wind_kt":35.0,"pressure_mb":1000.0,"cls":"TS"},{"t":"2026-01-20T12:00:00","lat":17.7,"lon":131.9,"wind_kt":35.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-01-20T18:00:00","lat":17.1,"lon":133.0,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"}]},{"sid":"2026035N09133","name":"PENHA","is_active":false,"current_category":"TD","max_category":"TS","ace":0.55,"points":[{"t":"2026-02-04T00:00:00","lat":8.8,"lon":133.1,"wind_kt":29.0,"pressure_mb":1003.0,"cls":"TD"},{"t":"2026-02-04T06:00:00","lat":8.7,"lon":132.6,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-04T12:00:00","lat":8.7,"lon":131.5,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-04T18:00:00","lat":8.3,"lon":130.4,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-02-05T00:00:00","lat":8.0,"lon":129.3,"wind_kt":35.0,"pressure_mb":1000.0,"cls":"TS"},{"t":"2026-02-05T06:00:00","lat":8.2,"lon":127.9,"wind_kt":39.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-02-05T12:00:00","lat":8.5,"lon":127.0,"wind_kt":39.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-02-05T18:00:00","lat":9.3,"lon":125.8,"wind_kt":35.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-02-06T00:00:00","lat":9.8,"lon":124.8,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-06T06:00:00","lat":9.9,"lon":123.6,"wind_kt":29.0,"pressure_mb":1004.0,"cls":"TD"},{"t":"2026-02-06T12:00:00","lat":10.1,"lon":122.8,"wind_kt":25.0,"pressure_mb":1004.0,"cls":"TD"}]},{"sid":"2026070N10137","name":"NURI","is_active":false,"current_category":"TD","max_category":"TD","ace":0.0,"points":[{"t":"2026-03-11T00:00:00","lat":10.4,"lon":136.8,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-03-11T06:00:00","lat":10.5,"lon":137.4,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-03-11T12:00:00","lat":11.0,"lon":138.1,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-03-11T18:00:00","lat":11.0,"lon":138.5,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-03-12T00:00:00","lat":10.3,"lon":138.1,"wind_kt":25.0,"pressure_mb":1003.0,"cls":"TD"},{"t":"2026-03-12T06:00:00","lat":9.8,"lon":138.2,"wind_kt":19.0,"pressure_mb":1001.0,"cls":"TD"}]}]}</script>
 <script>
 
 (function() {
@@ -2785,51 +2811,82 @@
     });
   });
 
-  // ---- Active-storm click: open detail placard ----
-  function togglePlacard(sid) {
+  // ---- Click handling ----
+  // Every storm card has an inline placard slot. For INACTIVE storms we
+  // toggle the inline placard (peak-intensity view). For ACTIVE storms
+  // the detail is shown pinned at the top of the sidebar; clicking the
+  // card toggles the pinned placard's visibility.
+  function togglePinned(scrollTo) {
+    var pinned = document.getElementById("pinned-active");
+    if (!pinned) return;
+    pinned.hidden = !pinned.hidden;
+    if (!pinned.hidden && scrollTo) {
+      pinned.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  function toggleInline(sid) {
     var el = document.getElementById("placard-" + sid);
     var card = document.getElementById("card-" + sid);
     if (!el) return;
     if (!el.dataset.rendered) {
-      el.innerHTML = renderPlacard(storemap[sid]);
+      el.innerHTML = renderPeakPlacard(storemap[sid]);
       el.dataset.rendered = "1";
     }
-    var nowOpen = el.hidden;  // hidden => will become visible
+    var nowOpen = el.hidden;
     el.hidden = !el.hidden;
     if (card) card.classList.toggle("open", nowOpen);
     if (nowOpen && card) {
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
-  function openPlacard(sid) {
-    var el = document.getElementById("placard-" + sid);
-    var card = document.getElementById("card-" + sid);
-    if (!el) return;
-    if (!el.dataset.rendered) {
-      el.innerHTML = renderPlacard(storemap[sid]);
-      el.dataset.rendered = "1";
-    }
-    el.hidden = false;
-    if (card) {
-      card.classList.add("open");
-      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
+  function onCardClick(sid) {
+    var s = storemap[sid];
+    if (!s) return;
+    if (s.is_active) togglePinned(true);
+    else toggleInline(sid);
   }
   document.querySelectorAll(".storm-card.clickable").forEach(function(card) {
-    card.addEventListener("click", function() {
-      togglePlacard(card.dataset.sid);
-    });
+    card.addEventListener("click", function() { onCardClick(card.dataset.sid); });
   });
+  // Clicking the spinning icon on the map opens the pinned active placard.
   document.querySelectorAll(".active-icon").forEach(function(g) {
     g.addEventListener("click", function(e) {
       e.stopPropagation();
-      openPlacard(g.dataset.sid);
+      var pinned = document.getElementById("pinned-active");
+      if (pinned) {
+        pinned.hidden = false;
+        pinned.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     });
   });
 
+  // ---- Render the pinned "Active Now" placard(s) on load ----
+  var pinnedBody = document.getElementById("pinned-active-body");
+  var pinnedWrap = document.getElementById("pinned-active");
+  if (pinnedBody && pinnedWrap) {
+    var actives = STORMS.filter(function(s) { return s.is_active; });
+    if (actives.length) {
+      pinnedBody.innerHTML = actives.map(renderCurrentPlacard).join("");
+      pinnedWrap.hidden = false;
+    }
+  }
+
   // ---- Placard rendering ----
+  // Hurricane glyph path — same one used for the spinning map icons,
+  // reused here as a small corner accent on each placard.
+  var HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z";
+  function spinnerSvg(color) {
+    // Inner <g> picks up the CSS-driven rotation. The fill matches the
+    // banner's category color but with a bit of white to stay readable
+    // against the bright banner backgrounds.
+    return '<div class="placard-spinner">' +
+      '<svg viewBox="-34 -34 68 68">' +
+        '<g><path d="' + HURRICANE_PATH + '" fill="' + color + '" ' +
+          'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/></g>' +
+      '</svg>' +
+    '</div>';
+  }
   function computeMovement(pts) {
-    // Use the last two points spaced ≥ 1 hour apart
     for (var i = pts.length - 2; i >= 0; i--) {
       var a = pts[i], b = pts[pts.length - 1];
       var ta = new Date(a.t).getTime(), tb = new Date(b.t).getTime();
@@ -2845,7 +2902,12 @@
     }
     return "\u2014";
   }
-  function renderPlacard(storm) {
+  // Dark vs. white banner text based on category color luminance.
+  function bannerTextColor(cls) {
+    return (cls === "TS" || cls === "C1" || cls === "C2") ? "#0a1324" : "#ffffff";
+  }
+  // Live/current-intensity variant. Used by the pinned "Active Now" panel.
+  function renderCurrentPlacard(storm) {
     if (!storm) return '<div class="chart-empty">No data.</div>';
     var pts = (storm.points || []).slice();
     var validPts = pts.filter(function(p) { return p.wind_kt != null; });
@@ -2855,29 +2917,73 @@
     var color = SSHS_COLORS[cls] || "#888";
     var catLabel = CAT_LABELS[cls] || cls;
     var windKt = lastValid.wind_kt || 0;
-    var windMph = ktToMph(windKt);
-    var windKmh = ktToKmh(windKt);
     var pres = lastValid.pressure_mb;
     var loc = fmtLatLon(last.lat, last.lon);
     var movement = computeMovement(pts);
     var chart = renderWindChart(validPts);
-    // Banner text color: dark against bright category colors, light against
-    // darker ones (C3/C4/C5 reads better with white text).
-    var darkText = (cls === "TS" || cls === "C1" || cls === "C2");
-    var txtColor = darkText ? "#0a1324" : "#ffffff";
+    var txtColor = bannerTextColor(cls);
     return (
+      '<div class="storm-placard">' +
       '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        spinnerSvg(color) +
         '<div class="pl-row1"><span class="pl-cat">' + catLabel + '</span><b>' +
           escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
         '<div class="pl-intensity">' +
-          '<div class="pl-big">' + windMph + '</div>' +
-          '<div class="pl-units">mph<br>' + windKmh + ' km/h</div>' +
+          '<div class="pl-big">' + ktToMph(windKt) + '</div>' +
+          '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
         '</div>' +
         '<div class="pl-deets">' +
           '<div><span>Updated</span><b>' + fmtTime(last.t) + '</b></div>' +
           '<div><span>Location</span><b>' + loc + '</b></div>' +
           '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "\u2014") + '</b></div>' +
           '<div><span>Movement</span><b>' + movement + '</b></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="placard-chart-label">Wind history</div>' +
+      chart +
+      '</div>'
+    );
+  }
+  // Peak-intensity variant. Used inline for every storm (including the
+  // already-dissipated ones that have a historical max).
+  function renderPeakPlacard(storm) {
+    if (!storm) return '<div class="chart-empty">No data.</div>';
+    var pts = (storm.points || []).slice();
+    var validPts = pts.filter(function(p) { return p.wind_kt != null; });
+    if (!validPts.length) return '<div class="chart-empty">No wind observations.</div>';
+    // Observation with the strongest wind (ties broken by earliest).
+    var peak = validPts[0];
+    for (var i = 1; i < validPts.length; i++) {
+      if (validPts[i].wind_kt > peak.wind_kt) peak = validPts[i];
+    }
+    // Lowest pressure may be at a different time; report it separately.
+    var minPres = null;
+    validPts.forEach(function(p) {
+      if (p.pressure_mb != null && (minPres == null || p.pressure_mb < minPres)) {
+        minPres = p.pressure_mb;
+      }
+    });
+    var cls = peak.cls || "TD";
+    var color = SSHS_COLORS[cls] || "#888";
+    var catLabel = CAT_LABELS[cls] || cls;
+    var windKt = peak.wind_kt;
+    var loc = fmtLatLon(peak.lat, peak.lon);
+    var chart = renderWindChart(validPts);
+    var txtColor = bannerTextColor(cls);
+    return (
+      '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        spinnerSvg(color) +
+        '<div class="pl-row1"><span class="pl-cat">PEAK · ' + catLabel + '</span><b>' +
+          escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
+        '<div class="pl-intensity">' +
+          '<div class="pl-big">' + ktToMph(windKt) + '</div>' +
+          '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
+        '</div>' +
+        '<div class="pl-deets">' +
+          '<div><span>Reached</span><b>' + fmtTime(peak.t) + '</b></div>' +
+          '<div><span>Location</span><b>' + loc + '</b></div>' +
+          '<div><span>Min pressure</span><b>' + (minPres ? Math.round(minPres) + " mb" : "\u2014") + '</b></div>' +
+          '<div><span>ACE</span><b>' + (storm.ace != null ? storm.ace.toFixed(2) : "\u2014") + '</b></div>' +
         '</div>' +
       '</div>' +
       '<div class="placard-chart-label">Wind history</div>' +
