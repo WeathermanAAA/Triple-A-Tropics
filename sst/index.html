@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sea-Surface Temperature · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Daily global sea-surface temperature, anomalies vs 1991–2020, and daily record comparisons. Source: NOAA OISST v2.1.">
+<meta property="og:title" content="Sea-Surface Temperature · Triple-A-Tropics">
+<meta property="og:description" content="Daily global SST, anomalies, and records. NOAA OISST v2.1.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <span class="logo">🌀</span>
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/" class="active">SST</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Sea-Surface Temperature</h1>
+  <p>Daily global SST from NOAA OISST v2.1, plus anomalies vs the 1991–2020 climatology and record-breaking pixels since 1982.</p>
+  <p class="muted" id="dataDate">Loading latest valid date…</p>
+</header>
+
+<nav class="tabs" id="sstTabs">
+  <a href="#" data-variant="actual" class="active">Actual</a>
+  <a href="#" data-variant="anomaly">Anomaly</a>
+  <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
+</nav>
+
+<section class="chart-section">
+  <div class="chart-card sst-chart">
+    <img id="sstImage"
+         class="sst-image"
+         src="/sst/global_actual.png"
+         alt="Global sea-surface temperature map">
+    <div class="sst-caption" id="sstCaption">Global tropical sea-surface temperature.</div>
+  </div>
+</section>
+
+<header class="page-head page-head-sub">
+  <h2>By basin</h2>
+  <p>Zoom in on a single basin for tighter detail.</p>
+</header>
+
+<section class="cards">
+  <a class="card live" href="/sst/atlantic/">
+    <span class="emoji">🌊</span>
+    <h2>Atlantic</h2>
+    <p>North Atlantic SST: from the Gulf of Mexico and Caribbean out to the coast of Africa, the key tropical-cyclone development region.</p>
+    <span class="badge">● Live</span>
+  </a>
+
+  <a class="card live" href="/sst/west-pacific/">
+    <span class="emoji">🌀</span>
+    <h2>West Pacific</h2>
+    <p>Northwest Pacific SST: Philippine Sea, South China Sea, and the broader warm pool that fuels the world's most prolific tropical-cyclone basin.</p>
+    <span class="badge">● Live</span>
+  </a>
+
+  <a class="card live" href="/sst/east-pacific/">
+    <span class="emoji">🏝️</span>
+    <h2>East Pacific</h2>
+    <p>Northeast Pacific SST: ENSO-sensitive region stretching from the coast of Mexico west past 140°W.</p>
+    <span class="badge">● Live</span>
+  </a>
+</section>
+
+<section class="about">
+  <h2>How to read these maps</h2>
+  <p><b>Actual</b> shows each grid cell's sea-surface temperature on the latest analysis day, colored from violet (cold, 0 °C) through blue, green, yellow, orange, and red (warm, 32 °C). Contour lines run at each integer degree for easy reference.</p>
+  <p><b>Anomaly</b> shows how today's SST compares to the 1991–2020 mean for this same day of the year. Red / magenta tones mark areas warmer than average; blue / purple mark cooler. The scale runs from −5 °C to +5 °C; values beyond that saturate at the extremes.</p>
+  <p><b>Anomaly + Records</b> is the same anomaly map overlaid with stippling where today's SST is the warmest or coldest ever observed for this day of the year since OISST records began in 1982. Warm-colored stippling marks record highs; cool-colored stippling marks record lows.</p>
+
+  <h2>Data source</h2>
+  <p>All fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">Optimum Interpolation Sea-Surface Temperature (OISST) v2.1</a> daily analysis — a 0.25° global grid merging AVHRR satellite observations, ship + buoy reports, and Argo floats. OISST has roughly a one-day latency; we re-render these maps once per day at 13 UTC.</p>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Data: <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">NOAA OISST v2.1</a></div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  // Tab toggle — just swaps the <img src> and caption. The images are all
+  // pre-rendered by the daily workflow, so this is instant.
+  const REGION = "global";
+  const CAPTIONS = {
+    actual:            "Global actual sea-surface temperature.",
+    anomaly:           "Global SST anomaly vs 1991–2020 climatology.",
+    anomaly_records:   "Global SST anomaly with stippling where today meets or exceeds the 1982-present record for this day of year."
+  };
+  const img = document.getElementById('sstImage');
+  const caption = document.getElementById('sstCaption');
+  const tabs = document.querySelectorAll('#sstTabs a');
+  tabs.forEach(t => {
+    t.addEventListener('click', e => {
+      e.preventDefault();
+      tabs.forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      const v = t.dataset.variant;
+      img.src = `/sst/${REGION}_${v}.png?t=${Date.now()}`;
+      caption.textContent = CAPTIONS[v] || '';
+    });
+  });
+
+  // Fetch meta.json for the "valid date" line
+  fetch('/sst/sst_meta.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(m => {
+      if (!m || !m.date) return;
+      const d = new Date(m.date + 'T00:00:00Z');
+      const txt = d.toLocaleDateString('en-US', {
+        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+      });
+      document.getElementById('dataDate').textContent =
+        `Valid ${txt}  ·  updated ${m.updated_utc}`;
+    })
+    .catch(() => {});
+</script>
+
+</body>
+</html>
