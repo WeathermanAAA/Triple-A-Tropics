@@ -59,9 +59,9 @@ BASINS: dict[str, dict] = {
         "agency_name": "JTWC",
         "agency_url": "https://www.metoc.navy.mil/jtwc/",
         "atcf_patterns": [
-            "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{yy}.dat",
-            "https://www.nrlmry.navy.mil/atcf_web/docs/tracks/{year}/bwp{nn}{yy}.dat",
-            "https://tropic.ssec.wisc.edu/real-time/atcf/btk/bwp{nn}{yy}.dat",
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bwp{nn}{year}.dat",
+            "https://www.natyphoon.top/atcf/temp/bwp{nn}{year}.dat",
+            "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{year}.dat",
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
@@ -87,7 +87,9 @@ BASINS: dict[str, dict] = {
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
-            "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{yy}.dat",
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bal{nn}{year}.dat",
+            "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{year}.dat",
+            "https://www.natyphoon.top/atcf/temp/bal{nn}{year}.dat",
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
@@ -110,7 +112,9 @@ BASINS: dict[str, dict] = {
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
-            "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{yy}.dat",
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bep{nn}{year}.dat",
+            "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
+            "https://www.natyphoon.top/atcf/temp/bep{nn}{year}.dat",
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
