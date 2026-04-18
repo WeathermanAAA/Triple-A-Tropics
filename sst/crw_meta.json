@@ -1,6 +1,6 @@
 {
   "date": "2026-04-17",
-  "updated_utc": "2026-04-18 18:18 UTC",
+  "updated_utc": "2026-04-18 19:14 UTC",
   "record_years": [
     1985,
     1986,
@@ -65,5 +65,11 @@
     "mediterranean"
   ],
   "baseline_note": "1985\u20132012 Monthly Max Mean (NOAA CRW official)",
-  "record_start": 1985
+  "record_start": 1985,
+  "global_mean_ssta": 0.8048471107343198,
+  "change_periods": [
+    7,
+    15,
+    30
+  ]
 }
