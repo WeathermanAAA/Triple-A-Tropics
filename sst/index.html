@@ -79,7 +79,11 @@
 <nav class="tabs" id="sstTabs">
   <a href="#" data-variant="actual" class="active">Actual</a>
   <a href="#" data-variant="anomaly">Anomaly</a>
+  <a href="#" data-variant="anomaly_gmr">Anom − Gbl Mean</a>
   <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
+  <a href="#" data-variant="change7d">7-Day Change</a>
+  <a href="#" data-variant="change15d">15-Day Change</a>
+  <a href="#" data-variant="change30d">30-Day Change</a>
 </nav>
 
 <section class="chart-section">
@@ -140,7 +144,11 @@
 <nav class="tabs" id="crwTabs">
   <a href="#" data-variant="actual" class="active">Actual</a>
   <a href="#" data-variant="anomaly">Anomaly</a>
+  <a href="#" data-variant="anomaly_gmr">Anom − Gbl Mean</a>
   <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
+  <a href="#" data-variant="change7d">7-Day Change</a>
+  <a href="#" data-variant="change15d">15-Day Change</a>
+  <a href="#" data-variant="change30d">30-Day Change</a>
 </nav>
 
 <section class="chart-section">
@@ -197,7 +205,11 @@
   const VARIANT_CAPTIONS = {
     actual:            "actual sea-surface temperature.",
     anomaly:           "SST anomaly vs 1991–2020 climatology.",
+    anomaly_gmr:       "SST anomaly with the daily global-mean SSTA subtracted (highlights spatial patterns vs the global trend).",
     anomaly_records:   "SST anomaly with stippling where today meets or exceeds the 1982-present record.",
+    change7d:          "SST change over the past 7 days.",
+    change15d:         "SST change over the past 15 days.",
+    change30d:         "SST change over the past 30 days.",
   };
 
   const img = document.getElementById('sstImage');
@@ -257,7 +269,12 @@
   }
   update();
 
-  // Pull the valid date from the sidecar meta JSON
+  // Pull the valid date + global-mean SSTA from the sidecar meta JSON
+  function fmtGlobalMean(v) {
+    if (v == null || !isFinite(v)) return "";
+    const sign = v >= 0 ? "+" : "−";
+    return `Global mean SSTA: ${sign}${Math.abs(v).toFixed(2)} °C`;
+  }
   fetch('/sst/sst_meta.json?t=' + Date.now(), { cache: 'no-store' })
     .then(r => r.ok ? r.json() : null)
     .then(m => {
@@ -268,6 +285,8 @@
       });
       document.getElementById('dataDate').textContent =
         `Valid ${txt}  ·  updated ${m.updated_utc}`;
+      const gm = document.getElementById('sstGlobalMean');
+      if (gm) gm.textContent = fmtGlobalMean(m.global_mean_ssta);
     })
     .catch(() => {});
 
@@ -275,7 +294,11 @@
   const CRW_VARIANT_CAPTIONS = {
     actual:            "CRW actual sea-surface temperature (5 km).",
     anomaly:           "CRW SST anomaly vs 1985–2012 MMM (5 km).",
+    anomaly_gmr:       "CRW SST anomaly with the daily global-mean SSTA subtracted (5 km).",
     anomaly_records:   "CRW SST anomaly with stippling where today meets or exceeds the 1985-present record.",
+    change7d:          "CRW SSTA change over the past 7 days (5 km).",
+    change15d:         "CRW SSTA change over the past 15 days (5 km).",
+    change30d:         "CRW SSTA change over the past 30 days (5 km).",
   };
   const crwImg = document.getElementById('crwImage');
   const crwCaption = document.getElementById('crwCaption');
@@ -322,6 +345,8 @@
       });
       document.getElementById('crwDataDate').textContent =
         `Valid ${txt}  ·  updated ${m.updated_utc}`;
+      const gm = document.getElementById('crwGlobalMean');
+      if (gm) gm.textContent = fmtGlobalMean(m.global_mean_ssta);
     })
     .catch(() => {});
 </script>
