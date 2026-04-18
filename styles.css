@@ -368,3 +368,16 @@ footer {
 .sst-select select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
 .sst-select select optgroup { color: var(--muted); font-style: normal; }
 .sst-select select option { background: var(--panel); color: var(--fg); }
+
+/* ---- Section divider between OISST and CRW on /sst/ ---- */
+.page-head.section-divider {
+  margin-top: 40px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border);
+}
+.page-head.section-divider .section-h2 {
+  margin: 0 0 6px;
+  font-size: clamp(20px, 3vw, 26px);
+  font-weight: 700;
+  color: var(--fg);
+}
