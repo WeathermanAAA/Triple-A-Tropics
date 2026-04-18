@@ -302,9 +302,14 @@ def _parse_atcf_latlon(lat_raw: str, lon_raw: str) -> tuple[float, float] | None
 
 
 def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
-    """Parse an ATCF b-deck file into the same schema as the IBTrACS frame."""
+    """Parse an ATCF b-deck file into the same schema as the IBTrACS frame.
+
+    NOTE: ATCF b-decks have multiple BEST lines per timestamp (one per
+    wind-radius threshold 34/50/64 kt). We dedupe by (storm_num, tstamp)
+    to count each observation only once."""
     rows = []
     name_by_storm: dict[int, str] = {}
+    seen_obs: set[tuple[int, str]] = set()
     # First pass: grab the storm name (appears in the later columns, if set)
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
@@ -338,6 +343,10 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             continue
         if tech != "BEST":
             continue
+        key = (storm_num, tstamp)
+        if key in seen_obs:
+            continue          # multi-radius duplicate — already counted
+        seen_obs.add(key)
         try:
             t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
         except ValueError:
