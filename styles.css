@@ -239,3 +239,71 @@ footer {
   padding: 24px 20px;
   display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
 }
+
+/* ---- "Active Now" top banner (populated by active-banner.js) ---- */
+.active-banner-wrap {
+  max-width: 1180px; margin: 20px auto 0; padding: 0 20px;
+}
+.active-banner-wrap:empty { display: none; }
+.active-banner-wrap .ab-label {
+  color: var(--muted); font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700;
+  padding: 0 2px 8px;
+}
+.active-banner {
+  position: relative;
+  border-radius: 12px;
+  padding: 14px 86px 14px 20px;
+  box-shadow: 0 0 0 2px rgba(255, 184, 58, 0.18),
+              0 8px 22px rgba(0, 0, 0, 0.42);
+}
+.active-banner + .active-banner { margin-top: 12px; }
+.active-banner .ab-spinner {
+  position: absolute; top: 14px; right: 18px;
+  width: 54px; height: 54px;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.35));
+}
+.active-banner .ab-spinner svg {
+  width: 100%; height: 100%;
+  animation: active-banner-spin 2.6s linear infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes active-banner-spin {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+.active-banner .ab-title {
+  font-size: 13px; font-weight: 800; letter-spacing: 0.4px;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 10px;
+}
+.active-banner .ab-cat {
+  display: inline-block; padding: 3px 10px; border-radius: 4px;
+  background: rgba(0, 0, 0, 0.15);
+}
+.active-banner .ab-intensity {
+  display: flex; align-items: baseline; gap: 12px; margin-top: 8px;
+}
+.active-banner .ab-big {
+  font-size: 56px; font-weight: 900; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.active-banner .ab-units {
+  font-size: 13px; font-weight: 700; line-height: 1.3;
+}
+.active-banner .ab-deets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 4px 22px;
+  margin-top: 10px;
+  font-size: 12px; font-weight: 600;
+}
+.active-banner .ab-deets span { opacity: 0.72; margin-right: 6px; }
+.active-banner .ab-deets b {
+  font-weight: 700; font-variant-numeric: tabular-nums;
+}
+@media (max-width: 560px) {
+  .active-banner { padding-right: 74px; }
+  .active-banner .ab-spinner { width: 44px; height: 44px; }
+  .active-banner .ab-big { font-size: 46px; }
+}
