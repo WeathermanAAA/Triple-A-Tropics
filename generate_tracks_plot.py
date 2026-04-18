@@ -626,17 +626,24 @@ def load_natural_earth(path: Path) -> dict | None:
 
 def render_basemap_svg(extent, countries_geojson: dict | None,
                        coastline_geojson: dict | None) -> str:
-    """Build the SVG basemap: ocean fill, land polygons, coastlines, grid."""
+    """Build the SVG basemap: ocean fill, land polygons, coastlines, grid.
+
+    Color palette (matches user-supplied reference):
+      ocean   #2463a0  medium blue
+      land    #aeb2b5  bright gray
+      borders #ffffff  white, bold
+      grid    dashed white w/ low opacity
+    """
     project, _ = build_projection(extent)
     lon_min, lon_max, lat_min, lat_max = extent
     parts = []
 
     # Ocean background
-    parts.append(f'<rect x="0" y="0" width="{MAP_W}" height="{MAP_H}" fill="#0b2a48"/>')
+    parts.append(f'<rect x="0" y="0" width="{MAP_W}" height="{MAP_H}" fill="#2463a0"/>')
 
-    # Countries / land
+    # Countries / land polygons (filled)
     if countries_geojson is not None:
-        parts.append('<g class="land" fill="#3a4f3b" stroke="none">')
+        parts.append('<g class="land" fill="#aeb2b5" stroke="none">')
         for feat in countries_geojson.get("features", []):
             geom = feat.get("geometry") or {}
             gtype = geom.get("type")
@@ -653,10 +660,34 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
                         parts.append(f'<path d="{d}" />')
         parts.append('</g>')
 
-    # Coastlines (drawn on top of countries for a crisp edge)
+        # Country borders (drawn on top) — white + bold to match reference
+        parts.append('<g class="borders" fill="none" stroke="#ffffff" '
+                     'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" '
+                     'stroke-opacity="0.95">')
+        for feat in countries_geojson.get("features", []):
+            geom = feat.get("geometry") or {}
+            gtype = geom.get("type")
+            coords = geom.get("coordinates") or []
+            polys = []
+            if gtype == "Polygon":
+                polys = [coords]
+            elif gtype == "MultiPolygon":
+                polys = coords
+            for poly in polys:
+                for ring in poly:
+                    d = _ring_to_svg_path(ring, project)
+                    if d:
+                        parts.append(f'<path d="{d}" />')
+        parts.append('</g>')
+
+    # Coastlines — drawn on top, thinner than borders to avoid doubling up
+    # where coast and border coincide. If we don't have country polys,
+    # this is the only landmass outline.
     if coastline_geojson is not None:
-        parts.append('<g class="coast" fill="none" stroke="#1a1a1a" '
-                     'stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round">')
+        stroke_w = "1.6" if countries_geojson is None else "0.8"
+        parts.append(f'<g class="coast" fill="none" stroke="#ffffff" '
+                     f'stroke-width="{stroke_w}" stroke-linejoin="round" stroke-linecap="round" '
+                     f'stroke-opacity="0.85">')
         for feat in coastline_geojson.get("features", []):
             geom = feat.get("geometry") or {}
             gtype = geom.get("type")
@@ -672,8 +703,8 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
                     parts.append(f'<path d="{d}" />')
         parts.append('</g>')
 
-    # Graticule (lat/lon grid)
-    parts.append('<g class="grid" stroke="#5a7090" stroke-width="0.4" stroke-dasharray="3 4" opacity="0.55">')
+    # Graticule (lat/lon grid) — white dashes, low opacity
+    parts.append('<g class="grid" stroke="#ffffff" stroke-width="0.5" stroke-dasharray="4 5" opacity="0.22">')
     # 10° spacing
     lon = math.ceil(lon_min / 10) * 10
     while lon <= lon_max:
@@ -693,9 +724,10 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
         lat += 10
     parts.append('</g>')
 
-    # Axis labels (outside the map area would need margin — we draw inside
-    # at the edges with a faint halo)
-    parts.append('<g class="axis-labels" fill="#aec1df" font-size="13" '
+    # Axis labels — white with dark shadow for legibility on any background
+    parts.append('<g class="axis-labels" fill="#ffffff" font-size="13" '
+                 'font-weight="600" paint-order="stroke" stroke="rgba(0,0,0,0.55)" '
+                 'stroke-width="3" stroke-linejoin="round" '
                  'font-family="-apple-system, Segoe UI, Roboto, sans-serif">')
     lon = math.ceil(lon_min / 10) * 10
     while lon <= lon_max:
@@ -760,8 +792,8 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
             xy.append((x, y))
         if len(xy) >= 2:
             d = "M " + " L ".join(f"{x:.1f},{y:.1f}" for x, y in xy)
-            parts.append(f'<path d="{d}" fill="none" stroke="#0e1624" '
-                         'stroke-width="1.2" stroke-opacity="0.9" '
+            parts.append(f'<path d="{d}" fill="none" stroke="#ffffff" '
+                         'stroke-width="1.2" stroke-opacity="0.5" '
                          'stroke-linejoin="round" stroke-linecap="round"/>')
         # Dots — radius depends on whether the point is at TS+ (bigger) or not
         for (x, y), p in zip(xy, pts):
@@ -777,7 +809,7 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                 r = 5
             parts.append(
                 f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{color}" '
-                f'stroke="#081220" stroke-width="0.8"/>')
+                f'stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>')
     parts.append('</g>')
     return "\n".join(parts)
 
@@ -1110,9 +1142,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(json.dumps(payload, indent=2, default=str))
         return 0
 
-    # Load Natural Earth basemap (optional — graceful fallback if missing)
-    countries = load_natural_earth(HERE / "ne_110m_admin_0_countries.geojson")
-    coast = load_natural_earth(HERE / "ne_110m_coastline.geojson")
+    # Load Natural Earth basemap — prefer 50m (shows small islands) and
+    # fall back to 110m if the higher-res files aren't present.
+    countries = (load_natural_earth(HERE / "ne_50m_admin_0_countries.geojson")
+                 or load_natural_earth(HERE / "ne_110m_admin_0_countries.geojson"))
+    coast = (load_natural_earth(HERE / "ne_50m_coastline.geojson")
+             or load_natural_earth(HERE / "ne_110m_coastline.geojson"))
     if countries is None and coast is None:
         print(f"{log} WARN: no Natural Earth GeoJSON found — basemap will "
               f"only show the grid. Workflow downloads these into the repo.")
