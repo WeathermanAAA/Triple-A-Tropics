@@ -2,14 +2,14 @@
    Edit this one file and every page's look updates. */
 
 :root {
-  --bg: #07101c;
-  --panel: #0f1a2a;
-  --border: #1a2840;
-  --fg: #e5edf6;
-  --muted: #8ea2bd;
-  --accent: #ffb83a;     /* amber */
-  --accent-2: #5dd3ff;   /* cyan */
-  --accent-3: #c084fc;   /* violet */
+  --bg: #131519;       /* muted dark charcoal (was deep navy) */
+  --panel: #1b1e24;    /* slightly lighter card surface */
+  --border: #2a2e36;   /* neutral mid-gray border */
+  --fg: #e8ebef;       /* near-white text, neutral */
+  --muted: #9199a4;    /* medium gray for secondary text */
+  --accent: #ffb83a;   /* amber */
+  --accent-2: #5dd3ff; /* cyan */
+  --accent-3: #c084fc; /* violet */
 }
 * { box-sizing: border-box; }
 html, body {
@@ -298,7 +298,7 @@ a:hover { text-decoration: underline; }
 /* ---- Footer ---- */
 footer {
   border-top: 1px solid var(--border);
-  background: #050b14;
+  background: #0d0f13;    /* a touch darker than --bg for contrast */
   color: var(--muted);
   font-size: 13px;
 }
