@@ -309,3 +309,27 @@ footer {
   .active-banner .ab-spinner { width: 44px; height: 44px; }
   .active-banner .ab-big { font-size: 46px; }
 }
+
+/* ---- SST pages ---- */
+.page-head-sub { padding-top: 12px; }
+.page-head .muted { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.sst-chart {
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex; flex-direction: column;
+}
+.sst-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #07101c;
+  border-radius: 6px;
+}
+.sst-caption {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 4px 2px;
+  text-align: center;
+}
