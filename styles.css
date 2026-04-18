@@ -132,9 +132,28 @@ a:hover { text-decoration: underline; }
   padding: 56px 20px 28px;
   text-align: center;
 }
+/* Flex row that places a hurricane icon on each side of the title. */
+.hero-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 3vw, 28px);
+  margin: 0 auto 14px;
+  flex-wrap: wrap;
+}
+.hero-icon {
+  height: clamp(42px, 6vw, 70px);
+  width: auto;
+  flex-shrink: 0;
+  display: block;
+}
+.hero-icon-right {
+  transform: scaleX(-1);  /* mirror the right-side copy */
+}
+
 .hero h1 {
   font-size: clamp(32px, 6vw, 54px);
-  margin: 0 0 14px;
+  margin: 0;
   line-height: 1.1;
   font-weight: 800;
   /* Chrome-metallic gradient that mirrors the metallic nav bar:
@@ -151,15 +170,19 @@ a:hover { text-decoration: underline; }
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  /* Glowing "outline" built from stacked text-shadows. Layered from
-     tight + bright to wide + soft so it reads as light bleeding out
-     from the glyph edges — no hard outline artifacts over the
-     clipped gradient fill. */
+  /* Thin, crisp white outline. Eight 1 px offset text-shadows with
+     0 blur paint a 1 px halo just outside every glyph edge. No blur
+     = no soft glow; no -webkit-text-stroke = no "double wall" artifact
+     against the clipped gradient fill. */
   text-shadow:
-    0 0 2px  rgba(255, 255, 255, 0.80),
-    0 0 6px  rgba(255, 255, 255, 0.65),
-    0 0 14px rgba(255, 255, 255, 0.45),
-    0 0 28px rgba(255, 255, 255, 0.25);
+    -1px -1px 0 rgba(255, 255, 255, 0.95),
+     0   -1px 0 rgba(255, 255, 255, 0.95),
+     1px -1px 0 rgba(255, 255, 255, 0.95),
+    -1px  0   0 rgba(255, 255, 255, 0.95),
+     1px  0   0 rgba(255, 255, 255, 0.95),
+    -1px  1px 0 rgba(255, 255, 255, 0.95),
+     0    1px 0 rgba(255, 255, 255, 0.95),
+     1px  1px 0 rgba(255, 255, 255, 0.95);
 }
 .hero p {
   color: var(--muted);
