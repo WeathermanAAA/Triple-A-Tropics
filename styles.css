@@ -268,7 +268,11 @@ footer {
 .active-banner .ab-spinner svg {
   width: 100%; height: 100%;
   /* Rotation is handled by <animateTransform> inside the SVG so the
-     center label can stay upright — no CSS keyframes needed. */
+     center label can stay upright — no CSS keyframes needed.
+     overflow:visible lets the rotating fins extend past the viewBox
+     corners (the hurricane path rotates on a radius of ~41 in a
+     viewBox of 68, so the default overflow:hidden was clipping them). */
+  overflow: visible;
 }
 .active-banner .ab-title {
   font-size: 13px; font-weight: 800; letter-spacing: 0.4px;
