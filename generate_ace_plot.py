@@ -1010,29 +1010,34 @@ def main(argv: Iterable[str] | None = None) -> int:
         live = fetch_live_season(current_year, basin_cfg, log)
         if not live.empty:
             print(f"{log} pulled {len(live)} live 6-hour points from {basin_cfg['agency_name']}")
-            # Merge strategy: only drop IBTrACS rows for storms whose NAMES
-            # are in live data. This preserves IBTrACS storms that live
-            # didn't pick up (e.g., early-season storms whose ATCF files
-            # got archived). Matches the tracks generator's behavior so
-            # the two charts stay consistent.
-            live_names = {
-                str(n).strip().upper()
-                for n in live["NAME"].unique()
-                if pd.notna(n) and str(n).strip()
-                and str(n).strip().upper() not in {"", "UNNAMED", "INVEST", "NAMELESS"}
-            }
-            if live_names:
-                current_year_mask = points["season"] == current_year
-                name_mask = points["NAME"].fillna("").str.strip().str.upper().isin(live_names)
-                drop_mask = current_year_mask & name_mask
-                dropped = int(drop_mask.sum())
+            # Merge strategy: for each storm appearing in live, drop the
+            # IBTrACS rows that share (name, doy) with live — live is
+            # authoritative for those. BUT KEEP IBTrACS rows whose doy
+            # live doesn't cover. This preserves genesis/dissipation
+            # observations that IBTrACS has but live's bwpNN file lacks.
+            placeholders = {"", "UNNAMED", "INVEST", "NAMELESS"}
+            live_by_name: dict[str, set] = {}
+            for n, d in zip(live["NAME"].fillna("").astype(str).str.strip().str.upper(),
+                            live["doy"]):
+                if n and n not in placeholders:
+                    live_by_name.setdefault(n, set()).add(int(d))
+
+            if live_by_name:
+                ib_names = points["NAME"].fillna("").astype(str).str.strip().str.upper()
+                keep_mask = pd.Series(True, index=points.index)
+                dropped = 0
+                for name, doys in live_by_name.items():
+                    storm_mask = (points["season"] == current_year) & (ib_names == name)
+                    doy_mask = points["doy"].isin(doys)
+                    same = storm_mask & doy_mask
+                    dropped += int(same.sum())
+                    keep_mask &= ~same
                 if dropped:
                     print(f"{log}   merge: dropped {dropped} IBTrACS row(s) "
-                          f"for storms covered by live: {sorted(live_names)}")
-                points = points[~drop_mask].copy()
+                          f"overlapping live by (name, doy); kept rest.")
+                points = points[keep_mask].copy()
             else:
-                # Live has unnamed storms only — drop the whole current
-                # year from IBTrACS to avoid duplicates anyway.
+                # Live has only unnamed storms — drop whole current year.
                 points = points[points["season"] != current_year]
             points = pd.concat([points, live], ignore_index=True)
             live_used = True
