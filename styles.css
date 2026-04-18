@@ -38,7 +38,7 @@ a:hover { text-decoration: underline; }
 /* Pulls the Oswald condensed sans from Google Fonts for the bold
    embossed title/link styling. Single import covers every page
    since styles.css is linked from all of them. */
-@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Montserrat:wght@900&display=swap');
 
 .nav {
   position: sticky; top: 0; z-index: 10;
@@ -132,9 +132,28 @@ a:hover { text-decoration: underline; }
   padding: 56px 20px 28px;
   text-align: center;
 }
+/* Flex row holding the title + a spinning hurricane on each side. */
+.hero-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 3vw, 32px);
+  margin: 0 auto 14px;
+  flex-wrap: wrap;
+}
+.hero-icon {
+  width: clamp(56px, 7vw, 86px);
+  height: clamp(56px, 7vw, 86px);
+  flex-shrink: 0;
+  /* Rotating path extends past the viewBox at its corners — without
+     this the SVG clips its own fins mid-spin. */
+  overflow: visible;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+}
+
 .hero h1 {
   font-size: clamp(32px, 6vw, 54px);
-  margin: 0 0 14px;
+  margin: 0;
   line-height: 1.1;
   font-weight: 800;
   background: linear-gradient(135deg, #5dd3ff 0%, #c084fc 55%, #ffb83a 100%);
