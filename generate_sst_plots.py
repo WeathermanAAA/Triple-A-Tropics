@@ -390,20 +390,26 @@ def _sst_actual_cmap() -> mcolors.LinearSegmentedColormap:
 
 
 def _sst_anom_cmap() -> mcolors.LinearSegmentedColormap:
-    """Diverging cool-to-warm to match the 1st reference image.
-    Dark blue/purple at strong negative → light cyan → near-white at 0 →
-    yellow → orange → dark red → magenta at strong positive."""
+    """Diverging cool-to-warm to match the reference 'RSST' image.
+    The near-white zero band is intentionally thin so ±0.5 °C anomalies
+    are already visibly tinted; colors ramp through blue→purple on the
+    cold side and yellow→red→magenta on the warm side, with the very
+    ends reserved for extremes beyond ±4 °C."""
     stops = [
-        (0.00, "#1a1066"),  # deep purple (≤ -5)
-        (0.08, "#283b9e"),
-        (0.20, "#3f6cc2"),
-        (0.32, "#8bb6e0"),
-        (0.42, "#d4e4f5"),
-        (0.50, "#ffffff"),  # zero
-        (0.58, "#fbe6b9"),
-        (0.68, "#f7b65d"),
-        (0.80, "#e84b2a"),
-        (0.92, "#9b0b20"),
+        (0.00, "#1a0c5f"),  # deep indigo (≤ -5)
+        (0.06, "#1a1f9e"),  # royal blue-violet
+        (0.14, "#2254c7"),  # blue
+        (0.24, "#3a87d9"),  # mid blue
+        (0.35, "#78b6e6"),  # light blue
+        (0.43, "#bcdcef"),  # very light blue
+        (0.485, "#e8f2f8"), # near-zero cool
+        (0.50, "#ffffff"),  # zero (thin)
+        (0.515, "#faeadd"), # near-zero warm
+        (0.57, "#f8c993"),  # light orange
+        (0.66, "#f5924d"),  # orange
+        (0.76, "#e04a2a"),  # red
+        (0.86, "#971b27"),  # dark red
+        (0.94, "#660e2e"),  # oxblood
         (1.00, "#ef37b8"),  # hot-pink magenta (≥ +5)
     ]
     return mcolors.LinearSegmentedColormap.from_list(
@@ -518,12 +524,14 @@ def _style_axes(ax, extent, title, subtitle):
     for spine in ax.spines.values():
         spine.set_color(MUTED_COLOR)
         spine.set_linewidth(0.5)
-    # Title block
-    ax.set_title(title, color=TEXT_COLOR, fontsize=14, fontweight="bold",
-                 loc="left", pad=10)
+    # Title block — placed in axes coordinates above the plot. Two
+    # stacked text objects with explicit y offsets so the bold title
+    # and the muted subtitle don't overlap each other.
+    ax.text(0.0, 1.07, title, color=TEXT_COLOR, fontsize=14,
+            fontweight="bold", transform=ax.transAxes, va="bottom")
     if subtitle:
-        ax.text(0.0, 1.02, subtitle, color=MUTED_COLOR, transform=ax.transAxes,
-                fontsize=10, va="bottom")
+        ax.text(0.0, 1.015, subtitle, color=MUTED_COLOR, fontsize=10,
+                transform=ax.transAxes, va="bottom")
 
 
 def _draw_watermark(ax):
@@ -579,7 +587,7 @@ def plot_actual(
     _add_colorbar(fig, pcm, "Sea-surface temperature (°C)",
                   ticks=np.arange(0, 33, 4))
     _draw_watermark(ax)
-    fig.subplots_adjust(left=0.05, right=0.89, top=0.92, bottom=0.08)
+    fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
     fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
     plt.close(fig)
 
@@ -644,7 +652,7 @@ def plot_anomaly(
     _add_colorbar(fig, pcm, "SST anomaly (°C)  vs 1991–2020 mean",
                   ticks=np.arange(-5, 6, 1))
     _draw_watermark(ax)
-    fig.subplots_adjust(left=0.05, right=0.89, top=0.92, bottom=0.08)
+    fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
     fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
     plt.close(fig)
 
