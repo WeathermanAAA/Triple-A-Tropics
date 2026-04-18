@@ -237,6 +237,148 @@ def stack_years(files_by_year: dict[int, Path]) -> tuple[np.ndarray, list[int]]:
     return np.stack(grids, axis=0), years
 
 
+# ============================================================================
+# CRW (NOAA Coral Reef Watch 5 km) data source
+# ============================================================================
+# CRW publishes a daily suite of 5 km gridded products. We use:
+#   • coraltemp_v3.1_YYYYMMDD.nc   — "actual" SST analysis   (var: analysed_sst)
+#   • ct5km_ssta_v3.1_YYYYMMDD.nc  — official SST anomaly    (var: sea_surface_temperature_anomaly)
+# CRW stores longitudes as -180..+180; we normalize to 0..360 on read so the
+# shared subset/plot code works uniformly with OISST.
+
+CRW_BASE = (
+    "https://www.star.nesdis.noaa.gov/pub/sod/mecb/crw/data/5km/"
+    "v3.1_op/nc/v1.0/daily"
+)
+CRW_RECORDS_START = 1985  # CoralTemp v3.1 archive starts here
+
+
+def crw_url_for(product: str, d: dt.date) -> str:
+    """Build the URL for a given CRW product ('sst' or 'ssta') on date d."""
+    y = d.year
+    if product == "sst":
+        fname = f"coraltemp_v3.1_{d:%Y%m%d}.nc"
+    else:
+        fname = f"ct5km_{product}_v3.1_{d:%Y%m%d}.nc"
+    return f"{CRW_BASE}/{product}/{y:04d}/{fname}"
+
+
+def crw_cache_path(d: dt.date, product: str) -> Path:
+    return CACHE_DIR / f"crw_{product}.{d:%Y%m%d}.nc"
+
+
+def fetch_crw_day(d: dt.date, product: str,
+                  log_prefix: str = "[sst-crw]",
+                  verbose: bool = False) -> Path | None:
+    """Download a specific CRW product file for a specific day, cached."""
+    cp = crw_cache_path(d, product)
+    if cp.exists() and cp.stat().st_size > 100_000:
+        return cp
+    url = crw_url_for(product, d)
+    for attempt in range(FETCH_RETRIES):
+        try:
+            r = requests.get(url, timeout=FETCH_TIMEOUT)
+            if r.status_code == 404:
+                if verbose:
+                    print(f"{log_prefix}   ✗ CRW {product} {d} (404)")
+                return None
+            r.raise_for_status()
+            if len(r.content) < 100_000:
+                return None
+            cp.write_bytes(r.content)
+            if verbose:
+                print(f"{log_prefix}   ✓ CRW {product} {d}")
+            return cp
+        except Exception as e:  # noqa: BLE001
+            if attempt == FETCH_RETRIES - 1:
+                if verbose:
+                    print(f"{log_prefix}   CRW {product} {d} error: "
+                          f"{type(e).__name__}: {e}", file=sys.stderr)
+                return None
+    return None
+
+
+def latest_available_crw_day(product: str = "sst",
+                             log_prefix: str = "[sst-crw]"
+                             ) -> tuple[dt.date, Path]:
+    """Walk back from yesterday UTC until a CRW file for `product` exists."""
+    today = dt.datetime.utcnow().date()
+    for back in range(1, LATENCY_TRIES + 1):
+        d = today - dt.timedelta(days=back)
+        print(f"{log_prefix} trying CRW {product} {d} ...")
+        p = fetch_crw_day(d, product, log_prefix, verbose=True)
+        if p is not None:
+            print(f"{log_prefix} latest CRW {product}: {d}")
+            return d, p
+    raise RuntimeError(
+        f"Could not fetch any CRW {product} file in the last {LATENCY_TRIES} days"
+    )
+
+
+def day_of_year_crw_files(target_month: int, target_day: int,
+                          year_range: range,
+                          product: str = "sst",
+                          log_prefix: str = "[sst-crw]") -> dict[int, Path]:
+    """Parallel fetch of CRW files at the same day-of-year across years."""
+    want: list[tuple[int, dt.date]] = []
+    for y in year_range:
+        try:
+            want.append((y, dt.date(y, target_month, target_day)))
+        except ValueError:
+            want.append((y, dt.date(y, target_month, 28)))
+
+    out: dict[int, Path] = {}
+    with cf.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+        futures = {
+            pool.submit(fetch_crw_day, d, product, log_prefix, False):
+            (y, d) for y, d in want
+        }
+        for fut in cf.as_completed(futures):
+            y, d = futures[fut]
+            p = fut.result()
+            if p is not None:
+                out[y] = p
+    print(
+        f"{log_prefix} downloaded {len(out)}/{len(want)} historical CRW "
+        f"{product} files for {target_month:02d}-{target_day:02d}"
+    )
+    return out
+
+
+def read_crw_grid(path: Path, var_name: str
+                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read a CRW NetCDF file; normalize lon to 0..360 for consistency."""
+    with Dataset(path, "r") as ds:
+        # Auto-fallback if the expected variable isn't there
+        if var_name not in ds.variables:
+            for name, v in ds.variables.items():
+                if name not in ("lat", "lon", "time") and v.ndim >= 2:
+                    var_name = name
+                    break
+        raw = ds.variables[var_name][:]
+        data = np.ma.squeeze(raw)
+        data = np.ma.filled(data.astype(np.float32), np.nan)
+        lat = ds.variables["lat"][:].astype(np.float32)
+        lon = ds.variables["lon"][:].astype(np.float32)
+    # Roll CRW's -180..180 into 0..360 so _subset_to_extent can share logic.
+    if float(np.nanmin(lon)) < 0:
+        lon_rolled = np.where(lon < 0, lon + 360.0, lon)
+        order = np.argsort(lon_rolled)
+        lon = lon_rolled[order]
+        data = data[:, order]
+    return data, lat, lon
+
+
+def stack_crw_years(files_by_year: dict[int, Path], var_name: str
+                    ) -> tuple[np.ndarray, list[int]]:
+    years = sorted(files_by_year)
+    grids = []
+    for y in years:
+        g, _, _ = read_crw_grid(files_by_year[y], var_name)
+        grids.append(g)
+    return np.stack(grids, axis=0), years
+
+
 # --- Projection + basemap overlay ---------------------------------------
 # Use the same ne_50m geojson files the tracks pages already use.
 
@@ -894,6 +1036,110 @@ def main(argv=None):
         json.dumps(meta, indent=2), encoding="utf-8"
     )
     print(f"{log} wrote {SST_DIR / 'sst_meta.json'}")
+
+    # ========================================================================
+    # CRW pipeline — runs after OISST so a CRW failure never blocks OISST.
+    # Uses the same region list and plotting code; outputs files with the
+    # `crw_` filename prefix so the HTML can target them independently.
+    # ========================================================================
+    crw_log = "[sst-crw]"
+    try:
+        crw_target, crw_sst_path = latest_available_crw_day("sst", crw_log)
+        _, crw_ssta_path = latest_available_crw_day("ssta", crw_log)
+
+        crw_sst, crw_lat, crw_lon = read_crw_grid(crw_sst_path, "analysed_sst")
+        crw_anom, _, _ = read_crw_grid(
+            crw_ssta_path, "sea_surface_temperature_anomaly"
+        )
+        print(f"{crw_log} grids: sst {crw_sst.shape} · anom {crw_anom.shape}")
+
+        # Records vs the full 1985-present CRW era. Download in parallel.
+        crw_hist_years = range(CRW_RECORDS_START, crw_target.year)
+        crw_records_high = crw_records_low = None
+        crw_record_years: list[int] = []
+        if not args.no_records:
+            crw_hist = day_of_year_crw_files(
+                crw_target.month, crw_target.day, crw_hist_years,
+                "sst", crw_log,
+            )
+            if crw_hist:
+                crw_stack, crw_record_years = stack_crw_years(
+                    crw_hist, "analysed_sst"
+                )
+                rmax = np.nanmax(crw_stack, axis=0)
+                rmin = np.nanmin(crw_stack, axis=0)
+                eps = 0.001
+                crw_records_high = crw_sst > (rmax - eps)
+                crw_records_low = crw_sst < (rmin + eps)
+                crw_records_high = np.where(
+                    np.isnan(crw_sst) | np.isnan(rmax),
+                    False, crw_records_high,
+                )
+                crw_records_low = np.where(
+                    np.isnan(crw_sst) | np.isnan(rmin),
+                    False, crw_records_low,
+                )
+                print(
+                    f"{crw_log} CRW records: {len(crw_record_years)} years "
+                    f"— highs {int(crw_records_high.sum())} px, "
+                    f"lows {int(crw_records_low.sum())} px"
+                )
+
+        crw_date_label = crw_target.strftime("%B %-d, %Y")
+        for region_key in args.regions:
+            rcfg = REGIONS[region_key]
+            extent = rcfg["extent"]
+            figsize = rcfg["figsize"]
+            label = rcfg["label"]
+            subtitle = (
+                f"Valid: {crw_date_label}  ·  NOAA Coral Reef Watch 5 km v3.1"
+            )
+            p_actual = SST_DIR / f"crw_{region_key}_actual.png"
+            p_anom = SST_DIR / f"crw_{region_key}_anomaly.png"
+            p_anom_rec = SST_DIR / f"crw_{region_key}_anomaly_records.png"
+
+            print(f"{crw_log} rendering {region_key} · actual")
+            plot_actual(
+                crw_sst, crw_lat, crw_lon, extent, figsize,
+                f"{label} · CRW Sea-Surface Temperature (5 km)",
+                subtitle, countries, coast, p_actual,
+            )
+            print(f"{crw_log} rendering {region_key} · anomaly")
+            plot_anomaly(
+                crw_anom, crw_lat, crw_lon, extent, figsize,
+                f"{label} · CRW SST Anomaly (5 km)",
+                subtitle + "  ·  Baseline 1985–2012 MMM",
+                countries, coast, p_anom,
+            )
+            if crw_records_high is not None:
+                print(f"{crw_log} rendering {region_key} · anomaly+records")
+                plot_anomaly(
+                    crw_anom, crw_lat, crw_lon, extent, figsize,
+                    f"{label} · CRW SST Anomaly with Daily Records (5 km)",
+                    subtitle
+                    + f"  ·  Records vs {CRW_RECORDS_START}–{crw_target.year - 1}",
+                    countries, coast, p_anom_rec,
+                    records_high=crw_records_high,
+                    records_low=crw_records_low,
+                )
+
+        crw_meta = {
+            "date": crw_target.isoformat(),
+            "updated_utc": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            "record_years": sorted(crw_record_years),
+            "regions": list(REGIONS.keys()),
+            "baseline_note": "1985–2012 Monthly Max Mean (NOAA CRW official)",
+            "record_start": CRW_RECORDS_START,
+        }
+        (SST_DIR / "crw_meta.json").write_text(
+            json.dumps(crw_meta, indent=2), encoding="utf-8"
+        )
+        print(f"{crw_log} wrote {SST_DIR / 'crw_meta.json'}")
+    except Exception as e:  # noqa: BLE001
+        # Don't let CRW failure cascade — OISST already succeeded above.
+        print(f"{crw_log} CRW pipeline failed: {type(e).__name__}: {e}",
+              file=sys.stderr)
+
     return 0
 
 
