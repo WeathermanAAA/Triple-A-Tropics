@@ -507,19 +507,29 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         storm_ace = 0.0
         peak_wind = float("nan")
         peak_pres = float("nan")
-        start_t = None
-        end_t = None
+        # Lifetime = first and last observation of ANY kind (TD included).
+        # ACE-window = first and last obs at TS+ intensity. Storms that
+        # never reach TS (e.g. NURI 2026 peaked at 29 kt) still need a
+        # lifetime date range in the sidebar.
+        life_start = None
+        life_end = None
+        ace_start = None
+        ace_end = None
         max_cls = "TD"
         for p in points:
             w = p["wind_kt"]
             nat = p["nature"] or ""
+            t = p["time"]
+            if life_start is None:
+                life_start = t
+            life_end = t
             # Consider NR as eligible for current-season provisional data
             nat_ok = nat in eligible_natures or nat == "NR" or nat == ""
             if nat_ok and pd.notna(w) and w >= 34:
                 storm_ace += (w ** 2) / 10_000.0
-                if start_t is None:
-                    start_t = p["time"]
-                end_t = p["time"]
+                if ace_start is None:
+                    ace_start = t
+                ace_end = t
             if pd.notna(w):
                 if math.isnan(peak_wind) or w > peak_wind:
                     peak_wind = float(w)
@@ -530,6 +540,10 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             if pd.notna(pr) and pr > 0:
                 if math.isnan(peak_pres) or pr < peak_pres:
                     peak_pres = float(pr)
+        # Sidebar "Active" row shows overall lifetime (preferring ACE
+        # window if the storm did reach TS; otherwise whole track).
+        start_t = ace_start or life_start
+        end_t = ace_end or life_end
 
         # Active = (1) last observation is recent, AND (2) it still shows
         # a valid tropical-storm-strength wind, AND (3) nature hasn't gone
