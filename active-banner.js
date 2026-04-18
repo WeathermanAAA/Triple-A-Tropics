@@ -70,11 +70,27 @@
     // Dark text on bright yellow/green/orange; white on the reds/magenta/purples.
     return (cls === "TS" || cls === "C1" || cls === "C2") ? "#0a1324" : "#ffffff";
   }
-  function spinnerSvg(color) {
+  function sshsLabel(cls) {
+    if (cls === "TD") return "D";
+    if (cls === "TS") return "S";
+    return (cls || "").replace("C", "") || "D";  // C1→1, C2→2, etc.
+  }
+  function spinnerSvg(color, cls) {
+    // <animateTransform> spins the hurricane path only; the center
+    // label (D/S/1–5) sits outside the rotating group so it stays still.
+    var label = sshsLabel(cls);
     return '<div class="ab-spinner">' +
       '<svg viewBox="-34 -34 68 68" aria-hidden="true">' +
-        '<g><path d="' + HURRICANE_PATH + '" fill="' + color + '" ' +
-          'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/></g>' +
+        '<g>' +
+          '<path d="' + HURRICANE_PATH + '" fill="' + color + '" ' +
+            'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/>' +
+          '<animateTransform attributeName="transform" attributeType="XML" ' +
+            'type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>' +
+        '</g>' +
+        '<text x="0" y="0" text-anchor="middle" dominant-baseline="central" ' +
+          'font-size="28" font-weight="900" fill="#ffffff" ' +
+          'paint-order="stroke" stroke="rgba(0,0,0,0.6)" stroke-width="2.4" ' +
+          'stroke-linejoin="round">' + label + '</text>' +
       '</svg>' +
     '</div>';
   }
@@ -94,7 +110,7 @@
     var movement = computeMovement(pts);
     return (
       '<div class="active-banner" style="background:' + color + ';color:' + txt + '">' +
-        spinnerSvg(color) +
+        spinnerSvg(color, cls) +
         '<div class="ab-title"><span class="ab-cat">' + cat + '</span><b>' +
           esc(storm.name || "UNNAMED") + '</b></div>' +
         '<div class="ab-intensity">' +
