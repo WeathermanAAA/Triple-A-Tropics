@@ -1010,36 +1010,52 @@ def main(argv: Iterable[str] | None = None) -> int:
         live = fetch_live_season(current_year, basin_cfg, log)
         if not live.empty:
             print(f"{log} pulled {len(live)} live 6-hour points from {basin_cfg['agency_name']}")
-            # Merge strategy: for each storm appearing in live, drop the
-            # IBTrACS rows that share (name, doy) with live — live is
-            # authoritative for those. BUT KEEP IBTrACS rows whose doy
-            # live doesn't cover. This preserves genesis/dissipation
-            # observations that IBTrACS has but live's bwpNN file lacks.
+            # Merge strategy: for each named storm appearing in BOTH
+            # sources (live and current-year IBTrACS), keep whichever
+            # source has more 6-hour observations for that storm. Live
+            # is usually more complete for currently-active storms (it
+            # has real-time advisories JTWC hasn't pushed to IBTrACS
+            # yet); IBTrACS is sometimes more complete for dissipated
+            # storms (JTWC may have stubbed or removed the bNN file).
+            # One source per storm — no double-counting of ACE.
             placeholders = {"", "UNNAMED", "INVEST", "NAMELESS"}
-            live_by_name: dict[str, set] = {}
-            for n, d in zip(live["NAME"].fillna("").astype(str).str.strip().str.upper(),
-                            live["doy"]):
-                if n and n not in placeholders:
-                    live_by_name.setdefault(n, set()).add(int(d))
 
-            if live_by_name:
-                ib_names = points["NAME"].fillna("").astype(str).str.strip().str.upper()
-                keep_mask = pd.Series(True, index=points.index)
-                dropped = 0
-                for name, doys in live_by_name.items():
-                    storm_mask = (points["season"] == current_year) & (ib_names == name)
-                    doy_mask = points["doy"].isin(doys)
-                    same = storm_mask & doy_mask
-                    dropped += int(same.sum())
-                    keep_mask &= ~same
-                if dropped:
-                    print(f"{log}   merge: dropped {dropped} IBTrACS row(s) "
-                          f"overlapping live by (name, doy); kept rest.")
-                points = points[keep_mask].copy()
-            else:
-                # Live has only unnamed storms — drop whole current year.
-                points = points[points["season"] != current_year]
-            points = pd.concat([points, live], ignore_index=True)
+            cur_mask = points["season"] == current_year
+            ib_cur = points[cur_mask]
+            ib_other = points[~cur_mask]
+
+            ib_names = ib_cur["NAME"].fillna("").astype(str).str.strip().str.upper()
+            live_names = live["NAME"].fillna("").astype(str).str.strip().str.upper()
+
+            ib_counts = ib_names.value_counts().to_dict()
+            live_counts = live_names.value_counts().to_dict()
+
+            contested = {n for n in live_names.unique()
+                         if n and n not in placeholders
+                         and ib_counts.get(n, 0) > 0}
+
+            drop_from_ib: list[str] = []
+            drop_from_live: list[str] = []
+            for name in contested:
+                ib_c = ib_counts.get(name, 0)
+                live_c = live_counts.get(name, 0)
+                # Prefer the source with more observations. Ties go to
+                # live (fresher, includes current JTWC/NHC advisory).
+                if ib_c > live_c:
+                    drop_from_live.append(name)
+                else:
+                    drop_from_ib.append(name)
+
+            if drop_from_ib:
+                ib_cur = ib_cur[~ib_names.isin(drop_from_ib)].copy()
+            if drop_from_live:
+                live = live[~live_names.isin(drop_from_live)].copy()
+            if contested:
+                print(f"{log}   merge: {len(contested)} storm(s) in both sources. "
+                      f"Kept live for: {sorted(drop_from_ib)}. "
+                      f"Kept IBTrACS for: {sorted(drop_from_live)}.")
+
+            points = pd.concat([ib_other, ib_cur, live], ignore_index=True)
             live_used = True
         else:
             print(f"{log} live fetch returned nothing — using IBTrACS provisional data only")
