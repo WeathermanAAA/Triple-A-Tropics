@@ -985,10 +985,15 @@ HTML_TEMPLATE = """<!doctype html>
     .legend {{ display: none; }}
   }}
 
-  /* Watermark */
-  .wm {{ fill: #e5edf6; fill-opacity: 0.16; font-weight: 700;
+  /* Watermark — same size as before, just more visible. The dark
+     stroke underneath lets it read clearly over both the bright
+     ocean and light land areas. */
+  .wm {{ fill: #ffffff; fill-opacity: 0.55; font-weight: 700;
     font-size: 26px; letter-spacing: 0.5px;
-    font-family: -apple-system, Segoe UI, Roboto, sans-serif; }}
+    stroke: #000000; stroke-opacity: 0.45; stroke-width: 1.1px;
+    paint-order: stroke fill;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    pointer-events: none; }}
 </style>
 </head>
 <body>
