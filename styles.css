@@ -137,7 +137,17 @@ a:hover { text-decoration: underline; }
   margin: 0 0 14px;
   line-height: 1.1;
   font-weight: 800;
-  background: linear-gradient(135deg, #5dd3ff 0%, #c084fc 55%, #ffb83a 100%);
+  /* Chrome-metallic gradient that mirrors the metallic nav bar:
+     highlight → steel blue → deep navy → highlight. Multi-stop so
+     you get that "gleam" running diagonally across the letters. */
+  background: linear-gradient(
+    135deg,
+    #eef2f8 0%,
+    #9cb5d8 28%,
+    #4a6ca3 52%,
+    #2b4976 68%,
+    #9cb5d8 100%
+  );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
