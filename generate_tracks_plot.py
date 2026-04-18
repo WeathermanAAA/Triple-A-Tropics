@@ -446,26 +446,41 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
 
 def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                              basin_cfg: dict) -> list[dict]:
-    """Merge IBTrACS + live frames, drop duplicates that happen when the
-    same storm appears in both (IBTrACS uses its own SID while live ATCF
-    uses a different one, so SID-based dedupe isn't enough). We match by
-    storm name — if a storm is in both sources, live wins (it's fresher
-    and authoritative)."""
-    # Pre-merge: drop IBTrACS rows for any storm whose name is also in live.
+    """Merge IBTrACS + live frames. For a storm present in both, we take
+    each observation from the freshest source that has it: live is
+    authoritative for timestamps it covers, IBTrACS fills in times live
+    doesn't have (usually genesis/dissipation observations JTWC's bwpNN
+    file starts/ends slightly after/before IBTrACS does)."""
     if not live.empty and not ibtracs.empty:
-        live_names = {
-            str(n).strip().upper()
-            for n in live["NAME"].unique()
-            if pd.notna(n) and str(n).strip()
-            and str(n).strip().upper() not in {"", "UNNAMED", "INVEST", "NAMELESS"}
-        }
-        if live_names:
-            mask = ibtracs["NAME"].fillna("").str.strip().str.upper().isin(live_names)
-            dropped = int(mask.sum())
+        # Normalize storm names for matching
+        def _norm(series):
+            return series.fillna("").astype(str).str.strip().str.upper()
+        ib_names = _norm(ibtracs["NAME"])
+        live_names_per_row = _norm(live["NAME"])
+        placeholders = {"", "UNNAMED", "INVEST", "NAMELESS"}
+
+        # For each named storm in live, build the set of times it covers.
+        # Drop any IBTrACS row that shares (name, time) with live.
+        live_by_name: dict[str, set] = {}
+        for name, t in zip(live_names_per_row, live["time"]):
+            if name and name not in placeholders:
+                live_by_name.setdefault(name, set()).add(t)
+
+        if live_by_name:
+            dropped = 0
+            keep_mask = pd.Series(True, index=ibtracs.index)
+            for name, times in live_by_name.items():
+                storm_mask = ib_names == name
+                time_mask = ibtracs["time"].isin(times)
+                same_obs = storm_mask & time_mask
+                dropped += int(same_obs.sum())
+                keep_mask &= ~same_obs
             if dropped:
-                print(f"   dedupe: dropped {dropped} IBTrACS row(s) for storms "
-                      f"covered by live data: {sorted(live_names)}")
-            ibtracs = ibtracs[~mask].copy()
+                kept = int((ib_names.isin(live_by_name.keys())).sum() - dropped)
+                print(f"   dedupe: dropped {dropped} IBTrACS row(s) that overlap "
+                      f"live by (name,time). Kept {kept} IBTrACS row(s) for "
+                      f"timestamps live doesn't cover.")
+            ibtracs = ibtracs[keep_mask].copy()
 
     frames = [df for df in (ibtracs, live) if not df.empty]
     if not frames:
