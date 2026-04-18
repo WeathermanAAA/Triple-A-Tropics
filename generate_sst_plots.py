@@ -347,7 +347,13 @@ def day_of_year_crw_files(target_month: int, target_day: int,
 
 def read_crw_grid(path: Path, var_name: str
                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Read a CRW NetCDF file; normalize lon to 0..360 for consistency."""
+    """Read a CRW NetCDF file. Normalizes lat to ascending order and lon
+    to 0..360 convention so the plot code can share logic with OISST.
+
+    The SST product (coraltemp_v3.1) stores lat ascending; the SSTA and
+    other derived products store it descending. Without flipping, those
+    derived products render upside-down over the basemap.
+    """
     with Dataset(path, "r") as ds:
         # Auto-fallback if the expected variable isn't there
         if var_name not in ds.variables:
@@ -360,6 +366,12 @@ def read_crw_grid(path: Path, var_name: str
         data = np.ma.filled(data.astype(np.float32), np.nan)
         lat = ds.variables["lat"][:].astype(np.float32)
         lon = ds.variables["lon"][:].astype(np.float32)
+
+    # Flip if lat is descending so output is always ascending (-90 → +90)
+    if lat.size >= 2 and lat[0] > lat[-1]:
+        lat = lat[::-1]
+        data = data[::-1, :]
+
     # Roll CRW's -180..180 into 0..360 so _subset_to_extent can share logic.
     if float(np.nanmin(lon)) < 0:
         lon_rolled = np.where(lon < 0, lon + 360.0, lon)
