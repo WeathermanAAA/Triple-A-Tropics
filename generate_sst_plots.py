@@ -436,6 +436,11 @@ def _sst_anom_cmap() -> mcolors.LinearSegmentedColormap:
 
 CMAP_ACTUAL = _sst_actual_cmap()
 CMAP_ANOM = _sst_anom_cmap()
+# NaN pixels (land, no-data) render as LAND_COLOR so we don't need to
+# draw filled country polygons — simpler, and avoids the dateline-wrap
+# rectangle bug on wide Pacific extents.
+CMAP_ACTUAL.set_bad(color="#0b1a30", alpha=1.0)
+CMAP_ANOM.set_bad(color="#0b1a30", alpha=1.0)
 
 
 # --- Plotting -----------------------------------------------------------
@@ -486,9 +491,15 @@ def _subset_to_extent(
 
 
 def _draw_basemap(ax, extent: tuple, countries, coast) -> None:
-    """Plot land polygons + coastlines + country borders from Natural Earth.
+    """Draw coastline + country border LINES (no filled polygons).
 
-    Handles longitude wrapping so polygons at the dateline draw correctly."""
+    Land is painted directly by the SST colormap via set_bad() on its
+    NaN pixels. Skipping ax.fill() avoids a nasty bug: countries that
+    span the dateline (Russia, USA) get coord-wrapped into polygons
+    whose ring order is no longer sane, causing matplotlib.fill() to
+    paint enormous spurious rectangles across the ocean — the "dark
+    bands" we were seeing on North Pacific / ENSO / Southwest Pacific.
+    """
     lon_min, lon_max, lat_min, lat_max = extent
     wraps_dateline = lon_max > 180
 
@@ -497,34 +508,40 @@ def _draw_basemap(ax, extent: tuple, countries, coast) -> None:
             return x + 360
         return x
 
-    # Countries: fill as land + white borders on top
-    if countries:
-        for feat in countries.get("features", []):
+    def _draw_feature_lines(features, color, linewidth, zorder):
+        for feat in features:
             for ring in _feature_linestrings(feat):
+                if not ring:
+                    continue
                 xs = [_wrap_coord(x) for x, _ in ring]
                 ys = [y for _, y in ring]
-                # Skip polygons that don't touch the viewport (cheap bbox)
                 if max(ys) < lat_min or min(ys) > lat_max:
                     continue
                 if max(xs) < lon_min or min(xs) > lon_max:
                     continue
-                # Polygon fill (land)
-                ax.fill(xs, ys, color=LAND_COLOR, zorder=2, linewidth=0)
-                # White border
-                ax.plot(xs, ys, color=BORDER_COLOR, linewidth=0.8,
-                        zorder=3, solid_capstyle="round")
+                # Break the line at any big longitude jump (>90°) — that
+                # happens when a polygon edge crosses the wrap point
+                # and we don't want a horizontal line slicing the map.
+                segs: list[list[tuple[float, float]]] = [[]]
+                prev_x = xs[0]
+                for x, y in zip(xs, ys):
+                    if segs[-1] and abs(x - prev_x) > 90:
+                        segs.append([])
+                    segs[-1].append((x, y))
+                    prev_x = x
+                for seg in segs:
+                    if len(seg) < 2:
+                        continue
+                    ax.plot([p[0] for p in seg], [p[1] for p in seg],
+                            color=color, linewidth=linewidth, zorder=zorder,
+                            solid_capstyle="round", solid_joinstyle="round")
 
-    # Coastline lines — thinner, on top of fill, under anything else
+    if countries:
+        _draw_feature_lines(countries.get("features", []),
+                            BORDER_COLOR, 0.7, 3)
     if coast:
-        for feat in coast.get("features", []):
-            for line in _feature_linestrings(feat):
-                xs = [_wrap_coord(x) for x, _ in line]
-                ys = [y for _, y in line]
-                if max(ys) < lat_min or min(ys) > lat_max:
-                    continue
-                if max(xs) < lon_min or min(xs) > lon_max:
-                    continue
-                ax.plot(xs, ys, color=COAST_COLOR, linewidth=0.8, zorder=3)
+        _draw_feature_lines(coast.get("features", []),
+                            COAST_COLOR, 0.8, 3)
 
 
 def _lon_tick_label(x: float, _pos) -> str:
