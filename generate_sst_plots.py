@@ -822,12 +822,30 @@ def plot_actual(
         LON2, LAT2, sub, cmap=CMAP_ACTUAL, norm=norm,
         shading="auto", zorder=1, rasterized=True,
     )
-    # Thin black contour lines at each integer degree for readability
+    # Thin black contour lines at every integer degree, with bolder
+    # labeled contours every 5 °C so you can read values off the map.
     try:
         ax.contour(
             LON2, LAT2, sub, levels=np.arange(0, 33, 1),
-            colors="#000000", linewidths=0.25, alpha=0.55, zorder=1.5,
+            colors="#000000", linewidths=0.25, alpha=0.5, zorder=1.5,
         )
+        cs5 = ax.contour(
+            LON2, LAT2, sub, levels=np.arange(5, 31, 5),
+            colors="#000000", linewidths=0.7, alpha=0.8, zorder=1.55,
+        )
+        # Inline numeric labels on the 5 °C contours. White stroke
+        # around black text keeps them legible over any background
+        # color in the turbo-style colormap.
+        labels = ax.clabel(
+            cs5, inline=True, inline_spacing=3, fontsize=7,
+            fmt="%d°", colors="#000000",
+        )
+        from matplotlib import patheffects as pe
+        for lbl in labels:
+            lbl.set_path_effects([
+                pe.withStroke(linewidth=1.6, foreground="#ffffff"),
+            ])
+            lbl.set_fontweight("bold")
     except Exception:
         pass
     _draw_basemap(ax, extent, countries, coast)
