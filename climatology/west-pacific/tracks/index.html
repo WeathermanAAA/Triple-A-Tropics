@@ -5,6 +5,9 @@
 <title>West Pacific Tracks · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="2026 Western North Pacific tropical cyclone tracks with active storm positions and intensity. Updated every 6 hours.">
+<meta property="og:title" content="West Pacific TC Tracks · Triple-A-Tropics">
+<meta property="og:description" content="2026 Western North Pacific tropical cyclone tracks, updated every 6 hours.">
+<meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🌀</text></svg>">
 <link rel="stylesheet" href="/styles.css">
 </head>
@@ -35,10 +38,18 @@
   <a href="/climatology/west-pacific/tracks/" class="active">Tracks</a>
 </nav>
 
+<div class="active-banner-wrap" data-src="/wp_tracks_data.json"></div>
+
 <section class="chart-section">
   <div class="chart-card">
-    <iframe id="tracksFrame" class="chart-iframe" src="/wp_tracks.html"
-      title="2026 Western North Pacific tropical cyclone tracks map" loading="lazy" scrolling="no"></iframe>
+    <iframe
+      id="tracksFrame"
+      class="chart-iframe"
+      src="/wp_tracks.html"
+      title="2026 Western North Pacific tropical cyclone tracks map"
+      loading="lazy"
+      scrolling="no"
+    ></iframe>
   </div>
 </section>
 
@@ -70,9 +81,14 @@
       if (h > 200) frame.style.height = (h + 16) + 'px';
     } catch (e) {}
   }
-  frame.addEventListener('load', () => { resizeFrame(); setTimeout(resizeFrame, 200); setTimeout(resizeFrame, 800); });
+  frame.addEventListener('load', () => {
+    resizeFrame();
+    setTimeout(resizeFrame, 200);
+    setTimeout(resizeFrame, 800);
+  });
   window.addEventListener('resize', resizeFrame);
 </script>
+<script src="/active-banner.js" defer></script>
 
 </body>
 </html>
