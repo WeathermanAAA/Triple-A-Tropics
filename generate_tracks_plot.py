@@ -428,23 +428,31 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
 
 def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                              basin_cfg: dict) -> list[dict]:
-    """Merge IBTrACS + live frames, dedupe per-storm (live wins for
-    the current-year storms it has), then group into per-storm records."""
+    """Merge IBTrACS + live frames, drop duplicates that happen when the
+    same storm appears in both (IBTrACS uses its own SID while live ATCF
+    uses a different one, so SID-based dedupe isn't enough). We match by
+    storm name — if a storm is in both sources, live wins (it's fresher
+    and authoritative)."""
+    # Pre-merge: drop IBTrACS rows for any storm whose name is also in live.
+    if not live.empty and not ibtracs.empty:
+        live_names = {
+            str(n).strip().upper()
+            for n in live["NAME"].unique()
+            if pd.notna(n) and str(n).strip()
+            and str(n).strip().upper() not in {"", "UNNAMED", "INVEST", "NAMELESS"}
+        }
+        if live_names:
+            mask = ibtracs["NAME"].fillna("").str.strip().str.upper().isin(live_names)
+            dropped = int(mask.sum())
+            if dropped:
+                print(f"   dedupe: dropped {dropped} IBTrACS row(s) for storms "
+                      f"covered by live data: {sorted(live_names)}")
+            ibtracs = ibtracs[~mask].copy()
+
     frames = [df for df in (ibtracs, live) if not df.empty]
     if not frames:
         return []
     df = pd.concat(frames, ignore_index=True)
-
-    # If both IBTrACS and live have the same storm, prefer the live data
-    # for observations that overlap. Key is (SID, time) for IBTrACS; for
-    # live the SID won't match IBTrACS's, so they can coexist. We dedupe
-    # by IBTrACS SID replacing it with live data when the live b-deck has
-    # any observations for that storm number.
-    #
-    # Practical approach: if a live entry exists for the same storm
-    # number and season (matched via ATCF naming), drop the IBTrACS rows
-    # for that storm. Since we don't have a clean mapping, we instead
-    # just keep both and dedupe on (time, rounded lat/lon) ties.
     df = df.drop_duplicates(subset=["SID", "time"])
     df = df.sort_values(["SID", "time"]).reset_index(drop=True)
 
