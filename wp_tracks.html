@@ -43,6 +43,7 @@
   .active-icon .name { fill: #f1f7fd; font-size: 12px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }
+  .active-icon { cursor: pointer; }
 
   /* Sidebar */
   .side { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }
@@ -93,6 +94,61 @@
     paint-order: stroke fill;
     font-family: -apple-system, Segoe UI, Roboto, sans-serif;
     pointer-events: none; }
+
+  /* Hover tooltip for track dots */
+  .track-dot { cursor: pointer; }
+  .track-dot:hover { r: 6.5; stroke: #fff; stroke-width: 1.6; }
+  #dot-tooltip { position: fixed; z-index: 9000; pointer-events: none;
+    background: rgba(10,18,34,0.96); color: var(--fg);
+    border: 1px solid #2a3e5c; border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; line-height: 1.45;
+    min-width: 170px; box-shadow: 0 6px 20px rgba(0,0,0,0.55);
+    backdrop-filter: blur(4px); }
+  #dot-tooltip[hidden] { display: none; }
+  #dot-tooltip .tt-name { font-weight: 800; color: #f1f7fd;
+    font-size: 13px; letter-spacing: 0.3px; }
+  #dot-tooltip .tt-time { color: var(--muted); font-size: 11px;
+    margin-bottom: 4px; }
+  #dot-tooltip .tt-row { display: flex; justify-content: space-between;
+    gap: 10px; margin-top: 2px; }
+  #dot-tooltip .tt-lbl { color: var(--muted); }
+  #dot-tooltip .tt-val { color: var(--fg); font-variant-numeric: tabular-nums; }
+  #dot-tooltip .tt-cat { display: inline-block; padding: 1px 8px;
+    border-radius: 999px; font-size: 10px; font-weight: 700;
+    color: #07101c; margin-top: 2px; }
+
+  /* Clickable active-storm card + detail placard */
+  .storm-card.clickable { cursor: pointer; transition: background 0.15s; }
+  .storm-card.clickable:hover { background: rgba(255,184,58,0.14); }
+  .click-hint { font-size: 10px; color: var(--c1); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
+    opacity: 0.72; }
+  .storm-card.clickable.open .click-hint { opacity: 0; }
+  .storm-placard { margin-top: 10px; background: #0a1324;
+    border: 1px solid #243452; border-radius: 8px; overflow: hidden; }
+  .placard-banner { padding: 10px 12px; }
+  .placard-banner .pl-row1 { font-size: 12px; font-weight: 800;
+    letter-spacing: 0.4px; display: flex; align-items: center; gap: 8px;
+    text-transform: uppercase; }
+  .placard-banner .pl-cat { display: inline-block; padding: 2px 8px;
+    border-radius: 4px; background: rgba(0,0,0,0.15); color: inherit; }
+  .placard-banner .pl-intensity { display: flex; align-items: baseline;
+    gap: 10px; margin-top: 6px; }
+  .placard-banner .pl-big { font-size: 44px; font-weight: 900;
+    line-height: 1; font-variant-numeric: tabular-nums; }
+  .placard-banner .pl-units { font-size: 12px; font-weight: 700;
+    line-height: 1.25; }
+  .placard-banner .pl-deets { display: grid;
+    grid-template-columns: 1fr 1fr; gap: 2px 12px; margin-top: 8px;
+    font-size: 11px; font-weight: 600; }
+  .placard-banner .pl-deets span { opacity: 0.7; margin-right: 4px; }
+  .placard-banner .pl-deets b { font-weight: 700;
+    font-variant-numeric: tabular-nums; }
+  .placard-chart-label { padding: 8px 12px 2px; font-size: 11px;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px;
+    font-weight: 700; }
+  .wind-chart { display: block; width: 100%; padding: 0 6px 8px; }
+  .chart-empty { padding: 12px; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -101,7 +157,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Western North Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-18 03:32 UTC</div>
+        <div class="sub">As of 2026-04-18 04:02 UTC</div>
       </div>
       <div class="stats">
         <b>3</b> named storms · <b>1</b> typhoons ·
@@ -2455,88 +2511,88 @@
 </g>
         <g class="tracks">
 <path d="M 901.3,785.1 L 896.0,786.5 L 892.5,786.5 L 890.8,789.2 L 897.8,787.8 L 903.0,782.3 L 903.0,778.2 L 899.5,776.8 L 899.5,772.6 L 896.0,764.3 L 885.5,757.4 L 878.5,746.3 L 866.2,739.4 L 854.0,731.1 L 840.0,724.2 L 829.5,718.6 L 822.5,710.3 L 813.8,702.0 L 805.0,697.8 L 801.5,693.7 L 796.2,689.5 L 791.0,684.0 L 785.8,678.5 L 780.5,675.7 L 777.0,668.8 L 777.0,663.2 L 778.8,654.9 L 784.0,645.2 L 787.5,636.9 L 792.8,630.0 L 799.7,621.7 L 806.7,612.0 L 810.3,603.7 L 812.0,591.2" fill="none" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.5" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="901.3" cy="785.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="896.0" cy="786.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="892.5" cy="786.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="890.8" cy="789.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="897.8" cy="787.8" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="903.0" cy="782.3" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="903.0" cy="778.2" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="899.5" cy="776.8" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="899.5" cy="772.6" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="896.0" cy="764.3" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="885.5" cy="757.4" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="878.5" cy="746.3" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="866.2" cy="739.4" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="854.0" cy="731.1" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="840.0" cy="724.2" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="829.5" cy="718.6" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="822.5" cy="710.3" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="813.8" cy="702.0" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="805.0" cy="697.8" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="801.5" cy="693.7" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="796.2" cy="689.5" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="791.0" cy="684.0" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="785.8" cy="678.5" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="780.5" cy="675.7" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="777.0" cy="668.8" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="777.0" cy="663.2" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="778.8" cy="654.9" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="784.0" cy="645.2" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="787.5" cy="636.9" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="792.8" cy="630.0" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="799.7" cy="621.7" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="806.7" cy="612.0" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="810.3" cy="603.7" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="812.0" cy="591.2" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
+<circle class="track-dot" cx="901.3" cy="785.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-09T18:00:00" data-wind="35.0" data-pres="995.0" data-cls="TS"/>
+<circle class="track-dot" cx="896.0" cy="786.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-10T00:00:00" data-wind="40.0" data-pres="993.0" data-cls="TS"/>
+<circle class="track-dot" cx="892.5" cy="786.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-10T06:00:00" data-wind="45.0" data-pres="989.0" data-cls="TS"/>
+<circle class="track-dot" cx="890.8" cy="789.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-10T12:00:00" data-wind="55.0" data-pres="986.0" data-cls="TS"/>
+<circle class="track-dot" cx="897.8" cy="787.8" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-10T18:00:00" data-wind="65.0" data-pres="983.0" data-cls="C1"/>
+<circle class="track-dot" cx="903.0" cy="782.3" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-11T00:00:00" data-wind="75.0" data-pres="972.0" data-cls="C1"/>
+<circle class="track-dot" cx="903.0" cy="778.2" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-11T06:00:00" data-wind="80.0" data-pres="968.0" data-cls="C1"/>
+<circle class="track-dot" cx="899.5" cy="776.8" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-11T12:00:00" data-wind="85.0" data-pres="965.0" data-cls="C2"/>
+<circle class="track-dot" cx="899.5" cy="772.6" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-11T18:00:00" data-wind="95.0" data-pres="957.0" data-cls="C2"/>
+<circle class="track-dot" cx="896.0" cy="764.3" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-12T00:00:00" data-wind="115.0" data-pres="939.0" data-cls="C4"/>
+<circle class="track-dot" cx="885.5" cy="757.4" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-12T06:00:00" data-wind="130.0" data-pres="921.0" data-cls="C4"/>
+<circle class="track-dot" cx="878.5" cy="746.3" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-12T12:00:00" data-wind="150.0" data-pres="902.0" data-cls="C5"/>
+<circle class="track-dot" cx="866.2" cy="739.4" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-12T18:00:00" data-wind="160.0" data-pres="890.0" data-cls="C5"/>
+<circle class="track-dot" cx="854.0" cy="731.1" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-13T00:00:00" data-wind="155.0" data-pres="897.0" data-cls="C5"/>
+<circle class="track-dot" cx="840.0" cy="724.2" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-13T06:00:00" data-wind="150.0" data-pres="903.0" data-cls="C5"/>
+<circle class="track-dot" cx="829.5" cy="718.6" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-13T12:00:00" data-wind="150.0" data-pres="904.0" data-cls="C5"/>
+<circle class="track-dot" cx="822.5" cy="710.3" r="5" fill="#b03bff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-13T18:00:00" data-wind="145.0" data-pres="906.0" data-cls="C5"/>
+<circle class="track-dot" cx="813.8" cy="702.0" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-14T00:00:00" data-wind="135.0" data-pres="919.0" data-cls="C4"/>
+<circle class="track-dot" cx="805.0" cy="697.8" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-14T06:00:00" data-wind="130.0" data-pres="925.0" data-cls="C4"/>
+<circle class="track-dot" cx="801.5" cy="693.7" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-14T12:00:00" data-wind="125.0" data-pres="930.0" data-cls="C4"/>
+<circle class="track-dot" cx="796.2" cy="689.5" r="5" fill="#e33ad4" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-14T18:00:00" data-wind="115.0" data-pres="939.0" data-cls="C4"/>
+<circle class="track-dot" cx="791.0" cy="684.0" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-15T00:00:00" data-wind="110.0" data-pres="944.0" data-cls="C3"/>
+<circle class="track-dot" cx="785.8" cy="678.5" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-15T06:00:00" data-wind="110.0" data-pres="944.0" data-cls="C3"/>
+<circle class="track-dot" cx="780.5" cy="675.7" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-15T12:00:00" data-wind="110.0" data-pres="943.0" data-cls="C3"/>
+<circle class="track-dot" cx="777.0" cy="668.8" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-15T18:00:00" data-wind="105.0" data-pres="942.0" data-cls="C3"/>
+<circle class="track-dot" cx="777.0" cy="663.2" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-16T00:00:00" data-wind="100.0" data-pres="955.0" data-cls="C3"/>
+<circle class="track-dot" cx="778.8" cy="654.9" r="5" fill="#ff4d3b" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-16T06:00:00" data-wind="100.0" data-pres="953.0" data-cls="C3"/>
+<circle class="track-dot" cx="784.0" cy="645.2" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-16T12:00:00" data-wind="90.0" data-pres="963.0" data-cls="C2"/>
+<circle class="track-dot" cx="787.5" cy="636.9" r="5" fill="#ff9a2f" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-16T18:00:00" data-wind="85.0" data-pres="966.0" data-cls="C2"/>
+<circle class="track-dot" cx="792.8" cy="630.0" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-17T00:00:00" data-wind="80.0" data-pres="971.0" data-cls="C1"/>
+<circle class="track-dot" cx="799.7" cy="621.7" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-17T06:00:00" data-wind="80.0" data-pres="971.0" data-cls="C1"/>
+<circle class="track-dot" cx="806.7" cy="612.0" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-17T12:00:00" data-wind="75.0" data-pres="974.0" data-cls="C1"/>
+<circle class="track-dot" cx="810.3" cy="603.7" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-17T18:00:00" data-wind="70.0" data-pres="974.0" data-cls="C1"/>
+<circle class="track-dot" cx="812.0" cy="591.2" r="5" fill="#ffe14d" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-18T00:00:00" data-wind="65.0" data-pres="979.0" data-cls="C1"/>
 <path d="M 528.5,768.5 L 519.7,771.2 L 505.8,761.5 L 505.8,761.5 L 507.5,758.8 L 505.8,744.9 L 490.0,733.8 L 472.5,731.1 L 449.8,722.8 L 437.5,713.1 L 427.0,704.8 L 421.7,692.3 L 437.5,702.0 L 441.0,700.6 L 446.2,697.8 L 449.8,688.2 L 449.8,677.1 L 463.8,670.2 L 465.5,668.8 L 472.5,664.6 L 491.7,664.6 L 509.2,660.5 L 530.3,654.9 L 558.3,654.9 L 577.5,663.2" fill="none" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.5" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="528.5" cy="768.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="519.7" cy="771.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="505.8" cy="761.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="505.8" cy="761.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="507.5" cy="758.8" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="505.8" cy="744.9" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="490.0" cy="733.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="472.5" cy="731.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="449.8" cy="722.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="437.5" cy="713.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="427.0" cy="704.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="421.7" cy="692.3" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="437.5" cy="702.0" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="441.0" cy="700.6" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="446.2" cy="697.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="449.8" cy="688.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="449.8" cy="677.1" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="463.8" cy="670.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="465.5" cy="668.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="472.5" cy="664.6" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="491.7" cy="664.6" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="509.2" cy="660.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="530.3" cy="654.9" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="558.3" cy="654.9" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="577.5" cy="663.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
+<circle class="track-dot" cx="528.5" cy="768.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-14T18:00:00" data-wind="25.0" data-pres="1002.0" data-cls="TD"/>
+<circle class="track-dot" cx="519.7" cy="771.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-15T00:00:00" data-wind="29.0" data-pres="1002.0" data-cls="TD"/>
+<circle class="track-dot" cx="505.8" cy="761.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-15T06:00:00" data-wind="29.0" data-pres="998.0" data-cls="TD"/>
+<circle class="track-dot" cx="505.8" cy="761.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-15T12:00:00" data-wind="29.0" data-pres="998.0" data-cls="TD"/>
+<circle class="track-dot" cx="507.5" cy="758.8" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-15T18:00:00" data-wind="29.0" data-pres="998.0" data-cls="TD"/>
+<circle class="track-dot" cx="505.8" cy="744.9" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-16T00:00:00" data-wind="35.0" data-pres="999.0" data-cls="TS"/>
+<circle class="track-dot" cx="490.0" cy="733.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-16T06:00:00" data-wind="35.0" data-pres="997.0" data-cls="TS"/>
+<circle class="track-dot" cx="472.5" cy="731.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-16T12:00:00" data-wind="39.0" data-pres="997.0" data-cls="TS"/>
+<circle class="track-dot" cx="449.8" cy="722.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-16T18:00:00" data-wind="45.0" data-pres="992.0" data-cls="TS"/>
+<circle class="track-dot" cx="437.5" cy="713.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-17T00:00:00" data-wind="45.0" data-pres="996.0" data-cls="TS"/>
+<circle class="track-dot" cx="427.0" cy="704.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-17T06:00:00" data-wind="51.0" data-pres="994.0" data-cls="TS"/>
+<circle class="track-dot" cx="421.7" cy="692.3" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-17T12:00:00" data-wind="51.0" data-pres="993.0" data-cls="TS"/>
+<circle class="track-dot" cx="437.5" cy="702.0" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-17T18:00:00" data-wind="45.0" data-pres="997.0" data-cls="TS"/>
+<circle class="track-dot" cx="441.0" cy="700.6" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-18T00:00:00" data-wind="39.0" data-pres="999.0" data-cls="TS"/>
+<circle class="track-dot" cx="446.2" cy="697.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-18T06:00:00" data-wind="35.0" data-pres="997.0" data-cls="TS"/>
+<circle class="track-dot" cx="449.8" cy="688.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-18T12:00:00" data-wind="29.0" data-pres="998.0" data-cls="TD"/>
+<circle class="track-dot" cx="449.8" cy="677.1" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-18T18:00:00" data-wind="29.0" data-pres="1000.0" data-cls="TD"/>
+<circle class="track-dot" cx="463.8" cy="670.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-19T00:00:00" data-wind="35.0" data-pres="1002.0" data-cls="TS"/>
+<circle class="track-dot" cx="465.5" cy="668.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-19T06:00:00" data-wind="35.0" data-pres="998.0" data-cls="TS"/>
+<circle class="track-dot" cx="472.5" cy="664.6" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-19T12:00:00" data-wind="29.0" data-pres="1000.0" data-cls="TD"/>
+<circle class="track-dot" cx="491.7" cy="664.6" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-19T18:00:00" data-wind="29.0" data-pres="999.0" data-cls="TD"/>
+<circle class="track-dot" cx="509.2" cy="660.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-20T00:00:00" data-wind="29.0" data-pres="1002.0" data-cls="TD"/>
+<circle class="track-dot" cx="530.3" cy="654.9" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-20T06:00:00" data-wind="35.0" data-pres="1000.0" data-cls="TS"/>
+<circle class="track-dot" cx="558.3" cy="654.9" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-20T12:00:00" data-wind="35.0" data-pres="1001.0" data-cls="TS"/>
+<circle class="track-dot" cx="577.5" cy="663.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-20T18:00:00" data-wind="29.0" data-pres="1001.0" data-cls="TD"/>
 <path d="M 579.2,778.2 L 570.5,779.5 L 551.2,779.5 L 532.0,785.1 L 512.8,789.2 L 488.3,786.5 L 472.5,782.3 L 451.5,771.2 L 434.0,764.3 L 413.0,762.9 L 399.0,760.2" fill="none" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.5" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="579.2" cy="778.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="570.5" cy="779.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="551.2" cy="779.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="532.0" cy="785.1" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="512.8" cy="789.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="488.3" cy="786.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="472.5" cy="782.3" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="451.5" cy="771.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="434.0" cy="764.3" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="413.0" cy="762.9" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="399.0" cy="760.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
+<circle class="track-dot" cx="579.2" cy="778.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-04T00:00:00" data-wind="29.0" data-pres="1003.0" data-cls="TD"/>
+<circle class="track-dot" cx="570.5" cy="779.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-04T06:00:00" data-wind="29.0" data-pres="1002.0" data-cls="TD"/>
+<circle class="track-dot" cx="551.2" cy="779.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-04T12:00:00" data-wind="29.0" data-pres="1002.0" data-cls="TD"/>
+<circle class="track-dot" cx="532.0" cy="785.1" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-04T18:00:00" data-wind="29.0" data-pres="1001.0" data-cls="TD"/>
+<circle class="track-dot" cx="512.8" cy="789.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-05T00:00:00" data-wind="35.0" data-pres="1000.0" data-cls="TS"/>
+<circle class="track-dot" cx="488.3" cy="786.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-05T06:00:00" data-wind="39.0" data-pres="999.0" data-cls="TS"/>
+<circle class="track-dot" cx="472.5" cy="782.3" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-05T12:00:00" data-wind="39.0" data-pres="1001.0" data-cls="TS"/>
+<circle class="track-dot" cx="451.5" cy="771.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-05T18:00:00" data-wind="35.0" data-pres="1001.0" data-cls="TS"/>
+<circle class="track-dot" cx="434.0" cy="764.3" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-06T00:00:00" data-wind="29.0" data-pres="1002.0" data-cls="TD"/>
+<circle class="track-dot" cx="413.0" cy="762.9" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-06T06:00:00" data-wind="29.0" data-pres="1004.0" data-cls="TD"/>
+<circle class="track-dot" cx="399.0" cy="760.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026035N09133" data-name="PENHA" data-t="2026-02-06T12:00:00" data-wind="25.0" data-pres="1004.0" data-cls="TD"/>
 <path d="M 644.0,756.0 L 654.5,754.6 L 666.7,747.7 L 673.8,747.7 L 666.7,757.4 L 668.5,764.3" fill="none" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.5" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="644.0" cy="756.0" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="654.5" cy="754.6" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="666.7" cy="747.7" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="673.8" cy="747.7" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="666.7" cy="757.4" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
-<circle cx="668.5" cy="764.3" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>
+<circle class="track-dot" cx="644.0" cy="756.0" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026070N10137" data-name="NURI" data-t="2026-03-11T00:00:00" data-wind="29.0" data-pres="1001.0" data-cls="TD"/>
+<circle class="track-dot" cx="654.5" cy="754.6" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026070N10137" data-name="NURI" data-t="2026-03-11T06:00:00" data-wind="29.0" data-pres="1000.0" data-cls="TD"/>
+<circle class="track-dot" cx="666.7" cy="747.7" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026070N10137" data-name="NURI" data-t="2026-03-11T12:00:00" data-wind="29.0" data-pres="1000.0" data-cls="TD"/>
+<circle class="track-dot" cx="673.8" cy="747.7" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026070N10137" data-name="NURI" data-t="2026-03-11T18:00:00" data-wind="29.0" data-pres="1001.0" data-cls="TD"/>
+<circle class="track-dot" cx="666.7" cy="757.4" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026070N10137" data-name="NURI" data-t="2026-03-12T00:00:00" data-wind="25.0" data-pres="1003.0" data-cls="TD"/>
+<circle class="track-dot" cx="668.5" cy="764.3" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026070N10137" data-name="NURI" data-t="2026-03-12T06:00:00" data-wind="19.0" data-pres="1001.0" data-cls="TD"/>
 </g>
         <g class="active-storms">
-<g class="active-icon" transform="translate(812.0,591.2)" style="filter:drop-shadow(0 0 6px #ffe14d);">
+<g class="active-icon" data-sid="JTWC_WP042026" transform="translate(812.0,591.2)" style="filter:drop-shadow(0 0 6px #ffe14d);">
   <g transform="scale(0.7)">
     <g class="spin-wrap">
       <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="#ffe14d"/>
@@ -2565,7 +2621,7 @@
     <div class="panel-title">2026 Season · 4 Storms</div>
     <div class="storm-list" id="storms">
       
-<div class="storm-card active">
+<div class="storm-card active clickable" id="card-JTWC_WP042026" data-sid="JTWC_WP042026">
   <div class="storm-top">
     <div class="storm-name">SINLAKU<span class="storm-active">Active</span></div>
     <div class="storm-cat" style="background:#b03bff">Cat 5</div>
@@ -2576,10 +2632,12 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">890.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">38.28</span></div>
   </div>
+  <div class="click-hint">▸ Click for live details</div>
+  <div class="storm-placard" id="placard-JTWC_WP042026" hidden></div>
 </div>
 
 
-<div class="storm-card">
+<div class="storm-card" id="card-2026015N10130" data-sid="2026015N10130">
   <div class="storm-top">
     <div class="storm-name">NOKAEN</div>
     <div class="storm-cat" style="background:#46c56a">TS</div>
@@ -2590,10 +2648,12 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">992.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">2.29</span></div>
   </div>
+  
+  
 </div>
 
 
-<div class="storm-card">
+<div class="storm-card" id="card-2026035N09133" data-sid="2026035N09133">
   <div class="storm-top">
     <div class="storm-name">PENHA</div>
     <div class="storm-cat" style="background:#46c56a">TS</div>
@@ -2604,10 +2664,12 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">999.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">0.55</span></div>
   </div>
+  
+  
 </div>
 
 
-<div class="storm-card">
+<div class="storm-card" id="card-2026070N10137" data-sid="2026070N10137">
   <div class="storm-top">
     <div class="storm-name">NURI</div>
     <div class="storm-cat" style="background:#3fa4ff">TD</div>
@@ -2618,10 +2680,290 @@
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">1000.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">0.00</span></div>
   </div>
+  
+  
 </div>
 
     </div>
   </div>
 </div>
+
+<div id="dot-tooltip" hidden></div>
+
+<script id="storms-payload" type="application/json">{"storms":[{"sid":"JTWC_WP042026","name":"SINLAKU","is_active":true,"current_category":"C1","points":[{"t":"2026-04-09T18:00:00","lat":8.3,"lon":151.5,"wind_kt":35.0,"pressure_mb":995.0,"cls":"TS"},{"t":"2026-04-10T00:00:00","lat":8.2,"lon":151.2,"wind_kt":40.0,"pressure_mb":993.0,"cls":"TS"},{"t":"2026-04-10T06:00:00","lat":8.2,"lon":151.0,"wind_kt":45.0,"pressure_mb":989.0,"cls":"TS"},{"t":"2026-04-10T12:00:00","lat":8.0,"lon":150.9,"wind_kt":55.0,"pressure_mb":986.0,"cls":"TS"},{"t":"2026-04-10T18:00:00","lat":8.1,"lon":151.3,"wind_kt":65.0,"pressure_mb":983.0,"cls":"C1"},{"t":"2026-04-11T00:00:00","lat":8.5,"lon":151.6,"wind_kt":75.0,"pressure_mb":972.0,"cls":"C1"},{"t":"2026-04-11T06:00:00","lat":8.8,"lon":151.6,"wind_kt":80.0,"pressure_mb":968.0,"cls":"C1"},{"t":"2026-04-11T12:00:00","lat":8.9,"lon":151.4,"wind_kt":85.0,"pressure_mb":965.0,"cls":"C2"},{"t":"2026-04-11T18:00:00","lat":9.2,"lon":151.4,"wind_kt":95.0,"pressure_mb":957.0,"cls":"C2"},{"t":"2026-04-12T00:00:00","lat":9.8,"lon":151.2,"wind_kt":115.0,"pressure_mb":939.0,"cls":"C4"},{"t":"2026-04-12T06:00:00","lat":10.3,"lon":150.6,"wind_kt":130.0,"pressure_mb":921.0,"cls":"C4"},{"t":"2026-04-12T12:00:00","lat":11.1,"lon":150.2,"wind_kt":150.0,"pressure_mb":902.0,"cls":"C5"},{"t":"2026-04-12T18:00:00","lat":11.6,"lon":149.5,"wind_kt":160.0,"pressure_mb":890.0,"cls":"C5"},{"t":"2026-04-13T00:00:00","lat":12.2,"lon":148.8,"wind_kt":155.0,"pressure_mb":897.0,"cls":"C5"},{"t":"2026-04-13T06:00:00","lat":12.7,"lon":148.0,"wind_kt":150.0,"pressure_mb":903.0,"cls":"C5"},{"t":"2026-04-13T12:00:00","lat":13.1,"lon":147.4,"wind_kt":150.0,"pressure_mb":904.0,"cls":"C5"},{"t":"2026-04-13T18:00:00","lat":13.7,"lon":147.0,"wind_kt":145.0,"pressure_mb":906.0,"cls":"C5"},{"t":"2026-04-14T00:00:00","lat":14.3,"lon":146.5,"wind_kt":135.0,"pressure_mb":919.0,"cls":"C4"},{"t":"2026-04-14T06:00:00","lat":14.6,"lon":146.0,"wind_kt":130.0,"pressure_mb":925.0,"cls":"C4"},{"t":"2026-04-14T12:00:00","lat":14.9,"lon":145.8,"wind_kt":125.0,"pressure_mb":930.0,"cls":"C4"},{"t":"2026-04-14T18:00:00","lat":15.2,"lon":145.5,"wind_kt":115.0,"pressure_mb":939.0,"cls":"C4"},{"t":"2026-04-15T00:00:00","lat":15.6,"lon":145.2,"wind_kt":110.0,"pressure_mb":944.0,"cls":"C3"},{"t":"2026-04-15T06:00:00","lat":16.0,"lon":144.9,"wind_kt":110.0,"pressure_mb":944.0,"cls":"C3"},{"t":"2026-04-15T12:00:00","lat":16.2,"lon":144.6,"wind_kt":110.0,"pressure_mb":943.0,"cls":"C3"},{"t":"2026-04-15T18:00:00","lat":16.7,"lon":144.4,"wind_kt":105.0,"pressure_mb":942.0,"cls":"C3"},{"t":"2026-04-16T00:00:00","lat":17.1,"lon":144.4,"wind_kt":100.0,"pressure_mb":955.0,"cls":"C3"},{"t":"2026-04-16T06:00:00","lat":17.7,"lon":144.5,"wind_kt":100.0,"pressure_mb":953.0,"cls":"C3"},{"t":"2026-04-16T12:00:00","lat":18.4,"lon":144.8,"wind_kt":90.0,"pressure_mb":963.0,"cls":"C2"},{"t":"2026-04-16T18:00:00","lat":19.0,"lon":145.0,"wind_kt":85.0,"pressure_mb":966.0,"cls":"C2"},{"t":"2026-04-17T00:00:00","lat":19.5,"lon":145.3,"wind_kt":80.0,"pressure_mb":971.0,"cls":"C1"},{"t":"2026-04-17T06:00:00","lat":20.1,"lon":145.7,"wind_kt":80.0,"pressure_mb":971.0,"cls":"C1"},{"t":"2026-04-17T12:00:00","lat":20.8,"lon":146.1,"wind_kt":75.0,"pressure_mb":974.0,"cls":"C1"},{"t":"2026-04-17T18:00:00","lat":21.4,"lon":146.3,"wind_kt":70.0,"pressure_mb":974.0,"cls":"C1"},{"t":"2026-04-18T00:00:00","lat":22.3,"lon":146.4,"wind_kt":65.0,"pressure_mb":979.0,"cls":"C1"}]},{"sid":"2026015N10130","name":"NOKAEN","is_active":false,"current_category":"TD","points":[{"t":"2026-01-14T18:00:00","lat":9.5,"lon":130.2,"wind_kt":25.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-15T00:00:00","lat":9.3,"lon":129.7,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-15T06:00:00","lat":10.0,"lon":128.9,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-15T12:00:00","lat":10.0,"lon":128.9,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-15T18:00:00","lat":10.2,"lon":129.0,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-16T00:00:00","lat":11.2,"lon":128.9,"wind_kt":35.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-01-16T06:00:00","lat":12.0,"lon":128.0,"wind_kt":35.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-16T12:00:00","lat":12.2,"lon":127.0,"wind_kt":39.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-16T18:00:00","lat":12.8,"lon":125.7,"wind_kt":45.0,"pressure_mb":992.0,"cls":"TS"},{"t":"2026-01-17T00:00:00","lat":13.5,"lon":125.0,"wind_kt":45.0,"pressure_mb":996.0,"cls":"TS"},{"t":"2026-01-17T06:00:00","lat":14.1,"lon":124.4,"wind_kt":51.0,"pressure_mb":994.0,"cls":"TS"},{"t":"2026-01-17T12:00:00","lat":15.0,"lon":124.1,"wind_kt":51.0,"pressure_mb":993.0,"cls":"TS"},{"t":"2026-01-17T18:00:00","lat":14.3,"lon":125.0,"wind_kt":45.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-18T00:00:00","lat":14.4,"lon":125.2,"wind_kt":39.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-01-18T06:00:00","lat":14.6,"lon":125.5,"wind_kt":35.0,"pressure_mb":997.0,"cls":"TS"},{"t":"2026-01-18T12:00:00","lat":15.3,"lon":125.7,"wind_kt":29.0,"pressure_mb":998.0,"cls":"TD"},{"t":"2026-01-18T18:00:00","lat":16.1,"lon":125.7,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-01-19T00:00:00","lat":16.6,"lon":126.5,"wind_kt":35.0,"pressure_mb":1002.0,"cls":"TS"},{"t":"2026-01-19T06:00:00","lat":16.7,"lon":126.6,"wind_kt":35.0,"pressure_mb":998.0,"cls":"TS"},{"t":"2026-01-19T12:00:00","lat":17.0,"lon":127.0,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-01-19T18:00:00","lat":17.0,"lon":128.1,"wind_kt":29.0,"pressure_mb":999.0,"cls":"TD"},{"t":"2026-01-20T00:00:00","lat":17.3,"lon":129.1,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-01-20T06:00:00","lat":17.7,"lon":130.3,"wind_kt":35.0,"pressure_mb":1000.0,"cls":"TS"},{"t":"2026-01-20T12:00:00","lat":17.7,"lon":131.9,"wind_kt":35.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-01-20T18:00:00","lat":17.1,"lon":133.0,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"}]},{"sid":"2026035N09133","name":"PENHA","is_active":false,"current_category":"TD","points":[{"t":"2026-02-04T00:00:00","lat":8.8,"lon":133.1,"wind_kt":29.0,"pressure_mb":1003.0,"cls":"TD"},{"t":"2026-02-04T06:00:00","lat":8.7,"lon":132.6,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-04T12:00:00","lat":8.7,"lon":131.5,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-04T18:00:00","lat":8.3,"lon":130.4,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-02-05T00:00:00","lat":8.0,"lon":129.3,"wind_kt":35.0,"pressure_mb":1000.0,"cls":"TS"},{"t":"2026-02-05T06:00:00","lat":8.2,"lon":127.9,"wind_kt":39.0,"pressure_mb":999.0,"cls":"TS"},{"t":"2026-02-05T12:00:00","lat":8.5,"lon":127.0,"wind_kt":39.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-02-05T18:00:00","lat":9.3,"lon":125.8,"wind_kt":35.0,"pressure_mb":1001.0,"cls":"TS"},{"t":"2026-02-06T00:00:00","lat":9.8,"lon":124.8,"wind_kt":29.0,"pressure_mb":1002.0,"cls":"TD"},{"t":"2026-02-06T06:00:00","lat":9.9,"lon":123.6,"wind_kt":29.0,"pressure_mb":1004.0,"cls":"TD"},{"t":"2026-02-06T12:00:00","lat":10.1,"lon":122.8,"wind_kt":25.0,"pressure_mb":1004.0,"cls":"TD"}]},{"sid":"2026070N10137","name":"NURI","is_active":false,"current_category":"TD","points":[{"t":"2026-03-11T00:00:00","lat":10.4,"lon":136.8,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-03-11T06:00:00","lat":10.5,"lon":137.4,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-03-11T12:00:00","lat":11.0,"lon":138.1,"wind_kt":29.0,"pressure_mb":1000.0,"cls":"TD"},{"t":"2026-03-11T18:00:00","lat":11.0,"lon":138.5,"wind_kt":29.0,"pressure_mb":1001.0,"cls":"TD"},{"t":"2026-03-12T00:00:00","lat":10.3,"lon":138.1,"wind_kt":25.0,"pressure_mb":1003.0,"cls":"TD"},{"t":"2026-03-12T06:00:00","lat":9.8,"lon":138.2,"wind_kt":19.0,"pressure_mb":1001.0,"cls":"TD"}]}]}</script>
+<script>
+
+(function() {
+  var SSHS_COLORS = {
+    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
+    "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
+  };
+  var CAT_LABELS = {
+    "TD": "Tropical Depression", "TS": "Tropical Storm",
+    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
+    "C4": "Category 4", "C5": "Category 5"
+  };
+  function ktToMph(k) { return Math.round(k * 1.15077945); }
+  function ktToKmh(k) { return Math.round(k * 1.852); }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function fmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var hh = String(d.getUTCHours()).padStart(2,"0");
+    var mm = String(d.getUTCMinutes()).padStart(2,"0");
+    return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  function fmtLatLon(lat, lon) {
+    while (lon > 180) lon -= 360;
+    while (lon < -180) lon += 360;
+    var la = Math.abs(lat).toFixed(1) + "\u00B0 " + (lat >= 0 ? "N" : "S");
+    var lo = Math.abs(lon).toFixed(1) + "\u00B0 " + (lon >= 0 ? "E" : "W");
+    return la + "   " + lo;
+  }
+  function compass(b) {
+    var dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return dirs[Math.round(b / 22.5) % 16];
+  }
+
+  // ---- Load payload ----
+  var payloadEl = document.getElementById("storms-payload");
+  var STORMS = [];
+  try { STORMS = JSON.parse(payloadEl.textContent || "[]"); }
+  catch (e) { STORMS = []; }
+  // Payload contains the full page object; pick off the storms list.
+  if (STORMS && STORMS.storms) STORMS = STORMS.storms;
+  var storemap = {};
+  STORMS.forEach(function(s) { storemap[s.sid] = s; });
+
+  // ---- Hover tooltip ----
+  var tip = document.getElementById("dot-tooltip");
+  function showTip(e) {
+    var d = e.currentTarget.dataset;
+    var windKt = d.wind ? parseFloat(d.wind) : null;
+    var windTxt = windKt != null && !isNaN(windKt)
+      ? (Math.round(windKt) + " kt · " + ktToMph(windKt) + " mph")
+      : "\u2014";
+    var presTxt = d.pres && d.pres !== "" ? (Math.round(parseFloat(d.pres)) + " mb") : "\u2014";
+    var cls = d.cls || "TD";
+    var catTxt = CAT_LABELS[cls] || cls;
+    tip.innerHTML =
+      '<div class="tt-name">' + escapeHtml(d.name) + '</div>' +
+      '<div class="tt-time">' + fmtTime(d.t) + '</div>' +
+      '<div class="tt-row"><span class="tt-cat" style="background:' +
+        (SSHS_COLORS[cls] || "#888") + '">' + catTxt + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Wind</span><span class="tt-val">' + windTxt + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Pressure</span><span class="tt-val">' + presTxt + '</span></div>';
+    tip.hidden = false;
+    moveTip(e);
+  }
+  function moveTip(e) {
+    var pad = 14;
+    var x = e.clientX + pad;
+    var y = e.clientY + pad;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    if (x + tw > window.innerWidth - 6) x = e.clientX - tw - pad;
+    if (y + th > window.innerHeight - 6) y = e.clientY - th - pad;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  }
+  function hideTip() { tip.hidden = true; }
+  var dots = document.querySelectorAll(".track-dot");
+  dots.forEach(function(dot) {
+    dot.addEventListener("mouseenter", showTip);
+    dot.addEventListener("mousemove", moveTip);
+    dot.addEventListener("mouseleave", hideTip);
+    dot.addEventListener("click", function(e) {
+      var sid = dot.dataset.sid;
+      if (sid && storemap[sid] && storemap[sid].is_active) {
+        openPlacard(sid);
+      }
+    });
+  });
+
+  // ---- Active-storm click: open detail placard ----
+  function togglePlacard(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    if (!el) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = renderPlacard(storemap[sid]);
+      el.dataset.rendered = "1";
+    }
+    var nowOpen = el.hidden;  // hidden => will become visible
+    el.hidden = !el.hidden;
+    if (card) card.classList.toggle("open", nowOpen);
+    if (nowOpen && card) {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  function openPlacard(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    if (!el) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = renderPlacard(storemap[sid]);
+      el.dataset.rendered = "1";
+    }
+    el.hidden = false;
+    if (card) {
+      card.classList.add("open");
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  document.querySelectorAll(".storm-card.clickable").forEach(function(card) {
+    card.addEventListener("click", function() {
+      togglePlacard(card.dataset.sid);
+    });
+  });
+  document.querySelectorAll(".active-icon").forEach(function(g) {
+    g.addEventListener("click", function(e) {
+      e.stopPropagation();
+      openPlacard(g.dataset.sid);
+    });
+  });
+
+  // ---- Placard rendering ----
+  function computeMovement(pts) {
+    // Use the last two points spaced ≥ 1 hour apart
+    for (var i = pts.length - 2; i >= 0; i--) {
+      var a = pts[i], b = pts[pts.length - 1];
+      var ta = new Date(a.t).getTime(), tb = new Date(b.t).getTime();
+      var dtH = (tb - ta) / 3600000;
+      if (dtH < 1) continue;
+      var latm = (b.lat - a.lat) * 60;
+      var lonm = (b.lon - a.lon) * 60 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+      var distNm = Math.sqrt(latm*latm + lonm*lonm);
+      if (distNm < 0.5) return "Nearly stationary";
+      var speedKt = distNm / dtH;
+      var bearing = (Math.atan2(lonm, latm) * 180 / Math.PI + 360) % 360;
+      return compass(bearing) + " at " + ktToMph(speedKt) + " mph";
+    }
+    return "\u2014";
+  }
+  function renderPlacard(storm) {
+    if (!storm) return '<div class="chart-empty">No data.</div>';
+    var pts = (storm.points || []).slice();
+    var validPts = pts.filter(function(p) { return p.wind_kt != null; });
+    var last = pts[pts.length - 1] || {};
+    var lastValid = validPts[validPts.length - 1] || last;
+    var cls = storm.current_category || "TD";
+    var color = SSHS_COLORS[cls] || "#888";
+    var catLabel = CAT_LABELS[cls] || cls;
+    var windKt = lastValid.wind_kt || 0;
+    var windMph = ktToMph(windKt);
+    var windKmh = ktToKmh(windKt);
+    var pres = lastValid.pressure_mb;
+    var loc = fmtLatLon(last.lat, last.lon);
+    var movement = computeMovement(pts);
+    var chart = renderWindChart(validPts);
+    // Banner text color: dark against bright category colors, light against
+    // darker ones (C3/C4/C5 reads better with white text).
+    var darkText = (cls === "TS" || cls === "C1" || cls === "C2");
+    var txtColor = darkText ? "#0a1324" : "#ffffff";
+    return (
+      '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        '<div class="pl-row1"><span class="pl-cat">' + catLabel + '</span><b>' +
+          escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
+        '<div class="pl-intensity">' +
+          '<div class="pl-big">' + windMph + '</div>' +
+          '<div class="pl-units">mph<br>' + windKmh + ' km/h</div>' +
+        '</div>' +
+        '<div class="pl-deets">' +
+          '<div><span>Updated</span><b>' + fmtTime(last.t) + '</b></div>' +
+          '<div><span>Location</span><b>' + loc + '</b></div>' +
+          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "\u2014") + '</b></div>' +
+          '<div><span>Movement</span><b>' + movement + '</b></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="placard-chart-label">Wind history</div>' +
+      chart
+    );
+  }
+
+  function renderWindChart(pts) {
+    if (!pts.length) {
+      return '<div class="chart-empty">No wind observations yet.</div>';
+    }
+    var W = 320, H = 190;
+    var padL = 34, padR = 8, padT = 8, padB = 26;
+    var plotW = W - padL - padR;
+    var plotH = H - padT - padB;
+    var times = pts.map(function(p) { return new Date(p.t).getTime(); });
+    var tMin = Math.min.apply(null, times);
+    var tMax = Math.max.apply(null, times);
+    var maxWind = Math.max(160, Math.max.apply(null, pts.map(function(p) { return p.wind_kt || 0; })));
+    function yScale(w) { return padT + plotH - (w / maxWind) * plotH; }
+    function xScale(t) {
+      if (tMax === tMin) return padL + plotW / 2;
+      return padL + (t - tMin) / (tMax - tMin) * plotW;
+    }
+    var bands = [
+      [0, 34, SSHS_COLORS.TD],
+      [34, 64, SSHS_COLORS.TS],
+      [64, 83, SSHS_COLORS.C1],
+      [83, 96, SSHS_COLORS.C2],
+      [96, 113, SSHS_COLORS.C3],
+      [113, 137, SSHS_COLORS.C4],
+      [137, maxWind, SSHS_COLORS.C5]
+    ];
+    var bandRects = bands.map(function(b) {
+      var lo = b[0], hi = b[1], c = b[2];
+      var y1 = yScale(Math.min(hi, maxWind));
+      var y2 = yScale(lo);
+      return '<rect x="' + padL + '" y="' + y1 + '" width="' + plotW +
+             '" height="' + (y2 - y1) + '" fill="' + c + '" fill-opacity="0.38"/>';
+    }).join("");
+    var pathD = "M " + pts.map(function(p) {
+      return xScale(new Date(p.t).getTime()).toFixed(1) + "," +
+             yScale(p.wind_kt || 0).toFixed(1);
+    }).join(" L ");
+    var dotsSvg = pts.map(function(p) {
+      var x = xScale(new Date(p.t).getTime()).toFixed(1);
+      var y = yScale(p.wind_kt || 0).toFixed(1);
+      return '<circle cx="' + x + '" cy="' + y + '" r="2.4" fill="#0a1324" ' +
+             'stroke="#ffffff" stroke-width="0.8"/>';
+    }).join("");
+    var ticks = [0, 35, 65, 85, 100, 115, 140, 160];
+    var yLabels = ticks.filter(function(v) { return v <= maxWind; }).map(function(v) {
+      var y = yScale(v);
+      return '<g><line x1="' + (padL - 3) + '" y1="' + y + '" x2="' + padL +
+             '" y2="' + y + '" stroke="#3a4d6e" stroke-width="0.6"/>' +
+             '<text x="' + (padL - 6) + '" y="' + (y + 3) +
+             '" text-anchor="end" font-size="9" fill="#8ea2bd">' + v + '</text></g>';
+    }).join("");
+    var nTicks = 3;
+    var xLabels = "";
+    for (var i = 0; i < nTicks; i++) {
+      var t = tMin + (i * (tMax - tMin) / (nTicks - 1 || 1));
+      var x = xScale(t);
+      var d = new Date(t);
+      var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      var label = m[d.getUTCMonth()] + " " + d.getUTCDate();
+      xLabels += '<text x="' + x + '" y="' + (H - padB + 13) +
+                 '" text-anchor="middle" font-size="9" fill="#8ea2bd">' + label + '</text>';
+    }
+    return (
+      '<svg class="wind-chart" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="xMidYMid meet">' +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
+          '" height="' + plotH + '" fill="#07101c"/>' +
+        bandRects +
+        '<path d="' + pathD + '" fill="none" stroke="#ffffff" ' +
+          'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        dotsSvg +
+        yLabels + xLabels +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
+          '" height="' + plotH + '" fill="none" stroke="#243452"/>' +
+      '</svg>'
+    );
+  }
+})();
+
+</script>
 </body>
 </html>
