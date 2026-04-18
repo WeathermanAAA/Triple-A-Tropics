@@ -214,17 +214,20 @@ def day_of_year_files(
 # --- NetCDF reading -----------------------------------------------------
 
 
-def read_sst_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (sst_celsius 2-D, lat 1-D, lon 1-D). Lat/lon are in the file's
-    native order (90 S → 90 N, 0 → 360 E). Masked/missing values become NaN."""
+def read_sst_grid(path: Path, var_name: str = "sst"
+                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (field 2-D, lat 1-D, lon 1-D) for a named variable out of an
+    OISST daily NetCDF. Default variable is 'sst'; pass 'anom' to get the
+    NOAA-computed anomaly (useful for change-maps: subtracting two `anom`
+    snapshots gives true SSTA change, with no seasonal cycle baked in)."""
     with Dataset(path, "r") as ds:
-        sst = ds.variables["sst"][:]
+        raw = ds.variables[var_name][:]
         # Some OISST files have (time, zlev, lat, lon); squeeze 1-length axes.
-        sst = np.ma.squeeze(sst)
-        sst = np.ma.filled(sst.astype(np.float32), np.nan)
+        field = np.ma.squeeze(raw)
+        field = np.ma.filled(field.astype(np.float32), np.nan)
         lat = ds.variables["lat"][:].astype(np.float32)
         lon = ds.variables["lon"][:].astype(np.float32)
-    return sst, lat, lon
+    return field, lat, lon
 
 
 def stack_years(files_by_year: dict[int, Path]) -> tuple[np.ndarray, list[int]]:
@@ -1018,12 +1021,15 @@ def main(argv=None):
     if countries is None and coast is None:
         print(f"{log} WARN: no basemap GeoJSON found — plots will have no coastlines")
 
-    # 4. Fetch 7/15/30-day-ago snapshots for N-day change maps. Change is
-    #    computed as raw SST delta (today_sst - day_N_sst). Over 7-30 days
-    #    the seasonal climatology shift is <0.3°C in most places so this
-    #    tracks SSTA change closely without fetching another 90 climatology
-    #    files per run.
+    # 4. Fetch 7/15/30-day-ago snapshots for N-day change maps. We use
+    #    NOAA's built-in `anom` variable from the daily OISST file on
+    #    BOTH endpoints, so change = anom_today - anom_prev is a true
+    #    SSTA change — no seasonal cycle bleed-through. Using `sst`
+    #    here would have spring mid-latitude warming (~3-5 °C/30 days)
+    #    show up as artificial "change."
     CHANGE_PERIODS = [7, 15, 30]
+    # Read today's NOAA anom directly from the file we already fetched.
+    anom_today_noaa, _, _ = read_sst_grid(today_path, var_name="anom")
     change_fields: dict[int, tuple[np.ndarray, dt.date]] = {}
     for days in CHANGE_PERIODS:
         prev_date = target - dt.timedelta(days=days)
@@ -1032,12 +1038,12 @@ def main(argv=None):
         if prev_path is None:
             print(f"{log}   skip {days}d change — could not fetch {prev_date}")
             continue
-        prev_sst, _, _ = read_sst_grid(prev_path)
-        if prev_sst.shape != sst_today.shape:
+        prev_anom, _, _ = read_sst_grid(prev_path, var_name="anom")
+        if prev_anom.shape != anom_today_noaa.shape:
             print(f"{log}   skip {days}d change — shape mismatch")
             continue
-        change_fields[days] = (sst_today - prev_sst, prev_date)
-        print(f"{log}   {days}d change ready (Δ since {prev_date})")
+        change_fields[days] = (anom_today_noaa - prev_anom, prev_date)
+        print(f"{log}   {days}d SSTA change ready (Δ since {prev_date})")
 
     # Global-mean SSTA — area-weighted over valid ocean pixels. Used as
     # the reference value for the "global-mean-removed" variant below.
@@ -1101,18 +1107,19 @@ def main(argv=None):
             cbar_label="SSTA − global mean (°C)",
         )
 
-        # N-day change maps
+        # N-day SSTA change maps
         for days, (change_field, prev_date) in sorted(change_fields.items()):
             out_change = SST_DIR / f"{region_key}_change{days}d.png"
             print(f"{log} rendering {region_key} · change{days}d")
             plot_anomaly(
                 change_field, lat, lon, extent, figsize,
-                f"{label} · SST {days}-Day Change",
+                f"{label} · OISST {days}-Day SSTA Change",
                 f"Latest: {date_label}  ·  "
-                f"Δ since {prev_date.strftime('%B %-d, %Y')}",
+                f"Δ since {prev_date.strftime('%B %-d, %Y')}  ·  "
+                "Baseline 1991–2020",
                 countries, coast, out_change,
-                vlim=3.0,
-                cbar_label=f"{days}-day SST change (°C)",
+                vlim=5.0,
+                cbar_label=f"{days}-day SSTA change (°C)",
             )
 
     # 6. Sidecar metadata JSON for the HTML pages to render timestamps, etc.
@@ -1262,11 +1269,11 @@ def main(argv=None):
                 print(f"{crw_log} rendering {region_key} · change{days}d")
                 plot_anomaly(
                     chg, crw_lat, crw_lon, extent, figsize,
-                    f"{label} · CRW SSTA {days}-Day Change (5 km)",
+                    f"{label} · CRW {days}-Day SSTA Change (5 km)",
                     f"Latest: {crw_date_label}  ·  "
                     f"Δ since {prev_date.strftime('%B %-d, %Y')}",
                     countries, coast, out_change,
-                    vlim=3.0,
+                    vlim=5.0,
                     cbar_label=f"{days}-day SSTA change (°C)",
                 )
 
