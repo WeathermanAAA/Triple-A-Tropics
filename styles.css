@@ -151,6 +151,11 @@ a:hover { text-decoration: underline; }
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  /* Soft white halo. text-shadow operates on the glyph outlines, so
+     it still reads even though the fill is a clipped gradient. */
+  text-shadow:
+    0 0 14px rgba(255, 255, 255, 0.22),
+    0 0 30px rgba(255, 255, 255, 0.12);
 }
 .hero p {
   color: var(--muted);
