@@ -84,6 +84,67 @@
   </div>
 </section>
 
+<!-- ============================================================ -->
+<!-- CRW (Coral Reef Watch 5 km) section                          -->
+<!-- Independent dropdown + tab state from OISST so users can     -->
+<!-- view both products simultaneously by scrolling.              -->
+<!-- ============================================================ -->
+<header class="page-head section-divider">
+  <h2 class="section-h2">Coral Reef Watch · 5 km</h2>
+  <p>Higher-resolution SST from NOAA's Coral Reef Watch v3.1 analysis (0.05° grid). The anomaly product uses CRW's coral-focused 1985–2012 Monthly Max Mean baseline.</p>
+  <p class="muted" id="crwDataDate">Loading latest valid date…</p>
+</header>
+
+<div class="sst-controls">
+  <label class="sst-select">
+    <span class="sst-select-label">Region</span>
+    <select id="crwRegionSelect">
+      <optgroup label="Overview">
+        <option value="global">Global</option>
+        <option value="global-tropics">Global Tropics</option>
+        <option value="enso">ENSO Regions</option>
+      </optgroup>
+      <optgroup label="Atlantic">
+        <option value="north-atlantic">North Atlantic</option>
+        <option value="tropical-atlantic">Tropical Atlantic</option>
+        <option value="western-atlantic">Western Atlantic</option>
+        <option value="equatorial-atlantic">Equatorial Atlantic</option>
+        <option value="south-atlantic">South Atlantic</option>
+      </optgroup>
+      <optgroup label="Pacific">
+        <option value="northeast-pacific">Northeast Pacific</option>
+        <option value="east-pacific">East Pacific</option>
+        <option value="central-pacific">Central Pacific</option>
+        <option value="northwest-pacific">Northwest Pacific</option>
+        <option value="north-pacific">North Pacific</option>
+        <option value="southwest-pacific">Southwest Pacific</option>
+        <option value="southeast-pacific">Southeast Pacific</option>
+      </optgroup>
+      <optgroup label="Other basins">
+        <option value="australia">Australia</option>
+        <option value="indian-ocean">Indian Ocean</option>
+        <option value="mediterranean">Mediterranean</option>
+      </optgroup>
+    </select>
+  </label>
+</div>
+
+<nav class="tabs" id="crwTabs">
+  <a href="#" data-variant="actual" class="active">Actual</a>
+  <a href="#" data-variant="anomaly">Anomaly</a>
+  <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
+</nav>
+
+<section class="chart-section">
+  <div class="chart-card sst-chart">
+    <img id="crwImage"
+         class="sst-image"
+         src="/sst/crw_global_actual.png"
+         alt="CRW sea-surface temperature map">
+    <div class="sst-caption" id="crwCaption">Global — CRW actual sea-surface temperature (5 km).</div>
+  </div>
+</section>
+
 <section class="about">
   <h2>How to read these maps</h2>
   <p><b>Actual</b> shows each grid cell's sea-surface temperature on the latest analysis day, colored from violet (cold, 0 °C) through blue, green, yellow, orange, and red (warm, 32 °C). Contour lines run at each integer degree for easy reference.</p>
@@ -198,6 +259,60 @@
         month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
       });
       document.getElementById('dataDate').textContent =
+        `Valid ${txt}  ·  updated ${m.updated_utc}`;
+    })
+    .catch(() => {});
+
+  // ---- CRW section (mirror of OISST wiring, independent state) ----
+  const CRW_VARIANT_CAPTIONS = {
+    actual:            "CRW actual sea-surface temperature (5 km).",
+    anomaly:           "CRW SST anomaly vs 1985–2012 MMM (5 km).",
+    anomaly_records:   "CRW SST anomaly with stippling where today meets or exceeds the 1985-present record.",
+  };
+  const crwImg = document.getElementById('crwImage');
+  const crwCaption = document.getElementById('crwCaption');
+  const crwRegionSelect = document.getElementById('crwRegionSelect');
+  const crwTabs = document.querySelectorAll('#crwTabs a');
+
+  function crwCurrentVariant() {
+    const active = [...crwTabs].find(t => t.classList.contains('active'));
+    return active ? active.dataset.variant : 'actual';
+  }
+  function crwSetVariant(v) {
+    crwTabs.forEach(t => t.classList.toggle('active', t.dataset.variant === v));
+  }
+  function crwUpdate() {
+    const region = crwRegionSelect.value;
+    const variant = crwCurrentVariant();
+    crwImg.src = `/sst/crw_${region}_${variant}.png?t=${Date.now()}`;
+    crwImg.alt = `CRW ${REGION_LABELS[region] || region} — ${variant.replace('_', ' + ')}`;
+    crwCaption.textContent =
+      (REGION_LABELS[region] || region) + " — " + (CRW_VARIANT_CAPTIONS[variant] || "");
+  }
+  crwRegionSelect.addEventListener('change', crwUpdate);
+  crwTabs.forEach(t => {
+    t.addEventListener('click', e => {
+      e.preventDefault();
+      crwSetVariant(t.dataset.variant);
+      crwUpdate();
+    });
+  });
+
+  // Keep the CRW dropdown in sync with the OISST dropdown initially —
+  // most users want to compare the same region in both. Changing either
+  // dropdown after load disconnects them.
+  crwRegionSelect.value = regionSelect.value;
+  crwUpdate();
+
+  fetch('/sst/crw_meta.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(m => {
+      if (!m || !m.date) return;
+      const d = new Date(m.date + 'T00:00:00Z');
+      const txt = d.toLocaleDateString('en-US', {
+        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+      });
+      document.getElementById('crwDataDate').textContent =
         `Valid ${txt}  ·  updated ${m.updated_utc}`;
     })
     .catch(() => {});
