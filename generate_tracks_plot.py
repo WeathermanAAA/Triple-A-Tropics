@@ -926,7 +926,7 @@ TRACKS_JS = r"""
     "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
   };
   var CAT_LABELS = {
-    "TD": "Tropical Depression", "TS": "Tropical Storm",
+    "TD": "Depression", "TS": "Tropical Storm",
     "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
     "C4": "Category 4", "C5": "Category 5"
   };
@@ -1013,24 +1013,39 @@ TRACKS_JS = r"""
   });
 
   // ---- Click handling ----
-  // Every storm card has an inline placard slot. For INACTIVE storms we
-  // toggle the inline placard (peak-intensity view). For ACTIVE storms
-  // the detail is shown pinned at the top of the sidebar; clicking the
-  // card toggles the pinned placard's visibility.
-  function togglePinned(scrollTo) {
-    var pinned = document.getElementById("pinned-active");
-    if (!pinned) return;
-    pinned.hidden = !pinned.hidden;
-    if (!pinned.hidden && scrollTo) {
-      pinned.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  // Every storm card has an inline placard slot.
+  //   - INACTIVE cards expand to show a peak-intensity banner + wind chart.
+  //   - ACTIVE cards expand to show just the wind-history chart — the
+  //     parent page already shows the live intensity banner at the top,
+  //     so we don't repeat it here. Clicking the spinning map icon does
+  //     the same thing (scrolls to the card and opens the chart).
+  function renderActiveInline(storm) {
+    var pts = (storm.points || []).filter(function(p) { return p.wind_kt != null; });
+    return '<div class="placard-chart-label">Wind history</div>' +
+           renderWindChart(pts);
+  }
+  function openInline(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    var s = storemap[sid];
+    if (!el || !s) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = s.is_active ? renderActiveInline(s) : renderPeakPlacard(s);
+      el.dataset.rendered = "1";
+    }
+    el.hidden = false;
+    if (card) {
+      card.classList.add("open");
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
   function toggleInline(sid) {
     var el = document.getElementById("placard-" + sid);
     var card = document.getElementById("card-" + sid);
-    if (!el) return;
+    var s = storemap[sid];
+    if (!el || !s) return;
     if (!el.dataset.rendered) {
-      el.innerHTML = renderPeakPlacard(storemap[sid]);
+      el.innerHTML = s.is_active ? renderActiveInline(s) : renderPeakPlacard(s);
       el.dataset.rendered = "1";
     }
     var nowOpen = el.hidden;
@@ -1040,37 +1055,17 @@ TRACKS_JS = r"""
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
-  function onCardClick(sid) {
-    var s = storemap[sid];
-    if (!s) return;
-    if (s.is_active) togglePinned(true);
-    else toggleInline(sid);
-  }
   document.querySelectorAll(".storm-card.clickable").forEach(function(card) {
-    card.addEventListener("click", function() { onCardClick(card.dataset.sid); });
+    card.addEventListener("click", function() { toggleInline(card.dataset.sid); });
   });
-  // Clicking the spinning icon on the map opens the pinned active placard.
+  // Spinning map icon → reveal that active storm's wind-history chart
+  // in the sidebar card.
   document.querySelectorAll(".active-icon").forEach(function(g) {
     g.addEventListener("click", function(e) {
       e.stopPropagation();
-      var pinned = document.getElementById("pinned-active");
-      if (pinned) {
-        pinned.hidden = false;
-        pinned.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
+      openInline(g.dataset.sid);
     });
   });
-
-  // ---- Render the pinned "Active Now" placard(s) on load ----
-  var pinnedBody = document.getElementById("pinned-active-body");
-  var pinnedWrap = document.getElementById("pinned-active");
-  if (pinnedBody && pinnedWrap) {
-    var actives = STORMS.filter(function(s) { return s.is_active; });
-    if (actives.length) {
-      pinnedBody.innerHTML = actives.map(renderCurrentPlacard).join("");
-      pinnedWrap.hidden = false;
-    }
-  }
 
   // ---- Placard rendering ----
   // Hurricane glyph path — same one used for the spinning map icons,
@@ -1406,17 +1401,12 @@ HTML_TEMPLATE = """<!doctype html>
   .storm-card.clickable.active .click-hint {{ color: var(--c1); opacity: 0.75; }}
   .storm-card.clickable.open .click-hint {{ opacity: 0.25; }}
 
-  /* Pinned "Active Now" placard at the top of the sidebar */
-  .panel-title-sub {{ margin-top: 8px; }}
-  .pinned-active {{ background: var(--panel); border: 1px solid #3a5178;
-    border-radius: 10px; overflow: hidden;
-    box-shadow: 0 0 0 2px rgba(255, 184, 58, 0.15), 0 6px 16px rgba(0,0,0,0.35); }}
-  .pinned-active[hidden] {{ display: none; }}
-
-  /* Shared placard styling (inline + pinned) */
+  /* Inline detail placard (appears when a storm card is clicked) */
   .storm-placard {{ margin-top: 10px; background: #0a1324;
     border: 1px solid #243452; border-radius: 8px; overflow: hidden; }}
-  .placard-banner {{ padding: 10px 12px; position: relative; }}
+  /* Right padding leaves room for the spinning corner icon so it
+     doesn't crowd the storm name. */
+  .placard-banner {{ padding: 10px 56px 10px 12px; position: relative; }}
   .placard-banner .placard-spinner {{ position: absolute; top: 10px; right: 12px;
     width: 34px; height: 34px; opacity: 0.85;
     filter: drop-shadow(0 0 3px rgba(0,0,0,0.35)); }}
@@ -1485,12 +1475,7 @@ HTML_TEMPLATE = """<!doctype html>
   </div>
 
   <div class="side">
-    <div class="panel-title">Active Now</div>
-    <div class="pinned-active" id="pinned-active" hidden>
-      <div id="pinned-active-body"></div>
-    </div>
-
-    <div class="panel-title panel-title-sub">{year} Season · {storm_count} Storms</div>
+    <div class="panel-title">{year} Season · {storm_count} Storms</div>
     <div class="storm-list" id="storms">
       {storm_cards}
     </div>
@@ -1541,7 +1526,7 @@ def render_storm_card(storm: dict) -> str:
     peak_pres = storm.get("peak_pressure_mb")
     ace = storm.get("ace") or 0
     sid = storm.get("sid") or ""
-    hint_text = "Click for live details" if is_active else "Click for peak intensity"
+    hint_text = "Click for wind history" if is_active else "Click for peak intensity"
     click_hint = f'<div class="click-hint">▸ {hint_text}</div>'
     placard_slot = f'<div class="storm-placard" id="placard-{sid}" hidden></div>'
     return f"""
