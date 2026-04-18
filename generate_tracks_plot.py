@@ -807,13 +807,21 @@ def _fmt_lat(lat: float) -> str:
 
 def render_tracks_svg(storms: list[dict], extent) -> str:
     """Draw each storm as a thin connecting polyline plus a colored dot
-    at every 6-hour observation. Colors follow SSHWS."""
+    at every 6-hour observation. Colors follow SSHWS.
+
+    Every dot carries data-* attributes so the client-side hover tooltip
+    can show the storm's intensity at that observation without another
+    fetch. Dots for the same storm share a data-sid so clicking one can
+    open that storm's detail placard.
+    """
     project, _ = build_projection(extent)
     parts = ['<g class="tracks">']
     for storm in storms:
         pts = storm.get("points") or []
         if len(pts) < 1:
             continue
+        sid = storm.get("sid") or ""
+        sname = (storm.get("name") or "UNNAMED").replace('"', '')
         # Track connecting line (thin, dark, under dots)
         xy = []
         for p in pts:
@@ -834,6 +842,8 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
         for (x, y), p in zip(xy, pts):
             cls = p.get("cls") or "TD"
             wind = p.get("wind_kt")
+            pres = p.get("pressure_mb")
+            t = p.get("t") or ""
             color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
             # Bigger dot for stronger systems
             if cls == "TD":
@@ -842,9 +852,15 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                 r = 4
             else:
                 r = 5
+            wind_attr = f"{wind}" if wind is not None else ""
+            pres_attr = f"{pres}" if pres is not None else ""
             parts.append(
-                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{color}" '
-                f'stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85"/>')
+                f'<circle class="track-dot" cx="{x:.1f}" cy="{y:.1f}" r="{r}" '
+                f'fill="{color}" stroke="#ffffff" stroke-width="0.9" '
+                f'stroke-opacity="0.85" '
+                f'data-sid="{sid}" data-name="{sname}" data-t="{t}" '
+                f'data-wind="{wind_attr}" data-pres="{pres_attr}" '
+                f'data-cls="{cls}"/>')
     parts.append('</g>')
     return "\n".join(parts)
 
@@ -877,7 +893,8 @@ def render_active_icons(storms: list[dict], extent) -> str:
         # in a scale() to shrink the icon; the scale is on an outer
         # group because <animateTransform> replaces its own element's
         # transform attribute. CCW spin for NH cyclones.
-        parts.append(f'''<g class="active-icon" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">
+        sid = storm.get("sid") or ""
+        parts.append(f'''<g class="active-icon" data-sid="{sid}" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">
   <g transform="scale(0.7)">
     <g class="spin-wrap">
       <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="{color}"/>
@@ -893,6 +910,287 @@ def render_active_icons(storms: list[dict], extent) -> str:
 
 # No <defs>/<symbol> needed — geometry is drawn inline in render_active_icons.
 SVG_DEFS = ""
+
+
+# ---------------------------------------------------------------------------
+# Client-side JS: hover tooltip on every dot, click-to-expand detail
+# placard (current intensity banner + wind-history chart) on active storms.
+# Kept as a raw string — no Python .format() — so we don't have to escape
+# the many braces in the JS body.
+# ---------------------------------------------------------------------------
+
+TRACKS_JS = r"""
+(function() {
+  var SSHS_COLORS = {
+    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
+    "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
+  };
+  var CAT_LABELS = {
+    "TD": "Tropical Depression", "TS": "Tropical Storm",
+    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
+    "C4": "Category 4", "C5": "Category 5"
+  };
+  function ktToMph(k) { return Math.round(k * 1.15077945); }
+  function ktToKmh(k) { return Math.round(k * 1.852); }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function fmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var hh = String(d.getUTCHours()).padStart(2,"0");
+    var mm = String(d.getUTCMinutes()).padStart(2,"0");
+    return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  function fmtLatLon(lat, lon) {
+    while (lon > 180) lon -= 360;
+    while (lon < -180) lon += 360;
+    var la = Math.abs(lat).toFixed(1) + "\u00B0 " + (lat >= 0 ? "N" : "S");
+    var lo = Math.abs(lon).toFixed(1) + "\u00B0 " + (lon >= 0 ? "E" : "W");
+    return la + "   " + lo;
+  }
+  function compass(b) {
+    var dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return dirs[Math.round(b / 22.5) % 16];
+  }
+
+  // ---- Load payload ----
+  var payloadEl = document.getElementById("storms-payload");
+  var STORMS = [];
+  try { STORMS = JSON.parse(payloadEl.textContent || "[]"); }
+  catch (e) { STORMS = []; }
+  // Payload contains the full page object; pick off the storms list.
+  if (STORMS && STORMS.storms) STORMS = STORMS.storms;
+  var storemap = {};
+  STORMS.forEach(function(s) { storemap[s.sid] = s; });
+
+  // ---- Hover tooltip ----
+  var tip = document.getElementById("dot-tooltip");
+  function showTip(e) {
+    var d = e.currentTarget.dataset;
+    var windKt = d.wind ? parseFloat(d.wind) : null;
+    var windTxt = windKt != null && !isNaN(windKt)
+      ? (Math.round(windKt) + " kt · " + ktToMph(windKt) + " mph")
+      : "\u2014";
+    var presTxt = d.pres && d.pres !== "" ? (Math.round(parseFloat(d.pres)) + " mb") : "\u2014";
+    var cls = d.cls || "TD";
+    var catTxt = CAT_LABELS[cls] || cls;
+    tip.innerHTML =
+      '<div class="tt-name">' + escapeHtml(d.name) + '</div>' +
+      '<div class="tt-time">' + fmtTime(d.t) + '</div>' +
+      '<div class="tt-row"><span class="tt-cat" style="background:' +
+        (SSHS_COLORS[cls] || "#888") + '">' + catTxt + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Wind</span><span class="tt-val">' + windTxt + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Pressure</span><span class="tt-val">' + presTxt + '</span></div>';
+    tip.hidden = false;
+    moveTip(e);
+  }
+  function moveTip(e) {
+    var pad = 14;
+    var x = e.clientX + pad;
+    var y = e.clientY + pad;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    if (x + tw > window.innerWidth - 6) x = e.clientX - tw - pad;
+    if (y + th > window.innerHeight - 6) y = e.clientY - th - pad;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  }
+  function hideTip() { tip.hidden = true; }
+  var dots = document.querySelectorAll(".track-dot");
+  dots.forEach(function(dot) {
+    dot.addEventListener("mouseenter", showTip);
+    dot.addEventListener("mousemove", moveTip);
+    dot.addEventListener("mouseleave", hideTip);
+    dot.addEventListener("click", function(e) {
+      var sid = dot.dataset.sid;
+      if (sid && storemap[sid] && storemap[sid].is_active) {
+        openPlacard(sid);
+      }
+    });
+  });
+
+  // ---- Active-storm click: open detail placard ----
+  function togglePlacard(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    if (!el) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = renderPlacard(storemap[sid]);
+      el.dataset.rendered = "1";
+    }
+    var nowOpen = el.hidden;  // hidden => will become visible
+    el.hidden = !el.hidden;
+    if (card) card.classList.toggle("open", nowOpen);
+    if (nowOpen && card) {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  function openPlacard(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    if (!el) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = renderPlacard(storemap[sid]);
+      el.dataset.rendered = "1";
+    }
+    el.hidden = false;
+    if (card) {
+      card.classList.add("open");
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  document.querySelectorAll(".storm-card.clickable").forEach(function(card) {
+    card.addEventListener("click", function() {
+      togglePlacard(card.dataset.sid);
+    });
+  });
+  document.querySelectorAll(".active-icon").forEach(function(g) {
+    g.addEventListener("click", function(e) {
+      e.stopPropagation();
+      openPlacard(g.dataset.sid);
+    });
+  });
+
+  // ---- Placard rendering ----
+  function computeMovement(pts) {
+    // Use the last two points spaced ≥ 1 hour apart
+    for (var i = pts.length - 2; i >= 0; i--) {
+      var a = pts[i], b = pts[pts.length - 1];
+      var ta = new Date(a.t).getTime(), tb = new Date(b.t).getTime();
+      var dtH = (tb - ta) / 3600000;
+      if (dtH < 1) continue;
+      var latm = (b.lat - a.lat) * 60;
+      var lonm = (b.lon - a.lon) * 60 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+      var distNm = Math.sqrt(latm*latm + lonm*lonm);
+      if (distNm < 0.5) return "Nearly stationary";
+      var speedKt = distNm / dtH;
+      var bearing = (Math.atan2(lonm, latm) * 180 / Math.PI + 360) % 360;
+      return compass(bearing) + " at " + ktToMph(speedKt) + " mph";
+    }
+    return "\u2014";
+  }
+  function renderPlacard(storm) {
+    if (!storm) return '<div class="chart-empty">No data.</div>';
+    var pts = (storm.points || []).slice();
+    var validPts = pts.filter(function(p) { return p.wind_kt != null; });
+    var last = pts[pts.length - 1] || {};
+    var lastValid = validPts[validPts.length - 1] || last;
+    var cls = storm.current_category || "TD";
+    var color = SSHS_COLORS[cls] || "#888";
+    var catLabel = CAT_LABELS[cls] || cls;
+    var windKt = lastValid.wind_kt || 0;
+    var windMph = ktToMph(windKt);
+    var windKmh = ktToKmh(windKt);
+    var pres = lastValid.pressure_mb;
+    var loc = fmtLatLon(last.lat, last.lon);
+    var movement = computeMovement(pts);
+    var chart = renderWindChart(validPts);
+    // Banner text color: dark against bright category colors, light against
+    // darker ones (C3/C4/C5 reads better with white text).
+    var darkText = (cls === "TS" || cls === "C1" || cls === "C2");
+    var txtColor = darkText ? "#0a1324" : "#ffffff";
+    return (
+      '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        '<div class="pl-row1"><span class="pl-cat">' + catLabel + '</span><b>' +
+          escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
+        '<div class="pl-intensity">' +
+          '<div class="pl-big">' + windMph + '</div>' +
+          '<div class="pl-units">mph<br>' + windKmh + ' km/h</div>' +
+        '</div>' +
+        '<div class="pl-deets">' +
+          '<div><span>Updated</span><b>' + fmtTime(last.t) + '</b></div>' +
+          '<div><span>Location</span><b>' + loc + '</b></div>' +
+          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "\u2014") + '</b></div>' +
+          '<div><span>Movement</span><b>' + movement + '</b></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="placard-chart-label">Wind history</div>' +
+      chart
+    );
+  }
+
+  function renderWindChart(pts) {
+    if (!pts.length) {
+      return '<div class="chart-empty">No wind observations yet.</div>';
+    }
+    var W = 320, H = 190;
+    var padL = 34, padR = 8, padT = 8, padB = 26;
+    var plotW = W - padL - padR;
+    var plotH = H - padT - padB;
+    var times = pts.map(function(p) { return new Date(p.t).getTime(); });
+    var tMin = Math.min.apply(null, times);
+    var tMax = Math.max.apply(null, times);
+    var maxWind = Math.max(160, Math.max.apply(null, pts.map(function(p) { return p.wind_kt || 0; })));
+    function yScale(w) { return padT + plotH - (w / maxWind) * plotH; }
+    function xScale(t) {
+      if (tMax === tMin) return padL + plotW / 2;
+      return padL + (t - tMin) / (tMax - tMin) * plotW;
+    }
+    var bands = [
+      [0, 34, SSHS_COLORS.TD],
+      [34, 64, SSHS_COLORS.TS],
+      [64, 83, SSHS_COLORS.C1],
+      [83, 96, SSHS_COLORS.C2],
+      [96, 113, SSHS_COLORS.C3],
+      [113, 137, SSHS_COLORS.C4],
+      [137, maxWind, SSHS_COLORS.C5]
+    ];
+    var bandRects = bands.map(function(b) {
+      var lo = b[0], hi = b[1], c = b[2];
+      var y1 = yScale(Math.min(hi, maxWind));
+      var y2 = yScale(lo);
+      return '<rect x="' + padL + '" y="' + y1 + '" width="' + plotW +
+             '" height="' + (y2 - y1) + '" fill="' + c + '" fill-opacity="0.38"/>';
+    }).join("");
+    var pathD = "M " + pts.map(function(p) {
+      return xScale(new Date(p.t).getTime()).toFixed(1) + "," +
+             yScale(p.wind_kt || 0).toFixed(1);
+    }).join(" L ");
+    var dotsSvg = pts.map(function(p) {
+      var x = xScale(new Date(p.t).getTime()).toFixed(1);
+      var y = yScale(p.wind_kt || 0).toFixed(1);
+      return '<circle cx="' + x + '" cy="' + y + '" r="2.4" fill="#0a1324" ' +
+             'stroke="#ffffff" stroke-width="0.8"/>';
+    }).join("");
+    var ticks = [0, 35, 65, 85, 100, 115, 140, 160];
+    var yLabels = ticks.filter(function(v) { return v <= maxWind; }).map(function(v) {
+      var y = yScale(v);
+      return '<g><line x1="' + (padL - 3) + '" y1="' + y + '" x2="' + padL +
+             '" y2="' + y + '" stroke="#3a4d6e" stroke-width="0.6"/>' +
+             '<text x="' + (padL - 6) + '" y="' + (y + 3) +
+             '" text-anchor="end" font-size="9" fill="#8ea2bd">' + v + '</text></g>';
+    }).join("");
+    var nTicks = 3;
+    var xLabels = "";
+    for (var i = 0; i < nTicks; i++) {
+      var t = tMin + (i * (tMax - tMin) / (nTicks - 1 || 1));
+      var x = xScale(t);
+      var d = new Date(t);
+      var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      var label = m[d.getUTCMonth()] + " " + d.getUTCDate();
+      xLabels += '<text x="' + x + '" y="' + (H - padB + 13) +
+                 '" text-anchor="middle" font-size="9" fill="#8ea2bd">' + label + '</text>';
+    }
+    return (
+      '<svg class="wind-chart" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="xMidYMid meet">' +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
+          '" height="' + plotH + '" fill="#07101c"/>' +
+        bandRects +
+        '<path d="' + pathD + '" fill="none" stroke="#ffffff" ' +
+          'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        dotsSvg +
+        yLabels + xLabels +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
+          '" height="' + plotH + '" fill="none" stroke="#243452"/>' +
+      '</svg>'
+    );
+  }
+})();
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -944,6 +1242,7 @@ HTML_TEMPLATE = """<!doctype html>
   .active-icon .name {{ fill: #f1f7fd; font-size: 12px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }}
+  .active-icon {{ cursor: pointer; }}
 
   /* Sidebar */
   .side {{ flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }}
@@ -994,6 +1293,61 @@ HTML_TEMPLATE = """<!doctype html>
     paint-order: stroke fill;
     font-family: -apple-system, Segoe UI, Roboto, sans-serif;
     pointer-events: none; }}
+
+  /* Hover tooltip for track dots */
+  .track-dot {{ cursor: pointer; }}
+  .track-dot:hover {{ r: 6.5; stroke: #fff; stroke-width: 1.6; }}
+  #dot-tooltip {{ position: fixed; z-index: 9000; pointer-events: none;
+    background: rgba(10,18,34,0.96); color: var(--fg);
+    border: 1px solid #2a3e5c; border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; line-height: 1.45;
+    min-width: 170px; box-shadow: 0 6px 20px rgba(0,0,0,0.55);
+    backdrop-filter: blur(4px); }}
+  #dot-tooltip[hidden] {{ display: none; }}
+  #dot-tooltip .tt-name {{ font-weight: 800; color: #f1f7fd;
+    font-size: 13px; letter-spacing: 0.3px; }}
+  #dot-tooltip .tt-time {{ color: var(--muted); font-size: 11px;
+    margin-bottom: 4px; }}
+  #dot-tooltip .tt-row {{ display: flex; justify-content: space-between;
+    gap: 10px; margin-top: 2px; }}
+  #dot-tooltip .tt-lbl {{ color: var(--muted); }}
+  #dot-tooltip .tt-val {{ color: var(--fg); font-variant-numeric: tabular-nums; }}
+  #dot-tooltip .tt-cat {{ display: inline-block; padding: 1px 8px;
+    border-radius: 999px; font-size: 10px; font-weight: 700;
+    color: #07101c; margin-top: 2px; }}
+
+  /* Clickable active-storm card + detail placard */
+  .storm-card.clickable {{ cursor: pointer; transition: background 0.15s; }}
+  .storm-card.clickable:hover {{ background: rgba(255,184,58,0.14); }}
+  .click-hint {{ font-size: 10px; color: var(--c1); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
+    opacity: 0.72; }}
+  .storm-card.clickable.open .click-hint {{ opacity: 0; }}
+  .storm-placard {{ margin-top: 10px; background: #0a1324;
+    border: 1px solid #243452; border-radius: 8px; overflow: hidden; }}
+  .placard-banner {{ padding: 10px 12px; }}
+  .placard-banner .pl-row1 {{ font-size: 12px; font-weight: 800;
+    letter-spacing: 0.4px; display: flex; align-items: center; gap: 8px;
+    text-transform: uppercase; }}
+  .placard-banner .pl-cat {{ display: inline-block; padding: 2px 8px;
+    border-radius: 4px; background: rgba(0,0,0,0.15); color: inherit; }}
+  .placard-banner .pl-intensity {{ display: flex; align-items: baseline;
+    gap: 10px; margin-top: 6px; }}
+  .placard-banner .pl-big {{ font-size: 44px; font-weight: 900;
+    line-height: 1; font-variant-numeric: tabular-nums; }}
+  .placard-banner .pl-units {{ font-size: 12px; font-weight: 700;
+    line-height: 1.25; }}
+  .placard-banner .pl-deets {{ display: grid;
+    grid-template-columns: 1fr 1fr; gap: 2px 12px; margin-top: 8px;
+    font-size: 11px; font-weight: 600; }}
+  .placard-banner .pl-deets span {{ opacity: 0.7; margin-right: 4px; }}
+  .placard-banner .pl-deets b {{ font-weight: 700;
+    font-variant-numeric: tabular-nums; }}
+  .placard-chart-label {{ padding: 8px 12px 2px; font-size: 11px;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px;
+    font-weight: 700; }}
+  .wind-chart {{ display: block; width: 100%; padding: 0 6px 8px; }}
+  .chart-empty {{ padding: 12px; font-size: 12px; color: var(--muted); }}
 </style>
 </head>
 <body>
@@ -1036,6 +1390,13 @@ HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
 </div>
+
+<div id="dot-tooltip" hidden></div>
+
+<script id="storms-payload" type="application/json">{storms_json}</script>
+<script>
+{tracks_js}
+</script>
 </body>
 </html>
 """
@@ -1064,12 +1425,24 @@ def render_storm_card(storm: dict) -> str:
     cat = storm.get("max_category", "TD")
     color, label = _cat_style(cat)
     active_tag = '<span class="storm-active">Active</span>' if storm.get("is_active") else ''
-    classes = "storm-card active" if storm.get("is_active") else "storm-card"
+    is_active = storm.get("is_active")
+    # Active cards get a click affordance + a placeholder div that JS fills
+    # with the current-intensity banner and wind-history chart on click.
+    classes = "storm-card active clickable" if is_active else "storm-card"
     peak_wind = storm.get("peak_wind_kt")
     peak_pres = storm.get("peak_pressure_mb")
     ace = storm.get("ace") or 0
+    sid = storm.get("sid") or ""
+    click_hint = (
+        '<div class="click-hint">▸ Click for live details</div>'
+        if is_active else ''
+    )
+    placard_slot = (
+        f'<div class="storm-placard" id="placard-{sid}" hidden></div>'
+        if is_active else ''
+    )
     return f"""
-<div class="{classes}">
+<div class="{classes}" id="card-{sid}" data-sid="{sid}">
   <div class="storm-top">
     <div class="storm-name">{storm.get('name') or 'UNNAMED'}{active_tag}</div>
     <div class="storm-cat" style="background:{color}">{label}</div>
@@ -1080,6 +1453,8 @@ def render_storm_card(storm: dict) -> str:
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">{peak_pres if peak_pres is not None else '—'} mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">{ace:.2f}</span></div>
   </div>
+  {click_hint}
+  {placard_slot}
 </div>
 """
 
@@ -1094,6 +1469,21 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
     )
     header = payload["header"]
     vocab = payload["vocab"]
+    # Slim payload for client-side — only the fields the placard/tooltip
+    # actually read. Keeps the inline blob small.
+    slim_storms = []
+    for s in payload["storms"]:
+        slim_storms.append({
+            "sid": s.get("sid"),
+            "name": s.get("name"),
+            "is_active": s.get("is_active"),
+            "current_category": s.get("current_category"),
+            "points": s.get("points"),
+        })
+    storms_json = json.dumps({"storms": slim_storms}, separators=(",", ":"))
+    # Guard against </script> accidentally appearing in a storm name —
+    # standard JSON-in-script escape.
+    storms_json = storms_json.replace("</", "<\\/")
     return HTML_TEMPLATE.format(
         basin_name=payload["basin_name"],
         year=payload["year"],
@@ -1110,6 +1500,8 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         wm_x=MAP_W - 20, wm_y=40,
         storm_cards=storm_cards,
         storm_count=len(payload["storms"]),
+        storms_json=storms_json,
+        tracks_js=TRACKS_JS,
     )
 
 
