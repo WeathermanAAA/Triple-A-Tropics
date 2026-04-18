@@ -15,7 +15,17 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--bg);
+  background-color: var(--bg);
+  /* Subtle dotted-grid texture. Radial-gradient paints one small dot
+     per 36×36 tile; size + alpha are tuned to read as "texture" rather
+     than "pattern" so the eye picks it up peripherally. */
+  background-image: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.055) 1.1px,
+    transparent 1.5px
+  );
+  background-size: 36px 36px;
+  background-position: 0 0;
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
