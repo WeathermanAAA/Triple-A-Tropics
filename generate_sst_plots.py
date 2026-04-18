@@ -780,6 +780,26 @@ def _add_colorbar(fig, mappable, label, ticks=None, extend="both"):
     return cb
 
 
+def compute_global_mean(field: np.ndarray, lat: np.ndarray) -> float:
+    """Area-weighted global mean of a (lat, lon) 2-D field.
+
+    Weights each grid cell by cos(latitude) to account for the fact that
+    equal-degree cells get smaller as you go poleward. NaN-safe: cells
+    that are NaN (land, masked) are excluded from both numerator and
+    denominator so the result reflects only valid ocean pixels.
+    """
+    if field.ndim != 2 or lat.ndim != 1 or lat.size != field.shape[0]:
+        return float("nan")
+    w = np.cos(np.deg2rad(lat.astype(np.float64)))
+    w2d = np.broadcast_to(w[:, None], field.shape)
+    valid = np.isfinite(field)
+    num = np.nansum(np.where(valid, field, 0.0) * w2d * valid)
+    den = np.nansum(w2d * valid)
+    if den <= 0:
+        return float("nan")
+    return float(num / den)
+
+
 def plot_actual(
     sst_today, lat, lon, extent, figsize, title, subtitle,
     countries, coast, out_path: Path,
@@ -821,6 +841,8 @@ def plot_anomaly(
     anom, lat, lon, extent, figsize, title, subtitle,
     countries, coast, out_path: Path,
     records_high=None, records_low=None, vlim=5.0,
+    cbar_label: str = "SST anomaly (°C)  vs 1991–2020 mean",
+    cbar_ticks=None,
 ):
     """Diverging anomaly plot. If `records_high` / `records_low` are given,
     stipple the areas where today's value met or exceeded those records."""
@@ -887,8 +909,10 @@ def plot_anomaly(
 
     _draw_basemap(ax, extent, countries, coast)
     _style_axes(ax, extent, title, subtitle)
-    _add_colorbar(fig, pcm, "SST anomaly (°C)  vs 1991–2020 mean",
-                  ticks=np.arange(-5, 6, 1))
+    if cbar_ticks is None:
+        step = max(int(round(vlim / 5)), 1)
+        cbar_ticks = np.arange(-int(round(vlim)), int(round(vlim)) + 1, step)
+    _add_colorbar(fig, pcm, cbar_label, ticks=cbar_ticks)
     _draw_watermark(ax)
     fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
     fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
@@ -994,7 +1018,37 @@ def main(argv=None):
     if countries is None and coast is None:
         print(f"{log} WARN: no basemap GeoJSON found — plots will have no coastlines")
 
-    # 4. Render each region × variant
+    # 4. Fetch 7/15/30-day-ago snapshots for N-day change maps. Change is
+    #    computed as raw SST delta (today_sst - day_N_sst). Over 7-30 days
+    #    the seasonal climatology shift is <0.3°C in most places so this
+    #    tracks SSTA change closely without fetching another 90 climatology
+    #    files per run.
+    CHANGE_PERIODS = [7, 15, 30]
+    change_fields: dict[int, tuple[np.ndarray, dt.date]] = {}
+    for days in CHANGE_PERIODS:
+        prev_date = target - dt.timedelta(days=days)
+        print(f"{log} fetching {days}d-ago snapshot {prev_date} ...")
+        prev_path = fetch_day(prev_date, log, verbose=True)
+        if prev_path is None:
+            print(f"{log}   skip {days}d change — could not fetch {prev_date}")
+            continue
+        prev_sst, _, _ = read_sst_grid(prev_path)
+        if prev_sst.shape != sst_today.shape:
+            print(f"{log}   skip {days}d change — shape mismatch")
+            continue
+        change_fields[days] = (sst_today - prev_sst, prev_date)
+        print(f"{log}   {days}d change ready (Δ since {prev_date})")
+
+    # Global-mean SSTA — area-weighted over valid ocean pixels. Used as
+    # the reference value for the "global-mean-removed" variant below.
+    global_mean_oisst = compute_global_mean(anomaly, lat)
+    print(f"{log} global-mean SSTA: {global_mean_oisst:+.3f} °C")
+    # Global-mean-removed anomaly field: SSTA - globally-averaged SSTA.
+    # Highlights spatial patterns by factoring out the uniform global
+    # warming signal.
+    anomaly_gmr = anomaly - global_mean_oisst
+
+    # 5. Render each region × variant
     date_label = target.strftime("%B %-d, %Y")
 
     for region_key in args.regions:
@@ -1033,7 +1087,35 @@ def main(argv=None):
                 records_low=records_mask_low,
             )
 
-    # 5. Sidecar metadata JSON for the HTML pages to render timestamps, etc.
+        # Global-mean-removed anomaly (same math as `anomaly` but with
+        # the daily global-mean SSTA subtracted from every pixel, so the
+        # colorbar centers on the relative pattern rather than the trend).
+        p_anom_gmr = SST_DIR / f"{region_key}_anomaly_gmr.png"
+        print(f"{log} rendering {region_key} · anomaly_gmr")
+        plot_anomaly(
+            anomaly_gmr, lat, lon, extent, figsize,
+            f"{label} · SSTA − Global Mean SSTA",
+            subtitle
+            + f"  ·  Global mean: {global_mean_oisst:+.2f} °C (subtracted)",
+            countries, coast, p_anom_gmr,
+            cbar_label="SSTA − global mean (°C)",
+        )
+
+        # N-day change maps
+        for days, (change_field, prev_date) in sorted(change_fields.items()):
+            out_change = SST_DIR / f"{region_key}_change{days}d.png"
+            print(f"{log} rendering {region_key} · change{days}d")
+            plot_anomaly(
+                change_field, lat, lon, extent, figsize,
+                f"{label} · SST {days}-Day Change",
+                f"Latest: {date_label}  ·  "
+                f"Δ since {prev_date.strftime('%B %-d, %Y')}",
+                countries, coast, out_change,
+                vlim=3.0,
+                cbar_label=f"{days}-day SST change (°C)",
+            )
+
+    # 6. Sidecar metadata JSON for the HTML pages to render timestamps, etc.
     meta = {
         "date": target.isoformat(),
         "updated_utc": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
@@ -1043,6 +1125,8 @@ def main(argv=None):
         "baseline_start": CLIMO_START,
         "baseline_end": CLIMO_END,
         "record_start": RECORDS_START,
+        "global_mean_ssta": global_mean_oisst,
+        "change_periods": sorted(change_fields.keys()),
     }
     (SST_DIR / "sst_meta.json").write_text(
         json.dumps(meta, indent=2), encoding="utf-8"
@@ -1097,6 +1181,31 @@ def main(argv=None):
                     f"lows {int(crw_records_low.sum())} px"
                 )
 
+        # N-day SSTA change maps. Use CRW's official SSTA files for both
+        # endpoints so the delta is a true SSTA difference (both endpoints
+        # are anomalies against CRW's own baked-in climatology).
+        crw_change_fields: dict[int, tuple[np.ndarray, dt.date]] = {}
+        for days in (7, 15, 30):
+            prev_date = crw_target - dt.timedelta(days=days)
+            print(f"{crw_log} fetching CRW ssta {days}d-ago {prev_date} ...")
+            prev_path = fetch_crw_day(prev_date, "ssta", crw_log, verbose=True)
+            if prev_path is None:
+                print(f"{crw_log}   skip CRW {days}d change — {prev_date} missing")
+                continue
+            prev_anom, _, _ = read_crw_grid(
+                prev_path, "sea_surface_temperature_anomaly"
+            )
+            if prev_anom.shape != crw_anom.shape:
+                print(f"{crw_log}   skip CRW {days}d change — shape mismatch")
+                continue
+            crw_change_fields[days] = (crw_anom - prev_anom, prev_date)
+            print(f"{crw_log}   CRW {days}d change ready (Δ since {prev_date})")
+
+        # Global-mean SSTA + global-mean-removed anomaly for CRW
+        global_mean_crw = compute_global_mean(crw_anom, crw_lat)
+        print(f"{crw_log} CRW global-mean SSTA: {global_mean_crw:+.3f} °C")
+        crw_anom_gmr = crw_anom - global_mean_crw
+
         crw_date_label = crw_target.strftime("%B %-d, %Y")
         for region_key in args.regions:
             rcfg = REGIONS[region_key]
@@ -1135,6 +1244,32 @@ def main(argv=None):
                     records_low=crw_records_low,
                 )
 
+            # Global-mean-removed anomaly (CRW)
+            crw_p_anom_gmr = SST_DIR / f"crw_{region_key}_anomaly_gmr.png"
+            print(f"{crw_log} rendering {region_key} · anomaly_gmr")
+            plot_anomaly(
+                crw_anom_gmr, crw_lat, crw_lon, extent, figsize,
+                f"{label} · CRW SSTA − Global Mean SSTA (5 km)",
+                subtitle
+                + f"  ·  Global mean: {global_mean_crw:+.2f} °C (subtracted)",
+                countries, coast, crw_p_anom_gmr,
+                cbar_label="SSTA − global mean (°C)",
+            )
+
+            # N-day SSTA change maps (CRW)
+            for days, (chg, prev_date) in sorted(crw_change_fields.items()):
+                out_change = SST_DIR / f"crw_{region_key}_change{days}d.png"
+                print(f"{crw_log} rendering {region_key} · change{days}d")
+                plot_anomaly(
+                    chg, crw_lat, crw_lon, extent, figsize,
+                    f"{label} · CRW SSTA {days}-Day Change (5 km)",
+                    f"Latest: {crw_date_label}  ·  "
+                    f"Δ since {prev_date.strftime('%B %-d, %Y')}",
+                    countries, coast, out_change,
+                    vlim=3.0,
+                    cbar_label=f"{days}-day SSTA change (°C)",
+                )
+
         crw_meta = {
             "date": crw_target.isoformat(),
             "updated_utc": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
@@ -1142,6 +1277,8 @@ def main(argv=None):
             "regions": list(REGIONS.keys()),
             "baseline_note": "1985–2012 Monthly Max Mean (NOAA CRW official)",
             "record_start": CRW_RECORDS_START,
+            "global_mean_ssta": global_mean_crw,
+            "change_periods": sorted(crw_change_fields.keys()),
         }
         (SST_DIR / "crw_meta.json").write_text(
             json.dumps(crw_meta, indent=2), encoding="utf-8"
