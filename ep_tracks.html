@@ -134,15 +134,9 @@
      doesn't crowd the storm name. */
   .placard-banner { padding: 10px 56px 10px 12px; position: relative; }
   .placard-banner .placard-spinner { position: absolute; top: 10px; right: 12px;
-    width: 34px; height: 34px; opacity: 0.85;
+    width: 38px; height: 38px; opacity: 0.95;
     filter: drop-shadow(0 0 3px rgba(0,0,0,0.35)); }
-  .placard-banner .placard-spinner svg { width: 100%; height: 100%;
-    animation: placard-spin 2.6s linear infinite;
-    transform-origin: 50% 50%; }
-  @keyframes placard-spin {
-    from { transform: rotate(360deg); }
-    to { transform: rotate(0deg); }
-  }
+  .placard-banner .placard-spinner svg { width: 100%; height: 100%; }
   .placard-banner .pl-row1 { font-size: 12px; font-weight: 800;
     letter-spacing: 0.4px; display: flex; align-items: center; gap: 8px;
     text-transform: uppercase; }
@@ -173,7 +167,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Northeast Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-18 04:55 UTC</div>
+        <div class="sub">As of 2026-04-18 05:11 UTC</div>
       </div>
       <div class="stats">
         <b>0</b> named storms · <b>0</b> hurricanes ·
@@ -2404,14 +2398,27 @@
   // Hurricane glyph path — same one used for the spinning map icons,
   // reused here as a small corner accent on each placard.
   var HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z";
-  function spinnerSvg(color) {
-    // Inner <g> picks up the CSS-driven rotation. The fill matches the
-    // banner's category color but with a bit of white to stay readable
-    // against the bright banner backgrounds.
+  function sshsLabel(cls) {
+    if (cls === "TD") return "D";
+    if (cls === "TS") return "S";
+    return (cls || "").replace("C", "") || "D";  // C1→1, C2→2, etc.
+  }
+  function spinnerSvg(color, cls) {
+    // <animateTransform> spins ONLY the hurricane path, leaving the
+    // center label (D/S/1-5) stationary. Label matches the map icon.
+    var label = sshsLabel(cls);
     return '<div class="placard-spinner">' +
       '<svg viewBox="-34 -34 68 68">' +
-        '<g><path d="' + HURRICANE_PATH + '" fill="' + color + '" ' +
-          'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/></g>' +
+        '<g>' +
+          '<path d="' + HURRICANE_PATH + '" fill="' + color + '" ' +
+            'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/>' +
+          '<animateTransform attributeName="transform" attributeType="XML" ' +
+            'type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>' +
+        '</g>' +
+        '<text x="0" y="0" text-anchor="middle" dominant-baseline="central" ' +
+          'font-size="22" font-weight="900" fill="#ffffff" ' +
+          'paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="2" ' +
+          'stroke-linejoin="round">' + label + '</text>' +
       '</svg>' +
     '</div>';
   }
@@ -2454,7 +2461,7 @@
     return (
       '<div class="storm-placard">' +
       '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
-        spinnerSvg(color) +
+        spinnerSvg(color, cls) +
         '<div class="pl-row1"><span class="pl-cat">' + catLabel + '</span><b>' +
           escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
         '<div class="pl-intensity">' +
@@ -2501,7 +2508,7 @@
     var txtColor = bannerTextColor(cls);
     return (
       '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
-        spinnerSvg(color) +
+        spinnerSvg(color, cls) +
         '<div class="pl-row1"><span class="pl-cat">PEAK · ' + catLabel + '</span><b>' +
           escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
         '<div class="pl-intensity">' +
@@ -2560,8 +2567,8 @@
     var dotsSvg = pts.map(function(p) {
       var x = xScale(new Date(p.t).getTime()).toFixed(1);
       var y = yScale(p.wind_kt || 0).toFixed(1);
-      return '<circle cx="' + x + '" cy="' + y + '" r="2.4" fill="#0a1324" ' +
-             'stroke="#ffffff" stroke-width="0.8"/>';
+      return '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#0a1324" ' +
+             'stroke="#ffffff" stroke-width="1.3"/>';
     }).join("");
     var ticks = [0, 35, 65, 85, 100, 115, 140, 160];
     var yLabels = ticks.filter(function(v) { return v <= maxWind; }).map(function(v) {
@@ -2582,18 +2589,21 @@
       xLabels += '<text x="' + x + '" y="' + (H - padB + 13) +
                  '" text-anchor="middle" font-size="9" fill="#8ea2bd">' + label + '</text>';
     }
+    // Rendering order matters: background + bands + axis first, then the
+    // outer border rect, then the line and dots ON TOP so nothing —
+    // including band seams — paints over them.
     return (
       '<svg class="wind-chart" viewBox="0 0 ' + W + ' ' + H +
       '" preserveAspectRatio="xMidYMid meet">' +
         '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
           '" height="' + plotH + '" fill="#07101c"/>' +
         bandRects +
-        '<path d="' + pathD + '" fill="none" stroke="#ffffff" ' +
-          'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
-        dotsSvg +
         yLabels + xLabels +
         '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
           '" height="' + plotH + '" fill="none" stroke="#243452"/>' +
+        '<path d="' + pathD + '" fill="none" stroke="#ffffff" ' +
+          'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        dotsSvg +
       '</svg>'
     );
   }
