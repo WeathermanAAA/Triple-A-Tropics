@@ -357,6 +357,11 @@ REGIONS: dict[str, dict] = {
     },
 
     # --- Other basins ---
+    "australia": {
+        "label": "Australia",
+        "extent": (95.0, 180.0, -45.0, 5.0),
+        "figsize": (11.5, 7.0),
+    },
     "indian-ocean": {
         "label": "Indian Ocean",
         "extent": (30.0, 130.0, -40.0, 30.0),
@@ -395,11 +400,13 @@ def _sst_actual_cmap() -> mcolors.LinearSegmentedColormap:
 
 
 def _sst_anom_cmap() -> mcolors.LinearSegmentedColormap:
-    """Diverging cool-to-warm to match the reference 'RSST' image.
-    The near-white zero band is intentionally thin so ±0.5 °C anomalies
-    are already visibly tinted; colors ramp through blue→purple on the
-    cold side and yellow→red→magenta on the warm side, with the very
-    ends reserved for extremes beyond ±4 °C."""
+    """Diverging cool-to-warm, warm side skewed toward saturated red.
+
+    Cold side: light blue → mid blue → royal blue → indigo at ≤ -5 °C.
+    Zero: razor-thin white band.
+    Warm side: pale salmon → coral → red → deep red → oxblood →
+    hot-pink magenta at ≥ +5 °C. Orange barely appears — +1 to +3 °C
+    reads as unmistakable red."""
     stops = [
         (0.00, "#1a0c5f"),  # deep indigo (≤ -5)
         (0.06, "#1a1f9e"),  # royal blue-violet
@@ -409,12 +416,13 @@ def _sst_anom_cmap() -> mcolors.LinearSegmentedColormap:
         (0.43, "#bcdcef"),  # very light blue
         (0.485, "#e8f2f8"), # near-zero cool
         (0.50, "#ffffff"),  # zero (thin)
-        (0.515, "#faeadd"), # near-zero warm
-        (0.57, "#f8c993"),  # light orange
-        (0.66, "#f5924d"),  # orange
-        (0.76, "#e04a2a"),  # red
-        (0.86, "#971b27"),  # dark red
-        (0.94, "#660e2e"),  # oxblood
+        (0.515, "#fbe3d8"), # very pale peach
+        (0.55, "#f5b39a"),  # pale salmon (+0.5)
+        (0.60, "#ed8568"),  # coral (+1)
+        (0.68, "#dc4a33"),  # red (+1.8)
+        (0.78, "#b01e22"),  # deep red (+2.8)
+        (0.86, "#7d1520"),  # dark red (+3.6)
+        (0.94, "#4d0d1e"),  # oxblood
         (1.00, "#ef37b8"),  # hot-pink magenta (≥ +5)
     ]
     return mcolors.LinearSegmentedColormap.from_list(
@@ -570,23 +578,29 @@ def plot_actual(
     sst_today, lat, lon, extent, figsize, title, subtitle,
     countries, coast, out_path: Path,
 ):
-    """Rainbow actual-SST plot with integer-degree contours."""
+    """Rainbow actual-SST plot with integer-degree contours.
+
+    Uses pcolormesh (one rectangle per grid cell) for the fill so
+    wide / dateline-crossing extents don't get triangulation banding
+    artifacts the way contourf did."""
     sub, la, lo = _subset_to_extent(sst_today, lat, lon, extent)
     if sub.size == 0:
         return
     fig, ax = plt.subplots(figsize=figsize, facecolor=BG_COLOR)
     LON2, LAT2 = np.meshgrid(lo, la)
-    # Filled contours — discrete steps every 1 °C look like the reference.
-    levels_fill = np.linspace(0, 32, 257)
-    pcm = ax.contourf(
-        LON2, LAT2, sub, levels=levels_fill,
-        cmap=CMAP_ACTUAL, vmin=0, vmax=32, extend="both", zorder=1,
+    norm = mcolors.Normalize(vmin=0.0, vmax=32.0)
+    pcm = ax.pcolormesh(
+        LON2, LAT2, sub, cmap=CMAP_ACTUAL, norm=norm,
+        shading="auto", zorder=1, rasterized=True,
     )
-    # Thin black contour lines at each integer degree to match reference
-    ax.contour(
-        LON2, LAT2, sub, levels=np.arange(0, 33, 1),
-        colors="#000000", linewidths=0.25, alpha=0.55, zorder=1.5,
-    )
+    # Thin black contour lines at each integer degree for readability
+    try:
+        ax.contour(
+            LON2, LAT2, sub, levels=np.arange(0, 33, 1),
+            colors="#000000", linewidths=0.25, alpha=0.55, zorder=1.5,
+        )
+    except Exception:
+        pass
     _draw_basemap(ax, extent, countries, coast)
     _style_axes(ax, extent, title, subtitle)
     _add_colorbar(fig, pcm, "Sea-surface temperature (°C)",
@@ -609,10 +623,13 @@ def plot_anomaly(
         return
     fig, ax = plt.subplots(figsize=figsize, facecolor=BG_COLOR)
     LON2, LAT2 = np.meshgrid(lo, la)
-    levels = np.linspace(-vlim, vlim, 257)
-    pcm = ax.contourf(
-        LON2, LAT2, sub, levels=levels,
-        cmap=CMAP_ANOM, vmin=-vlim, vmax=vlim, extend="both", zorder=1,
+    norm = mcolors.Normalize(vmin=-vlim, vmax=vlim)
+    # pcolormesh (one rectangle per cell) avoids the horizontal banding
+    # that contourf's triangulation produced on dateline-crossing
+    # regions like North Pacific and ENSO.
+    pcm = ax.pcolormesh(
+        LON2, LAT2, sub, cmap=CMAP_ANOM, norm=norm,
+        shading="auto", zorder=1, rasterized=True,
     )
     # Subtle zero-line contour for visual reference
     try:
@@ -621,35 +638,46 @@ def plot_anomaly(
     except Exception:
         pass
 
-    # Records overlay — diagonal hatching with a black outline, matching
-    # the DCAreaWx / Coral Reef Watch visual style. Both highs and lows
-    # use the same forward-diagonal pattern; the underlying anomaly color
-    # (red for record highs, blue for record lows) communicates which.
-    for rm in (records_high, records_low):
-        if rm is None:
-            continue
-        rm_sub, _, _ = _subset_to_extent(rm, lat, lon, extent)
-        if rm_sub.shape != sub.shape:
-            continue
-        mask_float = np.where(rm_sub, 1.0, 0.0)
-        if not (mask_float > 0.5).any():
-            continue
-        # contourf with colors='none' + hatches=['///'] paints only the
-        # hatch pattern. Hatch color & line width come from rcParams.
-        ax.contourf(
-            LON2, LAT2, mask_float,
-            levels=[0.5, 1.5],
-            colors="none",
-            hatches=["///"],
-            zorder=1.8,
-        )
-        # Thin black outline around each record region
-        ax.contour(
-            LON2, LAT2, mask_float,
-            levels=[0.5],
-            colors="#000000", linewidths=0.7,
-            zorder=1.9,
-        )
+    # Records overlay — diagonal hatching with a thin black outline,
+    # matching the NOAA Coral Reef Watch / DCAreaWx visual style.
+    # Forward slash "///" marks record HIGHS, back-slash "\\\\" marks
+    # record LOWS so the two are distinguishable even at a glance.
+    # Hatch stroke is driven by rcParams set per-call so we don't leak
+    # state to other figures.
+    prev_hatch_lw = mpl.rcParams.get("hatch.linewidth", 1.0)
+    prev_hatch_color = mpl.rcParams.get("hatch.color", "black")
+    mpl.rcParams["hatch.linewidth"] = 0.55
+    try:
+        for rm, pattern, hatch_color in (
+            (records_high, "///",   "#2a0412"),  # near-black red
+            (records_low,  "\\\\",  "#05122e"),  # near-black blue
+        ):
+            if rm is None:
+                continue
+            rm_sub, _, _ = _subset_to_extent(rm, lat, lon, extent)
+            if rm_sub.shape != sub.shape:
+                continue
+            mask_float = np.where(rm_sub, 1.0, 0.0)
+            if not (mask_float > 0.5).any():
+                continue
+            mpl.rcParams["hatch.color"] = hatch_color
+            ax.contourf(
+                LON2, LAT2, mask_float,
+                levels=[0.5, 1.5],
+                colors="none",
+                hatches=[pattern],
+                zorder=1.8,
+            )
+            # Thin outline around each record region for clarity
+            ax.contour(
+                LON2, LAT2, mask_float,
+                levels=[0.5],
+                colors="#000000", linewidths=0.6, alpha=0.75,
+                zorder=1.9,
+            )
+    finally:
+        mpl.rcParams["hatch.linewidth"] = prev_hatch_lw
+        mpl.rcParams["hatch.color"] = prev_hatch_color
 
     _draw_basemap(ax, extent, countries, coast)
     _style_axes(ax, extent, title, subtitle)
