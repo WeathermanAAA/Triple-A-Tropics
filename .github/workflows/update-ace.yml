@@ -2,7 +2,13 @@ name: Update ACE + Tracks
 
 on:
   schedule:
+    # Primary: :15 past every 6-hour boundary (00:15, 06:15, 12:15, 18:15 UTC).
     - cron: "15 */6 * * *"
+    # Backup 30 min later in case GitHub silently skips the primary
+    # during a high-load hour. Concurrency group below keeps them
+    # from running at the same time; if the primary succeeded, this
+    # just redoes the work (no data changes → empty commit skipped).
+    - cron: "45 */6 * * *"
   workflow_dispatch: {}
 
 permissions:
