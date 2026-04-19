@@ -155,16 +155,13 @@ a:hover { text-decoration: underline; }
   padding: 0 8px;
 }
 .hero-icon {
-  width: clamp(44px, 7vw, 86px);
-  height: clamp(44px, 7vw, 86px);
+  width: clamp(38px, 10vw, 86px);
+  height: clamp(38px, 10vw, 86px);
   flex-shrink: 0;
   /* Rotating path extends past the viewBox at its corners — without
      this the SVG clips its own fins mid-spin. */
   overflow: visible;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
-}
-@media (max-width: 460px) {
-  .hero-icon { display: none; }
 }
 
 .hero h1 {
