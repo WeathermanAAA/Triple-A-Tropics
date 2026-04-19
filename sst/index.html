@@ -114,7 +114,7 @@
 <!-- ============================================================ -->
 <header class="page-head section-divider">
   <h2 class="section-h2">Coral Reef Watch · 5 km</h2>
-  <p>Higher-resolution SST from NOAA's Coral Reef Watch v3.1 analysis (0.05° grid). The anomaly product uses CRW's coral-focused 1985–2012 Monthly Max Mean baseline.</p>
+  <p>Higher-resolution SST from NOAA's Coral Reef Watch v3.1 analysis (0.05° grid). Anomalies are computed here against the 1991–2020 daily climatology so the CRW and OISST panes use a matching baseline.</p>
   <p class="muted" id="crwDataDate">Loading latest valid date…</p>
 </header>
 
@@ -343,7 +343,7 @@
   // ---- CRW section (mirror of OISST wiring, independent state) ----
   const CRW_VARIANT_CAPTIONS = {
     actual:            "CRW actual sea-surface temperature (5 km).",
-    anomaly:           "CRW SST anomaly vs 1985–2012 MMM (5 km).",
+    anomaly:           "CRW SST anomaly vs 1991–2020 daily climatology (5 km).",
     anomaly_gmr:       "CRW SST anomaly with the daily global-mean SSTA subtracted (5 km).",
     anomaly_records:   "CRW SST anomaly with stippling where today meets or exceeds the 1985-present record.",
     change7d:          "CRW SSTA change over the past 7 days (5 km).",
