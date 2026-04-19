@@ -231,9 +231,12 @@
   const regionSelect = document.getElementById('regionSelect');
   const tabs = document.querySelectorAll('#sstTabs a');
   const runningMean = document.getElementById('sstRunningMean');
-  // Only Actual and Anomaly have 15-day running mean PNGs rendered.
-  // Toggle is disabled on the other variants.
-  const RM_VARIANTS = new Set(['actual', 'anomaly']);
+  // Every tab has a 15-day running-mean PNG — the toggle is always
+  // active. Toggle applies to the currently-selected tab.
+  const RM_VARIANTS = new Set([
+    'actual', 'anomaly', 'anomaly_gmr', 'anomaly_records',
+    'change7d', 'change15d', 'change30d',
+  ]);
 
   // Persist the last-picked region/variant in the URL hash so reloads and
   // shared links land on the same view. Format: #region,variant
