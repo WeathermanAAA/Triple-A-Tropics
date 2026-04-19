@@ -949,21 +949,21 @@ def plot_anomaly(
     # Save clean (no-labels) version first
     fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
 
-    # Add labeled contour lines at sensible steps for the anomaly range,
-    # then save the labels version. One labeled line per integer (or
-    # per 2° when vlim is large), skipping zero to keep the center quiet.
+    # Add labeled contour lines at 0.5 °C steps for typical anomaly
+    # ranges, 1 °C for larger. Zero excluded to keep the center quiet.
+    # Format "+%.1f" so the reader gets full precision (e.g. "+1.5").
     try:
-        step = 1 if vlim <= 5.5 else 2
-        max_abs = int(round(vlim))
-        label_levels = [v for v in range(-max_abs, max_abs + 1, step) if v != 0]
+        step = 0.5 if vlim <= 5.5 else 1.0
+        lvl = np.arange(-vlim, vlim + step / 2, step)
+        label_levels = [float(v) for v in lvl if abs(v) > 1e-6]
         if label_levels:
             cs_lab = ax.contour(
                 LON2, LAT2, sub, levels=label_levels,
-                colors="#000000", linewidths=0.5, alpha=0.7, zorder=1.65,
+                colors="#000000", linewidths=0.45, alpha=0.65, zorder=1.65,
             )
             labels = ax.clabel(
                 cs_lab, inline=True, inline_spacing=3, fontsize=6,
-                fmt="%+d", colors="#000000",
+                fmt="%+.1f", colors="#000000",
             )
             from matplotlib import patheffects as pe
             for lbl in labels:
