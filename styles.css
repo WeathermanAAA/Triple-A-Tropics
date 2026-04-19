@@ -514,11 +514,12 @@ footer {
 }
 .sst-globalmean:empty { display: none; }
 
-/* ---- 15-day running-mean toggle under each SST tab row ---- */
+/* ---- Option toggles under each SST tab row ---- */
 .sst-toggle {
   max-width: 1180px; margin: 0 auto;
   padding: 10px 20px 0;
-  display: flex; justify-content: flex-end;
+  display: flex; justify-content: flex-end; gap: 18px;
+  flex-wrap: wrap;
 }
 .sst-toggle label {
   display: inline-flex; align-items: center; gap: 8px;
