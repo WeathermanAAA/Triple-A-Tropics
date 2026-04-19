@@ -86,6 +86,13 @@
   <a href="#" data-variant="change30d">30-Day Change</a>
 </nav>
 
+<div class="sst-toggle">
+  <label>
+    <input type="checkbox" id="sstRunningMean">
+    <span>15-day running mean</span>
+  </label>
+</div>
+
 <section class="chart-section">
   <div class="chart-card sst-chart">
     <img id="sstImage"
@@ -150,6 +157,13 @@
   <a href="#" data-variant="change15d">15-Day Change</a>
   <a href="#" data-variant="change30d">30-Day Change</a>
 </nav>
+
+<div class="sst-toggle">
+  <label>
+    <input type="checkbox" id="crwRunningMean">
+    <span>15-day running mean</span>
+  </label>
+</div>
 
 <section class="chart-section">
   <div class="chart-card sst-chart">
@@ -216,6 +230,10 @@
   const caption = document.getElementById('sstCaption');
   const regionSelect = document.getElementById('regionSelect');
   const tabs = document.querySelectorAll('#sstTabs a');
+  const runningMean = document.getElementById('sstRunningMean');
+  // Only Actual and Anomaly have 15-day running mean PNGs rendered.
+  // Toggle is disabled on the other variants.
+  const RM_VARIANTS = new Set(['actual', 'anomaly']);
 
   // Persist the last-picked region/variant in the URL hash so reloads and
   // shared links land on the same view. Format: #region,variant
@@ -242,13 +260,23 @@
   function setVariant(v) {
     tabs.forEach(t => t.classList.toggle("active", t.dataset.variant === v));
   }
+  function updateRMEnabled() {
+    const variant = currentVariant();
+    const supports = RM_VARIANTS.has(variant);
+    runningMean.disabled = !supports;
+    runningMean.parentElement.style.opacity = supports ? "1" : "0.45";
+  }
   function update() {
     const region = regionSelect.value;
     const variant = currentVariant();
-    img.src = `/sst/${region}_${variant}.png?t=${Date.now()}`;
-    img.alt = `${REGION_LABELS[region] || region} — ${variant.replace("_", " + ")}`;
+    const is15d = runningMean.checked && RM_VARIANTS.has(variant);
+    const suffix = is15d ? "_15d" : "";
+    img.src = `/sst/${region}_${variant}${suffix}.png?t=${Date.now()}`;
+    img.alt = `${REGION_LABELS[region] || region} — ${variant.replace("_", " + ")}${is15d ? " (15d mean)" : ""}`;
     caption.textContent =
-      (REGION_LABELS[region] || region) + " — " + (VARIANT_CAPTIONS[variant] || "");
+      (REGION_LABELS[region] || region) + " — " +
+      (VARIANT_CAPTIONS[variant] || "") +
+      (is15d ? " · 15-day running mean." : "");
     writeHash(region, variant);
   }
 
@@ -257,9 +285,12 @@
     t.addEventListener("click", e => {
       e.preventDefault();
       setVariant(t.dataset.variant);
+      updateRMEnabled();
       update();
     });
   });
+  runningMean.addEventListener("change", update);
+  updateRMEnabled();
 
   // Restore from URL hash on load
   const saved = parseHash();
@@ -304,6 +335,7 @@
   const crwCaption = document.getElementById('crwCaption');
   const crwRegionSelect = document.getElementById('crwRegionSelect');
   const crwTabs = document.querySelectorAll('#crwTabs a');
+  const crwRunningMean = document.getElementById('crwRunningMean');
 
   function crwCurrentVariant() {
     const active = [...crwTabs].find(t => t.classList.contains('active'));
@@ -312,22 +344,35 @@
   function crwSetVariant(v) {
     crwTabs.forEach(t => t.classList.toggle('active', t.dataset.variant === v));
   }
+  function crwUpdateRMEnabled() {
+    const variant = crwCurrentVariant();
+    const supports = RM_VARIANTS.has(variant);
+    crwRunningMean.disabled = !supports;
+    crwRunningMean.parentElement.style.opacity = supports ? "1" : "0.45";
+  }
   function crwUpdate() {
     const region = crwRegionSelect.value;
     const variant = crwCurrentVariant();
-    crwImg.src = `/sst/crw_${region}_${variant}.png?t=${Date.now()}`;
-    crwImg.alt = `CRW ${REGION_LABELS[region] || region} — ${variant.replace('_', ' + ')}`;
+    const is15d = crwRunningMean.checked && RM_VARIANTS.has(variant);
+    const suffix = is15d ? "_15d" : "";
+    crwImg.src = `/sst/crw_${region}_${variant}${suffix}.png?t=${Date.now()}`;
+    crwImg.alt = `CRW ${REGION_LABELS[region] || region} — ${variant.replace('_', ' + ')}${is15d ? " (15d mean)" : ""}`;
     crwCaption.textContent =
-      (REGION_LABELS[region] || region) + " — " + (CRW_VARIANT_CAPTIONS[variant] || "");
+      (REGION_LABELS[region] || region) + " — " +
+      (CRW_VARIANT_CAPTIONS[variant] || "") +
+      (is15d ? " · 15-day running mean." : "");
   }
   crwRegionSelect.addEventListener('change', crwUpdate);
   crwTabs.forEach(t => {
     t.addEventListener('click', e => {
       e.preventDefault();
       crwSetVariant(t.dataset.variant);
+      crwUpdateRMEnabled();
       crwUpdate();
     });
   });
+  crwRunningMean.addEventListener('change', crwUpdate);
+  crwUpdateRMEnabled();
 
   // Keep the CRW dropdown in sync with the OISST dropdown initially —
   // most users want to compare the same region in both. Changing either
