@@ -50,9 +50,13 @@ jobs:
           done
 
       - name: Generate SST plots
-        # Pulls ~90 NetCDF files total (45 OISST + 45 CRW for records)
-        # and renders 108 PNGs (18 regions × 3 variants × 2 products).
-        # Typically takes 15–25 min on a GH-hosted runner.
+        # Pulls ~280 NetCDF files total: ~45 OISST + ~235 CRW (CRW now
+        # computes its own 1991–2020 baseline from historical SST files
+        # rather than consuming NOAA's pre-baked SSTA product, so it
+        # also fetches 30 years × 6 extra DOYs for the change-map and
+        # running-mean window-center climatologies). Renders 108 PNGs
+        # (18 regions × 3 variants × 2 products). Typically takes
+        # 20–35 min on a GH-hosted runner.
         run: python generate_sst_plots.py
 
       - name: Commit and push if anything changed
