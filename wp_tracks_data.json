@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-04-19 13:37 UTC",
+  "updated": "2026-04-19 13:47 UTC",
   "header": {
     "named": 3,
     "cat1plus": 1,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 43.06
+    "total_ace": 43.12
   },
   "vocab": {
     "named": "named storms",
@@ -25,7 +25,7 @@
       "end": "2026-04-19T12:00:00",
       "peak_wind_kt": 160.0,
       "peak_pressure_mb": 890.0,
-      "ace": 40.22,
+      "ace": 40.28,
       "max_category": "C5",
       "current_category": "TS",
       "is_active": true,
@@ -344,10 +344,10 @@
         },
         {
           "t": "2026-04-19T12:00:00",
-          "lat": 28.4,
-          "lon": 153.2,
-          "wind_kt": 50.0,
-          "pressure_mb": 984.0,
+          "lat": 28.3,
+          "lon": 153.7,
+          "wind_kt": 55.0,
+          "pressure_mb": 983.0,
           "cls": "TS"
         }
       ]
