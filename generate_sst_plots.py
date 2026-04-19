@@ -803,15 +803,22 @@ def compute_global_mean(field: np.ndarray, lat: np.ndarray) -> float:
     return float(num / den)
 
 
+def _labels_path(p: Path) -> Path:
+    """Return the sibling PNG path with `_labels` appended before the
+    extension, so out_path=foo/bar.png → foo/bar_labels.png."""
+    return p.with_name(p.stem + "_labels" + p.suffix)
+
+
 def plot_actual(
     sst_today, lat, lon, extent, figsize, title, subtitle,
     countries, coast, out_path: Path,
 ):
-    """Rainbow actual-SST plot with integer-degree contours.
+    """Rainbow actual-SST plot. Saves TWO versions per call:
+      • out_path                — filled colormap + thin 1 °C contours
+      • _labels_path(out_path) — same plus inline 5 °C value labels
 
-    Uses pcolormesh (one rectangle per grid cell) for the fill so
-    wide / dateline-crossing extents don't get triangulation banding
-    artifacts the way contourf did."""
+    The no-labels version is the site default; the labels version is
+    shown when the user toggles "Show values" on the SST page."""
     sub, la, lo = _subset_to_extent(sst_today, lat, lon, extent)
     if sub.size == 0:
         return
@@ -822,20 +829,29 @@ def plot_actual(
         LON2, LAT2, sub, cmap=CMAP_ACTUAL, norm=norm,
         shading="auto", zorder=1, rasterized=True,
     )
-    # Thin black contour lines at every integer degree, with bolder
-    # labeled contours every 5 °C so you can read values off the map.
+    # Thin black contour lines at every integer degree (always shown).
     try:
         ax.contour(
             LON2, LAT2, sub, levels=np.arange(0, 33, 1),
             colors="#000000", linewidths=0.25, alpha=0.5, zorder=1.5,
         )
+    except Exception:
+        pass
+    _draw_basemap(ax, extent, countries, coast)
+    _style_axes(ax, extent, title, subtitle)
+    _add_colorbar(fig, pcm, "Sea-surface temperature (°C)",
+                  ticks=np.arange(0, 33, 4))
+    _draw_watermark(ax)
+    fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
+    # Save the clean (no-labels) version
+    fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
+
+    # Add labeled 5 °C contours and save the labels version
+    try:
         cs5 = ax.contour(
             LON2, LAT2, sub, levels=np.arange(5, 31, 5),
             colors="#000000", linewidths=0.7, alpha=0.8, zorder=1.55,
         )
-        # Inline numeric labels on the 5 °C contours. White stroke
-        # around black text keeps them legible over any background
-        # color in the turbo-style colormap.
         labels = ax.clabel(
             cs5, inline=True, inline_spacing=3, fontsize=7,
             fmt="%d°", colors="#000000",
@@ -846,15 +862,9 @@ def plot_actual(
                 pe.withStroke(linewidth=1.6, foreground="#ffffff"),
             ])
             lbl.set_fontweight("bold")
+        fig.savefig(_labels_path(out_path), dpi=150, facecolor=BG_COLOR)
     except Exception:
         pass
-    _draw_basemap(ax, extent, countries, coast)
-    _style_axes(ax, extent, title, subtitle)
-    _add_colorbar(fig, pcm, "Sea-surface temperature (°C)",
-                  ticks=np.arange(0, 33, 4))
-    _draw_watermark(ax)
-    fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
-    fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
     plt.close(fig)
 
 
@@ -936,7 +946,34 @@ def plot_anomaly(
     _add_colorbar(fig, pcm, cbar_label, ticks=cbar_ticks)
     _draw_watermark(ax)
     fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
+    # Save clean (no-labels) version first
     fig.savefig(out_path, dpi=150, facecolor=BG_COLOR)
+
+    # Add labeled contour lines at sensible steps for the anomaly range,
+    # then save the labels version. One labeled line per integer (or
+    # per 2° when vlim is large), skipping zero to keep the center quiet.
+    try:
+        step = 1 if vlim <= 5.5 else 2
+        max_abs = int(round(vlim))
+        label_levels = [v for v in range(-max_abs, max_abs + 1, step) if v != 0]
+        if label_levels:
+            cs_lab = ax.contour(
+                LON2, LAT2, sub, levels=label_levels,
+                colors="#000000", linewidths=0.5, alpha=0.7, zorder=1.65,
+            )
+            labels = ax.clabel(
+                cs_lab, inline=True, inline_spacing=3, fontsize=6,
+                fmt="%+d", colors="#000000",
+            )
+            from matplotlib import patheffects as pe
+            for lbl in labels:
+                lbl.set_path_effects([
+                    pe.withStroke(linewidth=1.4, foreground="#ffffff"),
+                ])
+                lbl.set_fontweight("bold")
+        fig.savefig(_labels_path(out_path), dpi=150, facecolor=BG_COLOR)
+    except Exception:
+        pass
     plt.close(fig)
 
 
