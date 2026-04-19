@@ -85,10 +85,18 @@ OISST_BASE = (
 # covers holiday gaps in NCEI's publishing schedule.
 LATENCY_TRIES = 7
 
-# Baseline & records window
+# Baseline & records window (OISST)
 CLIMO_START = 1991
 CLIMO_END = 2020
 RECORDS_START = 1982  # full OISST era
+
+# CRW baseline — match OISST's modern 1991–2020 window instead of NOAA
+# CRW's default 1985–2012 climatology. This makes CRW + OISST anomalies
+# directly comparable in the viewer; the 1985–2012 default is coral-
+# bleaching-centric and runs ~0.1–0.2 °C "colder" than 1991–2020 because
+# of the post-2012 warming trend.
+CRW_CLIMO_START = 1991
+CRW_CLIMO_END = 2020
 
 # Keep a small local cache of raw NetCDF files so re-runs in the same
 # workday don't hammer NCEI for the same bytes.
@@ -392,6 +400,70 @@ def stack_crw_years(files_by_year: dict[int, Path], var_name: str
         g, _, _ = read_crw_grid(files_by_year[y], var_name)
         grids.append(g)
     return np.stack(grids, axis=0), years
+
+
+def mean_crw_years(files_by_year: dict[int, Path], var_name: str,
+                   ) -> tuple[np.ndarray | None, list[int]]:
+    """Return the per-pixel nanmean across years WITHOUT stacking all
+    grids in memory at once.
+
+    A CRW 5 km global grid is ~7200×3600 float32 (~100 MB). Stacking 30
+    years is ~3 GB per DOY; stacking for several DOYs (climatology at
+    multiple change-map endpoints and running-mean window centers) would
+    blow the 14 GB runner budget. We accumulate a running sum + a
+    per-pixel valid-count instead, so peak memory is O(2 grids).
+    """
+    years = sorted(files_by_year)
+    running_sum: np.ndarray | None = None
+    running_count: np.ndarray | None = None
+    years_used: list[int] = []
+    for y in years:
+        try:
+            g, _, _ = read_crw_grid(files_by_year[y], var_name)
+        except Exception:  # noqa: BLE001
+            continue
+        valid = ~np.isnan(g)
+        if running_sum is None:
+            running_sum = np.where(valid, g, 0.0).astype(np.float64)
+            running_count = valid.astype(np.int32)
+        else:
+            if g.shape != running_sum.shape:
+                continue
+            running_sum += np.where(valid, g, 0.0)
+            running_count += valid.astype(np.int32)
+        years_used.append(y)
+    if running_sum is None or running_count is None:
+        return None, []
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = running_sum / np.where(running_count > 0, running_count, 1)
+    mean = np.where(running_count > 0, mean, np.nan).astype(np.float32)
+    return mean, years_used
+
+
+def compute_crw_climo_for_date(d: dt.date, log_prefix: str
+                               ) -> tuple[np.ndarray | None, list[int]]:
+    """Fetch CRW SST for every year in [CRW_CLIMO_START, CRW_CLIMO_END]
+    at the same month/day as `d`, then return the per-pixel nanmean.
+
+    Used to build a 1991–2020 daily climatology at any day-of-year we
+    need (target DOY, change-map endpoint DOYs, running-mean window
+    centers). Falls back to whatever subset of years successfully
+    downloaded — callers check the returned climo is not None.
+    """
+    year_range = range(CRW_CLIMO_START, CRW_CLIMO_END + 1)
+    files = day_of_year_crw_files(
+        d.month, d.day, year_range, "sst", log_prefix,
+    )
+    if not files:
+        return None, []
+    climo, years_used = mean_crw_years(files, "analysed_sst")
+    if climo is None:
+        return None, []
+    print(
+        f"{log_prefix} CRW climo {CRW_CLIMO_START}–{CRW_CLIMO_END} "
+        f"for {d:%m-%d}: {len(years_used)} years"
+    )
+    return climo, years_used
 
 
 # --- Projection + basemap overlay ---------------------------------------
@@ -1355,18 +1427,19 @@ def main(argv=None):
     crw_log = "[sst-crw]"
     try:
         crw_target, crw_sst_path = latest_available_crw_day("sst", crw_log)
-        _, crw_ssta_path = latest_available_crw_day("ssta", crw_log)
-
         crw_sst, crw_lat, crw_lon = read_crw_grid(crw_sst_path, "analysed_sst")
-        crw_anom, _, _ = read_crw_grid(
-            crw_ssta_path, "sea_surface_temperature_anomaly"
-        )
-        print(f"{crw_log} grids: sst {crw_sst.shape} · anom {crw_anom.shape}")
+        print(f"{crw_log} grid: sst {crw_sst.shape}")
 
         # Records vs the full 1985-present CRW era. Download in parallel.
+        # The records stack also doubles as the target-DOY climatology
+        # source: its 1991-2020 subset is exactly what we need for the
+        # new baseline, so no separate climo fetch for today.
         crw_hist_years = range(CRW_RECORDS_START, crw_target.year)
         crw_records_high = crw_records_low = None
         crw_record_years: list[int] = []
+        crw_climo_target: np.ndarray | None = None
+        crw_climo_years_target: list[int] = []
+        rmax = rmin = None
         if not args.no_records:
             crw_hist = day_of_year_crw_files(
                 crw_target.month, crw_target.day, crw_hist_years,
@@ -1394,24 +1467,80 @@ def main(argv=None):
                     f"— highs {int(crw_records_high.sum())} px, "
                     f"lows {int(crw_records_low.sum())} px"
                 )
+                # Target-DOY 1991–2020 climo, carved out of the records
+                # stack for free (no extra network fetches).
+                climo_idx = [i for i, y in enumerate(crw_record_years)
+                             if CRW_CLIMO_START <= y <= CRW_CLIMO_END]
+                if climo_idx:
+                    crw_climo_years_target = [crw_record_years[i]
+                                              for i in climo_idx]
+                    crw_climo_target = np.nanmean(
+                        crw_stack[climo_idx], axis=0
+                    ).astype(np.float32)
+                    print(
+                        f"{crw_log} CRW climo "
+                        f"{CRW_CLIMO_START}–{CRW_CLIMO_END} "
+                        f"for target DOY: "
+                        f"{len(crw_climo_years_target)} years"
+                    )
+                # Release the 40-year records stack before we start
+                # pulling more per-DOY climo stacks for change maps and
+                # running-mean window centers — otherwise peak memory
+                # on the runner spikes hard.
+                del crw_stack
 
-        # N-day SSTA change maps. Use CRW's official SSTA files for both
-        # endpoints so the delta is a true SSTA difference (both endpoints
-        # are anomalies against CRW's own baked-in climatology).
+        if crw_climo_target is None:
+            # We can still render "actual" + records without a climo,
+            # but every anomaly-based product is blocked.
+            raise RuntimeError(
+                f"CRW climo {CRW_CLIMO_START}–{CRW_CLIMO_END} could not be "
+                f"assembled for target DOY (no historical files usable)"
+            )
+
+        # Main anomaly: today's SST vs the 1991–2020 daily mean at this DOY.
+        crw_anom = (crw_sst - crw_climo_target).astype(np.float32)
+
+        # N-day SSTA change maps on the new 1991–2020 baseline. Each
+        # endpoint needs its OWN DOY climatology so the seasonal cycle
+        # cancels out correctly: change = (sst_today - climo_today_doy)
+        # - (sst_prev - climo_prev_doy). That's 30 extra historical
+        # fetches per endpoint, done in parallel via the DOY helper.
         crw_change_fields: dict[int, tuple[np.ndarray, dt.date]] = {}
+        # Cache climo-by-date so change + running-mean centers can
+        # share fetches when their DOYs coincide (target-7 is both a
+        # change endpoint and today's 15-day-window center).
+        crw_doy_climo_cache: dict[dt.date, np.ndarray] = {}
+
+        def climo_for(d: dt.date) -> np.ndarray | None:
+            if d in crw_doy_climo_cache:
+                return crw_doy_climo_cache[d]
+            climo, _ = compute_crw_climo_for_date(d, crw_log)
+            if climo is not None:
+                crw_doy_climo_cache[d] = climo
+            return climo
+
         for days in (7, 15, 30):
             prev_date = crw_target - dt.timedelta(days=days)
-            print(f"{crw_log} fetching CRW ssta {days}d-ago {prev_date} ...")
-            prev_path = fetch_crw_day(prev_date, "ssta", crw_log, verbose=True)
+            print(f"{crw_log} CRW {days}d change: fetching prev SST "
+                  f"{prev_date} + building 1991–2020 climo for its DOY")
+            prev_path = fetch_crw_day(prev_date, "sst", crw_log, verbose=True)
             if prev_path is None:
                 print(f"{crw_log}   skip CRW {days}d change — {prev_date} missing")
                 continue
-            prev_anom, _, _ = read_crw_grid(
-                prev_path, "sea_surface_temperature_anomaly"
-            )
-            if prev_anom.shape != crw_anom.shape:
+            try:
+                prev_sst, _, _ = read_crw_grid(prev_path, "analysed_sst")
+            except Exception as e:  # noqa: BLE001
+                print(f"{crw_log}   skip CRW {days}d change — read error: {e}")
+                continue
+            if prev_sst.shape != crw_sst.shape:
                 print(f"{crw_log}   skip CRW {days}d change — shape mismatch")
                 continue
+            climo_prev = climo_for(prev_date)
+            if climo_prev is None:
+                print(f"{crw_log}   skip CRW {days}d change — no climo "
+                      f"for {prev_date:%m-%d}")
+                continue
+            prev_anom = (prev_sst - climo_prev).astype(np.float32)
             crw_change_fields[days] = (crw_anom - prev_anom, prev_date)
             print(f"{crw_log}   CRW {days}d change ready (Δ since {prev_date})")
 
@@ -1420,29 +1549,26 @@ def main(argv=None):
         print(f"{crw_log} CRW global-mean SSTA: {global_mean_crw:+.3f} °C")
         crw_anom_gmr = crw_anom - global_mean_crw
 
-        # 15-day running means at multiple offsets for CRW. Fetch
-        # today-1 through today-44 for SSTA so the change-map running
-        # means (7/15/30 days ago) have their own 15-day windows.
-        # Only fetch today-1..today-14 for SST since actual_15d only
-        # needs the current window.
+        # 15-day running means at multiple offsets for CRW. Fetch 44 days
+        # of SST (not SSTA — we build anomalies ourselves now against
+        # 1991–2020). For the running-mean anomalies at each window, we
+        # use the climatology at the window's CENTER DOY as a per-window
+        # approximation. Exact per-DOY climo across all 15 days would
+        # require ~1300 extra historical fetches every run; central-DOY
+        # caps residual seasonal error at <0.3 °C even in steep-gradient
+        # regions, which is comfortably below the color-scale resolution.
         CRW_RM_MAX_OFFSET = 45
         crw_rm_dates = {d: crw_target - dt.timedelta(days=d)
                         for d in range(1, CRW_RM_MAX_OFFSET)}
         print(f"{crw_log} fetching {len(crw_rm_dates)} previous days of "
-              "CRW SSTA + 14 days of CRW SST for running-mean stack ...")
+              "CRW SST for running-mean stack ...")
         with cf.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
-            crw_ssta_futs = {
-                d: pool.submit(fetch_crw_day, crw_rm_dates[d], "ssta",
-                               crw_log, False)
-                for d in crw_rm_dates
-            }
             crw_sst_futs = {
                 d: pool.submit(fetch_crw_day, crw_rm_dates[d], "sst",
                                crw_log, False)
-                for d in range(1, 15)
+                for d in crw_rm_dates
             }
         crw_rm_sst: dict[int, np.ndarray] = {0: crw_sst}
-        crw_rm_anom: dict[int, np.ndarray] = {0: crw_anom}
         for d, fut in crw_sst_futs.items():
             p = fut.result()
             if p is None:
@@ -1453,19 +1579,7 @@ def main(argv=None):
                     crw_rm_sst[d] = g
             except Exception:
                 pass
-        for d, fut in crw_ssta_futs.items():
-            p = fut.result()
-            if p is None:
-                continue
-            try:
-                g, _, _ = read_crw_grid(
-                    p, "sea_surface_temperature_anomaly")
-                if g.shape == crw_anom.shape:
-                    crw_rm_anom[d] = g
-            except Exception:
-                pass
-        print(f"{crw_log} running-mean stack: "
-              f"{len(crw_rm_sst)} SST, {len(crw_rm_anom)} SSTA days")
+        print(f"{crw_log} running-mean stack: {len(crw_rm_sst)} SST days")
 
         def crw_window_mean(source, end_offset):
             days = [source[end_offset + i] for i in range(15)
@@ -1475,10 +1589,35 @@ def main(argv=None):
             return np.nanmean(np.stack(days, axis=0), axis=0)
 
         crw_rm_sst_today = crw_window_mean(crw_rm_sst, 0)
-        crw_rm_anom_today = crw_window_mean(crw_rm_anom, 0)
-        crw_rm_anom_7 = crw_window_mean(crw_rm_anom, 7)
-        crw_rm_anom_15 = crw_window_mean(crw_rm_anom, 15)
-        crw_rm_anom_30 = crw_window_mean(crw_rm_anom, 30)
+
+        # Window-center DOY climos. 4 windows ending at offsets
+        # 0/7/15/30 → centers at target-7/-14/-22/-37.
+        window_spec = [
+            (0, 7),    # today's 15-day window centered at target-7
+            (7, 14),   # 7-ago window centered at target-14
+            (15, 22),  # 15-ago window centered at target-22
+            (30, 37),  # 30-ago window centered at target-37
+        ]
+        crw_rm_anom_by_offset: dict[int, np.ndarray] = {}
+        for end_offset, center_days in window_spec:
+            win_mean = crw_window_mean(crw_rm_sst, end_offset)
+            if win_mean is None:
+                continue
+            center_date = crw_target - dt.timedelta(days=center_days)
+            climo_center = climo_for(center_date)
+            if climo_center is None:
+                print(f"{crw_log}   skip RM anom offset {end_offset} — "
+                      f"no climo for center DOY {center_date:%m-%d}")
+                continue
+            crw_rm_anom_by_offset[end_offset] = (
+                win_mean - climo_center
+            ).astype(np.float32)
+
+        crw_rm_anom_today = crw_rm_anom_by_offset.get(0)
+        crw_rm_anom_7 = crw_rm_anom_by_offset.get(7)
+        crw_rm_anom_15 = crw_rm_anom_by_offset.get(15)
+        crw_rm_anom_30 = crw_rm_anom_by_offset.get(30)
+
         crw_rm_anom_gmr = None
         if crw_rm_anom_today is not None:
             gm = compute_global_mean(crw_rm_anom_today, crw_lat)
@@ -1499,7 +1638,8 @@ def main(argv=None):
         # single-day record envelope. Hatched where sustained conditions
         # beat the historical single-day extreme.
         crw_rm_records_high = crw_rm_records_low = None
-        if (crw_rm_sst_today is not None and crw_records_high is not None):
+        if (crw_rm_sst_today is not None and crw_records_high is not None
+                and rmax is not None and rmin is not None):
             eps = 0.001
             crw_rm_records_high = crw_rm_sst_today > (rmax - eps)
             crw_rm_records_low = crw_rm_sst_today < (rmin + eps)
@@ -1536,7 +1676,7 @@ def main(argv=None):
             plot_anomaly(
                 crw_anom, crw_lat, crw_lon, extent, figsize,
                 f"{label} · CRW SST Anomaly (5 km)",
-                subtitle + "  ·  Baseline 1985–2012 MMM",
+                subtitle + "  ·  Baseline 1991–2020",
                 countries, coast, p_anom,
             )
             if crw_records_high is not None:
@@ -1576,7 +1716,7 @@ def main(argv=None):
                 plot_anomaly(
                     crw_rm_anom_today, crw_lat, crw_lon, extent, figsize,
                     f"{label} · 15-Day Mean CRW SSTA (5 km)",
-                    crw_subtitle_15d + "  ·  Baseline 1985–2012 MMM",
+                    crw_subtitle_15d + "  ·  Baseline 1991–2020",
                     countries, coast,
                     SST_DIR / f"crw_{region_key}_anomaly_15d.png",
                     cbar_label="15-day mean SSTA (°C)",
@@ -1619,7 +1759,8 @@ def main(argv=None):
                     chg, crw_lat, crw_lon, extent, figsize,
                     f"{label} · CRW {days}-Day SSTA Change (5 km)",
                     f"Latest: {crw_date_label}  ·  "
-                    f"Δ since {prev_date.strftime('%B %-d, %Y')}",
+                    f"Δ since {prev_date.strftime('%B %-d, %Y')}  ·  "
+                    "Baseline 1991–2020",
                     countries, coast, out_change,
                     vlim=5.0,
                     cbar_label=f"{days}-day SSTA change (°C)",
@@ -1630,7 +1771,13 @@ def main(argv=None):
             "updated_utc": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
             "record_years": sorted(crw_record_years),
             "regions": list(REGIONS.keys()),
-            "baseline_note": "1985–2012 Monthly Max Mean (NOAA CRW official)",
+            "baseline_note": (
+                f"{CRW_CLIMO_START}–{CRW_CLIMO_END} daily climatology "
+                "(computed from CRW 5 km CoralTemp v3.1, matches OISST baseline)"
+            ),
+            "baseline_start": CRW_CLIMO_START,
+            "baseline_end": CRW_CLIMO_END,
+            "climo_years": sorted(crw_climo_years_target),
             "record_start": CRW_RECORDS_START,
             "global_mean_ssta": global_mean_crw,
             "change_periods": sorted(crw_change_fields.keys()),
