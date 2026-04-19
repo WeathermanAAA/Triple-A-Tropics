@@ -1072,6 +1072,48 @@ def main(argv=None):
     # warming signal.
     anomaly_gmr = anomaly - global_mean_oisst
 
+    # 15-day running mean (today + 14 previous consecutive days).
+    # Uses the NOAA-built-in `anom` variable on each day so the average
+    # is a true 15-day SSTA mean without baseline drift. Fetches are
+    # parallelized and cached — re-runs in the same day cost nothing.
+    running_sst_stack: list[np.ndarray] = [sst_today]
+    running_anom_stack: list[np.ndarray] = []
+    # Today's anom from the file we already have
+    try:
+        today_anom_noaa, _, _ = read_sst_grid(today_path, var_name="anom")
+        if today_anom_noaa.shape == sst_today.shape:
+            running_anom_stack.append(today_anom_noaa)
+    except Exception:
+        pass
+    running_dates = [target - dt.timedelta(days=d) for d in range(1, 15)]
+    print(f"{log} fetching 14 previous days for 15-day running mean ...")
+    with cf.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+        running_paths = {d: pool.submit(fetch_day, d, log, False)
+                         for d in running_dates}
+    for d, fut in running_paths.items():
+        p = fut.result()
+        if p is None:
+            continue
+        try:
+            g_sst, _, _ = read_sst_grid(p, var_name="sst")
+            g_anom, _, _ = read_sst_grid(p, var_name="anom")
+            if g_sst.shape == sst_today.shape:
+                running_sst_stack.append(g_sst)
+            if g_anom.shape == sst_today.shape:
+                running_anom_stack.append(g_anom)
+        except Exception as e:  # noqa: BLE001
+            print(f"{log}   running {d} read error: {e}", file=sys.stderr)
+    running_mean_sst = running_mean_anom = None
+    if len(running_sst_stack) >= 8:
+        running_mean_sst = np.nanmean(
+            np.stack(running_sst_stack, axis=0), axis=0)
+    if len(running_anom_stack) >= 8:
+        running_mean_anom = np.nanmean(
+            np.stack(running_anom_stack, axis=0), axis=0)
+    print(f"{log} 15-day running mean: "
+          f"{len(running_sst_stack)} SST days, "
+          f"{len(running_anom_stack)} anom days")
+
     # 5. Render each region × variant
     date_label = target.strftime("%B %-d, %Y")
 
@@ -1124,6 +1166,28 @@ def main(argv=None):
             countries, coast, p_anom_gmr,
             cbar_label="SSTA − global mean (°C)",
         )
+
+        # 15-day running mean variants for SST + Anomaly (if enough
+        # historical days fetched successfully)
+        if running_mean_sst is not None:
+            p_actual_15d = SST_DIR / f"{region_key}_actual_15d.png"
+            print(f"{log} rendering {region_key} · actual_15d")
+            plot_actual(
+                running_mean_sst, lat, lon, extent, figsize,
+                f"{label} · 15-Day Running Mean SST",
+                subtitle + "  ·  15-day mean centered on latest day",
+                countries, coast, p_actual_15d,
+            )
+        if running_mean_anom is not None:
+            p_anom_15d = SST_DIR / f"{region_key}_anomaly_15d.png"
+            print(f"{log} rendering {region_key} · anomaly_15d")
+            plot_anomaly(
+                running_mean_anom, lat, lon, extent, figsize,
+                f"{label} · 15-Day Running Mean SST Anomaly",
+                subtitle + "  ·  Baseline 1991–2020 · 15-day mean",
+                countries, coast, p_anom_15d,
+                cbar_label="15-day mean SSTA (°C)",
+            )
 
         # N-day SSTA change maps
         for days, (change_field, prev_date) in sorted(change_fields.items()):
@@ -1231,6 +1295,50 @@ def main(argv=None):
         print(f"{crw_log} CRW global-mean SSTA: {global_mean_crw:+.3f} °C")
         crw_anom_gmr = crw_anom - global_mean_crw
 
+        # 15-day running mean — fetch 14 previous days of CRW SST + SSTA
+        crw_running_sst: list[np.ndarray] = [crw_sst]
+        crw_running_anom: list[np.ndarray] = [crw_anom]
+        crw_running_dates = [
+            crw_target - dt.timedelta(days=d) for d in range(1, 15)
+        ]
+        print(f"{crw_log} fetching 14 previous days of CRW for running mean ...")
+        with cf.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+            crw_sst_futs = {d: pool.submit(fetch_crw_day, d, "sst", crw_log, False)
+                            for d in crw_running_dates}
+            crw_ssta_futs = {d: pool.submit(fetch_crw_day, d, "ssta", crw_log, False)
+                             for d in crw_running_dates}
+        for d, fut in crw_sst_futs.items():
+            p = fut.result()
+            if p is None:
+                continue
+            try:
+                g, _, _ = read_crw_grid(p, "analysed_sst")
+                if g.shape == crw_sst.shape:
+                    crw_running_sst.append(g)
+            except Exception:
+                pass
+        for d, fut in crw_ssta_futs.items():
+            p = fut.result()
+            if p is None:
+                continue
+            try:
+                g, _, _ = read_crw_grid(
+                    p, "sea_surface_temperature_anomaly")
+                if g.shape == crw_anom.shape:
+                    crw_running_anom.append(g)
+            except Exception:
+                pass
+        crw_mean_sst = crw_mean_anom = None
+        if len(crw_running_sst) >= 8:
+            crw_mean_sst = np.nanmean(
+                np.stack(crw_running_sst, axis=0), axis=0)
+        if len(crw_running_anom) >= 8:
+            crw_mean_anom = np.nanmean(
+                np.stack(crw_running_anom, axis=0), axis=0)
+        print(f"{crw_log} 15-day running mean: "
+              f"{len(crw_running_sst)} SST days, "
+              f"{len(crw_running_anom)} SSTA days")
+
         crw_date_label = crw_target.strftime("%B %-d, %Y")
         for region_key in args.regions:
             rcfg = REGIONS[region_key]
@@ -1280,6 +1388,27 @@ def main(argv=None):
                 countries, coast, crw_p_anom_gmr,
                 cbar_label="SSTA − global mean (°C)",
             )
+
+            # 15-day running mean variants (CRW)
+            if crw_mean_sst is not None:
+                crw_p_actual_15d = SST_DIR / f"crw_{region_key}_actual_15d.png"
+                print(f"{crw_log} rendering {region_key} · actual_15d")
+                plot_actual(
+                    crw_mean_sst, crw_lat, crw_lon, extent, figsize,
+                    f"{label} · 15-Day Running Mean CRW SST (5 km)",
+                    subtitle + "  ·  15-day mean centered on latest day",
+                    countries, coast, crw_p_actual_15d,
+                )
+            if crw_mean_anom is not None:
+                crw_p_anom_15d = SST_DIR / f"crw_{region_key}_anomaly_15d.png"
+                print(f"{crw_log} rendering {region_key} · anomaly_15d")
+                plot_anomaly(
+                    crw_mean_anom, crw_lat, crw_lon, extent, figsize,
+                    f"{label} · 15-Day Running Mean CRW SSTA (5 km)",
+                    subtitle + "  ·  Baseline 1985–2012 MMM · 15-day mean",
+                    countries, coast, crw_p_anom_15d,
+                    cbar_label="15-day mean SSTA (°C)",
+                )
 
             # N-day SSTA change maps (CRW)
             for days, (chg, prev_date) in sorted(crw_change_fields.items()):
