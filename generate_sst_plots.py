@@ -1148,6 +1148,28 @@ def main(argv=None):
     if rm_anom_today is not None and rm_anom_30 is not None:
         rm_change[30] = rm_anom_today - rm_anom_30
 
+    # Records mask for the 15-day running mean variant. Compared against
+    # the same 1982-present per-day-of-year record envelope, but the
+    # "current" side is now the 15-day average instead of today's single
+    # day. Stricter / more physically meaningful: a hatched pixel means
+    # the 15-day mean exceeded the historical single-day extreme, which
+    # implies sustained record conditions.
+    rm_records_high = rm_records_low = None
+    if (rm_sst_today is not None and records_mask_high is not None
+            and 'record_max' in locals()):
+        eps = 0.001
+        rm_records_high = rm_sst_today > (record_max - eps)
+        rm_records_low = rm_sst_today < (record_min + eps)
+        rm_records_high = np.where(
+            np.isnan(rm_sst_today) | np.isnan(record_max),
+            False, rm_records_high)
+        rm_records_low = np.where(
+            np.isnan(rm_sst_today) | np.isnan(record_min),
+            False, rm_records_low)
+        print(f"{log} running-mean records: "
+              f"highs {int(rm_records_high.sum())} px, "
+              f"lows {int(rm_records_low.sum())} px")
+
     # 5. Render each region × variant
     date_label = target.strftime("%B %-d, %Y")
 
@@ -1229,18 +1251,19 @@ def main(argv=None):
                 SST_DIR / f"{region_key}_anomaly_gmr_15d.png",
                 cbar_label="15-day mean SSTA − global mean (°C)",
             )
-        # Records overlay on the running mean — uses today's records
-        # mask as the best available approximation; the anomaly field
-        # underneath is the 15-day mean.
-        if rm_anom_today is not None and records_mask_high is not None:
+        # Records overlay on the running mean — compares the 15-day
+        # running-mean SST to the historical single-day record envelope.
+        # Hatching shows where the running mean meets/exceeds the
+        # strongest single day ever recorded on this DOY since 1982.
+        if rm_anom_today is not None and rm_records_high is not None:
             plot_anomaly(
                 rm_anom_today, lat, lon, extent, figsize,
-                f"{label} · 15-Day Mean SSTA with Daily Records",
+                f"{label} · 15-Day Mean SSTA vs Daily Records",
                 subtitle_15d + f"  ·  Records vs {RECORDS_START}–{target.year - 1}",
                 countries, coast,
                 SST_DIR / f"{region_key}_anomaly_records_15d.png",
-                records_high=records_mask_high,
-                records_low=records_mask_low,
+                records_high=rm_records_high,
+                records_low=rm_records_low,
                 cbar_label="15-day mean SSTA (°C)",
             )
         # Running-mean change maps: smoothed N-day anomaly change.
@@ -1434,6 +1457,25 @@ def main(argv=None):
         if crw_rm_anom_today is not None and crw_rm_anom_30 is not None:
             crw_rm_change[30] = crw_rm_anom_today - crw_rm_anom_30
 
+        # CRW records mask for the running-mean variant: compare the
+        # 15-day running-mean SST to the full 1985-present per-DOY
+        # single-day record envelope. Hatched where sustained conditions
+        # beat the historical single-day extreme.
+        crw_rm_records_high = crw_rm_records_low = None
+        if (crw_rm_sst_today is not None and crw_records_high is not None):
+            eps = 0.001
+            crw_rm_records_high = crw_rm_sst_today > (rmax - eps)
+            crw_rm_records_low = crw_rm_sst_today < (rmin + eps)
+            crw_rm_records_high = np.where(
+                np.isnan(crw_rm_sst_today) | np.isnan(rmax),
+                False, crw_rm_records_high)
+            crw_rm_records_low = np.where(
+                np.isnan(crw_rm_sst_today) | np.isnan(rmin),
+                False, crw_rm_records_low)
+            print(f"{crw_log} running-mean records: "
+                  f"highs {int(crw_rm_records_high.sum())} px, "
+                  f"lows {int(crw_rm_records_low.sum())} px")
+
         crw_date_label = crw_target.strftime("%B %-d, %Y")
         for region_key in args.regions:
             rcfg = REGIONS[region_key]
@@ -1510,16 +1552,16 @@ def main(argv=None):
                     SST_DIR / f"crw_{region_key}_anomaly_gmr_15d.png",
                     cbar_label="15-day mean SSTA − global mean (°C)",
                 )
-            if crw_rm_anom_today is not None and crw_records_high is not None:
+            if crw_rm_anom_today is not None and crw_rm_records_high is not None:
                 plot_anomaly(
                     crw_rm_anom_today, crw_lat, crw_lon, extent, figsize,
-                    f"{label} · 15-Day Mean CRW SSTA with Daily Records (5 km)",
+                    f"{label} · 15-Day Mean CRW SSTA vs Daily Records (5 km)",
                     crw_subtitle_15d
                     + f"  ·  Records vs {CRW_RECORDS_START}–{crw_target.year - 1}",
                     countries, coast,
                     SST_DIR / f"crw_{region_key}_anomaly_records_15d.png",
-                    records_high=crw_records_high,
-                    records_low=crw_records_low,
+                    records_high=crw_rm_records_high,
+                    records_low=crw_rm_records_low,
                     cbar_label="15-day mean SSTA (°C)",
                 )
             for days, chg in crw_rm_change.items():
