@@ -91,6 +91,10 @@
     <input type="checkbox" id="sstRunningMean">
     <span>15-day running mean</span>
   </label>
+  <label>
+    <input type="checkbox" id="sstShowValues">
+    <span>Show values</span>
+  </label>
 </div>
 
 <section class="chart-section">
@@ -163,6 +167,10 @@
     <input type="checkbox" id="crwRunningMean">
     <span>15-day running mean</span>
   </label>
+  <label>
+    <input type="checkbox" id="crwShowValues">
+    <span>Show values</span>
+  </label>
 </div>
 
 <section class="chart-section">
@@ -231,6 +239,7 @@
   const regionSelect = document.getElementById('regionSelect');
   const tabs = document.querySelectorAll('#sstTabs a');
   const runningMean = document.getElementById('sstRunningMean');
+  const showValues = document.getElementById('sstShowValues');
   // Every tab has a 15-day running-mean PNG — the toggle is always
   // active. Toggle applies to the currently-selected tab.
   const RM_VARIANTS = new Set([
@@ -273,13 +282,19 @@
     const region = regionSelect.value;
     const variant = currentVariant();
     const is15d = runningMean.checked && RM_VARIANTS.has(variant);
-    const suffix = is15d ? "_15d" : "";
+    const withValues = showValues.checked;
+    // Suffix order must match how filenames are constructed in Python:
+    //   base.png, base_labels.png, base_15d.png, base_15d_labels.png
+    let suffix = "";
+    if (is15d) suffix += "_15d";
+    if (withValues) suffix += "_labels";
     img.src = `/sst/${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    img.alt = `${REGION_LABELS[region] || region} — ${variant.replace("_", " + ")}${is15d ? " (15d mean)" : ""}`;
+    img.alt = `${REGION_LABELS[region] || region} — ${variant.replace("_", " + ")}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
     caption.textContent =
       (REGION_LABELS[region] || region) + " — " +
       (VARIANT_CAPTIONS[variant] || "") +
-      (is15d ? " · 15-day running mean." : "");
+      (is15d ? " · 15-day running mean." : "") +
+      (withValues ? " · values overlaid." : "");
     writeHash(region, variant);
   }
 
@@ -293,6 +308,7 @@
     });
   });
   runningMean.addEventListener("change", update);
+  showValues.addEventListener("change", update);
   updateRMEnabled();
 
   // Restore from URL hash on load
@@ -339,6 +355,7 @@
   const crwRegionSelect = document.getElementById('crwRegionSelect');
   const crwTabs = document.querySelectorAll('#crwTabs a');
   const crwRunningMean = document.getElementById('crwRunningMean');
+  const crwShowValues = document.getElementById('crwShowValues');
 
   function crwCurrentVariant() {
     const active = [...crwTabs].find(t => t.classList.contains('active'));
@@ -357,13 +374,17 @@
     const region = crwRegionSelect.value;
     const variant = crwCurrentVariant();
     const is15d = crwRunningMean.checked && RM_VARIANTS.has(variant);
-    const suffix = is15d ? "_15d" : "";
+    const withValues = crwShowValues.checked;
+    let suffix = "";
+    if (is15d) suffix += "_15d";
+    if (withValues) suffix += "_labels";
     crwImg.src = `/sst/crw_${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    crwImg.alt = `CRW ${REGION_LABELS[region] || region} — ${variant.replace('_', ' + ')}${is15d ? " (15d mean)" : ""}`;
+    crwImg.alt = `CRW ${REGION_LABELS[region] || region} — ${variant.replace('_', ' + ')}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
     crwCaption.textContent =
       (REGION_LABELS[region] || region) + " — " +
       (CRW_VARIANT_CAPTIONS[variant] || "") +
-      (is15d ? " · 15-day running mean." : "");
+      (is15d ? " · 15-day running mean." : "") +
+      (withValues ? " · values overlaid." : "");
   }
   crwRegionSelect.addEventListener('change', crwUpdate);
   crwTabs.forEach(t => {
@@ -375,6 +396,7 @@
     });
   });
   crwRunningMean.addEventListener('change', crwUpdate);
+  crwShowValues.addEventListener('change', crwUpdate);
   crwUpdateRMEnabled();
 
   // Keep the CRW dropdown in sync with the OISST dropdown initially —
