@@ -30,7 +30,7 @@
 
 <header class="page-head">
   <h1>Sea Surface Temperature Data</h1>
-  <p>Daily ocean-temperature maps from three NOAA products — OISST v2.1 (0.25°), Coral Reef Watch (5 km), and AOML's TCHP + D26 subsurface heat analysis (0.25°). Pick a region and variant in any section. Updated once per day.</p>
+  <p>Daily ocean-temperature maps from three NOAA products: OISST v2.1 (0.25°), Coral Reef Watch (5 km), and AOML's TCHP + D26 subsurface heat analysis (0.25°). Pick a region and variant in any section. Updated once per day.</p>
 </header>
 
 <!-- ============================================================ -->
@@ -179,7 +179,7 @@
          class="sst-image"
          src="/sst/crw_global_actual.png"
          alt="CRW sea-surface temperature map">
-    <div class="sst-caption" id="crwCaption">Global — CRW actual sea-surface temperature (5 km).</div>
+    <div class="sst-caption" id="crwCaption">Global: CRW actual sea-surface temperature (5 km).</div>
   </div>
 </section>
 
@@ -190,7 +190,7 @@
 <!-- ============================================================ -->
 <header class="page-head section-divider">
   <h2 class="section-h2">Subsurface Ocean Heat · 0.25°</h2>
-  <p>Tropical Cyclone Heat Potential (TCHP) and 26 °C isotherm depth (D26) from NOAA AOML's daily analysis. These are the oceanic "fuel" metrics behind TC intensity — storms over high TCHP and deep D26 are much less likely to mix their own wake cool enough to weaken. Dataset archive begins 2022, so no anomalies yet.</p>
+  <p>Tropical Cyclone Heat Potential (TCHP) and 26 °C isotherm depth (D26) from NOAA AOML's daily analysis. These are the oceanic "fuel" metrics behind TC intensity: storms over high TCHP and deep D26 are much less likely to mix their own wake cool enough to weaken. Dataset archive begins 2022, so no anomalies yet.</p>
   <p class="muted" id="subDataDate">Loading latest valid date…</p>
 </header>
 
@@ -246,7 +246,7 @@
          class="sst-image"
          src="/subsurface/global_tchp.png"
          alt="Tropical cyclone heat potential map">
-    <div class="sst-caption" id="subCaption">Global — Tropical Cyclone Heat Potential (kJ/cm²).</div>
+    <div class="sst-caption" id="subCaption">Global: Tropical Cyclone Heat Potential (kJ/cm²).</div>
   </div>
 </section>
 
@@ -255,8 +255,8 @@
   <p><b>Actual</b> shows each grid cell's sea-surface temperature on the latest analysis day, colored from violet (cold, 0 °C) through blue, green, yellow, orange, and red (warm, 32 °C). Contour lines run at each integer degree for easy reference.</p>
   <p><b>Anomaly</b> shows how today's SST compares to the 1991–2020 mean for this same day of year. Red / magenta tones mark areas warmer than average; blue / purple mark cooler. Scale runs from −5 °C to +5 °C; values beyond saturate at the extremes.</p>
   <p><b>Anomaly + Records</b> overlays diagonal hatching and a black outline on the anomaly map where today's SST is the warmest or coldest ever observed for this day of year since OISST records began in 1982. The underlying color tells you the direction: red-hatched = record high, blue-hatched = record low.</p>
-  <p><b>TCHP</b> (Tropical Cyclone Heat Potential, kJ/cm²) is the integrated heat content of the upper ocean column down to the 26 °C isotherm — effectively how much warm water is available to fuel a passing tropical cyclone before its own wind-driven mixing reaches cooler water. Operational thresholds commonly cited: 16 kJ/cm² to sustain a TC, 60 for development, 100 for intensification, 125 for rapid intensification, 160+ for explosive deepening into high-end hurricanes.</p>
-  <p><b>D26</b> is the depth of the 26 °C isotherm in meters — how thick the warm-water "blanket" is. Shallow D26 (under 30 m) means even a modest TC can mix enough cold water up to cap its own intensity. Deep D26 (100 m+) is why the Gulf of Mexico's Loop Current, the Western Atlantic warm pool, and parts of the West Pacific can support rapid intensification.</p>
+  <p><b>TCHP</b> (Tropical Cyclone Heat Potential, kJ/cm²) is the integrated heat content of the upper ocean column down to the 26 °C isotherm, effectively how much warm water is available to fuel a passing tropical cyclone before its own wind-driven mixing reaches cooler water. Operational thresholds commonly cited: 16 kJ/cm² to sustain a TC, 60 for development, 100 for intensification, 125 for rapid intensification, 160+ for explosive deepening into high-end hurricanes.</p>
+  <p><b>D26</b> is the depth of the 26 °C isotherm in meters, i.e. how thick the warm-water "blanket" is. Shallow D26 (under 30 m) means even a modest TC can mix enough cold water up to cap its own intensity. Deep D26 (100 m+) is why the Gulf of Mexico's Loop Current, the Western Atlantic warm pool, and parts of the West Pacific can support rapid intensification.</p>
 
   <h2>Data sources</h2>
   <p>SST fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">OISST v2.1</a> (0.25° daily, 1982-present) and <a href="https://coralreefwatch.noaa.gov/product/5km/index_5km_sst.php" target="_blank" rel="noopener">Coral Reef Watch CoralTemp v3.1</a> (5 km daily, 1985-present). Subsurface fields come from <a href="https://www.aoml.noaa.gov/phod/cyclone/data/" target="_blank" rel="noopener">NOAA AOML PhOD's TCHP/D26 analysis</a> (0.25° daily, 2022-present), which blends altimeter sea-surface height anomalies with microwave SST to estimate the vertical thermal structure. All three products have roughly a one-day latency; these maps refresh once per day.</p>
@@ -309,7 +309,7 @@
   const tabs = document.querySelectorAll('#sstTabs a');
   const runningMean = document.getElementById('sstRunningMean');
   const showValues = document.getElementById('sstShowValues');
-  // Every tab has a 15-day running-mean PNG — the toggle is always
+  // Every tab has a 15-day running-mean PNG; the toggle is always
   // active. Toggle applies to the currently-selected tab.
   const RM_VARIANTS = new Set([
     'actual', 'anomaly', 'anomaly_gmr', 'anomaly_records',
@@ -327,7 +327,7 @@
   }
   function writeHash(region, variant) {
     // Some sandboxed iframe contexts (about:srcdoc) forbid replaceState;
-    // in that case just skip URL-persistence — the dropdown state still
+    // in that case just skip URL-persistence; the dropdown state still
     // drives the image, it just won't survive a reload.
     try {
       history.replaceState(null, "", "#" + region + "," + variant);
@@ -358,9 +358,9 @@
     if (is15d) suffix += "_15d";
     if (withValues) suffix += "_labels";
     img.src = `/sst/${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    img.alt = `${REGION_LABELS[region] || region} — ${variant.replace("_", " + ")}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
+    img.alt = `${REGION_LABELS[region] || region}: ${variant.replace("_", " + ")}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
     caption.textContent =
-      (REGION_LABELS[region] || region) + " — " +
+      (REGION_LABELS[region] || region) + ": " +
       (VARIANT_CAPTIONS[variant] || "") +
       (is15d ? " · 15-day running mean." : "") +
       (withValues ? " · values overlaid." : "");
@@ -448,9 +448,9 @@
     if (is15d) suffix += "_15d";
     if (withValues) suffix += "_labels";
     crwImg.src = `/sst/crw_${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    crwImg.alt = `CRW ${REGION_LABELS[region] || region} — ${variant.replace('_', ' + ')}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
+    crwImg.alt = `CRW ${REGION_LABELS[region] || region}: ${variant.replace('_', ' + ')}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
     crwCaption.textContent =
-      (REGION_LABELS[region] || region) + " — " +
+      (REGION_LABELS[region] || region) + ": " +
       (CRW_VARIANT_CAPTIONS[variant] || "") +
       (is15d ? " · 15-day running mean." : "") +
       (withValues ? " · values overlaid." : "");
@@ -468,9 +468,9 @@
   crwShowValues.addEventListener('change', crwUpdate);
   crwUpdateRMEnabled();
 
-  // Keep the CRW dropdown in sync with the OISST dropdown initially —
-  // most users want to compare the same region in both. Changing either
-  // dropdown after load disconnects them.
+  // Keep the CRW dropdown in sync with the OISST dropdown initially,
+  // since most users want to compare the same region in both. Changing
+  // either dropdown after load disconnects them.
   crwRegionSelect.value = regionSelect.value;
   crwUpdate();
 
@@ -491,7 +491,7 @@
 
   // ---- Subsurface (AOML TCHP + D26) section ----
   // Independent state from OISST + CRW so users can scroll and compare
-  // all three products side-by-side. No running-mean or records vars —
+  // all three products side-by-side. No running-mean or records vars;
   // the AOML archive is too short (2022-present) for either.
   const SUB_VARIANT_CAPTIONS = {
     tchp: "Tropical Cyclone Heat Potential (kJ/cm²).",
@@ -516,9 +516,9 @@
     const withValues = subShowValues.checked;
     const suffix = withValues ? "_labels" : "";
     subImg.src = `/subsurface/${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    subImg.alt = `${REGION_LABELS[region] || region} — ${variant.toUpperCase()}${withValues ? " (values)" : ""}`;
+    subImg.alt = `${REGION_LABELS[region] || region}: ${variant.toUpperCase()}${withValues ? " (values)" : ""}`;
     subCaption.textContent =
-      (REGION_LABELS[region] || region) + " — " +
+      (REGION_LABELS[region] || region) + ": " +
       (SUB_VARIANT_CAPTIONS[variant] || "") +
       (withValues ? " · values overlaid." : "");
   }
