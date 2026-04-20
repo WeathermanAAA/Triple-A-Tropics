@@ -676,19 +676,23 @@ def main(argv: list[str] | None = None) -> int:
         else REGIONS
     )
 
+    # Subtitle format matches the OISST + CRW plots so all three look
+    # the same inside the shared SST page. SST uses:
+    #   "Valid: <Month Day, Year>  ·  <product>"
+    date_label = data_date.strftime("%B %-d, %Y")
+
     rendered: list[str] = []
     for rkey, r in regions_to_render.items():
         extent = r["extent"]
         figsize = r["figsize"]
         label = r["label"]
-        date_str = data_date.strftime("%Y-%m-%d")
 
         # TCHP
         out_tchp = SUB_DIR / f"{rkey}_tchp.png"
         ok = plot_tchp(
             tchp_field, lat_t, lon_t, extent, figsize,
             title=f"{label} · Tropical Cyclone Heat Potential",
-            subtitle=f"NOAA AOML · {date_str}",
+            subtitle=f"Valid: {date_label}  ·  NOAA AOML",
             countries=countries, coast=coast,
             out_path=out_tchp,
         )
@@ -701,7 +705,7 @@ def main(argv: list[str] | None = None) -> int:
         ok = plot_d26(
             d26_field, lat_d, lon_d, extent, figsize,
             title=f"{label} · Depth of 26 °C Isotherm",
-            subtitle=f"NOAA AOML · {date_str}",
+            subtitle=f"Valid: {date_label}  ·  NOAA AOML",
             countries=countries, coast=coast,
             out_path=out_d26,
         )
