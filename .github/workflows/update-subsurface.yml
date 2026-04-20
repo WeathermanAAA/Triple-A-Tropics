@@ -1,11 +1,13 @@
 name: Update Subsurface
 
 # AOML's TCHP/D26 analysis has a ~1-day latency. We refresh once per
-# day at 13:30 UTC — 30 minutes after the SST workflow so the two
-# commits don't collide, and well past AOML's morning publish cycle.
+# day, well past AOML's morning publish cycle. Previously 13:30 UTC,
+# but :30 is a contested cron slot. Offset to 14:23 + a 14:53 backup,
+# both well clear of the SST workflow's 13:17/13:47 slots.
 on:
   schedule:
-    - cron: "30 13 * * *"
+    - cron: "23 14 * * *"
+    - cron: "53 14 * * *"
   workflow_dispatch: {}
 
 permissions:
