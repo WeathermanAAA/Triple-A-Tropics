@@ -465,9 +465,11 @@ def compute_tchp(
     dT = np.where(np.isnan(dT), 0.0, dT)
     dT = np.clip(dT, 0.0, None)
 
-    # Trapezoidal integration over depth. np.trapz axis=-1 sums each
-    # column's positive-anomaly integral [°C · m].
-    integral = np.trapz(dT, x=depth, axis=-1)  # (lat, lon), units: °C·m
+    # Trapezoidal integration over depth — sums each column's positive-
+    # anomaly integral [°C · m]. NumPy 2.0 renamed trapz -> trapezoid;
+    # fall through to the old name so this works on both numpy majors.
+    _trapz = getattr(np, "trapezoid", None) or np.trapz
+    integral = _trapz(dT, x=depth, axis=-1)  # (lat, lon), units: °C·m
 
     # Convert °C·m -> J/m² -> kJ/cm². ρ·Cp carries the "energy per K·m³"
     # units, times 1 m² cross-section = J/m²; divide by TCHP_UNIT_FACTOR
