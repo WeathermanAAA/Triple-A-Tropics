@@ -10,6 +10,223 @@
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/styles.css">
+<style>
+  /* Homepage-only polish. Overrides the generic .card system with a
+     pro-weather-site card treatment: a data-visual banner graphic
+     across the top of each card, then title/desc/meta strip.
+
+     Everything here uses new class names (.home-*) so the base
+     styles.css rules stay intact for other pages that still depend
+     on them. */
+
+  .home-wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px 20px 28px;
+  }
+
+  /* Screen-reader-only: hide visually but leave text available to
+     assistive tech + SEO. Used on card h2s since the banner images
+     already carry the title. */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0);
+    white-space: nowrap; border: 0;
+  }
+
+  /* Operational meta strip directly under the hero. Mirrors the look
+     of a working terminal status line — small-caps tag on the left,
+     data-source facts separated by dots. */
+  .home-meta {
+    display: flex; flex-wrap: wrap;
+    gap: 4px 18px; align-items: baseline;
+    padding: 10px 14px;
+    margin-bottom: 22px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(0,0,0,0.08));
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.25px;
+  }
+  .home-meta .tag {
+    font-family: "Oswald", "Arial Narrow", Impact, sans-serif;
+    font-weight: 700; font-size: 11px;
+    letter-spacing: 1.1px;
+    color: var(--accent);
+    text-transform: uppercase;
+    padding-right: 10px;
+    border-right: 1px solid var(--border);
+    margin-right: 4px;
+  }
+  .home-meta b { color: var(--fg); font-weight: 600; }
+  .home-meta .dot { color: #3a424d; }
+
+  /* Card grid */
+  .home-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 18px;
+  }
+
+  /* Each card is a stack: graphic banner → body → meta. Uses its own
+     class so the old `.card` rules (used elsewhere) are unaffected. */
+  .home-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    text-decoration: none;
+    color: var(--fg);
+    display: flex; flex-direction: column;
+    transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+    position: relative;
+  }
+  .home-card:hover {
+    text-decoration: none;
+    border-color: var(--accent-2);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+  }
+
+  /* Banner graphic area — wide-aspect so it reads as a poster strip
+     across the top of the card rather than a square thumbnail. */
+  .home-card-banner {
+    aspect-ratio: 7 / 2;
+    position: relative;
+    background: #050b17;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .home-card-banner img,
+  .home-card-banner svg {
+    width: 100%; height: 100%;
+    display: block;
+    object-fit: cover;
+    /* Subtle bottom fade so the card body merges into the banner
+       instead of hard-cutting off the poster art. */
+  }
+  .home-card-banner::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg,
+      rgba(0,0,0,0) 55%,
+      rgba(7,11,23,0.35) 100%);
+    pointer-events: none;
+  }
+
+  /* Body text */
+  .home-card-body {
+    padding: 18px 20px 14px;
+    flex: 1;
+    display: flex; flex-direction: column;
+    gap: 8px;
+  }
+  .home-card-body h2 {
+    font-size: 19px;
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    color: var(--fg);
+  }
+  .home-card-body p {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0;
+    line-height: 1.6;
+  }
+
+  /* Bottom meta strip — data-source chips on the left, live pulse
+     on the right. Feels like a product footer on the card. */
+  .home-card-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px;
+    padding: 11px 20px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.22);
+    font-size: 11px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .home-card-meta .src {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .home-card-meta .live {
+    color: #c8f7d4;
+    padding: 3px 9px;
+    border-radius: 4px;
+    background: rgba(0, 220, 120, 0.12);
+    border: 1px solid rgba(0, 220, 120, 0.35);
+    display: inline-flex; align-items: center; gap: 6px;
+    letter-spacing: 0.7px;
+  }
+  .home-card-meta .live::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #6ff0a0;
+    box-shadow: 0 0 8px rgba(111, 240, 160, 0.7);
+    animation: home-pulse 1.7s ease-in-out infinite;
+  }
+  @keyframes home-pulse {
+    0%, 100% { opacity: 0.7; }
+    50%      { opacity: 1;   }
+  }
+
+  @media (max-width: 560px) {
+    .home-cards { grid-template-columns: 1fr; }
+    .home-card-banner { aspect-ratio: 16 / 7; }
+  }
+
+  /* About section — tightened rhythm + source-attribution chip row */
+  .home-about {
+    max-width: 860px; margin: 0 auto;
+    padding: 22px 20px 80px;
+  }
+  .home-about h2 {
+    color: var(--fg);
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+  .home-about p {
+    color: var(--muted); font-size: 15px; line-height: 1.7;
+    margin: 0 0 14px;
+  }
+  .home-about .chips {
+    margin-top: 18px;
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .home-about .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.02);
+    text-decoration: none;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .home-about .chip:hover {
+    color: var(--fg);
+    border-color: var(--accent-2);
+    background: rgba(93, 211, 255, 0.05);
+    text-decoration: none;
+  }
+  .home-about .chip-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-2);
+    box-shadow: 0 0 6px rgba(93, 211, 255, 0.4);
+  }
+</style>
 </head>
 <body>
 
@@ -70,25 +287,71 @@
   <div class="handle">Curated by <b>Andrew Austin-Adler</b></div>
 </header>
 
-<section class="cards">
-  <a class="card live" href="/climatology/">
-    <span class="emoji">📊</span>
-    <h2>Climatology</h2>
-    <p>Accumulated Cyclone Energy (ACE) and storm tracks for each basin, current season vs. 1991–2020 normals. Interactive rankings, hover tooltips, and live positions for active storms.</p>
-    <span class="badge">● Live</span>
-  </a>
+<section class="home-wrap">
 
-  <a class="card live" href="/sst/">
-    <span class="emoji">🌡️</span>
-    <h2>Sea-Surface Temperature</h2>
-    <p>Daily SST, anomalies, and records across 17 regions from NOAA OISST v2.1 and Coral Reef Watch — plus TCHP and 26 °C isotherm depth (D26) subsurface heat from NOAA AOML.</p>
-    <span class="badge">● Live</span>
-  </a>
+  <!-- Terminal-ish status strip. Reads like a working meteorologist's
+       header line rather than a marketing blurb. -->
+  <div class="home-meta">
+    <span class="tag">Live data</span>
+    <span>Tracks + ACE refresh every <b>6 h</b> via IBTrACS + JTWC</span>
+    <span class="dot">·</span>
+    <span>SST, TCHP, D26 rebuild <b>daily</b></span>
+    <span class="dot">·</span>
+    <span>Season <b><span id="meta-year">2026</span></b></span>
+  </div>
+
+  <div class="home-cards">
+
+    <!-- Climatology card — banner image is a 2005-Atlantic poster with
+         baked-in title. h2 is visually hidden so the image text carries
+         the heading without duplication. -->
+    <a class="home-card" href="/climatology/">
+      <div class="home-card-banner">
+        <img src="/Climatology-page.jpg"
+             alt="Tropical Cyclone Climatology — storm tracks across the Atlantic basin"
+             loading="lazy" decoding="async">
+      </div>
+      <div class="home-card-body">
+        <h2 class="sr-only">Tropical Cyclone Climatology</h2>
+        <p>Accumulated Cyclone Energy and storm tracks for every basin — this season against the 1991–2020 normal. Interactive rankings, hover tooltips, and live positions for active systems.</p>
+      </div>
+      <div class="home-card-meta">
+        <span class="src">IBTrACS · JTWC</span>
+        <span class="live">Live</span>
+      </div>
+    </a>
+
+    <!-- SST card — banner image is an SST poster with baked-in title. -->
+    <a class="home-card" href="/sst/">
+      <div class="home-card-banner">
+        <img src="/sst-page.jpg"
+             alt="Ocean Temperature Analysis — sea-surface temperature and subsurface heat"
+             loading="lazy" decoding="async">
+      </div>
+      <div class="home-card-body">
+        <h2 class="sr-only">Ocean Temperature Analysis</h2>
+        <p>Daily SST, anomalies, and record composites across 17 regions from NOAA OISST v2.1 and Coral Reef Watch — plus TCHP and 26 °C isotherm depth (D26) subsurface fuel from NOAA AOML and CMEMS ARMOR3D.</p>
+      </div>
+      <div class="home-card-meta">
+        <span class="src">OISST · CRW · AOML · ARMOR3D</span>
+        <span class="live">Live</span>
+      </div>
+    </a>
+
+  </div>
 </section>
 
-<section class="about">
+<section class="home-about">
   <h2>What is this?</h2>
-  <p>Triple-A-Tropics is a real-time dashboard for tracking tropical cyclone activity. It ingests official best-track data from NOAA's IBTrACS archive and JTWC's live b-decks, computes statistics like Accumulated Cyclone Energy (ACE), and publishes interactive visualizations.</p>
+  <p>Triple-A-Tropics is a real-time dashboard for tracking tropical cyclone activity. It ingests official best-track data from NOAA's IBTrACS archive and JTWC's live b-decks, computes statistics like Accumulated Cyclone Energy (ACE), and publishes the result as interactive visualizations. Subsurface heat products are rebuilt daily from NOAA AOML, with weekly cross-sections and TCHP anomalies layered in from CMEMS ARMOR3D reanalysis.</p>
+  <div class="chips">
+    <a class="chip" href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener"><span class="chip-dot"></span>IBTrACS</a>
+    <a class="chip" href="https://www.metoc.navy.mil/jtwc/" target="_blank" rel="noopener"><span class="chip-dot"></span>JTWC</a>
+    <a class="chip" href="https://www.ncei.noaa.gov/products/climate-data-records/sea-surface-temperature-optimum-interpolation" target="_blank" rel="noopener"><span class="chip-dot"></span>OISST v2.1</a>
+    <a class="chip" href="https://coralreefwatch.noaa.gov/product/5km/index.php" target="_blank" rel="noopener"><span class="chip-dot"></span>Coral Reef Watch</a>
+    <a class="chip" href="https://cwcgom.aoml.noaa.gov/thredds/dodsC/TCHP/TCHP.nc.html" target="_blank" rel="noopener"><span class="chip-dot"></span>NOAA AOML</a>
+    <a class="chip" href="https://data.marine.copernicus.eu/product/MULTIOBS_GLO_PHY_NRT_015_002/description" target="_blank" rel="noopener"><span class="chip-dot"></span>ARMOR3D</a>
+  </div>
 </section>
 
 <footer>
@@ -99,7 +362,15 @@
 </footer>
 
 <script>
-  document.getElementById('year').textContent = new Date().getFullYear();
+  // Stamp the current year into both the footer and the hero status
+  // strip so they stay accurate year over year.
+  (function () {
+    var y = new Date().getFullYear();
+    var f = document.getElementById('year');
+    var m = document.getElementById('meta-year');
+    if (f) f.textContent = y;
+    if (m) m.textContent = y;
+  })();
 </script>
 
 </body>
