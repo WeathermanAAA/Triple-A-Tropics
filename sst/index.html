@@ -190,7 +190,7 @@
 <!-- ============================================================ -->
 <header class="page-head section-divider">
   <h2 class="section-h2">Subsurface Ocean Heat · 0.25°</h2>
-  <p>Tropical Cyclone Heat Potential (TCHP) and 26 °C isotherm depth (D26) from NOAA AOML's daily analysis. These are the oceanic "fuel" metrics behind TC intensity: storms over high TCHP and deep D26 are much less likely to mix their own wake cool enough to weaken. Dataset archive begins 2022, so no anomalies yet.</p>
+  <p>Tropical Cyclone Heat Potential (TCHP) and 26 °C isotherm depth (D26) from two independent analyses. <b>NOAA AOML</b> updates daily with ~1-day latency (2022-present archive, no anomalies). <b>Copernicus Marine ARMOR3D</b> updates weekly with ~1-week latency, back to 1993, and supports anomalies vs. a 1993–2020 climatology. Use the source toggle to switch between them.</p>
   <p class="muted" id="subDataDate">Loading latest valid date…</p>
 </header>
 
@@ -228,9 +228,15 @@
   </label>
 </div>
 
+<nav class="tabs" id="subSourceTabs" aria-label="Subsurface data source">
+  <a href="#" data-source="aoml" class="active">AOML (daily)</a>
+  <a href="#" data-source="armor3d">ARMOR3D (weekly)</a>
+</nav>
+
 <nav class="tabs" id="subTabs">
   <a href="#" data-variant="tchp" class="active">TCHP</a>
   <a href="#" data-variant="d26">D26</a>
+  <a href="#" data-variant="tchp_anom" id="subTabAnom" hidden>TCHP Anomaly</a>
 </nav>
 
 <div class="sst-toggle">
@@ -250,6 +256,36 @@
   </div>
 </section>
 
+<!-- ARMOR3D equatorial cross-section sub-panel. Hidden unless the
+     ARMOR3D source is selected — the 4 cross-sections only apply to
+     the equatorial basins and are rendered weekly, not daily. -->
+<div id="subCrossSection" hidden>
+  <header class="page-head" style="margin-top: 1.5rem;">
+    <h3 class="section-h2" style="font-size:1.15rem;">Equatorial Cross-Sections · 5°S–5°N</h3>
+    <p>Longitude-by-depth slices of the ocean's upper 500 m. The fill shows temperature anomaly vs. the 1993–2020 weekly climatology (when available); the solid black line is the current 20 °C isotherm, and the dashed black line is that isotherm's climatological position. Deep warm anomalies below the isotherm are the subsurface signature of ENSO, Atlantic Niño, and IOD events.</p>
+  </header>
+  <div class="sst-controls">
+    <label class="sst-select">
+      <span class="sst-select-label">Region</span>
+      <select id="subCsSelect">
+        <option value="enso">ENSO Regions (120°E–70°W)</option>
+        <option value="equatorial-atlantic">Equatorial Atlantic (50°W–15°E)</option>
+        <option value="indian-ocean">Equatorial Indian Ocean (40°E–100°E)</option>
+        <option value="global-tropics">Global Tropics (full wrap)</option>
+      </select>
+    </label>
+  </div>
+  <section class="chart-section">
+    <div class="chart-card sst-chart">
+      <img id="subCsImage"
+           class="sst-image"
+           src="/armor3d/enso_crosssection.png"
+           alt="Equatorial subsurface cross-section">
+      <div class="sst-caption" id="subCsCaption">ENSO Regions: 5°S–5°N temperature anomaly cross-section (ARMOR3D).</div>
+    </div>
+  </section>
+</div>
+
 <section class="about">
   <h2>How to read these maps</h2>
   <p><b>Actual</b> shows each grid cell's sea-surface temperature on the latest analysis day, colored from violet (cold, 0 °C) through blue, green, yellow, orange, and red (warm, 32 °C). Contour lines run at each integer degree for easy reference.</p>
@@ -257,9 +293,11 @@
   <p><b>Anomaly + Records</b> overlays diagonal hatching and a black outline on the anomaly map where today's SST is the warmest or coldest ever observed for this day of year since OISST records began in 1982. The underlying color tells you the direction: red-hatched = record high, blue-hatched = record low.</p>
   <p><b>TCHP</b> (Tropical Cyclone Heat Potential, kJ/cm²) is the integrated heat content of the upper ocean column down to the 26 °C isotherm, effectively how much warm water is available to fuel a passing tropical cyclone before its own wind-driven mixing reaches cooler water. Operational thresholds commonly cited: 16 kJ/cm² to sustain a TC, 60 for development, 100 for intensification, 125 for rapid intensification, 160+ for explosive deepening into high-end hurricanes.</p>
   <p><b>D26</b> is the depth of the 26 °C isotherm in meters, i.e. how thick the warm-water "blanket" is. Shallow D26 (under 30 m) means even a modest TC can mix enough cold water up to cap its own intensity. Deep D26 (100 m+) is why the Gulf of Mexico's Loop Current, the Western Atlantic warm pool, and parts of the West Pacific can support rapid intensification.</p>
+  <p><b>TCHP Anomaly</b> (ARMOR3D only) compares this week's TCHP to the 1993–2020 mean for the same week of the year. Reds indicate more heat content than normal (favorable for intensifying TCs); blues indicate less. The long ARMOR3D archive makes a stable 28-year climatology possible, which the 2022-present AOML record is still too short to support.</p>
+  <p><b>Equatorial cross-sections</b> (ARMOR3D only) average temperature over the 5°S–5°N band and plot it as longitude × depth. The black 20 °C isotherm is the canonical diagnostic: when it rises steeply in the east Pacific while deepening in the west, that's La Niña; the opposite tilt is El Niño. Atlantic Niño and IOD events show analogous signatures in their basins.</p>
 
   <h2>Data sources</h2>
-  <p>SST fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">OISST v2.1</a> (0.25° daily, 1982-present) and <a href="https://coralreefwatch.noaa.gov/product/5km/index_5km_sst.php" target="_blank" rel="noopener">Coral Reef Watch CoralTemp v3.1</a> (5 km daily, 1985-present). Subsurface fields come from <a href="https://www.aoml.noaa.gov/phod/cyclone/data/" target="_blank" rel="noopener">NOAA AOML PhOD's TCHP/D26 analysis</a> (0.25° daily, 2022-present), which blends altimeter sea-surface height anomalies with microwave SST to estimate the vertical thermal structure. All three products have roughly a one-day latency; these maps refresh once per day.</p>
+  <p>SST fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">OISST v2.1</a> (0.25° daily, 1982-present) and <a href="https://coralreefwatch.noaa.gov/product/5km/index_5km_sst.php" target="_blank" rel="noopener">Coral Reef Watch CoralTemp v3.1</a> (5 km daily, 1985-present). Subsurface fields come from two sources: <a href="https://www.aoml.noaa.gov/phod/cyclone/data/" target="_blank" rel="noopener">NOAA AOML PhOD's TCHP/D26 analysis</a> (0.25° daily, 2022-present, no anomaly), which blends altimeter sea-surface height anomalies with microwave SST to estimate the vertical thermal structure; and <a href="https://data.marine.copernicus.eu/product/MULTIOBS_GLO_PHY_TSUV_3D_MYNRT_015_012/description" target="_blank" rel="noopener">Copernicus Marine ARMOR3D L4</a> (0.25° weekly, 1993-present), a 3D ocean temperature + salinity analysis from which we derive TCHP + D26 on the fly and compute anomalies vs. the 1993–2020 mean. AOML maps refresh daily; ARMOR3D maps refresh weekly (Thursdays).</p>
 </section>
 
 <footer>
@@ -489,67 +527,145 @@
     })
     .catch(() => {});
 
-  // ---- Subsurface (AOML TCHP + D26) section ----
+  // ---- Subsurface (AOML daily / ARMOR3D weekly) section ----
   // Independent state from OISST + CRW so users can scroll and compare
-  // all three products side-by-side. No running-mean or records vars;
-  // the AOML archive is too short (2022-present) for either.
+  // all sections side-by-side. Two data sources ("aoml" = NOAA AOML
+  // daily, "armor3d" = Copernicus Marine ARMOR3D weekly). Variants
+  // available depend on the source: AOML has no long-enough archive
+  // for anomalies, ARMOR3D adds a TCHP anomaly variant.
   const SUB_VARIANT_CAPTIONS = {
-    tchp: "Tropical Cyclone Heat Potential (kJ/cm²).",
-    d26:  "Depth of the 26 °C isotherm (m).",
+    tchp:      "Tropical Cyclone Heat Potential (kJ/cm²).",
+    d26:       "Depth of the 26 °C isotherm (m).",
+    tchp_anom: "TCHP anomaly vs. 1993–2020 weekly climatology (kJ/cm²).",
   };
+  // Cross-section region labels for the ARMOR3D equatorial sub-panel.
+  const CS_REGION_LABELS = {
+    "enso":                 "ENSO Regions",
+    "equatorial-atlantic":  "Equatorial Atlantic",
+    "indian-ocean":         "Equatorial Indian Ocean",
+    "global-tropics":       "Global Tropics",
+  };
+
   const subImg = document.getElementById('subImage');
   const subCaption = document.getElementById('subCaption');
   const subRegionSelect = document.getElementById('subRegionSelect');
   const subTabs = document.querySelectorAll('#subTabs a');
+  const subTabAnom = document.getElementById('subTabAnom');
   const subShowValues = document.getElementById('subShowValues');
+  const subSourceTabs = document.querySelectorAll('#subSourceTabs a');
+  const subCrossSection = document.getElementById('subCrossSection');
+  const subCsSelect = document.getElementById('subCsSelect');
+  const subCsImg = document.getElementById('subCsImage');
+  const subCsCaption = document.getElementById('subCsCaption');
+  const subDataDate = document.getElementById('subDataDate');
 
+  function subCurrentSource() {
+    const active = [...subSourceTabs].find(t => t.classList.contains('active'));
+    return active ? active.dataset.source : 'aoml';
+  }
   function subCurrentVariant() {
-    const active = [...subTabs].find(t => t.classList.contains('active'));
+    const active = [...subTabs].find(t => t.classList.contains('active') && !t.hidden);
     return active ? active.dataset.variant : 'tchp';
   }
   function subSetVariant(v) {
     subTabs.forEach(t => t.classList.toggle('active', t.dataset.variant === v));
+  }
+  function subSetSource(s) {
+    subSourceTabs.forEach(t => t.classList.toggle('active', t.dataset.source === s));
+    // Anomaly variant is ARMOR3D-only. If we switch to AOML while the
+    // anomaly tab is active, fall back to TCHP to avoid a 404.
+    const anomActive = subTabAnom.classList.contains('active');
+    if (s === 'armor3d') {
+      subTabAnom.hidden = false;
+      subCrossSection.hidden = false;
+    } else {
+      subTabAnom.hidden = true;
+      subCrossSection.hidden = true;
+      if (anomActive) subSetVariant('tchp');
+    }
+  }
+  // Base URL for the current source — /subsurface/ for AOML,
+  // /armor3d/ for ARMOR3D. Both dirs share the same per-region PNG
+  // naming convention so we can swap paths cleanly.
+  function subBaseDir() {
+    return subCurrentSource() === 'armor3d' ? '/armor3d' : '/subsurface';
   }
   function subUpdate() {
     const region = subRegionSelect.value;
     const variant = subCurrentVariant();
     const withValues = subShowValues.checked;
     const suffix = withValues ? "_labels" : "";
-    subImg.src = `/subsurface/${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    subImg.alt = `${REGION_LABELS[region] || region}: ${variant.toUpperCase()}${withValues ? " (values)" : ""}`;
+    const dir = subBaseDir();
+    const source = subCurrentSource();
+    subImg.src = `${dir}/${region}_${variant}${suffix}.png?t=${Date.now()}`;
+    const label = REGION_LABELS[region] || region;
+    const srcTag = source === 'armor3d' ? ' (ARMOR3D)' : '';
+    subImg.alt = `${label}: ${variant.toUpperCase().replace('_', ' ')}${withValues ? " (values)" : ""}${srcTag}`;
     subCaption.textContent =
-      (REGION_LABELS[region] || region) + ": " +
-      (SUB_VARIANT_CAPTIONS[variant] || "") +
-      (withValues ? " · values overlaid." : "");
+      label + ": " + (SUB_VARIANT_CAPTIONS[variant] || "") +
+      (withValues ? " · values overlaid." : "") + srcTag;
   }
+  function subCsUpdate() {
+    const r = subCsSelect.value;
+    subCsImg.src = `/armor3d/${r}_crosssection.png?t=${Date.now()}`;
+    subCsImg.alt = `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section`;
+    subCsCaption.textContent =
+      `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section (ARMOR3D).`;
+  }
+
   subRegionSelect.addEventListener('change', subUpdate);
   subTabs.forEach(t => {
     t.addEventListener('click', e => {
       e.preventDefault();
+      if (t.hidden) return;
       subSetVariant(t.dataset.variant);
       subUpdate();
     });
   });
+  subSourceTabs.forEach(t => {
+    t.addEventListener('click', e => {
+      e.preventDefault();
+      subSetSource(t.dataset.source);
+      subUpdate();
+      // Refresh the valid-date label from the appropriate meta file.
+      subLoadMeta();
+    });
+  });
   subShowValues.addEventListener('change', subUpdate);
+  subCsSelect.addEventListener('change', subCsUpdate);
 
   // Sync the Subsurface dropdown with the OISST dropdown on first load
   // so all three sections default to the same region. Changing either
   // dropdown after load disconnects them.
   subRegionSelect.value = regionSelect.value;
   subUpdate();
+  subCsUpdate();
 
-  fetch('/subsurface/subsurface_meta.json?t=' + Date.now(), { cache: 'no-store' })
-    .then(r => r.ok ? r.json() : null)
-    .then(m => {
-      if (!m || !m.date) return;
-      const d = new Date(m.date + 'T00:00:00Z');
-      const txt = d.toLocaleDateString('en-US', {
-        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+  function subLoadMeta() {
+    const source = subCurrentSource();
+    const url = source === 'armor3d'
+      ? '/armor3d/armor3d_meta.json?t=' + Date.now()
+      : '/subsurface/subsurface_meta.json?t=' + Date.now();
+    const label = source === 'armor3d' ? 'ARMOR3D' : 'AOML';
+    fetch(url, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(m => {
+        if (!m || !m.date) {
+          subDataDate.textContent = `${label}: (no data yet)`;
+          return;
+        }
+        const d = new Date(m.date + 'T00:00:00Z');
+        const txt = d.toLocaleDateString('en-US', {
+          month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+        });
+        subDataDate.textContent =
+          `${label} valid ${txt}  ·  updated ${m.updated_utc}`;
+      })
+      .catch(() => {
+        subDataDate.textContent = `${label}: (meta fetch failed)`;
       });
-      document.getElementById('subDataDate').textContent =
-        `Valid ${txt}  ·  updated ${m.updated_utc}`;
-    })
-    .catch(() => {});
+  }
+  subLoadMeta();
 </script>
 
 </body>
