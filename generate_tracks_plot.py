@@ -845,15 +845,18 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                          'stroke-width="1.2" stroke-opacity="0.5" '
                          'stroke-linejoin="round" stroke-linecap="round"/>')
         # Dots — radius depends on whether the point is at TS+ (bigger) or not.
-        # Shape depends on the point's lifecycle phase:
-        #   * circle        = tropical / subtropical (nature TS/SS, or TS+ wind)
-        #   * down-triangle = extratropical (nature == "ET")
-        #                     — convention: "after" / post-tropical decay
-        #   * up-triangle   = pre-TC disturbance (nature blank/NR/MX/DS and
-        #                     wind < TS) — convention: "before" / pre-genesis
-        # Triangle apex radii match the circle radii so the group of
-        # points for one storm reads as a coherent size progression
-        # (TD/pre r≈3, TS r≈4, major r≈5).
+        # Shape depends on the point's lifecycle phase (matches the
+        # JMA/JTWC best-track convention in the reference image):
+        #   * circle      = tropical cyclone (nature "TS", or NR/MX/""
+        #                   defaulting to tropical since they appear in
+        #                   the track)
+        #   * square      = subtropical cyclone (nature "SS")
+        #   * up-triangle = anything else: extratropical (ET) or pre-TC
+        #                   disturbance (DS / DB / LO). Every non-TC
+        #                   point uses the same shape.
+        # Shape radii match the circle radii so the group of points for
+        # one storm reads as a coherent size progression (TD r≈3,
+        # TS r≈4, major r≈5).
         for (x, y), p in zip(xy, pts):
             cls = p.get("cls") or "TD"
             wind = p.get("wind_kt")
@@ -872,19 +875,17 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
 
             # Phase classification is purely by nature code — wind speed
             # is not a tiebreaker.
-            #   ET                       → down-triangle (extratropical)
-            #   DS / DB / LO             → up-triangle (pre-TC / non-cyclone)
-            #     DS = disturbance/dissipating, DB = disturbance (per-agency
-            #     code that sometimes leaks into NATURE), LO = remnant low
-            #   TS / SS / NR / MX / ""   → circle (tropical or presumed-
-            #     tropical; NR/MX/blank are points that appear in a
-            #     storm's track but weren't explicitly re-categorized,
-            #     so they're treated as part of the tropical life cycle)
+            #   SS                          → square (subtropical)
+            #   ET / DS / DB / LO           → down-triangle (non-TC: either
+            #     extratropical or pre-TC disturbance / remnant low)
+            #   TS / NR / MX / "" / other   → circle (tropical; NR/MX/blank
+            #     default to tropical because those points appear in a
+            #     storm's track but weren't explicitly re-categorized)
             # ATCF rows are mapped upstream so TD→TS, EX→ET, etc.
-            if nature == "ET":
-                phase = "ex"
-            elif nature in {"DS", "DB", "LO"}:
-                phase = "pre"
+            if nature == "SS":
+                phase = "st"
+            elif nature in {"ET", "DS", "DB", "LO"}:
+                phase = "non"
             else:
                 phase = "tc"
 
@@ -902,19 +903,23 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                     f'<circle class="track-dot" cx="{x:.1f}" cy="{y:.1f}" '
                     f'r="{r}" {common_attrs}/>'
                 )
+            elif phase == "st":
+                # Square centered on (x, y). Side length = 2r so its
+                # "half-diagonal" is a touch bigger than the circle — but
+                # visually the bounding box reads as the same footprint.
+                parts.append(
+                    f'<rect class="track-dot" x="{x - r:.1f}" y="{y - r:.1f}" '
+                    f'width="{r * 2}" height="{r * 2}" {common_attrs}/>'
+                )
             else:
-                # Equilateral triangle centered on (x, y) with apex
-                # radius r. Up-triangle (pre-TC) points apex upward;
-                # down-triangle (ET) points apex downward. sqrt(3)/2 ≈ 0.866.
+                # Up-triangle centered on (x, y), apex pointing up.
+                # sqrt(3)/2 ≈ 0.866 gives an equilateral shape whose
+                # circumscribed-circle radius matches r, so it reads at
+                # the same visual size as the TC circle beside it.
                 half = r * 0.866
-                if phase == "pre":
-                    p1 = f"{x:.1f},{y - r:.1f}"
-                    p2 = f"{x + half:.1f},{y + r * 0.5:.1f}"
-                    p3 = f"{x - half:.1f},{y + r * 0.5:.1f}"
-                else:  # "ex"
-                    p1 = f"{x:.1f},{y + r:.1f}"
-                    p2 = f"{x + half:.1f},{y - r * 0.5:.1f}"
-                    p3 = f"{x - half:.1f},{y - r * 0.5:.1f}"
+                p1 = f"{x:.1f},{y - r:.1f}"
+                p2 = f"{x + half:.1f},{y + r * 0.5:.1f}"
+                p3 = f"{x - half:.1f},{y + r * 0.5:.1f}"
                 parts.append(
                     f'<polygon class="track-dot" points="{p1} {p2} {p3}" '
                     f'{common_attrs}/>'
@@ -1430,18 +1435,17 @@ HTML_TEMPLATE = """<!doctype html>
   .legend .item {{ display: flex; align-items: center; gap: 6px;
     margin: 3px 0; }}
   .legend .dot {{ width: 10px; height: 10px; border-radius: 50%; }}
-  /* Phase-marker shapes — used at the bottom of the legend to show
-     what the triangle dots on the map mean. Classic CSS-border trick:
-     a zero-sized box with three coloured borders renders as a filled
-     triangle. The container width is kept equal to `.dot` (10px) so
-     all legend rows line up. */
+  /* Phase-marker shapes for the legend rows at the bottom. The square
+     glyph is a plain block; the triangle uses the classic CSS-border
+     trick (zero-size box with three coloured borders). Containers are
+     all 10px wide so legend rows line up. */
+  .legend .sq {{ width: 10px; height: 10px; background: #ffffff; }}
   .legend .tri {{ width: 10px; height: 10px; position: relative; }}
-  .legend .tri::before {{ content: ""; position: absolute; left: 0; top: 0;
+  .legend .tri::before {{ content: ""; position: absolute; left: 0; top: 1px;
     width: 0; height: 0;
     border-left: 5px solid transparent;
-    border-right: 5px solid transparent; }}
-  .legend .tri-up::before {{ border-bottom: 9px solid #ffffff; top: 1px; }}
-  .legend .tri-dn::before {{ border-top: 9px solid #ffffff; }}
+    border-right: 5px solid transparent;
+    border-bottom: 9px solid #ffffff; }}
   .legend .sep {{ height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }}
 
@@ -1567,8 +1571,8 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="item"><span class="dot" style="background:var(--c4)"></span>Cat 4 (113–136)</div>
         <div class="item"><span class="dot" style="background:var(--c5)"></span>Cat 5 (≥137)</div>
         <div class="sep"></div>
-        <div class="item"><span class="tri tri-up"></span>Pre-TC (disturbance)</div>
-        <div class="item"><span class="tri tri-dn"></span>Extratropical</div>
+        <div class="item"><span class="sq"></span>Subtropical</div>
+        <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
       </div>
     </div>
   </div>
