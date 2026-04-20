@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-Triple-A-Tropics · Pacific TCHP GIF generator (one-off)
-========================================================
+Triple-A-Tropics · Pacific TCHP GIF generator (AOML, one-off)
+=============================================================
 
-Fetches daily ARMOR3D temperature over the Pacific for a custom date
-range, computes TCHP per day, renders one Pacific-centered frame per
-day, and assembles everything into a single GIF intended for blog /
-social-media posts.
+Fetches daily TCHP straight from NOAA AOML's precomputed TCHP/D26
+OPeNDAP feed for a custom date range, crops to a Pacific-centered
+window, renders one frame per day, and assembles everything into a
+single GIF intended for blog / social-media posts.
 
-This script is **not** wired into the site or the weekly ARMOR3D
-update. It runs on demand via the `make-pacific-tchp-gif.yml`
-GitHub Actions workflow, and the resulting GIF is uploaded as a
-workflow artifact (not committed to the repo).
+This script is **not** wired into the site or any scheduled update.
+It runs on demand via the `make-pacific-tchp-gif.yml` GitHub Actions
+workflow, and the resulting GIF is uploaded as a workflow artifact
+(not committed to the repo).
+
+Data source
+-----------
+NOAA AOML PhOD TCHP/D26 Fields, OPeNDAP:
+    https://cwcgom.aoml.noaa.gov/thredds/dodsC/TCHP/TCHP.nc
+
+Same source used by the daily subsurface maps on the /sst/ page.
+Coverage: 2022-01-01 → present, ~1-day latency, 0.25° global.
 
 Usage
 -----
-    export COPERNICUSMARINE_SERVICE_USERNAME=...
-    export COPERNICUSMARINE_SERVICE_PASSWORD=...
     python generate_pacific_tchp_gif.py \\
         --start 2026-01-20 --end 2026-04-19 \\
         --out pacific_tchp.gif
@@ -28,7 +34,6 @@ import argparse
 import datetime as dt
 import io
 import sys
-import tempfile
 from pathlib import Path
 
 import matplotlib.colors as mcolors
@@ -37,8 +42,14 @@ import numpy as np
 import xarray as xr
 from PIL import Image
 
-import generate_armor3d_plots as a3d
 import generate_subsurface_plots as gss
+
+
+# AOML OPeNDAP endpoint + variable name. Same constants the daily
+# subsurface generator uses, just re-referenced here so this script
+# stays runnable on its own.
+OPENDAP_URL = gss.OPENDAP_URL
+TCHP_VAR = gss.TCHP_VAR
 
 
 # Pacific warm-pool + ENSO thermocline tilt view. 100°E to 80°W, with a
@@ -54,68 +65,81 @@ FIGSIZE = (13.5, 5.8)
 TCHP_VMAX = 200.0
 
 
-def _fetch_pacific(
+def _fetch_pacific_timeseries(
     start: dt.datetime,
     end: dt.datetime,
-    dataset_id: str,
     log: str,
-) -> xr.Dataset:
-    """Fetch Pacific-only temperature as one xarray Dataset (lon 0-360).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Open AOML OPeNDAP and pull the Pacific TCHP time-series slab.
 
-    CMEMS expects lon in -180..180, so the Pacific (crossing the
-    dateline) has to come back in two subsets. We download both halves,
-    roll the east-hemisphere longitudes to +360, and concat."""
-    tmp_dir = Path(tempfile.mkdtemp(prefix="pac_tchp_"))
-    west_path = tmp_dir / "pac_west.nc"
-    east_path = tmp_dir / "pac_east.nc"
+    Returns (tchp[time, lat, lon], times, lat, lon) with lon in 0-360
+    convention and lat ascending — matches the sister scripts, so the
+    existing basemap code works unchanged.
 
-    print(f"{log} fetching west Pacific (100°E..180°E) "
-          f"{start.date()} → {end.date()}")
-    a3d._cmems_subset(
-        dataset_id=dataset_id,
-        start=start, end=end,
-        lon_min=100.0, lon_max=179.875,
-        lat_min=LAT_MIN, lat_max=LAT_MAX,
-        depth_min=0.0, depth_max=a3d.DEPTH_MAX,
-        variables=["to"],
-        out_path=west_path, log=log,
-    )
+    AOML lon is -180..+180, so the Pacific (crossing the dateline)
+    comes back in two subsets. We pull both halves lazily via
+    OPeNDAP's range-select, load into memory, roll east to +360, and
+    concat. The slab is small enough (~0.25° × 90 days × Pacific
+    strip) to fit easily.
+    """
+    print(f"{log} opening {OPENDAP_URL}")
+    ds = xr.open_dataset(OPENDAP_URL)
+    try:
+        time_slice = slice(np.datetime64(start.date()),
+                           np.datetime64(end.date()))
+        lat_slice = slice(LAT_MIN, LAT_MAX)
 
-    print(f"{log} fetching east Pacific (180°..80°W) "
-          f"{start.date()} → {end.date()}")
-    a3d._cmems_subset(
-        dataset_id=dataset_id,
-        start=start, end=end,
-        lon_min=-180.0, lon_max=-80.0,
-        lat_min=LAT_MIN, lat_max=LAT_MAX,
-        depth_min=0.0, depth_max=a3d.DEPTH_MAX,
-        variables=["to"],
-        out_path=east_path, log=log,
-    )
+        print(f"{log} fetching west Pacific (100°E..180°E) "
+              f"{start.date()} → {end.date()}")
+        west = ds[[TCHP_VAR]].sel(
+            time=time_slice,
+            lat=lat_slice,
+            lon=slice(100.0, 180.0),
+        ).load()
 
-    # Load both into memory (Pacific strip is small enough — <2 GB for
-    # 90 days at 0.125° × 30 depth levels), roll east to +360, concat.
-    west = xr.open_dataset(west_path).load()
-    east = xr.open_dataset(east_path).load()
-    east = east.assign_coords(longitude=east["longitude"] + 360.0)
-    combined = xr.concat([west, east], dim="longitude").sortby("longitude")
-    west.close()
-    east.close()
-    return combined
+        print(f"{log} fetching east Pacific (180°..80°W) "
+              f"{start.date()} → {end.date()}")
+        east = ds[[TCHP_VAR]].sel(
+            time=time_slice,
+            lat=lat_slice,
+            lon=slice(-180.0, -80.0),
+        ).load()
+    finally:
+        ds.close()
+
+    # Roll east half to +360 convention and concat onto the west half.
+    east = east.assign_coords(lon=east["lon"] + 360.0)
+    combined = xr.concat([west, east], dim="lon").sortby("lon")
+
+    tchp = combined[TCHP_VAR].values.astype(np.float32)
+    times = combined["time"].values
+    lat = combined["lat"].values.astype(np.float32)
+    lon = combined["lon"].values.astype(np.float32)
+
+    # Ensure ascending lat — AOML typically comes back ascending but
+    # normalize defensively so downstream pcolormesh is always sane.
+    if lat.size >= 2 and lat[0] > lat[-1]:
+        lat = lat[::-1]
+        tchp = tchp[:, ::-1, :]
+
+    return tchp, times, lat, lon
+
+
+def _np_datetime_to_date(t) -> dt.date:
+    """Convert numpy.datetime64 → python date (UTC)."""
+    seconds = (t - np.datetime64("1970-01-01T00:00:00")) \
+        / np.timedelta64(1, "s")
+    return dt.datetime.utcfromtimestamp(float(seconds)).date()
 
 
 def _render_frame(
-    t_arr: np.ndarray,
-    depth: np.ndarray,
+    tchp_slice: np.ndarray,
     lat: np.ndarray,
     lon: np.ndarray,
     valid_date: dt.date,
     countries, coast,
 ) -> Image.Image:
-    """Render a single day's TCHP as an in-memory PIL image."""
-    d26 = a3d.compute_d26(t_arr, depth)
-    tchp = a3d.compute_tchp(t_arr, depth, d26)
-
+    """Render a single day's AOML TCHP as an in-memory PIL image."""
     extent = (LON_MIN_0360, LON_MAX_0360, LAT_MIN, LAT_MAX)
 
     fig, ax = plt.subplots(figsize=FIGSIZE, facecolor=gss.BG_COLOR)
@@ -123,7 +147,7 @@ def _render_frame(
     LON2, LAT2 = np.meshgrid(lon, lat)
     norm = mcolors.Normalize(vmin=0, vmax=TCHP_VMAX)
     pcm = ax.pcolormesh(
-        LON2, LAT2, tchp, cmap=gss.CMAP_TCHP, norm=norm,
+        LON2, LAT2, tchp_slice, cmap=gss.CMAP_TCHP, norm=norm,
         shading="auto", rasterized=True,
     )
     gss._draw_basemap(ax, extent, countries, coast)
@@ -132,7 +156,7 @@ def _render_frame(
     gss._style_axes(
         ax, extent,
         "Pacific · Tropical Cyclone Heat Potential",
-        f"Valid: {date_label}  ·  ARMOR3D daily",
+        f"Valid: {date_label}  ·  NOAA AOML",
     )
 
     cax = fig.add_axes([0.91, 0.18, 0.018, 0.64])
@@ -156,7 +180,7 @@ def _render_frame(
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="Render a Pacific-basin TCHP GIF over a date range."
+        description="Render a Pacific-basin TCHP GIF from AOML data."
     )
     p.add_argument("--start", default="2026-01-20",
                    help="Start date (YYYY-MM-DD).")
@@ -168,21 +192,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="Playback speed (frames per second).")
     p.add_argument("--step", type=int, default=1,
                    help="Day step (1 = daily, 2 = every other day, ...).")
-    p.add_argument("--dataset", default=a3d.ARMOR3D_NRT_DATASET,
-                   help=f"CMEMS dataset ID (default {a3d.ARMOR3D_NRT_DATASET}).")
     args = p.parse_args(argv)
 
     start = dt.datetime.fromisoformat(args.start)
-    end   = dt.datetime.fromisoformat(args.end).replace(
-        hour=23, minute=59, second=59,
-    )
-
-    if not a3d._have_credentials():
-        raise RuntimeError(
-            "CMEMS credentials missing. Set "
-            "COPERNICUSMARINE_SERVICE_USERNAME and "
-            "COPERNICUSMARINE_SERVICE_PASSWORD before running."
-        )
+    end   = dt.datetime.fromisoformat(args.end)
 
     log = "[pac-tchp-gif]"
 
@@ -199,23 +212,21 @@ def main(argv: list[str] | None = None) -> int:
     if countries is None and coast is None:
         print(f"{log} WARN: no basemap GeoJSON found — plots will have no coastlines")
 
-    ds = _fetch_pacific(start, end, args.dataset, log)
-    depth = ds["depth"].values.astype(np.float32)
-    lat   = ds["latitude"].values.astype(np.float32)
-    lon   = ds["longitude"].values.astype(np.float32)
-    times = ds["time"].values
+    tchp, times, lat, lon = _fetch_pacific_timeseries(start, end, log)
     print(f"{log} got {len(times)} time steps, "
-          f"{lat.size} lat × {lon.size} lon × {depth.size} depth")
+          f"{lat.size} lat × {lon.size} lon")
+    if tchp.size == 0 or len(times) == 0:
+        print(f"{log} no data returned for that window — exiting")
+        return 1
 
     # Render every Nth day per --step.
     frames: list[Image.Image] = []
     indices = list(range(0, len(times), max(1, args.step)))
     for n, ti in enumerate(indices):
-        valid_date = a3d._np_datetime_to_date(times[ti])
+        valid_date = _np_datetime_to_date(times[ti])
         print(f"{log}   rendering {valid_date}  ({n + 1}/{len(indices)})")
-        t_arr = ds["to"].isel(time=ti).values.astype(np.float32)
         frames.append(_render_frame(
-            t_arr, depth, lat, lon, valid_date, countries, coast,
+            tchp[ti], lat, lon, valid_date, countries, coast,
         ))
 
     if not frames:
