@@ -1,0 +1,106 @@
+name: Update ARMOR3D
+
+# Copernicus Marine ARMOR3D weekly product has ~7-10 day latency and a
+# single file per Wednesday. A once-a-week run is plenty; we fire
+# Thursdays at 14:43 UTC with a 15:13 backup. Those times are well clear
+# of the SST (13:17/13:47) and Subsurface (14:23/14:53) cron slots, and
+# Thursday lets CMEMS get a full day past their Wednesday publish cut.
+on:
+  schedule:
+    - cron: "43 14 * * 4"
+    - cron: "13 15 * * 4"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# One ARMOR3D job at a time. If both cron entries fire in the same
+# window or a manual dispatch overlaps, queue rather than race.
+concurrency:
+  group: update-armor3d
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        # No need for LFS — armor3d_climatology.nc is checked into plain
+        # git (~15 MB, well under GitHub's hard size limit).
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # copernicusmarine is the CMEMS Python client; it pulls in
+          # xarray + netCDF4 transitively. We pin to the 1.x series so
+          # a future 2.0 kwarg rename doesn't silently break CI.
+          pip install numpy matplotlib netCDF4 xarray requests \
+                      "copernicusmarine>=1.3,<2.0"
+
+      - name: Ensure Natural Earth basemap files exist
+        run: |
+          set -euo pipefail
+          NE="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
+          for f in ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson; do
+            if [ ! -f "$f" ]; then
+              echo "--- Downloading $f ---"
+              curl -fSL --retry 3 --retry-delay 10 -o "$f" "$NE/$f" || true
+            fi
+          done
+
+      - name: Generate ARMOR3D weekly plots
+        # Fetches one weekly slice of ARMOR3D (T at 0-500 m, global,
+        # ~8 MB) via the Copernicus Marine subsetter, derives D26 + TCHP,
+        # renders 18 regions × (TCHP + D26 + TCHP anomaly + labels) maps
+        # plus 4 equatorial cross-sections = ~112 PNGs. Typically runs
+        # in 5-9 min on a GH-hosted runner. Anomaly panels + climo
+        # overlays are skipped automatically if armor3d_climatology.nc
+        # is missing from the repo.
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: python generate_armor3d_plots.py
+
+      - name: Commit and push if anything changed
+        run: |
+          set -eo pipefail
+          git config --local user.name  "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # armor3d_climatology.nc is NOT staged here — it's a one-time
+          # pre-compute that lives in the repo already. We only ship the
+          # freshly rendered PNGs + the meta JSON.
+          git add armor3d/*.png armor3d/armor3d_meta.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No ARMOR3D changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: refresh ARMOR3D weekly maps ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+
+          # Rebase-and-push loop — same rationale as SST/subsurface
+          # workflows. Other workflows can push to main while this job
+          # is rendering, so we retry with rebase rather than failing
+          # outright. Our commits only touch armor3d/*.png + the meta
+          # JSON, so conflicts are effectively impossible.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected on attempt $attempt — fetching + rebasing..."
+            git fetch origin main
+            git rebase origin/main || {
+              echo "Rebase failed (unexpected conflict)." >&2
+              git rebase --abort || true
+              exit 1
+            }
+            sleep $((attempt * 2))
+          done
+          echo "Push still failing after 5 attempts." >&2
+          exit 1
