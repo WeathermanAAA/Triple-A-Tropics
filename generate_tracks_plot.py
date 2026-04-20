@@ -410,9 +410,12 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             continue
         if tech != "BEST":
             continue
-        # Accept blank RAD (pre-radii observations) or "34"; skip 50/64
-        # kt radii (they're duplicates of the 34 kt row for the same obs)
-        if rad not in ("", "34"):
+        # Accept pre-radii observations ("" or "0" — the latter is how
+        # JTWC encodes it for sub-34-kt statuses like DB/LO/WV/TD) or
+        # the 34 kt row. Skip 50/64 kt radii (duplicates of the 34 kt
+        # row for the same obs). This filter previously dropped every
+        # pre-genesis disturbance because they all carry rad="0".
+        if rad not in ("", "0", "34"):
             continue
         # Belt-and-suspenders dedupe by (storm, timestamp) in case a file
         # ever has both a short 11-col line and a 12-col RAD=34 line for
