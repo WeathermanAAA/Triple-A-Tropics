@@ -1,11 +1,14 @@
 name: Update SST
 
 # OISST v2.1 has a ~24-hour latency from NOAA NCEI, so we update once
-# per day well after that window. 13:00 UTC = ~9 AM ET, new file for
-# the previous UTC day is reliably posted by then.
+# per day well after that window. Previously scheduled at 13:00 UTC
+# exactly, but GitHub silently drops top-of-hour cron runs during
+# high-load windows. Offset to :17 and add a backup at :47. Concurrency
+# group below dedupes if both fire.
 on:
   schedule:
-    - cron: "0 13 * * *"
+    - cron: "17 13 * * *"
+    - cron: "47 13 * * *"
   workflow_dispatch: {}
 
 permissions:
