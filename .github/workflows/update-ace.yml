@@ -2,13 +2,22 @@ name: Update ACE + Tracks
 
 on:
   schedule:
-    # Primary: :15 past every 6-hour boundary (00:15, 06:15, 12:15, 18:15 UTC).
-    - cron: "15 */6 * * *"
-    # Backup 30 min later in case GitHub silently skips the primary
-    # during a high-load hour. Concurrency group below keeps them
+    # GitHub silently drops scheduled runs during high-load windows,
+    # especially on the round-number minute marks (:00/:15/:30/:45).
+    # We stagger across off-peak offsets and add a third backup so at
+    # least one slot lands even when a whole top-of-hour window gets
+    # throttled.
+    #
+    # Primary: :07 past every 6-hour boundary (00:07, 06:07, 12:07, 18:07 UTC).
+    - cron: "7 */6 * * *"
+    # Backup 1 (~30 min later). Concurrency group below keeps them
     # from running at the same time; if the primary succeeded, this
     # just redoes the work (no data changes → empty commit skipped).
-    - cron: "45 */6 * * *"
+    - cron: "37 */6 * * *"
+    # Backup 2 (~1h46m after primary). Offset from 01/07/13/19 UTC so
+    # it lands in a quieter slot entirely outside the hour-boundary
+    # contention window.
+    - cron: "53 1,7,13,19 * * *"
   workflow_dispatch: {}
 
 permissions:
