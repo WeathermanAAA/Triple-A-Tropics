@@ -145,7 +145,7 @@ CROSSSECTION_REGIONS = {
         "lon_max": 290.0,
         "lat_min": -5.0,
         "lat_max":  5.0,
-        "figsize": (14.0, 5.6),
+        "figsize": (14.0, 7.0),
     },
     "equatorial-atlantic": {
         "label": "Equatorial Atlantic",
@@ -153,7 +153,7 @@ CROSSSECTION_REGIONS = {
         "lon_max": 375.0,   # 15°E (wraps past 360)
         "lat_min": -5.0,
         "lat_max":  5.0,
-        "figsize": (11.0, 5.6),
+        "figsize": (11.0, 7.0),
     },
     "indian-ocean": {
         "label": "Equatorial Indian Ocean",
@@ -161,7 +161,7 @@ CROSSSECTION_REGIONS = {
         "lon_max": 100.0,
         "lat_min":  -5.0,
         "lat_max":   5.0,
-        "figsize": (11.0, 5.6),
+        "figsize": (11.0, 7.0),
     },
     "global-tropics": {
         "label": "Global Tropics (5°S–5°N)",
@@ -169,7 +169,7 @@ CROSSSECTION_REGIONS = {
         "lon_max": 390.0,   # full 360° wrap, Pacific-centered
         "lat_min":  -5.0,
         "lat_max":   5.0,
-        "figsize": (15.0, 5.2),
+        "figsize": (15.0, 6.5),
     },
 }
 
@@ -640,23 +640,18 @@ def plot_cross_section(
         has_climo = False
         anom = None  # unused in absolute-T mode
 
-    # --- Figure layout: small inset map on top, main panel below ------
+    # --- Figure layout: title band | inset map | cross-section -------
+    # Three vertical bands so nothing overlaps:
+    #   * top ~14% is a dedicated title/subtitle band (no axes in it)
+    #   * next ~24% is the inset map, drawn at aspect="equal" so the
+    #     continents never look squished no matter how wide the lon
+    #     window is
+    #   * remaining ~62% is the cross-section panel
     fig = plt.figure(figsize=region["figsize"], facecolor=gss.BG_COLOR)
-    fig.subplots_adjust(
-        left=0.06, right=0.94, top=0.92, bottom=0.09, hspace=0.18,
-    )
-
-    # Inset map — give it ~28% of the figure height and let it size
-    # itself with aspect="equal". That forces true geographic
-    # proportions, so the continents are never stretched/squished; the
-    # map will just center itself horizontally in whatever slot is
-    # available and leave clean empty margins on either side for
-    # narrow-lon regions (Atlantic, Indian Ocean). For wide-lon
-    # regions (ENSO, global tropics) it fills the slot.
     gs = fig.add_gridspec(
         nrows=2, ncols=1, height_ratios=[1, 2.5],
-        left=0.06, right=0.94,
-        top=0.92, bottom=0.09, hspace=0.18,
+        left=0.06, right=0.93,
+        top=0.86, bottom=0.09, hspace=0.22,
     )
     ax_map = fig.add_subplot(gs[0, 0])
     ax_cs  = fig.add_subplot(gs[1, 0])
@@ -765,17 +760,24 @@ def plot_cross_section(
             f"Valid: {date_label}  ·  ARMOR3D · 5°S–5°N zonal mean"
         )
         cb_label = "Temperature (°C)"
+    # Title + subtitle sit in the dedicated top band (fig y ≈ 0.86-1.0).
+    # Spread them out so a 15-pt bold title and a 10-pt subtitle can't
+    # collide no matter how matplotlib renders them.
     fig.suptitle(
-        title, color=gss.TEXT_COLOR, fontsize=14, fontweight="bold",
-        x=0.06, ha="left", y=0.97,
+        title, color=gss.TEXT_COLOR, fontsize=15, fontweight="bold",
+        x=0.06, ha="left", y=0.955,
     )
     fig.text(
-        0.06, 0.945, subtitle,
+        0.06, 0.905, subtitle,
         color=gss.MUTED_COLOR, fontsize=10, ha="left",
     )
 
-    # Colorbar to the right of the main panel.
-    cax = fig.add_axes([0.95, 0.09, 0.012, 0.66])
+    # Colorbar to the right of the main panel. Anchor its vertical
+    # extent to the cross-section axis so it tracks whatever layout
+    # the gridspec produces, instead of hard-coding y0/height.
+    cs_pos = ax_cs.get_position()
+    cax = fig.add_axes([cs_pos.x1 + 0.012, cs_pos.y0,
+                        0.012, cs_pos.height])
     cb = fig.colorbar(pcm, cax=cax, extend="both")
     cb.set_label(cb_label, color=gss.TEXT_COLOR, fontsize=9)
     cb.ax.yaxis.set_tick_params(color=gss.MUTED_COLOR,
