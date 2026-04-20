@@ -187,14 +187,17 @@ def read_subsurface_grid(path: Path, var_name: str
 # --- Region definitions (parallel to generate_sst_plots.py) -------------
 
 REGIONS: dict[str, dict] = {
+    # Full-earth overview — Pacific-centered to match the OISST + CRW
+    # global view on the /sst/ page. _subset_to_extent and _draw_basemap
+    # handle the 30→390° wrap transparently.
     "global": {
         "label": "Global",
-        "extent": (-180.0, 180.0, -75.0, 75.0),
+        "extent": (30.0, 390.0, -75.0, 75.0),
         "figsize": (14.5, 7.2),
     },
     "global-tropics": {
         "label": "Global Tropics",
-        "extent": (-180.0, 180.0, -45.0, 45.0),
+        "extent": (30.0, 390.0, -45.0, 45.0),
         "figsize": (14.5, 5.6),
     },
     "enso": {
@@ -394,12 +397,28 @@ def _normalize_lons_for_extent(lon: np.ndarray, extent: tuple) -> np.ndarray:
 
 
 def _subset_to_extent(data, lat, lon, extent):
+    """Crop `data` to `extent`. Mirrors generate_sst_plots.py's helper,
+    including the Pacific-centered wrap where `lon_max` exceeds 360°:
+    we duplicate the [0, lon_max-360) sliver onto the right edge so the
+    globe view has no seam."""
     lon_min, lon_max, lat_min, lat_max = extent
     lat_mask = (lat >= lat_min) & (lat <= lat_max)
     lon_adj = _normalize_lons_for_extent(lon, extent)
     order = np.argsort(lon_adj)
     lon_sorted = lon_adj[order]
     data_sorted = data[:, order]
+
+    if lon_max > 360:
+        wrap_cut = lon_max - 360
+        wrap_mask = lon_sorted < wrap_cut
+        if np.any(wrap_mask):
+            lon_sorted = np.concatenate(
+                [lon_sorted, lon_sorted[wrap_mask] + 360]
+            )
+            data_sorted = np.concatenate(
+                [data_sorted, data_sorted[:, wrap_mask]], axis=1
+            )
+
     lon_mask = (lon_sorted >= lon_min) & (lon_sorted <= lon_max)
     return (
         data_sorted[np.ix_(lat_mask, lon_mask)],
@@ -414,18 +433,19 @@ def _draw_basemap(ax, extent, countries, coast) -> None:
     dateline."""
     lon_min, lon_max, lat_min, lat_max = extent
     wraps_dateline = lon_max > 180
+    wraps_globe = lon_max > 360
 
     def _wrap_coord(x):
         if wraps_dateline and x < 0:
             return x + 360
         return x
 
-    def _draw_feature_lines(features, color, linewidth, zorder):
+    def _draw_feature_lines(features, color, linewidth, zorder, shift=0.0):
         for feat in features:
             for ring in _feature_linestrings(feat):
                 if not ring:
                     continue
-                xs = [_wrap_coord(x) for x, _ in ring]
+                xs = [_wrap_coord(x) + shift for x, _ in ring]
                 ys = [y for _, y in ring]
                 if max(ys) < lat_min or min(ys) > lat_max:
                     continue
@@ -448,9 +468,15 @@ def _draw_basemap(ax, extent, countries, coast) -> None:
     if countries:
         _draw_feature_lines(countries.get("features", []),
                             BORDER_COLOR, 0.7, 3)
+        if wraps_globe:
+            _draw_feature_lines(countries.get("features", []),
+                                BORDER_COLOR, 0.7, 3, shift=360.0)
     if coast:
         _draw_feature_lines(coast.get("features", []),
                             COAST_COLOR, 0.8, 3)
+        if wraps_globe:
+            _draw_feature_lines(coast.get("features", []),
+                                COAST_COLOR, 0.8, 3, shift=360.0)
 
 
 def _lon_tick_label(x, _pos):
@@ -478,7 +504,16 @@ def _style_axes(ax, extent, title, subtitle):
     ax.set_ylim(lat_min, lat_max)
     ax.set_aspect("auto")
     ax.set_facecolor(PANEL_COLOR)
-    ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
+    # Same adaptive tick spacing as generate_sst_plots.py so the 360°
+    # Pacific-centered global view doesn't get 18 cramped ticks.
+    lon_range = lon_max - lon_min
+    if lon_range >= 270:
+        lon_step = 30
+    elif lon_range >= 90:
+        lon_step = 20
+    else:
+        lon_step = 10
+    ax.xaxis.set_major_locator(mticker.MultipleLocator(lon_step))
     ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(_lon_tick_label))
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(_lat_tick_label))
