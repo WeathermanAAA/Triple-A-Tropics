@@ -500,16 +500,21 @@ def _feature_linestrings(feat: dict) -> list[list[tuple[float, float]]]:
 # --- Region definitions -------------------------------------------------
 
 REGIONS: dict[str, dict] = {
-    # Full-earth overview
+    # Full-earth overview — Pacific-centered. Extent spans 360° but
+    # starts at 30°E so the split runs through eastern Africa/Arabian
+    # peninsula (minimal landmass bisection) and the full Pacific basin
+    # sits at the image center (~210°E = 150°W). _subset_to_extent +
+    # _draw_basemap duplicate the 0–30°E sliver onto the right edge for
+    # a seamless wrap.
     "global": {
         "label": "Global",
-        "extent": (-180.0, 180.0, -75.0, 75.0),
+        "extent": (30.0, 390.0, -75.0, 75.0),
         "figsize": (14.5, 7.2),
     },
-    # Tropical belt (narrower latitude band than Global)
+    # Tropical belt — same Pacific-centered wrap, narrower latitude band.
     "global-tropics": {
         "label": "Global Tropics",
-        "extent": (-180.0, 180.0, -45.0, 45.0),
+        "extent": (30.0, 390.0, -45.0, 45.0),
         "figsize": (14.5, 5.6),
     },
     # ENSO monitoring view — tropical Pacific spanning the dateline
@@ -701,7 +706,13 @@ def _subset_to_extent(
     sst: np.ndarray, lat: np.ndarray, lon: np.ndarray, extent: tuple
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return sst/lat/lon cropped to `extent`. Handles the dateline and the
-    0→360 vs -180→180 roll automatically."""
+    0→360 vs -180→180 roll automatically.
+
+    Also supports Pacific-centered globe views whose `lon_max` exceeds
+    360° (e.g. the `global` region uses (30, 390)). In that case we
+    duplicate the leftmost sliver of the 0→360 grid onto the right edge
+    with a +360 shift, yielding a continuous strip from `lon_min` to
+    `lon_max` with no seam."""
     lon_min, lon_max, lat_min, lat_max = extent
     lat_mask = (lat >= lat_min) & (lat <= lat_max)
 
@@ -710,6 +721,20 @@ def _subset_to_extent(
     order = np.argsort(lon_adj)
     lon_sorted = lon_adj[order]
     sst_sorted = sst[:, order]
+
+    # Pacific-centered global wrap: duplicate the [0, lon_max-360)
+    # sliver at the right edge so the seam between continents
+    # disappears.
+    if lon_max > 360:
+        wrap_cut = lon_max - 360
+        wrap_mask = lon_sorted < wrap_cut
+        if np.any(wrap_mask):
+            lon_sorted = np.concatenate(
+                [lon_sorted, lon_sorted[wrap_mask] + 360]
+            )
+            sst_sorted = np.concatenate(
+                [sst_sorted, sst_sorted[:, wrap_mask]], axis=1
+            )
 
     lon_mask = (lon_sorted >= lon_min) & (lon_sorted <= lon_max)
     return (
@@ -731,18 +756,19 @@ def _draw_basemap(ax, extent: tuple, countries, coast) -> None:
     """
     lon_min, lon_max, lat_min, lat_max = extent
     wraps_dateline = lon_max > 180
+    wraps_globe = lon_max > 360
 
     def _wrap_coord(x):
         if wraps_dateline and x < 0:
             return x + 360
         return x
 
-    def _draw_feature_lines(features, color, linewidth, zorder):
+    def _draw_feature_lines(features, color, linewidth, zorder, shift=0.0):
         for feat in features:
             for ring in _feature_linestrings(feat):
                 if not ring:
                     continue
-                xs = [_wrap_coord(x) for x, _ in ring]
+                xs = [_wrap_coord(x) + shift for x, _ in ring]
                 ys = [y for _, y in ring]
                 if max(ys) < lat_min or min(ys) > lat_max:
                     continue
@@ -768,9 +794,17 @@ def _draw_basemap(ax, extent: tuple, countries, coast) -> None:
     if countries:
         _draw_feature_lines(countries.get("features", []),
                             BORDER_COLOR, 0.7, 3)
+        if wraps_globe:
+            # Pacific-centered wrap: redraw the 0→(lon_max-360)°E sliver
+            # shifted to the right edge of the plot (360→lon_max).
+            _draw_feature_lines(countries.get("features", []),
+                                BORDER_COLOR, 0.7, 3, shift=360.0)
     if coast:
         _draw_feature_lines(coast.get("features", []),
                             COAST_COLOR, 0.8, 3)
+        if wraps_globe:
+            _draw_feature_lines(coast.get("features", []),
+                                COAST_COLOR, 0.8, 3, shift=360.0)
 
 
 def _lon_tick_label(x: float, _pos) -> str:
@@ -806,8 +840,17 @@ def _style_axes(ax, extent, title, subtitle):
     ax.set_ylim(lat_min, lat_max)
     ax.set_aspect("auto")
     ax.set_facecolor(PANEL_COLOR)
-    # Lat/lon gridlines
-    ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
+    # Lat/lon gridlines. Pick a tick step that keeps labels readable
+    # across both narrow regional views (~30° wide) and the 360° wide
+    # Pacific-centered global view.
+    lon_range = lon_max - lon_min
+    if lon_range >= 270:
+        lon_step = 30  # global / global-tropics
+    elif lon_range >= 90:
+        lon_step = 20  # most regional views
+    else:
+        lon_step = 10  # small basins (e.g. Mediterranean)
+    ax.xaxis.set_major_locator(mticker.MultipleLocator(lon_step))
     ax.yaxis.set_major_locator(mticker.MultipleLocator(10))
     # Proper geographic formatting: -140°W, 120°E, etc. — even for
     # dateline-crossing extents that use >180 coordinates internally.
