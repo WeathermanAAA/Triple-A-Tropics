@@ -36,20 +36,15 @@
     white-space: nowrap; border: 0;
   }
 
-  /* Live status strip: basin-activity chips on the left, Atlantic
-     season pulse on the right. Replaces the old static meta line with
-     something that actually reflects what is happening right now. JS
-     at the bottom of the file populates both sides from the same JSON
-     feeds the climatology page already uses. If the fetches fail
-     (local preview, slow network), the strip keeps its default text
-     instead of breaking. */
+  /* Live status strip: one row per basin, each with activity dot,
+     YTD count, and season context (countdown before season start,
+     live ACE / rank during season, final stats after season ends).
+     Populated by the script at the bottom of the file from the
+     JSON feeds the climatology page already publishes every 6 h.
+     Fails silently if a feed is missing (local preview, slow net). */
   .home-status {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 10px 18px;
-    align-items: center;
     margin-bottom: 22px;
-    padding: 10px 14px;
+    padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(0,0,0,0.08));
@@ -57,84 +52,89 @@
     color: var(--muted);
     letter-spacing: 0.25px;
   }
-  .home-status .status-label {
+  .status-head {
+    display: flex; align-items: baseline;
+    gap: 12px; flex-wrap: wrap;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .status-head .status-label {
     font-family: "Oswald", "Arial Narrow", Impact, sans-serif;
     font-weight: 700; font-size: 11px;
     letter-spacing: 1.1px;
     color: var(--accent);
     text-transform: uppercase;
-    padding-right: 12px;
-    margin-right: 2px;
-    border-right: 1px solid var(--border);
-    display: inline-flex; align-items: center;
   }
-  .basin-strip {
-    display: flex; align-items: center;
-    gap: 8px; flex-wrap: wrap;
+  .status-head .status-hint {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.3px;
   }
-  .basin-chip {
+
+  .basin-grid {
+    display: flex; flex-direction: column;
+    gap: 6px;
+  }
+  .basin-row {
+    display: grid;
+    grid-template-columns: 72px auto 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+  }
+  .basin-row:hover {
+    background: rgba(93, 211, 255, 0.05);
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .basin-row .basin-head {
     display: inline-flex; align-items: center;
     gap: 7px;
-    padding: 4px 11px;
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.7px;
     text-transform: uppercase;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--muted);
-    background: rgba(255, 255, 255, 0.02);
-    text-decoration: none;
-    transition: color 0.15s, border-color 0.15s, background 0.15s;
-  }
-  .basin-chip:hover {
     color: var(--fg);
-    border-color: var(--accent-2);
-    background: rgba(93, 211, 255, 0.05);
-    text-decoration: none;
   }
-  .basin-chip .dot {
+  .basin-row .dot {
     width: 7px; height: 7px;
     border-radius: 50%;
     background: #3a424d;
     transition: background 0.3s, box-shadow 0.3s;
   }
-  .basin-chip.active {
-    border-color: rgba(0, 220, 120, 0.45);
-    color: #c8f7d4;
-    background: rgba(0, 220, 120, 0.08);
-  }
-  .basin-chip.active .dot {
+  .basin-row.active .dot {
     background: #6ff0a0;
     box-shadow: 0 0 8px rgba(111, 240, 160, 0.75);
     animation: home-pulse 1.7s ease-in-out infinite;
   }
-  .basin-chip .code { color: var(--fg); font-weight: 700; }
-  .basin-chip.active .code { color: #e8ffe8; }
-  .basin-chip .meta {
+  .basin-row.active .basin-head .code { color: #e8ffe8; }
+
+  .basin-row .bstat {
+    font-size: 12px;
     color: var(--muted);
-    font-weight: 600;
-    font-size: 10px;
-    letter-spacing: 0.35px;
-    text-transform: none;
-  }
-  .basin-chip.active .meta { color: #c8f7d4; }
-
-  .season-pulse {
-    display: inline-flex; align-items: center;
-    gap: 10px;
+    letter-spacing: 0.2px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .season-pulse b { color: var(--fg); font-weight: 700; }
-  .season-pulse .sep { color: #3a424d; padding: 0 2px; }
+  .basin-row .bstat.count {
+    color: var(--fg);
+    font-weight: 600;
+    min-width: 110px;
+  }
+  .basin-row .bstat b { color: var(--fg); font-weight: 700; }
+  .basin-row .sep { color: #3a424d; padding: 0 4px; }
 
-  @media (max-width: 760px) {
-    .home-status { grid-template-columns: 1fr; }
-    .season-pulse {
-      border-top: 1px solid var(--border);
-      padding-top: 8px;
-      white-space: normal;
+  @media (max-width: 620px) {
+    .basin-row {
+      grid-template-columns: 64px 1fr;
     }
+    .basin-row .bstat.season { grid-column: 1 / -1; padding-left: 76px; }
   }
 
   /* Card grid */
@@ -164,7 +164,7 @@
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
   }
 
-  /* Banner graphic area — wide-aspect so it reads as a poster strip
+  /* Banner graphic area: wide-aspect so it reads as a poster strip
      across the top of the card rather than a square thumbnail. */
   .home-card-banner {
     aspect-ratio: 7 / 2;
@@ -211,7 +211,7 @@
     line-height: 1.6;
   }
 
-  /* Bottom meta strip — data-source chips on the left, live pulse
+  /* Bottom meta strip: data-source chips on the left, live pulse
      on the right. Feels like a product footer on the card. */
   .home-card-meta {
     display: flex; align-items: center; justify-content: space-between;
@@ -255,7 +255,7 @@
     .home-card-banner { aspect-ratio: 16 / 7; }
   }
 
-  /* About section — tightened rhythm + source-attribution chip row */
+  /* About section: tightened rhythm + source-attribution chip row */
   .home-about {
     max-width: 860px; margin: 0 auto;
     padding: 22px 20px 80px;
@@ -320,7 +320,7 @@
 
 <header class="hero">
   <div class="hero-title">
-    <!-- Left hurricane: spins CCW (top sweeps left — away from the
+    <!-- Left hurricane: spins CCW (top sweeps left, away from the
          title). Blue "A" is placed OUTSIDE the rotating group so it
          stays upright. -->
     <svg class="hero-icon hero-icon-left" viewBox="-34 -34 68 68" aria-hidden="true">
@@ -338,7 +338,7 @@
     <h1>Triple-A-Tropics</h1>
 
     <!-- Right hurricane: outer group flips horizontally (scale -1,1),
-         so the inner rotation — same SMIL direction as the left — is
+         so the inner rotation (same SMIL direction as the left) is
          mirrored visually, making the top sweep RIGHT (away from the
          title). Text sits outside the mirror so the "A" reads
          correctly. -->
@@ -362,51 +362,47 @@
 
 <section class="home-wrap">
 
-  <!-- Live status strip. Left: per-basin activity chips that flip to
-       a pulsing green dot when a cyclone is active in that basin.
-       Right: Atlantic season pulse that shows a countdown before
-       June 1, live ACE vs normal during season, and a postseason
-       ranking after Nov 30. Populated by the script at the bottom of
-       the file. -->
+  <!-- Live status strip. One row per basin, showing activity dot,
+       YTD named-storm count, and season context. Populated by the
+       script at the bottom of the file. -->
   <div class="home-status">
-    <div class="basin-strip">
-      <span class="status-label">Basins</span>
-      <a class="basin-chip" data-basin="al" href="/climatology/">
-        <span class="dot"></span>
-        <span class="code">ATL</span>
-        <span class="meta" data-role="meta">loading</span>
-      </a>
-      <a class="basin-chip" data-basin="ep" href="/climatology/">
-        <span class="dot"></span>
-        <span class="code">EPAC</span>
-        <span class="meta" data-role="meta">loading</span>
-      </a>
-      <a class="basin-chip" data-basin="wp" href="/climatology/">
-        <span class="dot"></span>
-        <span class="code">WPAC</span>
-        <span class="meta" data-role="meta">loading</span>
-      </a>
+    <div class="status-head">
+      <span class="status-label">Live status</span>
+      <span class="status-hint">Auto-refresh every 6 h via IBTrACS + JTWC</span>
     </div>
-    <div class="season-pulse">
-      <span class="status-label">Atlantic</span>
-      <span class="pulse-text" id="pulse-text">Loading season status</span>
+    <div class="basin-grid">
+      <a class="basin-row" data-basin="al" href="/climatology/">
+        <span class="basin-head"><span class="dot"></span><span class="code">ATL</span></span>
+        <span class="bstat count" data-role="count">loading</span>
+        <span class="bstat season" data-role="season">loading</span>
+      </a>
+      <a class="basin-row" data-basin="ep" href="/climatology/">
+        <span class="basin-head"><span class="dot"></span><span class="code">EPAC</span></span>
+        <span class="bstat count" data-role="count">loading</span>
+        <span class="bstat season" data-role="season">loading</span>
+      </a>
+      <a class="basin-row" data-basin="wp" href="/climatology/">
+        <span class="basin-head"><span class="dot"></span><span class="code">WPAC</span></span>
+        <span class="bstat count" data-role="count">loading</span>
+        <span class="bstat season" data-role="season">loading</span>
+      </a>
     </div>
   </div>
 
   <div class="home-cards">
 
-    <!-- Climatology card — banner image is a 2005-Atlantic poster with
+    <!-- Climatology card: banner image is a 2005-Atlantic poster with
          baked-in title. h2 is visually hidden so the image text carries
          the heading without duplication. -->
     <a class="home-card" href="/climatology/">
       <div class="home-card-banner">
         <img src="Climatology-page.jpg"
-             alt="Tropical Cyclone Climatology — storm tracks across the Atlantic basin"
+             alt="Tropical Cyclone Climatology: storm tracks across the Atlantic basin"
              loading="lazy" decoding="async">
       </div>
       <div class="home-card-body">
         <h2 class="sr-only">Tropical Cyclone Climatology</h2>
-        <p>Accumulated Cyclone Energy and storm tracks for every basin — this season against the 1991–2020 normal. Interactive rankings, hover tooltips, and live positions for active systems.</p>
+        <p>Accumulated Cyclone Energy and storm tracks for every basin, this season against the 1991–2020 normal. Interactive rankings, hover tooltips, and live positions for active systems.</p>
       </div>
       <div class="home-card-meta">
         <span class="src">IBTrACS · JTWC</span>
@@ -414,16 +410,16 @@
       </div>
     </a>
 
-    <!-- SST card — banner image is an SST poster with baked-in title. -->
+    <!-- SST card: banner image is an SST poster with baked-in title. -->
     <a class="home-card" href="/sst/">
       <div class="home-card-banner">
         <img src="sst-page.jpg"
-             alt="Ocean Temperature Analysis — sea-surface temperature and subsurface heat"
+             alt="Ocean Temperature Analysis: sea-surface temperature and subsurface heat"
              loading="lazy" decoding="async">
       </div>
       <div class="home-card-body">
         <h2 class="sr-only">Ocean Temperature Analysis</h2>
-        <p>Daily SST, anomalies, and record composites across 17 regions from NOAA OISST v2.1 and Coral Reef Watch — plus TCHP and 26 °C isotherm depth (D26) subsurface fuel from NOAA AOML and CMEMS ARMOR3D.</p>
+        <p>Daily SST, anomalies, and record composites across 17 regions from NOAA OISST v2.1 and Coral Reef Watch, plus TCHP and 26 °C isotherm depth (D26) subsurface fuel from NOAA AOML and CMEMS ARMOR3D.</p>
       </div>
       <div class="home-card-meta">
         <span class="src">OISST · CRW · AOML · ARMOR3D</span>
@@ -454,99 +450,108 @@
     if (f) f.textContent = y;
   })();
 
-  // --- Live basin-activity chips --------------------------------------
-  // Polls the three per-basin tracks JSON files that the site already
-  // publishes on every 6-hour scheduled update, figures out whether a
-  // cyclone is active, and updates the chip. Fails silently if a
-  // file is missing.
+  // --- Live basin status rows -----------------------------------------
+  // For each basin (ATL / EPAC / WPAC) we hydrate two cells:
+  //   1. "count":  either "N active" (pulsing green) or "N named YTD"
+  //   2. "season": countdown to season start, live ACE + %-of-normal
+  //                 during season, or final rank after season ends.
+  //                 WPAC has no official start/end so it always shows
+  //                 the live ACE form.
+  //
+  // All fetches are tolerant: a missing JSON leaves the default
+  // "loading" text in place but does not break the rest of the page.
   (function () {
-    var basins = ['al', 'ep', 'wp'];
-    basins.forEach(function (b) {
-      fetch(b + '_tracks_data.json', { cache: 'no-cache' })
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) {
-          if (!d) return;
-          var chip = document.querySelector('.basin-chip[data-basin="' + b + '"]');
-          if (!chip) return;
-          var storms = Array.isArray(d.storms) ? d.storms : [];
-          var active = storms.filter(function (s) { return s && s.is_active; });
-          var named = (d.header && typeof d.header.named === 'number') ? d.header.named : 0;
-          var meta = chip.querySelector('[data-role="meta"]');
-          if (active.length > 0) {
-            chip.classList.add('active');
-            if (meta) meta.textContent = active.length + ' active';
-          } else {
-            chip.classList.remove('active');
-            if (meta) meta.textContent = named + ' named YTD';
-          }
-        })
-        .catch(function () { /* fail silent */ });
-    });
-  })();
-
-  // --- Atlantic season pulse ------------------------------------------
-  // Three modes, chosen by today's date vs the official June 1 / Nov 30
-  // Atlantic season window:
-  //   1. Pre-season (before Jun 1)  : countdown days to start
-  //   2. In-season  (Jun 1 to Nov 30): live ACE, % of normal, # named
-  //   3. Postseason (after Nov 30)  : final ACE + rank vs history
-  (function () {
-    var el = document.getElementById('pulse-text');
-    if (!el) return;
-
     var now = new Date();
     var y = now.getUTCFullYear();
-    var seasonStart = new Date(Date.UTC(y, 5, 1));            // Jun 1
-    var seasonEnd   = new Date(Date.UTC(y, 10, 30, 23, 59, 59)); // Nov 30
 
-    function fmtDays(d) { return Math.max(0, Math.ceil(d / 86400000)); }
+    // Basin definitions. `start`/`end` are month (0-indexed) + day
+    // pairs in UTC. `yearRound: true` disables the countdown logic
+    // so WPAC always reports live stats.
+    var BASINS = [
+      { code: 'al', label: 'June 1',  start: [5, 1],  end: [10, 30] },
+      { code: 'ep', label: 'May 15',  start: [4, 15], end: [10, 30] },
+      { code: 'wp', label: null,      start: null,    end: null, yearRound: true }
+    ];
 
-    function renderCountdown() {
-      var days = fmtDays(seasonStart - now);
-      el.innerHTML = 'Season starts <b>June 1</b> <span class="sep">·</span> ' +
-                     '<b>' + days + '</b> days';
+    function daysUntil(d) {
+      return Math.max(0, Math.ceil((d - now) / 86400000));
     }
 
-    function renderInSeason() {
-      el.innerHTML = 'ACE loading <span class="sep">·</span> live feed';
-      Promise.all([
-        fetch('al_ace_data.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; }),
-        fetch('al_tracks_data.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; })
-      ]).then(function (res) {
-        var a = res[0], t = res[1];
-        if (!a) return;
-        var ace = (a.current && typeof a.current.latest_value === 'number') ? a.current.latest_value : 0;
-        var doy = (typeof a.today_doy === 'number') ? a.today_doy : 0;
-        var normal = (a.climo && a.climo.mean && doy > 0) ? a.climo.mean[doy - 1] : 0;
-        var named = (t && t.header && typeof t.header.named === 'number') ? t.header.named : 0;
-        var pct = normal > 0 ? Math.round((ace / normal) * 100) : null;
-        var parts = ['ACE <b>' + ace.toFixed(1) + '</b>'];
-        if (pct !== null) parts.push('<b>' + pct + '%</b> of normal');
-        parts.push('<b>' + named + '</b> named');
-        el.innerHTML = parts.join(' <span class="sep">·</span> ');
-      }).catch(function () { /* fail silent */ });
-    }
-
-    function renderPostseason() {
-      el.innerHTML = 'Season complete <span class="sep">·</span> <b>Nov 30</b>';
-      fetch('al_ace_data.json', { cache: 'no-cache' })
+    // Safe fetch → JSON or null.
+    function fetchJSON(path) {
+      return fetch(path, { cache: 'no-cache' })
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (a) {
-          if (!a) return;
-          var ace = (a.current && typeof a.current.latest_value === 'number') ? a.current.latest_value : null;
-          var rank = a.current_rank;
-          var total = a.total_seasons;
-          if (ace !== null && rank && total) {
-            el.innerHTML = 'Final ACE <b>' + ace.toFixed(1) + '</b> <span class="sep">·</span> ' +
-                           'rank <b>' + rank + '</b> of ' + total;
-          }
-        })
-        .catch(function () { /* fail silent */ });
+        .catch(function () { return null; });
     }
 
-    if (now < seasonStart)      renderCountdown();
-    else if (now > seasonEnd)   renderPostseason();
-    else                        renderInSeason();
+    // Populate one basin row.
+    function hydrate(basin) {
+      var row = document.querySelector('.basin-row[data-basin="' + basin.code + '"]');
+      if (!row) return;
+      var countEl  = row.querySelector('[data-role="count"]');
+      var seasonEl = row.querySelector('[data-role="season"]');
+
+      Promise.all([
+        fetchJSON(basin.code + '_tracks_data.json'),
+        fetchJSON(basin.code + '_ace_data.json')
+      ]).then(function (res) {
+        var t = res[0], a = res[1];
+
+        // Count cell: "active" beats "named" for surfacing live storms.
+        var named = (t && t.header && typeof t.header.named === 'number') ? t.header.named : 0;
+        var activeStorms = (t && Array.isArray(t.storms))
+          ? t.storms.filter(function (s) { return s && s.is_active; })
+          : [];
+        if (activeStorms.length > 0) {
+          row.classList.add('active');
+          if (countEl) countEl.innerHTML = '<b>' + activeStorms.length + '</b> active';
+        } else {
+          row.classList.remove('active');
+          if (countEl) countEl.innerHTML = '<b>' + named + '</b> named YTD';
+        }
+
+        // Season cell. Mode picked by basin + today's date.
+        if (!seasonEl) return;
+        var ace   = (a && a.current && typeof a.current.latest_value === 'number') ? a.current.latest_value : null;
+        var doy   = (a && typeof a.today_doy === 'number') ? a.today_doy : 0;
+        var norm  = (a && a.climo && a.climo.mean && doy > 0) ? a.climo.mean[doy - 1] : null;
+        var rank  = a ? a.current_rank : null;
+        var total = a ? a.total_seasons : null;
+
+        function inSeasonText() {
+          if (ace === null) return 'Live feed loading';
+          var parts = ['ACE <b>' + ace.toFixed(1) + '</b>'];
+          if (norm && norm > 0) {
+            parts.push('<b>' + Math.round((ace / norm) * 100) + '%</b> of normal');
+          }
+          if (rank && total) parts.push('rank <b>' + rank + '</b>/' + total);
+          return parts.join(' <span class="sep">·</span> ');
+        }
+
+        if (basin.yearRound) {
+          seasonEl.innerHTML = inSeasonText();
+          return;
+        }
+
+        var seasonStart = new Date(Date.UTC(y, basin.start[0], basin.start[1]));
+        var seasonEnd   = new Date(Date.UTC(y, basin.end[0], basin.end[1], 23, 59, 59));
+        if (now < seasonStart) {
+          seasonEl.innerHTML = 'Season starts <b>' + basin.label + '</b> ' +
+                               '<span class="sep">·</span> <b>' + daysUntil(seasonStart) + '</b> days';
+        } else if (now > seasonEnd) {
+          if (ace !== null && rank && total) {
+            seasonEl.innerHTML = 'Final ACE <b>' + ace.toFixed(1) + '</b> ' +
+                                 '<span class="sep">·</span> rank <b>' + rank + '</b>/' + total;
+          } else {
+            seasonEl.innerHTML = 'Season complete';
+          }
+        } else {
+          seasonEl.innerHTML = inSeasonText();
+        }
+      });
+    }
+
+    BASINS.forEach(hydrate);
   })();
 </script>
 
