@@ -92,6 +92,7 @@ jobs:
 
       - name: Commit and push if anything changed
         run: |
+          set -eo pipefail
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add wp_ace.html wp_ace_data.json al_ace.html al_ace_data.json ep_ace.html ep_ace_data.json \
@@ -100,7 +101,31 @@ jobs:
                   ne_110m_coastline.geojson ne_110m_admin_0_countries.geojson 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No changes to commit."
-          else
-            git commit -m "chore: refresh ACE + tracks ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-            git push
+            exit 0
           fi
+          git commit -m "chore: refresh ACE + tracks ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+
+          # Rebase-and-push loop — the SST / subsurface / ARMOR3D
+          # workflows can push to main while this job is still running
+          # (the ACE render takes a couple of minutes and overlaps with
+          # their cron slots). A plain `git push` loses the race and
+          # fails with `[rejected] main -> main (fetch first)`. Retry
+          # with rebase; our commits only touch ACE / tracks / Natural
+          # Earth assets, so genuine conflicts are effectively
+          # impossible.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected on attempt $attempt — fetching + rebasing..."
+            git fetch origin main
+            git rebase origin/main || {
+              echo "Rebase failed (unexpected conflict)." >&2
+              git rebase --abort || true
+              exit 1
+            }
+            sleep $((attempt * 2))
+          done
+          echo "Push still failing after 5 attempts." >&2
+          exit 1
