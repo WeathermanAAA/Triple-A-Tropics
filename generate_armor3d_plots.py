@@ -96,12 +96,15 @@ CLIMATOLOGY_PATH = ARMOR_DIR / "armor3d_climatology.nc"
 
 # --- Data source --------------------------------------------------------
 
-# NRT weekly (updated ~weekly, ~7-14 day latency). IDs verified against
-# the Copernicus Marine catalog — if CMEMS renames the dataset, update
-# both here and in build_armor3d_climatology.py.
-ARMOR3D_NRT_DATASET = "cmems_obs-mob_glo_phy-tsuv_nrt_3d-weekly_P1W"
-# Multi-year reanalysis for climatology (1993 -> ~2022).
-ARMOR3D_MY_DATASET = "cmems_obs-mob_glo_phy-tsuv_my_3d-weekly_P1W"
+# ARMOR3D NRT & multi-year reanalysis, 0.125° daily. CMEMS retired the
+# P1W "weekly" aggregations during the 2025 catalog migration, so we now
+# hit the daily product and naturally get the freshest single slice per
+# workflow run. IDs verified against the CMEMS catalog as of 2026-04.
+# If CMEMS renames them again, update both here and in
+# build_armor3d_climatology.py.
+ARMOR3D_NRT_DATASET = "cmems_obs-mob_glo_phy_nrt_0.125deg_P1D-m"
+# Multi-year reanalysis for climatology (1993 -> recent).
+ARMOR3D_MY_DATASET = "cmems_obs-mob_glo_phy_my_0.125deg_P1D-m"
 
 # Variables we need from ARMOR3D for TCHP/D26 calculation. `to` is the
 # ocean temperature (°C); `so` (salinity) is not required for TCHP but
