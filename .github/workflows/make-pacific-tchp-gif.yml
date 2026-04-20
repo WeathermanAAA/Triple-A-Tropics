@@ -1,9 +1,13 @@
 name: Make Pacific TCHP GIF
 
 # One-off (manually-dispatched) workflow that renders a Pacific-basin
-# TCHP GIF via `generate_pacific_tchp_gif.py`. The resulting GIF is
-# uploaded as a workflow artifact and is NOT committed to the repo —
-# it's meant for ad-hoc social-media posts, not for the live website.
+# TCHP GIF via `generate_pacific_tchp_gif.py`. Data source is NOAA
+# AOML's TCHP/D26 OPeNDAP feed — same source the daily subsurface
+# maps use — so no CMEMS credentials are required.
+#
+# The resulting GIF is uploaded as a workflow artifact and is NOT
+# committed to the repo (meant for ad-hoc social-media posts, not
+# for the live website).
 #
 # To run:
 #   Actions → "Make Pacific TCHP GIF" → "Run workflow"
@@ -35,9 +39,10 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-latest
-    # ~90 frames at a few seconds each plus the CMEMS fetch — should
-    # finish in well under an hour, but give it room for throttling.
-    timeout-minutes: 120
+    # AOML OPeNDAP fetch for ~90 days of a Pacific strip is typically
+    # under a minute; the matplotlib render loop dominates runtime.
+    # Give it room in case OPeNDAP is slow.
+    timeout-minutes: 60
 
     steps:
       - name: Check out repo
@@ -51,9 +56,8 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # Same pin window as the other ARMOR3D workflows.
-          pip install numpy matplotlib netCDF4 xarray requests Pillow \
-                      "copernicusmarine>=2.1,<3.0"
+          # netCDF4 is required by xarray to read OPeNDAP URLs.
+          pip install numpy matplotlib netCDF4 xarray requests Pillow
 
       - name: Download Natural Earth basemaps
         run: |
@@ -72,9 +76,6 @@ jobs:
           done
 
       - name: Render Pacific TCHP GIF
-        env:
-          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
-          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
         run: |
           set -eo pipefail
           OUT="pacific_tchp_${{ inputs.start }}_to_${{ inputs.end }}.gif"
