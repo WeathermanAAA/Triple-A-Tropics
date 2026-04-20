@@ -424,8 +424,12 @@ def compute_d26(
     valid = any_above & (last_above_idx < nk - 1)
 
     # Gather neighbors (requires explicit take-along for float data).
+    # Clip idx_k1 to stay in-bounds for columns where the warm layer
+    # reaches the deepest fetched level (idx_k == nk-1). The `valid`
+    # mask below already excludes those columns from the final output,
+    # but the gather itself has to not IndexError first.
     idx_k  = last_above_idx
-    idx_k1 = idx_k + 1
+    idx_k1 = np.minimum(idx_k + 1, nk - 1)
     ii, jj = np.indices(T.shape[:-1])
     T_k  = T[ii, jj, idx_k]
     T_k1 = T[ii, jj, idx_k1]
