@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Sea Surface Temperature Data · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Daily sea-surface temperature maps by region: actual SST, anomalies vs 1991–2020, and daily records since 1982. Source: NOAA OISST v2.1.">
+<meta name="description" content="Daily sea-surface temperature maps by region: actual SST, anomalies vs 1991–2020, daily records since 1982, plus TCHP + D26 subsurface ocean heat. Sources: NOAA OISST v2.1, Coral Reef Watch, and AOML.">
 <meta property="og:title" content="Sea Surface Temperature Data · Triple-A-Tropics">
-<meta property="og:description" content="Daily SST, anomalies, and records across 17 regions.">
+<meta property="og:description" content="Daily SST, anomalies, records, and subsurface ocean heat across 17 regions.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/styles.css">
@@ -30,7 +30,7 @@
 
 <header class="page-head">
   <h1>Sea Surface Temperature Data</h1>
-  <p>Daily SST maps from two NOAA products — OISST v2.1 (0.25°) and Coral Reef Watch (5 km). Pick a region and variant in either section. Updated once per day at 13:00 UTC.</p>
+  <p>Daily ocean-temperature maps from three NOAA products — OISST v2.1 (0.25°), Coral Reef Watch (5 km), and AOML's TCHP + D26 subsurface heat analysis (0.25°). Pick a region and variant in any section. Updated once per day.</p>
 </header>
 
 <!-- ============================================================ -->
@@ -183,14 +183,83 @@
   </div>
 </section>
 
+<!-- ============================================================ -->
+<!-- Subsurface (AOML TCHP + D26) section                         -->
+<!-- Independent dropdown + tab state from OISST and CRW so all   -->
+<!-- three products can be viewed side-by-side by scrolling.      -->
+<!-- ============================================================ -->
+<header class="page-head section-divider">
+  <h2 class="section-h2">Subsurface Ocean Heat · 0.25°</h2>
+  <p>Tropical Cyclone Heat Potential (TCHP) and 26 °C isotherm depth (D26) from NOAA AOML's daily analysis. These are the oceanic "fuel" metrics behind TC intensity — storms over high TCHP and deep D26 are much less likely to mix their own wake cool enough to weaken. Dataset archive begins 2022, so no anomalies yet.</p>
+  <p class="muted" id="subDataDate">Loading latest valid date…</p>
+</header>
+
+<div class="sst-controls">
+  <label class="sst-select">
+    <span class="sst-select-label">Region</span>
+    <select id="subRegionSelect">
+      <optgroup label="Overview">
+        <option value="global">Global</option>
+        <option value="global-tropics">Global Tropics</option>
+        <option value="enso">ENSO Regions</option>
+      </optgroup>
+      <optgroup label="Atlantic">
+        <option value="north-atlantic">North Atlantic</option>
+        <option value="tropical-atlantic">Tropical Atlantic</option>
+        <option value="western-atlantic">Western Atlantic</option>
+        <option value="equatorial-atlantic">Equatorial Atlantic</option>
+        <option value="south-atlantic">South Atlantic</option>
+      </optgroup>
+      <optgroup label="Pacific">
+        <option value="northeast-pacific">Northeast Pacific</option>
+        <option value="east-pacific">East Pacific</option>
+        <option value="central-pacific">Central Pacific</option>
+        <option value="northwest-pacific">Northwest Pacific</option>
+        <option value="north-pacific">North Pacific</option>
+        <option value="southwest-pacific">Southwest Pacific</option>
+        <option value="southeast-pacific">Southeast Pacific</option>
+      </optgroup>
+      <optgroup label="Other basins">
+        <option value="australia">Australia</option>
+        <option value="indian-ocean">Indian Ocean</option>
+        <option value="mediterranean">Mediterranean</option>
+      </optgroup>
+    </select>
+  </label>
+</div>
+
+<nav class="tabs" id="subTabs">
+  <a href="#" data-variant="tchp" class="active">TCHP</a>
+  <a href="#" data-variant="d26">D26</a>
+</nav>
+
+<div class="sst-toggle">
+  <label>
+    <input type="checkbox" id="subShowValues">
+    <span>Show values</span>
+  </label>
+</div>
+
+<section class="chart-section">
+  <div class="chart-card sst-chart">
+    <img id="subImage"
+         class="sst-image"
+         src="/subsurface/global_tchp.png"
+         alt="Tropical cyclone heat potential map">
+    <div class="sst-caption" id="subCaption">Global — Tropical Cyclone Heat Potential (kJ/cm²).</div>
+  </div>
+</section>
+
 <section class="about">
   <h2>How to read these maps</h2>
   <p><b>Actual</b> shows each grid cell's sea-surface temperature on the latest analysis day, colored from violet (cold, 0 °C) through blue, green, yellow, orange, and red (warm, 32 °C). Contour lines run at each integer degree for easy reference.</p>
   <p><b>Anomaly</b> shows how today's SST compares to the 1991–2020 mean for this same day of year. Red / magenta tones mark areas warmer than average; blue / purple mark cooler. Scale runs from −5 °C to +5 °C; values beyond saturate at the extremes.</p>
   <p><b>Anomaly + Records</b> overlays diagonal hatching and a black outline on the anomaly map where today's SST is the warmest or coldest ever observed for this day of year since OISST records began in 1982. The underlying color tells you the direction: red-hatched = record high, blue-hatched = record low.</p>
+  <p><b>TCHP</b> (Tropical Cyclone Heat Potential, kJ/cm²) is the integrated heat content of the upper ocean column down to the 26 °C isotherm — effectively how much warm water is available to fuel a passing tropical cyclone before its own wind-driven mixing reaches cooler water. Operational thresholds commonly cited: 16 kJ/cm² to sustain a TC, 60 for development, 100 for intensification, 125 for rapid intensification, 160+ for explosive deepening into high-end hurricanes.</p>
+  <p><b>D26</b> is the depth of the 26 °C isotherm in meters — how thick the warm-water "blanket" is. Shallow D26 (under 30 m) means even a modest TC can mix enough cold water up to cap its own intensity. Deep D26 (100 m+) is why the Gulf of Mexico's Loop Current, the Western Atlantic warm pool, and parts of the West Pacific can support rapid intensification.</p>
 
-  <h2>Data source</h2>
-  <p>All fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">Optimum Interpolation Sea-Surface Temperature (OISST) v2.1</a> daily analysis — a 0.25° global grid merging AVHRR satellite observations, ship + buoy reports, and Argo floats. OISST has roughly a one-day latency; these maps refresh once per day at 13:00 UTC.</p>
+  <h2>Data sources</h2>
+  <p>SST fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">OISST v2.1</a> (0.25° daily, 1982-present) and <a href="https://coralreefwatch.noaa.gov/product/5km/index_5km_sst.php" target="_blank" rel="noopener">Coral Reef Watch CoralTemp v3.1</a> (5 km daily, 1985-present). Subsurface fields come from <a href="https://www.aoml.noaa.gov/phod/cyclone/data/" target="_blank" rel="noopener">NOAA AOML PhOD's TCHP/D26 analysis</a> (0.25° daily, 2022-present), which blends altimeter sea-surface height anomalies with microwave SST to estimate the vertical thermal structure. All three products have roughly a one-day latency; these maps refresh once per day.</p>
 </section>
 
 <footer>
@@ -417,6 +486,68 @@
         `Valid ${txt}  ·  updated ${m.updated_utc}`;
       const gm = document.getElementById('crwGlobalMean');
       if (gm) gm.textContent = fmtGlobalMean(m.global_mean_ssta);
+    })
+    .catch(() => {});
+
+  // ---- Subsurface (AOML TCHP + D26) section ----
+  // Independent state from OISST + CRW so users can scroll and compare
+  // all three products side-by-side. No running-mean or records vars —
+  // the AOML archive is too short (2022-present) for either.
+  const SUB_VARIANT_CAPTIONS = {
+    tchp: "Tropical Cyclone Heat Potential (kJ/cm²).",
+    d26:  "Depth of the 26 °C isotherm (m).",
+  };
+  const subImg = document.getElementById('subImage');
+  const subCaption = document.getElementById('subCaption');
+  const subRegionSelect = document.getElementById('subRegionSelect');
+  const subTabs = document.querySelectorAll('#subTabs a');
+  const subShowValues = document.getElementById('subShowValues');
+
+  function subCurrentVariant() {
+    const active = [...subTabs].find(t => t.classList.contains('active'));
+    return active ? active.dataset.variant : 'tchp';
+  }
+  function subSetVariant(v) {
+    subTabs.forEach(t => t.classList.toggle('active', t.dataset.variant === v));
+  }
+  function subUpdate() {
+    const region = subRegionSelect.value;
+    const variant = subCurrentVariant();
+    const withValues = subShowValues.checked;
+    const suffix = withValues ? "_labels" : "";
+    subImg.src = `/subsurface/${region}_${variant}${suffix}.png?t=${Date.now()}`;
+    subImg.alt = `${REGION_LABELS[region] || region} — ${variant.toUpperCase()}${withValues ? " (values)" : ""}`;
+    subCaption.textContent =
+      (REGION_LABELS[region] || region) + " — " +
+      (SUB_VARIANT_CAPTIONS[variant] || "") +
+      (withValues ? " · values overlaid." : "");
+  }
+  subRegionSelect.addEventListener('change', subUpdate);
+  subTabs.forEach(t => {
+    t.addEventListener('click', e => {
+      e.preventDefault();
+      subSetVariant(t.dataset.variant);
+      subUpdate();
+    });
+  });
+  subShowValues.addEventListener('change', subUpdate);
+
+  // Sync the Subsurface dropdown with the OISST dropdown on first load
+  // so all three sections default to the same region. Changing either
+  // dropdown after load disconnects them.
+  subRegionSelect.value = regionSelect.value;
+  subUpdate();
+
+  fetch('/subsurface/subsurface_meta.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(m => {
+      if (!m || !m.date) return;
+      const d = new Date(m.date + 'T00:00:00Z');
+      const txt = d.toLocaleDateString('en-US', {
+        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+      });
+      document.getElementById('subDataDate').textContent =
+        `Valid ${txt}  ·  updated ${m.updated_utc}`;
     })
     .catch(() => {});
 </script>
