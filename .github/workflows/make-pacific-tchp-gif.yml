@@ -1,0 +1,101 @@
+name: Make Pacific TCHP GIF
+
+# One-off (manually-dispatched) workflow that renders a Pacific-basin
+# TCHP GIF via `generate_pacific_tchp_gif.py`. The resulting GIF is
+# uploaded as a workflow artifact and is NOT committed to the repo —
+# it's meant for ad-hoc social-media posts, not for the live website.
+#
+# To run:
+#   Actions → "Make Pacific TCHP GIF" → "Run workflow"
+# Then, on the completed run page, scroll down to "Artifacts" and
+# download `pacific-tchp-gif`. Artifact retention is 14 days.
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Start date (YYYY-MM-DD)"
+        default: "2026-01-20"
+      end:
+        description: "End date (YYYY-MM-DD, inclusive)"
+        default: "2026-04-19"
+      fps:
+        description: "Playback speed (frames per second)"
+        default: "8"
+      step:
+        description: "Day step (1 = daily, 2 = every other day, ...)"
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: make-pacific-tchp-gif
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    # ~90 frames at a few seconds each plus the CMEMS fetch — should
+    # finish in well under an hour, but give it room for throttling.
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Same pin window as the other ARMOR3D workflows.
+          pip install numpy matplotlib netCDF4 xarray requests Pillow \
+                      "copernicusmarine>=2.1,<3.0"
+
+      - name: Download Natural Earth basemaps
+        run: |
+          set -euo pipefail
+          NE="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
+          # 50m resolution for islands / small coastal features. 110m
+          # is the fallback the generator uses if a 50m file is absent.
+          for f in ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson \
+                   ne_110m_coastline.geojson ne_110m_admin_0_countries.geojson; do
+            if [ ! -f "$f" ]; then
+              echo "--- Downloading $f ---"
+              curl -fSL --retry 3 --retry-delay 10 -o "$f" "$NE/$f" \
+                || echo "(optional file $f failed — OK)"
+            fi
+            ls -lh "$f" 2>/dev/null || true
+          done
+
+      - name: Render Pacific TCHP GIF
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: |
+          set -eo pipefail
+          OUT="pacific_tchp_${{ inputs.start }}_to_${{ inputs.end }}.gif"
+          echo "Output file: $OUT"
+          python generate_pacific_tchp_gif.py \
+            --start "${{ inputs.start }}" \
+            --end   "${{ inputs.end }}" \
+            --fps   "${{ inputs.fps }}" \
+            --step  "${{ inputs.step }}" \
+            --out   "$OUT"
+          ls -lh "$OUT"
+          # Stash the exact name so the upload step can find it without
+          # having to recompute the template.
+          echo "GIF_PATH=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload GIF as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-tchp-gif
+          path: ${{ env.GIF_PATH }}
+          # Short retention — this is a one-off post asset, not a
+          # long-lived deliverable. Download it promptly after the run.
+          retention-days: 14
+          if-no-files-found: error
