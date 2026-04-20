@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-04-20 17:22 UTC",
+  "updated": "2026-04-20 18:00 UTC",
   "header": {
     "named": 3,
     "cat1plus": 1,
@@ -127,7 +127,7 @@
           "wind_kt": 130.0,
           "pressure_mb": 921.0,
           "cls": "C4",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-12T12:00:00",
@@ -136,7 +136,7 @@
           "wind_kt": 150.0,
           "pressure_mb": 902.0,
           "cls": "C5",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-12T18:00:00",
@@ -145,7 +145,7 @@
           "wind_kt": 160.0,
           "pressure_mb": 890.0,
           "cls": "C5",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-13T00:00:00",
@@ -154,7 +154,7 @@
           "wind_kt": 155.0,
           "pressure_mb": 897.0,
           "cls": "C5",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-13T06:00:00",
@@ -163,7 +163,7 @@
           "wind_kt": 150.0,
           "pressure_mb": 903.0,
           "cls": "C5",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-13T12:00:00",
@@ -172,7 +172,7 @@
           "wind_kt": 150.0,
           "pressure_mb": 904.0,
           "cls": "C5",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-13T18:00:00",
@@ -181,7 +181,7 @@
           "wind_kt": 145.0,
           "pressure_mb": 906.0,
           "cls": "C5",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-14T00:00:00",
@@ -190,7 +190,7 @@
           "wind_kt": 135.0,
           "pressure_mb": 919.0,
           "cls": "C4",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-14T06:00:00",
@@ -199,7 +199,7 @@
           "wind_kt": 130.0,
           "pressure_mb": 925.0,
           "cls": "C4",
-          "nature": ""
+          "nature": "TS"
         },
         {
           "t": "2026-04-14T12:00:00",
@@ -439,7 +439,7 @@
           "wind_kt": 25.0,
           "pressure_mb": 1002.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-15T00:00:00",
@@ -448,7 +448,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1002.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-15T06:00:00",
@@ -457,7 +457,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 998.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-15T12:00:00",
@@ -466,7 +466,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 998.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-15T18:00:00",
@@ -475,7 +475,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 998.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-16T00:00:00",
@@ -484,7 +484,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 999.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-16T06:00:00",
@@ -493,7 +493,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 997.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-16T12:00:00",
@@ -502,7 +502,7 @@
           "wind_kt": 39.0,
           "pressure_mb": 997.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-16T18:00:00",
@@ -511,7 +511,7 @@
           "wind_kt": 45.0,
           "pressure_mb": 992.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-17T00:00:00",
@@ -520,7 +520,7 @@
           "wind_kt": 45.0,
           "pressure_mb": 996.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-17T06:00:00",
@@ -529,7 +529,7 @@
           "wind_kt": 51.0,
           "pressure_mb": 994.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-17T12:00:00",
@@ -538,7 +538,7 @@
           "wind_kt": 51.0,
           "pressure_mb": 993.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-17T18:00:00",
@@ -547,7 +547,7 @@
           "wind_kt": 45.0,
           "pressure_mb": 997.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-18T00:00:00",
@@ -556,7 +556,7 @@
           "wind_kt": 39.0,
           "pressure_mb": 999.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-18T06:00:00",
@@ -565,7 +565,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 997.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-18T12:00:00",
@@ -574,7 +574,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 998.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-18T18:00:00",
@@ -583,7 +583,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1000.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-19T00:00:00",
@@ -592,7 +592,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 1002.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-19T06:00:00",
@@ -601,7 +601,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 998.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-19T12:00:00",
@@ -610,7 +610,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1000.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-19T18:00:00",
@@ -619,7 +619,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 999.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-20T00:00:00",
@@ -628,7 +628,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1002.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-20T06:00:00",
@@ -637,7 +637,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 1000.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-20T12:00:00",
@@ -646,7 +646,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 1001.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-01-20T18:00:00",
@@ -655,7 +655,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1001.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         }
       ]
     },
@@ -679,7 +679,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1003.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-04T06:00:00",
@@ -688,7 +688,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1002.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-04T12:00:00",
@@ -697,7 +697,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1002.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-04T18:00:00",
@@ -706,7 +706,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1001.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-05T00:00:00",
@@ -715,7 +715,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 1000.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-05T06:00:00",
@@ -724,7 +724,7 @@
           "wind_kt": 39.0,
           "pressure_mb": 999.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-05T12:00:00",
@@ -733,7 +733,7 @@
           "wind_kt": 39.0,
           "pressure_mb": 1001.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-05T18:00:00",
@@ -742,7 +742,7 @@
           "wind_kt": 35.0,
           "pressure_mb": 1001.0,
           "cls": "TS",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-06T00:00:00",
@@ -751,7 +751,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1002.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-06T06:00:00",
@@ -760,7 +760,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1004.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-02-06T12:00:00",
@@ -769,7 +769,7 @@
           "wind_kt": 25.0,
           "pressure_mb": 1004.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         }
       ]
     },
@@ -793,7 +793,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1001.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-03-11T06:00:00",
@@ -802,7 +802,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1000.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-03-11T12:00:00",
@@ -811,7 +811,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1000.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-03-11T18:00:00",
@@ -820,7 +820,7 @@
           "wind_kt": 29.0,
           "pressure_mb": 1001.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-03-12T00:00:00",
@@ -829,7 +829,7 @@
           "wind_kt": 25.0,
           "pressure_mb": 1003.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         },
         {
           "t": "2026-03-12T06:00:00",
@@ -838,7 +838,7 @@
           "wind_kt": 19.0,
           "pressure_mb": 1001.0,
           "cls": "TD",
-          "nature": "NR"
+          "nature": "TS"
         }
       ]
     }
