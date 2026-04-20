@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-04-20 04:04 UTC",
+  "updated": "2026-04-20 08:26 UTC",
   "header": {
     "named": 3,
     "cat1plus": 1,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 43.62
+    "total_ace": 42.81
   },
   "vocab": {
     "named": "named storms",
@@ -22,13 +22,13 @@
       "name": "SINLAKU",
       "season": 2026,
       "start": "2026-04-09T18:00:00",
-      "end": "2026-04-20T00:00:00",
+      "end": "2026-04-19T06:00:00",
       "peak_wind_kt": 160.0,
       "peak_pressure_mb": 890.0,
-      "ace": 40.78,
+      "ace": 39.97,
       "max_category": "C5",
       "current_category": "TS",
-      "is_active": true,
+      "is_active": false,
       "points": [
         {
           "t": "2026-04-09T18:00:00",
@@ -362,8 +362,16 @@
           "t": "2026-04-20T00:00:00",
           "lat": 29.6,
           "lon": 158.8,
-          "wind_kt": 50.0,
-          "pressure_mb": 986.0,
+          "wind_kt": 45.0,
+          "pressure_mb": 988.0,
+          "cls": "TS"
+        },
+        {
+          "t": "2026-04-20T06:00:00",
+          "lat": 29.8,
+          "lon": 161.2,
+          "wind_kt": 45.0,
+          "pressure_mb": 988.0,
           "cls": "TS"
         }
       ]
