@@ -439,17 +439,27 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
         if ll is None:
             continue
         lat, lon = ll
-        # Map ATCF dev-level to IBTrACS-style nature
-        if devlvl in {"TS", "TY", "STY", "HU"}:
-            nature = "TS"
-        elif devlvl in {"SS", "SD"}:
-            nature = "SS"
-        elif devlvl in {"TD"}:
-            nature = "TS"  # pre-TS, still tropical
-        elif devlvl in {"EX"}:
-            nature = "ET"
-        else:
-            nature = ""
+        # Map ATCF dev-level (STATUS) to IBTrACS-style nature using the
+        # same table we use for IBTrACS USA_STATUS. This covers tropical
+        # (TD/TS/TY/HU/ST/STY/TC → TS), subtropical (SD/SS → SS),
+        # extratropical (EX/PT → ET), and pre-TC disturbances
+        # (DB/LO/WV/MD/IN/DS → DS). Pre-TC codes are critical for
+        # current-season storms that spend their invest phase at DB in
+        # the b-deck before being upgraded to TD.
+        devlvl_u = (devlvl or "").strip().upper()
+        nature = _STATUS_TO_NATURE.get(devlvl_u, "")
+        # Wind-based fallback for unmapped codes (e.g. "XX") — if the
+        # b-deck has a positive wind estimate, treat as tropical;
+        # otherwise leave blank so downstream classification treats it
+        # as a disturbance.
+        if not nature:
+            try:
+                if vmax and float(vmax) > 0:
+                    nature = "TS"
+                else:
+                    nature = "DS"
+            except (ValueError, TypeError):
+                nature = "DS"
         rows.append({
             "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
                    f"{storm_num:02d}{season}",
