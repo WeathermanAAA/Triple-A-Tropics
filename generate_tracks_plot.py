@@ -989,6 +989,10 @@ TRACKS_JS = r"""
     "C4": "Category 4", "C5": "Category 5"
   };
   function ktToMph(k) { return Math.round(k * 1.15077945); }
+  // Storm intensity is conventionally reported in nearest 5 mph
+  // increments (NHC/JTWC operational practice). Movement speed still
+  // uses the 1-mph ktToMph() above.
+  function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
   function ktToKmh(k) { return Math.round(k * 1.852); }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
@@ -1031,7 +1035,7 @@ TRACKS_JS = r"""
     var d = e.currentTarget.dataset;
     var windKt = d.wind ? parseFloat(d.wind) : null;
     var windTxt = windKt != null && !isNaN(windKt)
-      ? (Math.round(windKt) + " kt · " + ktToMph(windKt) + " mph")
+      ? (Math.round(windKt) + " kt · " + ktToMph5(windKt) + " mph")
       : "\u2014";
     var presTxt = d.pres && d.pres !== "" ? (Math.round(parseFloat(d.pres)) + " mb") : "\u2014";
     var cls = d.cls || "TD";
@@ -1196,7 +1200,7 @@ TRACKS_JS = r"""
         '<div class="pl-row1"><span class="pl-cat">' + catLabel + '</span><b>' +
           escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
         '<div class="pl-intensity">' +
-          '<div class="pl-big">' + ktToMph(windKt) + '</div>' +
+          '<div class="pl-big">' + ktToMph5(windKt) + '</div>' +
           '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
         '</div>' +
         '<div class="pl-deets">' +
@@ -1243,7 +1247,7 @@ TRACKS_JS = r"""
         '<div class="pl-row1"><span class="pl-cat">PEAK · ' + catLabel + '</span><b>' +
           escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
         '<div class="pl-intensity">' +
-          '<div class="pl-big">' + ktToMph(windKt) + '</div>' +
+          '<div class="pl-big">' + ktToMph5(windKt) + '</div>' +
           '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
         '</div>' +
         '<div class="pl-deets">' +
