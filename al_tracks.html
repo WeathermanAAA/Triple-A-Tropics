@@ -78,18 +78,17 @@
   .legend .item { display: flex; align-items: center; gap: 6px;
     margin: 3px 0; }
   .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
-  /* Phase-marker shapes — used at the bottom of the legend to show
-     what the triangle dots on the map mean. Classic CSS-border trick:
-     a zero-sized box with three coloured borders renders as a filled
-     triangle. The container width is kept equal to `.dot` (10px) so
-     all legend rows line up. */
+  /* Phase-marker shapes for the legend rows at the bottom. The square
+     glyph is a plain block; the triangle uses the classic CSS-border
+     trick (zero-size box with three coloured borders). Containers are
+     all 10px wide so legend rows line up. */
+  .legend .sq { width: 10px; height: 10px; background: #ffffff; }
   .legend .tri { width: 10px; height: 10px; position: relative; }
-  .legend .tri::before { content: ""; position: absolute; left: 0; top: 0;
+  .legend .tri::before { content: ""; position: absolute; left: 0; top: 1px;
     width: 0; height: 0;
     border-left: 5px solid transparent;
-    border-right: 5px solid transparent; }
-  .legend .tri-up::before { border-bottom: 9px solid #ffffff; top: 1px; }
-  .legend .tri-dn::before { border-top: 9px solid #ffffff; }
+    border-right: 5px solid transparent;
+    border-bottom: 9px solid #ffffff; }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -191,7 +190,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 North Atlantic TC Tracks</div>
-        <div class="sub">As of 2026-04-20 15:56 UTC</div>
+        <div class="sub">As of 2026-04-20 17:22 UTC</div>
       </div>
       <div class="stats">
         <b>0</b> named storms · <b>0</b> hurricanes ·
@@ -3211,8 +3210,8 @@
         <div class="item"><span class="dot" style="background:var(--c4)"></span>Cat 4 (113–136)</div>
         <div class="item"><span class="dot" style="background:var(--c5)"></span>Cat 5 (≥137)</div>
         <div class="sep"></div>
-        <div class="item"><span class="tri tri-up"></span>Pre-TC (disturbance)</div>
-        <div class="item"><span class="tri tri-dn"></span>Extratropical</div>
+        <div class="item"><span class="sq"></span>Subtropical</div>
+        <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
       </div>
     </div>
   </div>

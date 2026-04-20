@@ -78,18 +78,17 @@
   .legend .item { display: flex; align-items: center; gap: 6px;
     margin: 3px 0; }
   .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
-  /* Phase-marker shapes — used at the bottom of the legend to show
-     what the triangle dots on the map mean. Classic CSS-border trick:
-     a zero-sized box with three coloured borders renders as a filled
-     triangle. The container width is kept equal to `.dot` (10px) so
-     all legend rows line up. */
+  /* Phase-marker shapes for the legend rows at the bottom. The square
+     glyph is a plain block; the triangle uses the classic CSS-border
+     trick (zero-size box with three coloured borders). Containers are
+     all 10px wide so legend rows line up. */
+  .legend .sq { width: 10px; height: 10px; background: #ffffff; }
   .legend .tri { width: 10px; height: 10px; position: relative; }
-  .legend .tri::before { content: ""; position: absolute; left: 0; top: 0;
+  .legend .tri::before { content: ""; position: absolute; left: 0; top: 1px;
     width: 0; height: 0;
     border-left: 5px solid transparent;
-    border-right: 5px solid transparent; }
-  .legend .tri-up::before { border-bottom: 9px solid #ffffff; top: 1px; }
-  .legend .tri-dn::before { border-top: 9px solid #ffffff; }
+    border-right: 5px solid transparent;
+    border-bottom: 9px solid #ffffff; }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -191,7 +190,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Western North Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-20 15:56 UTC</div>
+        <div class="sub">As of 2026-04-20 17:22 UTC</div>
       </div>
       <div class="stats">
         <b>3</b> named storms · <b>1</b> typhoons ·
@@ -2584,10 +2583,10 @@
 <circle class="track-dot" cx="845.3" cy="548.3" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-18T18:00:00" data-wind="55.0" data-pres="983.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="866.2" cy="533.1" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-19T00:00:00" data-wind="55.0" data-pres="983.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="899.5" cy="517.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-19T06:00:00" data-wind="55.0" data-pres="983.0" data-cls="TS" data-phase="tc"/>
-<circle class="track-dot" cx="939.7" cy="508.2" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-19T12:00:00" data-wind="55.0" data-pres="983.0" data-cls="TS" data-phase="tc"/>
-<polygon class="track-dot" points="981.7,503.8 985.2,497.8 978.3,497.8" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-19T18:00:00" data-wind="50.0" data-pres="986.0" data-cls="TS" data-phase="ex"/>
-<polygon class="track-dot" points="1029.0,494.2 1032.5,488.2 1025.5,488.2" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-20T00:00:00" data-wind="45.0" data-pres="988.0" data-cls="TS" data-phase="ex"/>
-<polygon class="track-dot" points="1071.0,491.4 1074.5,485.4 1067.5,485.4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-20T06:00:00" data-wind="45.0" data-pres="988.0" data-cls="TS" data-phase="ex"/>
+<rect class="track-dot" x="935.7" y="504.2" width="8" height="8" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-19T12:00:00" data-wind="55.0" data-pres="983.0" data-cls="TS" data-phase="st"/>
+<polygon class="track-dot" points="981.7,495.8 985.2,501.8 978.3,501.8" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-19T18:00:00" data-wind="50.0" data-pres="986.0" data-cls="TS" data-phase="non"/>
+<polygon class="track-dot" points="1029.0,486.2 1032.5,492.2 1025.5,492.2" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-20T00:00:00" data-wind="45.0" data-pres="988.0" data-cls="TS" data-phase="non"/>
+<polygon class="track-dot" points="1071.0,483.4 1074.5,489.4 1067.5,489.4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP042026" data-name="SINLAKU" data-t="2026-04-20T06:00:00" data-wind="45.0" data-pres="988.0" data-cls="TS" data-phase="non"/>
 <path d="M 528.5,768.5 L 519.7,771.2 L 505.8,761.5 L 505.8,761.5 L 507.5,758.8 L 505.8,744.9 L 490.0,733.8 L 472.5,731.1 L 449.8,722.8 L 437.5,713.1 L 427.0,704.8 L 421.7,692.3 L 437.5,702.0 L 441.0,700.6 L 446.2,697.8 L 449.8,688.2 L 449.8,677.1 L 463.8,670.2 L 465.5,668.8 L 472.5,664.6 L 491.7,664.6 L 509.2,660.5 L 530.3,654.9 L 558.3,654.9 L 577.5,663.2" fill="none" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.5" stroke-linejoin="round" stroke-linecap="round"/>
 <circle class="track-dot" cx="528.5" cy="768.5" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-14T18:00:00" data-wind="25.0" data-pres="1002.0" data-cls="TD" data-phase="tc"/>
 <circle class="track-dot" cx="519.7" cy="771.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="2026015N10130" data-name="NOKAEN" data-t="2026-01-15T00:00:00" data-wind="29.0" data-pres="1002.0" data-cls="TD" data-phase="tc"/>
@@ -2647,8 +2646,8 @@
         <div class="item"><span class="dot" style="background:var(--c4)"></span>Cat 4 (113–136)</div>
         <div class="item"><span class="dot" style="background:var(--c5)"></span>Cat 5 (≥137)</div>
         <div class="sep"></div>
-        <div class="item"><span class="tri tri-up"></span>Pre-TC (disturbance)</div>
-        <div class="item"><span class="tri tri-dn"></span>Extratropical</div>
+        <div class="item"><span class="sq"></span>Subtropical</div>
+        <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
       </div>
     </div>
   </div>
