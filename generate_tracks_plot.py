@@ -585,6 +585,12 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 "pressure_mb": None if pd.isna(p["pressure_mb"]) or p["pressure_mb"] <= 0
                                else round(float(p["pressure_mb"]), 1),
                 "cls": sshs_class(p["wind_kt"]),
+                # NATURE passes through from IBTrACS ("TS", "SS", "ET",
+                # "DS", "NR", "MX", "") or the ATCF dev-level mapping in
+                # parse_atcf_bdeck() ("TS", "SS", "ET", ""). The SVG
+                # renderer uses this to draw non-tropical points as
+                # triangles (see render_tracks_svg).
+                "nature": (p.get("nature") or "").strip(),
             } for p in points],
         })
     # Sort: active storms first, then by ACE desc, then by start date
@@ -838,29 +844,81 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
             parts.append(f'<path d="{d}" fill="none" stroke="#ffffff" '
                          'stroke-width="1.2" stroke-opacity="0.5" '
                          'stroke-linejoin="round" stroke-linecap="round"/>')
-        # Dots — radius depends on whether the point is at TS+ (bigger) or not
+        # Dots — radius depends on whether the point is at TS+ (bigger) or not.
+        # Shape depends on the point's lifecycle phase:
+        #   * circle        = tropical / subtropical (nature TS/SS, or TS+ wind)
+        #   * down-triangle = extratropical (nature == "ET")
+        #                     — convention: "after" / post-tropical decay
+        #   * up-triangle   = pre-TC disturbance (nature blank/NR/MX/DS and
+        #                     wind < TS) — convention: "before" / pre-genesis
+        # Triangle apex radii match the circle radii so the group of
+        # points for one storm reads as a coherent size progression
+        # (TD/pre r≈3, TS r≈4, major r≈5).
         for (x, y), p in zip(xy, pts):
             cls = p.get("cls") or "TD"
             wind = p.get("wind_kt")
             pres = p.get("pressure_mb")
             t = p.get("t") or ""
+            nature = (p.get("nature") or "").upper()
             color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
-            # Bigger dot for stronger systems
+            # Bigger marker for stronger systems (applies to both circle
+            # and triangle — measured as radius from centroid to apex).
             if cls == "TD":
                 r = 3
             elif cls == "TS":
                 r = 4
             else:
                 r = 5
+
+            # Phase classification is purely by nature code — wind speed
+            # is not a tiebreaker.
+            #   ET                       → down-triangle (extratropical)
+            #   DS / DB / LO             → up-triangle (pre-TC / non-cyclone)
+            #     DS = disturbance/dissipating, DB = disturbance (per-agency
+            #     code that sometimes leaks into NATURE), LO = remnant low
+            #   TS / SS / NR / MX / ""   → circle (tropical or presumed-
+            #     tropical; NR/MX/blank are points that appear in a
+            #     storm's track but weren't explicitly re-categorized,
+            #     so they're treated as part of the tropical life cycle)
+            # ATCF rows are mapped upstream so TD→TS, EX→ET, etc.
+            if nature == "ET":
+                phase = "ex"
+            elif nature in {"DS", "DB", "LO"}:
+                phase = "pre"
+            else:
+                phase = "tc"
+
             wind_attr = f"{wind}" if wind is not None else ""
             pres_attr = f"{pres}" if pres is not None else ""
-            parts.append(
-                f'<circle class="track-dot" cx="{x:.1f}" cy="{y:.1f}" r="{r}" '
+            common_attrs = (
                 f'fill="{color}" stroke="#ffffff" stroke-width="0.9" '
                 f'stroke-opacity="0.85" '
                 f'data-sid="{sid}" data-name="{sname}" data-t="{t}" '
                 f'data-wind="{wind_attr}" data-pres="{pres_attr}" '
-                f'data-cls="{cls}"/>')
+                f'data-cls="{cls}" data-phase="{phase}"'
+            )
+            if phase == "tc":
+                parts.append(
+                    f'<circle class="track-dot" cx="{x:.1f}" cy="{y:.1f}" '
+                    f'r="{r}" {common_attrs}/>'
+                )
+            else:
+                # Equilateral triangle centered on (x, y) with apex
+                # radius r. Up-triangle (pre-TC) points apex upward;
+                # down-triangle (ET) points apex downward. sqrt(3)/2 ≈ 0.866.
+                half = r * 0.866
+                if phase == "pre":
+                    p1 = f"{x:.1f},{y - r:.1f}"
+                    p2 = f"{x + half:.1f},{y + r * 0.5:.1f}"
+                    p3 = f"{x - half:.1f},{y + r * 0.5:.1f}"
+                else:  # "ex"
+                    p1 = f"{x:.1f},{y + r:.1f}"
+                    p2 = f"{x + half:.1f},{y - r * 0.5:.1f}"
+                    p3 = f"{x - half:.1f},{y - r * 0.5:.1f}"
+                parts.append(
+                    f'<polygon class="track-dot" points="{p1} {p2} {p3}" '
+                    f'{common_attrs}/>'
+                )
     parts.append('</g>')
     return "\n".join(parts)
 
@@ -1368,6 +1426,20 @@ HTML_TEMPLATE = """<!doctype html>
   .legend .item {{ display: flex; align-items: center; gap: 6px;
     margin: 3px 0; }}
   .legend .dot {{ width: 10px; height: 10px; border-radius: 50%; }}
+  /* Phase-marker shapes — used at the bottom of the legend to show
+     what the triangle dots on the map mean. Classic CSS-border trick:
+     a zero-sized box with three coloured borders renders as a filled
+     triangle. The container width is kept equal to `.dot` (10px) so
+     all legend rows line up. */
+  .legend .tri {{ width: 10px; height: 10px; position: relative; }}
+  .legend .tri::before {{ content: ""; position: absolute; left: 0; top: 0;
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent; }}
+  .legend .tri-up::before {{ border-bottom: 9px solid #ffffff; top: 1px; }}
+  .legend .tri-dn::before {{ border-top: 9px solid #ffffff; }}
+  .legend .sep {{ height: 1px; background: var(--border);
+    margin: 6px 0 4px; opacity: 0.6; }}
 
   @media (max-width: 820px) {{
     .side {{ flex: 1 1 100%; }}
@@ -1385,9 +1457,12 @@ HTML_TEMPLATE = """<!doctype html>
     font-family: -apple-system, Segoe UI, Roboto, sans-serif;
     pointer-events: none; }}
 
-  /* Hover tooltip for track dots */
+  /* Hover tooltip for track dots (applies to circle + polygon markers).
+     `r: 6.5` is a no-op for polygons but still enlarges circles; the
+     stroke-width bump + white stroke highlights both shapes uniformly. */
   .track-dot {{ cursor: pointer; }}
-  .track-dot:hover {{ r: 6.5; stroke: #fff; stroke-width: 1.6; }}
+  .track-dot:hover {{ r: 6.5; stroke: #fff; stroke-width: 1.6;
+    filter: brightness(1.15); }}
   #dot-tooltip {{ position: fixed; z-index: 9000; pointer-events: none;
     background: rgba(10,18,34,0.96); color: var(--fg);
     border: 1px solid #2a3e5c; border-radius: 8px;
@@ -1487,6 +1562,9 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="item"><span class="dot" style="background:var(--c3)"></span>Cat 3 (96–112)</div>
         <div class="item"><span class="dot" style="background:var(--c4)"></span>Cat 4 (113–136)</div>
         <div class="item"><span class="dot" style="background:var(--c5)"></span>Cat 5 (≥137)</div>
+        <div class="sep"></div>
+        <div class="item"><span class="tri tri-up"></span>Pre-TC (disturbance)</div>
+        <div class="item"><span class="tri tri-dn"></span>Extratropical</div>
       </div>
     </div>
   </div>
