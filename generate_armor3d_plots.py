@@ -193,6 +193,11 @@ TCHP_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
         (1.00, "#67001d"),
     ],
 )
+# Paint NaN pixels (land + shallow-water gaps) with the same LAND_COLOR
+# the SST/CRW plots use, so the subsurface products visually match on
+# the site. Default behaviour would bleed through to the axes facecolor
+# (a slightly different navy), creating subtle land-fill mismatches.
+TCHP_ANOM_CMAP.set_bad(color=gss.LAND_COLOR, alpha=1.0)
 
 # Cross-section temperature-anomaly colormap — matches the magenta/red/
 # blue style of the a-reference-site.com reference image.
@@ -213,6 +218,7 @@ CS_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
         (1.00, "#5e0a0a"),
     ],
 )
+CS_ANOM_CMAP.set_bad(color=gss.LAND_COLOR, alpha=1.0)
 
 # Cross-section absolute-temperature colormap — used when no climatology
 # file is available yet and we fall back to rendering raw T instead of
@@ -233,6 +239,7 @@ CS_ABS_CMAP = mcolors.LinearSegmentedColormap.from_list(
         (1.00, "#a50026"),  # warm surface mixed layer
     ],
 )
+CS_ABS_CMAP.set_bad(color=gss.LAND_COLOR, alpha=1.0)
 
 
 # --- Copernicus Marine fetch -------------------------------------------
