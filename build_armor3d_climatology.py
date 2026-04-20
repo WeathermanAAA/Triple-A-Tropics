@@ -48,8 +48,8 @@ Scope / knobs
 * Equatorial band for cross-sections: -5 .. +5 lat, averaged per
   time step before storage so we only carry a small t_climo_eq field.
 
-CMEMS dataset IDs (mirror the weekly generator — keep in sync):
-    cmems_obs-mob_glo_phy-tsuv_my_3d-weekly_P1W   (multi-year reanalysis)
+CMEMS dataset IDs (mirror the daily generator — keep in sync):
+    cmems_obs-mob_glo_phy_my_0.125deg_P1D-m   (multi-year reanalysis, daily)
 """
 
 from __future__ import annotations
