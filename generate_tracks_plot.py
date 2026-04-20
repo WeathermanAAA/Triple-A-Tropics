@@ -202,6 +202,71 @@ def _best_pressure(row: pd.Series, preference: list[str]) -> float:
     return np.nan
 
 
+# Map per-agency STATUS codes (ATCF-style) onto the IBTrACS-style NATURE
+# vocabulary the renderer expects. The main win here is that STATUS
+# columns carry disturbance granularity that NATURE strips out:
+#   DB = disturbance, LO = remnant low, WV = tropical wave,
+#   MD = monsoon depression — all pre-TC / non-cyclone, rendered as
+# up-triangles. NATURE collapses most of these into "NR" or blank,
+# which is why the pre-TC portions of a track look like circles when
+# we rely on NATURE alone.
+_STATUS_TO_NATURE = {
+    # Tropical
+    "TD": "TS", "TS": "TS", "TY": "TS", "HU": "TS",
+    "ST": "TS", "STY": "TS", "TC": "TS",
+    # Subtropical
+    "SD": "SS", "SS": "SS",
+    # Extratropical / post-tropical
+    "EX": "ET", "PT": "ET",
+    # Pre-TC / non-cyclone
+    "DB": "DS", "LO": "DS", "WV": "DS", "MD": "DS",
+    "DS": "DS", "IN": "DS",  # IN = inland remnant
+}
+
+
+def _best_nature(row: pd.Series) -> str:
+    """Derive a single nature code from IBTrACS NATURE + USA_STATUS +
+    agency wind estimates. The goal is to match JTWC/NHC operational
+    best-track visual convention, where pre-genesis disturbance points
+    are rendered as triangles (not circles).
+
+    Priority:
+      1. USA_STATUS if it maps to a known code — this is JTWC's ATCF
+         granular status (DB, LO, WV, TD, TS, TY, HU, EX, ...) and is
+         the most authoritative signal for shape classification.
+      2. Explicit non-tropical NATURE codes (ET, SS, DS) — trusted
+         because they're unambiguous.
+      3. For ambiguous NATURE ("TS" / "NR" / "MX" / "") without a
+         USA_STATUS, fall back to wind data: if ANY major agency
+         (JTWC / WMO / JMA) has a positive wind estimate, the point is
+         tropical (or subtropical, if NATURE says so) — otherwise it's
+         a pre-genesis / post-dissipation disturbance (rendered as
+         triangle). This catches WPAC storms' early invest phase
+         where NATURE='TS' gets forward-filled but no agency has
+         actually classified intensity yet.
+    """
+    s = row.get("USA_STATUS")
+    if pd.notna(s):
+        s = str(s).strip().upper()
+        if s in _STATUS_TO_NATURE:
+            return _STATUS_TO_NATURE[s]
+    n = (row.get("NATURE") or "").strip().upper()
+    # Explicit non-tropical / explicit disturbance codes: trust them
+    if n in {"ET", "SS", "DS"}:
+        return n
+    # Ambiguous: need wind evidence to call this a classified cyclone
+    for wcol in ("USA_WIND", "WMO_WIND", "TOKYO_WIND"):
+        w = row.get(wcol)
+        if pd.notna(w):
+            try:
+                if float(str(w).strip()) > 0:
+                    return n if n in {"TS", "SS"} else "TS"
+            except (ValueError, TypeError):
+                pass
+    # No agency wind estimate → pre-TC disturbance (triangle)
+    return "DS"
+
+
 def _parse_ibtracs_latlon(row: pd.Series) -> tuple[float, float] | None:
     """Try USA_LAT/LON first, then LAT/LON. IBTrACS stores as decimal degrees."""
     for la_col, lo_col in [("USA_LAT", "USA_LON"), ("LAT", "LON")]:
@@ -271,7 +336,7 @@ def load_ibtracs_current_year(csv_path: Path, basin_cfg: dict,
             "lon": lon,
             "wind_kt": row["WIND_KT"],
             "pressure_mb": row["PRES_MB"],
-            "nature": row.get("NATURE") or "",
+            "nature": _best_nature(row),
             "source": "IBTrACS",
         })
     out = pd.DataFrame(rows)
