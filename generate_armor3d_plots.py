@@ -646,23 +646,31 @@ def plot_cross_section(
         left=0.06, right=0.94, top=0.92, bottom=0.09, hspace=0.18,
     )
 
-    # Inset map — 1 row of a 5-row gridspec so it's ~1/5 the height of
-    # the main cross-section panel.
+    # Inset map — give it ~28% of the figure height and let it size
+    # itself with aspect="equal". That forces true geographic
+    # proportions, so the continents are never stretched/squished; the
+    # map will just center itself horizontally in whatever slot is
+    # available and leave clean empty margins on either side for
+    # narrow-lon regions (Atlantic, Indian Ocean). For wide-lon
+    # regions (ENSO, global tropics) it fills the slot.
     gs = fig.add_gridspec(
-        nrows=5, ncols=1, left=0.06, right=0.94,
+        nrows=2, ncols=1, height_ratios=[1, 2.5],
+        left=0.06, right=0.94,
         top=0.92, bottom=0.09, hspace=0.18,
     )
     ax_map = fig.add_subplot(gs[0, 0])
-    ax_cs  = fig.add_subplot(gs[1:, 0])
+    ax_cs  = fig.add_subplot(gs[1, 0])
 
-    # Inset: draw full lon range at true aspect, highlight the lat band.
+    # Inset: tight lat padding (±10°) so the highlighted 5°S–5°N band
+    # is visually meaningful, and aspect="equal" so geography isn't
+    # distorted no matter the slot shape.
     ax_map.set_xlim(lon_min, lon_max)
-    ax_map.set_ylim(lat_min - 20, lat_max + 20)
-    ax_map.set_aspect("auto")
+    ax_map.set_ylim(lat_min - 10, lat_max + 10)
+    ax_map.set_aspect("equal", adjustable="box")
     ax_map.set_facecolor(gss.PANEL_COLOR)
     gss._draw_basemap(
         ax_map,
-        (lon_min, lon_max, lat_min - 20, lat_max + 20),
+        (lon_min, lon_max, lat_min - 10, lat_max + 10),
         countries, coast,
     )
     # Shaded lat band so the viewer sees which slice was averaged.
