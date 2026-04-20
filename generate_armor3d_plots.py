@@ -214,6 +214,26 @@ CS_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
     ],
 )
 
+# Cross-section absolute-temperature colormap — used when no climatology
+# file is available yet and we fall back to rendering raw T instead of
+# an anomaly. Sequential cool→warm palette so deep cold water reads as
+# deep blue and the surface mixed layer reads as orange/red, without
+# falsely implying "anomaly".
+CS_ABS_VMIN = 0.0
+CS_ABS_VMAX = 30.0
+CS_ABS_CMAP = mcolors.LinearSegmentedColormap.from_list(
+    "cs_abs",
+    [
+        (0.00, "#08306b"),  # deep cold abyss
+        (0.20, "#2171b5"),
+        (0.40, "#6baed6"),
+        (0.55, "#c6dbef"),
+        (0.65, "#fee08b"),
+        (0.80, "#f46d43"),
+        (1.00, "#a50026"),  # warm surface mixed layer
+    ],
+)
+
 
 # --- Copernicus Marine fetch -------------------------------------------
 
@@ -595,8 +615,11 @@ def plot_cross_section(
     T_now_m = np.nanmean(T_now, axis=1)            # (depth, lon)
     lon_cs  = lon_w[lon_mask]
 
-    # Anomaly field (vs climatology if present; else absolute T − 26 for
-    # visual reference).
+    # Anomaly field (vs climatology if present). If no climatology is
+    # available yet we switch to absolute-temperature mode below rather
+    # than faking an anomaly — T_now − 26°C on a diverging ±6°C colormap
+    # saturates the whole water column and is deeply misleading.
+    has_climo = True
     if climo_is_2d:
         # Interpolate the climo (depth, lon) onto our lon_cs grid.
         T_cl_m = np.empty_like(T_now_m)
@@ -614,7 +637,8 @@ def plot_cross_section(
         anom = T_now_m - T_cl_m
     else:
         T_cl_m = None
-        anom = T_now_m - T_REF  # fallback so the plot isn't empty
+        has_climo = False
+        anom = None  # unused in absolute-T mode
 
     # --- Figure layout: small inset map on top, main panel below ------
     fig = plt.figure(figsize=region["figsize"], facecolor=gss.BG_COLOR)
@@ -649,13 +673,21 @@ def plot_cross_section(
         spine.set_color(gss.MUTED_COLOR)
         spine.set_linewidth(0.4)
 
-    # Main cross-section: pcolormesh of anomaly.
+    # Main cross-section: anomaly if we have a climatology, otherwise
+    # absolute temperature on a sequential colormap.
     LON2, DEPTH2 = np.meshgrid(lon_cs, depth)
-    norm = mcolors.Normalize(vmin=-CS_ANOM_VMAX, vmax=CS_ANOM_VMAX)
-    pcm = ax_cs.pcolormesh(
-        LON2, DEPTH2, anom, cmap=CS_ANOM_CMAP, norm=norm,
-        shading="auto", zorder=1, rasterized=True,
-    )
+    if has_climo:
+        norm = mcolors.Normalize(vmin=-CS_ANOM_VMAX, vmax=CS_ANOM_VMAX)
+        pcm = ax_cs.pcolormesh(
+            LON2, DEPTH2, anom, cmap=CS_ANOM_CMAP, norm=norm,
+            shading="auto", zorder=1, rasterized=True,
+        )
+    else:
+        norm = mcolors.Normalize(vmin=CS_ABS_VMIN, vmax=CS_ABS_VMAX)
+        pcm = ax_cs.pcolormesh(
+            LON2, DEPTH2, T_now_m, cmap=CS_ABS_CMAP, norm=norm,
+            shading="auto", zorder=1, rasterized=True,
+        )
     ax_cs.invert_yaxis()
     ax_cs.set_ylim(500, 0)
 
@@ -710,11 +742,21 @@ def plot_cross_section(
         spine.set_linewidth(0.5)
     ax_cs.set_facecolor(gss.PANEL_COLOR)
 
-    # Title block — same style as the maps.
+    # Title block — same style as the maps. Wording switches with mode
+    # so we never label raw T as an "anomaly".
     date_label = valid_date.strftime("%B %-d, %Y")
-    title = f"{region['label']} · Subsurface Temperature Anomalies"
-    src = "ARMOR3D" if T_cl_m is not None else "ARMOR3D (no climo yet)"
-    subtitle = f"Valid: {date_label}  ·  {src} · 5°S–5°N zonal mean"
+    if has_climo:
+        title = f"{region['label']} · Subsurface Temperature Anomalies"
+        subtitle = (
+            f"Valid: {date_label}  ·  ARMOR3D · 5°S–5°N zonal mean"
+        )
+        cb_label = "Temperature anomaly (°C)"
+    else:
+        title = f"{region['label']} · Subsurface Temperature"
+        subtitle = (
+            f"Valid: {date_label}  ·  ARMOR3D · 5°S–5°N zonal mean"
+        )
+        cb_label = "Temperature (°C)"
     fig.suptitle(
         title, color=gss.TEXT_COLOR, fontsize=14, fontweight="bold",
         x=0.06, ha="left", y=0.97,
@@ -727,8 +769,7 @@ def plot_cross_section(
     # Colorbar to the right of the main panel.
     cax = fig.add_axes([0.95, 0.09, 0.012, 0.66])
     cb = fig.colorbar(pcm, cax=cax, extend="both")
-    cb.set_label("Temperature anomaly (°C)",
-                 color=gss.TEXT_COLOR, fontsize=9)
+    cb.set_label(cb_label, color=gss.TEXT_COLOR, fontsize=9)
     cb.ax.yaxis.set_tick_params(color=gss.MUTED_COLOR,
                                 labelcolor=gss.MUTED_COLOR, labelsize=8)
     cb.outline.set_edgecolor(gss.MUTED_COLOR)
