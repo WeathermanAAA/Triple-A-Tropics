@@ -34,6 +34,10 @@ html, body {
   background-position: 0 0;
   color: var(--fg);
   font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+  /* Whole site runs on Metropolis Bold by default. Heavier weights
+     (800 on the hero h1, 900 on the active-banner readout) still win
+     on their own elements. */
+  font-weight: 700;
   -webkit-font-smoothing: antialiased;
   line-height: 1.55;
 }
