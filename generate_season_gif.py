@@ -618,9 +618,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--basin", required=True, choices=list(BASIN_CFG.keys()))
     ap.add_argument("--year", type=int, required=True)
-    ap.add_argument("--repo-root", type=Path,
-                    default=Path("/sessions/wizardly-elegant-mayer/"
-                                 "mnt/triple-a-tropics.com"))
+    ap.add_argument("--repo-root", type=Path, default=Path.cwd(),
+                    help="Root of the repo checkout "
+                         "(defaults to the current working directory).")
     ap.add_argument("--out", type=Path, default=None,
                     help="Output path (defaults to historical/{basin}/gifs/"
                          "{basin}_{year}_season.gif or wpac/alpac/epac_{year}_season.gif "
