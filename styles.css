@@ -1,11 +1,55 @@
 /* Triple-A-Tropics · shared site styles.
    Edit this one file and every page's look updates. */
 
-/* Metropolis (geometric sans) — sole site font. Pulls from the
-   cdnfonts.com mirror of the open-source SIL OFL Metropolis family.
-   Loaded here so every page (homepage, basins, SST, subsurface, etc.)
-   picks it up without per-page <link>s. */
-@import url('https://fonts.cdnfonts.com/css/metropolis-2');
+/* Metropolis (geometric sans) — sole site font.
+   The cdnfonts.com @import also includes local('Metropolis') fallbacks
+   which were catching stale local system fonts on some machines (all
+   weights collapsing to Regular). These explicit @font-face rules
+   bypass that by requesting the .woff files directly with no local()
+   fallback, so the browser MUST use the CDN-served file and weight
+   mappings are exact. */
+@font-face {
+  font-family: 'Metropolis';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('https://fonts.cdnfonts.com/s/16308/Metropolis-Regular.woff') format('woff');
+}
+@font-face {
+  font-family: 'Metropolis';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('https://fonts.cdnfonts.com/s/16308/Metropolis-Medium.woff') format('woff');
+}
+@font-face {
+  font-family: 'Metropolis';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('https://fonts.cdnfonts.com/s/16308/Metropolis-SemiBold.woff') format('woff');
+}
+@font-face {
+  font-family: 'Metropolis';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('https://fonts.cdnfonts.com/s/16308/Metropolis-Bold.woff') format('woff');
+}
+@font-face {
+  font-family: 'Metropolis';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('https://fonts.cdnfonts.com/s/16308/Metropolis-ExtraBold.woff') format('woff');
+}
+@font-face {
+  font-family: 'Metropolis';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('https://fonts.cdnfonts.com/s/16308/Metropolis-Black.woff') format('woff');
+}
 
 :root {
   --bg: #131519;       /* muted dark charcoal (was deep navy) */
