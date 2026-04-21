@@ -136,6 +136,7 @@
       this.frac = 0;                    // 0..1 through season
       this.fps = 15;
       this.durationS = 15;
+      this.speed = 1.0;                 // playback multiplier (0.25..4)
 
       this._render();
       this._wire();
@@ -157,6 +158,13 @@
               <select id="animYearSelect" class="anim-select"></select>
             </label>
             <button id="animPlay" class="anim-btn" type="button">▶ Play</button>
+            <div class="anim-speed" role="group" aria-label="Playback speed">
+              <button type="button" class="anim-speed-btn" data-speed="0.25">0.25×</button>
+              <button type="button" class="anim-speed-btn" data-speed="0.5">0.5×</button>
+              <button type="button" class="anim-speed-btn anim-speed-active" data-speed="1">1×</button>
+              <button type="button" class="anim-speed-btn" data-speed="2">2×</button>
+              <button type="button" class="anim-speed-btn" data-speed="4">4×</button>
+            </div>
             <a id="animDownload" class="anim-btn anim-btn-ghost"
                target="_blank" rel="noopener">Download GIF</a>
           </div>
@@ -214,6 +222,16 @@
       });
       this.select.addEventListener('change', (e) => {
         this.changeYear(parseInt(e.target.value, 10));
+      });
+      // Speed pill — click any button to change the playback multiplier.
+      // Applied in the tick loop so both running and paused states pick it up.
+      const speedBtns = this.root.querySelectorAll('.anim-speed-btn');
+      speedBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.speed = parseFloat(btn.dataset.speed) || 1;
+          speedBtns.forEach(b =>
+            b.classList.toggle('anim-speed-active', b === btn));
+        });
       });
     }
 
@@ -383,7 +401,9 @@
         if (!this.playing) return;
         const dt = (now - this._lastT) / 1000;
         this._lastT = now;
-        this.frac += dt / this.durationS;
+        // Multiply by the user-selected speed so the full season still
+        // covers `durationS` seconds at 1×, but 4× runs it in ~3.75s etc.
+        this.frac += (dt * this.speed) / this.durationS;
         if (this.frac >= 1) this.frac = 0;   // loop
         this.scrub.value = Math.floor(this.frac * 1000);
         this.redraw();
