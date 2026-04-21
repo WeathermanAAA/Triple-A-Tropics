@@ -187,6 +187,16 @@
     letter-spacing: 1.2px;
     white-space: nowrap;
   }
+  /* Mid-dot separator before every .bstat so the row reads
+     "BASIN · COUNT · SEASON" with the same divider that was already
+     used inside the season/ACE fragments. Matches the existing inline
+     .sep styling (color #d8dce5). */
+  .basin-row .bstat::before {
+    content: "·";
+    color: #d8dce5;
+    padding-right: 18px;
+    font-weight: 700;
+  }
   .basin-row .bstat.count {
     color: #ffffff;
     font-weight: 700;
