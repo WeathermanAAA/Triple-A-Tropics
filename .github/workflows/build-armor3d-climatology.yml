@@ -6,14 +6,16 @@ name: Build ARMOR3D Climatology
 # TCHP-anomaly plots. Fire it from the Actions tab:
 #     Actions → "Build ARMOR3D Climatology" → "Run workflow".
 #
-# Runtime is 2-6 hours, dominated by CMEMS throttling. GitHub's hard
-# 6-hour job limit may clip it, so the script is written to be
-# resumable: per-year state files live in `.armor3d_climo_state/`,
-# which we stash in the Actions cache between runs. If the workflow
-# times out, just re-run it — already-fetched years are skipped
-# automatically on the next invocation, and the final
-# `armor3d/armor3d_climatology.nc` is committed on whichever run
-# finally finishes year 2020.
+# Runtime is dominated by CMEMS throttling. The script subsamples the
+# daily ARMOR3D product down to 52 days/year (one per week bucket), so
+# download volume is ~7× smaller than a naive year-at-a-time fetch.
+# Even so, GitHub's hard 6-hour job limit may clip it, so the script is
+# written to be resumable at the *week* level: per-week raw files and
+# per-year state files live in `.armor3d_climo_state/`, which we stash
+# in the Actions cache between runs. If the workflow times out, just
+# re-run it — already-fetched weeks are skipped automatically on the
+# next invocation, and the final `armor3d/armor3d_climatology.nc` is
+# committed on whichever run finally finishes year 2020.
 on:
   workflow_dispatch:
     inputs:
