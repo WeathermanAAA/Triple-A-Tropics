@@ -9,7 +9,23 @@
 <meta property="og:description" content="Real-time tropical cyclone analysis, climatology, and tracking.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
+<!-- Metropolis web font (geometric sans). Loaded site-wide so both the
+     global styles.css rules and the homepage-inline styles pick it up. -->
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
 <link rel="stylesheet" href="/styles.css">
+<style>
+  /* Force Metropolis everywhere on the page, overriding anything
+     styles.css still has hard-coded to Oswald / Montserrat / Arial.
+     !important because styles.css targets many selectors with high
+     specificity (e.g. .nav-links a) that would otherwise win. */
+  html, body,
+  h1, h2, h3, h4, h5, h6,
+  p, a, span, div, li, button, input, textarea, select, label,
+  nav, header, footer, section, article,
+  .brand, .nav-links, .nav-links a, .hero h1, .hero p, .handle {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
+  }
+</style>
 <style>
   /* Homepage-only polish. Overrides the generic .card system with a
      pro-weather-site card treatment: a data-visual banner graphic
@@ -44,97 +60,150 @@
      Fails silently if a feed is missing (local preview, slow net). */
   .home-status {
     margin-bottom: 22px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(0,0,0,0.08));
-    font-size: 12px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
     color: var(--muted);
     letter-spacing: 0.25px;
   }
+
+  /* Header bar: EXACT copy of the site .nav gradient + inset shadows
+     (see styles.css .nav rule) so the strip reads as a sibling of the
+     top navigation. */
   .status-head {
-    display: flex; align-items: baseline;
-    gap: 12px; flex-wrap: wrap;
-    padding-bottom: 10px;
-    margin-bottom: 10px;
-    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 14px 20px;
+    background: linear-gradient(180deg,
+      #0a1a2e 0%,
+      #1d3a5c 22%,
+      #2b4976 50%,
+      #1d3a5c 78%,
+      #0a1a2e 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.92);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.40),
+      0 0 6px rgba(255, 255, 255, 0.55),
+      0 0 14px rgba(255, 255, 255, 0.25);
+    text-align: center;
+    flex-wrap: wrap;
   }
+  /* Matches .brand / .nav-links typography from the nav so the strip
+     reads as a sibling of the top navigation. */
   .status-head .status-label {
-    font-family: "Oswald", "Arial Narrow", Impact, sans-serif;
-    font-weight: 700; font-size: 11px;
-    letter-spacing: 1.1px;
-    color: var(--accent);
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 1.2px;
+    color: #ffffff;
     text-transform: uppercase;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.55),
+      0 2px 3px rgba(0, 0, 0, 0.45);
   }
   .status-head .status-hint {
-    font-size: 11px;
-    color: var(--muted);
-    letter-spacing: 0.3px;
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: #c8d4e7;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.55),
+      0 2px 3px rgba(0, 0, 0, 0.45);
   }
 
+  /* Basin rows: same vertical-gradient structure as the header but in
+     neutral gray so the blue bar stays the focal point. */
   .basin-grid {
-    display: flex; flex-direction: column;
-    gap: 6px;
+    display: flex;
+    flex-direction: column;
   }
+  /* Basin rows: same Oswald / uppercase / white-with-shadow typography
+     as the .status-head so everything in the strip reads as one
+     cohesive piece. Only the background differs (lighter gray so the
+     blue header stays the focal point). */
   .basin-row {
-    display: grid;
-    grid-template-columns: 72px auto 1fr;
-    gap: 12px;
+    display: flex;
     align-items: center;
-    padding: 5px 8px;
-    border-radius: 6px;
+    justify-content: center;
+    gap: 22px;
+    padding: 13px 20px;
+    background: linear-gradient(180deg,
+                  #5a6070 0%,
+                  #484e5c 55%,
+                  #363b47 100%);
+    border-top: 1px solid rgba(255,255,255,0.08);
     text-decoration: none;
-    color: var(--muted);
-    transition: background 0.15s, color 0.15s;
+    color: #ffffff;
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.55),
+      0 2px 3px rgba(0, 0, 0, 0.45);
+    text-align: center;
+    flex-wrap: wrap;
+    transition: filter 0.18s, color 0.18s;
   }
+  .basin-row:first-child { border-top: none; }
   .basin-row:hover {
-    background: rgba(93, 211, 255, 0.05);
-    color: var(--fg);
+    filter: brightness(1.18);
+    color: #ffffff;
     text-decoration: none;
   }
   .basin-row .basin-head {
     display: inline-flex; align-items: center;
-    gap: 7px;
-    font-size: 11px;
+    gap: 9px;
+    font-size: 16px;
     font-weight: 700;
-    letter-spacing: 0.7px;
-    text-transform: uppercase;
-    color: var(--fg);
+    letter-spacing: 1.2px;
+    color: #ffffff;
+    min-width: 72px;
+    justify-content: center;
   }
   .basin-row .dot {
-    width: 7px; height: 7px;
+    width: 9px; height: 9px;
     border-radius: 50%;
-    background: #3a424d;
+    background: #c5cad5;
     transition: background 0.3s, box-shadow 0.3s;
   }
   .basin-row.active .dot {
     background: #6ff0a0;
-    box-shadow: 0 0 8px rgba(111, 240, 160, 0.75);
+    box-shadow: 0 0 10px rgba(111, 240, 160, 0.8);
     animation: home-pulse 1.7s ease-in-out infinite;
   }
   .basin-row.active .basin-head .code { color: #e8ffe8; }
 
   .basin-row .bstat {
-    font-size: 12px;
-    color: var(--muted);
-    letter-spacing: 0.2px;
+    font-size: 14px;
+    color: #ffffff;
+    letter-spacing: 1.2px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .basin-row .bstat.count {
-    color: var(--fg);
-    font-weight: 600;
-    min-width: 110px;
+    color: #ffffff;
+    font-weight: 700;
   }
-  .basin-row .bstat b { color: var(--fg); font-weight: 700; }
-  .basin-row .sep { color: #3a424d; padding: 0 4px; }
+  .basin-row .bstat b { color: #ffffff; font-weight: 700; }
+  .basin-row .sep { color: #d8dce5; padding: 0 4px; }
 
   @media (max-width: 620px) {
+    .status-head { padding: 12px 14px; gap: 10px; }
+    .status-head .status-label { font-size: 15px; }
+    .status-head .status-hint { font-size: 12px; }
     .basin-row {
-      grid-template-columns: 64px 1fr;
+      gap: 10px;
+      padding: 11px 14px;
+      font-size: 13px;
     }
-    .basin-row .bstat.season { grid-column: 1 / -1; padding-left: 76px; }
+    .basin-row .bstat { font-size: 13px; }
   }
 
   /* Card grid */
@@ -190,43 +259,68 @@
     pointer-events: none;
   }
 
-  /* Body text */
+  /* Body text. Gray gradient matching the basin rows in the live
+     status strip so the whole homepage reads as one color system. */
   .home-card-body {
-    padding: 18px 20px 14px;
+    padding: 18px 20px 16px;
     flex: 1;
     display: flex; flex-direction: column;
     gap: 8px;
+    background: linear-gradient(180deg,
+                  #5a6070 0%,
+                  #484e5c 55%,
+                  #363b47 100%);
   }
   .home-card-body h2 {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
     font-size: 19px;
     margin: 0;
     font-weight: 700;
-    letter-spacing: 0.2px;
-    color: var(--fg);
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #ffffff;
   }
   .home-card-body p {
-    color: var(--muted);
-    font-size: 14px;
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 400;
     margin: 0;
-    line-height: 1.6;
+    line-height: 1.55;
+    letter-spacing: 0.5px;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.45),
+      0 2px 3px rgba(0, 0, 0, 0.35);
   }
 
-  /* Bottom meta strip: data-source chips on the left, live pulse
-     on the right. Feels like a product footer on the card. */
+  /* Bottom meta strip: EXACT same nav-blue gradient + white glow
+     hairline as .status-head so the card footer mirrors the live
+     status bar header. */
   .home-card-meta {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: center;
     gap: 12px;
-    padding: 11px 20px;
-    border-top: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.22);
-    font-size: 11px;
-    letter-spacing: 0.6px;
+    padding: 12px 20px;
+    background: linear-gradient(180deg,
+      #0a1a2e 0%,
+      #1d3a5c 22%,
+      #2b4976 50%,
+      #1d3a5c 78%,
+      #0a1a2e 100%);
+    border-top: 1px solid rgba(255, 255, 255, 0.92);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.40),
+      0 0 6px rgba(255, 255, 255, 0.45) inset,
+      0 -6px 10px -6px rgba(255, 255, 255, 0.35);
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+    font-size: 12px;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
-    color: var(--muted);
+    color: #ffffff;
     font-weight: 700;
-  }
-  .home-card-meta .src {
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.55),
+      0 2px 3px rgba(0, 0, 0, 0.45);
   }
   .home-card-meta .live {
     color: #c8f7d4;
@@ -331,7 +425,7 @@
       </g>
       <text x="0" y="0" text-anchor="middle" dominant-baseline="central"
             font-size="22" font-weight="900" fill="#ffffff"
-            font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif"
+            font-family="Metropolis, 'Helvetica Neue', Arial, sans-serif"
             letter-spacing="0">A</text>
     </svg>
 
@@ -352,7 +446,7 @@
       </g>
       <text x="0" y="0" text-anchor="middle" dominant-baseline="central"
             font-size="22" font-weight="900" fill="#ffffff"
-            font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif"
+            font-family="Metropolis, 'Helvetica Neue', Arial, sans-serif"
             letter-spacing="0">A</text>
     </svg>
   </div>
@@ -368,7 +462,7 @@
   <div class="home-status">
     <div class="status-head">
       <span class="status-label">Live status</span>
-      <span class="status-hint">Auto-refresh every 6 h via IBTrACS + JTWC</span>
+      <span class="status-hint">Auto-refresh every 6 h</span>
     </div>
     <div class="basin-grid">
       <a class="basin-row" data-basin="al" href="/climatology/">
@@ -405,7 +499,6 @@
         <p>Accumulated Cyclone Energy and storm tracks for every basin, this season against the 1991–2020 normal. Interactive rankings, hover tooltips, and live positions for active systems.</p>
       </div>
       <div class="home-card-meta">
-        <span class="src">IBTrACS · JTWC</span>
         <span class="live">Live</span>
       </div>
     </a>
@@ -422,7 +515,6 @@
         <p>Daily SST, anomalies, and record composites across 17 regions from NOAA OISST v2.1 and Coral Reef Watch, plus TCHP and 26 °C isotherm depth (D26) subsurface fuel from NOAA AOML and CMEMS ARMOR3D.</p>
       </div>
       <div class="home-card-meta">
-        <span class="src">OISST · CRW · AOML · ARMOR3D</span>
         <span class="live">Live</span>
       </div>
     </a>
