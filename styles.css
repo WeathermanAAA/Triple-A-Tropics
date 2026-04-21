@@ -195,6 +195,7 @@ a:hover { text-decoration: underline; }
 .hero p {
   color: var(--muted);
   font-size: 17px;
+  font-weight: 700;
   max-width: 680px;
   margin: 0 auto;
 }
@@ -224,6 +225,7 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   margin: 0;
   font-size: 15px;
+  font-weight: 700;
 }
 .page-head .crumb {
   margin: 0 0 10px;
@@ -274,6 +276,7 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   font-size: 14px;
   margin: 0;
+  font-weight: 700;
 }
 .card.soon { opacity: 0.55; cursor: not-allowed; }
 .card.soon:hover { transform: none; border-color: var(--border); }
@@ -346,6 +349,7 @@ a:hover { text-decoration: underline; }
   padding: 32px 20px 80px;
   color: var(--muted);
   font-size: 15px;
+  font-weight: 700;
 }
 .about h2 {
   color: var(--fg);
@@ -361,6 +365,7 @@ footer {
   background: #0d0f13;    /* a touch darker than --bg for contrast */
   color: var(--muted);
   font-size: 13px;
+  font-weight: 700;
 }
 .footer-inner {
   max-width: 1180px; margin: 0 auto;
@@ -460,6 +465,7 @@ footer {
   font-size: 13px;
   padding: 8px 4px 2px;
   text-align: center;
+  font-weight: 700;
 }
 
 /* ---- SST region dropdown ---- */
