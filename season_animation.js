@@ -172,6 +172,16 @@
       `;
       this.canvas = this.root.querySelector('#animCanvas');
       this.ctx    = this.canvas.getContext('2d');
+      // HD rendering: scale backing store to the device's pixel ratio so
+      // tracks, coastlines, and text render crisply on retina displays.
+      // All draw code uses logical 1080×1080 coords; the ctx.scale call
+      // maps those to the larger backing store. Capped at 2 to keep the
+      // per-frame allocation bounded.
+      this._dpr = Math.min(window.devicePixelRatio || 1, 2);
+      this.canvas.width  = 1080 * this._dpr;
+      this.canvas.height = 1080 * this._dpr;
+      this.ctx.scale(this._dpr, this._dpr);
+      this.ctx.imageSmoothingEnabled = true;
       this.select = this.root.querySelector('#animYearSelect');
       this.playBtn = this.root.querySelector('#animPlay');
       this.scrub  = this.root.querySelector('#animScrub');
@@ -309,12 +319,32 @@
       }
       this.seasonFinal = this.curveVal.length
         ? this.curveVal[this.curveVal.length - 1] : 0;
-      // Rank
-      const finals = Object.entries(all).map(([y, v]) =>
-        [parseInt(y, 10), v.length ? v[v.length - 1] : 0]);
-      finals.sort((a, b) => b[1] - a[1]);
-      this.rank = finals.findIndex(([y]) => y === year) + 1;
-      this.totalSeasons = finals.length;
+      // Rank: for a completed historical season, compare final ACE.
+      // For the current (in-progress) season, compare where we are
+      // *today* against every historical season's value on the same
+      // day-of-year — i.e. "on pace to rank" rather than "final rank."
+      if (year === this.currentYear) {
+        const today = this.ace.today_doy || this.curveVal.length;
+        const cur = this.seasonFinal;
+        let better = 0, total = 0;
+        for (const [y, v] of Object.entries(all)) {
+          if (parseInt(y, 10) === year) continue;      // skip self
+          total++;
+          const idx = Math.min(today, v.length) - 1;
+          const paceVal = idx >= 0 ? v[idx] : 0;
+          if (paceVal > cur) better++;
+        }
+        this.rank = better + 1;
+        this.totalSeasons = total + 1;
+        this.rankMode = 'pace';
+      } else {
+        const finals = Object.entries(all).map(([y, v]) =>
+          [parseInt(y, 10), v.length ? v[v.length - 1] : 0]);
+        finals.sort((a, b) => b[1] - a[1]);
+        this.rank = finals.findIndex(([y]) => y === year) + 1;
+        this.totalSeasons = finals.length;
+        this.rankMode = 'final';
+      }
       // Max-y for ACE panel (climo p90 × 1.1, or season final × 1.2)
       const p90 = this.ace.climo.p90;
       const climoMax = Math.max.apply(null, p90);
@@ -372,20 +402,22 @@
     redraw() {
       if (!this.tracks || !this.ace) return;
       const ctx = this.ctx;
-      const W = this.canvas.width, H = this.canvas.height;
+      // Logical coordinate system is always 1080×1080 regardless of dpr;
+      // the ctx has already been scaled in _render().
+      const W = 1080, H = 1080;
       ctx.fillStyle = PAL.bg;
       ctx.fillRect(0, 0, W, H);
 
-      // Layout (matches GIF): 10% title, 58% map, 32% ace.
-      const pad = 24;
-      const titleH = H * 0.10;
-      const mapY = titleH + 6;
-      const mapH = H * 0.58 - 12;
-      const aceY = titleH + H * 0.60;
-      const aceH = H * 0.32;
-      const leftX = pad * 2.3;
-      const rightX = W - pad * 0.6;
+      // Budget: 96 title + 8 pad + 540 map + 32 lon-labels + 14 pad
+      //         + 340 ACE + 32 month-labels + 18 bottom-pad = 1080
+      const leftX  = 64;                 // room for y-axis labels
+      const rightX = W - 20;
       const panelW = rightX - leftX;
+      const titleH = 96;
+      const mapY   = titleH + 8;
+      const mapH   = 540;
+      const aceY   = mapY + mapH + 32 + 14;
+      const aceH   = 340;
 
       this._drawTitle(ctx, leftX, 0, panelW, titleH);
       this._drawMap(ctx, leftX, mapY, panelW, mapH);
@@ -411,8 +443,9 @@
       ctx.fillText(`${named} named`, x + w, y + h * 0.42);
       ctx.fillStyle = PAL.muted;
       ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      const rankLbl = this.rankMode === 'pace' ? 'Pace' : 'Rank';
       const rankStr = this.rank
-        ? `   Rank ${this.rank}/${this.totalSeasons}` : '';
+        ? `   ${rankLbl} ${this.rank}/${this.totalSeasons}` : '';
       ctx.fillText(`ACE ${this.seasonFinal.toFixed(1)}${rankStr}`,
                    x + w, y + h * 0.80);
     }
@@ -537,19 +570,20 @@
       ctx.textBaseline = 'middle';
       actives.forEach((a, i) => {
         const cx = p2x(a.p._lon), cy = p2y(a.p.lat);
-        const w = a.p.wind_kt || 30;
-        const r = 7 + Math.min(1, Math.max(0, (w - 30) / 130)) * 6;
-        ctx.fillStyle = '#1e3a8a';
-        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '900 10px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('A', cx, cy + 1);
+        const wKt = a.p.wind_kt || 30;
+        const color = CAT_COLORS[windToCat(wKt)] || '#6bb7ff';
+        // Small dot colored by current intensity, with a thin white
+        // halo so it reads against the storm-track line underneath.
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(cx, cy, 5.5, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
         if (i < 3) {
-          const label = `${a.s.name} · ${Math.round(w)} kt`;
+          const label = `${a.s.name} · ${Math.round(wKt)} kt`;
           ctx.font = '700 13px sans-serif';
           const m = ctx.measureText(label);
-          const lx = cx + 10, ly = cy - 10;
+          const lx = cx + 10, ly = cy - 12;
           ctx.fillStyle = 'rgba(15,18,22,0.80)';
           ctx.fillRect(lx - 4, ly - 10, m.width + 8, 20);
           ctx.strokeStyle = PAL.border;
