@@ -1,0 +1,91 @@
+name: Update Season GIFs
+
+# Re-renders the current-season animated GIFs for all three basins
+# (WPAC, Atlantic, East Pacific). Runs once per day, after the
+# update-ace workflow has refreshed the source JSON the GIF reads
+# from ({wp,al,ep}_tracks_data.json, {wp,al,ep}_ace_data.json).
+#
+# The GIFs are embedded on each basin's Tracks page as the default
+# "Download GIF" artifact and as a fallback preview when JS is
+# disabled; the in-browser animator reads the same JSON live.
+
+on:
+  schedule:
+    # 03:23 UTC daily — well clear of update-ace's 00:07 / 06:07
+    # / 12:07 / 18:07 runs, and in a low-load slot.
+    - cron: "23 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-season-gifs
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-season-gifs-${{ hashFiles('.github/workflows/update-season-gifs.yml') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy matplotlib pillow imageio
+
+      - name: Ensure Natural Earth basemaps are present
+        run: |
+          set -euo pipefail
+          NE="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
+          for f in ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson; do
+            if [ ! -f "$f" ]; then
+              echo "--- Downloading $f ---"
+              curl -fSL --retry 3 --retry-delay 10 -o "$f" "$NE/$f"
+            fi
+            ls -lh "$f"
+          done
+
+      - name: Derive current season year
+        id: year
+        run: echo "y=$(date -u +%Y)" >> "$GITHUB_OUTPUT"
+
+      - name: Regenerate season GIF — West Pacific
+        run: |
+          python generate_season_gif.py --basin wp --year ${{ steps.year.outputs.y }}
+
+      - name: Regenerate season GIF — Atlantic
+        run: |
+          python generate_season_gif.py --basin al --year ${{ steps.year.outputs.y }}
+
+      - name: Regenerate season GIF — East Pacific
+        run: |
+          python generate_season_gif.py --basin ep --year ${{ steps.year.outputs.y }}
+
+      - name: Commit and push if anything changed
+        run: |
+          set -euo pipefail
+          Y=${{ steps.year.outputs.y }}
+          git config --local user.name  "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The generator uses slugs wpac/atl/epac for current-year files.
+          git add "wpac_${Y}_season.gif" "atl_${Y}_season.gif" "epac_${Y}_season.gif" 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: refresh season GIFs for ${Y} ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi
