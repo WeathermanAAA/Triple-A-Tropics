@@ -3057,9 +3057,11 @@
       107,
       108,
       109,
-      110
+      110,
+      111
     ],
     "values": [
+      0.0,
       0.0,
       0.0,
       0.0,
@@ -3913,7 +3915,7 @@
     ],
     "latest_value": 130.772
   },
-  "today_doy": 110,
+  "today_doy": 111,
   "rankings": [
     {
       "year": 1954,
@@ -3965,29 +3967,29 @@
       "rank": 7
     },
     {
+      "year": 2003,
+      "ytd": 1.56,
+      "total": 176.28,
+      "current": false,
+      "rank": 8
+    },
+    {
       "year": 2023,
       "ytd": 1.42,
       "total": 148.21,
       "current": false,
-      "rank": 8
+      "rank": 9
     },
     {
       "year": 1952,
       "ytd": 1.02,
       "total": 68.78,
       "current": false,
-      "rank": 9
-    },
-    {
-      "year": 2003,
-      "ytd": 0.57,
-      "total": 176.28,
-      "current": false,
       "rank": 10
     },
     {
       "year": 2017,
-      "ytd": 0.41,
+      "ytd": 0.81,
       "total": 224.88,
       "current": false,
       "rank": 11
