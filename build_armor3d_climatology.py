@@ -423,6 +423,11 @@ def _combine_years(year_paths: list[Path], log: str) -> Path:
             np.nan,
         ).astype(np.float32)
 
+    # Final climatology written for the site consumer. `tchp_count` is
+    # intentionally omitted here — it's a build-time diagnostic used only
+    # during `_combine_years` aggregation of per-year state files, and
+    # generate_armor3d_plots.py only reads `tchp_climo` and `t_climo_eq`.
+    # Keeping it would push the file past GitHub's 100 MB per-file limit.
     out_ds = xr.Dataset(
         {
             "tchp_climo": (["week", "latitude", "longitude"], tchp_climo,
@@ -430,7 +435,6 @@ def _combine_years(year_paths: list[Path], log: str) -> Path:
             "t_climo_eq": (["week", "depth", "longitude"], t_climo_eq,
                            {"units": "degree_C",
                             "long_name": "Temperature 5S-5N zonal mean climatology"}),
-            "tchp_count": (["week", "latitude", "longitude"], tchp_cnt_tot.astype(np.int16)),
         },
         coords={
             "week":      np.arange(1, 53, dtype=np.int16),
@@ -447,12 +451,13 @@ def _combine_years(year_paths: list[Path], log: str) -> Path:
         },
     )
     out_path = ARMOR_DIR / "armor3d_climatology.nc"
+    # complevel=9 is max zlib — slower to write but we only write this
+    # file a handful of times ever, so the extra CPU cost is free.
     enc = {
-        "tchp_climo": {"zlib": True, "complevel": 6,
+        "tchp_climo": {"zlib": True, "complevel": 9,
                        "dtype": "float32", "_FillValue": np.float32(np.nan)},
-        "t_climo_eq": {"zlib": True, "complevel": 6,
+        "t_climo_eq": {"zlib": True, "complevel": 9,
                        "dtype": "float32", "_FillValue": np.float32(np.nan)},
-        "tchp_count": {"zlib": True, "complevel": 4, "dtype": "int16"},
     }
     out_ds.to_netcdf(out_path, encoding=enc)
     size_mb = out_path.stat().st_size / (1024 * 1024)
