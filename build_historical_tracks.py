@@ -286,11 +286,13 @@ def main() -> None:
                     help="Build every basin (al, ep, wp).")
     ap.add_argument("--min-year", type=int, default=None)
     ap.add_argument("--max-year", type=int, default=None)
-    ap.add_argument("--src-root", type=Path,
-                    default=Path("/sessions/wizardly-elegant-mayer"))
+    ap.add_argument("--src-root", type=Path, default=Path.cwd(),
+                    help="Directory containing IBTrACS CSVs "
+                         "(defaults to current working directory).")
     ap.add_argument("--out-root", type=Path,
-                    default=Path("/sessions/wizardly-elegant-mayer/mnt/"
-                                 "triple-a-tropics.com/historical"))
+                    default=Path.cwd() / "historical",
+                    help="Where to write per-basin JSON trees "
+                         "(defaults to ./historical/).")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
