@@ -106,36 +106,89 @@ def _week_of_year(d: dt.date) -> int:
     return max(1, min(52, (d.timetuple().tm_yday - 1) // 7 + 1))
 
 
+def _doy_for_week(year: int, week: int) -> dt.date:
+    """Representative sample date for a week bucket.
+
+    We sample day-4 of each 7-day window (DOY 4, 11, 18, …) so the pull
+    lands near the middle of the week rather than on an edge. ARMOR3D
+    daily means vary slowly so any single day inside the window is
+    representative; center-of-window avoids accidental overlap with
+    adjacent week buckets when a year edge straddles a weekend."""
+    doy = (week - 1) * 7 + 4
+    return dt.date(year, 1, 1) + dt.timedelta(days=doy - 1)
+
+
 def _year_state_path(year: int) -> Path:
     return STATE_DIR / f"year_{year}.nc"
 
 
+def _raw_week_path(year: int, week: int) -> Path:
+    """Cache path for one per-week raw CMEMS download."""
+    return STATE_DIR / f"_raw_{year}_w{week:02d}.nc"
+
+
 def _fetch_year(
     year: int, log: str,
-) -> Path:
-    """Download one calendar year of weekly ARMOR3D MY data (tropics only)."""
-    out_path = STATE_DIR / f"_raw_{year}.nc"
-    start = dt.datetime(year, 1, 1)
-    end   = dt.datetime(year, 12, 31, 23, 59, 59)
-    print(f"{log} fetching ARMOR3D MY {year} (lat {LAT_MIN}..{LAT_MAX})…")
-    a3d._cmems_subset(
-        dataset_id=a3d.ARMOR3D_MY_DATASET,
-        start=start,
-        end=end,
-        lon_min=-180.0, lon_max=180.0,
-        lat_min=LAT_MIN, lat_max=LAT_MAX,
-        depth_min=a3d.DEPTH_MIN, depth_max=a3d.DEPTH_MAX,
-        variables=a3d.VARIABLES,
-        out_path=out_path,
-        log=log,
-    )
-    return out_path
+) -> list[Path]:
+    """Download 52 per-week ARMOR3D MY samples for one calendar year.
+
+    Subsampled from the daily (P1D-m) product — one day per week bucket —
+    because CMEMS dropped its P1W aggregate during the 2025 catalog
+    migration. Pulling only 52 timesteps per year (vs 365) cuts download
+    volume ~7× and shortens each year's wall time enough to fit the full
+    28-year build inside GitHub's 6-hour job ceiling.
+
+    Each per-week file is cached under `.armor3d_climo_state/` so if the
+    runner is canceled mid-year, re-running picks up at the exact week
+    we stopped at — not at the year boundary.
+
+    Returns the list of raw per-week paths actually on disk (some may be
+    skipped on CMEMS errors; the caller tolerates partial years)."""
+    paths: list[Path] = []
+    for week in range(1, 53):
+        out = _raw_week_path(year, week)
+        if out.exists() and out.stat().st_size > 0:
+            paths.append(out)
+            continue
+        sample = _doy_for_week(year, week)
+        # Week-52 DOY 4 = DOY 361; safely inside every calendar year, so
+        # no overflow guard needed. Leap years still map DOY 1..366 → 52
+        # buckets via _week_of_year's clip.
+        start = dt.datetime.combine(sample, dt.time.min)
+        end   = dt.datetime.combine(sample, dt.time.max)
+        print(f"{log}   {year} week {week:02d} ({sample.isoformat()})…")
+        try:
+            a3d._cmems_subset(
+                dataset_id=a3d.ARMOR3D_MY_DATASET,
+                start=start, end=end,
+                lon_min=-180.0, lon_max=180.0,
+                lat_min=LAT_MIN, lat_max=LAT_MAX,
+                depth_min=a3d.DEPTH_MIN, depth_max=a3d.DEPTH_MAX,
+                variables=a3d.VARIABLES,
+                out_path=out,
+                log=log,
+            )
+            paths.append(out)
+        except Exception as exc:
+            # A few missing weeks per year are tolerable — the climo
+            # averages across 28 years, so one missing week/year just
+            # reduces that WOY bucket's sample count by ~3%.
+            print(f"{log}   WARN {year} week {week:02d} failed: {exc}")
+            continue
+    return paths
 
 
 def _process_year(
-    year: int, raw_path: Path, log: str,
+    year: int, raw_paths: list[Path], log: str,
 ) -> Path:
     """Derive per-year weekly TCHP + t_climo_eq accumulator from raw T.
+
+    Iterates over the list of per-week raw NetCDFs produced by
+    _fetch_year. Accumulates the same TCHP + equatorial-T sums the
+    old single-file version produced. Using per-week files instead of
+    one big year-long file keeps peak memory low (~220 MB/week vs ~30
+    GB for a full year) and lets us resume cleanly if the job is
+    killed mid-year.
 
     Writes a per-year NetCDF with:
         tchp_sum   (week, lat, lon)  — sum of TCHP across that year's
@@ -144,95 +197,117 @@ def _process_year(
         t_sum_eq   (week, depth, lon) — sum of 5°S–5°N-averaged T
         t_count_eq (week, depth, lon)
     """
-    print(f"{log}   processing year {year} → TCHP + equatorial T sums…")
-    with xr.open_dataset(raw_path) as ds:
-        t = ds["to"]  # (time, depth, lat, lon)
-        depth = ds["depth"].values.astype(np.float32)
-        lat = ds["latitude"].values.astype(np.float32)
-        lon = ds["longitude"].values.astype(np.float32)
-        times = ds["time"].values
+    if not raw_paths:
+        raise RuntimeError(f"year {year}: no per-week raw files to process")
 
-        # Roll to 0-360 so storage layout matches the runtime generator.
-        lon_roll_shift = int(np.sum(lon < 0))
-        if lon_roll_shift:
-            lon_new = np.concatenate(
-                [lon[lon_roll_shift:], lon[:lon_roll_shift] + 360]
-            )
-        else:
-            lon_new = lon.copy()
+    print(f"{log}   processing year {year} ({len(raw_paths)} weekly files) "
+          f"→ TCHP + equatorial T sums…")
 
-        nlat = lat.size
-        nlon = lon_new.size
-        ndep = depth.size
+    # Grid metadata (lat / lon / depth) is lazy-initialized from the first
+    # raw file; every subsequent week is assumed to sit on the same
+    # ARMOR3D grid (CMEMS has held that grid constant since ~2010 across
+    # all versions we care about here).
+    tchp_sum = tchp_count = None
+    t_sum_eq = t_count_eq = None
+    lat_arr = lon_new = depth_arr = eq_mask = None
+    lon_roll_shift = 0
 
-        tchp_sum   = np.zeros((52, nlat, nlon), dtype=np.float64)
-        tchp_count = np.zeros((52, nlat, nlon), dtype=np.int32)
+    for raw_path in raw_paths:
+        with xr.open_dataset(raw_path) as ds:
+            t = ds["to"]  # (time, depth, lat, lon)
 
-        eq_mask = (lat >= EQ_LAT_MIN) & (lat <= EQ_LAT_MAX)
-        t_sum_eq   = np.zeros((52, ndep, nlon), dtype=np.float64)
-        t_count_eq = np.zeros((52, ndep, nlon), dtype=np.int32)
+            if tchp_sum is None:
+                depth_arr = ds["depth"].values.astype(np.float32)
+                lat_arr   = ds["latitude"].values.astype(np.float32)
+                lon       = ds["longitude"].values.astype(np.float32)
 
-        for ti, t_val in enumerate(times):
-            valid_date = a3d._np_datetime_to_date(t_val)
-            if valid_date.year != year:
-                # CMEMS can return fractional weeks straddling year
-                # boundaries — skip anything outside our year bucket so
-                # neighbouring years don't double-count.
-                continue
-            woy = _week_of_year(valid_date)
-            wi = woy - 1
+                # Roll to 0-360 so storage layout matches the runtime
+                # generator.
+                lon_roll_shift = int(np.sum(lon < 0))
+                if lon_roll_shift:
+                    lon_new = np.concatenate(
+                        [lon[lon_roll_shift:], lon[:lon_roll_shift] + 360]
+                    )
+                else:
+                    lon_new = lon.copy()
 
-            # Extract this timestep's T field and roll lon.
-            t_arr = t.isel(time=ti).values.astype(np.float32)  # (depth, lat, lon)
-            if lon_roll_shift:
-                t_arr = np.concatenate(
-                    [t_arr[:, :, lon_roll_shift:],
-                     t_arr[:, :, :lon_roll_shift]],
-                    axis=2,
-                )
+                nlat = lat_arr.size
+                nlon = lon_new.size
+                ndep = depth_arr.size
 
-            # TCHP.
-            d26 = a3d.compute_d26(t_arr, depth)
-            tchp = a3d.compute_tchp(t_arr, depth, d26)  # (lat, lon)
-            # Treat NaNs as missing (don't pollute counts).
-            valid = ~np.isnan(tchp)
-            tchp_sum[wi][valid]   += tchp[valid]
-            tchp_count[wi][valid] += 1
+                tchp_sum   = np.zeros((52, nlat, nlon), dtype=np.float64)
+                tchp_count = np.zeros((52, nlat, nlon), dtype=np.int32)
+                eq_mask    = (lat_arr >= EQ_LAT_MIN) & (lat_arr <= EQ_LAT_MAX)
+                t_sum_eq   = np.zeros((52, ndep, nlon), dtype=np.float64)
+                t_count_eq = np.zeros((52, ndep, nlon), dtype=np.int32)
 
-            # Equatorial 5°S–5°N zonal-mean T.
-            if eq_mask.any():
-                t_eq = np.nanmean(t_arr[:, eq_mask, :], axis=1)  # (depth, lon)
-                valid_eq = ~np.isnan(t_eq)
-                t_sum_eq[wi][valid_eq] += t_eq[valid_eq]
-                t_count_eq[wi][valid_eq] += 1
+            times = ds["time"].values
+            for ti, t_val in enumerate(times):
+                valid_date = a3d._np_datetime_to_date(t_val)
+                if valid_date.year != year:
+                    # CMEMS occasionally returns the prior/following day
+                    # when a bucket straddles midnight UTC; drop anything
+                    # outside the year we're accumulating.
+                    continue
+                woy = _week_of_year(valid_date)
+                wi = woy - 1
 
-        state = xr.Dataset(
-            {
-                "tchp_sum":   (["week", "latitude", "longitude"], tchp_sum),
-                "tchp_count": (["week", "latitude", "longitude"], tchp_count),
-                "t_sum_eq":   (["week", "depth", "longitude"],    t_sum_eq),
-                "t_count_eq": (["week", "depth", "longitude"],    t_count_eq),
-            },
-            coords={
-                "week":      np.arange(1, 53, dtype=np.int16),
-                "latitude":  lat,
-                "longitude": lon_new,
-                "depth":     depth,
-            },
-            attrs={
-                "year": year,
-                "note": "Per-year TCHP + equatorial T sums for ARMOR3D climatology.",
-            },
-        )
-        out = _year_state_path(year)
-        enc = {
-            "tchp_sum":   {"zlib": True, "complevel": 4},
-            "tchp_count": {"zlib": True, "complevel": 4},
-            "t_sum_eq":   {"zlib": True, "complevel": 4},
-            "t_count_eq": {"zlib": True, "complevel": 4},
-        }
-        state.to_netcdf(out, encoding=enc)
-        return out
+                # Extract this timestep's T field and roll lon.
+                t_arr = t.isel(time=ti).values.astype(np.float32)
+                if lon_roll_shift:
+                    t_arr = np.concatenate(
+                        [t_arr[:, :, lon_roll_shift:],
+                         t_arr[:, :, :lon_roll_shift]],
+                        axis=2,
+                    )
+
+                # TCHP.
+                d26  = a3d.compute_d26(t_arr, depth_arr)
+                tchp = a3d.compute_tchp(t_arr, depth_arr, d26)  # (lat, lon)
+                # Treat NaNs as missing (don't pollute counts).
+                valid = ~np.isnan(tchp)
+                tchp_sum[wi][valid]   += tchp[valid]
+                tchp_count[wi][valid] += 1
+
+                # Equatorial 5°S–5°N zonal-mean T.
+                if eq_mask.any():
+                    t_eq = np.nanmean(t_arr[:, eq_mask, :], axis=1)  # (depth, lon)
+                    valid_eq = ~np.isnan(t_eq)
+                    t_sum_eq[wi][valid_eq] += t_eq[valid_eq]
+                    t_count_eq[wi][valid_eq] += 1
+
+    if tchp_sum is None:
+        # Should only happen if every raw_path was empty (never observed
+        # in practice; defensive).
+        raise RuntimeError(f"year {year}: processed zero timesteps")
+
+    state = xr.Dataset(
+        {
+            "tchp_sum":   (["week", "latitude", "longitude"], tchp_sum),
+            "tchp_count": (["week", "latitude", "longitude"], tchp_count),
+            "t_sum_eq":   (["week", "depth", "longitude"],    t_sum_eq),
+            "t_count_eq": (["week", "depth", "longitude"],    t_count_eq),
+        },
+        coords={
+            "week":      np.arange(1, 53, dtype=np.int16),
+            "latitude":  lat_arr,
+            "longitude": lon_new,
+            "depth":     depth_arr,
+        },
+        attrs={
+            "year": year,
+            "note": "Per-year TCHP + equatorial T sums for ARMOR3D climatology.",
+        },
+    )
+    out = _year_state_path(year)
+    enc = {
+        "tchp_sum":   {"zlib": True, "complevel": 4},
+        "tchp_count": {"zlib": True, "complevel": 4},
+        "t_sum_eq":   {"zlib": True, "complevel": 4},
+        "t_count_eq": {"zlib": True, "complevel": 4},
+    }
+    state.to_netcdf(out, encoding=enc)
+    return out
 
 
 def _combine_years(year_paths: list[Path], log: str) -> Path:
@@ -356,14 +431,22 @@ def main(argv: list[str] | None = None) -> int:
                 year_paths.append(state_path)
                 continue
             try:
-                raw = _fetch_year(year, log)
-                _process_year(year, raw, log)
+                raw_paths = _fetch_year(year, log)
+                if not raw_paths:
+                    print(f"{log}   year {year}: no weekly samples pulled — skipping.")
+                    continue
+                _process_year(year, raw_paths, log)
                 year_paths.append(state_path)
+                # Delete the per-week raw cache files once the year's
+                # accumulator is safely on disk. Keeps the Actions cache
+                # from growing unboundedly (each raw week ~200 MB ×
+                # 52 × 28 years would otherwise be >280 GB).
                 if not args.keep_raw:
-                    try:
-                        raw.unlink()
-                    except OSError:
-                        pass
+                    for rp in raw_paths:
+                        try:
+                            rp.unlink()
+                        except OSError:
+                            pass
             except Exception as exc:
                 print(f"{log}   ERR year {year}: {exc}")
                 # Allow one failure and continue — with 28 years we can
