@@ -29,7 +29,10 @@
     bg: '#131519', panel: '#1b1e24', border: '#2a2e36',
     fg: '#e8ebef', muted: '#9199a4',
     amber: '#ffb83a', cyan: '#5dd3ff', violet: '#c084fc',
-    land: '#20242b', coast: '#3a4050',
+    // Light-gray landmass fill with a brighter coast outline, so the
+    // continents read clearly against the dark-navy ocean backdrop
+    // without competing visually with the storm tracks.
+    land: '#6b7280', coast: '#9ca3af',
   };
   const CAT_COLORS = {
     TD: '#6bb7ff', TS: '#6ff0a0',
