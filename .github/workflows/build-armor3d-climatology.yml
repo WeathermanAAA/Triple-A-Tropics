@@ -80,17 +80,33 @@ jobs:
             armor3d-climo-state-v1-
 
       - name: Build climatology (resumable)
+        # Pass --time-budget-minutes so the Python script exits cleanly
+        # well before GitHub's step timeout kills it mid-write. We set
+        # it at 320 min, leaving ~20 min of headroom for the sync +
+        # cache-save steps below to run on a quiescent filesystem.
         env:
           COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
           COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
         run: |
           set -eo pipefail
-          ARGS="--start-year ${{ inputs.start_year }} --end-year ${{ inputs.end_year }}"
+          ARGS="--start-year ${{ inputs.start_year }} --end-year ${{ inputs.end_year }} --time-budget-minutes 320"
           if [ "${{ inputs.combine_only }}" = "true" ]; then
             ARGS="$ARGS --combine-only"
           fi
           echo "Running: python build_armor3d_climatology.py $ARGS"
           python build_armor3d_climatology.py $ARGS
+
+      - name: Flush disk buffers before cache save
+        # Prior run's cache save failed with "file changed as we read it"
+        # because the Python process was still flushing writes when tar
+        # started archiving. With the time-budget flag above the script
+        # should exit well before any forced kill, but we also sync the
+        # filesystem and sleep briefly as a belt-and-suspenders so the
+        # cache-save step below sees a quiescent .armor3d_climo_state/.
+        if: always()
+        run: |
+          sync || true
+          sleep 5
 
       - name: Save per-year climo state to cache
         # always() so a timeout / interrupted run still persists
