@@ -95,6 +95,35 @@ EQ_LAT_MIN = -5.0
 EQ_LAT_MAX =  5.0
 
 
+# --- Time budget ------------------------------------------------------
+#
+# CI runners (GitHub Actions) enforce a hard per-step timeout that kills
+# the process mid-write — which in turn corrupts any `_raw_*.nc` file
+# that xarray was still flushing to disk and leaves tar unable to read
+# the .armor3d_climo_state/ directory for the cache-save step. To avoid
+# that, we track a wall-clock deadline and exit *cleanly* once we're
+# within the safety margin. This way the last week we fetched is
+# complete on disk, the OS has time to sync buffers, and the Actions
+# cache saves successfully so the next run can resume.
+#
+# Both values are set from main() based on the --time-budget-minutes
+# flag. A None deadline means "no budget, run until finished".
+
+_TIME_BUDGET_DEADLINE: float | None = None
+
+
+def _budget_exhausted() -> bool:
+    """Has the wall-clock deadline passed?"""
+    return (_TIME_BUDGET_DEADLINE is not None
+            and time.monotonic() >= _TIME_BUDGET_DEADLINE)
+
+
+def _budget_remaining_s() -> float | None:
+    if _TIME_BUDGET_DEADLINE is None:
+        return None
+    return max(0.0, _TIME_BUDGET_DEADLINE - time.monotonic())
+
+
 # -- Helpers ------------------------------------------------------------
 
 
@@ -127,6 +156,31 @@ def _raw_week_path(year: int, week: int) -> Path:
     return STATE_DIR / f"_raw_{year}_w{week:02d}.nc"
 
 
+def _purge_partial_raw_files(log: str) -> None:
+    """Remove any `_raw_*.nc` file that can't be opened by xarray.
+
+    Runs at script startup. If a prior run was force-killed mid-
+    download, the partial NetCDF file on disk will look size-nonzero
+    but fail to open. Leaving it around would make _fetch_year skip
+    that week (it only checks existence + size > 0) and then
+    _process_year would crash trying to read it. We'd rather detect
+    and re-fetch it now."""
+    partial = 0
+    for p in sorted(STATE_DIR.glob("_raw_*.nc")):
+        try:
+            with xr.open_dataset(p) as _:
+                pass
+        except Exception:
+            print(f"{log}   cleanup: removing partial {p.name}")
+            try:
+                p.unlink()
+                partial += 1
+            except OSError:
+                pass
+    if partial:
+        print(f"{log}   cleanup: removed {partial} partial raw file(s).")
+
+
 def _fetch_year(
     year: int, log: str,
 ) -> list[Path]:
@@ -150,13 +204,26 @@ def _fetch_year(
         if out.exists() and out.stat().st_size > 0:
             paths.append(out)
             continue
+
+        # Honor the CI time budget: if we're past the deadline, stop
+        # *before* starting another weekly download. Returning here
+        # leaves the disk quiescent and lets the cache-save step
+        # archive `.armor3d_climo_state/` cleanly. The weeks we already
+        # finished are on disk and will be picked up on the next run.
+        if _budget_exhausted():
+            print(f"{log}   TIME BUDGET EXHAUSTED at {year} week {week:02d} — "
+                  f"stopping cleanly so cache save can succeed.")
+            return paths
+
         sample = _doy_for_week(year, week)
         # Week-52 DOY 4 = DOY 361; safely inside every calendar year, so
         # no overflow guard needed. Leap years still map DOY 1..366 → 52
         # buckets via _week_of_year's clip.
         start = dt.datetime.combine(sample, dt.time.min)
         end   = dt.datetime.combine(sample, dt.time.max)
-        print(f"{log}   {year} week {week:02d} ({sample.isoformat()})…")
+        remaining = _budget_remaining_s()
+        suffix = f" (budget {remaining/60:.1f} min left)" if remaining is not None else ""
+        print(f"{log}   {year} week {week:02d} ({sample.isoformat()}){suffix}…")
         try:
             a3d._cmems_subset(
                 dataset_id=a3d.ARMOR3D_MY_DATASET,
@@ -174,6 +241,13 @@ def _fetch_year(
             # averages across 28 years, so one missing week/year just
             # reduces that WOY bucket's sample count by ~3%.
             print(f"{log}   WARN {year} week {week:02d} failed: {exc}")
+            # If the week file partially wrote before the exception,
+            # remove it so a retry (this run or next) sees a clean slate.
+            if out.exists() and out.stat().st_size == 0:
+                try:
+                    out.unlink()
+                except OSError:
+                    pass
             continue
     return paths
 
@@ -409,10 +483,35 @@ def main(argv: list[str] | None = None) -> int:
         "--keep-raw", action="store_true",
         help="Don't delete the raw CMEMS download after processing a year.",
     )
+    parser.add_argument(
+        "--time-budget-minutes", type=float, default=None,
+        help=(
+            "Wall-clock budget in minutes. When elapsed, the script stops "
+            "cleanly between weekly downloads (so the last week on disk is "
+            "complete) and exits 0. Used in CI to finish before GitHub's "
+            "hard step timeout kills the process mid-write. Default: no "
+            "budget (run until all years are done)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     log = "[armor3d-climo]"
     print(f"{log} target baseline: {args.start_year}..{args.end_year}")
+
+    # Arm the time budget. `time.monotonic()` + `time.sleep` are the only
+    # two clock calls we make after this; both are monotonic-safe so a
+    # mid-run NTP correction can't shift the deadline.
+    global _TIME_BUDGET_DEADLINE
+    if args.time_budget_minutes is not None:
+        _TIME_BUDGET_DEADLINE = time.monotonic() + args.time_budget_minutes * 60.0
+        print(f"{log} time budget: {args.time_budget_minutes:.1f} min — "
+              f"script will exit cleanly at deadline.")
+
+    # Defensive cleanup: a previous run may have left a partial
+    # `_raw_YYYY_wNN.nc` on disk if the process was force-killed mid-
+    # download. Any file that xarray can't open is deleted now so the
+    # fetch loop re-downloads it cleanly.
+    _purge_partial_raw_files(log)
 
     year_paths: list[Path] = []
 
@@ -430,8 +529,29 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{log}   year {year}: state already exists — skipping.")
                 year_paths.append(state_path)
                 continue
+
+            # Check the budget at the year boundary too — if we're out
+            # of time we want to stop BEFORE starting a new year's
+            # worth of fetches (otherwise we'd partly fetch a year and
+            # then have to discard since year-state is only written
+            # when the full year's worth of weeks is processed).
+            if _budget_exhausted():
+                print(f"{log}   TIME BUDGET EXHAUSTED at year boundary ({year}) "
+                      f"— stopping so cache save can succeed.")
+                break
+
             try:
                 raw_paths = _fetch_year(year, log)
+
+                # If the budget ran out mid-year, `_fetch_year` returns
+                # only the weeks actually on disk so far. We don't
+                # process a partial year — just persist the per-week
+                # raws and let the next run finish the year.
+                if _budget_exhausted() and len(raw_paths) < 52:
+                    print(f"{log}   year {year}: partial ({len(raw_paths)}/52 "
+                          f"weeks) — not processing, will resume next run.")
+                    break
+
                 if not raw_paths:
                     print(f"{log}   year {year}: no weekly samples pulled — skipping.")
                     continue
@@ -439,8 +559,8 @@ def main(argv: list[str] | None = None) -> int:
                 year_paths.append(state_path)
                 # Delete the per-week raw cache files once the year's
                 # accumulator is safely on disk. Keeps the Actions cache
-                # from growing unboundedly (each raw week ~200 MB ×
-                # 52 × 28 years would otherwise be >280 GB).
+                # from growing unboundedly (each raw week ~150 MB ×
+                # 52 × 28 years would otherwise be >200 GB).
                 if not args.keep_raw:
                     for rp in raw_paths:
                         try:
