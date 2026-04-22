@@ -3058,9 +3058,11 @@
       108,
       109,
       110,
-      111
+      111,
+      112
     ],
     "values": [
+      0.0,
       0.0,
       0.0,
       0.0,
@@ -3915,7 +3917,7 @@
     ],
     "latest_value": 130.772
   },
-  "today_doy": 111,
+  "today_doy": 112,
   "rankings": [
     {
       "year": 1954,
@@ -3960,16 +3962,16 @@
       "rank": 6
     },
     {
-      "year": 1978,
-      "ytd": 1.69,
-      "total": 66.55,
+      "year": 2003,
+      "ytd": 2.47,
+      "total": 176.28,
       "current": false,
       "rank": 7
     },
     {
-      "year": 2003,
-      "ytd": 1.56,
-      "total": 176.28,
+      "year": 1978,
+      "ytd": 1.69,
+      "total": 66.55,
       "current": false,
       "rank": 8
     },
