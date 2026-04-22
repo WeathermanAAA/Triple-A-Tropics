@@ -56,15 +56,32 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install system libnetcdf / libhdf5
+        run: |
+          # Ensure netCDF4 binds against the system HDF5 stack rather
+          # than a possibly-mismatched bundled copy — fixes SIGSEGV at
+          # import time we hit on the first two workflow runs.
+          sudo apt-get update
+          sudo apt-get install -y libnetcdf-dev libhdf5-dev
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # netCDF4 is required to read the CRW NetCDF files.
-          # netCDF4 is required to read the CRW NetCDF files. Pin
-          # numpy<2 because the netCDF4 wheel on PyPI is still built
-          # against numpy 1.x ABI; running against numpy 2.x segfaults
-          # during import (SIGSEGV / exit 139).
-          pip install "numpy<2" matplotlib netCDF4 xarray requests Pillow
+          # Pinned versions known-good together as of 2025-Q4. The
+          # default (unpinned) netCDF4 1.7.x wheels have segfaulted
+          # on ubuntu-latest runners during import; 1.6.5 is the last
+          # widely-stable release. Pin numpy 1.26.x for ABI match.
+          pip install "numpy==1.26.4" matplotlib "netCDF4==1.6.5" \
+                      xarray requests Pillow
+
+      - name: Smoke-test imports
+        run: |
+          # Fail fast if the Python stack segfaults — gives us a real
+          # traceback instead of the render step's blind exit 139.
+          python -X faulthandler -c "import netCDF4; print('netCDF4', netCDF4.__version__)"
+          python -X faulthandler -c "import generate_sst_plots; print('generate_sst_plots OK')"
+          python -X faulthandler -c "import generate_subsurface_plots; print('generate_subsurface_plots OK')"
+          python -X faulthandler -c "import generate_global_crw_anom_gif; print('generate_global_crw_anom_gif OK')"
 
       - name: Download Natural Earth basemaps
         run: |
@@ -84,11 +101,17 @@ jobs:
           done
 
       - name: Render Global CRW Anomaly GIF
+        env:
+          # Force unbuffered stdout/stderr so progress logs appear in
+          # real time in the Actions UI (and so any crash traceback
+          # isn't swallowed by the block buffer).
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
         run: |
           set -eo pipefail
           OUT="global_crw_anom_${{ inputs.start }}_to_${{ inputs.end }}.gif"
           echo "Output file: $OUT"
-          python generate_global_crw_anom_gif.py \
+          python -X faulthandler generate_global_crw_anom_gif.py \
             --start  "${{ inputs.start }}" \
             --end    "${{ inputs.end }}" \
             --fps    "${{ inputs.fps }}" \
