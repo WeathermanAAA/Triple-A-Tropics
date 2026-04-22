@@ -455,9 +455,15 @@ def _combine_years(year_paths: list[Path], log: str) -> Path:
     # file a handful of times ever, so the extra CPU cost is free.
     enc = {
         "tchp_climo": {"zlib": True, "complevel": 9,
-                       "dtype": "float16", "_FillValue": np.float16(np.nan)},
+                       "dtype": "int16",
+                       "scale_factor": np.float32(0.004),
+                       "add_offset":   np.float32(100.0),
+                       "_FillValue":   np.int16(-32768)},
         "t_climo_eq": {"zlib": True, "complevel": 9,
-                       "dtype": "float16", "_FillValue": np.float16(np.nan)},
+                       "dtype": "int16",
+                       "scale_factor": np.float32(0.001),
+                       "add_offset":   np.float32(15.0),
+                       "_FillValue":   np.int16(-32768)},
     }
     out_ds.to_netcdf(out_path, encoding=enc)
     size_mb = out_path.stat().st_size / (1024 * 1024)
