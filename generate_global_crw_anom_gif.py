@@ -81,16 +81,20 @@ SUBSAMPLE = 4
 FETCH_WORKERS = 10
 
 
-def _fetch_one_day(d: dt.date, log: str
-                   ) -> tuple[dt.date, np.ndarray | None,
-                              np.ndarray | None, np.ndarray | None]:
-    """Download the CRW SSTA NetCDF for one day and return the (anom,
-    lat, lon) grid — lat ascending, lon in 0–360 convention. Returns
-    (d, None, None, None) when the file isn't available yet (preliminary
-    latency gap, network blip, etc.) so we can skip that frame."""
-    p = gsp.fetch_crw_day(d, "ssta", log, verbose=False)
-    if p is None:
-        return d, None, None, None
+def _download_one_day(d: dt.date, log: str
+                      ) -> tuple[dt.date, Path | None]:
+    """Download the CRW SSTA NetCDF for one day. This is the ONLY
+    piece that runs inside the thread pool — we deliberately do NOT
+    open/read the NetCDF here because netCDF4/HDF5 is not fully
+    thread-safe and concurrent Dataset() opens can SIGSEGV on CI
+    runners. Read + subsample happens serially in main()."""
+    return d, gsp.fetch_crw_day(d, "ssta", log, verbose=False)
+
+
+def _read_and_subsample(p: Path, log: str, d: dt.date
+                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Serial NetCDF read + optional spatial subsample. Returns None on
+    any read error so one bad file doesn't tank the whole GIF."""
     try:
         data, lat, lon = gsp.read_crw_grid(
             p, "sea_surface_temperature_anomaly"
@@ -98,12 +102,12 @@ def _fetch_one_day(d: dt.date, log: str
     except Exception as e:  # noqa: BLE001
         print(f"{log}   ! {d} read error: {type(e).__name__}: {e}",
               file=sys.stderr)
-        return d, None, None, None
+        return None
     if SUBSAMPLE > 1:
         data = data[::SUBSAMPLE, ::SUBSAMPLE]
         lat = lat[::SUBSAMPLE]
         lon = lon[::SUBSAMPLE]
-    return d, data, lat, lon
+    return data, lat, lon
 
 
 def _render_frame(
@@ -216,36 +220,45 @@ def main(argv: list[str] | None = None) -> int:
     if countries is None and coast is None:
         print(f"{log} WARN: no basemap GeoJSON found — plots will have no coastlines")
 
-    # Parallel fetch first so render loop isn't blocked on network.
-    print(f"{log} fetching {len(dates)} CRW SSTA files ({FETCH_WORKERS} workers)…")
-    results: dict[dt.date, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    # Stage 1: parallel network download only (safe to thread — this
+    # is just requests.get + disk write). netCDF4 reads are strictly
+    # serial in stage 2 because HDF5 isn't fully thread-safe.
+    print(f"{log} downloading {len(dates)} CRW SSTA files "
+          f"({FETCH_WORKERS} workers)…", flush=True)
+    paths: dict[dt.date, Path] = {}
     missing: list[dt.date] = []
     with cf.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
-        futures = [pool.submit(_fetch_one_day, d, log) for d in dates]
+        futures = [pool.submit(_download_one_day, d, log) for d in dates]
         for fut in cf.as_completed(futures):
-            d, data, lat, lon = fut.result()
-            if data is None:
+            d, p = fut.result()
+            if p is None:
                 missing.append(d)
-                print(f"{log}   ✗ {d} (unavailable)")
+                print(f"{log}   ✗ {d} (unavailable)", flush=True)
             else:
-                results[d] = (data, lat, lon)
-    print(f"{log} fetched {len(results)}/{len(dates)} frames "
-          f"(missing: {len(missing)})")
+                paths[d] = p
+    print(f"{log} downloaded {len(paths)}/{len(dates)} files "
+          f"(missing: {len(missing)})", flush=True)
     if missing:
         print(f"{log} missing dates: "
               f"{', '.join(m.isoformat() for m in sorted(missing)[:10])}"
-              + (" …" if len(missing) > 10 else ""))
+              + (" …" if len(missing) > 10 else ""), flush=True)
 
-    if not results:
-        print(f"{log} no frames downloaded — exiting")
+    if not paths:
+        print(f"{log} no files downloaded — exiting", flush=True)
         return 1
 
-    # Render in chronological order so the GIF plays forward.
+    # Stage 2: serial NetCDF read + render, one date at a time.
+    # Reading + rendering + discarding frees each grid (~20 MB) before
+    # the next, so we don't hold all 91 grids in memory at once.
     frames: list[Image.Image] = []
-    ordered = [d for d in dates if d in results]
+    ordered = [d for d in dates if d in paths]
     for n, d in enumerate(ordered):
-        data, lat, lon = results[d]
-        print(f"{log}   rendering {d}  ({n + 1}/{len(ordered)})")
+        print(f"{log}   reading+rendering {d}  ({n + 1}/{len(ordered)})",
+              flush=True)
+        grid = _read_and_subsample(paths[d], log, d)
+        if grid is None:
+            continue
+        data, lat, lon = grid
         frames.append(_render_frame(data, lat, lon, d, countries, coast))
 
     if not frames:
