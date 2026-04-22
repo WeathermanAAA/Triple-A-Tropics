@@ -981,20 +981,41 @@ def main(argv: list[str] | None = None) -> int:
 
             # TCHP anomaly — skip if climo not built yet.
             if tchp_climo_slice is not None:
-                anom = (tchp - tchp_climo_slice).astype(np.float32)
-                out = ARMOR_DIR / f"{rkey}_tchp_anom.png"
-                if plot_tchp_anom(
-                    anom, lat, lon, extent, figsize,
-                    title=f"{label} · TCHP Anomaly",
-                    subtitle=(
-                        f"Valid: {date_label}  ·  ARMOR3D · "
-                        f"anomaly vs. 1993–2020 weekly climatology"
-                    ),
-                    countries=countries, coast=coast,
-                    out_path=out,
-                ):
-                    print(f"{log}   ✓ {out.name}")
-                    rendered.append(out.name)
+                # NRT data comes on the full ARMOR3D native grid
+                # (~-75..+75 lat, 1200 pts) while the climatology was
+                # built on -60..+60 only (LAT_MIN/MAX in
+                # build_armor3d_climatology.py -> 960 pts). Crop the
+                # NRT arrays to the climo's exact lat range so the
+                # shapes line up before subtraction.
+                climo_lat = climo_da["latitude"].values
+                eps = 1e-4
+                _mask = (
+                    (lat >= float(climo_lat.min()) - eps)
+                    & (lat <= float(climo_lat.max()) + eps)
+                )
+                tchp_crop = tchp[_mask, :]
+                anom_lat = lat[_mask]
+                if tchp_crop.shape != tchp_climo_slice.shape:
+                    print(
+                        f"{log}   WARN: anom shape mismatch "
+                        f"{tchp_crop.shape} vs {tchp_climo_slice.shape} "
+                        "-- skipping anomaly"
+                    )
+                else:
+                    anom = (tchp_crop - tchp_climo_slice).astype(np.float32)
+                    out = ARMOR_DIR / f"{rkey}_tchp_anom.png"
+                    if plot_tchp_anom(
+                        anom, anom_lat, lon, extent, figsize,
+                        title=f"{label} · TCHP Anomaly",
+                        subtitle=(
+                            f"Valid: {date_label}  ·  ARMOR3D · "
+                            f"anomaly vs. 1993-2020 weekly climatology"
+                        ),
+                        countries=countries, coast=coast,
+                        out_path=out,
+                    ):
+                        print(f"{log}   ✓ {out.name}")
+                        rendered.append(out.name)
 
     # 7) Cross-sections — 4 equatorial regions.
     if not args.maps_only:
