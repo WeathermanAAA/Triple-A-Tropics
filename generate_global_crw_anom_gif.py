@@ -158,7 +158,18 @@ def _render_frame(
     cb.outline.set_edgecolor(gsp.MUTED_COLOR)
     cb.outline.set_linewidth(0.4)
 
-    gsp._draw_watermark(ax)
+    # Watermark in the top-right, above the plot panel — sits at the
+    # same y as the title (1.07 in axes coords, which is inside the
+    # title band), right-aligned against the right edge of the axes so
+    # it doesn't cover any SST data. We deliberately don't call
+    # gsp._draw_watermark here because that helper places it at the
+    # bottom-right *inside* the plot, which is how the site's static
+    # SST plots want it — this one-off GIF wants it above instead.
+    ax.text(
+        1.0, 1.07, gsp.WATERMARK, transform=ax.transAxes,
+        ha="right", va="bottom", fontsize=12, fontweight="bold",
+        color=gsp.TEXT_COLOR, alpha=0.9,
+    )
     fig.subplots_adjust(left=0.05, right=0.89, top=0.86, bottom=0.08)
 
     buf = io.BytesIO()
