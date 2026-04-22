@@ -836,6 +836,14 @@ def plot_tchp_anom(
         pass
     gss._draw_basemap(ax, extent, countries, coast)
     gss._style_axes(ax, extent, title, subtitle)
+    # _style_axes sets the axes face to PANEL_COLOR (slightly darker
+    # than LAND_COLOR). For the anomaly plot that creates a visible
+    # seam at the +/-60 deg climatology lat band (outside the band we
+    # have no climo so pcolormesh draws nothing and the axes face
+    # shows through; inside the band our NaN mask paints LAND_COLOR
+    # via set_bad). Force the axes face to LAND_COLOR so land, masked
+    # ocean, and the poles all render as the same uniform navy.
+    ax.set_facecolor(gss.LAND_COLOR)
 
     cax = fig.add_axes([0.91, 0.18, 0.018, 0.64])
     cb = fig.colorbar(pcm, cax=cax, extend="both",
