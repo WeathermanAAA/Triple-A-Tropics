@@ -1002,7 +1002,20 @@ def main(argv: list[str] | None = None) -> int:
                         "-- skipping anomaly"
                     )
                 else:
-                    anom = (tchp_crop - tchp_climo_slice).astype(np.float32)
+                    # Mask to NaN where both NRT and climo show
+                    # essentially no TCHP -- land, polar water, cold
+                    # tongue areas without a 26C isotherm. Without
+                    # this, "0 - 0 = 0" paints the colormap's cream
+                    # zero-color straight across the continents and
+                    # obscures them. 1 kJ/cm^2 is well below any real
+                    # signal (active regions are 50+ kJ/cm^2).
+                    _near0 = 1.0
+                    _nosig = (
+                        (np.abs(tchp_crop) < _near0)
+                        & (np.abs(tchp_climo_slice) < _near0)
+                    )
+                    anom_raw = tchp_crop - tchp_climo_slice
+                    anom = np.where(_nosig, np.nan, anom_raw).astype(np.float32)
                     out = ARMOR_DIR / f"{rkey}_tchp_anom.png"
                     if plot_tchp_anom(
                         anom, anom_lat, lon, extent, figsize,
