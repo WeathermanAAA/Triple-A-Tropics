@@ -500,9 +500,24 @@ def _feature_polygons(feat: dict) -> list[list[list[tuple[float, float]]]]:
 
 
 def _draw_filled_land(ax, extent, countries) -> None:
-    """Fill country polygons with LAND_COLOR for a gray-land look on
-    small inset maps. Natural Earth ne_50m_admin_0_countries supplies the
-    polygons; the coast file is LineString-only."""
+    """Fill country polygons with LAND_COLOR for a gray-land look.
+    Natural Earth's ne_50m_admin_0_countries supplies the polygons
+    (Polygon / MultiPolygon); the coast file is LineString-only.
+
+    Dateline-safe at any width: we wrap lon into [0, 360] space when the
+    extent crosses the antimeridian, and draw a shifted copy for globe-
+    tropics panels that duplicate the leftmost lon sliver onto the right
+    edge. Natural Earth's country polygons are already split at the
+    dateline, so no bow-tie handling is needed.
+
+    Used on BOTH regional insets and global TCHP/D26/TCHP-anom maps,
+    because AOML and ARMOR3D subsurface grids carry 0.0 (not NaN) over
+    land. That means the colormap's .set_bad() never fires on land there,
+    and CMAP(0) == OCEAN_COLOR navy — so without this helper, land and
+    deep ocean render as the same color and continents disappear outside
+    the tropics. Drawing the polygons explicitly at zorder=2 (above
+    pcolormesh, below coastlines) gives the unified gray-land SST look.
+    """
     import matplotlib.patches as mpatches
     from matplotlib.path import Path as MplPath
 
@@ -677,6 +692,12 @@ def _plot_field(
         )
     except Exception:
         pass
+    # Overlay LAND_COLOR-filled country polygons so continents match the
+    # unified SST/CRW/OISST look. AOML and ARMOR3D TCHP/D26 grids carry
+    # 0.0 (not NaN) over land, so CMAP.set_bad() never fires — without
+    # this overlay, land and deep/cold ocean render as the same dark navy
+    # (#12253f) and continents disappear outside the tropics.
+    _draw_filled_land(ax, extent, countries)
     _draw_basemap(ax, extent, countries, coast)
     _style_axes(ax, extent, title, subtitle)
     _add_colorbar(fig, pcm, cbar_label, ticks=cbar_ticks, extend="max")

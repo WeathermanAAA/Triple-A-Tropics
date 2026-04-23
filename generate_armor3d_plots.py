@@ -924,6 +924,13 @@ def plot_tchp_anom(
         )
     except Exception:
         pass
+    # Overlay LAND_COLOR-filled country polygons so continents match the
+    # unified SST look. The anomaly field can be 0.0 (or finite near-zero)
+    # over land in regions where the climatology and the live field both
+    # happen to agree, so CMAP.set_bad() can't be relied on to paint land
+    # gray everywhere. Draw the gray polygons explicitly — same pattern as
+    # gss._plot_field uses for TCHP/D26.
+    gss._draw_filled_land(ax, extent, countries)
     gss._draw_basemap(ax, extent, countries, coast)
     gss._style_axes(ax, extent, title, subtitle)
     # _style_axes sets the axes face to PANEL_COLOR (slightly darker
