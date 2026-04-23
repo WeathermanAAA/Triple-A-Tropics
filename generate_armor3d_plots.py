@@ -649,26 +649,63 @@ def plot_cross_section(
 
     # --- Figure layout: title band | inset map | cross-section -------
     # Three vertical bands so nothing overlaps:
-    #   * top ~14% is a dedicated title/subtitle band (no axes in it)
-    #   * next ~24% is the inset map, drawn at aspect="equal" so the
-    #     continents never look squished no matter how wide the lon
-    #     window is
-    #   * remaining ~62% is the cross-section panel
-    fig = plt.figure(figsize=region["figsize"], facecolor=gss.BG_COLOR)
+    #   * top title/subtitle band (no axes in it)
+    #   * inset map drawn at aspect="equal" so geography is never
+    #     horizontally stretched — previously aspect="auto" squished the
+    #     Atlantic and Indian Ocean insets because their lon spans are
+    #     narrow relative to the panel width.
+    #   * cross-section panel, fixed ~3.6" tall so every variant renders
+    #     the data at the same vertical weight.
+    #
+    # The figure height is computed dynamically: given the main panel
+    # width in inches, an aspect="equal" inset needs a height equal to
+    #   main_w_in × (lat_span_padded / lon_span).
+    # We compute that, clamp it to sane bounds, and size the figure and
+    # gridspec row heights accordingly.
+    fig_w      = region["figsize"][0]
+    left_frac  = 0.06
+    right_frac = 0.93
+    main_w_in  = fig_w * (right_frac - left_frac)
+
+    lat_span_pad = (lat_max - lat_min) + 20   # with ±10° padding
+    lon_span     = lon_max - lon_min
+    # Geographic-accurate inset height (aspect="equal").
+    inset_h_in   = main_w_in * (lat_span_pad / lon_span)
+    # Clamp so global-tropics doesn't produce a 1" strip and narrow
+    # Atlantic/Indian doesn't produce a 5" square.
+    inset_h_in   = max(1.1, min(inset_h_in, 3.2))
+
+    cs_h_in      = 3.6     # cross-section panel height (constant)
+    top_m_in     = 1.00    # title band + top padding
+    bot_m_in     = 0.60    # bottom margin for xlabels
+    hspace_in    = 0.35    # gap between inset and cross-section
+
+    fig_h  = top_m_in + inset_h_in + hspace_in + cs_h_in + bot_m_in
+    top    = 1.0 - top_m_in / fig_h
+    bottom = bot_m_in / fig_h
+    # matplotlib's hspace is a fraction of the MEAN axes height
+    hspace = hspace_in / ((inset_h_in + cs_h_in) / 2.0)
+
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor=gss.BG_COLOR)
     gs = fig.add_gridspec(
-        nrows=2, ncols=1, height_ratios=[1, 2.5],
-        left=0.06, right=0.93,
-        top=0.86, bottom=0.09, hspace=0.22,
+        nrows=2, ncols=1,
+        height_ratios=[inset_h_in, cs_h_in],
+        left=left_frac, right=right_frac,
+        top=top, bottom=bottom, hspace=hspace,
     )
     ax_map = fig.add_subplot(gs[0, 0])
     ax_cs  = fig.add_subplot(gs[1, 0])
 
-    # Inset: tight lat padding (±10°) so the highlighted 5°S–5°N band
-    # is visually meaningful. aspect="auto" makes the inset fill the full
-    # width of its gridspec cell so it matches the cross-section panel below.
+    # Inset: tight lat padding (±10°) so the 5°S–5°N band is visually
+    # meaningful. aspect="equal" preserves geography. The gridspec row
+    # height was sized above to exactly fit a geographically-accurate
+    # inset, so no horizontal letterboxing. Inset ocean color matches
+    # the unified OCEAN_COLOR used across all subsurface plots, and
+    # country borders are suppressed so filled gray land + white coast
+    # render cleanly — no more "line shit" from internal borders.
     ax_map.set_xlim(lon_min, lon_max)
     ax_map.set_ylim(lat_min - 10, lat_max + 10)
-    ax_map.set_aspect("auto")
+    ax_map.set_aspect("equal", adjustable="box")
     ax_map.set_facecolor(gss.OCEAN_COLOR)
     gss._draw_filled_land(
         ax_map,
@@ -678,10 +715,12 @@ def plot_cross_section(
     gss._draw_basemap(
         ax_map,
         (lon_min, lon_max, lat_min - 10, lat_max + 10),
-        countries, coast,
+        countries, coast, draw_borders=False,
     )
     # Shaded lat band so the viewer sees which slice was averaged.
-    ax_map.axhspan(lat_min, lat_max, color="#ffffff", alpha=0.15, zorder=4)
+    # Softened from 0.15 to 0.10 so the band is visible but not a
+    # distracting horizontal stripe across the basin.
+    ax_map.axhspan(lat_min, lat_max, color="#ffffff", alpha=0.10, zorder=4)
     ax_map.set_xticks([])
     ax_map.set_yticks([])
     for spine in ax_map.spines.values():
@@ -757,7 +796,21 @@ def plot_cross_section(
     ax_cs.xaxis.set_major_formatter(
         mticker.FuncFormatter(gss._lon_tick_label)
     )
-    ax_cs.set_xlim(lon_min, lon_max)
+    # Trim the east edge to the last column that actually has data at
+    # any depth. Over land (e.g. South America at the east edge of
+    # ENSO) the zonal-mean column is all NaN, and contourf rendered a
+    # thin dark stripe there because the OCEAN_COLOR facecolor showed
+    # through next to the deepest filled contour. Clipping xlim to the
+    # last valid lon removes the stripe without touching the data.
+    valid_any = np.any(np.isfinite(T_now_m), axis=0)
+    if valid_any.any():
+        east_valid_lon = float(lon_cs[np.where(valid_any)[0].max()])
+        west_valid_lon = float(lon_cs[np.where(valid_any)[0].min()])
+        east_clip = min(lon_max, east_valid_lon + 0.25)
+        west_clip = max(lon_min, west_valid_lon - 0.25)
+        ax_cs.set_xlim(west_clip, east_clip)
+    else:
+        ax_cs.set_xlim(lon_min, lon_max)
     ax_cs.set_ylabel("Depth (m)", color=gss.TEXT_COLOR, fontsize=10)
     ax_cs.tick_params(colors=gss.MUTED_COLOR, labelsize=9)
     ax_cs.grid(True, linewidth=0.3, color="#2a3e5c", alpha=0.35, zorder=2)
