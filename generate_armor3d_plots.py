@@ -707,7 +707,9 @@ def plot_cross_section(
             LON2, DEPTH2, T_now_m, levels=cf_levels,
             cmap=CS_ABS_CMAP, norm=norm, extend="both", zorder=1,
         )
-    for coll in pcm.collections:
+    # matplotlib 3.8+ made QuadContourSet itself a Collection (no
+    # .collections list); fall back to that loop on older versions.
+    for coll in getattr(pcm, "collections", [pcm]):
         coll.set_edgecolor("face")
         coll.set_antialiased(True)
     ax_cs.invert_yaxis()
