@@ -528,13 +528,6 @@ def _draw_filled_land(ax, extent, countries) -> None:
         return
 
     lon_min, lon_max, lat_min, lat_max = extent
-    wraps_dateline = lon_max > 180
-
-    def _wrap_coord(x):
-        if wraps_dateline and x < 0:
-            return x + 360
-        return x
-
     def _add_poly(rings_xy, shift=0.0):
         outer = rings_xy[0]
         if not outer:
@@ -568,13 +561,17 @@ def _draw_filled_land(ax, extent, countries) -> None:
         )
         ax.add_patch(patch)
 
+    shifts = [0.0]
+    if lon_max > 180:
+        shifts.append(360.0)
+    if lon_max > 540:
+        shifts.append(720.0)
+    if lon_min < -180:
+        shifts.append(-360.0)
     for feat in countries.get("features", []):
         for poly in _feature_polygons(feat):
-            wrapped = [[(_wrap_coord(x), y) for (x, y) in ring]
-                       for ring in poly]
-            _add_poly(wrapped)
-            if lon_max > 360:
-                _add_poly(wrapped, shift=360.0)
+            for s in shifts:
+                _add_poly(poly, shift=s)
 
 
 def _lon_tick_label(x, _pos):
