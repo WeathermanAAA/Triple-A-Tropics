@@ -193,11 +193,12 @@ TCHP_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
         (1.00, "#67001d"),
     ],
 )
-# Paint NaN pixels (land + shallow-water gaps) with the same LAND_COLOR
-# the SST/CRW plots use, so the subsurface products visually match on
-# the site. Default behaviour would bleed through to the axes facecolor
-# (a slightly different navy), creating subtle land-fill mismatches.
-TCHP_ANOM_CMAP.set_bad(color=gss.LAND_COLOR, alpha=1.0)
+# Paint NaN pixels (land + no-climo ocean) with OCEAN_COLOR navy so
+# extratropical ocean matches the unified blue used across the AOML
+# TCHP, AOML D26, and ARMOR3D TCHP/D26 maps. Continents are drawn on
+# top by _draw_filled_land in plot_tchp_anom, so land still renders
+# gray even though set_bad is navy.
+TCHP_ANOM_CMAP.set_bad(color=gss.OCEAN_COLOR, alpha=1.0)
 
 # Cross-section temperature-anomaly colormap — matches the magenta/red/
 # blue style of the a-reference-site.com reference image.
@@ -934,13 +935,14 @@ def plot_tchp_anom(
     gss._draw_basemap(ax, extent, countries, coast)
     gss._style_axes(ax, extent, title, subtitle)
     # _style_axes sets the axes face to PANEL_COLOR (slightly darker
-    # than LAND_COLOR). For the anomaly plot that creates a visible
-    # seam at the +/-60 deg climatology lat band (outside the band we
+    # than OCEAN_COLOR). For the anomaly plot that creates a visible
+    # seam at the +/-60 deg climatology lat band: outside the band we
     # have no climo so pcolormesh draws nothing and the axes face
-    # shows through; inside the band our NaN mask paints LAND_COLOR
-    # via set_bad). Force the axes face to LAND_COLOR so land, masked
-    # ocean, and the poles all render as the same uniform navy.
-    ax.set_facecolor(gss.LAND_COLOR)
+    # shows through. Force the axes face to OCEAN_COLOR so no-climo
+    # ocean matches the extratropical ocean color used across the
+    # AOML/ARMOR3D TCHP/D26 maps. Land is drawn on top by
+    # _draw_filled_land so the gray-land story is preserved.
+    ax.set_facecolor(gss.OCEAN_COLOR)
 
     cax = fig.add_axes([0.91, 0.18, 0.018, 0.64])
     cb = fig.colorbar(pcm, cax=cax, extend="both",

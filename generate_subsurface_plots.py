@@ -341,10 +341,13 @@ def _d26_cmap() -> mcolors.LinearSegmentedColormap:
 
 CMAP_TCHP = _tchp_cmap()
 CMAP_D26 = _d26_cmap()
-# Land / NaN rendered as near-black so we don't need filled country
-# polygons (which break over dateline-crossing extents).
-CMAP_TCHP.set_bad(color="#5f6b7a", alpha=1.0)
-CMAP_D26.set_bad(color="#5f6b7a", alpha=1.0)
+# NaN pixels render as OCEAN_COLOR navy (#12253f), not LAND_COLOR gray.
+# This makes ARMOR3D's extratropical NaN ocean match AOML's extratropical
+# TCHP=0 ocean (which paints navy via CMAP(0)). Continents are drawn
+# separately via _draw_filled_land in _plot_field, so land still shows
+# gray on top of this navy fill.
+CMAP_TCHP.set_bad(color="#12253f", alpha=1.0)
+CMAP_D26.set_bad(color="#12253f", alpha=1.0)
 
 
 # --- Styling ------------------------------------------------------------
