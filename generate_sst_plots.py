@@ -673,8 +673,8 @@ CMAP_ANOM = _sst_anom_cmap()
 # NaN pixels (land, no-data) render as LAND_COLOR so we don't need to
 # draw filled country polygons — simpler, and avoids the dateline-wrap
 # rectangle bug on wide Pacific extents.
-CMAP_ACTUAL.set_bad(color="#0b1a30", alpha=1.0)
-CMAP_ANOM.set_bad(color="#0b1a30", alpha=1.0)
+CMAP_ACTUAL.set_bad(color="#8e99a8", alpha=1.0)
+CMAP_ANOM.set_bad(color="#8e99a8", alpha=1.0)
 
 
 # --- Plotting -----------------------------------------------------------
@@ -682,7 +682,8 @@ CMAP_ANOM.set_bad(color="#0b1a30", alpha=1.0)
 # Plot background / foreground colors — match the site's dark theme.
 BG_COLOR = "#07101c"
 PANEL_COLOR = "#0a1324"
-LAND_COLOR = "#0b1a30"          # where sea isn't, show near-black land
+LAND_COLOR = "#8e99a8"          # neutral gray for all landmasses (unified)
+OCEAN_COLOR = "#12253f"         # unified inset/cross-section ocean blue
 COAST_COLOR = "#ffffff"
 BORDER_COLOR = "#ffffff"
 TEXT_COLOR = "#e5edf6"

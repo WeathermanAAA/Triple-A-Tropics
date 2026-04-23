@@ -664,40 +664,52 @@ def plot_cross_section(
     ax_cs  = fig.add_subplot(gs[1, 0])
 
     # Inset: tight lat padding (±10°) so the highlighted 5°S–5°N band
-    # is visually meaningful, and aspect="equal" so geography isn't
-    # distorted no matter the slot shape.
+    # is visually meaningful. aspect="auto" makes the inset fill the full
+    # width of its gridspec cell so it matches the cross-section panel below.
     ax_map.set_xlim(lon_min, lon_max)
     ax_map.set_ylim(lat_min - 10, lat_max + 10)
-    ax_map.set_aspect("equal", adjustable="box")
-    ax_map.set_facecolor(gss.PANEL_COLOR)
+    ax_map.set_aspect("auto")
+    ax_map.set_facecolor(gss.OCEAN_COLOR)
+    gss._draw_filled_land(
+        ax_map,
+        (lon_min, lon_max, lat_min - 10, lat_max + 10),
+        countries,
+    )
     gss._draw_basemap(
         ax_map,
         (lon_min, lon_max, lat_min - 10, lat_max + 10),
         countries, coast,
     )
     # Shaded lat band so the viewer sees which slice was averaged.
-    ax_map.axhspan(lat_min, lat_max, color="#ffffff", alpha=0.15, zorder=2)
+    ax_map.axhspan(lat_min, lat_max, color="#ffffff", alpha=0.15, zorder=4)
     ax_map.set_xticks([])
     ax_map.set_yticks([])
     for spine in ax_map.spines.values():
         spine.set_color(gss.MUTED_COLOR)
         spine.set_linewidth(0.4)
 
-    # Main cross-section: anomaly if we have a climatology, otherwise
-    # absolute temperature on a sequential colormap.
+    # contourf (not pcolormesh) for smooth bands and to cleanly skip NaN
+    # columns in the 5°S–5°N band near the Maritime Continent (which
+    # previously rendered as vertical stripes via .set_bad()).
     LON2, DEPTH2 = np.meshgrid(lon_cs, depth)
+    ax_cs.set_facecolor(gss.OCEAN_COLOR)
     if has_climo:
         norm = mcolors.Normalize(vmin=-CS_ANOM_VMAX, vmax=CS_ANOM_VMAX)
-        pcm = ax_cs.pcolormesh(
-            LON2, DEPTH2, anom, cmap=CS_ANOM_CMAP, norm=norm,
-            shading="auto", zorder=1, rasterized=True,
+        cf_levels = np.linspace(-CS_ANOM_VMAX, CS_ANOM_VMAX, 25)
+        pcm = ax_cs.contourf(
+            LON2, DEPTH2, anom, levels=cf_levels,
+            cmap=CS_ANOM_CMAP, norm=norm, extend="both", zorder=1,
         )
     else:
         norm = mcolors.Normalize(vmin=CS_ABS_VMIN, vmax=CS_ABS_VMAX)
-        pcm = ax_cs.pcolormesh(
-            LON2, DEPTH2, T_now_m, cmap=CS_ABS_CMAP, norm=norm,
-            shading="auto", zorder=1, rasterized=True,
+        cf_levels = np.linspace(CS_ABS_VMIN, CS_ABS_VMAX, 25)
+        pcm = ax_cs.contourf(
+            LON2, DEPTH2, T_now_m, levels=cf_levels,
+            cmap=CS_ABS_CMAP, norm=norm, extend="both", zorder=1,
         )
+    for coll in pcm.collections:
+        coll.set_edgecolor("face")
+        coll.set_antialiased(True)
     ax_cs.invert_yaxis()
     ax_cs.set_ylim(500, 0)
 
@@ -746,11 +758,12 @@ def plot_cross_section(
     ax_cs.set_xlim(lon_min, lon_max)
     ax_cs.set_ylabel("Depth (m)", color=gss.TEXT_COLOR, fontsize=10)
     ax_cs.tick_params(colors=gss.MUTED_COLOR, labelsize=9)
-    ax_cs.grid(True, linewidth=0.3, color="#2a3e5c", alpha=0.35, zorder=1)
+    ax_cs.grid(True, linewidth=0.3, color="#2a3e5c", alpha=0.35, zorder=2)
     for spine in ax_cs.spines.values():
         spine.set_color(gss.MUTED_COLOR)
         spine.set_linewidth(0.5)
-    ax_cs.set_facecolor(gss.PANEL_COLOR)
+    # facecolor is set before the contourf call so NaN gaps show through
+    # as OCEAN_COLOR — do not override it here.
 
     # Title block — same style as the maps. Wording switches with mode
     # so we never label raw T as an "anomaly".
