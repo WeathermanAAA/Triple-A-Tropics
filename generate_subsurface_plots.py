@@ -343,15 +343,16 @@ CMAP_TCHP = _tchp_cmap()
 CMAP_D26 = _d26_cmap()
 # Land / NaN rendered as near-black so we don't need filled country
 # polygons (which break over dateline-crossing extents).
-CMAP_TCHP.set_bad(color="#0b1a30", alpha=1.0)
-CMAP_D26.set_bad(color="#0b1a30", alpha=1.0)
+CMAP_TCHP.set_bad(color="#8e99a8", alpha=1.0)
+CMAP_D26.set_bad(color="#8e99a8", alpha=1.0)
 
 
 # --- Styling ------------------------------------------------------------
 
 BG_COLOR = "#07101c"
 PANEL_COLOR = "#0a1324"
-LAND_COLOR = "#0b1a30"
+LAND_COLOR = "#8e99a8"         # unified neutral gray for all landmasses
+OCEAN_COLOR = "#12253f"        # unified blue for subsurface ocean panels
 COAST_COLOR = "#ffffff"
 BORDER_COLOR = "#ffffff"
 TEXT_COLOR = "#e5edf6"
@@ -477,6 +478,82 @@ def _draw_basemap(ax, extent, countries, coast) -> None:
         if wraps_globe:
             _draw_feature_lines(coast.get("features", []),
                                 COAST_COLOR, 0.8, 3, shift=360.0)
+
+
+def _feature_polygons(feat: dict) -> list[list[list[tuple[float, float]]]]:
+    """Return a list of polygons (each a list of rings) from a GeoJSON
+    feature. Non-polygon geometries are ignored."""
+    geom = feat.get("geometry") or {}
+    t = geom.get("type")
+    out: list[list[list[tuple[float, float]]]] = []
+    if t == "Polygon":
+        rings = [[(p[0], p[1]) for p in ring] for ring in geom["coordinates"]]
+        out.append(rings)
+    elif t == "MultiPolygon":
+        for poly in geom["coordinates"]:
+            rings = [[(p[0], p[1]) for p in ring] for ring in poly]
+            out.append(rings)
+    return out
+
+
+def _draw_filled_land(ax, extent, countries) -> None:
+    """Fill country polygons with LAND_COLOR for a gray-land look on
+    small inset maps. Natural Earth ne_50m_admin_0_countries supplies the
+    polygons; the coast file is LineString-only."""
+    import matplotlib.patches as mpatches
+    from matplotlib.path import Path as MplPath
+
+    if not countries:
+        return
+
+    lon_min, lon_max, lat_min, lat_max = extent
+    wraps_dateline = lon_max > 180
+
+    def _wrap_coord(x):
+        if wraps_dateline and x < 0:
+            return x + 360
+        return x
+
+    def _add_poly(rings_xy, shift=0.0):
+        outer = rings_xy[0]
+        if not outer:
+            return
+        xs = [p[0] + shift for p in outer]
+        ys = [p[1] for p in outer]
+        if max(ys) < lat_min or min(ys) > lat_max:
+            return
+        if max(xs) < lon_min or min(xs) > lon_max:
+            return
+        verts: list[tuple[float, float]] = []
+        codes: list[int] = []
+        for ring in rings_xy:
+            if len(ring) < 3:
+                continue
+            ring_xs = [p[0] + shift for p in ring]
+            ring_ys = [p[1] for p in ring]
+            verts.append((ring_xs[0], ring_ys[0]))
+            codes.append(MplPath.MOVETO)
+            for x, y in zip(ring_xs[1:], ring_ys[1:]):
+                verts.append((x, y))
+                codes.append(MplPath.LINETO)
+            verts.append((ring_xs[0], ring_ys[0]))
+            codes.append(MplPath.CLOSEPOLY)
+        if not verts:
+            return
+        path = MplPath(verts, codes)
+        patch = mpatches.PathPatch(
+            path, facecolor=LAND_COLOR, edgecolor="none",
+            zorder=2, linewidth=0,
+        )
+        ax.add_patch(patch)
+
+    for feat in countries.get("features", []):
+        for poly in _feature_polygons(feat):
+            wrapped = [[(_wrap_coord(x), y) for (x, y) in ring]
+                       for ring in poly]
+            _add_poly(wrapped)
+            if lon_max > 360:
+                _add_poly(wrapped, shift=360.0)
 
 
 def _lon_tick_label(x, _pos):
