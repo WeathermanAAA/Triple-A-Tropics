@@ -301,7 +301,7 @@ REGIONS: dict[str, dict] = {
 
 def _tchp_cmap() -> mcolors.LinearSegmentedColormap:
     stops = [
-        (0.00,  "#0a0b2e"),   # near-black indigo (0)
+        (0.00,  "#12253f"),   # unified OCEAN_COLOR at zero
         (0.06,  "#1b2b7a"),   # deep blue (~12)
         (0.10,  "#2459c0"),   # blue (~20) — just above 16 threshold
         (0.22,  "#2896dc"),   # sky (~44)
@@ -323,7 +323,7 @@ def _d26_cmap() -> mcolors.LinearSegmentedColormap:
     """D26 depth (0–200 m). Shallow = cool pastels, deep = warm saturated
     colors. Reads intuitively as "more warm-water buffer = more fuel"."""
     stops = [
-        (0.00,  "#05162d"),   # near-black navy (0 m)
+        (0.00,  "#12253f"),   # unified OCEAN_COLOR at zero
         (0.07,  "#102c5b"),   # deep navy (~14 m)
         (0.15,  "#1a51a3"),   # royal blue (~30 m)
         (0.25,  "#2d8fd6"),   # bright blue (~50 m)
@@ -343,15 +343,15 @@ CMAP_TCHP = _tchp_cmap()
 CMAP_D26 = _d26_cmap()
 # Land / NaN rendered as near-black so we don't need filled country
 # polygons (which break over dateline-crossing extents).
-CMAP_TCHP.set_bad(color="#8e99a8", alpha=1.0)
-CMAP_D26.set_bad(color="#8e99a8", alpha=1.0)
+CMAP_TCHP.set_bad(color="#5f6b7a", alpha=1.0)
+CMAP_D26.set_bad(color="#5f6b7a", alpha=1.0)
 
 
 # --- Styling ------------------------------------------------------------
 
 BG_COLOR = "#07101c"
 PANEL_COLOR = "#0a1324"
-LAND_COLOR = "#8e99a8"         # unified neutral gray for all landmasses
+LAND_COLOR = "#5f6b7a"         # unified neutral gray for all landmasses
 OCEAN_COLOR = "#12253f"        # unified blue for subsurface ocean panels
 COAST_COLOR = "#ffffff"
 BORDER_COLOR = "#ffffff"
@@ -428,10 +428,13 @@ def _subset_to_extent(data, lat, lon, extent):
     )
 
 
-def _draw_basemap(ax, extent, countries, coast) -> None:
+def _draw_basemap(ax, extent, countries, coast,
+                  draw_borders: bool = True) -> None:
     """Draw coastline + country border LINES only. Same rationale as
     generate_sst_plots.py: filled country polygons break over the
-    dateline."""
+    dateline. Pass ``draw_borders=False`` on small inset maps where
+    filled land + coastline is enough info and country borders just
+    add visual clutter."""
     lon_min, lon_max, lat_min, lat_max = extent
     wraps_dateline = lon_max > 180
     wraps_globe = lon_max > 360
@@ -466,7 +469,7 @@ def _draw_basemap(ax, extent, countries, coast) -> None:
                             color=color, linewidth=linewidth, zorder=zorder,
                             solid_capstyle="round", solid_joinstyle="round")
 
-    if countries:
+    if countries and draw_borders:
         _draw_feature_lines(countries.get("features", []),
                             BORDER_COLOR, 0.7, 3)
         if wraps_globe:
