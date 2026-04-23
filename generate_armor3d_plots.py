@@ -650,18 +650,15 @@ def plot_cross_section(
     # --- Figure layout: title band | inset map | cross-section -------
     # Three vertical bands so nothing overlaps:
     #   * top title/subtitle band (no axes in it)
-    #   * inset map drawn at aspect="equal" so geography is never
-    #     horizontally stretched — previously aspect="auto" squished the
-    #     Atlantic and Indian Ocean insets because their lon spans are
-    #     narrow relative to the panel width.
+    #   * inset map, sized so the gridspec row's aspect ratio matches
+    #     the geography (lat_span_padded / lon_span). Because the row
+    #     itself has the right shape, the inset axes can use the default
+    #     aspect="auto" and still render geographically accurately —
+    #     this avoids the adjustable="box" bug where matplotlib shrank
+    #     the axes to enforce aspect="equal" and let the figure BG bleed
+    #     through on the sides, visually inverting land/ocean colors.
     #   * cross-section panel, fixed ~3.6" tall so every variant renders
     #     the data at the same vertical weight.
-    #
-    # The figure height is computed dynamically: given the main panel
-    # width in inches, an aspect="equal" inset needs a height equal to
-    #   main_w_in × (lat_span_padded / lon_span).
-    # We compute that, clamp it to sane bounds, and size the figure and
-    # gridspec row heights accordingly.
     fig_w      = region["figsize"][0]
     left_frac  = 0.06
     right_frac = 0.93
@@ -669,7 +666,7 @@ def plot_cross_section(
 
     lat_span_pad = (lat_max - lat_min) + 20   # with ±10° padding
     lon_span     = lon_max - lon_min
-    # Geographic-accurate inset height (aspect="equal").
+    # Geographically-faithful inset height.
     inset_h_in   = main_w_in * (lat_span_pad / lon_span)
     # Clamp so global-tropics doesn't produce a 1" strip and narrow
     # Atlantic/Indian doesn't produce a 5" square.
@@ -696,30 +693,55 @@ def plot_cross_section(
     ax_map = fig.add_subplot(gs[0, 0])
     ax_cs  = fig.add_subplot(gs[1, 0])
 
-    # Inset: tight lat padding (±10°) so the 5°S–5°N band is visually
-    # meaningful. aspect="equal" preserves geography. The gridspec row
-    # height was sized above to exactly fit a geographically-accurate
-    # inset, so no horizontal letterboxing. Inset ocean color matches
-    # the unified OCEAN_COLOR used across all subsurface plots, and
-    # country borders are suppressed so filled gray land + white coast
-    # render cleanly — no more "line shit" from internal borders.
+    # --- Inset rendering: mirror the SST/CRW/OISST style ------------------
+    # generate_sst_plots.py gets its "perfect" look by letting the colormap's
+    # set_bad() paint NaN pixels (land) gray and letting live data pixels
+    # paint ocean. No filled-polygon overlay, no dateline bow-ties. We do
+    # the same thing here using ARMOR3D's surface temperature as the
+    # ocean/land indicator: finite = ocean, NaN = land.
+    #
+    # This replaces the earlier _draw_filled_land path, which painted a
+    # filled country-polygon layer on top of a solid OCEAN_COLOR facecolor
+    # — that combination was rendering inverted (ocean gray, land dark)
+    # because aspect="equal", adjustable="box" was shrinking the axes off
+    # the gridspec cell and letting BG_COLOR bleed through where land
+    # should have been.
+    lat_inset_mask = (lat >= lat_min - 10) & (lat <= lat_max + 10)
+    lat_inset      = lat[lat_inset_mask]
+    lon_inset      = lon_cs
+    # Surface (depth index 0) zonal slice, masked to the padded lat/lon
+    # window. t_w already has the lon-wrap handling applied above.
+    surf_inset     = t_w[0][np.ix_(lat_inset_mask, lon_mask)]
+    # Uniform ocean display: finite -> 1.0 (OCEAN_COLOR), NaN -> NaN
+    # (LAND_COLOR via set_bad). One listed color == flat ocean fill.
+    ocean_field    = np.where(np.isfinite(surf_inset), 1.0, np.nan)
+
+    inset_cmap = mcolors.ListedColormap([gss.OCEAN_COLOR])
+    inset_cmap.set_bad(color=gss.LAND_COLOR, alpha=1.0)
+
     ax_map.set_xlim(lon_min, lon_max)
     ax_map.set_ylim(lat_min - 10, lat_max + 10)
-    ax_map.set_aspect("equal", adjustable="box")
-    ax_map.set_facecolor(gss.OCEAN_COLOR)
-    gss._draw_filled_land(
-        ax_map,
-        (lon_min, lon_max, lat_min - 10, lat_max + 10),
-        countries,
-    )
+    # aspect="auto" — the gridspec row was sized above to match geography
+    # exactly, so auto is what we want. aspect="equal" with adjustable=
+    # "box" would re-shrink the axes and re-expose BG_COLOR.
+    ax_map.set_aspect("auto")
+    ax_map.set_facecolor(gss.LAND_COLOR)  # fallback if a pixel somehow misses
+
+    if lon_inset.size and lat_inset.size:
+        LON_I, LAT_I = np.meshgrid(lon_inset, lat_inset)
+        ax_map.pcolormesh(
+            LON_I, LAT_I, ocean_field, cmap=inset_cmap,
+            vmin=0.9, vmax=1.1, shading="auto",
+            zorder=1, rasterized=True,
+        )
+    # White coastline on top — matches SST. Country borders stay off
+    # because inset is too small to read them cleanly.
     gss._draw_basemap(
         ax_map,
         (lon_min, lon_max, lat_min - 10, lat_max + 10),
         countries, coast, draw_borders=False,
     )
     # Shaded lat band so the viewer sees which slice was averaged.
-    # Softened from 0.15 to 0.10 so the band is visible but not a
-    # distracting horizontal stripe across the basin.
     ax_map.axhspan(lat_min, lat_max, color="#ffffff", alpha=0.10, zorder=4)
     ax_map.set_xticks([])
     ax_map.set_yticks([])
