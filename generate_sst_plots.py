@@ -961,6 +961,19 @@ def _labels_path(p: Path) -> Path:
     return p.with_name(p.stem + "_labels" + p.suffix)
 
 
+def draw_integer_degree_contours(ax, LON2, LAT2, field, zorder: float = 1.5):
+    """Thin black integer-degree contour overlay. Used by plot_actual and
+    by generate_sst_animations._render_frame so animator frames match the
+    static plot's line style exactly — any tweak here propagates to both."""
+    try:
+        ax.contour(
+            LON2, LAT2, field, levels=np.arange(0, 33, 1),
+            colors="#000000", linewidths=0.25, alpha=0.5, zorder=zorder,
+        )
+    except Exception:
+        pass
+
+
 def plot_actual(
     sst_today, lat, lon, extent, figsize, title, subtitle,
     countries, coast, out_path: Path,
@@ -982,13 +995,7 @@ def plot_actual(
         shading="auto", zorder=1, rasterized=True,
     )
     # Thin black contour lines at every integer degree (always shown).
-    try:
-        ax.contour(
-            LON2, LAT2, sub, levels=np.arange(0, 33, 1),
-            colors="#000000", linewidths=0.25, alpha=0.5, zorder=1.5,
-        )
-    except Exception:
-        pass
+    draw_integer_degree_contours(ax, LON2, LAT2, sub)
     _draw_basemap(ax, extent, countries, coast)
     _style_axes(ax, extent, title, subtitle)
     _add_colorbar(fig, pcm, "Sea-surface temperature (°C)",
