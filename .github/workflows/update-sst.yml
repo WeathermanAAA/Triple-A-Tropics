@@ -72,8 +72,19 @@ jobs:
       # (region × product) — the rest are reused from the cache below.
       #
       # MP4s land on the orphan `mp4-artifacts` branch (see the push
-      # step further down), NOT on main. ffmpeg is preinstalled on
-      # ubuntu-latest so no extra apt step is needed.
+      # step further down), NOT on main.
+
+      - name: Install ffmpeg
+        # ubuntu-latest does NOT ship ffmpeg in its base image (this
+        # changed at some point — an earlier version of this workflow
+        # assumed it was preinstalled and blew up at the encode step
+        # after rendering 6,480 frames). Verify it landed on PATH so
+        # we fail fast here rather than ~90 min later.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
 
       - name: Restore animation frame cache
         # Monthly key so the cache rotates and prunes itself. The
@@ -91,7 +102,7 @@ jobs:
         # Cold start (empty cache) takes ~90–120 min: ~6,500 frame
         # renders at ~1 s each plus h.264 encode for 72 MP4s. Warm
         # runs do 72 new frames + 72 re-encodes ≈ 5–8 min total.
-        # ffmpeg comes preinstalled on ubuntu-latest.
+        # ffmpeg is installed in the step above (NOT preinstalled).
         run: python generate_sst_animations.py
 
       # Save the cache regardless of whether the orphan-branch push

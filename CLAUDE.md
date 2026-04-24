@@ -49,6 +49,7 @@ Climatology bands are 1991–2020 (NHC standard); min/max envelope uses **all** 
 - **JTWC `metoc.navy.mil` 403s on GH Actions IPs.** ATCF fetches try in order: our Cloudflare Worker proxy → natyphoon.top mirror → JTWC. The proxy is the primary — do not remove it.
 - **NHC `ftp.nhc.noaa.gov/atcf/btk/`** is always reachable.
 - **Chart HTML is inlined in a `HTML_TEMPLATE` string** inside each generator — no CDN deps so iframes work standalone. Don't introduce Plotly/D3/bundlers.
+- **GitHub Actions `ubuntu-latest` does NOT ship ffmpeg** — workflows that need it must `apt-get install ffmpeg` explicitly (and `ffmpeg -version` after, to fail fast on PATH issues rather than mid-encode).
 
 ## Common commands
 
