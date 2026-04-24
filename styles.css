@@ -732,6 +732,105 @@ footer {
   .anim-scrub-wrap { flex-direction: column; align-items: stretch; gap: 4px; }
 }
 
+/* ---- Unified SST static-plot widget (sst/index.html) ---- */
+/* Uses the same visual vocabulary as .pa-* (product animator) so both
+   widgets on the same page look like siblings. Differences are
+   intentional: static has tab-style variants (like the old per-section
+   layout) and checkbox toggles, no video controls. */
+.sw-head {
+  margin: 0 auto 10px;
+  max-width: 1180px;
+  color: var(--muted);
+}
+.sw-subtitle {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.sw-meta {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sw-controls {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  max-width: 1180px;
+  margin: 0 auto 10px;
+}
+.sw-ctrl {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 10px 4px 12px;
+}
+.sw-ctrl span {
+  color: var(--muted);
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.sw-select {
+  background: transparent;
+  color: var(--fg);
+  border: 0; outline: 0;
+  font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px; font-weight: 600;
+  padding: 4px 22px 4px 4px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='%238ea2bd'><path d='M6 8 0 0h12z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  background-size: 9px;
+}
+.sw-select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
+.sw-select option { background: var(--panel); color: var(--fg); }
+.sw-select optgroup { background: var(--panel); color: var(--fg); font-weight: 700; }
+.sw-tabs {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  max-width: 1180px;
+  margin: 0 auto 10px;
+}
+.sw-tabs[hidden] { display: none; }
+.sw-tabs a {
+  padding: 6px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.3px;
+  text-decoration: none;
+}
+.sw-tabs a:hover { color: var(--fg); border-color: var(--accent-2); }
+.sw-tabs a.active { color: var(--fg); border-color: var(--accent-2); background: var(--bg); }
+.sw-toggles {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  max-width: 1180px;
+  margin: 0 auto 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sw-toggle[hidden] { display: none; }
+.sw-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+}
+.sw-toggle input[type="checkbox"] {
+  accent-color: var(--accent-2);
+}
+.sw-image { width: 100%; height: auto; display: block; }
+.sw-caption { color: var(--muted); font-size: 13px; margin-top: 8px; line-height: 1.5; }
+.sw-error {
+  max-width: 1180px; margin: 0 auto;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
 /* ---- Product MP4 animator widget (sst/, subsurface/, armor3d/) ---- */
 .product-animator {
   max-width: 1180px;
