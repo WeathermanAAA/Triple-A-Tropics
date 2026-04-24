@@ -851,3 +851,87 @@ footer {
   .pa-head { flex-direction: column; align-items: stretch; }
   .pa-controls { justify-content: flex-start; }
 }
+/* ---- Product animator: custom scrubber row ---- */
+/* Native <video controls> is removed so we can style the bar to match
+   the site theme. Play button + range + date label live on their own
+   row between the stage and the caption. */
+.pa-scrub-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.pa-play {
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.pa-play:hover { border-color: var(--accent-2); color: var(--accent-2); }
+.pa-play:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.pa-play:disabled { opacity: 0.45; cursor: not-allowed; }
+.pa-scrub {
+  flex: 1 1 auto;
+  appearance: none;
+  background: transparent;
+  height: 22px;
+  margin: 0;
+  cursor: pointer;
+}
+.pa-scrub:disabled { opacity: 0.45; cursor: not-allowed; }
+.pa-scrub::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+}
+.pa-scrub::-moz-range-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  border: 0;
+}
+.pa-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  background: var(--accent-2);
+  border: 0;
+  border-radius: 50%;
+  margin-top: -4px;
+  cursor: pointer;
+}
+.pa-scrub::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--accent-2);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.pa-scrub:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(79, 163, 255, 0.35);
+}
+.pa-scrub:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(79, 163, 255, 0.35);
+}
+.pa-date {
+  flex: 0 0 auto;
+  min-width: 120px;
+  text-align: right;
+  font-size: 12px; font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+@media (max-width: 760px) {
+  .pa-scrub-row { flex-wrap: wrap; }
+  .pa-date { min-width: 0; flex: 1 1 100%; text-align: left; }
+}
