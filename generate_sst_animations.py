@@ -71,7 +71,11 @@ SST_BUILD_DIR = BUILD_DIR / "sst"
 
 WINDOW_DAYS = 90
 FPS = 15
-FRAME_DPI = 100
+# Match generate_sst_plots.py savefig dpi so animator frames have the
+# same pixel dimensions as the on-site static PNG for each region.
+# Anything lower quietly downscales the frame before ffmpeg sees it,
+# which reads as blur in the encoded MP4.
+FRAME_DPI = 150
 # Keep a small over-window cushion in the cache so a single skipped CI
 # run (e.g. CMEMS hiccup) doesn't immediately invalidate cached frames.
 CACHE_KEEP_DAYS = WINDOW_DAYS + 14
@@ -100,10 +104,11 @@ CORE_PRODUCTS: list[dict] = [
         # Anomaly products intentionally skip this (different visual
         # language — a zero-line contour, not a full-grid overlay).
         "contour": True,
-        # Bumped from the implicit v1 when contours were added. Keeps
-        # old non-contour cached frames isolated (they age out via
-        # _prune_old_frames rather than being served stale).
-        "cache_version": 2,
+        # Every product bumped in lockstep when FRAME_DPI went 100→150;
+        # old cached frames are the wrong pixel size and must be
+        # re-rendered under a fresh path. Old dirs age out via
+        # _prune_old_frames.
+        "cache_version": 3,
     },
     {
         "slug": "anomaly",
@@ -120,6 +125,7 @@ CORE_PRODUCTS: list[dict] = [
         "cbar_extend": "both",
         "title_suffix": "SST Anomaly",
         "subtitle_src": "OISST v2.1 · vs 1991–2020",
+        "cache_version": 2,
     },
     {
         "slug": "anomaly_gmr",
@@ -138,6 +144,7 @@ CORE_PRODUCTS: list[dict] = [
         "cbar_extend": "both",
         "title_suffix": "SSTA − Global Mean SSTA",
         "subtitle_src": "OISST v2.1 · vs 1991–2020 · GMR",
+        "cache_version": 2,
     },
     {
         "slug": "crw_anomaly",
@@ -154,6 +161,7 @@ CORE_PRODUCTS: list[dict] = [
         "cbar_extend": "both",
         "title_suffix": "CRW SST Anomaly",
         "subtitle_src": "Coral Reef Watch 5 km · vs 1991–2020",
+        "cache_version": 2,
     },
 ]
 PRODUCT_BY_SLUG: dict[str, dict] = {p["slug"]: p for p in CORE_PRODUCTS}
@@ -354,13 +362,22 @@ def _encode_mp4(frames: list[Path], out_path: Path, fps: int = FPS) -> int:
         # Repeat last (required by concat demuxer; no trailing duration)
         f.write(f"file '{frames[-1].resolve()}'\n")
 
+    # `high` profile is required by -preset slow's 8x8 transform; it's
+    # universally supported by modern browsers so there's no playback
+    # cost. CRF 18 is visually ~lossless for scientific viz with text
+    # and contour lines; -preset slow buys ~3x encode time for a
+    # noticeably cleaner result at the same bitrate. -tune stillimage
+    # biases x264 toward preserving sharp edges (text, tick marks,
+    # contours) at the expense of inter-frame smoothing — appropriate
+    # for this slideshow-style content where each frame is effectively
+    # a still. yuv420p is kept for maximum browser compatibility.
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", str(concat_file),
         "-vsync", "cfr", "-r", str(fps),
-        "-c:v", "libx264", "-profile:v", "main",
+        "-c:v", "libx264", "-profile:v", "high",
         "-pix_fmt", "yuv420p",
-        "-crf", "23", "-preset", "fast",
+        "-crf", "18", "-preset", "slow", "-tune", "stillimage",
         "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0:black",
         "-movflags", "+faststart",
         str(out_path),
