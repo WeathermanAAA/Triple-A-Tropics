@@ -38,7 +38,8 @@ jobs:
           python -m pip install --upgrade pip
           # Minimal plotting stack — no cartopy. We draw coastlines from
           # the Natural Earth GeoJSON the tracks workflow already caches.
-          pip install numpy matplotlib netCDF4 requests
+          # Pillow is needed by the animation step below for poster JPGs.
+          pip install numpy matplotlib netCDF4 requests Pillow
 
       - name: Ensure Natural Earth basemap files exist
         run: |
@@ -61,6 +62,103 @@ jobs:
         # (18 regions × 3 variants × 2 products). Typically takes
         # 20–35 min on a GH-hosted runner.
         run: python generate_sst_plots.py
+
+      # --------------------------------------------------------------
+      # MP4 animation pipeline
+      # --------------------------------------------------------------
+      # The animator renders 90-day evolution clips for 18 regions × 4
+      # core products (actual / anomaly / anomaly_gmr / crw_anomaly).
+      # On warm runs only the newest day's frame is rendered for each
+      # (region × product) — the rest are reused from the cache below.
+      #
+      # MP4s land on the orphan `mp4-artifacts` branch (see the push
+      # step further down), NOT on main. ffmpeg is preinstalled on
+      # ubuntu-latest so no extra apt step is needed.
+
+      - name: Restore animation frame cache
+        # Monthly key so the cache rotates and prunes itself. The
+        # restore-keys fall-through means a fresh month inherits the
+        # previous month's frames as a warm starting point — only
+        # frames older than 100 days actually get re-rendered.
+        uses: actions/cache@v4
+        with:
+          path: _frame_cache
+          key: sst-mp4-frames-${{ github.run_id }}
+          restore-keys: |
+            sst-mp4-frames-
+
+      - name: Generate SST MP4 animations
+        # Cold start (empty cache) takes ~90–120 min: ~6,500 frame
+        # renders at ~1 s each plus h.264 encode for 72 MP4s. Warm
+        # runs do 72 new frames + 72 re-encodes ≈ 5–8 min total.
+        # ffmpeg comes preinstalled on ubuntu-latest.
+        run: python generate_sst_animations.py
+
+      # Save the cache regardless of whether the orphan-branch push
+      # below succeeds — the rendered frames are valuable even if a
+      # later step fails, and re-rendering them is the expensive part.
+      - name: Save animation frame cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: _frame_cache
+          key: sst-mp4-frames-${{ github.run_id }}
+
+      - name: Push SST MP4 artifacts to orphan branch (force-push, scoped)
+        # Force-push is intentional and SAFE here:
+        #   * The `mp4-artifacts` branch is purpose-built for rewrites —
+        #     each workflow run rewrites only its OWN family directory
+        #     (`sst/`) and leaves sibling families' dirs untouched.
+        #   * No source code lives on this branch; it is a CDN-friendly
+        #     publish surface for raw.githubusercontent.com.
+        #   * `main` is never touched by this step.
+        # If the branch doesn't exist yet (first SST run), it is
+        # created as an orphan with just `sst/` + `README.md`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eo pipefail
+          ARTIFACTS_DIR=/tmp/mp4-artifacts
+          rm -rf "$ARTIFACTS_DIR"
+          mkdir -p "$ARTIFACTS_DIR"
+          cd "$ARTIFACTS_DIR"
+
+          git init -q
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Pull the existing branch if it's there; otherwise start fresh
+          # as an orphan so the very first SST run can bootstrap it.
+          if git fetch --depth=1 origin mp4-artifacts 2>/dev/null; then
+            git checkout -q -b mp4-artifacts FETCH_HEAD
+          else
+            echo "mp4-artifacts branch does not exist yet — creating it"
+            git checkout -q --orphan mp4-artifacts
+            git rm -rfq . 2>/dev/null || true
+          fi
+
+          # Wipe ONLY the SST family dir; preserve sibling families'
+          # dirs (subsurface/, armor3d/) when those workflows start
+          # writing to this branch in future PRs.
+          rm -rf sst
+          mkdir -p sst
+          cp -r "${GITHUB_WORKSPACE}/_mp4_build/sst/." sst/
+
+          # Refresh README only if missing — manual edits survive.
+          if [ ! -f README.md ]; then
+            cp "${GITHUB_WORKSPACE}/_mp4_build/README.md" README.md
+          fi
+
+          git add sst README.md
+          if git diff --cached --quiet; then
+            echo "No SST artifact changes to push."
+            exit 0
+          fi
+          git commit -q -m "chore: refresh SST MP4 artifacts ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          # Force-push is fine here — see step header comment.
+          git push --force origin mp4-artifacts
 
       - name: Commit and push if anything changed
         run: |
