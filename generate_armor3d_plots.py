@@ -808,7 +808,7 @@ def plot_cross_section(
                    label="20 °C Isotherm Climatology"),
         )
     ax_cs.legend(
-        handles=legend_items, loc="lower right",
+        handles=legend_items, loc="lower left",
         fontsize=8, framealpha=0.85,
     )
 
