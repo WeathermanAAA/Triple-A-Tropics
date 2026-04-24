@@ -1,5 +1,5 @@
 {
-  "_comment": "Manifest for sst/static_widget.js — unified SST/subsurface static-plot picker. Hand-written; keep in sync with the PNGs the generate_{sst,subsurface,armor3d}_plots.py generators emit. Per-source region lists are authoritative: if a source ever stops producing a region's PNG, drop the slug from that source's `regions` array and the widget filters its dropdown automatically.",
+  "_comment": "Manifest for sst/static_widget.js — unified SST/subsurface static-plot picker. Hand-written; keep in sync with the PNGs the generate_{sst,subsurface,armor3d}_plots.py generators emit. Each source has a top-level `regions` array (the union of what any of its variants cover) and each variant may optionally override with its own `regions` array — the widget re-filters the Region dropdown on variant change, so if one variant ever stops producing some region's PNG, drop that slug from the variant's `regions` without touching the source-level union.",
   "region_labels": {
     "global":              "Global",
     "global-tropics":      "Global Tropics",
@@ -66,55 +66,36 @@
       "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"]
     },
     {
-      "slug": "aoml_tchp",
-      "label": "AOML TCHP",
-      "subtitle": "NOAA AOML PhOD tropical cyclone heat potential (0.25°, daily, 2022-present). No anomaly — archive too short for a stable climatology.",
+      "slug": "aoml",
+      "label": "AOML",
+      "subtitle": "NOAA AOML PhOD subsurface analysis (0.25°, daily, 2022-present). No anomaly — archive too short for a stable climatology.",
       "path_template": "/subsurface/{region}_{variant}{suffix}.png",
       "meta_url": "/subsurface/subsurface_meta.json",
       "supports_15d": false,
       "supports_labels": true,
       "variants": [
-        { "slug": "tchp", "label": "TCHP", "caption": "Tropical Cyclone Heat Potential (kJ/cm²)." }
+        { "slug": "tchp", "label": "TCHP", "caption": "Tropical Cyclone Heat Potential (kJ/cm²).",
+          "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"] },
+        { "slug": "d26",  "label": "D26",  "caption": "Depth of the 26 °C isotherm (m).",
+          "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"] }
       ],
       "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"]
     },
     {
-      "slug": "aoml_d26",
-      "label": "AOML D26",
-      "subtitle": "NOAA AOML PhOD depth of the 26 °C isotherm (0.25°, daily, 2022-present). No anomaly — archive too short for a stable climatology.",
-      "path_template": "/subsurface/{region}_{variant}{suffix}.png",
-      "meta_url": "/subsurface/subsurface_meta.json",
-      "supports_15d": false,
-      "supports_labels": true,
-      "variants": [
-        { "slug": "d26", "label": "D26", "caption": "Depth of the 26 °C isotherm (m)." }
-      ],
-      "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"]
-    },
-    {
-      "slug": "armor3d_tchp",
-      "label": "ARMOR3D TCHP",
-      "subtitle": "Copernicus Marine ARMOR3D TCHP (0.25°, weekly, 1993-present). Includes anomaly vs the 1993–2020 weekly climatology.",
+      "slug": "armor3d",
+      "label": "ARMOR3D",
+      "subtitle": "Copernicus Marine ARMOR3D L4 (0.25°, weekly, 1993-present). Includes TCHP anomaly vs the 1993–2020 weekly climatology; the long archive supports a stable baseline the AOML record is still too short for.",
       "path_template": "/armor3d/{region}_{variant}{suffix}.png",
       "meta_url": "/armor3d/armor3d_meta.json",
       "supports_15d": false,
       "supports_labels": true,
       "variants": [
-        { "slug": "tchp",      "label": "TCHP",          "caption": "Tropical Cyclone Heat Potential (kJ/cm²)." },
-        { "slug": "tchp_anom", "label": "TCHP Anomaly",  "caption": "TCHP anomaly vs 1993–2020 weekly climatology (kJ/cm²)." }
-      ],
-      "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"]
-    },
-    {
-      "slug": "armor3d_d26",
-      "label": "ARMOR3D D26",
-      "subtitle": "Copernicus Marine ARMOR3D depth of the 26 °C isotherm (0.25°, weekly, 1993-present).",
-      "path_template": "/armor3d/{region}_{variant}{suffix}.png",
-      "meta_url": "/armor3d/armor3d_meta.json",
-      "supports_15d": false,
-      "supports_labels": true,
-      "variants": [
-        { "slug": "d26", "label": "D26", "caption": "Depth of the 26 °C isotherm (m)." }
+        { "slug": "tchp",      "label": "TCHP",         "caption": "Tropical Cyclone Heat Potential (kJ/cm²).",
+          "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"] },
+        { "slug": "d26",       "label": "D26",          "caption": "Depth of the 26 °C isotherm (m).",
+          "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"] },
+        { "slug": "tchp_anom", "label": "TCHP Anomaly", "caption": "TCHP anomaly vs 1993–2020 weekly climatology (kJ/cm²).",
+          "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"] }
       ],
       "regions": ["global", "global-tropics", "enso", "north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic", "northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific", "australia", "indian-ocean", "mediterranean"]
     }
