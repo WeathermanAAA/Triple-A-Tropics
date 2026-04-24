@@ -169,7 +169,7 @@
               <button type="button" class="anim-speed-btn" data-speed="4">4×</button>
             </div>
             <a id="animDownload" class="anim-btn anim-btn-ghost"
-               target="_blank" rel="noopener">Download GIF</a>
+               download rel="noopener">Download GIF</a>
           </div>
         </div>
         <canvas id="animCanvas" class="anim-canvas" width="1080" height="1080"
@@ -204,7 +204,9 @@
     }
 
     _setDownloadHref() {
-      // Current-year GIFs live at root; historical under historical/{basin}/gifs/
+      // Current-year GIFs live at root as {slug}_{year}_season.gif;
+      // historical GIFs under historical/{basin}/gifs/{basin}_{year}_season.gif.
+      // The two naming conventions are intentional — see generate_season_gif.py.
       const slug = {wp: 'wpac', al: 'atl', ep: 'epac'}[this.basin];
       if (this.year === this.currentYear) {
         this.download.href = `/${slug}_${this.year}_season.gif`;
@@ -212,6 +214,7 @@
         this.download.href =
           `/historical/${this.basin}/gifs/${this.basin}_${this.year}_season.gif`;
       }
+      this.download.download = `${slug}_${this.year}_season.gif`;
     }
 
     _wire() {
