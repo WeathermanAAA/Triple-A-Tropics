@@ -183,13 +183,26 @@ jobs:
           fi
           git commit -m "chore: refresh SST maps ($(date -u +'%Y-%m-%d %H:%M UTC'))"
 
+          # Metadata files the SST generators rewrite in full on every
+          # run. Rebase conflicts limited to these paths are auto-
+          # resolvable: every scheduled run overwrites them from
+          # scratch, so whichever side we pick is thrown away within
+          # a day. Conflicts on anything OUTSIDE this list (a PNG we
+          # rendered, unexpected changes to code/data) are genuinely
+          # ambiguous and need a human — we abort and fail loudly in
+          # that case.
+          META_FILES=(
+            sst/sst_meta.json
+            sst/crw_meta.json
+          )
+
           # Rebase-and-push loop. This workflow takes 10+ minutes to run,
           # so commits on main from other sources (you, or the ACE
           # workflow) are very likely to land while we're rendering.
           # Instead of failing outright, fetch their work, replay our
-          # commit on top, and push again. Our changes touch only
-          # sst/*.png + sst/sst_meta.json, so conflicts are nearly
-          # impossible in practice.
+          # commit on top, and push again. Metadata-only conflicts get
+          # auto-resolved via the --theirs block below; anything else
+          # aborts the rebase.
           for attempt in 1 2 3 4 5; do
             if git push; then
               echo "Pushed on attempt $attempt."
@@ -197,11 +210,41 @@ jobs:
             fi
             echo "Push rejected on attempt $attempt — fetching + rebasing..."
             git fetch origin main
-            git rebase origin/main || {
-              echo "Rebase failed (unexpected conflict)." >&2
-              git rebase --abort || true
-              exit 1
-            }
+            if ! git rebase origin/main; then
+              conflicted="$(git diff --name-only --diff-filter=U)"
+              if [ -z "$conflicted" ]; then
+                echo "Rebase failed but no conflicted paths listed." >&2
+                git rebase --abort || true
+                exit 1
+              fi
+              echo "Rebase hit conflicts on:"
+              echo "$conflicted"
+              unresolvable=""
+              while IFS= read -r f; do
+                match=0
+                for allow in "${META_FILES[@]}"; do
+                  if [ "$f" = "$allow" ]; then match=1; break; fi
+                done
+                if [ "$match" -eq 0 ]; then
+                  unresolvable="$unresolvable $f"
+                fi
+              done <<< "$conflicted"
+              if [ -n "$unresolvable" ]; then
+                echo "Non-metadata conflicts — aborting:$unresolvable" >&2
+                git rebase --abort || true
+                exit 1
+              fi
+              echo "All conflicts are metadata files — auto-resolving via --theirs."
+              while IFS= read -r f; do
+                git checkout --theirs -- "$f"
+                git add -- "$f"
+              done <<< "$conflicted"
+              if ! GIT_EDITOR=true git rebase --continue; then
+                echo "Rebase --continue failed after metadata auto-resolve." >&2
+                git rebase --abort || true
+                exit 1
+              fi
+            fi
             sleep $((attempt * 2))
           done
           echo "Push still failing after 5 attempts." >&2
