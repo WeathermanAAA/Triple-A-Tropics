@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <title>Sea Surface Temperature Data · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Daily sea-surface temperature maps by region: actual SST, anomalies vs 1991–2020, daily records since 1982, plus TCHP + D26 subsurface ocean heat. Sources: NOAA OISST v2.1, Coral Reef Watch, and AOML.">
+<meta name="description" content="Daily sea-surface temperature maps by region: OISST, Coral Reef Watch, AOML + ARMOR3D subsurface heat, and 90-day MP4 animations. Sources: NOAA OISST v2.1, Coral Reef Watch, AOML, Copernicus Marine.">
 <meta property="og:title" content="Sea Surface Temperature Data · Triple-A-Tropics">
-<meta property="og:description" content="Daily SST, anomalies, records, and subsurface ocean heat across 17 regions.">
+<meta property="og:description" content="Daily SST, anomalies, records, subsurface ocean heat, and MP4 animations across 18 regions.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/styles.css">
+<script src="/sst/static_widget.js" defer></script>
 <script src="/product_animator.js" defer></script>
 </head>
 <body>
@@ -31,276 +32,78 @@
 
 <header class="page-head">
   <h1>Sea Surface Temperature Data</h1>
-  <p>Daily ocean-temperature maps from three NOAA products: OISST v2.1 (0.25°), Coral Reef Watch (5 km), and AOML's TCHP + D26 subsurface heat analysis (0.25°). Pick a region and variant in any section. Updated once per day.</p>
+  <p>Daily ocean-temperature maps and 90-day animations across three SST products plus two independent subsurface-heat analyses. Pick a data source, region, and variant in the widget below. Updated once per day.</p>
 </header>
 
 <!-- ============================================================ -->
-<!-- OISST section                                                -->
+<!-- Unified static-plot widget                                   -->
+<!-- Replaces the former separate OISST / CRW / Subsurface        -->
+<!-- sections. All six data sources live behind one Source        -->
+<!-- dropdown; regions + variants are filtered per source by      -->
+<!-- sst/static_manifest.json. Hash state format:                 -->
+<!--   #source,region,variant                                     -->
 <!-- ============================================================ -->
 <header class="page-head section-divider">
-  <h2 class="section-h2">OISST · 0.25°</h2>
-  <p>NOAA OISST v2.1 daily analysis. Anomalies computed vs the 1991–2020 climatology; records compared against the full OISST era (1982-present).</p>
-  <p class="muted" id="dataDate">Loading latest valid date…</p>
+  <h2 class="section-h2">Static maps</h2>
 </header>
-
-<div class="sst-controls">
-  <label class="sst-select">
-    <span class="sst-select-label">Region</span>
-    <select id="regionSelect">
-      <optgroup label="Overview">
-        <option value="global">Global</option>
-        <option value="global-tropics">Global Tropics</option>
-        <option value="enso">ENSO Regions</option>
-      </optgroup>
-      <optgroup label="Atlantic">
-        <option value="north-atlantic">North Atlantic</option>
-        <option value="tropical-atlantic">Tropical Atlantic</option>
-        <option value="western-atlantic">Western Atlantic</option>
-        <option value="equatorial-atlantic">Equatorial Atlantic</option>
-        <option value="south-atlantic">South Atlantic</option>
-      </optgroup>
-      <optgroup label="Pacific">
-        <option value="northeast-pacific">Northeast Pacific</option>
-        <option value="east-pacific">East Pacific</option>
-        <option value="central-pacific">Central Pacific</option>
-        <option value="northwest-pacific">Northwest Pacific</option>
-        <option value="north-pacific">North Pacific</option>
-        <option value="southwest-pacific">Southwest Pacific</option>
-        <option value="southeast-pacific">Southeast Pacific</option>
-      </optgroup>
-      <optgroup label="Other basins">
-        <option value="australia">Australia</option>
-        <option value="indian-ocean">Indian Ocean</option>
-        <option value="mediterranean">Mediterranean</option>
-      </optgroup>
-    </select>
-  </label>
-</div>
-
-<nav class="tabs" id="sstTabs">
-  <a href="#" data-variant="actual" class="active">Actual</a>
-  <a href="#" data-variant="anomaly">Anomaly</a>
-  <a href="#" data-variant="anomaly_gmr">Anom − Gbl Mean</a>
-  <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
-  <a href="#" data-variant="change7d">7-Day Change</a>
-  <a href="#" data-variant="change15d">15-Day Change</a>
-  <a href="#" data-variant="change30d">30-Day Change</a>
-</nav>
-
-<div class="sst-toggle">
-  <label>
-    <input type="checkbox" id="sstRunningMean">
-    <span>15-day running mean</span>
-  </label>
-  <label>
-    <input type="checkbox" id="sstShowValues">
-    <span>Show values</span>
-  </label>
-</div>
-
 <section class="chart-section">
-  <div class="chart-card sst-chart">
-    <img id="sstImage"
-         class="sst-image"
-         src="/sst/global_actual.png"
-         alt="Sea-surface temperature map">
-    <div class="sst-caption" id="sstCaption">Global actual sea-surface temperature.</div>
-  </div>
-</section>
-
-<!-- ============================================================ -->
-<!-- CRW (Coral Reef Watch 5 km) section                          -->
-<!-- Independent dropdown + tab state from OISST so users can     -->
-<!-- view both products simultaneously by scrolling.              -->
-<!-- ============================================================ -->
-<header class="page-head section-divider">
-  <h2 class="section-h2">Coral Reef Watch · 5 km</h2>
-  <p>Higher-resolution SST from NOAA's Coral Reef Watch v3.1 analysis (0.05° grid). Anomalies are computed here against the 1991–2020 daily climatology so the CRW and OISST panes use a matching baseline.</p>
-  <p class="muted" id="crwDataDate">Loading latest valid date…</p>
-</header>
-
-<div class="sst-controls">
-  <label class="sst-select">
-    <span class="sst-select-label">Region</span>
-    <select id="crwRegionSelect">
-      <optgroup label="Overview">
-        <option value="global">Global</option>
-        <option value="global-tropics">Global Tropics</option>
-        <option value="enso">ENSO Regions</option>
-      </optgroup>
-      <optgroup label="Atlantic">
-        <option value="north-atlantic">North Atlantic</option>
-        <option value="tropical-atlantic">Tropical Atlantic</option>
-        <option value="western-atlantic">Western Atlantic</option>
-        <option value="equatorial-atlantic">Equatorial Atlantic</option>
-        <option value="south-atlantic">South Atlantic</option>
-      </optgroup>
-      <optgroup label="Pacific">
-        <option value="northeast-pacific">Northeast Pacific</option>
-        <option value="east-pacific">East Pacific</option>
-        <option value="central-pacific">Central Pacific</option>
-        <option value="northwest-pacific">Northwest Pacific</option>
-        <option value="north-pacific">North Pacific</option>
-        <option value="southwest-pacific">Southwest Pacific</option>
-        <option value="southeast-pacific">Southeast Pacific</option>
-      </optgroup>
-      <optgroup label="Other basins">
-        <option value="australia">Australia</option>
-        <option value="indian-ocean">Indian Ocean</option>
-        <option value="mediterranean">Mediterranean</option>
-      </optgroup>
-    </select>
-  </label>
-</div>
-
-<nav class="tabs" id="crwTabs">
-  <a href="#" data-variant="actual" class="active">Actual</a>
-  <a href="#" data-variant="anomaly">Anomaly</a>
-  <a href="#" data-variant="anomaly_gmr">Anom − Gbl Mean</a>
-  <a href="#" data-variant="anomaly_records">Anomaly + Records</a>
-  <a href="#" data-variant="change7d">7-Day Change</a>
-  <a href="#" data-variant="change15d">15-Day Change</a>
-  <a href="#" data-variant="change30d">30-Day Change</a>
-</nav>
-
-<div class="sst-toggle">
-  <label>
-    <input type="checkbox" id="crwRunningMean">
-    <span>15-day running mean</span>
-  </label>
-  <label>
-    <input type="checkbox" id="crwShowValues">
-    <span>Show values</span>
-  </label>
-</div>
-
-<section class="chart-section">
-  <div class="chart-card sst-chart">
-    <img id="crwImage"
-         class="sst-image"
-         src="/sst/crw_global_actual.png"
-         alt="CRW sea-surface temperature map">
-    <div class="sst-caption" id="crwCaption">Global: CRW actual sea-surface temperature (5 km).</div>
-  </div>
+  <div id="sstStatic" data-manifest="/sst/static_manifest.json"></div>
 </section>
 
 <!-- ============================================================ -->
 <!-- SST Animations (90-day MP4 player)                           -->
-<!-- Reads its manifest + clips from the orphan `mp4-artifacts`   -->
-<!-- branch via raw.githubusercontent.com. The widget JS is       -->
-<!-- loaded in <head>; this section is just the mount point.      -->
+<!-- Reads its manifest(s) from the orphan `mp4-artifacts` branch -->
+<!-- via raw.githubusercontent.com. Data-source dropdown surfaces -->
+<!-- the same six sources as the static widget; AOML + ARMOR3D    -->
+<!-- options are disabled until their animator families ship.     -->
+<!-- Static and animator selections are INDEPENDENT — no syncing. -->
 <!-- ============================================================ -->
 <header class="page-head section-divider">
-  <h2 class="section-h2">SST Animations · 90-Day MP4</h2>
-  <p>Sliding 90-day window of OISST + CRW evolution per region. Pick a region and product, drop the window length to 30 or 60 days for a tighter recent view, or download the full 90-day MP4 for offline use. Anomalies use the same 1991–2020 daily climatology as the static maps above, so values are numerically consistent across both views.</p>
+  <h2 class="section-h2">Animations · 90-Day MP4</h2>
+  <p>Sliding 90-day window of daily evolution per region. Scrub the timeline to pick a date, or drop the window to 30 / 60 days for a tighter recent view. Anomalies use the same 1991–2020 daily climatology as the static maps above.</p>
 </header>
-
 <section class="chart-section">
-  <div class="product-animator" data-family="sst"></div>
+  <div class="product-animator"
+       data-sources='[
+         {"slug":"oisst","label":"OISST","family":"sst","products":["actual","anomaly","anomaly_gmr"]},
+         {"slug":"crw","label":"CRW","family":"sst","products":["crw_anomaly"]},
+         {"slug":"aoml_tchp","label":"AOML TCHP","disabled":true,"disabledReason":"Animations coming soon for AOML TCHP"},
+         {"slug":"aoml_d26","label":"AOML D26","disabled":true,"disabledReason":"Animations coming soon for AOML D26"},
+         {"slug":"armor3d_tchp","label":"ARMOR3D TCHP","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D TCHP"},
+         {"slug":"armor3d_d26","label":"ARMOR3D D26","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D D26"}
+       ]'></div>
 </section>
 
 <!-- ============================================================ -->
-<!-- Subsurface (AOML TCHP + D26) section                         -->
-<!-- Independent dropdown + tab state from OISST and CRW so all   -->
-<!-- three products can be viewed side-by-side by scrolling.      -->
+<!-- ARMOR3D equatorial cross-sections                            -->
+<!-- Standalone widget — longitude × depth slices of the upper    -->
+<!-- 500 m for four equatorial regions. Weekly cadence, ARMOR3D   -->
+<!-- only (AOML has no vertical profile product).                 -->
 <!-- ============================================================ -->
 <header class="page-head section-divider">
-  <h2 class="section-h2">Subsurface Ocean Heat · 0.25°</h2>
-  <p>Tropical Cyclone Heat Potential (TCHP) and 26 °C isotherm depth (D26) from two independent analyses. <b>NOAA AOML</b> updates daily with ~1-day latency (2022-present archive, no anomalies). <b>Copernicus Marine ARMOR3D</b> updates weekly with ~1-week latency, back to 1993, and supports anomalies vs. a 1993–2020 climatology. Use the source toggle to switch between them.</p>
-  <p class="muted" id="subDataDate">Loading latest valid date…</p>
+  <h3 class="section-h2" style="font-size:1.15rem;">Equatorial Cross-Sections · 5°S–5°N</h3>
+  <p>Longitude-by-depth slices of the ocean's upper 500 m. Fill = temperature anomaly vs the 1993–2020 weekly ARMOR3D climatology. Solid black line = current 20 °C isotherm; dashed = climatological position. Deep warm anomalies below the isotherm are the subsurface signature of ENSO, Atlantic Niño, and IOD events.</p>
 </header>
-
 <div class="sst-controls">
   <label class="sst-select">
     <span class="sst-select-label">Region</span>
-    <select id="subRegionSelect">
-      <optgroup label="Overview">
-        <option value="global">Global</option>
-        <option value="global-tropics">Global Tropics</option>
-        <option value="enso">ENSO Regions</option>
-      </optgroup>
-      <optgroup label="Atlantic">
-        <option value="north-atlantic">North Atlantic</option>
-        <option value="tropical-atlantic">Tropical Atlantic</option>
-        <option value="western-atlantic">Western Atlantic</option>
-        <option value="equatorial-atlantic">Equatorial Atlantic</option>
-        <option value="south-atlantic">South Atlantic</option>
-      </optgroup>
-      <optgroup label="Pacific">
-        <option value="northeast-pacific">Northeast Pacific</option>
-        <option value="east-pacific">East Pacific</option>
-        <option value="central-pacific">Central Pacific</option>
-        <option value="northwest-pacific">Northwest Pacific</option>
-        <option value="north-pacific">North Pacific</option>
-        <option value="southwest-pacific">Southwest Pacific</option>
-        <option value="southeast-pacific">Southeast Pacific</option>
-      </optgroup>
-      <optgroup label="Other basins">
-        <option value="australia">Australia</option>
-        <option value="indian-ocean">Indian Ocean</option>
-        <option value="mediterranean">Mediterranean</option>
-      </optgroup>
+    <select id="subCsSelect">
+      <option value="enso">ENSO Regions (120°E–70°W)</option>
+      <option value="equatorial-atlantic">Equatorial Atlantic (50°W–15°E)</option>
+      <option value="indian-ocean">Equatorial Indian Ocean (40°E–100°E)</option>
+      <option value="global-tropics">Global Tropics (full wrap)</option>
     </select>
   </label>
 </div>
-
-<nav class="tabs" id="subSourceTabs" aria-label="Subsurface data source">
-  <a href="#" data-source="aoml" class="active">AOML (daily)</a>
-  <a href="#" data-source="armor3d">ARMOR3D (weekly)</a>
-</nav>
-
-<nav class="tabs" id="subTabs">
-  <a href="#" data-variant="tchp" class="active">TCHP</a>
-  <a href="#" data-variant="d26">D26</a>
-  <a href="#" data-variant="tchp_anom" id="subTabAnom" hidden>TCHP Anomaly</a>
-</nav>
-
-<div class="sst-toggle">
-  <label>
-    <input type="checkbox" id="subShowValues">
-    <span>Show values</span>
-  </label>
-</div>
-
 <section class="chart-section">
   <div class="chart-card sst-chart">
-    <img id="subImage"
+    <img id="subCsImage"
          class="sst-image"
-         src="/subsurface/global_tchp.png"
-         alt="Tropical cyclone heat potential map">
-    <div class="sst-caption" id="subCaption">Global: Tropical Cyclone Heat Potential (kJ/cm²).</div>
+         src="/armor3d/enso_crosssection.png"
+         alt="Equatorial subsurface cross-section">
+    <div class="sst-caption" id="subCsCaption">ENSO Regions: 5°S–5°N temperature anomaly cross-section (ARMOR3D).</div>
   </div>
 </section>
-
-<!-- ARMOR3D equatorial cross-section sub-panel. Hidden unless the
-     ARMOR3D source is selected — the 4 cross-sections only apply to
-     the equatorial basins and are rendered weekly, not daily. -->
-<div id="subCrossSection" hidden>
-  <header class="page-head" style="margin-top: 1.5rem;">
-    <h3 class="section-h2" style="font-size:1.15rem;">Equatorial Cross-Sections · 5°S–5°N</h3>
-    <p>Longitude-by-depth slices of the ocean's upper 500 m. The fill shows temperature anomaly vs. the 1993–2020 weekly climatology (when available); the solid black line is the current 20 °C isotherm, and the dashed black line is that isotherm's climatological position. Deep warm anomalies below the isotherm are the subsurface signature of ENSO, Atlantic Niño, and IOD events.</p>
-  </header>
-  <div class="sst-controls">
-    <label class="sst-select">
-      <span class="sst-select-label">Region</span>
-      <select id="subCsSelect">
-        <option value="enso">ENSO Regions (120°E–70°W)</option>
-        <option value="equatorial-atlantic">Equatorial Atlantic (50°W–15°E)</option>
-        <option value="indian-ocean">Equatorial Indian Ocean (40°E–100°E)</option>
-        <option value="global-tropics">Global Tropics (full wrap)</option>
-      </select>
-    </label>
-  </div>
-  <section class="chart-section">
-    <div class="chart-card sst-chart">
-      <img id="subCsImage"
-           class="sst-image"
-           src="/armor3d/enso_crosssection.png"
-           alt="Equatorial subsurface cross-section">
-      <div class="sst-caption" id="subCsCaption">ENSO Regions: 5°S–5°N temperature anomaly cross-section (ARMOR3D).</div>
-    </div>
-  </section>
-</div>
 
 <section class="about">
   <h2>How to read these maps</h2>
@@ -326,362 +129,27 @@
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
 
-  // Human-readable labels for the caption, keyed by slug.
-  const REGION_LABELS = {
-    "global":               "Global",
-    "global-tropics":       "Global Tropics",
-    "enso":                 "ENSO Regions",
-    "north-atlantic":       "North Atlantic",
-    "tropical-atlantic":    "Tropical Atlantic",
-    "western-atlantic":     "Western Atlantic",
-    "equatorial-atlantic":  "Equatorial Atlantic",
-    "south-atlantic":       "South Atlantic",
-    "northeast-pacific":    "Northeast Pacific",
-    "east-pacific":         "East Pacific",
-    "central-pacific":      "Central Pacific",
-    "northwest-pacific":    "Northwest Pacific",
-    "north-pacific":        "North Pacific",
-    "southwest-pacific":    "Southwest Pacific",
-    "southeast-pacific":    "Southeast Pacific",
-    "australia":            "Australia",
-    "indian-ocean":         "Indian Ocean",
-    "mediterranean":        "Mediterranean",
-  };
-  const VARIANT_CAPTIONS = {
-    actual:            "actual sea-surface temperature.",
-    anomaly:           "SST anomaly vs 1991–2020 climatology.",
-    anomaly_gmr:       "SST anomaly with the daily global-mean SSTA subtracted (highlights spatial patterns vs the global trend).",
-    anomaly_records:   "SST anomaly with stippling where today meets or exceeds the 1982-present record.",
-    change7d:          "SSTA change over the past 7 days (NOAA anom field).",
-    change15d:         "SSTA change over the past 15 days (NOAA anom field).",
-    change30d:         "SSTA change over the past 30 days (NOAA anom field).",
-  };
-
-  const img = document.getElementById('sstImage');
-  const caption = document.getElementById('sstCaption');
-  const regionSelect = document.getElementById('regionSelect');
-  const tabs = document.querySelectorAll('#sstTabs a');
-  const runningMean = document.getElementById('sstRunningMean');
-  const showValues = document.getElementById('sstShowValues');
-  // Every tab has a 15-day running-mean PNG; the toggle is always
-  // active. Toggle applies to the currently-selected tab.
-  const RM_VARIANTS = new Set([
-    'actual', 'anomaly', 'anomaly_gmr', 'anomaly_records',
-    'change7d', 'change15d', 'change30d',
-  ]);
-
-  // Persist the last-picked region/variant in the URL hash so reloads and
-  // shared links land on the same view. Format: #region,variant
-  function parseHash() {
-    const h = location.hash.replace(/^#/, "");
-    if (!h) return null;
-    const [r, v] = h.split(",");
-    if (REGION_LABELS[r] && VARIANT_CAPTIONS[v]) return { region: r, variant: v };
-    return null;
-  }
-  function writeHash(region, variant) {
-    // Some sandboxed iframe contexts (about:srcdoc) forbid replaceState;
-    // in that case just skip URL-persistence; the dropdown state still
-    // drives the image, it just won't survive a reload.
-    try {
-      history.replaceState(null, "", "#" + region + "," + variant);
-    } catch (e) { /* noop */ }
-  }
-
-  function currentVariant() {
-    const active = [...tabs].find(t => t.classList.contains("active"));
-    return active ? active.dataset.variant : "actual";
-  }
-  function setVariant(v) {
-    tabs.forEach(t => t.classList.toggle("active", t.dataset.variant === v));
-  }
-  function updateRMEnabled() {
-    const variant = currentVariant();
-    const supports = RM_VARIANTS.has(variant);
-    runningMean.disabled = !supports;
-    runningMean.parentElement.style.opacity = supports ? "1" : "0.45";
-  }
-  function update() {
-    const region = regionSelect.value;
-    const variant = currentVariant();
-    const is15d = runningMean.checked && RM_VARIANTS.has(variant);
-    const withValues = showValues.checked;
-    // Suffix order must match how filenames are constructed in Python:
-    //   base.png, base_labels.png, base_15d.png, base_15d_labels.png
-    let suffix = "";
-    if (is15d) suffix += "_15d";
-    if (withValues) suffix += "_labels";
-    img.src = `/sst/${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    img.alt = `${REGION_LABELS[region] || region}: ${variant.replace("_", " + ")}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
-    caption.textContent =
-      (REGION_LABELS[region] || region) + ": " +
-      (VARIANT_CAPTIONS[variant] || "") +
-      (is15d ? " · 15-day running mean." : "") +
-      (withValues ? " · values overlaid." : "");
-    writeHash(region, variant);
-  }
-
-  regionSelect.addEventListener("change", update);
-  tabs.forEach(t => {
-    t.addEventListener("click", e => {
-      e.preventDefault();
-      setVariant(t.dataset.variant);
-      updateRMEnabled();
-      update();
-    });
-  });
-  runningMean.addEventListener("change", update);
-  showValues.addEventListener("change", update);
-  updateRMEnabled();
-
-  // Restore from URL hash on load
-  const saved = parseHash();
-  if (saved) {
-    regionSelect.value = saved.region;
-    setVariant(saved.variant);
-  }
-  update();
-
-  // Pull the valid date + global-mean SSTA from the sidecar meta JSON
-  function fmtGlobalMean(v) {
-    if (v == null || !isFinite(v)) return "";
-    const sign = v >= 0 ? "+" : "−";
-    return `Global mean SSTA: ${sign}${Math.abs(v).toFixed(2)} °C`;
-  }
-  fetch('/sst/sst_meta.json?t=' + Date.now(), { cache: 'no-store' })
-    .then(r => r.ok ? r.json() : null)
-    .then(m => {
-      if (!m || !m.date) return;
-      const d = new Date(m.date + 'T00:00:00Z');
-      const txt = d.toLocaleDateString('en-US', {
-        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
-      });
-      document.getElementById('dataDate').textContent =
-        `Valid ${txt}  ·  updated ${m.updated_utc}`;
-      const gm = document.getElementById('sstGlobalMean');
-      if (gm) gm.textContent = fmtGlobalMean(m.global_mean_ssta);
-    })
-    .catch(() => {});
-
-  // ---- CRW section (mirror of OISST wiring, independent state) ----
-  const CRW_VARIANT_CAPTIONS = {
-    actual:            "CRW actual sea-surface temperature (5 km).",
-    anomaly:           "CRW SST anomaly vs 1991–2020 daily climatology (5 km).",
-    anomaly_gmr:       "CRW SST anomaly with the daily global-mean SSTA subtracted (5 km).",
-    anomaly_records:   "CRW SST anomaly with stippling where today meets or exceeds the 1985-present record.",
-    change7d:          "CRW SSTA change over the past 7 days (5 km).",
-    change15d:         "CRW SSTA change over the past 15 days (5 km).",
-    change30d:         "CRW SSTA change over the past 30 days (5 km).",
-  };
-  const crwImg = document.getElementById('crwImage');
-  const crwCaption = document.getElementById('crwCaption');
-  const crwRegionSelect = document.getElementById('crwRegionSelect');
-  const crwTabs = document.querySelectorAll('#crwTabs a');
-  const crwRunningMean = document.getElementById('crwRunningMean');
-  const crwShowValues = document.getElementById('crwShowValues');
-
-  function crwCurrentVariant() {
-    const active = [...crwTabs].find(t => t.classList.contains('active'));
-    return active ? active.dataset.variant : 'actual';
-  }
-  function crwSetVariant(v) {
-    crwTabs.forEach(t => t.classList.toggle('active', t.dataset.variant === v));
-  }
-  function crwUpdateRMEnabled() {
-    const variant = crwCurrentVariant();
-    const supports = RM_VARIANTS.has(variant);
-    crwRunningMean.disabled = !supports;
-    crwRunningMean.parentElement.style.opacity = supports ? "1" : "0.45";
-  }
-  function crwUpdate() {
-    const region = crwRegionSelect.value;
-    const variant = crwCurrentVariant();
-    const is15d = crwRunningMean.checked && RM_VARIANTS.has(variant);
-    const withValues = crwShowValues.checked;
-    let suffix = "";
-    if (is15d) suffix += "_15d";
-    if (withValues) suffix += "_labels";
-    crwImg.src = `/sst/crw_${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    crwImg.alt = `CRW ${REGION_LABELS[region] || region}: ${variant.replace('_', ' + ')}${is15d ? " (15d mean)" : ""}${withValues ? " (values)" : ""}`;
-    crwCaption.textContent =
-      (REGION_LABELS[region] || region) + ": " +
-      (CRW_VARIANT_CAPTIONS[variant] || "") +
-      (is15d ? " · 15-day running mean." : "") +
-      (withValues ? " · values overlaid." : "");
-  }
-  crwRegionSelect.addEventListener('change', crwUpdate);
-  crwTabs.forEach(t => {
-    t.addEventListener('click', e => {
-      e.preventDefault();
-      crwSetVariant(t.dataset.variant);
-      crwUpdateRMEnabled();
-      crwUpdate();
-    });
-  });
-  crwRunningMean.addEventListener('change', crwUpdate);
-  crwShowValues.addEventListener('change', crwUpdate);
-  crwUpdateRMEnabled();
-
-  // Keep the CRW dropdown in sync with the OISST dropdown initially,
-  // since most users want to compare the same region in both. Changing
-  // either dropdown after load disconnects them.
-  crwRegionSelect.value = regionSelect.value;
-  crwUpdate();
-
-  fetch('/sst/crw_meta.json?t=' + Date.now(), { cache: 'no-store' })
-    .then(r => r.ok ? r.json() : null)
-    .then(m => {
-      if (!m || !m.date) return;
-      const d = new Date(m.date + 'T00:00:00Z');
-      const txt = d.toLocaleDateString('en-US', {
-        month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
-      });
-      document.getElementById('crwDataDate').textContent =
-        `Valid ${txt}  ·  updated ${m.updated_utc}`;
-      const gm = document.getElementById('crwGlobalMean');
-      if (gm) gm.textContent = fmtGlobalMean(m.global_mean_ssta);
-    })
-    .catch(() => {});
-
-  // ---- Subsurface (AOML daily / ARMOR3D weekly) section ----
-  // Independent state from OISST + CRW so users can scroll and compare
-  // all sections side-by-side. Two data sources ("aoml" = NOAA AOML
-  // daily, "armor3d" = Copernicus Marine ARMOR3D weekly). Variants
-  // available depend on the source: AOML has no long-enough archive
-  // for anomalies, ARMOR3D adds a TCHP anomaly variant.
-  const SUB_VARIANT_CAPTIONS = {
-    tchp:      "Tropical Cyclone Heat Potential (kJ/cm²).",
-    d26:       "Depth of the 26 °C isotherm (m).",
-    tchp_anom: "TCHP anomaly vs. 1993–2020 weekly climatology (kJ/cm²).",
-  };
-  // Cross-section region labels for the ARMOR3D equatorial sub-panel.
-  const CS_REGION_LABELS = {
-    "enso":                 "ENSO Regions",
-    "equatorial-atlantic":  "Equatorial Atlantic",
-    "indian-ocean":         "Equatorial Indian Ocean",
-    "global-tropics":       "Global Tropics",
-  };
-
-  const subImg = document.getElementById('subImage');
-  const subCaption = document.getElementById('subCaption');
-  const subRegionSelect = document.getElementById('subRegionSelect');
-  const subTabs = document.querySelectorAll('#subTabs a');
-  const subTabAnom = document.getElementById('subTabAnom');
-  const subShowValues = document.getElementById('subShowValues');
-  const subSourceTabs = document.querySelectorAll('#subSourceTabs a');
-  const subCrossSection = document.getElementById('subCrossSection');
-  const subCsSelect = document.getElementById('subCsSelect');
-  const subCsImg = document.getElementById('subCsImage');
-  const subCsCaption = document.getElementById('subCsCaption');
-  const subDataDate = document.getElementById('subDataDate');
-
-  function subCurrentSource() {
-    const active = [...subSourceTabs].find(t => t.classList.contains('active'));
-    return active ? active.dataset.source : 'aoml';
-  }
-  function subCurrentVariant() {
-    const active = [...subTabs].find(t => t.classList.contains('active') && !t.hidden);
-    return active ? active.dataset.variant : 'tchp';
-  }
-  function subSetVariant(v) {
-    subTabs.forEach(t => t.classList.toggle('active', t.dataset.variant === v));
-  }
-  function subSetSource(s) {
-    subSourceTabs.forEach(t => t.classList.toggle('active', t.dataset.source === s));
-    // Anomaly variant is ARMOR3D-only. If we switch to AOML while the
-    // anomaly tab is active, fall back to TCHP to avoid a 404.
-    const anomActive = subTabAnom.classList.contains('active');
-    if (s === 'armor3d') {
-      subTabAnom.hidden = false;
-      subCrossSection.hidden = false;
-    } else {
-      subTabAnom.hidden = true;
-      subCrossSection.hidden = true;
-      if (anomActive) subSetVariant('tchp');
+  // Cross-section widget (ARMOR3D only) — tiny enough to stay inline.
+  // Static widget + animator have their own JS files above.
+  (function () {
+    const CS_REGION_LABELS = {
+      "enso":                 "ENSO Regions",
+      "equatorial-atlantic":  "Equatorial Atlantic",
+      "indian-ocean":         "Equatorial Indian Ocean",
+      "global-tropics":       "Global Tropics",
+    };
+    const sel = document.getElementById('subCsSelect');
+    const img = document.getElementById('subCsImage');
+    const cap = document.getElementById('subCsCaption');
+    if (!sel || !img || !cap) return;
+    function update() {
+      const r = sel.value;
+      img.src = `/armor3d/${r}_crosssection.png?t=${Date.now()}`;
+      img.alt = `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section`;
+      cap.textContent = `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section (ARMOR3D).`;
     }
-  }
-  // Base URL for the current source — /subsurface/ for AOML,
-  // /armor3d/ for ARMOR3D. Both dirs share the same per-region PNG
-  // naming convention so we can swap paths cleanly.
-  function subBaseDir() {
-    return subCurrentSource() === 'armor3d' ? '/armor3d' : '/subsurface';
-  }
-  function subUpdate() {
-    const region = subRegionSelect.value;
-    const variant = subCurrentVariant();
-    const withValues = subShowValues.checked;
-    const suffix = withValues ? "_labels" : "";
-    const dir = subBaseDir();
-    const source = subCurrentSource();
-    subImg.src = `${dir}/${region}_${variant}${suffix}.png?t=${Date.now()}`;
-    const label = REGION_LABELS[region] || region;
-    const srcTag = source === 'armor3d' ? ' (ARMOR3D)' : '';
-    subImg.alt = `${label}: ${variant.toUpperCase().replace('_', ' ')}${withValues ? " (values)" : ""}${srcTag}`;
-    subCaption.textContent =
-      label + ": " + (SUB_VARIANT_CAPTIONS[variant] || "") +
-      (withValues ? " · values overlaid." : "") + srcTag;
-  }
-  function subCsUpdate() {
-    const r = subCsSelect.value;
-    subCsImg.src = `/armor3d/${r}_crosssection.png?t=${Date.now()}`;
-    subCsImg.alt = `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section`;
-    subCsCaption.textContent =
-      `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section (ARMOR3D).`;
-  }
-
-  subRegionSelect.addEventListener('change', subUpdate);
-  subTabs.forEach(t => {
-    t.addEventListener('click', e => {
-      e.preventDefault();
-      if (t.hidden) return;
-      subSetVariant(t.dataset.variant);
-      subUpdate();
-    });
-  });
-  subSourceTabs.forEach(t => {
-    t.addEventListener('click', e => {
-      e.preventDefault();
-      subSetSource(t.dataset.source);
-      subUpdate();
-      // Refresh the valid-date label from the appropriate meta file.
-      subLoadMeta();
-    });
-  });
-  subShowValues.addEventListener('change', subUpdate);
-  subCsSelect.addEventListener('change', subCsUpdate);
-
-  // Sync the Subsurface dropdown with the OISST dropdown on first load
-  // so all three sections default to the same region. Changing either
-  // dropdown after load disconnects them.
-  subRegionSelect.value = regionSelect.value;
-  subUpdate();
-  subCsUpdate();
-
-  function subLoadMeta() {
-    const source = subCurrentSource();
-    const url = source === 'armor3d'
-      ? '/armor3d/armor3d_meta.json?t=' + Date.now()
-      : '/subsurface/subsurface_meta.json?t=' + Date.now();
-    const label = source === 'armor3d' ? 'ARMOR3D' : 'AOML';
-    fetch(url, { cache: 'no-store' })
-      .then(r => r.ok ? r.json() : null)
-      .then(m => {
-        if (!m || !m.date) {
-          subDataDate.textContent = `${label}: (no data yet)`;
-          return;
-        }
-        const d = new Date(m.date + 'T00:00:00Z');
-        const txt = d.toLocaleDateString('en-US', {
-          month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
-        });
-        subDataDate.textContent =
-          `${label} valid ${txt}  ·  updated ${m.updated_utc}`;
-      })
-      .catch(() => {
-        subDataDate.textContent = `${label}: (meta fetch failed)`;
-      });
-  }
-  subLoadMeta();
+    sel.addEventListener('change', update);
+  })();
 </script>
 
 </body>
