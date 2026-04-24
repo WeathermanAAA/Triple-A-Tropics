@@ -14,7 +14,7 @@
  *         "products":["actual","anomaly","anomaly_gmr"]},
  *        {"slug":"crw","label":"CRW","family":"sst",
  *         "products":["crw_anomaly"]},
- *        {"slug":"aoml_tchp","label":"AOML TCHP","disabled":true,
+ *        {"slug":"aoml","label":"AOML","disabled":true,
  *         "disabledReason":"Animations coming soon"}
  *      ]'></div>
  *

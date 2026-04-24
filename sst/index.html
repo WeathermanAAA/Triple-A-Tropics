@@ -53,9 +53,11 @@
 <!-- ============================================================ -->
 <!-- SST Animations (90-day MP4 player)                           -->
 <!-- Reads its manifest(s) from the orphan `mp4-artifacts` branch -->
-<!-- via raw.githubusercontent.com. Data-source dropdown surfaces -->
-<!-- the same six sources as the static widget; AOML + ARMOR3D    -->
-<!-- options are disabled until their animator families ship.     -->
+<!-- via raw.githubusercontent.com. Data-source dropdown mirrors  -->
+<!-- the static widget (OISST / CRW / AOML / ARMOR3D); AOML and   -->
+<!-- ARMOR3D are disabled until their animator families ship, at  -->
+<!-- which point they light up and the Product dropdown populates -->
+<!-- from the new family manifest — no widget change needed.      -->
 <!-- Static and animator selections are INDEPENDENT — no syncing. -->
 <!-- ============================================================ -->
 <header class="page-head section-divider">
@@ -67,10 +69,8 @@
        data-sources='[
          {"slug":"oisst","label":"OISST","family":"sst","products":["actual","anomaly","anomaly_gmr"]},
          {"slug":"crw","label":"CRW","family":"sst","products":["crw_anomaly"]},
-         {"slug":"aoml_tchp","label":"AOML TCHP","disabled":true,"disabledReason":"Animations coming soon for AOML TCHP"},
-         {"slug":"aoml_d26","label":"AOML D26","disabled":true,"disabledReason":"Animations coming soon for AOML D26"},
-         {"slug":"armor3d_tchp","label":"ARMOR3D TCHP","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D TCHP"},
-         {"slug":"armor3d_d26","label":"ARMOR3D D26","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D D26"}
+         {"slug":"aoml","label":"AOML","disabled":true,"disabledReason":"Animations coming soon for AOML"},
+         {"slug":"armor3d","label":"ARMOR3D","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D"}
        ]'></div>
 </section>
 

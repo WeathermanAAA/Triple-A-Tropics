@@ -2,11 +2,15 @@
  * static_widget.js — Triple-A-Tropics /sst/ page
  * -------------------------------------------------------------
  * Unified static-plot widget. One Source dropdown chooses the data
- * family (OISST / CRW / AOML TCHP / AOML D26 / ARMOR3D TCHP / ARMOR3D
- * D26); per-source Region + Variant controls filter down from there.
- * All image URLs are resolved from `sst/static_manifest.json` so adding
- * a source or changing a path convention is a config edit, not a code
- * edit.
+ * family (OISST / CRW / AOML / ARMOR3D); per-source Region + Variant
+ * controls filter down from there. All image URLs are resolved from
+ * `sst/static_manifest.json` so adding a source or changing a path
+ * convention is a config edit, not a code edit.
+ *
+ * Region filtering: a variant may declare its own `regions` array to
+ * override the source-level union — the Region dropdown rebuilds on
+ * every variant change, preserving the current selection when it's
+ * still valid under the new variant.
  *
  * Container contract:
  *   <div id="sstStatic" data-manifest="/sst/static_manifest.json"></div>
@@ -138,8 +142,58 @@
       this.sourceSel.value = slug;
       this.subtitleEl.textContent = src.subtitle || '';
 
-      // --- Region dropdown, filtered to this source's `regions` list.
-      const allowed = new Set(src.regions || []);
+      // Variant tabs, rebuilt per source. _setVariant handles the
+      // Region dropdown rebuild (so it refilters on variant change
+      // too, when a variant carries its own `regions` list).
+      this.variantNav.innerHTML = src.variants.map((v, i) =>
+        `<a href="#" class="${i === 0 ? 'active' : ''}" data-variant="${escapeAttr(v.slug)}">${escapeHTML(v.label)}</a>`
+      ).join('');
+      this.variantNav.querySelectorAll('a').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          this._setVariant(a.dataset.variant, { desiredRegion: this.regionSlug });
+          this._update();
+        });
+      });
+      // Hide the variant bar when a source has just one variant — keeps
+      // single-product sources from looking visually empty.
+      this.variantNav.hidden = src.variants.length <= 1;
+
+      const preferredVariant = opts.desiredVariant || this.variantSlug;
+      const found = src.variants.find(v => v.slug === preferredVariant);
+      this._setVariant(
+        (found && found.slug) || src.variants[0].slug,
+        { desiredRegion: opts.desiredRegion || this.regionSlug }
+      );
+
+      // Toggles: hide what the source doesn't support.
+      this.toggle15dWrap.hidden = !src.supports_15d;
+      this.toggleLabelsWrap.hidden = !src.supports_labels;
+      if (!src.supports_15d) this.chk15d.checked = false;
+      if (!src.supports_labels) this.chkLabels.checked = false;
+      this.use15d = this.chk15d.checked;
+      this.showLabels = this.chkLabels.checked;
+
+      this._loadMeta();
+    }
+
+    _setVariant(slug, opts = {}) {
+      const src = this._currentSource();
+      if (!src) return;
+      this.variantSlug = slug;
+      this.variantNav.querySelectorAll('a').forEach(a => {
+        a.classList.toggle('active', a.dataset.variant === slug);
+      });
+
+      // Region dropdown: use the variant's own regions list when
+      // present (coverage that varies by variant); otherwise the
+      // source-level union. Preserve the current region across the
+      // rebuild if it's still valid; otherwise default to the first.
+      const variant = src.variants.find(v => v.slug === slug) || src.variants[0];
+      const effective = (variant && Array.isArray(variant.regions) && variant.regions.length)
+        ? variant.regions
+        : (src.regions || []);
+      const allowed = new Set(effective);
       const groups = (this.m.region_groups || []).map(g => ({
         label: g.label,
         regions: (g.regions || []).filter(r => allowed.has(r)),
@@ -151,50 +205,11 @@
           `).join('')}
         </optgroup>
       `).join('');
-      // Preserve current region across source switches when possible;
-      // otherwise prefer the hash's region; otherwise first allowed.
       const preferred = opts.desiredRegion || this.regionSlug;
       this.regionSlug = (preferred && allowed.has(preferred))
         ? preferred
-        : (src.regions[0] || null);
+        : (effective[0] || null);
       this.regionSel.value = this.regionSlug;
-
-      // --- Variant tabs, rebuilt per source.
-      this.variantNav.innerHTML = src.variants.map((v, i) =>
-        `<a href="#" class="${i === 0 ? 'active' : ''}" data-variant="${escapeAttr(v.slug)}">${escapeHTML(v.label)}</a>`
-      ).join('');
-      this.variantNav.querySelectorAll('a').forEach(a => {
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          this._setVariant(a.dataset.variant);
-          this._update();
-        });
-      });
-      // Hide the variant bar entirely when a source has just one variant,
-      // so single-product sources (AOML TCHP, AOML D26, ARMOR3D D26) look
-      // intentional instead of visually empty.
-      this.variantNav.hidden = src.variants.length <= 1;
-
-      const preferredVariant = opts.desiredVariant || this.variantSlug;
-      const found = src.variants.find(v => v.slug === preferredVariant);
-      this._setVariant((found && found.slug) || src.variants[0].slug);
-
-      // --- Toggles: hide what the source doesn't support.
-      this.toggle15dWrap.hidden = !src.supports_15d;
-      this.toggleLabelsWrap.hidden = !src.supports_labels;
-      if (!src.supports_15d) this.chk15d.checked = false;
-      if (!src.supports_labels) this.chkLabels.checked = false;
-      this.use15d = this.chk15d.checked;
-      this.showLabels = this.chkLabels.checked;
-
-      this._loadMeta();
-    }
-
-    _setVariant(slug) {
-      this.variantSlug = slug;
-      this.variantNav.querySelectorAll('a').forEach(a => {
-        a.classList.toggle('active', a.dataset.variant === slug);
-      });
     }
 
     _currentSource() { return this._sourceBySlug(this.sourceSlug); }
