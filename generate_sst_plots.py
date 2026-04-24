@@ -440,6 +440,42 @@ def mean_crw_years(files_by_year: dict[int, Path], var_name: str,
     return mean, years_used
 
 
+def compute_oisst_climo_for_date(
+    d: dt.date, log_prefix: str = "[sst]",
+    prefetched: dict[int, Path] | None = None,
+) -> tuple[np.ndarray | None, list[int]]:
+    """Fetch OISST for every year in [CLIMO_START, CLIMO_END] at the
+    same month/day as `d`, then return the per-pixel nanmean.
+
+    Used by the daily-static main() (via `prefetched=hist` to avoid a
+    duplicate fetch when the records envelope already pulled the union
+    of years) and by the MP4 animator (which calls without
+    `prefetched` and lets this helper handle its own parallel fetch
+    for each day-of-year in its 90-day window).
+
+    Returns (climo_mean, years_used). climo_mean is None if no files
+    were available.
+    """
+    if prefetched is None:
+        files = day_of_year_files(
+            d.month, d.day, range(CLIMO_START, CLIMO_END + 1), log_prefix,
+        )
+    else:
+        files = {y: p for y, p in prefetched.items()
+                 if CLIMO_START <= y <= CLIMO_END}
+    if not files:
+        return None, []
+    stacked, years_used = stack_years(files)
+    if stacked.size == 0:
+        return None, []
+    climo = np.nanmean(stacked, axis=0)
+    print(
+        f"{log_prefix} OISST climo {CLIMO_START}–{CLIMO_END} "
+        f"for {d:%m-%d}: {len(years_used)} years"
+    )
+    return climo, years_used
+
+
 def compute_crw_climo_for_date(d: dt.date, log_prefix: str
                                ) -> tuple[np.ndarray | None, list[int]]:
     """Fetch CRW SST for every year in [CRW_CLIMO_START, CRW_CLIMO_END]
