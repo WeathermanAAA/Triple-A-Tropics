@@ -96,6 +96,14 @@ CORE_PRODUCTS: list[dict] = [
         "cbar_extend": "both",
         "title_suffix": "Sea-Surface Temperature",
         "subtitle_src": "OISST v2.1 (NOAA NCEI)",
+        # Integer-degree contours matching the static /sst/ actual plot.
+        # Anomaly products intentionally skip this (different visual
+        # language — a zero-line contour, not a full-grid overlay).
+        "contour": True,
+        # Bumped from the implicit v1 when contours were added. Keeps
+        # old non-contour cached frames isolated (they age out via
+        # _prune_old_frames rather than being served stale).
+        "cache_version": 2,
     },
     {
         "slug": "anomaly",
@@ -248,6 +256,8 @@ def _render_frame(product: dict, data: np.ndarray, lat: np.ndarray,
         LON2, LAT2, sub, cmap=cmap, norm=norm,
         shading="auto", rasterized=True, zorder=1,
     )
+    if product.get("contour"):
+        gsp.draw_integer_degree_contours(ax, LON2, LAT2, sub)
     gsp._draw_basemap(ax, extent, countries, coast)
 
     date_label = valid_date.strftime("%B %-d, %Y")
@@ -271,12 +281,24 @@ def _render_frame(product: dict, data: np.ndarray, lat: np.ndarray,
 # ----------------------------------------------------------------------
 # Cache helpers
 # ----------------------------------------------------------------------
-def _frame_path(region_key: str, product_slug: str, d: dt.date) -> Path:
-    return FRAME_CACHE_DIR / region_key / product_slug / f"{d:%Y%m%d}.png"
+def _product_cache_key(product: dict) -> str:
+    """Segment used under FRAME_CACHE_DIR for this product's frames.
+
+    `cache_version` lets us invalidate stale cached frames when a
+    product's rendering changes (e.g. adding contours to `actual`)
+    without touching other products. v1 is the implicit default for
+    untagged products, so legacy dirs remain valid."""
+    v = int(product.get("cache_version", 1))
+    slug = product["slug"]
+    return slug if v == 1 else f"{slug}_v{v}"
 
 
-def _list_cached_frames(region_key: str, product_slug: str) -> list[Path]:
-    d = FRAME_CACHE_DIR / region_key / product_slug
+def _frame_path(region_key: str, product: dict, d: dt.date) -> Path:
+    return FRAME_CACHE_DIR / region_key / _product_cache_key(product) / f"{d:%Y%m%d}.png"
+
+
+def _list_cached_frames(region_key: str, product: dict) -> list[Path]:
+    d = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
     if not d.exists():
         return []
     return sorted(d.glob("*.png"))
@@ -430,7 +452,7 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
         any_missing = False
         for region in regions:
             for product in products:
-                if not _frame_path(region, product["slug"], d).exists():
+                if not _frame_path(region, product, d).exists():
                     any_missing = True
                     break
             if any_missing:
@@ -450,7 +472,7 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
         for region in regions:
             rcfg = gsp.REGIONS[region]
             for product, data, lat, lon in day_products:
-                fp = _frame_path(region, product["slug"], d)
+                fp = _frame_path(region, product, d)
                 if fp.exists():
                     stats["cached"] += 1
                     continue
@@ -480,7 +502,7 @@ def _encode_all(end_date: dt.date, regions: list[str],
     for region in regions:
         for product in products:
             slug = product["slug"]
-            cached = _list_cached_frames(region, slug)
+            cached = _list_cached_frames(region, product)
             if not cached:
                 print(f"{log}   ! {region}/{slug}: no cached frames, skip",
                       flush=True)
