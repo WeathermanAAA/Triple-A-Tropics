@@ -395,7 +395,11 @@ def _write_poster(last_frame: Path, out_path: Path) -> None:
     if img.width > max_w:
         h = int(img.height * (max_w / img.width))
         img = img.resize((max_w, h), Image.LANCZOS)
-    img.save(out_path, "JPEG", quality=72, optimize=True)
+    # quality=92 (not lower): posters carry sharp text, tick labels, and
+    # contour lines that smear under aggressive JPEG compression even
+    # when the source frame is high-DPI. Frame DPI / cache_version don't
+    # govern poster sharpness — this knob does, independently.
+    img.save(out_path, "JPEG", quality=92, optimize=True)
 
 
 # ----------------------------------------------------------------------
