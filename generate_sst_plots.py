@@ -109,6 +109,12 @@ FETCH_WORKERS = 12
 FETCH_TIMEOUT = 45
 FETCH_RETRIES = 3
 
+# NCEI OISST publishes a preliminary file within ~1-2 days of observation,
+# then replaces it with a final file ~14 days later. Downstream consumers
+# (notably the MP4 animator's frame cache) key off this constant to know
+# when a cached prelim should be auto-promoted to final.
+UPGRADE_LATENCY_DAYS = 14
+
 
 def oisst_url_candidates(d: dt.date) -> list[str]:
     """Return candidate URLs for a given UTC day.
@@ -127,42 +133,134 @@ def oisst_url_candidates(d: dt.date) -> list[str]:
     ]
 
 
-def cache_path(d: dt.date) -> Path:
-    return CACHE_DIR / f"oisst.{d:%Y%m%d}.nc"
+def cache_path(d: dt.date, version: str | None = None) -> Path:
+    """Local NetCDF cache path for a date, optionally tagged by version.
+
+    `version` is "final" or "prelim" (or None for the legacy unversioned
+    layout used before the prelim/final-aware cache was added). New writes
+    always go to a versioned path; the unversioned form is still recognized
+    on read for backwards compatibility with caches written by older code."""
+    if version is None:
+        return CACHE_DIR / f"oisst.{d:%Y%m%d}.nc"
+    return CACHE_DIR / f"oisst.{d:%Y%m%d}.{version}.nc"
 
 
 def fetch_day(d: dt.date, log_prefix: str = "[sst]",
               verbose: bool = False) -> Path | None:
-    """Download the OISST NetCDF for a specific UTC day. Cache-hit fast-path;
-    falls back to the preliminary filename if the final one 404s."""
-    cp = cache_path(d)
-    if cp.exists() and cp.stat().st_size > 100_000:
-        return cp
+    """Backwards-compat wrapper: returns the cached NetCDF path or None.
+
+    Discards the prelim/final tag — callers that need it (e.g. the MP4
+    animator's frame cache, which keys PNGs by data version) should use
+    `fetch_day_versioned` directly."""
+    res = fetch_day_versioned(d, log_prefix, verbose)
+    return res[0] if res is not None else None
+
+
+def fetch_day_versioned(d: dt.date, log_prefix: str = "[sst]",
+                        verbose: bool = False
+                        ) -> tuple[Path, str] | None:
+    """Download the OISST NetCDF for a specific UTC day, prelim/final-aware.
+
+    Returns (path, version) where version is "final" or "prelim". This is
+    the load-bearing piece for OISST's prelim→final auto-promotion: the
+    function ALWAYS probes the upstream final URL first, regardless of
+    which versions are already cached. That means a previously-cached
+    prelim is replaced the moment the final lands upstream, with no
+    cache-key bumps or manual intervention needed downstream.
+
+    Resolution order:
+      1. final cache (oisst.YYYYMMDD.final.nc) → done.
+      2. final URL upstream → if 200, write `.final.nc`, drop any stale
+         `.prelim.nc` and legacy unversioned `.nc` for the same date,
+         return ("final"). The drop is what makes auto-promotion
+         self-cleaning so old prelim files don't accumulate.
+      3. prelim cache (oisst.YYYYMMDD.prelim.nc) → done.
+      4. legacy unversioned cache (oisst.YYYYMMDD.nc) → accept as-is,
+         tagged "final" if d is older than UPGRADE_LATENCY_DAYS (final
+         must have been available when it was written) or "prelim"
+         otherwise. Best-effort tagging for caches predating versioning.
+      5. prelim URL upstream → if 200, write `.prelim.nc`, return.
+    """
+    final_cache = cache_path(d, "final")
+    prelim_cache = cache_path(d, "prelim")
+    legacy_cache = cache_path(d, None)
+
+    def _ok(p: Path) -> bool:
+        return p.exists() and p.stat().st_size > 100_000
+
+    # 1. Final already cached.
+    if _ok(final_cache):
+        return final_cache, "final"
+
+    final_url, prelim_url = oisst_url_candidates(d)
+
+    # 2. Try final URL — auto-promote a previously-prelim cache.
     last_status = None
-    for url in oisst_url_candidates(d):
-        for attempt in range(FETCH_RETRIES):
-            try:
-                r = requests.get(url, timeout=FETCH_TIMEOUT)
-                last_status = r.status_code
-                if r.status_code == 404:
-                    break  # try next URL flavor
-                r.raise_for_status()
-                if len(r.content) < 100_000:
-                    # Likely a redirect or error page, not a real NetCDF
-                    break
-                cp.write_bytes(r.content)
+    for attempt in range(FETCH_RETRIES):
+        try:
+            r = requests.get(final_url, timeout=FETCH_TIMEOUT)
+            last_status = r.status_code
+            if r.status_code == 404:
+                break  # not yet final; fall through to prelim
+            r.raise_for_status()
+            if len(r.content) < 100_000:
+                break
+            final_cache.write_bytes(r.content)
+            # Once we have the final, the prelim and legacy variants are
+            # superseded — drop them so they can't be picked up again on
+            # subsequent runs (and don't waste disk).
+            prelim_cache.unlink(missing_ok=True)
+            legacy_cache.unlink(missing_ok=True)
+            if verbose:
+                print(f"{log_prefix}   ✓ {d} ← {final_url.split('/')[-1]} (final)")
+            return final_cache, "final"
+        except Exception as e:  # noqa: BLE001
+            if attempt == FETCH_RETRIES - 1:
                 if verbose:
-                    print(f"{log_prefix}   ✓ {d} ← {url.split('/')[-1]}")
-                return cp
-            except Exception as e:  # noqa: BLE001
-                if attempt == FETCH_RETRIES - 1:
-                    if verbose:
-                        print(
-                            f"{log_prefix}   fetch error {d} ({url.split('/')[-1]}): "
-                            f"{type(e).__name__}: {e}",
-                            file=sys.stderr,
-                        )
-                    break
+                    print(
+                        f"{log_prefix}   fetch error {d} ({final_url.split('/')[-1]}): "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr,
+                    )
+                break
+
+    # 3. Prelim already cached.
+    if _ok(prelim_cache):
+        return prelim_cache, "prelim"
+
+    # 4. Legacy unversioned cache — accept and best-effort-tag by age.
+    #    Caches written by pre-versioning code are honored as-is so we
+    #    don't stampede re-downloads on first run after deploy.
+    if _ok(legacy_cache):
+        today = dt.datetime.utcnow().date()
+        version = ("final" if (today - d).days >= UPGRADE_LATENCY_DAYS
+                   else "prelim")
+        return legacy_cache, version
+
+    # 5. Try prelim URL.
+    for attempt in range(FETCH_RETRIES):
+        try:
+            r = requests.get(prelim_url, timeout=FETCH_TIMEOUT)
+            last_status = r.status_code
+            if r.status_code == 404:
+                break
+            r.raise_for_status()
+            if len(r.content) < 100_000:
+                break
+            prelim_cache.write_bytes(r.content)
+            if verbose:
+                print(f"{log_prefix}   ✓ {d} ← {prelim_url.split('/')[-1]} (prelim)")
+            return prelim_cache, "prelim"
+        except Exception as e:  # noqa: BLE001
+            if attempt == FETCH_RETRIES - 1:
+                if verbose:
+                    print(
+                        f"{log_prefix}   fetch error {d} ({prelim_url.split('/')[-1]}): "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr,
+                    )
+                break
+
     if verbose and last_status is not None:
         print(f"{log_prefix}   ✗ {d} (last HTTP {last_status})")
     return None
