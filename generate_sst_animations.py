@@ -80,6 +80,22 @@ FRAME_DPI = 150
 # run (e.g. CMEMS hiccup) doesn't immediately invalidate cached frames.
 CACHE_KEEP_DAYS = WINDOW_DAYS + 14
 
+# OISST publishes prelim then final per day; final lands ~14 days after
+# observation. Sourced from generate_sst_plots so the two stay aligned.
+UPGRADE_LATENCY_DAYS = gsp.UPGRADE_LATENCY_DAYS
+# Bound how long we eagerly try to upgrade a cached prelim PNG to final.
+# A date that's been "upgradeable" for longer than this without success
+# is accepted as-is — covers extended NCEI outages and the bootstrap
+# case where pre-versioning legacy PNGs sit in the older portion of the
+# window (those were rendered from final at the time and need no upgrade).
+UPGRADE_GRACE_DAYS = 14
+
+OISST_PRODUCT_SLUGS = frozenset({"actual", "anomaly", "anomaly_gmr"})
+
+
+def _is_oisst_product(product: dict) -> bool:
+    return product["slug"] in OISST_PRODUCT_SLUGS
+
 
 # ----------------------------------------------------------------------
 # Core product config
@@ -171,20 +187,23 @@ PRODUCT_BY_SLUG: dict[str, dict] = {p["slug"]: p for p in CORE_PRODUCTS}
 # Per-day data loading
 # ----------------------------------------------------------------------
 def _load_oisst_sst(d: dt.date, log: str
-                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Returns (sst, lat, lon) for one OISST day, or None if missing.
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, str] | None:
+    """Returns (sst, lat, lon, version) for one OISST day, or None.
 
-    The animator recomputes anomalies from raw SST + climo, so we only
-    need the `sst` variable here (no `anom` read)."""
-    p = gsp.fetch_day(d, log)
-    if p is None:
+    `version` is "final" or "prelim" — passed through to the PNG cache
+    path so the encoder can prefer final-version frames once they land
+    upstream. The animator recomputes anomalies from raw SST + climo, so
+    we only need the `sst` variable here (no `anom` read)."""
+    res = gsp.fetch_day_versioned(d, log)
+    if res is None:
         return None
+    p, version = res
     try:
         sst, lat, lon = gsp.read_sst_grid(p, var_name="sst")
     except Exception as e:  # noqa: BLE001
         print(f"{log}   ! OISST {d} read error: {e}", file=sys.stderr)
         return None
-    return sst, lat, lon
+    return sst, lat, lon, version
 
 
 def _load_crw_sst(d: dt.date, log: str
@@ -301,15 +320,77 @@ def _product_cache_key(product: dict) -> str:
     return slug if v == 1 else f"{slug}_v{v}"
 
 
-def _frame_path(region_key: str, product: dict, d: dt.date) -> Path:
-    return FRAME_CACHE_DIR / region_key / _product_cache_key(product) / f"{d:%Y%m%d}.png"
+def _frame_path(region_key: str, product: dict, d: dt.date,
+                version: str | None) -> Path:
+    """Per-(region, product, date, version) PNG cache path.
+
+    `version` is "final"/"prelim" for OISST products and None for CRW or
+    legacy unversioned writes. Encoding the OISST version into the filename
+    lets `_list_window_frames` prefer a final-rendered frame over a
+    prelim-rendered one for the same date once the final lands upstream —
+    that's what dissolves the prelim/final seam without a cache_version
+    bump."""
+    base = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
+    if version is None:
+        return base / f"{d:%Y%m%d}.png"
+    return base / f"{d:%Y%m%d}.{version}.png"
 
 
-def _list_cached_frames(region_key: str, product: dict) -> list[Path]:
-    d = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
-    if not d.exists():
-        return []
-    return sorted(d.glob("*.png"))
+def _existing_cached(region_key: str, product: dict,
+                     d: dt.date) -> Path | None:
+    """Best-available cached PNG for (region, product, date), or None.
+
+    Preference: .final.png  >  .prelim.png  >  legacy unversioned .png.
+    Used by `_list_window_frames` (encoder input) and `_needs_render`
+    (cache-skip decision)."""
+    base = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
+    if _is_oisst_product(product):
+        for v in ("final", "prelim"):
+            p = base / f"{d:%Y%m%d}.{v}.png"
+            if p.exists():
+                return p
+    legacy = base / f"{d:%Y%m%d}.png"
+    return legacy if legacy.exists() else None
+
+
+def _needs_render(region_key: str, product: dict, d: dt.date,
+                  end_date: dt.date) -> bool:
+    """True if (region, product, date) needs to be (re-)rendered.
+
+    OISST: render if no `.final.png` exists AND the date is in the eager
+    upgrade window (between UPGRADE_LATENCY_DAYS and that + GRACE days
+    behind end_date — i.e. final should now exist upstream and we should
+    promote any prelim/legacy PNG to final). Outside that window, any
+    cached variant (final/prelim/legacy) is accepted as-is.
+
+    CRW: render only if no PNG exists at all (CRW has no prelim/final
+    two-stage publish — single version per day, never auto-upgrades)."""
+    base = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
+    if _is_oisst_product(product):
+        if (base / f"{d:%Y%m%d}.final.png").exists():
+            return False
+        days_old = (end_date - d).days
+        in_upgrade_window = (
+            UPGRADE_LATENCY_DAYS <= days_old
+            <= UPGRADE_LATENCY_DAYS + UPGRADE_GRACE_DAYS
+        )
+        if in_upgrade_window:
+            return True
+        return _existing_cached(region_key, product, d) is None
+    return _existing_cached(region_key, product, d) is None
+
+
+def _list_window_frames(region_key: str, product: dict,
+                        window_dates: list[dt.date]) -> list[Path]:
+    """Returns one PNG path per date in the window that has any cached
+    variant, in chronological order. Prefers `.final.png` per
+    `_existing_cached`. Drops dates with no cached frame at all."""
+    out: list[Path] = []
+    for d in window_dates:
+        p = _existing_cached(region_key, product, d)
+        if p is not None:
+            out.append(p)
+    return out
 
 
 def _prune_old_frames(window_end: dt.date) -> None:
@@ -351,16 +432,19 @@ def _encode_mp4(frames: list[Path], out_path: Path, fps: int = FPS) -> int:
 
     # Write an ffmpeg concat list to a temp file alongside the MP4.
     # Each line: "file '/abs/path/to/frame.png'" + "duration <secs>".
-    # Final frame is repeated at the end with no duration line — that's
-    # the concat-demuxer's documented way to avoid clipping it.
+    # No trailing-repeat line: with `-vsync cfr -r fps` and an explicit
+    # duration on every entry, ffmpeg honors per-frame timing exactly.
+    # The trailing-repeat trick is only needed under `-vsync vfr` and,
+    # combined with CFR resampling, used to push total stream duration
+    # to exactly N/fps which CFR samples *inclusively at both endpoints*
+    # — yielding N+1 output frames for N inputs. `-frames:v` below caps
+    # to N to make this airtight regardless.
     concat_file = out_path.with_suffix(".concat.txt")
     per_frame_s = 1.0 / fps
     with concat_file.open("w") as f:
         for fp in frames:
             f.write(f"file '{fp.resolve()}'\n")
             f.write(f"duration {per_frame_s}\n")
-        # Repeat last (required by concat demuxer; no trailing duration)
-        f.write(f"file '{frames[-1].resolve()}'\n")
 
     # `high` profile is required by -preset slow's 8x8 transform; it's
     # universally supported by modern browsers so there's no playback
@@ -375,6 +459,7 @@ def _encode_mp4(frames: list[Path], out_path: Path, fps: int = FPS) -> int:
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", str(concat_file),
         "-vsync", "cfr", "-r", str(fps),
+        "-frames:v", str(len(frames)),
         "-c:v", "libx264", "-profile:v", "high",
         "-pix_fmt", "yuv420p",
         "-crf", "18", "-preset", "slow", "-tune", "stillimage",
@@ -411,36 +496,42 @@ def _build_window_dates(end_date: dt.date) -> list[dt.date]:
 
 
 def _build_day_products(d: dt.date, log: str
-                        ) -> list[tuple[dict, np.ndarray,
-                                        np.ndarray, np.ndarray]]:
+                        ) -> list[tuple[dict, np.ndarray, np.ndarray,
+                                        np.ndarray, str | None]]:
     """For one date, fetch the source data + climatology and return a
-    list of (product_dict, derived_field, lat, lon) tuples ready to
-    feed into _render_frame across all regions.
+    list of (product_dict, derived_field, lat, lon, version) tuples ready
+    to feed into _render_frame across all regions.
+
+    `version` is "final"/"prelim" for OISST products and None for CRW
+    (single-publish source). All three OISST products derived from the
+    same day's SST share that day's version.
 
     OISST anomaly products are skipped if the OISST climatology can't
     be built (e.g. network failure on >half the historical years);
     `actual` still renders. Same for CRW.
     """
-    out: list[tuple[dict, np.ndarray, np.ndarray, np.ndarray]] = []
+    out: list[tuple[dict, np.ndarray, np.ndarray,
+                    np.ndarray, str | None]] = []
 
     # OISST family
     oisst = _load_oisst_sst(d, log)
     if oisst is not None:
-        sst, oi_lat, oi_lon = oisst
-        out.append((PRODUCT_BY_SLUG["actual"], sst, oi_lat, oi_lon))
+        sst, oi_lat, oi_lon, oi_version = oisst
+        out.append((PRODUCT_BY_SLUG["actual"], sst, oi_lat, oi_lon, oi_version))
 
         oi_climo = _oisst_climo(d, log)
         if oi_climo is not None and oi_climo.shape == sst.shape:
             anom = sst - oi_climo
-            out.append((PRODUCT_BY_SLUG["anomaly"], anom, oi_lat, oi_lon))
+            out.append((PRODUCT_BY_SLUG["anomaly"], anom, oi_lat, oi_lon,
+                        oi_version))
 
             gm = gsp.compute_global_mean(anom, oi_lat)
             if np.isfinite(gm):
                 anom_gmr = anom - gm
                 out.append((PRODUCT_BY_SLUG["anomaly_gmr"],
-                            anom_gmr, oi_lat, oi_lon))
+                            anom_gmr, oi_lat, oi_lon, oi_version))
 
-    # CRW family
+    # CRW family — single-version publish, no per-day version tag.
     crw = _load_crw_sst(d, log)
     if crw is not None:
         crw_sst, crw_lat, crw_lon = crw
@@ -448,7 +539,7 @@ def _build_day_products(d: dt.date, log: str
         if crw_clim is not None and crw_clim.shape == crw_sst.shape:
             anom_crw = crw_sst - crw_clim
             out.append((PRODUCT_BY_SLUG["crw_anomaly"],
-                        anom_crw, crw_lat, crw_lon))
+                        anom_crw, crw_lat, crw_lon, None))
 
     return out
 
@@ -457,7 +548,13 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
                        products: list[dict], countries, coast,
                        log: str = "[sst-anim]") -> dict:
     """For every (date, region, product), render to the frame cache if
-    not present. Returns a small stats dict.
+    needed. Returns a small stats dict.
+
+    "Needed" is decided by `_needs_render`, which honors prelim/final
+    version-aware caching: a date that's just crossed the upgrade
+    boundary (~14 days old) re-renders even if a prelim PNG is on disk,
+    so the final version replaces the prelim and the encoder picks it
+    up automatically on the next pass.
 
     Iterates date-major because each day's data + climo is loaded
     once and fanned out across all regions/products before being
@@ -465,15 +562,15 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
     """
     stats = {"rendered": 0, "cached": 0, "skipped_unavailable": 0}
     requested_slugs = {p["slug"] for p in products}
+    end_date = dates[-1]
     t0 = time.time()
     for di, d in enumerate(dates, start=1):
-        # Skip the day entirely if every (region × product) frame for it
-        # is already cached — avoids needless data + climo fetches on
-        # warm runs.
+        # Skip the day entirely if no (region × product) needs work —
+        # avoids needless data + climo fetches on warm runs.
         any_missing = False
         for region in regions:
             for product in products:
-                if not _frame_path(region, product, d).exists():
+                if _needs_render(region, product, d, end_date):
                     any_missing = True
                     break
             if any_missing:
@@ -484,7 +581,7 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
 
         day_products = _build_day_products(d, log)
         # Restrict to the user-requested product subset.
-        day_products = [(p, data, la, lo) for (p, data, la, lo)
+        day_products = [(p, data, la, lo, ver) for (p, data, la, lo, ver)
                         in day_products if p["slug"] in requested_slugs]
         if not day_products:
             stats["skipped_unavailable"] += len(regions) * len(products)
@@ -492,15 +589,27 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
 
         for region in regions:
             rcfg = gsp.REGIONS[region]
-            for product, data, lat, lon in day_products:
-                fp = _frame_path(region, product, d)
-                if fp.exists():
+            for product, data, lat, lon, version in day_products:
+                target = _frame_path(region, product, d, version)
+                if target.exists():
                     stats["cached"] += 1
                     continue
                 ok = _render_frame(product, data, lat, lon, rcfg, d,
-                                   countries, coast, fp)
+                                   countries, coast, target)
                 if ok:
                     stats["rendered"] += 1
+                    # Promotion cleanup: when we just wrote a `.final.png`,
+                    # retire the prelim and legacy variants for the same
+                    # date so `_existing_cached` doesn't see a stale
+                    # alternative and `_prune_old_frames` doesn't have to
+                    # carry them for ~14 weeks.
+                    if version == "final":
+                        base = target.parent
+                        for stale in (
+                            base / f"{d:%Y%m%d}.prelim.png",
+                            base / f"{d:%Y%m%d}.png",
+                        ):
+                            stale.unlink(missing_ok=True)
                 else:
                     stats["skipped_unavailable"] += 1
 
@@ -520,18 +629,19 @@ def _encode_all(end_date: dt.date, regions: list[str],
     `clips` dict ready to drop into manifest.json."""
     clips: dict[str, dict] = {}
     SST_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    window_dates = _build_window_dates(end_date)
     for region in regions:
         for product in products:
             slug = product["slug"]
-            cached = _list_cached_frames(region, product)
-            if not cached:
+            # One PNG per date in the window, preferring final over
+            # prelim over legacy unversioned. Dates with no cached
+            # variant are silently dropped (the encoder accepts a
+            # short clip).
+            window_frames = _list_window_frames(region, product, window_dates)
+            if not window_frames:
                 print(f"{log}   ! {region}/{slug}: no cached frames, skip",
                       flush=True)
                 continue
-            # Take the last WINDOW_DAYS frames (chronological); frames
-            # older than that are out-of-window leftovers waiting for
-            # the next prune cycle.
-            window_frames = cached[-WINDOW_DAYS:]
             mp4_name = f"{region}_{slug}.mp4"
             poster_name = f"{region}_{slug}.jpg"
             mp4_path = SST_BUILD_DIR / mp4_name
