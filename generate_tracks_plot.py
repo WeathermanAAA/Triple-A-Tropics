@@ -56,6 +56,10 @@ BASINS: dict[str, dict] = {
         "ibtracs_file_code": "WP",
         "ibtracs_basin_col": ["WP"],
         "atcf_prefix": "bwp",
+        # JTWC/NHC convention: invests are named "<num><letter>" where the
+        # letter is a single-character basin code (W=W.Pac, L=Atlantic,
+        # E=E.Pac, C=Cen.Pac). Used to render invest names like "91W".
+        "invest_letter": "W",
         "agency_name": "JTWC",
         "agency_url": "https://www.metoc.navy.mil/jtwc/",
         "atcf_patterns": [
@@ -84,6 +88,7 @@ BASINS: dict[str, dict] = {
         "ibtracs_file_code": "NA",
         "ibtracs_basin_col": ["NA", "AL"],
         "atcf_prefix": "bal",
+        "invest_letter": "L",
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
@@ -109,6 +114,7 @@ BASINS: dict[str, dict] = {
         "ibtracs_file_code": "EP",
         "ibtracs_basin_col": ["EP"],
         "atcf_prefix": "bep",
+        "invest_letter": "E",
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
@@ -463,10 +469,16 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
                     nature = "DS"
             except (ValueError, TypeError):
                 nature = "DS"
+        # Fallback display name: numbered TC → "#01" / "#15"; invest →
+        # "91W" / "92L" / "93E" (JTWC/NHC single-letter basin convention).
+        if storm_num >= 90:
+            fallback_name = f"{storm_num}{basin_cfg.get('invest_letter', '')}"
+        else:
+            fallback_name = f"#{storm_num:02d}"
         rows.append({
             "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
                    f"{storm_num:02d}{season}",
-            "NAME": name_by_storm.get(storm_num, f"#{storm_num:02d}"),
+            "NAME": name_by_storm.get(storm_num, fallback_name),
             "season": season,
             "time": t,
             "lat": lat,
@@ -475,6 +487,10 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
             "pressure_mb": mslp_f,
             "nature": nature,
             "source": f"live-{basin_cfg['agency_name']}",
+            # Carry storm_num so downstream merge can detect invests
+            # (90-99 by JTWC/NHC convention). IBTrACS rows leave this
+            # blank — IBTrACS doesn't archive invests.
+            "storm_num": storm_num,
         })
     return pd.DataFrame(rows)
 
@@ -489,9 +505,10 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
     yy = season % 100
     frames: list[pd.DataFrame] = []
     patterns = basin_cfg["atcf_patterns"]
-    consecutive_misses = 0
-    for nn in range(1, 41):
-        hit = False
+
+    def _try_fetch_one(nn: int) -> bool:
+        """Try the proxy chain for a single storm number. Append a parsed
+        frame on success and return True; return False on any miss."""
         for pattern in patterns:
             url = pattern.format(nn=f"{nn:02d}", yy=f"{yy:02d}", year=season)
             try:
@@ -503,13 +520,29 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
                 if "BEST" not in text:
                     continue
                 frames.append(parse_atcf_bdeck(text, season, basin_cfg))
-                hit = True
-                break
+                return True
             except Exception:
                 continue
+        return False
+
+    # Numbered TCs (01-40). Bail after 3 consecutive misses to keep the
+    # fetch fast — typical seasons have 1-3 active storms at a time.
+    consecutive_misses = 0
+    for nn in range(1, 41):
+        hit = _try_fetch_one(nn)
         consecutive_misses = 0 if hit else consecutive_misses + 1
         if consecutive_misses >= 3:
             break
+
+    # Invest areas (90-99). JTWC/NHC convention: each agency tracks active
+    # disturbances with cyclone numbers in the 90s (90W-99W, 90L-99L,
+    # 90E-99E). Numbers cycle as invests dissipate or get upgraded to a
+    # numbered TC. We try the full range unconditionally — only 10
+    # candidates and most will 404, but we can't bail early because gaps
+    # are normal (e.g. 91W active, 92W not, 93W active again).
+    for nn in range(90, 100):
+        _try_fetch_one(nn)
+
     if not frames:
         return pd.DataFrame()
     out = pd.concat(frames, ignore_index=True)
@@ -576,6 +609,12 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     now = dt.datetime.utcnow()
     active_cutoff = now - dt.timedelta(hours=ACTIVE_WINDOW_HOURS)
 
+    # storm_num is only set on live ATCF rows; IBTrACS contributes NaN.
+    # Need it on the dataframe even when live is empty so the groupby
+    # below can read it without KeyError.
+    if "storm_num" not in df.columns:
+        df["storm_num"] = float("nan")
+
     storms: list[dict] = []
     for sid, group in df.groupby("SID"):
         points = group.to_dict("records")
@@ -634,6 +673,14 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             strong = pd.notna(last["wind_kt"]) and last["wind_kt"] >= 34
             tropical = (last["nature"] or "") not in {"ET", "DS"}
             is_active = recent and strong and tropical
+        # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
+        # from any row in the group; IBTrACS rows have NaN and are ignored
+        # since IBTrACS doesn't archive invests.
+        nums = [p.get("storm_num") for p in points
+                if p.get("storm_num") is not None
+                and not (isinstance(p["storm_num"], float)
+                         and math.isnan(p["storm_num"]))]
+        is_invest = bool(nums) and any(int(n) >= 90 for n in nums)
         # Current intensity = SSHWS of the most recent observation
         last_wind = points[-1]["wind_kt"] if points else float("nan")
         current_cls = sshs_class(last_wind)
@@ -655,6 +702,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             "max_category": max_cls,
             "current_category": current_cls,
             "is_active": bool(is_active),
+            "is_invest": bool(is_invest),
             "points": [{
                 "t": p["time"].isoformat(),
                 "lat": round(float(p["lat"]), 2),
@@ -671,8 +719,10 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 "nature": (p.get("nature") or "").strip(),
             } for p in points],
         })
-    # Sort: active storms first, then by ACE desc, then by start date
-    storms.sort(key=lambda s: (not s["is_active"], -s["ace"], s["start"] or ""))
+    # Sort: active TCs first, then invests (currently being tracked but
+    # haven't reached TS), then inactive storms by ACE desc, then start.
+    storms.sort(key=lambda s: (not s["is_active"], not s["is_invest"],
+                               -s["ace"], s["start"] or ""))
     return storms
 
 
@@ -919,9 +969,15 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
             xy.append((x, y))
         if len(xy) >= 2:
             d = "M " + " L ".join(f"{x:.1f},{y:.1f}" for x, y in xy)
+            # Dashed line for invests (90-99); solid for numbered TCs.
+            # Keeping the dot styling identical so the wind-class colors
+            # still convey intensity — only the connecting line changes.
+            dash_attr = (' stroke-dasharray="4 3"' if storm.get("is_invest")
+                         else "")
             parts.append(f'<path d="{d}" fill="none" stroke="#ffffff" '
                          'stroke-width="1.2" stroke-opacity="0.5" '
-                         'stroke-linejoin="round" stroke-linecap="round"/>')
+                         'stroke-linejoin="round" stroke-linecap="round"'
+                         f'{dash_attr}/>')
         # Dots — radius depends on whether the point is at TS+ (bigger) or not.
         # Shape depends on the point's lifecycle phase (matches the
         # JMA/JTWC best-track convention in the reference image):
@@ -1504,6 +1560,11 @@ HTML_TEMPLATE = """<!doctype html>
   .storm-active {{ font-size: 10px; color: var(--c1); font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.6px; margin-left: 6px; }}
   .storm-active::before {{ content: "● "; }}
+  /* Invest tag — yellow-ish neutral so it doesn't compete with the
+     active-storm dot. Same typography otherwise. */
+  .storm-invest {{ font-size: 10px; color: var(--td); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px; margin-left: 6px; }}
+  .storm-invest::before {{ content: "◌ "; }}
 
   /* SSHS color-bar legend (right of map) */
   .legend {{ position: absolute; top: 70px; right: 12px;
@@ -1524,6 +1585,13 @@ HTML_TEMPLATE = """<!doctype html>
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
     border-bottom: 9px solid #ffffff; }}
+  /* Dashed-line glyph for the invest legend row. Mirrors the SVG
+     stroke-dasharray="4 3" used in the track polylines. */
+  .legend .dashline {{ width: 14px; height: 2px; position: relative; }}
+  .legend .dashline::before {{ content: ""; position: absolute; inset: 0;
+    background-image: linear-gradient(to right, #ffffff 4px,
+      transparent 4px, transparent 7px); background-size: 7px 100%;
+    background-repeat: repeat-x; opacity: 0.7; }}
   .legend .sep {{ height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }}
 
@@ -1651,12 +1719,13 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="sep"></div>
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
+        <div class="item"><span class="dashline"></span>Invest (90-99)</div>
       </div>
     </div>
   </div>
 
   <div class="side">
-    <div class="panel-title">{year} Season · {storm_count} Storms</div>
+    <div class="panel-title">{year} Season · {storm_count_label}</div>
     <div class="storm-list" id="storms">
       {storm_cards}
     </div>
@@ -1679,6 +1748,17 @@ def _cat_style(cls: str) -> tuple[str, str]:
     return SSHS_COLORS.get(cls, SSHS_COLORS["TD"]), cls.replace("C", "Cat ")
 
 
+def _storm_count_label(storms: list[dict]) -> str:
+    """Sidebar title fragment. When invests are present, surface them
+    separately so the count "8 Storms" doesn't silently include 91W."""
+    invests = sum(1 for s in storms if s.get("is_invest"))
+    tcs = len(storms) - invests
+    if invests == 0:
+        return f"{tcs} Storms"
+    invest_word = "Invest" if invests == 1 else "Invests"
+    return f"{tcs} Storms · {invests} {invest_word}"
+
+
 def _fmt_date_range(start: str | None, end: str | None) -> str:
     def fmt(iso):
         try:
@@ -1696,13 +1776,26 @@ def _fmt_date_range(start: str | None, end: str | None) -> str:
 def render_storm_card(storm: dict) -> str:
     cat = storm.get("max_category", "TD")
     color, label = _cat_style(cat)
-    active_tag = '<span class="storm-active">Active</span>' if storm.get("is_active") else ''
     is_active = storm.get("is_active")
+    is_invest = storm.get("is_invest")
+    # Active TCs get the "Active" tag (also gets the spinning map icon);
+    # invests that aren't active TCs get an "INVEST" tag instead. The
+    # two are mutually exclusive — an invest that briefly hit 34 kt would
+    # show "Active", which is correct since the b-deck would still call
+    # it 91W until JTWC/NHC numbers it.
+    if is_active:
+        active_tag = '<span class="storm-active">Active</span>'
+    elif is_invest:
+        active_tag = '<span class="storm-invest">Invest</span>'
+    else:
+        active_tag = ''
     # Every card is clickable — active cards open the pinned live placard
     # at the top; inactive cards expand an inline peak-intensity placard.
     classes = "storm-card clickable"
     if is_active:
         classes += " active"
+    if is_invest:
+        classes += " invest"
     peak_wind = storm.get("peak_wind_kt")
     peak_pres = storm.get("peak_pressure_mb")
     ace = storm.get("ace") or 0
@@ -1746,6 +1839,7 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
             "sid": s.get("sid"),
             "name": s.get("name"),
             "is_active": s.get("is_active"),
+            "is_invest": s.get("is_invest"),
             "current_category": s.get("current_category"),
             "max_category": s.get("max_category"),
             "ace": s.get("ace"),
@@ -1770,7 +1864,7 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         active_svg=active_svg,
         wm_x=MAP_W - 20, wm_y=40,
         storm_cards=storm_cards,
-        storm_count=len(payload["storms"]),
+        storm_count_label=_storm_count_label(payload["storms"]),
         storms_json=storms_json,
         tracks_js=TRACKS_JS,
     )
