@@ -51,30 +51,6 @@
 </section>
 
 <!-- ============================================================ -->
-<!-- SST Animations (90-day MP4 player)                           -->
-<!-- Reads its manifest(s) from the orphan `mp4-artifacts` branch -->
-<!-- via raw.githubusercontent.com. Data-source dropdown mirrors  -->
-<!-- the static widget (OISST / CRW / AOML / ARMOR3D); AOML and   -->
-<!-- ARMOR3D are disabled until their animator families ship, at  -->
-<!-- which point they light up and the Product dropdown populates -->
-<!-- from the new family manifest — no widget change needed.      -->
-<!-- Static and animator selections are INDEPENDENT — no syncing. -->
-<!-- ============================================================ -->
-<header class="page-head section-divider">
-  <h2 class="section-h2">Animations · 90-Day MP4</h2>
-  <p>Sliding 90-day window of daily evolution per region. Scrub the timeline to pick a date, or drop the window to 30 / 60 days for a tighter recent view. Anomalies use the same 1991–2020 daily climatology as the static maps above.</p>
-</header>
-<section class="chart-section">
-  <div class="product-animator"
-       data-sources='[
-         {"slug":"oisst","label":"OISST","family":"sst","products":["actual","anomaly","anomaly_gmr"]},
-         {"slug":"crw","label":"CRW","family":"sst","products":["crw_anomaly"]},
-         {"slug":"aoml","label":"AOML","disabled":true,"disabledReason":"Animations coming soon for AOML"},
-         {"slug":"armor3d","label":"ARMOR3D","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D"}
-       ]'></div>
-</section>
-
-<!-- ============================================================ -->
 <!-- ARMOR3D equatorial cross-sections                            -->
 <!-- Standalone widget — longitude × depth slices of the upper    -->
 <!-- 500 m for four equatorial regions. Weekly cadence, ARMOR3D   -->
@@ -103,6 +79,30 @@
          alt="Equatorial subsurface cross-section">
     <div class="sst-caption" id="subCsCaption">ENSO Regions: 5°S–5°N temperature anomaly cross-section (ARMOR3D).</div>
   </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SST Animations (90-day MP4 player)                           -->
+<!-- Reads its manifest(s) from the orphan `mp4-artifacts` branch -->
+<!-- via raw.githubusercontent.com. Data-source dropdown mirrors  -->
+<!-- the static widget (OISST / CRW / AOML / ARMOR3D); AOML and   -->
+<!-- ARMOR3D are disabled until their animator families ship, at  -->
+<!-- which point they light up and the Product dropdown populates -->
+<!-- from the new family manifest — no widget change needed.      -->
+<!-- Static and animator selections are INDEPENDENT — no syncing. -->
+<!-- ============================================================ -->
+<header class="page-head section-divider">
+  <h2 class="section-h2">Animations · 90-Day MP4</h2>
+  <p>Sliding 90-day window of daily evolution per region. Scrub the timeline to pick a date, or drop the window to 30 / 60 days for a tighter recent view. Anomalies use the same 1991–2020 daily climatology as the static maps above.</p>
+</header>
+<section class="chart-section">
+  <div class="product-animator"
+       data-sources='[
+         {"slug":"oisst","label":"OISST","family":"sst","products":["actual","anomaly","anomaly_gmr"]},
+         {"slug":"crw","label":"CRW","family":"sst","products":["crw_anomaly"]},
+         {"slug":"aoml","label":"AOML","disabled":true,"disabledReason":"Animations coming soon for AOML"},
+         {"slug":"armor3d","label":"ARMOR3D","disabled":true,"disabledReason":"Animations coming soon for ARMOR3D"}
+       ]'></div>
 </section>
 
 <section class="about">

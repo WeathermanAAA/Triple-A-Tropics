@@ -134,6 +134,8 @@
       this.land = null;
       this.coast = null;
       this.tracksByYear = new Map();    // year → tracks doc
+      this._gifProbeCache = new Map();  // `${basin}:${year}` → bool (HEAD result)
+      this._gifProbeInflight = new Map();
       this.playing = false;
       this.rafId = 0;
       this.frac = 0;                    // 0..1 through season
@@ -204,17 +206,76 @@
     }
 
     _setDownloadHref() {
+      const slug = {wp: 'wpac', al: 'atl', ep: 'epac'}[this.basin];
+      this.download.href = this._gifUrl(this.year);
+      this.download.download = `${slug}_${this.year}_season.gif`;
+    }
+
+    _gifUrl(year) {
       // Current-year GIFs live at root as {slug}_{year}_season.gif;
       // historical GIFs under historical/{basin}/gifs/{basin}_{year}_season.gif.
       // The two naming conventions are intentional — see generate_season_gif.py.
       const slug = {wp: 'wpac', al: 'atl', ep: 'epac'}[this.basin];
-      if (this.year === this.currentYear) {
-        this.download.href = `/${slug}_${this.year}_season.gif`;
+      return year === this.currentYear
+        ? `/${slug}_${year}_season.gif`
+        : `/historical/${this.basin}/gifs/${this.basin}_${year}_season.gif`;
+    }
+
+    // years.json advertises every year we have tracks for, but only a few
+    // pre-rendered GIFs are committed. HEAD-probe the URL so the play +
+    // download buttons aren't enabled for years with no committed file.
+    async _probeGifAvailability(year) {
+      const key = `${this.basin}:${year}`;
+      if (this._gifProbeCache.has(key)) return this._gifProbeCache.get(key);
+      if (this._gifProbeInflight.has(key)) return this._gifProbeInflight.get(key);
+      const p = (async () => {
+        try {
+          const r = await fetch(this._gifUrl(year), { method: 'HEAD' });
+          return r.ok;
+        } catch (e) {
+          return false;
+        }
+      })().then((ok) => {
+        this._gifProbeCache.set(key, ok);
+        this._gifProbeInflight.delete(key);
+        return ok;
+      });
+      this._gifProbeInflight.set(key, p);
+      return p;
+    }
+
+    _applyGifAvailability(year, ok) {
+      // Stale probe — user moved on before HEAD resolved.
+      if (this.year !== year) return;
+      if (ok) {
+        this.playBtn.disabled = false;
+        this.playBtn.style.opacity = '';
+        this.playBtn.style.cursor = '';
+        this.download.removeAttribute('aria-disabled');
+        this.download.style.opacity = '';
+        this.download.style.pointerEvents = '';
+        this._setDownloadHref();
+        // Don't clobber other status messages (e.g. load error).
+        if (this.status.textContent === 'Animation not yet generated for this year.') {
+          this._setStatus('');
+        }
       } else {
-        this.download.href =
-          `/historical/${this.basin}/gifs/${this.basin}_${this.year}_season.gif`;
+        this.pause();
+        this.playBtn.disabled = true;
+        this.playBtn.style.opacity = '0.45';
+        this.playBtn.style.cursor = 'not-allowed';
+        this.download.setAttribute('aria-disabled', 'true');
+        this.download.removeAttribute('href');
+        this.download.style.opacity = '0.45';
+        this.download.style.pointerEvents = 'none';
+        this._setStatus('Animation not yet generated for this year.');
       }
-      this.download.download = `${slug}_${this.year}_season.gif`;
+    }
+
+    async _refreshGifAvailability() {
+      const year = this.year;
+      const ok = await this._probeGifAvailability(year);
+      this._applyGifAvailability(year, ok);
     }
 
     _wire() {
@@ -266,6 +327,7 @@
         await this._loadYearData(this.year);
         this._setStatus('');
         this.redraw();
+        this._refreshGifAvailability();
       } catch (e) {
         this._setStatus('Failed to load data.');
         console.error(e);
@@ -391,6 +453,7 @@
         await this._loadYearData(year);
         this._setStatus('');
         this.redraw();
+        this._refreshGifAvailability();
       } catch (e) {
         this._setStatus('Load failed: ' + e.message);
       }
