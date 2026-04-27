@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gc
 import json
 import shutil
 import subprocess
@@ -282,14 +283,17 @@ def _load_crw_sst(d: dt.date, log: str
 _OISST_CLIMO_CACHE: dict[tuple[int, int], np.ndarray | None] = {}
 _CRW_CLIMO_CACHE:   dict[tuple[int, int], np.ndarray | None] = {}
 # (record_max, record_min) per (month, day) for OISST. Per-DOY because
-# the records envelope only depends on calendar day-of-year, so the
-# 90-day window's ~90 unique DOYs each get computed at most once per
-# run regardless of how many regions iterate over the same DOY.
+# the records envelope only depends on calendar day-of-year, so each
+# DOY in the 90-day window gets computed at most once regardless of how
+# many regions iterate over it. Bounded to the current DOY ± 1 by
+# `_trim_records_cache` since the render walks dates sequentially —
+# without that bound, the CRW variant alone holds ~6 GB by DOY 30 of a
+# cold render and OOM-kills the runner.
 _OISST_RECORDS_CACHE: dict[
     tuple[int, int], tuple[np.ndarray, np.ndarray] | None
 ] = {}
-# Same shape, CRW source. CoralTemp v3.1 (5 km) — heavier per-DOY fetch
-# than OISST 0.25° but the per-DOY cache amortizes it the same way.
+# Same shape, CRW source. CoralTemp v3.1 (5 km) — ~200 MB per max/min
+# pair vs ~10 MB for OISST 0.25°, so the cache bound matters more here.
 _CRW_RECORDS_CACHE: dict[
     tuple[int, int], tuple[np.ndarray, np.ndarray] | None
 ] = {}
@@ -313,51 +317,107 @@ def _crw_climo(d: dt.date, log: str) -> np.ndarray | None:
     return climo
 
 
+def _trim_records_cache(
+    cache: dict[tuple[int, int], tuple[np.ndarray, np.ndarray] | None],
+    d: dt.date,
+) -> None:
+    """Drop cache entries whose (month, day) isn't within ±1 day of `d`.
+
+    The cold-render walks the 90-day window in date order and never
+    revisits a DOY, so a 3-DOY sliding window covers the next call. A
+    full-resolution OISST max/min pair is ~10 MB; CRW (5 km) is ~200 MB.
+    Without bounding the cache, by DOY 30 the CRW cache alone holds
+    ~6 GB of arrays that will never be read again — which OOM-kills
+    the runner partway through a cold render.
+    """
+    keep: set[tuple[int, int]] = set()
+    for offset in (-1, 0, 1):
+        try:
+            nd = d + dt.timedelta(days=offset)
+        except OverflowError:
+            continue
+        keep.add((nd.month, nd.day))
+    for k in list(cache.keys()):
+        if k not in keep:
+            del cache[k]
+
+
 def _oisst_records(d: dt.date, target_year: int, log: str
                    ) -> tuple[np.ndarray, np.ndarray] | None:
     """(record_max, record_min) over OISST history for (d.month, d.day).
 
-    Mirrors the static /sst/ records computation: stack every available
-    year from RECORDS_START..target_year-1 for the same DOY, then
-    nanmax/nanmin per pixel. Cached per-DOY like the climatology — the
-    historical NetCDFs themselves are also disk-cached by `gsp.fetch_day`,
-    so warm runs only re-read from disk and return None only when too
-    few historical files were ever fetched."""
+    Mirrors the static /sst/ records computation but streams the reduce:
+    instead of stacking every year for this DOY into a (n_years, lat,
+    lon) array and calling np.nanmax/nanmin, we iterate years and update
+    running np.fmax/fmin in place so peak memory is O(2 grids) instead
+    of O(n_years × grid). The cache is bounded to current DOY ± 1 (see
+    `_trim_records_cache`) since the cold-render walks dates
+    sequentially. Historical NetCDFs themselves are still disk-cached
+    by `gsp.fetch_day`, so warm runs only re-read from disk."""
     key = (d.month, d.day)
-    if key in _OISST_RECORDS_CACHE:
-        return _OISST_RECORDS_CACHE[key]
-    hist_years = range(gsp.RECORDS_START, target_year)
-    hist = gsp.day_of_year_files(d.month, d.day, hist_years, log)
-    if not hist:
-        _OISST_RECORDS_CACHE[key] = None
-        return None
-    stack, _years = gsp.stack_years(hist)
-    rmax = np.nanmax(stack, axis=0)
-    rmin = np.nanmin(stack, axis=0)
-    _OISST_RECORDS_CACHE[key] = (rmax, rmin)
-    return rmax, rmin
+    if key not in _OISST_RECORDS_CACHE:
+        hist_years = range(gsp.RECORDS_START, target_year)
+        hist = gsp.day_of_year_files(d.month, d.day, hist_years, log)
+        rmax: np.ndarray | None = None
+        rmin: np.ndarray | None = None
+        for y in sorted(hist):
+            try:
+                g, _, _ = gsp.read_sst_grid(hist[y])
+            except Exception:  # noqa: BLE001
+                continue
+            if rmax is None:
+                rmax = g.copy()
+                rmin = g
+            else:
+                if g.shape != rmax.shape:
+                    continue
+                np.fmax(rmax, g, out=rmax)
+                np.fmin(rmin, g, out=rmin)
+            del g
+        _OISST_RECORDS_CACHE[key] = (
+            (rmax, rmin) if rmax is not None and rmin is not None else None
+        )
+    _trim_records_cache(_OISST_RECORDS_CACHE, d)
+    gc.collect()
+    return _OISST_RECORDS_CACHE.get(key)
 
 
 def _crw_records(d: dt.date, target_year: int, log: str
                  ) -> tuple[np.ndarray, np.ndarray] | None:
     """(record_max, record_min) over CRW CoralTemp history for
-    (d.month, d.day). Mirrors `_oisst_records` but pulls from
+    (d.month, d.day). Mirrors `_oisst_records` — same streaming
+    fmax/fmin reduce and same DOY±1 cache bound — but pulls from
     CRW_RECORDS_START..target_year-1 (1985 onward) and reads the
-    `analysed_sst` variable from each CoralTemp v3.1 daily NetCDF."""
+    `analysed_sst` variable. CRW grids are ~7200×3600 float32 (~100 MB
+    each) so streaming the reduce is the difference between a ~6 GB
+    transient and ~200 MB."""
     key = (d.month, d.day)
-    if key in _CRW_RECORDS_CACHE:
-        return _CRW_RECORDS_CACHE[key]
-    hist_years = range(gsp.CRW_RECORDS_START, target_year)
-    hist = gsp.day_of_year_crw_files(d.month, d.day, hist_years,
-                                     "sst", log)
-    if not hist:
-        _CRW_RECORDS_CACHE[key] = None
-        return None
-    stack, _years = gsp.stack_crw_years(hist, "analysed_sst")
-    rmax = np.nanmax(stack, axis=0)
-    rmin = np.nanmin(stack, axis=0)
-    _CRW_RECORDS_CACHE[key] = (rmax, rmin)
-    return rmax, rmin
+    if key not in _CRW_RECORDS_CACHE:
+        hist_years = range(gsp.CRW_RECORDS_START, target_year)
+        hist = gsp.day_of_year_crw_files(d.month, d.day, hist_years,
+                                         "sst", log)
+        rmax: np.ndarray | None = None
+        rmin: np.ndarray | None = None
+        for y in sorted(hist):
+            try:
+                g, _, _ = gsp.read_crw_grid(hist[y], "analysed_sst")
+            except Exception:  # noqa: BLE001
+                continue
+            if rmax is None:
+                rmax = g.copy()
+                rmin = g
+            else:
+                if g.shape != rmax.shape:
+                    continue
+                np.fmax(rmax, g, out=rmax)
+                np.fmin(rmin, g, out=rmin)
+            del g
+        _CRW_RECORDS_CACHE[key] = (
+            (rmax, rmin) if rmax is not None and rmin is not None else None
+        )
+    _trim_records_cache(_CRW_RECORDS_CACHE, d)
+    gc.collect()
+    return _CRW_RECORDS_CACHE.get(key)
 
 
 # ----------------------------------------------------------------------
