@@ -110,9 +110,11 @@ FETCH_TIMEOUT = 45
 FETCH_RETRIES = 3
 
 # NCEI OISST publishes a preliminary file within ~1-2 days of observation,
-# then replaces it with a final file ~14 days later. Downstream consumers
-# (notably the MP4 animator's frame cache) key off this constant to know
-# when a cached prelim should be auto-promoted to final.
+# then a final file ~14 days later. Under the animator's render-once cache
+# we never auto-upgrade prelim→final — first version captured wins. This
+# constant now only seeds the best-effort version tag for pre-versioning
+# legacy NetCDFs (case 3 in fetch_day_versioned) so callers still get a
+# sensible label.
 UPGRADE_LATENCY_DAYS = 14
 
 
@@ -161,25 +163,35 @@ def fetch_day_versioned(d: dt.date, log_prefix: str = "[sst]",
                         ) -> tuple[Path, str] | None:
     """Download the OISST NetCDF for a specific UTC day, prelim/final-aware.
 
-    Returns (path, version) where version is "final" or "prelim". This is
-    the load-bearing piece for OISST's prelim→final auto-promotion: the
-    function ALWAYS probes the upstream final URL first, regardless of
-    which versions are already cached. That means a previously-cached
-    prelim is replaced the moment the final lands upstream, with no
-    cache-key bumps or manual intervention needed downstream.
+    Returns (path, version) where version is "final" or "prelim".
+
+    RENDER-ONCE: once a date is cached we keep that file forever — no
+    auto-upgrade from prelim→final, no second download for the same
+    date. Combined with the prelim-first ordering below, this gives the
+    MP4 animator a uniformly-processed 90-day window with no prelim/
+    final perceptual seam.
+
+    Why prefer prelim over final upstream (counterintuitive)? NCEI's
+    final files come out of a reprocessing batch whose quality-control
+    tweaks vary slightly between batches, producing a visible seam in
+    animated SST/SSTA wherever the prelim/final boundary falls inside
+    the rolling window. Prelim is the consistent operational pipeline
+    and is the only version available across the entire 90-day window
+    once the workflow has been running daily. Cyclonicwx uses the same
+    strategy.
 
     Resolution order:
-      1. final cache (oisst.YYYYMMDD.final.nc) → done.
-      2. final URL upstream → if 200, write `.final.nc`, drop any stale
-         `.prelim.nc` and legacy unversioned `.nc` for the same date,
-         return ("final"). The drop is what makes auto-promotion
-         self-cleaning so old prelim files don't accumulate.
-      3. prelim cache (oisst.YYYYMMDD.prelim.nc) → done.
-      4. legacy unversioned cache (oisst.YYYYMMDD.nc) → accept as-is,
-         tagged "final" if d is older than UPGRADE_LATENCY_DAYS (final
-         must have been available when it was written) or "prelim"
-         otherwise. Best-effort tagging for caches predating versioning.
-      5. prelim URL upstream → if 200, write `.prelim.nc`, return.
+      1. prelim cache (oisst.YYYYMMDD.prelim.nc) → done.
+      2. final cache  (oisst.YYYYMMDD.final.nc)  → only present when
+         that's all we ever managed to fetch (NCEI had already purged
+         prelim the first time we asked about this date).
+      3. legacy unversioned cache (oisst.YYYYMMDD.nc) → accepted as-is,
+         best-effort-tagged by age. Honored from caches that predate
+         versioning.
+      4. prelim URL upstream → write `.prelim.nc`, return ("prelim").
+      5. final URL upstream  → write `.final.nc`,  return ("final").
+         Only reached when prelim is no longer on NCEI (older dates,
+         beyond ~30-day prelim retention).
     """
     final_cache = cache_path(d, "final")
     prelim_cache = cache_path(d, "prelim")
@@ -188,47 +200,15 @@ def fetch_day_versioned(d: dt.date, log_prefix: str = "[sst]",
     def _ok(p: Path) -> bool:
         return p.exists() and p.stat().st_size > 100_000
 
-    # 1. Final already cached.
-    if _ok(final_cache):
-        return final_cache, "final"
-
-    final_url, prelim_url = oisst_url_candidates(d)
-
-    # 2. Try final URL — auto-promote a previously-prelim cache.
-    last_status = None
-    for attempt in range(FETCH_RETRIES):
-        try:
-            r = requests.get(final_url, timeout=FETCH_TIMEOUT)
-            last_status = r.status_code
-            if r.status_code == 404:
-                break  # not yet final; fall through to prelim
-            r.raise_for_status()
-            if len(r.content) < 100_000:
-                break
-            final_cache.write_bytes(r.content)
-            # Once we have the final, the prelim and legacy variants are
-            # superseded — drop them so they can't be picked up again on
-            # subsequent runs (and don't waste disk).
-            prelim_cache.unlink(missing_ok=True)
-            legacy_cache.unlink(missing_ok=True)
-            if verbose:
-                print(f"{log_prefix}   ✓ {d} ← {final_url.split('/')[-1]} (final)")
-            return final_cache, "final"
-        except Exception as e:  # noqa: BLE001
-            if attempt == FETCH_RETRIES - 1:
-                if verbose:
-                    print(
-                        f"{log_prefix}   fetch error {d} ({final_url.split('/')[-1]}): "
-                        f"{type(e).__name__}: {e}",
-                        file=sys.stderr,
-                    )
-                break
-
-    # 3. Prelim already cached.
+    # 1. Prelim already cached — keep it forever.
     if _ok(prelim_cache):
         return prelim_cache, "prelim"
 
-    # 4. Legacy unversioned cache — accept and best-effort-tag by age.
+    # 2. Final already cached (from a prior run that hit case 5).
+    if _ok(final_cache):
+        return final_cache, "final"
+
+    # 3. Legacy unversioned cache — accept and best-effort-tag by age.
     #    Caches written by pre-versioning code are honored as-is so we
     #    don't stampede re-downloads on first run after deploy.
     if _ok(legacy_cache):
@@ -237,13 +217,18 @@ def fetch_day_versioned(d: dt.date, log_prefix: str = "[sst]",
                    else "prelim")
         return legacy_cache, version
 
-    # 5. Try prelim URL.
+    final_url, prelim_url = oisst_url_candidates(d)
+
+    # 4. Try prelim URL first — consistent operational pipeline; the
+    #    only version available for recent dates and the version we
+    #    want for the entire window.
+    last_status = None
     for attempt in range(FETCH_RETRIES):
         try:
             r = requests.get(prelim_url, timeout=FETCH_TIMEOUT)
             last_status = r.status_code
             if r.status_code == 404:
-                break
+                break  # not on NCEI as prelim; fall through to final
             r.raise_for_status()
             if len(r.content) < 100_000:
                 break
@@ -256,6 +241,31 @@ def fetch_day_versioned(d: dt.date, log_prefix: str = "[sst]",
                 if verbose:
                     print(
                         f"{log_prefix}   fetch error {d} ({prelim_url.split('/')[-1]}): "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr,
+                    )
+                break
+
+    # 5. Fall back to the final URL — only reachable when prelim has
+    #    been purged from NCEI (older dates, beyond prelim retention).
+    for attempt in range(FETCH_RETRIES):
+        try:
+            r = requests.get(final_url, timeout=FETCH_TIMEOUT)
+            last_status = r.status_code
+            if r.status_code == 404:
+                break
+            r.raise_for_status()
+            if len(r.content) < 100_000:
+                break
+            final_cache.write_bytes(r.content)
+            if verbose:
+                print(f"{log_prefix}   ✓ {d} ← {final_url.split('/')[-1]} (final)")
+            return final_cache, "final"
+        except Exception as e:  # noqa: BLE001
+            if attempt == FETCH_RETRIES - 1:
+                if verbose:
+                    print(
+                        f"{log_prefix}   fetch error {d} ({final_url.split('/')[-1]}): "
                         f"{type(e).__name__}: {e}",
                         file=sys.stderr,
                     )
