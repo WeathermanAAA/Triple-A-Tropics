@@ -3063,7 +3063,8 @@
       113,
       114,
       115,
-      116
+      116,
+      117
     ],
     "values": [
       0.0,
@@ -3175,6 +3176,7 @@
       39.91,
       41.331,
       42.435,
+      42.695,
       42.695,
       42.695,
       42.695,
@@ -3925,7 +3927,7 @@
     ],
     "latest_value": 186.352
   },
-  "today_doy": 116,
+  "today_doy": 117,
   "rankings": [
     {
       "year": 1956,
@@ -4006,7 +4008,7 @@
     },
     {
       "year": 1976,
-      "ytd": 34.84,
+      "ytd": 35.2,
       "total": 293.58,
       "current": false,
       "rank": 12
@@ -4083,7 +4085,7 @@
     },
     {
       "year": 2005,
-      "ytd": 23.66,
+      "ytd": 24.22,
       "total": 313.84,
       "current": false,
       "rank": 23
@@ -4131,16 +4133,16 @@
       "rank": 29
     },
     {
-      "year": 1971,
-      "ytd": 16.74,
-      "total": 374.78,
+      "year": 1978,
+      "ytd": 17.35,
+      "total": 242.29,
       "current": false,
       "rank": 30
     },
     {
-      "year": 1978,
-      "ytd": 16.73,
-      "total": 242.29,
+      "year": 1971,
+      "ytd": 17.23,
+      "total": 374.78,
       "current": false,
       "rank": 31
     },
@@ -4167,7 +4169,7 @@
     },
     {
       "year": 1991,
-      "ytd": 11.46,
+      "ytd": 12.15,
       "total": 415.65,
       "current": false,
       "rank": 35
@@ -4243,30 +4245,30 @@
       "rank": 45
     },
     {
-      "year": 2007,
-      "ytd": 7.37,
-      "total": 218.16,
+      "year": 1986,
+      "ytd": 7.7,
+      "total": 335.02,
       "current": false,
       "rank": 46
     },
     {
-      "year": 2014,
-      "ytd": 6.23,
-      "total": 276.09,
+      "year": 1999,
+      "ytd": 7.43,
+      "total": 109.01,
       "current": false,
       "rank": 47
     },
     {
-      "year": 1986,
-      "ytd": 6.03,
-      "total": 335.02,
+      "year": 2007,
+      "ytd": 7.37,
+      "total": 218.16,
       "current": false,
       "rank": 48
     },
     {
-      "year": 1999,
-      "ytd": 5.54,
-      "total": 109.01,
+      "year": 2014,
+      "ytd": 6.39,
+      "total": 276.09,
       "current": false,
       "rank": 49
     },
@@ -4299,16 +4301,16 @@
       "rank": 53
     },
     {
-      "year": 1974,
+      "year": 1960,
       "ytd": 3.22,
-      "total": 194.49,
+      "total": 316.91,
       "current": false,
       "rank": 54
     },
     {
-      "year": 1960,
-      "ytd": 3.1,
-      "total": 316.91,
+      "year": 1974,
+      "ytd": 3.22,
+      "total": 194.49,
       "current": false,
       "rank": 55
     },
@@ -4355,65 +4357,65 @@
       "rank": 61
     },
     {
+      "year": 1963,
+      "ytd": 1.81,
+      "total": 376.49,
+      "current": false,
+      "rank": 62
+    },
+    {
       "year": 1954,
       "ytd": 1.76,
       "total": 299.93,
       "current": false,
-      "rank": 62
+      "rank": 63
     },
     {
       "year": 1977,
       "ytd": 1.59,
       "total": 171.42,
       "current": false,
-      "rank": 63
+      "rank": 64
     },
     {
       "year": 2023,
       "ytd": 1.21,
       "total": 268.41,
       "current": false,
-      "rank": 64
+      "rank": 65
+    },
+    {
+      "year": 2017,
+      "ytd": 0.93,
+      "total": 165.41,
+      "current": false,
+      "rank": 66
     },
     {
       "year": 2006,
       "ytd": 0.73,
       "total": 321.02,
       "current": false,
-      "rank": 65
-    },
-    {
-      "year": 2017,
-      "ytd": 0.65,
-      "total": 165.41,
-      "current": false,
-      "rank": 66
+      "rank": 67
     },
     {
       "year": 1947,
       "ytd": 0.37,
       "total": 225.43,
       "current": false,
-      "rank": 67
+      "rank": 68
     },
     {
       "year": 1950,
       "ytd": 0.33,
       "total": 156.71,
       "current": false,
-      "rank": 68
+      "rank": 69
     },
     {
       "year": 1964,
       "ytd": 0.0,
       "total": 398.83,
-      "current": false,
-      "rank": 69
-    },
-    {
-      "year": 1963,
-      "ytd": 0.0,
-      "total": 376.49,
       "current": false,
       "rank": 70
     },
