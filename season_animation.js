@@ -245,12 +245,11 @@
     }
 
     _applyGifAvailability(year, ok) {
-      // Stale probe — user moved on before HEAD resolved.
+      // Stale probe — user moved on before HEAD resolved. Play stays
+      // enabled regardless: it drives the canvas animation, which renders
+      // from tracks JSON and doesn't depend on the committed GIF.
       if (this.year !== year) return;
       if (ok) {
-        this.playBtn.disabled = false;
-        this.playBtn.style.opacity = '';
-        this.playBtn.style.cursor = '';
         this.download.removeAttribute('aria-disabled');
         this.download.style.opacity = '';
         this.download.style.pointerEvents = '';
@@ -260,10 +259,6 @@
           this._setStatus('');
         }
       } else {
-        this.pause();
-        this.playBtn.disabled = true;
-        this.playBtn.style.opacity = '0.45';
-        this.playBtn.style.cursor = 'not-allowed';
         this.download.setAttribute('aria-disabled', 'true');
         this.download.removeAttribute('href');
         this.download.style.opacity = '0.45';
