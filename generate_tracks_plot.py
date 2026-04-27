@@ -807,6 +807,12 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # card grid accumulates ~10 stale invests by mid-season (most of
         # which never developed) that just clutter the inactive section.
         recent_invest = is_invest and recent_obs
+        # ATCF id (e.g. "91W" / "92L" / "93E") for the invest renderer's
+        # red-X label. Only set for invests; numbered TCs surface their
+        # name via the spinning-icon label instead.
+        atcf_id = None
+        if is_invest and nums:
+            atcf_id = f"{int(nums[0])}{basin_cfg.get('invest_letter', '')}"
         # Current intensity = SSHWS of the most recent observation
         last_wind = points[-1]["wind_kt"] if points else float("nan")
         current_cls = sshs_class(last_wind)
@@ -830,6 +836,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             "is_active": bool(is_active),
             "is_invest": bool(is_invest),
             "recent_invest": bool(recent_invest),
+            "atcf_id": atcf_id,
             "points": [{
                 "t": p["time"].isoformat(),
                 "lat": round(float(p["lat"]), 2),
@@ -1111,6 +1118,66 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                          'stroke-width="1.2" stroke-opacity="0.5" '
                          'stroke-linejoin="round" stroke-linecap="round"'
                          f'{dash_attr}/>')
+
+        # Invest treatment (storm_num 90-99): past observations render as
+        # small white triangles, the most-recent point renders as a red
+        # crossed-X with a glow (filter defined in SVG_DEFS) and an
+        # atcf_id label. This bypasses the wind-class dot styling below
+        # because invests aren't classified TC/ST/non-TC the same way —
+        # they're just disturbances. Numbered TCs (01-89) keep the
+        # circle/square/triangle-by-nature treatment.
+        # TODO: scale invest X glow intensity with NHC/JTWC formation
+        # probability (Low/Med/High or %) when a data source is wired
+        # up — knackwx doesn't return it today. Tracked in POST_LAUNCH.md.
+        if storm.get("is_invest"):
+            atcf_id = storm.get("atcf_id") or sname
+            last_idx = len(xy) - 1
+            for i, ((x, y), p) in enumerate(zip(xy, pts)):
+                wind = p.get("wind_kt")
+                pres = p.get("pressure_mb")
+                t = p.get("t") or ""
+                cls = p.get("cls") or "TD"
+                wind_attr = f"{wind}" if wind is not None else ""
+                pres_attr = f"{pres}" if pres is not None else ""
+                common_attrs = (
+                    f'data-sid="{sid}" data-name="{sname}" data-t="{t}" '
+                    f'data-wind="{wind_attr}" data-pres="{pres_attr}" '
+                    f'data-cls="{cls}" data-phase="invest"'
+                )
+                if i < last_idx:
+                    # Past observation: small white triangle.
+                    r = 3.5
+                    half = r * 0.866
+                    p1 = f"{x:.1f},{y - r:.1f}"
+                    p2 = f"{x + half:.1f},{y + r * 0.5:.1f}"
+                    p3 = f"{x - half:.1f},{y + r * 0.5:.1f}"
+                    parts.append(
+                        f'<polygon class="track-dot invest-past" '
+                        f'points="{p1} {p2} {p3}" '
+                        f'fill="#ffffff" stroke="#ffffff" '
+                        f'stroke-width="0.9" stroke-opacity="0.85" '
+                        f'{common_attrs}/>'
+                    )
+                else:
+                    # Current position: red glowing X + atcf_id label.
+                    parts.append(
+                        f'<g class="invest-current" '
+                        f'transform="translate({x:.1f},{y:.1f})" '
+                        f'filter="url(#invest-red-glow)">'
+                        f'<path class="track-dot" '
+                        f'd="M -7 -7 L 7 7 M -7 7 L 7 -7" '
+                        f'stroke="#ff2a2a" stroke-width="2.4" '
+                        f'stroke-linecap="round" fill="none" '
+                        f'{common_attrs}/>'
+                        f'</g>'
+                    )
+                    parts.append(
+                        f'<text class="invest-label" '
+                        f'x="{x + 11:.1f}" y="{y + 4:.1f}" '
+                        f'text-anchor="start">{atcf_id}</text>'
+                    )
+            continue
+
         # Dots — radius depends on whether the point is at TS+ (bigger) or not.
         # Shape depends on the point's lifecycle phase (matches the
         # JMA/JTWC best-track convention in the reference image):
@@ -1238,8 +1305,27 @@ def render_active_icons(storms: list[dict], extent) -> str:
     return "\n".join(parts)
 
 
-# No <defs>/<symbol> needed — geometry is drawn inline in render_active_icons.
-SVG_DEFS = ""
+# SVG <defs> — only the active-icon geometry is inline; the invest
+# current-position X uses a Gaussian-blur red-glow filter referenced
+# via filter="url(#invest-red-glow)" from render_tracks_svg.
+# stdDeviation tuned to bloom ~6 px past the X without dominating the
+# basemap; flood-color is fixed full-saturation red (uniform intensity
+# until formation_probability becomes available — see POST_LAUNCH.md).
+SVG_DEFS = (
+    '<defs>'
+    '<filter id="invest-red-glow" x="-200%" y="-200%" '
+    'width="500%" height="500%">'
+    '<feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="blur"/>'
+    '<feFlood flood-color="#ff0000" flood-opacity="0.95" result="red"/>'
+    '<feComposite in="red" in2="blur" operator="in" result="redblur"/>'
+    '<feMerge>'
+    '<feMergeNode in="redblur"/>'
+    '<feMergeNode in="redblur"/>'
+    '<feMergeNode in="SourceGraphic"/>'
+    '</feMerge>'
+    '</filter>'
+    '</defs>'
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1668,6 +1754,12 @@ HTML_TEMPLATE = """<!doctype html>
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }}
   .active-icon {{ cursor: pointer; }}
+  /* Invest current-position label (atcf_id like "91W"). Same typography
+     as .active-icon .name but tinted red to match the X glow. */
+  .invest-label {{ fill: #ff5050; font-size: 12px; font-weight: 700;
+    paint-order: stroke; stroke: #07101c; stroke-width: 3;
+    stroke-linejoin: round; pointer-events: none;
+    dominant-baseline: middle; }}
 
   /* Sidebar */
   .side {{ flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }}
