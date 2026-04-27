@@ -52,6 +52,7 @@ import sys
 import time
 from pathlib import Path
 
+import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -87,7 +88,9 @@ CACHE_KEEP_DAYS = WINDOW_DAYS + 14
 # is the single consistent operational pipeline available across the
 # whole window — see that function's docstring for the full rationale.
 
-OISST_PRODUCT_SLUGS = frozenset({"actual", "anomaly", "anomaly_gmr"})
+OISST_PRODUCT_SLUGS = frozenset({
+    "actual", "anomaly", "anomaly_records", "anomaly_gmr",
+})
 
 
 def _is_oisst_product(product: dict) -> bool:
@@ -139,6 +142,31 @@ CORE_PRODUCTS: list[dict] = [
         "title_suffix": "SST Anomaly",
         "subtitle_src": "OISST v2.1 · vs 1991–2020",
         "cache_version": 2,
+    },
+    {
+        # Same anomaly field as `anomaly`, with diagonal-hatch stippling
+        # over pixels whose value meets/exceeds the per-DOY OISST record
+        # envelope (1982-present, excluding the current year). Mirrors the
+        # static `<region>_anomaly_records.png` plot exactly. Records
+        # masks are passed through `_render_frame`'s extras dict.
+        "slug": "anomaly_records",
+        "label": "SST anomaly + daily records (°C)",
+        "description": (
+            "OISST v2.1 SST anomaly vs the 1991–2020 daily climatology, "
+            "with diagonal stippling where today's value meets or "
+            "exceeds the warmest (///) or coldest (\\\\) value ever "
+            "observed for this day-of-year since 1982."
+        ),
+        "cmap": "anom",
+        "vmin": -5.0,
+        "vmax": 5.0,
+        "cbar_label": "SST anomaly (°C)",
+        "cbar_ticks": list(range(-5, 6)),
+        "cbar_extend": "both",
+        "title_suffix": "SST Anomaly with Daily Records",
+        "subtitle_src": "OISST v2.1 · vs 1991–2020 · records vs 1982-present",
+        "records_overlay": True,
+        "cache_version": 1,
     },
     {
         "slug": "anomaly_gmr",
@@ -230,6 +258,13 @@ def _load_crw_sst(d: dt.date, log: str
 # share a single fetch+nanmean per DOY.
 _OISST_CLIMO_CACHE: dict[tuple[int, int], np.ndarray | None] = {}
 _CRW_CLIMO_CACHE:   dict[tuple[int, int], np.ndarray | None] = {}
+# (record_max, record_min) per (month, day) for OISST. Per-DOY because
+# the records envelope only depends on calendar day-of-year, so the
+# 90-day window's ~90 unique DOYs each get computed at most once per
+# run regardless of how many regions iterate over the same DOY.
+_OISST_RECORDS_CACHE: dict[
+    tuple[int, int], tuple[np.ndarray, np.ndarray] | None
+] = {}
 
 
 def _oisst_climo(d: dt.date, log: str) -> np.ndarray | None:
@@ -250,19 +285,47 @@ def _crw_climo(d: dt.date, log: str) -> np.ndarray | None:
     return climo
 
 
+def _oisst_records(d: dt.date, target_year: int, log: str
+                   ) -> tuple[np.ndarray, np.ndarray] | None:
+    """(record_max, record_min) over OISST history for (d.month, d.day).
+
+    Mirrors the static /sst/ records computation: stack every available
+    year from RECORDS_START..target_year-1 for the same DOY, then
+    nanmax/nanmin per pixel. Cached per-DOY like the climatology — the
+    historical NetCDFs themselves are also disk-cached by `gsp.fetch_day`,
+    so warm runs only re-read from disk and return None only when too
+    few historical files were ever fetched."""
+    key = (d.month, d.day)
+    if key in _OISST_RECORDS_CACHE:
+        return _OISST_RECORDS_CACHE[key]
+    hist_years = range(gsp.RECORDS_START, target_year)
+    hist = gsp.day_of_year_files(d.month, d.day, hist_years, log)
+    if not hist:
+        _OISST_RECORDS_CACHE[key] = None
+        return None
+    stack, _years = gsp.stack_years(hist)
+    rmax = np.nanmax(stack, axis=0)
+    rmin = np.nanmin(stack, axis=0)
+    _OISST_RECORDS_CACHE[key] = (rmax, rmin)
+    return rmax, rmin
+
+
 # ----------------------------------------------------------------------
 # Frame rendering
 # ----------------------------------------------------------------------
 def _render_frame(product: dict, data: np.ndarray, lat: np.ndarray,
                   lon: np.ndarray, region_cfg: dict, valid_date: dt.date,
-                  countries, coast, out_path: Path) -> bool:
+                  countries, coast, out_path: Path,
+                  extras: dict | None = None) -> bool:
     """Render one frame (one date × region × product) to `out_path`.
 
     Mirrors the static plot_actual / plot_anomaly visual style exactly
     (colormap, basemap, watermark, subtitle layout) but at lower DPI
-    and skipping the labels variant + record overlays for animation
-    speed. Returns False if the subset is empty (region outside the
-    data's coverage)."""
+    and skipping the labels variant for animation speed. Optional
+    `extras` carries product-specific overlays — e.g. records_high /
+    records_low boolean masks for the `anomaly_records` product.
+    Returns False if the subset is empty (region outside the data's
+    coverage)."""
     extent = region_cfg["extent"]
     figsize = region_cfg["figsize"]
     label = region_cfg["label"]
@@ -282,6 +345,45 @@ def _render_frame(product: dict, data: np.ndarray, lat: np.ndarray,
     )
     if product.get("contour"):
         gsp.draw_integer_degree_contours(ax, LON2, LAT2, sub)
+
+    # Records overlay — diagonal hatching in the same style as
+    # gsp.plot_anomaly (forward-slash for highs, back-slash for lows).
+    # Drawn before the basemap so coastlines sit on top of the hatching.
+    if product.get("records_overlay") and extras:
+        prev_hatch_lw = mpl.rcParams.get("hatch.linewidth", 1.0)
+        prev_hatch_color = mpl.rcParams.get("hatch.color", "black")
+        mpl.rcParams["hatch.linewidth"] = 0.55
+        try:
+            for rm, pattern, hatch_color in (
+                (extras.get("records_high"), "///",  "#2a0412"),
+                (extras.get("records_low"),  "\\\\", "#05122e"),
+            ):
+                if rm is None:
+                    continue
+                rm_sub, _, _ = gsp._subset_to_extent(rm, lat, lon, extent)
+                if rm_sub.shape != sub.shape:
+                    continue
+                mask_float = np.where(rm_sub, 1.0, 0.0)
+                if not (mask_float > 0.5).any():
+                    continue
+                mpl.rcParams["hatch.color"] = hatch_color
+                ax.contourf(
+                    LON2, LAT2, mask_float,
+                    levels=[0.5, 1.5],
+                    colors="none",
+                    hatches=[pattern],
+                    zorder=1.8,
+                )
+                ax.contour(
+                    LON2, LAT2, mask_float,
+                    levels=[0.5],
+                    colors="#000000", linewidths=0.6, alpha=0.75,
+                    zorder=1.9,
+                )
+        finally:
+            mpl.rcParams["hatch.linewidth"] = prev_hatch_lw
+            mpl.rcParams["hatch.color"] = prev_hatch_color
+
     gsp._draw_basemap(ax, extent, countries, coast)
 
     date_label = valid_date.strftime("%B %-d, %Y")
@@ -478,41 +580,71 @@ def _build_window_dates(end_date: dt.date) -> list[dt.date]:
             for i in range(WINDOW_DAYS)]
 
 
-def _build_day_products(d: dt.date, log: str
+def _build_day_products(d: dt.date, target_year: int,
+                        requested_slugs: frozenset[str], log: str
                         ) -> list[tuple[dict, np.ndarray, np.ndarray,
-                                        np.ndarray, str | None]]:
+                                        np.ndarray, str | None, dict]]:
     """For one date, fetch the source data + climatology and return a
-    list of (product_dict, derived_field, lat, lon, version) tuples ready
-    to feed into _render_frame across all regions.
+    list of (product_dict, derived_field, lat, lon, version, extras)
+    tuples ready to feed into _render_frame across all regions.
 
     `version` is "final"/"prelim" for OISST products and None for CRW
-    (single-publish source). All three OISST products derived from the
-    same day's SST share that day's version.
+    (single-publish source). All OISST products derived from the same
+    day's SST share that day's version. `extras` is a per-product dict
+    carrying overlay arrays (e.g. records masks for `anomaly_records`).
 
     OISST anomaly products are skipped if the OISST climatology can't
     be built (e.g. network failure on >half the historical years);
-    `actual` still renders. Same for CRW.
+    `actual` still renders. Same for CRW. The `anomaly_records`
+    product is also skipped silently if the per-DOY records envelope
+    can't be assembled — its frame just gets the next-day shot at it.
+
+    `target_year` scopes the records computation to RECORDS_START..
+    target_year-1 (matching the static /sst/ page's behavior).
+    `requested_slugs` lets the caller cheaply opt out of the records
+    fetch when no anomaly_records frames are being rendered this run.
     """
     out: list[tuple[dict, np.ndarray, np.ndarray,
-                    np.ndarray, str | None]] = []
+                    np.ndarray, str | None, dict]] = []
 
     # OISST family
     oisst = _load_oisst_sst(d, log)
     if oisst is not None:
         sst, oi_lat, oi_lon, oi_version = oisst
-        out.append((PRODUCT_BY_SLUG["actual"], sst, oi_lat, oi_lon, oi_version))
+        out.append((PRODUCT_BY_SLUG["actual"], sst, oi_lat, oi_lon,
+                    oi_version, {}))
 
         oi_climo = _oisst_climo(d, log)
         if oi_climo is not None and oi_climo.shape == sst.shape:
             anom = sst - oi_climo
             out.append((PRODUCT_BY_SLUG["anomaly"], anom, oi_lat, oi_lon,
-                        oi_version))
+                        oi_version, {}))
+
+            if "anomaly_records" in requested_slugs:
+                rec = _oisst_records(d, target_year, log)
+                if rec is not None:
+                    rmax, rmin = rec
+                    if rmax.shape == sst.shape and rmin.shape == sst.shape:
+                        eps = 0.001
+                        rec_high = sst > (rmax - eps)
+                        rec_low = sst < (rmin + eps)
+                        nan_mask = np.isnan(sst)
+                        rec_high = np.where(
+                            nan_mask | np.isnan(rmax), False, rec_high)
+                        rec_low = np.where(
+                            nan_mask | np.isnan(rmin), False, rec_low)
+                        out.append((
+                            PRODUCT_BY_SLUG["anomaly_records"], anom,
+                            oi_lat, oi_lon, oi_version,
+                            {"records_high": rec_high,
+                             "records_low": rec_low},
+                        ))
 
             gm = gsp.compute_global_mean(anom, oi_lat)
             if np.isfinite(gm):
                 anom_gmr = anom - gm
                 out.append((PRODUCT_BY_SLUG["anomaly_gmr"],
-                            anom_gmr, oi_lat, oi_lon, oi_version))
+                            anom_gmr, oi_lat, oi_lon, oi_version, {}))
 
     # CRW family — single-version publish, no per-day version tag.
     crw = _load_crw_sst(d, log)
@@ -522,7 +654,7 @@ def _build_day_products(d: dt.date, log: str
         if crw_clim is not None and crw_clim.shape == crw_sst.shape:
             anom_crw = crw_sst - crw_clim
             out.append((PRODUCT_BY_SLUG["crw_anomaly"],
-                        anom_crw, crw_lat, crw_lon, None))
+                        anom_crw, crw_lat, crw_lon, None, {}))
 
     return out
 
@@ -544,7 +676,8 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
     freed — keeps peak RAM ~bounded.
     """
     stats = {"rendered": 0, "cached": 0, "skipped_unavailable": 0}
-    requested_slugs = {p["slug"] for p in products}
+    requested_slugs = frozenset(p["slug"] for p in products)
+    target_year = dates[-1].year
     t0 = time.time()
     for di, d in enumerate(dates, start=1):
         # Skip the day entirely if no (region × product) needs work —
@@ -561,23 +694,28 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
             stats["cached"] += len(regions) * len(products)
             continue
 
-        day_products = _build_day_products(d, log)
+        day_products = _build_day_products(d, target_year,
+                                           requested_slugs, log)
         # Restrict to the user-requested product subset.
-        day_products = [(p, data, la, lo, ver) for (p, data, la, lo, ver)
-                        in day_products if p["slug"] in requested_slugs]
+        day_products = [
+            (p, data, la, lo, ver, extras)
+            for (p, data, la, lo, ver, extras) in day_products
+            if p["slug"] in requested_slugs
+        ]
         if not day_products:
             stats["skipped_unavailable"] += len(regions) * len(products)
             continue
 
         for region in regions:
             rcfg = gsp.REGIONS[region]
-            for product, data, lat, lon, version in day_products:
+            for product, data, lat, lon, version, extras in day_products:
                 target = _frame_path(region, product, d, version)
                 if target.exists():
                     stats["cached"] += 1
                     continue
                 ok = _render_frame(product, data, lat, lon, rcfg, d,
-                                   countries, coast, target)
+                                   countries, coast, target,
+                                   extras=extras)
                 if ok:
                     stats["rendered"] += 1
                 else:
