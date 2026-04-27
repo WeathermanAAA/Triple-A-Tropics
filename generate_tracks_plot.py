@@ -1090,6 +1090,10 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
     """
     project, _ = build_projection(extent)
     parts = ['<g class="tracks">']
+    # Stash per-invest current-position coordinates from the first pass
+    # so the second pass can draw the red X + label on top of every
+    # other storm's markers, regardless of source order.
+    invest_current_positions: list[tuple[dict, float, float, dict]] = []
     for storm in storms:
         pts = storm.get("points") or []
         if len(pts) < 1:
@@ -1130,7 +1134,6 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
         # probability (Low/Med/High or %) when a data source is wired
         # up — knackwx doesn't return it today. Tracked in POST_LAUNCH.md.
         if storm.get("is_invest"):
-            atcf_id = storm.get("atcf_id") or sname
             last_idx = len(xy) - 1
             for i, ((x, y), p) in enumerate(zip(xy, pts)):
                 wind = p.get("wind_kt")
@@ -1159,22 +1162,12 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                         f'{common_attrs}/>'
                     )
                 else:
-                    # Current position: red glowing X + atcf_id label.
-                    parts.append(
-                        f'<g class="invest-current" '
-                        f'transform="translate({x:.1f},{y:.1f})" '
-                        f'filter="url(#invest-red-glow)">'
-                        f'<path class="track-dot" '
-                        f'd="M -7 -7 L 7 7 M -7 7 L 7 -7" '
-                        f'stroke="#ff2a2a" stroke-width="2.4" '
-                        f'stroke-linecap="round" fill="none" '
-                        f'{common_attrs}/>'
-                        f'</g>'
-                    )
-                    parts.append(
-                        f'<text class="invest-label" '
-                        f'x="{x + 11:.1f}" y="{y + 4:.1f}" '
-                        f'text-anchor="start">{atcf_id}</text>'
+                    # Defer the current-position X + label to the
+                    # second pass so it renders on top of every other
+                    # storm's past markers (e.g., a neighboring TC's
+                    # triangle that would otherwise overlap the X).
+                    invest_current_positions.append(
+                        (storm, x, y, p)
                     )
             continue
 
@@ -1258,6 +1251,41 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
                     f'<polygon class="track-dot" points="{p1} {p2} {p3}" '
                     f'{common_attrs}/>'
                 )
+
+    # Second pass: every invest's red glowing X + atcf_id label, drawn
+    # last so it sits on top of any neighboring storm's past markers
+    # (triangles, dots, polygons) regardless of source order.
+    for storm, x, y, p in invest_current_positions:
+        sid = storm.get("sid") or ""
+        sname = (storm.get("name") or "UNNAMED").replace('"', '')
+        atcf_id = storm.get("atcf_id") or sname
+        wind = p.get("wind_kt")
+        pres = p.get("pressure_mb")
+        t = p.get("t") or ""
+        cls = p.get("cls") or "TD"
+        wind_attr = f"{wind}" if wind is not None else ""
+        pres_attr = f"{pres}" if pres is not None else ""
+        common_attrs = (
+            f'data-sid="{sid}" data-name="{sname}" data-t="{t}" '
+            f'data-wind="{wind_attr}" data-pres="{pres_attr}" '
+            f'data-cls="{cls}" data-phase="invest"'
+        )
+        parts.append(
+            f'<g class="invest-current" '
+            f'transform="translate({x:.1f},{y:.1f})" '
+            f'filter="url(#invest-red-glow)">'
+            f'<path class="track-dot" '
+            f'd="M -7 -7 L 7 7 M -7 7 L 7 -7" '
+            f'stroke="#ff2a2a" stroke-width="2.4" '
+            f'stroke-linecap="round" fill="none" '
+            f'{common_attrs}/>'
+            f'</g>'
+        )
+        parts.append(
+            f'<text class="invest-label" '
+            f'x="{x + 11:.1f}" y="{y + 4:.1f}" '
+            f'text-anchor="start">{atcf_id}</text>'
+        )
     parts.append('</g>')
     return "\n".join(parts)
 
