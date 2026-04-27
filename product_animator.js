@@ -112,9 +112,11 @@
               <span>Window</span>
               <select class="pa-select" data-role="timescale" disabled></select>
             </label>
-            <label class="pa-ctrl">
-              <span>Speed</span>
-              <select class="pa-select" data-role="speed" disabled>
+            <label class="pa-ctrl"
+                   title="Affects playback only — downloaded MP4s play at native FPS.">
+              <span>Speed <span class="pa-meta">(playback)</span></span>
+              <select class="pa-select" data-role="speed" disabled
+                      title="Affects playback only — downloaded MP4s play at native FPS.">
                 ${SPEED_OPTIONS.map(s =>
                   `<option value="${s}"${s === 1 ? ' selected' : ''}>${s}×</option>`
                 ).join('')}
@@ -395,7 +397,14 @@
       const win = this.manifest.window || { unit: 'days', length: 90 };
       this.downloadBtn.textContent =
         `Download ${win.length}-${win.unit.replace(/s$/, '')} MP4`;
-      this.downloadBtn.download = clip.src;
+      // Filename embeds the manifest's date range so saved files self-describe
+      // their window. Falls back to today's date when the manifest hasn't
+      // emitted first/last frame yet.
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const first = clip.first_frame || todayISO;
+      const last  = clip.last_frame  || todayISO;
+      this.downloadBtn.download =
+        `triple-a-tropics_${slugify(this.productSlug)}_${slugify(this.regionSlug)}_${first}_to_${last}.mp4`;
 
       // Caption: product description + clip metadata
       const product = (this.manifest.products || [])
@@ -499,6 +508,10 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function escapeAttr(s) { return escapeHTML(s); }
+  function slugify(s) {
+    return String(s == null ? '' : s).toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
 
   function init() {
     document.querySelectorAll('.product-animator').forEach(el => {
