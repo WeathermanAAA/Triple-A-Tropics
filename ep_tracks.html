@@ -69,6 +69,11 @@
   .storm-active { font-size: 10px; color: var(--c1); font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.6px; margin-left: 6px; }
   .storm-active::before { content: "● "; }
+  /* Invest tag — yellow-ish neutral so it doesn't compete with the
+     active-storm dot. Same typography otherwise. */
+  .storm-invest { font-size: 10px; color: var(--td); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px; margin-left: 6px; }
+  .storm-invest::before { content: "◌ "; }
 
   /* SSHS color-bar legend (right of map) */
   .legend { position: absolute; top: 70px; right: 12px;
@@ -89,6 +94,13 @@
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
     border-bottom: 9px solid #ffffff; }
+  /* Dashed-line glyph for the invest legend row. Mirrors the SVG
+     stroke-dasharray="4 3" used in the track polylines. */
+  .legend .dashline { width: 14px; height: 2px; position: relative; }
+  .legend .dashline::before { content: ""; position: absolute; inset: 0;
+    background-image: linear-gradient(to right, #ffffff 4px,
+      transparent 4px, transparent 7px); background-size: 7px 100%;
+    background-repeat: repeat-x; opacity: 0.7; }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -190,7 +202,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Northeast Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-27 04:12 UTC</div>
+        <div class="sub">As of 2026-04-27 04:44 UTC</div>
       </div>
       <div class="stats">
         <b>0</b> named storms · <b>0</b> hurricanes ·
@@ -2256,6 +2268,7 @@
         <div class="sep"></div>
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
+        <div class="item"><span class="dashline"></span>Invest (90-99)</div>
       </div>
     </div>
   </div>
