@@ -44,6 +44,12 @@
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }
   .active-icon { cursor: pointer; }
+  /* Invest current-position label (atcf_id like "91W"). Same typography
+     as .active-icon .name but tinted red to match the X glow. */
+  .invest-label { fill: #ff5050; font-size: 12px; font-weight: 700;
+    paint-order: stroke; stroke: #07101c; stroke-width: 3;
+    stroke-linejoin: round; pointer-events: none;
+    dominant-baseline: middle; }
 
   /* Sidebar */
   .side { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }
@@ -202,7 +208,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Northeast Pacific TC Tracks</div>
-        <div class="sub">As of 2026-04-27 10:02 UTC</div>
+        <div class="sub">As of 2026-04-27 14:08 UTC</div>
       </div>
       <div class="stats">
         <b>0</b> named storms · <b>0</b> hurricanes ·
@@ -211,7 +217,7 @@
     </div>
     <div class="map-svg-wrap">
       <svg class="map" viewBox="0 0 1400 900" preserveAspectRatio="xMidYMid meet">
-        
+        <defs><filter id="invest-red-glow" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="blur"/><feFlood flood-color="#ff0000" flood-opacity="0.95" result="red"/><feComposite in="red" in2="blur" operator="in" result="redblur"/><feMerge><feMergeNode in="redblur"/><feMergeNode in="redblur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
         <rect x="0" y="0" width="1400" height="900" fill="#2463a0"/>
 <g class="land" fill="#aeb2b5" stroke="none">
 <path d="M 1668.5,694.4 L 1666.8,695.1 L 1666.8,694.5 L 1667.3,693.5 L 1668.2,693.2 L 1668.5,692.8 L 1669.1,692.6 L 1669.4,692.6 L 1669.7,692.9 L 1668.9,693.5 L 1668.5,694.4" />
