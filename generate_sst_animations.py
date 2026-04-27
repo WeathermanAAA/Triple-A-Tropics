@@ -204,6 +204,29 @@ CORE_PRODUCTS: list[dict] = [
         "subtitle_src": "Coral Reef Watch 5 km · vs 1991–2020",
         "cache_version": 2,
     },
+    {
+        # CRW counterpart of `anomaly_records`. Same overlay treatment,
+        # CRW's CoralTemp v3.1 archive starts in 1985 so the records
+        # baseline is shorter than OISST's by ~3 years.
+        "slug": "crw_anomaly_records",
+        "label": "CRW SST anomaly + daily records (°C)",
+        "description": (
+            "Coral Reef Watch 5 km SST anomaly vs the 1991–2020 daily "
+            "climatology, with diagonal stippling where today's value "
+            "meets or exceeds the warmest (///) or coldest (\\\\) value "
+            "ever observed for this day-of-year since 1985."
+        ),
+        "cmap": "anom",
+        "vmin": -5.0,
+        "vmax": 5.0,
+        "cbar_label": "SST anomaly (°C)",
+        "cbar_ticks": list(range(-5, 6)),
+        "cbar_extend": "both",
+        "title_suffix": "CRW SST Anomaly with Daily Records",
+        "subtitle_src": "Coral Reef Watch 5 km · vs 1991–2020 · records vs 1985-present",
+        "records_overlay": True,
+        "cache_version": 1,
+    },
 ]
 PRODUCT_BY_SLUG: dict[str, dict] = {p["slug"]: p for p in CORE_PRODUCTS}
 
@@ -265,6 +288,11 @@ _CRW_CLIMO_CACHE:   dict[tuple[int, int], np.ndarray | None] = {}
 _OISST_RECORDS_CACHE: dict[
     tuple[int, int], tuple[np.ndarray, np.ndarray] | None
 ] = {}
+# Same shape, CRW source. CoralTemp v3.1 (5 km) — heavier per-DOY fetch
+# than OISST 0.25° but the per-DOY cache amortizes it the same way.
+_CRW_RECORDS_CACHE: dict[
+    tuple[int, int], tuple[np.ndarray, np.ndarray] | None
+] = {}
 
 
 def _oisst_climo(d: dt.date, log: str) -> np.ndarray | None:
@@ -307,6 +335,28 @@ def _oisst_records(d: dt.date, target_year: int, log: str
     rmax = np.nanmax(stack, axis=0)
     rmin = np.nanmin(stack, axis=0)
     _OISST_RECORDS_CACHE[key] = (rmax, rmin)
+    return rmax, rmin
+
+
+def _crw_records(d: dt.date, target_year: int, log: str
+                 ) -> tuple[np.ndarray, np.ndarray] | None:
+    """(record_max, record_min) over CRW CoralTemp history for
+    (d.month, d.day). Mirrors `_oisst_records` but pulls from
+    CRW_RECORDS_START..target_year-1 (1985 onward) and reads the
+    `analysed_sst` variable from each CoralTemp v3.1 daily NetCDF."""
+    key = (d.month, d.day)
+    if key in _CRW_RECORDS_CACHE:
+        return _CRW_RECORDS_CACHE[key]
+    hist_years = range(gsp.CRW_RECORDS_START, target_year)
+    hist = gsp.day_of_year_crw_files(d.month, d.day, hist_years,
+                                     "sst", log)
+    if not hist:
+        _CRW_RECORDS_CACHE[key] = None
+        return None
+    stack, _years = gsp.stack_crw_years(hist, "analysed_sst")
+    rmax = np.nanmax(stack, axis=0)
+    rmin = np.nanmin(stack, axis=0)
+    _CRW_RECORDS_CACHE[key] = (rmax, rmin)
     return rmax, rmin
 
 
@@ -655,6 +705,27 @@ def _build_day_products(d: dt.date, target_year: int,
             anom_crw = crw_sst - crw_clim
             out.append((PRODUCT_BY_SLUG["crw_anomaly"],
                         anom_crw, crw_lat, crw_lon, None, {}))
+
+            if "crw_anomaly_records" in requested_slugs:
+                rec = _crw_records(d, target_year, log)
+                if rec is not None:
+                    rmax, rmin = rec
+                    if (rmax.shape == crw_sst.shape
+                            and rmin.shape == crw_sst.shape):
+                        eps = 0.001
+                        rec_high = crw_sst > (rmax - eps)
+                        rec_low = crw_sst < (rmin + eps)
+                        nan_mask = np.isnan(crw_sst)
+                        rec_high = np.where(
+                            nan_mask | np.isnan(rmax), False, rec_high)
+                        rec_low = np.where(
+                            nan_mask | np.isnan(rmin), False, rec_low)
+                        out.append((
+                            PRODUCT_BY_SLUG["crw_anomaly_records"],
+                            anom_crw, crw_lat, crw_lon, None,
+                            {"records_high": rec_high,
+                             "records_low": rec_low},
+                        ))
 
     return out
 
