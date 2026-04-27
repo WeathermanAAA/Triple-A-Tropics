@@ -94,16 +94,18 @@ jobs:
         #
         # Version-prefix bumping (-vN-) is the sledgehammer for forcing
         # a full cold re-render of the entire 90-day window. Bumped to
-        # v2 to discard frames rendered before the prelim/final-aware
-        # fetch logic in commit e712f4e — without a bump, the seam
-        # would only clear naturally as upstream prelims age into
-        # finals (~13 days). See SST animator gotchas in CLAUDE.md.
+        # v3 to seed a fresh cache under the render-once / prelim-first
+        # strategy: gsp.fetch_day_versioned now prefers prelim and
+        # never auto-promotes, so once a date is cached it sticks.
+        # Old v2 frames mixed prelim and final-promoted variants whose
+        # seam we're now leaving behind. See SST animator gotchas in
+        # CLAUDE.md.
         uses: actions/cache@v4
         with:
           path: _frame_cache
-          key: sst-mp4-frames-v2-${{ github.run_id }}
+          key: sst-mp4-frames-v3-${{ github.run_id }}
           restore-keys: |
-            sst-mp4-frames-v2-
+            sst-mp4-frames-v3-
 
       - name: Generate SST MP4 animations
         # Cold start (empty cache) takes ~90–120 min: ~6,500 frame
@@ -120,7 +122,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: _frame_cache
-          key: sst-mp4-frames-v2-${{ github.run_id }}
+          key: sst-mp4-frames-v3-${{ github.run_id }}
 
       - name: Push SST MP4 artifacts to orphan branch (force-push, scoped)
         # Force-push is intentional and SAFE here:

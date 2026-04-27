@@ -80,15 +80,12 @@ FRAME_DPI = 150
 # run (e.g. CMEMS hiccup) doesn't immediately invalidate cached frames.
 CACHE_KEEP_DAYS = WINDOW_DAYS + 14
 
-# OISST publishes prelim then final per day; final lands ~14 days after
-# observation. Sourced from generate_sst_plots so the two stay aligned.
-UPGRADE_LATENCY_DAYS = gsp.UPGRADE_LATENCY_DAYS
-# Bound how long we eagerly try to upgrade a cached prelim PNG to final.
-# A date that's been "upgradeable" for longer than this without success
-# is accepted as-is — covers extended NCEI outages and the bootstrap
-# case where pre-versioning legacy PNGs sit in the older portion of the
-# window (those were rendered from final at the time and need no upgrade).
-UPGRADE_GRACE_DAYS = 14
+# OISST publishes prelim then final per day; the animator uses render-
+# once caching: whichever version is captured first stays in the cache
+# for the rest of that date's lifetime in the rolling window. The
+# upstream fetcher (gsp.fetch_day_versioned) prefers prelim because it
+# is the single consistent operational pipeline available across the
+# whole window — see that function's docstring for the full rationale.
 
 OISST_PRODUCT_SLUGS = frozenset({"actual", "anomaly", "anomaly_gmr"})
 
@@ -325,11 +322,10 @@ def _frame_path(region_key: str, product: dict, d: dt.date,
     """Per-(region, product, date, version) PNG cache path.
 
     `version` is "final"/"prelim" for OISST products and None for CRW or
-    legacy unversioned writes. Encoding the OISST version into the filename
-    lets `_list_window_frames` prefer a final-rendered frame over a
-    prelim-rendered one for the same date once the final lands upstream —
-    that's what dissolves the prelim/final seam without a cache_version
-    bump."""
+    legacy unversioned writes. Under render-once caching only one variant
+    per date is ever written, but the version tag is still encoded in the
+    filename so the cache remains diagnosable (you can tell at a glance
+    whether a date came in as prelim or final)."""
     base = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
     if version is None:
         return base / f"{d:%Y%m%d}.png"
@@ -340,9 +336,11 @@ def _existing_cached(region_key: str, product: dict,
                      d: dt.date) -> Path | None:
     """Best-available cached PNG for (region, product, date), or None.
 
-    Preference: .final.png  >  .prelim.png  >  legacy unversioned .png.
-    Used by `_list_window_frames` (encoder input) and `_needs_render`
-    (cache-skip decision)."""
+    Under render-once caching there is at most one variant per date, but
+    we still check all three (.final / .prelim / legacy) to remain
+    forward-compatible with caches written by older code paths. Used by
+    `_list_window_frames` (encoder input) and `_needs_render` (cache-
+    skip decision)."""
     base = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
     if _is_oisst_product(product):
         for v in ("final", "prelim"):
@@ -353,30 +351,15 @@ def _existing_cached(region_key: str, product: dict,
     return legacy if legacy.exists() else None
 
 
-def _needs_render(region_key: str, product: dict, d: dt.date,
-                  end_date: dt.date) -> bool:
-    """True if (region, product, date) needs to be (re-)rendered.
+def _needs_render(region_key: str, product: dict, d: dt.date) -> bool:
+    """True if (region, product, date) has no cached PNG yet.
 
-    OISST: render if no `.final.png` exists AND the date is in the eager
-    upgrade window (between UPGRADE_LATENCY_DAYS and that + GRACE days
-    behind end_date — i.e. final should now exist upstream and we should
-    promote any prelim/legacy PNG to final). Outside that window, any
-    cached variant (final/prelim/legacy) is accepted as-is.
-
-    CRW: render only if no PNG exists at all (CRW has no prelim/final
-    two-stage publish — single version per day, never auto-upgrades)."""
-    base = FRAME_CACHE_DIR / region_key / _product_cache_key(product)
-    if _is_oisst_product(product):
-        if (base / f"{d:%Y%m%d}.final.png").exists():
-            return False
-        days_old = (end_date - d).days
-        in_upgrade_window = (
-            UPGRADE_LATENCY_DAYS <= days_old
-            <= UPGRADE_LATENCY_DAYS + UPGRADE_GRACE_DAYS
-        )
-        if in_upgrade_window:
-            return True
-        return _existing_cached(region_key, product, d) is None
+    Render-once: any cached variant (.final.png / .prelim.png / legacy
+    .png) wins permanently — we never re-render a date that's already in
+    the cache. This is what eliminates the prelim/final perceptual seam
+    from the MP4 (after the ~60-90 day transition every frame in the
+    window has been originally rendered from prelim → uniform processing).
+    The same rule now applies to OISST and CRW."""
     return _existing_cached(region_key, product, d) is None
 
 
@@ -550,11 +533,11 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
     """For every (date, region, product), render to the frame cache if
     needed. Returns a small stats dict.
 
-    "Needed" is decided by `_needs_render`, which honors prelim/final
-    version-aware caching: a date that's just crossed the upgrade
-    boundary (~14 days old) re-renders even if a prelim PNG is on disk,
-    so the final version replaces the prelim and the encoder picks it
-    up automatically on the next pass.
+    "Needed" is decided by `_needs_render`: render-once caching means
+    any cached PNG variant for a date is kept forever, and only dates
+    with no cached frame at all get rendered. New dates pick up
+    whichever upstream version `gsp.fetch_day_versioned` returned first
+    (prelim is preferred — see that function's docstring for why).
 
     Iterates date-major because each day's data + climo is loaded
     once and fanned out across all regions/products before being
@@ -562,7 +545,6 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
     """
     stats = {"rendered": 0, "cached": 0, "skipped_unavailable": 0}
     requested_slugs = {p["slug"] for p in products}
-    end_date = dates[-1]
     t0 = time.time()
     for di, d in enumerate(dates, start=1):
         # Skip the day entirely if no (region × product) needs work —
@@ -570,7 +552,7 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
         any_missing = False
         for region in regions:
             for product in products:
-                if _needs_render(region, product, d, end_date):
+                if _needs_render(region, product, d):
                     any_missing = True
                     break
             if any_missing:
@@ -598,18 +580,6 @@ def _render_all_frames(dates: list[dt.date], regions: list[str],
                                    countries, coast, target)
                 if ok:
                     stats["rendered"] += 1
-                    # Promotion cleanup: when we just wrote a `.final.png`,
-                    # retire the prelim and legacy variants for the same
-                    # date so `_existing_cached` doesn't see a stale
-                    # alternative and `_prune_old_frames` doesn't have to
-                    # carry them for ~14 weeks.
-                    if version == "final":
-                        base = target.parent
-                        for stale in (
-                            base / f"{d:%Y%m%d}.prelim.png",
-                            base / f"{d:%Y%m%d}.png",
-                        ):
-                            stale.unlink(missing_ok=True)
                 else:
                     stats["skipped_unavailable"] += 1
 
@@ -633,10 +603,11 @@ def _encode_all(end_date: dt.date, regions: list[str],
     for region in regions:
         for product in products:
             slug = product["slug"]
-            # One PNG per date in the window, preferring final over
-            # prelim over legacy unversioned. Dates with no cached
-            # variant are silently dropped (the encoder accepts a
-            # short clip).
+            # One PNG per date in the window. Under render-once caching
+            # there's at most one variant per date, but the lookup still
+            # tolerates final/prelim/legacy filenames for forward
+            # compatibility. Dates with no cached frame are silently
+            # dropped (the encoder accepts a short clip).
             window_frames = _list_window_frames(region, product, window_dates)
             if not window_frames:
                 print(f"{log}   ! {region}/{slug}: no cached frames, skip",
