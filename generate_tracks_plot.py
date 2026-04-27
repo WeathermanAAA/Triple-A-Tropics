@@ -495,6 +495,127 @@ def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+KNACKWX_ATCF_URL = "https://api.knackwx.com/atcf/v2"
+
+
+def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
+                       ) -> pd.DataFrame:
+    """Pull currently-active invests (90-99) from the knackwx API.
+
+    Replaces a brittle 90-99 b-deck sweep that depended on a stale
+    natyphoon mirror (last updated 2026-01-14 at the time of writing).
+    knackwx aggregates JTWC/NHC's currently-active systems into a single
+    JSON array refreshed on every JTWC/NHC bulletin push, so it surfaces
+    today's 91W where the b-deck mirror still shows January's expired
+    91W. As a side benefit, knackwx only returns ACTIVE systems — past
+    invests don't accumulate (the recent_invest card filter becomes
+    belt-and-suspenders).
+
+    Filters to invests in this basin only (storm_num 90-99 AND
+    origin_basin matching the basin's invest_letter). Numbered TCs
+    still come from the per-storm b-deck path in fetch_live_season,
+    unchanged — knackwx may or may not list them and we haven't
+    confirmed yet."""
+    try:
+        import urllib.request
+    except Exception:
+        return pd.DataFrame()
+
+    letter = basin_cfg.get("invest_letter", "")
+    if not letter:
+        return pd.DataFrame()
+
+    try:
+        req = urllib.request.Request(KNACKWX_ATCF_URL,
+                                     headers={"User-Agent": FETCH_UA})
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as r:
+            if r.status != 200:
+                return pd.DataFrame()
+            data = json.loads(r.read().decode("utf-8", errors="ignore"))
+    except Exception as e:  # noqa: BLE001
+        print(f"{log_prefix}   knackwx fetch failed: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        return pd.DataFrame()
+
+    if not isinstance(data, list):
+        return pd.DataFrame()
+
+    rows = []
+    for it in data:
+        if (it.get("origin_basin") or "").upper() != letter:
+            continue
+        atcf_id = (it.get("atcf_id") or "").strip()
+        # "91W" → 91 (last char is the basin letter we already matched).
+        try:
+            storm_num = int(atcf_id[:-1])
+        except (ValueError, IndexError):
+            continue
+        if not (90 <= storm_num <= 99):
+            continue
+        ts = it.get("analysis_time")
+        if not ts:
+            continue
+        try:
+            t = dt.datetime.fromisoformat(
+                ts.replace("Z", "+00:00")).replace(tzinfo=None)
+        except (ValueError, AttributeError):
+            continue
+        try:
+            lat = float(it.get("latitude"))
+            lon = float(it.get("longitude"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            vmax = (float(it["winds"]) if it.get("winds") is not None
+                    else float("nan"))
+        except (TypeError, ValueError):
+            vmax = float("nan")
+        pres_raw = it.get("pressure")
+        try:
+            pres = (float(pres_raw) if pres_raw not in (None, 0)
+                    else float("nan"))
+        except (TypeError, ValueError):
+            pres = float("nan")
+        # Map ATCF dev-level to IBTrACS-style nature using the same
+        # table parse_atcf_bdeck uses, so downstream classification
+        # (rendering, ACE eligibility) doesn't care which path the row
+        # came from.
+        devlvl = (it.get("cyclone_nature") or "").strip().upper()
+        nature = _STATUS_TO_NATURE.get(devlvl, "")
+        if not nature:
+            nature = "TS" if (pd.notna(vmax) and vmax > 0) else "DS"
+        # Display name: knackwx uses "INVEST" for unnamed invests; fall
+        # back to "<num><letter>" (91W / 92L / 93E) — same convention
+        # the b-deck path uses for unnamed invests.
+        name_raw = (it.get("storm_name") or "").strip()
+        if name_raw and name_raw not in {"INVEST", "NAMELESS", "UNNAMED"}:
+            name = name_raw
+        else:
+            name = f"{storm_num}{letter}"
+        rows.append({
+            # SID matches the b-deck path's SID format so a future
+            # promotion to a numbered TC (with a real b-deck) doesn't
+            # collide with this invest row.
+            "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
+                   f"{storm_num:02d}{season}",
+            "NAME": name,
+            "season": season,
+            "time": t,
+            "lat": lat,
+            "lon": lon,
+            "wind_kt": vmax,
+            "pressure_mb": pres,
+            "nature": nature,
+            "source": "live-knackwx",
+            "storm_num": storm_num,
+        })
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        print(f"{log_prefix}   knackwx: {len(out)} invest point(s) "
+              f"from {out['SID'].nunique()} system(s)")
+    return out
+
+
 def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataFrame:
     try:
         import urllib.request
@@ -534,14 +655,13 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
         if consecutive_misses >= 3:
             break
 
-    # Invest areas (90-99). JTWC/NHC convention: each agency tracks active
-    # disturbances with cyclone numbers in the 90s (90W-99W, 90L-99L,
-    # 90E-99E). Numbers cycle as invests dissipate or get upgraded to a
-    # numbered TC. We try the full range unconditionally — only 10
-    # candidates and most will 404, but we can't bail early because gaps
-    # are normal (e.g. 91W active, 92W not, 93W active again).
-    for nn in range(90, 100):
-        _try_fetch_one(nn)
+    # Invests (90-99) come from the knackwx API instead of the b-deck
+    # mirror chain — see fetch_live_invests for why (mirror was 3 months
+    # stale and the b-deck for a freshly-spawned invest doesn't exist
+    # yet at the point JTWC announces it in their text bulletin).
+    invests = fetch_live_invests(season, basin_cfg, log_prefix)
+    if not invests.empty:
+        frames.append(invests)
 
     if not frames:
         return pd.DataFrame()
@@ -666,13 +786,14 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # a valid tropical-storm-strength wind, AND (3) nature hasn't gone
         # extratropical. Otherwise the storm has weakened/dissipated and
         # shouldn't get the spinning icon.
+        recent_obs = (len(points) > 0
+                      and points[-1]["time"] >= active_cutoff)
         is_active = False
         if len(points) > 0:
             last = points[-1]
-            recent = last["time"] >= active_cutoff
             strong = pd.notna(last["wind_kt"]) and last["wind_kt"] >= 34
             tropical = (last["nature"] or "") not in {"ET", "DS"}
-            is_active = recent and strong and tropical
+            is_active = recent_obs and strong and tropical
         # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
         # from any row in the group; IBTrACS rows have NaN and are ignored
         # since IBTrACS doesn't archive invests.
@@ -681,6 +802,11 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 and not (isinstance(p["storm_num"], float)
                          and math.isnan(p["storm_num"]))]
         is_invest = bool(nums) and any(int(n) >= 90 for n in nums)
+        # Recent invest = invest with a fresh observation. JTWC/NHC cycle
+        # 90-99 numbers across the season, so without this filter the
+        # card grid accumulates ~10 stale invests by mid-season (most of
+        # which never developed) that just clutter the inactive section.
+        recent_invest = is_invest and recent_obs
         # Current intensity = SSHWS of the most recent observation
         last_wind = points[-1]["wind_kt"] if points else float("nan")
         current_cls = sshs_class(last_wind)
@@ -703,6 +829,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             "current_category": current_cls,
             "is_active": bool(is_active),
             "is_invest": bool(is_invest),
+            "recent_invest": bool(recent_invest),
             "points": [{
                 "t": p["time"].isoformat(),
                 "lat": round(float(p["lat"]), 2),
@@ -719,8 +846,14 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 "nature": (p.get("nature") or "").strip(),
             } for p in points],
         })
-    # Sort: active TCs first, then invests (currently being tracked but
-    # haven't reached TS), then inactive storms by ACE desc, then start.
+    # Drop stale invest cards. Numbered TCs (01-89) keep showing past
+    # cards as part of the season summary; only invests need this
+    # filter, because JTWC/NHC cycle 90-99 numbers continuously.
+    storms = [s for s in storms
+              if not s["is_invest"] or s["recent_invest"]]
+    # Sort: active TCs → recent invests → past TCs by ACE → start.
+    # Past invests are already filtered out above, so all remaining
+    # invests are guaranteed recent — the existing key still works.
     storms.sort(key=lambda s: (not s["is_active"], not s["is_invest"],
                                -s["ace"], s["start"] or ""))
     return storms
