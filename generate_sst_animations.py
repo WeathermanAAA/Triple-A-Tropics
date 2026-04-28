@@ -23,8 +23,8 @@ For each day in the 90-day window (today-89 → today inclusive):
     `gsp.compute_crw_climo_for_date`) so the anomaly products use
     EXACTLY the same baseline as the static `/sst/` page.
   * Derive `anomaly = sst - climo` and `anomaly_gmr = anomaly -
-    global_mean(anomaly)` for OISST; `crw_anomaly = sst - climo` for
-    CRW.
+    global_mean(anomaly)` for both OISST and CRW; CRW also emits
+    `crw_actual` (raw SST) for parity with OISST `actual`.
   * For each (region × core product), render a frame at FRAME_DPI to
     `_frame_cache/sst/{region}/{product}/{YYYYMMDD}.png` IF that frame
     is not already on disk. This is the incremental-cache lever — on
@@ -189,6 +189,25 @@ CORE_PRODUCTS: list[dict] = [
         "cache_version": 2,
     },
     {
+        "slug": "crw_actual",
+        "label": "CRW SST (°C)",
+        "description": (
+            "Coral Reef Watch 5 km absolute sea-surface temperature."
+        ),
+        "cmap": "actual",
+        "vmin": 0.0,
+        "vmax": 32.0,
+        "cbar_label": "Sea-surface temperature (°C)",
+        "cbar_ticks": list(range(0, 33, 4)),
+        "cbar_extend": "both",
+        "title_suffix": "CRW · Sea Surface Temperature",
+        "subtitle_src": "5 km Coral Reef Watch · daily",
+        # Integer-degree contours, matching the OISST `actual` entry — same
+        # visual language across both absolute-SST products.
+        "contour": True,
+        "cache_version": 1,
+    },
+    {
         "slug": "crw_anomaly",
         "label": "CRW SST anomaly (°C)",
         "description": (
@@ -226,6 +245,25 @@ CORE_PRODUCTS: list[dict] = [
         "title_suffix": "CRW SST Anomaly with Daily Records",
         "subtitle_src": "Coral Reef Watch 5 km · vs 1991–2020 · records vs 1985-present",
         "records_overlay": True,
+        "cache_version": 1,
+    },
+    {
+        "slug": "crw_anomaly_gmr",
+        "label": "CRW SSTA − global mean (°C)",
+        "description": (
+            "Coral Reef Watch SST anomaly with each day's area-weighted "
+            "global-mean SSTA subtracted. Highlights spatial patterns vs "
+            "the global warming trend. Same 1991–2020 baseline as the "
+            "CRW anomaly above."
+        ),
+        "cmap": "anom",
+        "vmin": -3.0,
+        "vmax": 3.0,
+        "cbar_label": "SSTA − global mean (°C)",
+        "cbar_ticks": list(range(-3, 4)),
+        "cbar_extend": "both",
+        "title_suffix": "CRW · SST Anomaly (Global Mean Removed)",
+        "subtitle_src": "Coral Reef Watch 5 km · vs 1991–2020 · GMR",
         "cache_version": 1,
     },
 ]
@@ -760,6 +798,8 @@ def _build_day_products(d: dt.date, target_year: int,
     crw = _load_crw_sst(d, log)
     if crw is not None:
         crw_sst, crw_lat, crw_lon = crw
+        out.append((PRODUCT_BY_SLUG["crw_actual"], crw_sst,
+                    crw_lat, crw_lon, None, {}))
         crw_clim = _crw_climo(d, log)
         if crw_clim is not None and crw_clim.shape == crw_sst.shape:
             anom_crw = crw_sst - crw_clim
@@ -786,6 +826,12 @@ def _build_day_products(d: dt.date, target_year: int,
                             {"records_high": rec_high,
                              "records_low": rec_low},
                         ))
+
+            gm_crw = gsp.compute_global_mean(anom_crw, crw_lat)
+            if np.isfinite(gm_crw):
+                anom_crw_gmr = anom_crw - gm_crw
+                out.append((PRODUCT_BY_SLUG["crw_anomaly_gmr"],
+                            anom_crw_gmr, crw_lat, crw_lon, None, {}))
 
     return out
 
