@@ -14,14 +14,21 @@
  *         "products":["actual","anomaly","anomaly_gmr"]},
  *        {"slug":"crw","label":"CRW","family":"sst",
  *         "products":["crw_anomaly"]},
- *        {"slug":"aoml","label":"AOML","disabled":true,
+ *        {"slug":"aoml","label":"AOML","products":[
+ *           {"slug":"tchp","family":"aoml_tchp"},
+ *           {"slug":"d26", "family":"aoml_d26"}]},
+ *        {"slug":"armor3d","label":"ARMOR3D","disabled":true,
  *         "disabledReason":"Animations coming soon"}
  *      ]'></div>
  *
- *   The multi-source mode fetches each distinct `family`'s manifest on
- *   demand (and memoizes), then filters the Product dropdown to the
- *   source's `products` list. Disabled sources show a status message
- *   and freeze the video surface.
+ *   `products` may be an array of slug strings (uses the source-level
+ *   `family`) OR an array of objects `{slug, label?, family?}` so that
+ *   one source can fan out across multiple `mp4-artifacts/{family}/`
+ *   directories — each product picks its own manifest. The widget
+ *   fetches each distinct family's manifest on demand (and memoizes),
+ *   merges products + regions across them, and swaps the active
+ *   manifest when the user changes product. Disabled sources show a
+ *   status message and freeze the video surface.
  *
  * URLs it hits:
  *   .../mp4-artifacts/{family}/manifest.json
@@ -50,7 +57,8 @@
       this.sourceSlug = null;
       this.manifestsByFamily = new Map();   // family → manifest (fetched once)
       this.manifestPromises = new Map();    // family → in-flight fetch
-      this.manifest = null;                 // active manifest
+      this.manifest = null;                 // active manifest (current product's family)
+      this._productFamily = new Map();      // product slug → family (for active source)
       this.regionSlug = null;
       this.productSlug = null;
       this.timescale = null;
@@ -266,19 +274,38 @@
       }
 
       this._setStatus('Loading manifest…');
-      this._loadManifestFor(src.family).then((manifest) => {
-        if (this.sourceSlug !== slug) return; // user switched again
-        this.manifest = manifest;
-        this._populateFromManifest(src);
-        this._loadCurrent();
-      }).catch((e) => {
-        if (this.sourceSlug !== slug) return;
-        this._setStatus(
-          `Animations are not available yet — the orphan ` +
-          `\`mp4-artifacts\` branch hasn't been published for ` +
-          `${src.family}. (${e.message})`
-        );
-      });
+      const families = this._resolveSourceFamilies(src);
+      Promise.all(families.map(f => this._loadManifestFor(f)))
+        .then((manifests) => {
+          if (this.sourceSlug !== slug) return; // user switched again
+          this._populateFromManifests(src, families, manifests);
+          this._loadCurrent();
+        }).catch((e) => {
+          if (this.sourceSlug !== slug) return;
+          this._setStatus(
+            `Animations are not available yet — the orphan ` +
+            `\`mp4-artifacts\` branch hasn't been published for ` +
+            `${families.join(', ') || src.family || src.slug}. (${e.message})`
+          );
+        });
+    }
+
+    _resolveSourceFamilies(src) {
+      // Distinct families this source pulls from. Source-level `family`
+      // (legacy) plus any per-product `family` overrides.
+      const set = new Set();
+      if (src.family) set.add(src.family);
+      if (Array.isArray(src.products)) {
+        for (const p of src.products) {
+          if (p && typeof p === 'object' && p.family) set.add(p.family);
+        }
+      }
+      return Array.from(set);
+    }
+
+    _normalizeProductSlugs(src) {
+      if (!Array.isArray(src.products) || !src.products.length) return null;
+      return new Set(src.products.map(p => typeof p === 'object' ? p.slug : p));
     }
 
     _loadManifestFor(family) {
@@ -297,18 +324,49 @@
       return p;
     }
 
-    _populateFromManifest(src) {
-      const m = this.manifest;
-      const win = m.window || { unit: 'days', length: 90 };
+    _populateFromManifests(src, families, manifests) {
+      // Build product → family map. Manifest-level entries first (every
+      // product the manifests advertise), then explicit per-product
+      // overrides from the data-sources attribute win.
+      this._productFamily = new Map();
+      for (let i = 0; i < manifests.length; i++) {
+        const m = manifests[i];
+        const fam = families[i];
+        for (const p of (m.products || [])) {
+          if (!this._productFamily.has(p.slug)) this._productFamily.set(p.slug, fam);
+        }
+      }
+      if (Array.isArray(src.products)) {
+        for (const p of src.products) {
+          if (p && typeof p === 'object' && p.slug && p.family) {
+            this._productFamily.set(p.slug, p.family);
+          }
+        }
+      }
+
+      // Use the first manifest as the metadata anchor (window/title).
+      // For our use cases all of a source's families share the same
+      // window length and unit; if they ever diverge, _loadCurrent will
+      // re-anchor `this.manifest` to the active product's family.
+      const primary = manifests[0];
+      this.manifest = primary;
+      const win = primary.window || { unit: 'days', length: 90 };
       const unit = win.unit;
       const len  = win.length;
 
       this.familyLabelEl.textContent =
         `${src.label} · ${len}-${unit.replace(/s$/, '')} MP4 animations`;
 
-      // Regions — sort with Global / Global Tropics pinned to the top.
-      // If the source declares a `regions` allow-list, filter down to it.
-      let regions = (m.regions || []).slice();
+      // Regions — union across all manifests (so a source can span
+      // families with overlapping but not identical region sets).
+      // Pin Global / Global Tropics to the top; alpha after that.
+      const regionMap = new Map();
+      for (const m of manifests) {
+        for (const r of (m.regions || [])) {
+          if (!regionMap.has(r.slug)) regionMap.set(r.slug, r);
+        }
+      }
+      let regions = Array.from(regionMap.values());
       if (Array.isArray(src.regions) && src.regions.length) {
         const allow = new Set(src.regions);
         regions = regions.filter(r => allow.has(r.slug));
@@ -320,8 +378,6 @@
         if (b.slug === 'global-tropics') return 1;
         return a.label.localeCompare(b.label);
       });
-      // Preserve current region selection across source switches when it
-      // still exists in the new source's regions.
       const wantRegion = this.regionSlug && regions.find(r => r.slug === this.regionSlug)
         ? this.regionSlug : (regions[0] ? regions[0].slug : null);
       this.regionSelect.innerHTML = regions.map(r =>
@@ -331,12 +387,26 @@
       this.regionSelect.value = wantRegion;
       this.regionSlug = wantRegion;
 
-      // Products — filter to the source's declared list, preserving
-      // manifest order so the renderer controls presentation.
-      let products = m.products || [];
+      // Products — union across manifests, filtered by the source's
+      // declared allow-list. If the source provided product objects,
+      // honor their order; otherwise fall back to manifest order.
+      const allowedSlugs = this._normalizeProductSlugs(src);
+      const productMap = new Map();
+      for (const m of manifests) {
+        for (const p of (m.products || [])) {
+          if (allowedSlugs && !allowedSlugs.has(p.slug)) continue;
+          if (!productMap.has(p.slug)) productMap.set(p.slug, p);
+        }
+      }
+      let products = Array.from(productMap.values());
       if (Array.isArray(src.products) && src.products.length) {
-        const allow = new Set(src.products);
-        products = products.filter(p => allow.has(p.slug));
+        const order = new Map();
+        src.products.forEach((p, i) => {
+          order.set(typeof p === 'object' ? p.slug : p, i);
+        });
+        products.sort((a, b) =>
+          (order.has(a.slug) ? order.get(a.slug) : 999) -
+          (order.has(b.slug) ? order.get(b.slug) : 999));
       }
       const wantProduct = this.productSlug && products.find(p => p.slug === this.productSlug)
         ? this.productSlug : (products[0] ? products[0].slug : null);
@@ -365,9 +435,21 @@
     }
 
     _loadCurrent() {
-      if (!this.manifest || !this.regionSlug || !this.productSlug) return;
+      if (!this.regionSlug || !this.productSlug) return;
+      const src = this.sources.find(s => s.slug === this.sourceSlug);
+      if (!src) return;
+      // Resolve the family that owns this product (may differ per
+      // product within a single source — e.g. AOML/TCHP → aoml_tchp,
+      // AOML/D26 → aoml_d26) and pin `this.manifest` to it so the
+      // clip + product lookups below all read from the right manifest.
+      const family = this._productFamily.get(this.productSlug)
+                  || src.family
+                  || (this.manifest && this.manifest.family) || '';
+      const m = (family && this.manifestsByFamily.get(family)) || this.manifest;
+      if (!m) return;
+      this.manifest = m;
       const key = `${this.regionSlug}_${this.productSlug}`;
-      const clip = (this.manifest.clips || {})[key];
+      const clip = (m.clips || {})[key];
       if (!clip) {
         this._setStatus(`No clip for ${this.regionSlug} · ${this.productSlug} yet.`);
         this.video.removeAttribute('src');
@@ -381,9 +463,7 @@
       }
       this._setStatus('');
       this._currentClip = clip;
-      const v = encodeURIComponent(this.manifest.generated_at || '');
-      const family = (this.sources.find(s => s.slug === this.sourceSlug) || {}).family
-                   || this.manifest.family || '';
+      const v = encodeURIComponent(m.generated_at || '');
       const base = `${ARTIFACTS_BASE}/${family}`;
       const mp4Url    = `${base}/${clip.src}?v=${v}`;
       const posterUrl = `${base}/${clip.poster}?v=${v}`;
