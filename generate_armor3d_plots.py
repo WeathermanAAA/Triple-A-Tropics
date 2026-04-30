@@ -21,7 +21,8 @@ For each of the 18 map regions (same list as generate_subsurface_plots.py):
 
 For each of the 4 equatorial cross-section regions (5°S–5°N zonal mean):
 
-    armor3d/<region>_crosssection.png  # longitude–depth T anomaly panel
+    armor3d/<region>_actual.png        # longitude–depth raw T panel
+    armor3d/<region>_anomaly.png       # longitude–depth T anomaly panel
 
 Plus:
     armor3d/armor3d_meta.json
@@ -541,6 +542,9 @@ def climatology_slice_for(
 # --- Cross-section rendering -------------------------------------------
 
 
+CS_ISOTHERM_C = 26.0  # overlay isotherm on cross-section panels (°C)
+
+
 def plot_cross_section(
     t_arr_now: np.ndarray,
     t_arr_climo: np.ndarray | None,
@@ -550,17 +554,25 @@ def plot_cross_section(
     countries, coast,
     out_path: Path,
     climo_lon: np.ndarray | None = None,
+    *,
+    mode: str = "anomaly",
 ) -> bool:
-    """5°S-5°N longitude-depth cross-section with 20 °C isotherm overlay.
+    """5°S-5°N longitude-depth cross-section with 26 °C isotherm overlay.
 
-    Mirrors the cyclonicwx.com reference:
+    Two render modes:
+      * ``mode="actual"``  — fill = absolute T (sequential cool→warm).
+      * ``mode="anomaly"`` — fill = T − T_climo (diverging). Falls back to
+        ``actual`` if ``t_arr_climo`` is None so we never label raw T as
+        an "anomaly" by accident.
+
+    Common overlays in both modes:
       * small inset map at the top showing the averaged latitude band
-      * main panel: longitude × depth, temperature anomaly colour fill
-      * solid line = current 20 °C isotherm
-      * dashed line = climatological 20 °C isotherm (if climo available)
+      * solid black contour at the 26 °C isotherm of the current field
+      * dashed black contour at the 26 °C isotherm of the climatology
+        (only when climatology is supplied)
 
     ``t_arr_climo`` may be either:
-      * 2D (depth, lon) — already 5°S–5°N zonal-averaged (new climo format
+      * 2D (depth, lon) — already 5°S–5°N zonal-averaged (climo format
         written by build_armor3d_climatology.py as `t_climo_eq`), or
       * 3D (depth, lat, lon) — legacy form averaged on the fly here.
     In the 2D case, `climo_lon` must supply the climatology's lon grid so
@@ -623,11 +635,9 @@ def plot_cross_section(
     T_now_m = np.nanmean(T_now, axis=1)            # (depth, lon)
     lon_cs  = lon_w[lon_mask]
 
-    # Anomaly field (vs climatology if present). If no climatology is
-    # available yet we switch to absolute-temperature mode below rather
-    # than faking an anomaly — T_now − 26°C on a diverging ±6°C colormap
-    # saturates the whole water column and is deeply misleading.
-    has_climo = True
+    # Climatology zonal mean (always computed when climo is supplied so
+    # the dashed isotherm overlay is available in both modes). Anomaly
+    # fill is only computed/used when mode="anomaly".
     if climo_is_2d:
         # Interpolate the climo (depth, lon) onto our lon_cs grid.
         T_cl_m = np.empty_like(T_now_m)
@@ -638,15 +648,16 @@ def plot_cross_section(
                 lon_cs, climo_lon_w[sort_ix], t_arr_climo[di, sort_ix],
                 left=np.nan, right=np.nan,
             )
-        anom = T_now_m - T_cl_m
     elif climo_is_3d:
         T_cl = t_arr_climo[:, lat_mask][:, :, lon_mask]
         T_cl_m = np.nanmean(T_cl, axis=1)
-        anom = T_now_m - T_cl_m
     else:
         T_cl_m = None
-        has_climo = False
-        anom = None  # unused in absolute-T mode
+
+    # Effective fill mode. mode="anomaly" without climatology degrades
+    # cleanly to "actual" — never label raw T as an anomaly.
+    fill_mode = "anomaly" if (mode == "anomaly" and T_cl_m is not None) else "actual"
+    anom = (T_now_m - T_cl_m) if fill_mode == "anomaly" else None
 
     # --- Figure layout: title band | inset map | cross-section -------
     # Three vertical bands so nothing overlaps:
@@ -755,7 +766,7 @@ def plot_cross_section(
     # previously rendered as vertical stripes via .set_bad()).
     LON2, DEPTH2 = np.meshgrid(lon_cs, depth)
     ax_cs.set_facecolor(gss.OCEAN_COLOR)
-    if has_climo:
+    if fill_mode == "anomaly":
         norm = mcolors.Normalize(vmin=-CS_ANOM_VMAX, vmax=CS_ANOM_VMAX)
         cf_levels = np.linspace(-CS_ANOM_VMAX, CS_ANOM_VMAX, 25)
         pcm = ax_cs.contourf(
@@ -777,10 +788,10 @@ def plot_cross_section(
     ax_cs.invert_yaxis()
     ax_cs.set_ylim(500, 0)
 
-    # 20°C isotherm overlays — current (solid) + climo (dashed).
+    # 26°C isotherm overlays — current (solid) + climo (dashed).
     try:
         cs_now = ax_cs.contour(
-            LON2, DEPTH2, T_now_m, levels=[20.0],
+            LON2, DEPTH2, T_now_m, levels=[CS_ISOTHERM_C],
             colors="#000000", linewidths=1.6, zorder=3,
         )
     except Exception:
@@ -788,7 +799,7 @@ def plot_cross_section(
     if T_cl_m is not None:
         try:
             ax_cs.contour(
-                LON2, DEPTH2, T_cl_m, levels=[20.0],
+                LON2, DEPTH2, T_cl_m, levels=[CS_ISOTHERM_C],
                 colors="#000000", linewidths=1.4,
                 linestyles="dashed", zorder=3,
             )
@@ -799,13 +810,13 @@ def plot_cross_section(
     from matplotlib.lines import Line2D
     legend_items = [
         Line2D([0], [0], color="#000000", linewidth=1.6,
-               label="20 °C Isotherm"),
+               label=f"{int(CS_ISOTHERM_C)} °C Isotherm"),
     ]
     if T_cl_m is not None:
         legend_items.append(
             Line2D([0], [0], color="#000000", linewidth=1.4,
                    linestyle="dashed",
-                   label="20 °C Isotherm Climatology"),
+                   label=f"{int(CS_ISOTHERM_C)} °C Isotherm Climatology"),
         )
     ax_cs.legend(
         handles=legend_items, loc="lower left",
@@ -846,18 +857,13 @@ def plot_cross_section(
     # Title block — same style as the maps. Wording switches with mode
     # so we never label raw T as an "anomaly".
     date_label = valid_date.strftime("%B %-d, %Y")
-    if has_climo:
+    if fill_mode == "anomaly":
         title = f"{region['label']} · Subsurface Temperature Anomalies"
-        subtitle = (
-            f"Valid: {date_label}  ·  ARMOR3D · 5°S–5°N zonal mean"
-        )
         cb_label = "Temperature anomaly (°C)"
     else:
         title = f"{region['label']} · Subsurface Temperature"
-        subtitle = (
-            f"Valid: {date_label}  ·  ARMOR3D · 5°S–5°N zonal mean"
-        )
         cb_label = "Temperature (°C)"
+    subtitle = f"Valid: {date_label}  ·  ARMOR3D · 5°S–5°N zonal mean"
     # Title + subtitle sit in the dedicated top band (fig y ≈ 0.86-1.0).
     # Spread them out so a 15-pt bold title and a 10-pt subtitle can't
     # collide no matter how matplotlib renders them.
@@ -1162,18 +1168,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{log}   WARN: could not load t_climo_eq: {exc}")
 
         for rkey, region in CROSSSECTION_REGIONS.items():
-            out = ARMOR_DIR / f"{rkey}_crosssection.png"
-            if plot_cross_section(
-                t_now, t_climo_slice_eq,
-                lat, lon, depth,
-                rkey, region,
-                valid_date,
-                countries, coast,
-                out_path=out,
-                climo_lon=climo_lon,
-            ):
-                print(f"{log}   ✓ {out.name}")
-                rendered.append(out.name)
+            # Two static products per region: raw T ("actual") and
+            # T anomaly vs the 1993–2020 weekly climatology ("anomaly").
+            # The 26 °C isotherm overlays appear on both.
+            for suffix, mode in (("actual", "actual"), ("anomaly", "anomaly")):
+                out = ARMOR_DIR / f"{rkey}_{suffix}.png"
+                if plot_cross_section(
+                    t_now, t_climo_slice_eq,
+                    lat, lon, depth,
+                    rkey, region,
+                    valid_date,
+                    countries, coast,
+                    out_path=out,
+                    climo_lon=climo_lon,
+                    mode=mode,
+                ):
+                    print(f"{log}   ✓ {out.name}")
+                    rendered.append(out.name)
 
     # 8) Metadata.
     meta = {
