@@ -1,8 +1,12 @@
 name: Update Subsurface Animations
 
 # 90-day daily-cadence MP4 animations for AOML TCHP/D26 + ARMOR3D
-# TCHP/D26 — 18 regions × 4 families = 72 clips. Pushed to the
-# `mp4-artifacts` orphan branch alongside the SST animator's output.
+# TCHP/D26 + ARMOR3D equatorial cross-sections (actual + anomaly).
+#   Map families: 18 regions × 4 = 72 clips
+#   Cross-section families: 4 regions × 2 = 8 clips
+#   Total: 80 clips per cold run.
+# Pushed to the `mp4-artifacts` orphan branch alongside the SST
+# animator's output.
 #
 # Scheduled to fire after the SST (13:17/13:47), Subsurface static
 # (14:23/14:53), and ARMOR3D static (14:43/15:13) workflows have had
@@ -92,14 +96,17 @@ jobs:
             subsurface-mp4-frames-v1-
 
       - name: Generate subsurface MP4 animations
-        # Cold render (empty cache) on first run is ~2-3 h:
+        # Cold render (empty cache) on first run is ~2.5-3.5 h:
         #   * AOML: 90 OPeNDAP slice fetches + ~3,240 frame renders
         #     = ~60-90 min total (OPeNDAP is the cheap part).
         #   * ARMOR3D: 3 × 30-day CMEMS subsets (~10 min each) +
         #     compute TCHP/D26 per timestep + ~3,240 frame renders
         #     = ~2 h end to end, dominated by CMEMS download time.
-        # Warm runs do 1 new day per source = 144 new frames + 72
-        # MP4 re-encodes ≈ 5-10 min total.
+        #   * ARMOR3D cross-sections: piggyback on the same CMEMS
+        #     fetch (slice the equatorial band out of each chunk) +
+        #     ~720 frame renders = ~10-15 min added to ARMOR3D phase.
+        # Warm runs do 1 new day per source = 152 new frames + 80
+        # MP4 re-encodes ≈ 5-12 min total.
         env:
           COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
           COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
@@ -154,7 +161,9 @@ jobs:
           # for a family wasn't produced (e.g. CMEMS creds missing
           # → ARMOR3D phase skipped), we leave the existing version
           # in place rather than wiping to an empty state.
-          for family in aoml_tchp aoml_d26 armor3d_tchp armor3d_d26; do
+          for family in aoml_tchp aoml_d26 armor3d_tchp armor3d_d26 \
+                        armor3d_crosssection_actual \
+                        armor3d_crosssection_anomaly; do
             src="${GITHUB_WORKSPACE}/_mp4_build/${family}"
             if [ -d "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
               echo "--- staging ${family} (wiping prior version) ---"
@@ -172,7 +181,10 @@ jobs:
             cp "${GITHUB_WORKSPACE}/_mp4_build/README.md" README.md
           fi
 
-          git add aoml_tchp aoml_d26 armor3d_tchp armor3d_d26 README.md 2>/dev/null || true
+          git add aoml_tchp aoml_d26 armor3d_tchp armor3d_d26 \
+                  armor3d_crosssection_actual \
+                  armor3d_crosssection_anomaly \
+                  README.md 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No subsurface artifact changes to push."
             exit 0

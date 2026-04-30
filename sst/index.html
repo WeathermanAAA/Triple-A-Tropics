@@ -53,12 +53,14 @@
 <!-- ============================================================ -->
 <!-- ARMOR3D equatorial cross-sections                            -->
 <!-- Standalone widget — longitude × depth slices of the upper    -->
-<!-- 500 m for four equatorial regions. Weekly cadence, ARMOR3D   -->
-<!-- only (AOML has no vertical profile product).                 -->
+<!-- 500 m for four equatorial regions. Daily cadence, ARMOR3D    -->
+<!-- only (AOML has no vertical profile product). View toggle     -->
+<!-- switches between absolute T and T anomaly vs 1993–2020       -->
+<!-- weekly climatology.                                          -->
 <!-- ============================================================ -->
 <header class="page-head section-divider">
   <h3 class="section-h2" style="font-size:1.15rem;">Equatorial Cross-Sections · 5°S–5°N</h3>
-  <p>Longitude-by-depth slices of the ocean's upper 500 m. Fill = temperature anomaly vs the 1993–2020 weekly ARMOR3D climatology. Solid black line = current 20 °C isotherm; dashed = climatological position. Deep warm anomalies below the isotherm are the subsurface signature of ENSO, Atlantic Niño, and IOD events.</p>
+  <p>Longitude-by-depth slices of the ocean's upper 500 m. Toggle between absolute temperature and the anomaly versus the 1993–2020 weekly ARMOR3D climatology. Solid black line = current 26 °C isotherm; dashed = climatological position. Anomaly mode highlights the subsurface signature of ENSO, Atlantic Niño, and IOD events; actual mode shows the depth of the warm-water reservoir directly.</p>
 </header>
 <div class="sst-controls">
   <label class="sst-select">
@@ -70,12 +72,19 @@
       <option value="global-tropics">Global Tropics (full wrap)</option>
     </select>
   </label>
+  <label class="sst-select">
+    <span class="sst-select-label">View</span>
+    <select id="subCsView">
+      <option value="anomaly">Anomaly</option>
+      <option value="actual">Actual</option>
+    </select>
+  </label>
 </div>
 <section class="chart-section">
   <div class="chart-card sst-chart">
     <img id="subCsImage"
          class="sst-image"
-         src="/armor3d/enso_crosssection.png"
+         src="/armor3d/enso_anomaly.png"
          alt="Equatorial subsurface cross-section">
     <div class="sst-caption" id="subCsCaption">ENSO Regions: 5°S–5°N temperature anomaly cross-section (ARMOR3D).</div>
   </div>
@@ -103,7 +112,8 @@
          {"slug":"oisst","label":"OISST","family":"sst","products":["actual","anomaly","anomaly_records","anomaly_gmr"]},
          {"slug":"crw","label":"CRW","family":"sst","products":["crw_actual","crw_anomaly","crw_anomaly_records","crw_anomaly_gmr"]},
          {"slug":"aoml","label":"AOML","products":[{"slug":"tchp","family":"aoml_tchp"},{"slug":"d26","family":"aoml_d26"}]},
-         {"slug":"armor3d","label":"ARMOR3D","products":[{"slug":"tchp","family":"armor3d_tchp"},{"slug":"d26","family":"armor3d_d26"}]}
+         {"slug":"armor3d","label":"ARMOR3D","products":[{"slug":"tchp","family":"armor3d_tchp"},{"slug":"d26","family":"armor3d_d26"}]},
+         {"slug":"armor3d_cs","label":"ARMOR3D Cross-Section","regions":["enso","equatorial-atlantic","indian-ocean","global-tropics"],"products":[{"slug":"actual","family":"armor3d_crosssection_actual"},{"slug":"anomaly","family":"armor3d_crosssection_anomaly"}]}
        ]'></div>
 </section>
 
@@ -115,7 +125,7 @@
   <p><b>TCHP</b> (Tropical Cyclone Heat Potential, kJ/cm²) is the integrated heat content of the upper ocean column down to the 26 °C isotherm, effectively how much warm water is available to fuel a passing tropical cyclone before its own wind-driven mixing reaches cooler water. Operational thresholds commonly cited: 16 kJ/cm² to sustain a TC, 60 for development, 100 for intensification, 125 for rapid intensification, 160+ for explosive deepening into high-end hurricanes.</p>
   <p><b>D26</b> is the depth of the 26 °C isotherm in meters, i.e. how thick the warm-water "blanket" is. Shallow D26 (under 30 m) means even a modest TC can mix enough cold water up to cap its own intensity. Deep D26 (100 m+) is why the Gulf of Mexico's Loop Current, the Western Atlantic warm pool, and parts of the West Pacific can support rapid intensification.</p>
   <p><b>TCHP Anomaly</b> (ARMOR3D only) compares this week's TCHP to the 1993–2020 mean for the same week of the year. Reds indicate more heat content than normal (favorable for intensifying TCs); blues indicate less. The long ARMOR3D archive makes a stable 28-year climatology possible, which the 2022-present AOML record is still too short to support.</p>
-  <p><b>Equatorial cross-sections</b> (ARMOR3D only) average temperature over the 5°S–5°N band and plot it as longitude × depth. The black 20 °C isotherm is the canonical diagnostic.</p>
+  <p><b>Equatorial cross-sections</b> (ARMOR3D only) average temperature over the 5°S–5°N band and plot it as longitude × depth. Toggle between absolute T and the anomaly versus the 1993–2020 weekly climatology; the solid black 26 °C isotherm marks the top of the warm-water reservoir, with the dashed line showing the climatological position for comparison.</p>
 
   <h2>Data sources</h2>
   <p>SST fields come from NOAA's <a href="https://www.ncei.noaa.gov/products/optimum-interpolation-sst" target="_blank" rel="noopener">OISST v2.1</a> (0.25° daily, 1982-present) and <a href="https://coralreefwatch.noaa.gov/product/5km/index_5km_sst.php" target="_blank" rel="noopener">Coral Reef Watch CoralTemp v3.1</a> (5 km daily, 1985-present). Subsurface fields come from two sources: <a href="https://www.aoml.noaa.gov/phod/cyclone/data/" target="_blank" rel="noopener">NOAA AOML PhOD's TCHP/D26 analysis</a> (0.25° daily, 2022-present, no anomaly), which blends altimeter sea-surface height anomalies with microwave SST to estimate the vertical thermal structure; and <a href="https://data.marine.copernicus.eu/product/MULTIOBS_GLO_PHY_TSUV_3D_MYNRT_015_012/description" target="_blank" rel="noopener">Copernicus Marine ARMOR3D L4</a> (0.25° weekly, 1993-present), a 3D ocean temperature + salinity analysis from which we derive TCHP + D26 on the fly and compute anomalies vs. the 1993–2020 mean. AOML maps refresh daily; ARMOR3D maps refresh weekly (Thursdays).</p>
@@ -140,17 +150,25 @@
       "indian-ocean":         "Equatorial Indian Ocean",
       "global-tropics":       "Global Tropics",
     };
-    const sel = document.getElementById('subCsSelect');
-    const img = document.getElementById('subCsImage');
-    const cap = document.getElementById('subCsCaption');
-    if (!sel || !img || !cap) return;
+    const VIEW_LABELS = {
+      "anomaly": "temperature anomaly",
+      "actual":  "temperature",
+    };
+    const sel  = document.getElementById('subCsSelect');
+    const view = document.getElementById('subCsView');
+    const img  = document.getElementById('subCsImage');
+    const cap  = document.getElementById('subCsCaption');
+    if (!sel || !view || !img || !cap) return;
     function update() {
       const r = sel.value;
-      img.src = `/armor3d/${r}_crosssection.png?t=${Date.now()}`;
-      img.alt = `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section`;
-      cap.textContent = `${CS_REGION_LABELS[r] || r}: 5°S–5°N temperature anomaly cross-section (ARMOR3D).`;
+      const v = view.value;
+      img.src = `/armor3d/${r}_${v}.png?t=${Date.now()}`;
+      const label = VIEW_LABELS[v] || 'temperature';
+      img.alt = `${CS_REGION_LABELS[r] || r}: 5°S–5°N ${label} cross-section`;
+      cap.textContent = `${CS_REGION_LABELS[r] || r}: 5°S–5°N ${label} cross-section (ARMOR3D).`;
     }
     sel.addEventListener('change', update);
+    view.addEventListener('change', update);
   })();
 </script>
 
