@@ -1065,6 +1065,12 @@ def parse_args(argv):
     p.add_argument("--clean-build", action="store_true",
                    help="Wipe _mp4_build/ before staging (does NOT touch "
                         "the frame cache).")
+    p.add_argument("--render-only", action="store_true",
+                   help="Render frames into _frame_cache/ and stop. "
+                        "Skips ffmpeg encode, manifest, and README. Used "
+                        "by the OISST shard of the split workflow so a "
+                        "later shard (with all families warm) can do one "
+                        "consolidated encode + write the unified manifest.")
     return p.parse_args(argv)
 
 
@@ -1108,6 +1114,15 @@ def main(argv=None):
     t0 = time.time()
     stats = _render_all_frames(dates, regions, products, countries, coast, log)
     print(f"{log} render phase: {time.time() - t0:.1f}s — {stats}")
+
+    if args.render_only:
+        # Cache-priming shard: prune stale frames so the cache stays
+        # bounded, then exit. The next shard will do the full encode +
+        # manifest with everything warm.
+        _prune_old_frames(end_date)
+        print(f"{log} render-only done in {time.time() - t0:.1f}s "
+              f"(frames in {FRAME_CACHE_DIR})")
+        return 0
 
     # Encode
     t1 = time.time()

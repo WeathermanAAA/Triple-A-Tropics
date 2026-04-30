@@ -14,14 +14,36 @@ on:
 permissions:
   contents: write
 
-# Only one SST job at a time. If a run is in progress when the next
+# Only one SST workflow at a time. If a run is in progress when the next
 # cron fires, queue the new one instead of racing.
 concurrency:
   group: update-sst
   cancel-in-progress: false
 
+# ----------------------------------------------------------------------
+# Why this is split into two jobs
+# ----------------------------------------------------------------------
+# Per CLAUDE.md SST animator gotchas: the animation pipeline grew from 4
+# product families (~2.5 h cold render) to 8 (~5–6 h cold render) as new
+# CRW + records overlays landed. A single job kept hitting the GitHub
+# Actions 6-hour hard timeout, which kills the post-step `Save animation
+# frame cache` and creates a self-reinforcing failure loop (every run
+# starts cold).
+#
+# The split gives each shard its own 6 h budget:
+#   * Job 1 renders the four OISST-family products and saves the cache.
+#     Static SST PNGs are committed to main first, so they update even
+#     if the OISST shard later trips up.
+#   * Job 2 inherits Job 1's cache (warm OISST), cold-renders the four
+#     CRW-family products, encodes ALL 144 MP4s in one consolidated
+#     pass (so the manifest is unified), and force-pushes to the
+#     `mp4-artifacts` orphan branch.
+#
+# Bootstrap (cache cold for both shards) is ~3 h + ~3 h. Steady-state
+# (cache warm) is ~5 min + ~5 min.
+
 jobs:
-  regenerate:
+  static-and-render-oisst:
     runs-on: ubuntu-latest
 
     steps:
@@ -63,124 +85,12 @@ jobs:
         # 20–35 min on a GH-hosted runner.
         run: python generate_sst_plots.py
 
-      # --------------------------------------------------------------
-      # MP4 animation pipeline
-      # --------------------------------------------------------------
-      # The animator renders 90-day evolution clips for 18 regions × 4
-      # core products (actual / anomaly / anomaly_gmr / crw_anomaly).
-      # On warm runs only the newest day's frame is rendered for each
-      # (region × product) — the rest are reused from the cache below.
-      #
-      # MP4s land on the orphan `mp4-artifacts` branch (see the push
-      # step further down), NOT on main.
-
-      - name: Install ffmpeg
-        # ubuntu-latest does NOT ship ffmpeg in its base image (this
-        # changed at some point — an earlier version of this workflow
-        # assumed it was preinstalled and blew up at the encode step
-        # after rendering 6,480 frames). Verify it landed on PATH so
-        # we fail fast here rather than ~90 min later.
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          ffmpeg -version
-
-      - name: Restore animation frame cache
-        # Monthly key so the cache rotates and prunes itself. The
-        # restore-keys fall-through means a fresh month inherits the
-        # previous month's frames as a warm starting point — only
-        # frames older than 100 days actually get re-rendered.
-        #
-        # Version-prefix bumping (-vN-) is the sledgehammer for forcing
-        # a full cold re-render of the entire 90-day window. Bumped to
-        # v3 to seed a fresh cache under the render-once / prelim-first
-        # strategy: gsp.fetch_day_versioned now prefers prelim and
-        # never auto-promotes, so once a date is cached it sticks.
-        # Old v2 frames mixed prelim and final-promoted variants whose
-        # seam we're now leaving behind. See SST animator gotchas in
-        # CLAUDE.md.
-        uses: actions/cache@v4
-        with:
-          path: _frame_cache
-          key: sst-mp4-frames-v3-${{ github.run_id }}
-          restore-keys: |
-            sst-mp4-frames-v3-
-
-      - name: Generate SST MP4 animations
-        # Cold start (empty cache) takes ~90–120 min: ~6,500 frame
-        # renders at ~1 s each plus h.264 encode for 72 MP4s. Warm
-        # runs do 72 new frames + 72 re-encodes ≈ 5–8 min total.
-        # ffmpeg is installed in the step above (NOT preinstalled).
-        run: python generate_sst_animations.py
-
-      # Save the cache regardless of whether the orphan-branch push
-      # below succeeds — the rendered frames are valuable even if a
-      # later step fails, and re-rendering them is the expensive part.
-      - name: Save animation frame cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: _frame_cache
-          key: sst-mp4-frames-v3-${{ github.run_id }}
-
-      - name: Push SST MP4 artifacts to orphan branch (force-push, scoped)
-        # Force-push is intentional and SAFE here:
-        #   * The `mp4-artifacts` branch is purpose-built for rewrites —
-        #     each workflow run rewrites only its OWN family directory
-        #     (`sst/`) and leaves sibling families' dirs untouched.
-        #   * No source code lives on this branch; it is a CDN-friendly
-        #     publish surface for raw.githubusercontent.com.
-        #   * `main` is never touched by this step.
-        # If the branch doesn't exist yet (first SST run), it is
-        # created as an orphan with just `sst/` + `README.md`.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -eo pipefail
-          ARTIFACTS_DIR=/tmp/mp4-artifacts
-          rm -rf "$ARTIFACTS_DIR"
-          mkdir -p "$ARTIFACTS_DIR"
-          cd "$ARTIFACTS_DIR"
-
-          git init -q
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-          # Pull the existing branch if it's there; otherwise start fresh
-          # as an orphan so the very first SST run can bootstrap it.
-          if git fetch --depth=1 origin mp4-artifacts 2>/dev/null; then
-            git checkout -q -b mp4-artifacts FETCH_HEAD
-          else
-            echo "mp4-artifacts branch does not exist yet — creating it"
-            git checkout -q --orphan mp4-artifacts
-            git rm -rfq . 2>/dev/null || true
-          fi
-
-          # Wipe ONLY the SST family dir; preserve sibling families'
-          # dirs (subsurface/, armor3d/) when those workflows start
-          # writing to this branch in future PRs.
-          rm -rf sst
-          mkdir -p sst
-          cp -r "${GITHUB_WORKSPACE}/_mp4_build/sst/." sst/
-
-          # Refresh README only if missing — manual edits survive.
-          if [ ! -f README.md ]; then
-            cp "${GITHUB_WORKSPACE}/_mp4_build/README.md" README.md
-          fi
-
-          git add sst README.md
-          if git diff --cached --quiet; then
-            echo "No SST artifact changes to push."
-            exit 0
-          fi
-          git commit -q -m "chore: refresh SST MP4 artifacts ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-          # Force-push is fine here — see step header comment.
-          git push --force origin mp4-artifacts
-
-      - name: Commit and push if anything changed
+      - name: Commit and push static SST PNGs to main
+        # Push the static plots to main BEFORE the animation render so
+        # they update reliably even if the OISST cold render later hits
+        # the 6-hour timeout. Only this step pushes to main — the
+        # animation steps push to the orphan `mp4-artifacts` branch in
+        # Job 2.
         run: |
           set -eo pipefail
           git config --local user.name  "github-actions[bot]"
@@ -258,3 +168,186 @@ jobs:
           done
           echo "Push still failing after 5 attempts." >&2
           exit 1
+
+      # --------------------------------------------------------------
+      # Animation pipeline — OISST shard
+      # --------------------------------------------------------------
+      # This shard renders only the four OISST-family products
+      # (actual / anomaly / anomaly_records / anomaly_gmr). It uses
+      # `--render-only` to skip ffmpeg encode, manifest, and README —
+      # those happen in Job 2 once everything is warm so the manifest
+      # is unified. ffmpeg is therefore NOT installed in this job.
+
+      - name: Restore animation frame cache
+        # Split restore/save form (vs the combined actions/cache@v4) so
+        # the save step can run with `if: always()` even if the render
+        # step is cancelled.
+        #
+        # restore-keys fall through across runs: a fresh run picks up
+        # the most recent v3 cache (from any prior shard of any prior
+        # run), which on warm steady-state is the previous run's `-full`
+        # cache from Job 2.
+        #
+        # Version-prefix bumping (-vN-) is the sledgehammer for forcing
+        # a full cold re-render of the entire 90-day window. Bumped to
+        # v3 to seed a fresh cache under the render-once / prelim-first
+        # strategy: gsp.fetch_day_versioned now prefers prelim and
+        # never auto-promotes, so once a date is cached it sticks.
+        # See SST animator gotchas in CLAUDE.md.
+        uses: actions/cache/restore@v4
+        with:
+          path: _frame_cache
+          key: sst-mp4-frames-v3-${{ github.run_id }}-oisst
+          restore-keys: |
+            sst-mp4-frames-v3-
+
+      - name: Render OISST animation frames (4 products)
+        # Cold start (empty cache) takes ~2–3 h: ~6,480 OISST frame
+        # renders at ~1 s each. Warm runs do ~72 new frames + skip the
+        # rest in well under 5 min. `--render-only` skips encode +
+        # manifest entirely — Job 2 produces the unified output once
+        # CRW frames are also rendered.
+        run: |
+          python generate_sst_animations.py \
+            --render-only \
+            --products actual anomaly anomaly_records anomaly_gmr
+
+      # Save the cache regardless of whether later steps fail — the
+      # rendered OISST frames are what Job 2 needs to skip rerunning
+      # the same ~3 h of work. With split restore/save, this step
+      # fires even on cancellation (graceful) and on render-step
+      # failure (because if: always()). It does NOT fire on the 6-hour
+      # Actions hard-kill, but the 6-hour budget per job is generous
+      # enough that the OISST shard alone should never approach it.
+      - name: Save animation frame cache (after OISST shard)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: _frame_cache
+          key: sst-mp4-frames-v3-${{ github.run_id }}-oisst
+
+  render-crw-and-publish:
+    runs-on: ubuntu-latest
+    needs: static-and-render-oisst
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy matplotlib netCDF4 requests Pillow
+
+      - name: Ensure Natural Earth basemap files exist
+        run: |
+          set -euo pipefail
+          NE="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
+          for f in ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson \
+                   ne_110m_coastline.geojson ne_110m_admin_0_countries.geojson; do
+            if [ ! -f "$f" ]; then
+              echo "--- Downloading $f ---"
+              curl -fSL --retry 3 --retry-delay 10 -o "$f" "$NE/$f" || true
+            fi
+          done
+
+      - name: Install ffmpeg
+        # ubuntu-latest does NOT ship ffmpeg in its base image. Verify
+        # it landed on PATH so we fail fast here rather than ~90 min
+        # later at the encode step.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+
+      - name: Restore animation frame cache (warm OISST from Job 1)
+        # First restore-key matches Job 1's just-saved cache for THIS
+        # run, so we inherit the freshly rendered OISST frames. Second
+        # key falls through to any prior v3 cache as a backstop (e.g.
+        # if Job 1 itself ran cold and somehow lost its save).
+        uses: actions/cache/restore@v4
+        with:
+          path: _frame_cache
+          key: sst-mp4-frames-v3-${{ github.run_id }}-full
+          restore-keys: |
+            sst-mp4-frames-v3-${{ github.run_id }}-oisst
+            sst-mp4-frames-v3-
+
+      - name: Render CRW frames + encode all MP4s + write unified manifest
+        # Full pipeline run with no --products filter:
+        #   * OISST families warm-skip (Job 1 just rendered them).
+        #   * CRW families cold-render (~2–3 h on bootstrap, ~30 s warm).
+        #   * `_encode_all` produces 144 MP4s + 144 poster JPGs covering
+        #     ALL 8 products × 18 regions in a single consolidated pass.
+        #   * `_write_manifest` writes the unified manifest the on-page
+        #     widget reads — this is the only manifest write of the run.
+        run: python generate_sst_animations.py
+
+      - name: Save animation frame cache (full set)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: _frame_cache
+          key: sst-mp4-frames-v3-${{ github.run_id }}-full
+
+      - name: Push SST MP4 artifacts to orphan branch (force-push, scoped)
+        # Force-push is intentional and SAFE here:
+        #   * The `mp4-artifacts` branch is purpose-built for rewrites —
+        #     each workflow run rewrites only its OWN family directory
+        #     (`sst/`) and leaves sibling families' dirs untouched.
+        #   * No source code lives on this branch; it is a CDN-friendly
+        #     publish surface for raw.githubusercontent.com.
+        #   * `main` is never touched by this step.
+        # If the branch doesn't exist yet (first SST run), it is
+        # created as an orphan with just `sst/` + `README.md`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eo pipefail
+          ARTIFACTS_DIR=/tmp/mp4-artifacts
+          rm -rf "$ARTIFACTS_DIR"
+          mkdir -p "$ARTIFACTS_DIR"
+          cd "$ARTIFACTS_DIR"
+
+          git init -q
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Pull the existing branch if it's there; otherwise start fresh
+          # as an orphan so the very first SST run can bootstrap it.
+          if git fetch --depth=1 origin mp4-artifacts 2>/dev/null; then
+            git checkout -q -b mp4-artifacts FETCH_HEAD
+          else
+            echo "mp4-artifacts branch does not exist yet — creating it"
+            git checkout -q --orphan mp4-artifacts
+            git rm -rfq . 2>/dev/null || true
+          fi
+
+          # Wipe ONLY the SST family dir; preserve sibling families'
+          # dirs (subsurface/, armor3d/) when those workflows start
+          # writing to this branch in future PRs.
+          rm -rf sst
+          mkdir -p sst
+          cp -r "${GITHUB_WORKSPACE}/_mp4_build/sst/." sst/
+
+          # Refresh README only if missing — manual edits survive.
+          if [ ! -f README.md ]; then
+            cp "${GITHUB_WORKSPACE}/_mp4_build/README.md" README.md
+          fi
+
+          git add sst README.md
+          if git diff --cached --quiet; then
+            echo "No SST artifact changes to push."
+            exit 0
+          fi
+          git commit -q -m "chore: refresh SST MP4 artifacts ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          # Force-push is fine here — see step header comment.
+          git push --force origin mp4-artifacts
