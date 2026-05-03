@@ -1,0 +1,82 @@
+name: Update Climatology Panels
+
+on:
+  schedule:
+    # Staggered offset minutes to dodge GitHub Actions cron throttling
+    # at the round-number marks; primary :17 past every 6 hours, with
+    # backups at :47 and a late :13 outside the heaviest contention
+    # windows. Same pattern as update-ace.yml / update-sst.yml.
+    - cron: "17 */6 * * *"
+    - cron: "47 */6 * * *"
+    - cron: "13 2,8,14,20 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-climo-panels
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy matplotlib
+
+      - name: Render current-year panels (all basins)
+        run: |
+          set -euo pipefail
+          YEAR=$(date -u +%Y)
+          # Force-overwrite this year's PNG; older years are static and
+          # already committed in the initial backfill.
+          python generate_climo_panel.py --all-basins --year "$YEAR" --force
+
+      - name: Commit and push if anything changed
+        run: |
+          set -eo pipefail
+          git config --local user.name  "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          YEAR=$(date -u +%Y)
+          git add \
+            "climatology/atlantic/panels/${YEAR}.png" \
+            "climatology/east-pacific/panels/${YEAR}.png" \
+            "climatology/west-pacific/panels/${YEAR}.png" 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: refresh climo panels ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+
+          # Rebase-and-push loop. Other scheduled workflows (SST,
+          # subsurface, ARMOR3D, ACE) push to main concurrently. Each
+          # commit only touches its own files so genuine conflicts
+          # are impossible — but a plain push will still lose the race.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected on attempt $attempt — fetching + rebasing..."
+            git fetch origin main
+            git rebase origin/main || {
+              echo "Rebase failed (unexpected conflict)." >&2
+              git rebase --abort || true
+              exit 1
+            }
+            sleep $((attempt * 2))
+          done
+          echo "Push still failing after 5 attempts." >&2
+          exit 1
