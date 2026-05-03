@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Satellite Plots · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Custom-zoom GOES-19 ABI satellite imagery. Pick any bbox, time, channel, and enhancement, get back a clean cropped tile.">
+<meta property="og:title" content="Satellite Plots · Triple-A-Tropics">
+<meta property="og:description" content="Worldview-Snapshots-style custom satellite renders for any bbox, channel, and enhancement.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+
+<!-- Leaflet 1.9 (CDN). leaflet-draw 1.0.4 for the rectangle tool. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin="">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
+  nav, header, footer {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
+  }
+
+  .sat-wrap {
+    max-width: 1380px;
+    margin: 0 auto;
+    padding: 18px 18px 24px;
+  }
+
+  /* Two-pane layout: map LEFT, controls RIGHT. Stacks on narrow screens. */
+  .sat-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 16px;
+  }
+  @media (max-width: 920px) {
+    .sat-grid { grid-template-columns: 1fr; }
+  }
+
+  #sat-map {
+    height: 560px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+    background: #0a0d12;
+  }
+  /* Leaflet inherits font from body, but the attribution looks chunky in
+     Metropolis — push it back to system sans for legibility. */
+  .leaflet-container .leaflet-control-attribution,
+  .leaflet-container .leaflet-control-attribution a {
+    font-family: "Helvetica Neue", Arial, sans-serif !important;
+    font-size: 10px;
+  }
+
+  .sat-controls {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sat-controls h2 {
+    margin: 0;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .sat-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sat-field label {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .sat-field input[type=datetime-local],
+  .sat-field select,
+  .sat-field input[type=text] {
+    background: #0e1014;
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .sat-field input:focus,
+  .sat-field select:focus {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 1px;
+  }
+  .sat-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .sat-bbox-display {
+    background: #0a0d12;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace !important;
+    font-size: 12px;
+    color: var(--muted);
+    word-break: break-all;
+  }
+  .sat-bbox-display.has-bbox {
+    color: var(--accent-2);
+    border-style: solid;
+    border-color: var(--accent-2);
+  }
+  .sat-render-btn {
+    background: linear-gradient(180deg, var(--accent-2) 0%, #3aa7d1 100%);
+    color: #0a0d12;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.05s ease;
+  }
+  .sat-render-btn:hover:not(:disabled) {
+    opacity: 0.92;
+  }
+  .sat-render-btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .sat-render-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Result section spans full width below the grid. */
+  .sat-result {
+    margin-top: 18px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    color: var(--fg);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+  }
+  .sat-result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .sat-result-meta {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .sat-result-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .sat-action-btn {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .sat-action-btn:hover {
+    border-color: var(--accent-2);
+    color: var(--accent-2);
+  }
+  .sat-result-img-wrap {
+    background: #0a0d12;
+    text-align: center;
+    padding: 8px;
+  }
+  .sat-result-img-wrap img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    display: inline-block;
+  }
+
+  /* Spinner / status overlay over the map while rendering. */
+  .sat-status {
+    margin-top: 8px;
+    display: none;
+    background: rgba(20, 24, 32, 0.95);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--fg);
+    font-size: 13px;
+  }
+  .sat-status.visible { display: flex; align-items: center; gap: 10px; }
+  .sat-spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent-2);
+    border-radius: 50%;
+    animation: sat-spin 0.8s linear infinite;
+  }
+  @keyframes sat-spin {
+    to { transform: rotate(360deg); }
+  }
+  .sat-toast {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    background: #4a1820;
+    color: #ffd5da;
+    border: 1px solid #803040;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    max-width: 380px;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.6);
+    display: none;
+    z-index: 9999;
+  }
+  .sat-toast.visible { display: block; }
+
+  .sat-help {
+    background: #0a0d12;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .sat-help b { color: var(--fg); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/" class="active">Satellite</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Satellite Plots</h1>
+  <p>Custom GOES-19 ABI renders. Draw a box on the map, pick a time and channel, get back a cropped high-resolution PNG. Renders are cached, so identical re-requests come back instantly.</p>
+</header>
+
+<div class="sat-wrap">
+
+  <div class="sat-grid">
+    <div>
+      <div id="sat-map"></div>
+      <div id="sat-status" class="sat-status">
+        <div class="sat-spinner"></div>
+        <span id="sat-status-text">Rendering…</span>
+      </div>
+    </div>
+
+    <aside class="sat-controls">
+      <h2>Render parameters</h2>
+
+      <div class="sat-field">
+        <label class="sat-checkbox">
+          <input type="checkbox" id="sat-latest" checked>
+          Use latest available scan
+        </label>
+      </div>
+
+      <div class="sat-field">
+        <label for="sat-time">Time (UTC)</label>
+        <input type="datetime-local" id="sat-time" disabled step="60">
+      </div>
+
+      <div class="sat-field">
+        <label for="sat-channel">Channel</label>
+        <select id="sat-channel">
+          <option value="13">IR · Channel 13 (clean longwave, 10.3 µm)</option>
+          <option value="8">Upper WV · Channel 8 (6.2 µm)</option>
+          <option value="2">Visible · Channel 2 (0.64 µm)</option>
+        </select>
+      </div>
+
+      <div class="sat-field">
+        <label for="sat-enh">Enhancement</label>
+        <select id="sat-enh">
+          <option value="tat_neon">TAT Neon</option>
+          <option value="dvorak_bd">Dvorak BD</option>
+          <option value="grayscale">Grayscale</option>
+        </select>
+      </div>
+
+      <div class="sat-field">
+        <label>Bbox (drag to draw)</label>
+        <div id="sat-bbox" class="sat-bbox-display">— no rectangle drawn —</div>
+      </div>
+
+      <button id="sat-render" class="sat-render-btn" disabled>Render</button>
+
+      <div class="sat-help">
+        <b>How it works:</b> draw a rectangle (max 30°×30°) over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
+      </div>
+    </aside>
+  </div>
+
+  <section id="sat-result" class="sat-result" style="display:none">
+    <div class="sat-result-head">
+      <div class="sat-result-meta" id="sat-result-meta">—</div>
+      <div class="sat-result-actions">
+        <a id="sat-download" class="sat-action-btn" download="satellite-render.png" href="#">Download</a>
+        <button id="sat-share" class="sat-action-btn" type="button">Copy share link</button>
+      </div>
+    </div>
+    <div class="sat-result-img-wrap">
+      <img id="sat-result-img" alt="Rendered satellite image">
+    </div>
+  </section>
+
+</div>
+
+<div id="sat-toast" class="sat-toast"></div>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Imagery: NOAA GOES-19 ABI via NOAA AWS Open Data</div>
+  </div>
+</footer>
+
+<script>
+(function() {
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  const RENDER_API = "https://web-production-b88d.up.railway.app/render";
+  const MAX_BBOX_DEG = 30;
+  // GOES-East operational disk (matches backend validator)
+  const GOES_DISK = { lonMin: -152.04, latMin: -75, lonMax: 6.04, latMax: 75 };
+
+  // ---- Map ----
+  const map = L.map('sat-map', {
+    center: [22, -65],
+    zoom: 3,
+    worldCopyJump: false,
+    attributionControl: true,
+  });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png', {
+    maxZoom: 10,
+    minZoom: 2,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+  }).addTo(map);
+
+  // ---- leaflet-draw rectangle, single-rectangle policy ----
+  const drawn = new L.FeatureGroup();
+  map.addLayer(drawn);
+  const drawControl = new L.Control.Draw({
+    edit: { featureGroup: drawn, remove: true },
+    draw: {
+      polygon: false,
+      polyline: false,
+      circle: false,
+      circlemarker: false,
+      marker: false,
+      rectangle: {
+        shapeOptions: {
+          color: '#5dd3ff',
+          weight: 2,
+          fillOpacity: 0.08,
+          fillColor: '#5dd3ff',
+        },
+      },
+    },
+  });
+  map.addControl(drawControl);
+
+  let currentBbox = null; // [lonMin, latMin, lonMax, latMax]
+
+  function setBbox(bbox) {
+    currentBbox = bbox;
+    const display = document.getElementById('sat-bbox');
+    const btn = document.getElementById('sat-render');
+    if (!bbox) {
+      display.textContent = '— no rectangle drawn —';
+      display.classList.remove('has-bbox');
+      btn.disabled = true;
+      return;
+    }
+    display.textContent =
+      'lon ' + bbox[0].toFixed(2) + '° to ' + bbox[2].toFixed(2) + '°, ' +
+      'lat ' + bbox[1].toFixed(2) + '° to ' + bbox[3].toFixed(2) + '° ' +
+      '(' + (bbox[2]-bbox[0]).toFixed(1) + '° × ' + (bbox[3]-bbox[1]).toFixed(1) + '°)';
+    display.classList.add('has-bbox');
+    btn.disabled = false;
+  }
+
+  function bboxFromLayer(layer) {
+    const b = layer.getBounds();
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  }
+
+  function validateBbox(bbox) {
+    const [lonMin, latMin, lonMax, latMax] = bbox;
+    if (lonMax - lonMin > MAX_BBOX_DEG || latMax - latMin > MAX_BBOX_DEG) {
+      return 'Bbox must be ≤ ' + MAX_BBOX_DEG + '° per axis.';
+    }
+    if (lonMax < GOES_DISK.lonMin || lonMin > GOES_DISK.lonMax ||
+        latMax < GOES_DISK.latMin || latMin > GOES_DISK.latMax) {
+      return 'Bbox must overlap the GOES-19 visible disk.';
+    }
+    return null;
+  }
+
+  map.on(L.Draw.Event.CREATED, function(e) {
+    drawn.clearLayers();
+    drawn.addLayer(e.layer);
+    setBbox(bboxFromLayer(e.layer));
+  });
+  map.on(L.Draw.Event.EDITED, function(e) {
+    e.layers.eachLayer(function(layer) {
+      setBbox(bboxFromLayer(layer));
+    });
+  });
+  map.on(L.Draw.Event.DELETED, function() {
+    setBbox(null);
+  });
+
+  // ---- "Latest" toggle ----
+  const latestCheckbox = document.getElementById('sat-latest');
+  const timeInput = document.getElementById('sat-time');
+  function syncTimeInput() {
+    timeInput.disabled = latestCheckbox.checked;
+    if (latestCheckbox.checked) {
+      timeInput.value = '';
+    }
+  }
+  latestCheckbox.addEventListener('change', syncTimeInput);
+  syncTimeInput();
+
+  // ---- Toasts ----
+  const toast = document.getElementById('sat-toast');
+  let toastTimer = null;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('visible');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('visible'), 6000);
+  }
+
+  // ---- Status / spinner ----
+  const status = document.getElementById('sat-status');
+  const statusText = document.getElementById('sat-status-text');
+  const loadingMessages = [
+    'Picking the right GOES product…',
+    'Pulling the NetCDF from NOAA AWS…',
+    'Cropping in geos-projection space…',
+    'Rendering with cartopy…',
+    'Encoding PNG…',
+  ];
+  let loadingTimer = null;
+  function showLoading() {
+    let i = 0;
+    statusText.textContent = loadingMessages[0];
+    status.classList.add('visible');
+    if (loadingTimer) clearInterval(loadingTimer);
+    loadingTimer = setInterval(() => {
+      i = (i + 1) % loadingMessages.length;
+      statusText.textContent = loadingMessages[i];
+    }, 2200);
+  }
+  function hideLoading() {
+    status.classList.remove('visible');
+    if (loadingTimer) clearInterval(loadingTimer);
+    loadingTimer = null;
+  }
+
+  // ---- Render call ----
+  function buildRequestBody() {
+    const channel = parseInt(document.getElementById('sat-channel').value, 10);
+    const enhancement = document.getElementById('sat-enh').value;
+    let time = 'latest';
+    if (!latestCheckbox.checked && timeInput.value) {
+      // datetime-local has no timezone; treat as UTC by appending Z.
+      time = timeInput.value + ':00Z';
+    }
+    return { bbox: currentBbox, time, channel, enhancement };
+  }
+
+  async function doRender() {
+    if (!currentBbox) return;
+    const err = validateBbox(currentBbox);
+    if (err) { showToast(err); return; }
+
+    const body = buildRequestBody();
+    const renderBtn = document.getElementById('sat-render');
+    renderBtn.disabled = true;
+    showLoading();
+
+    try {
+      const t0 = performance.now();
+      const resp = await fetch(RENDER_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        let msg = 'render failed (' + resp.status + ')';
+        try {
+          const j = await resp.json();
+          if (j.detail) msg = (typeof j.detail === 'string') ? j.detail : JSON.stringify(j.detail);
+        } catch {}
+        throw new Error(msg);
+      }
+      const blob = await resp.blob();
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+      const cacheHdr = resp.headers.get('X-Cache') || '?';
+      const productHdr = resp.headers.get('X-Product') || '?';
+      const renderMs = resp.headers.get('X-Render-Ms') || '?';
+
+      const url = URL.createObjectURL(blob);
+      document.getElementById('sat-result-img').src = url;
+      document.getElementById('sat-download').href = url;
+      const fname = 'goes19_ch' + body.channel + '_' + body.enhancement + '_' +
+        body.bbox.map(v => v.toFixed(1)).join('_') + '.png';
+      document.getElementById('sat-download').download = fname;
+      document.getElementById('sat-result-meta').textContent =
+        productHdr + ' · ' + cacheHdr + ' · ' + (renderMs/1000).toFixed(2) + 's render · ' + elapsed + 's total';
+      document.getElementById('sat-result').style.display = 'block';
+
+      // Push deep-link state to history
+      const params = new URLSearchParams();
+      params.set('bbox', body.bbox.join(','));
+      params.set('time', body.time);
+      params.set('channel', String(body.channel));
+      params.set('enhance', body.enhancement);
+      window.history.replaceState({}, '', '/satellite/?' + params.toString());
+    } catch (e) {
+      showToast('Render failed: ' + e.message);
+    } finally {
+      hideLoading();
+      renderBtn.disabled = false;
+    }
+  }
+
+  document.getElementById('sat-render').addEventListener('click', doRender);
+
+  // ---- Share button ----
+  document.getElementById('sat-share').addEventListener('click', async function() {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Share link copied to clipboard.');
+    } catch {
+      showToast('Could not copy to clipboard. URL: ' + url);
+    }
+  });
+
+  // ---- Deep-link parsing on page load ----
+  function applyDeepLink() {
+    const p = new URLSearchParams(window.location.search);
+    const bboxStr = p.get('bbox');
+    if (!bboxStr) return false;
+    const parts = bboxStr.split(',').map(parseFloat);
+    if (parts.length !== 4 || parts.some(isNaN)) return false;
+    const [lonMin, latMin, lonMax, latMax] = parts;
+    setBbox(parts);
+    // Draw rectangle on map
+    const rect = L.rectangle(
+      [[latMin, lonMin], [latMax, lonMax]],
+      { color: '#5dd3ff', weight: 2, fillOpacity: 0.08, fillColor: '#5dd3ff' }
+    );
+    drawn.addLayer(rect);
+    map.fitBounds(rect.getBounds(), { padding: [40, 40] });
+
+    const channel = p.get('channel');
+    if (channel) document.getElementById('sat-channel').value = channel;
+    const enh = p.get('enhance');
+    if (enh) document.getElementById('sat-enh').value = enh;
+    const time = p.get('time');
+    if (time && time !== 'latest') {
+      latestCheckbox.checked = false;
+      // strip trailing :00Z if present, datetime-local takes YYYY-MM-DDTHH:MM
+      timeInput.value = time.replace(/Z$/, '').replace(/:00$/, '').slice(0, 16);
+      syncTimeInput();
+    }
+    return true;
+  }
+
+  if (applyDeepLink()) {
+    // Auto-fire render to make screenshots reproducible
+    setTimeout(doRender, 200);
+  }
+})();
+</script>
+
+</body>
+</html>
