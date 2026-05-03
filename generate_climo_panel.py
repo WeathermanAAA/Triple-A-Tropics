@@ -34,10 +34,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import FancyBboxPatch, Rectangle
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import blended_transform_factory
 import matplotlib.patheffects as path_effects
+
+# Crisper text at 180 DPI; without this the legend captions and storm-name
+# labels can render with subpixel grey speckle on a near-black panel.
+matplotlib.rcParams["text.antialiased"] = True
+matplotlib.rcParams["lines.antialiased"] = True
+
+DPI = 180
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +95,7 @@ COL = {
     "bar_cyan":    "#5dd3ff",
 }
 
-# SSHWS colors for the Gantt panel.
+# SSHWS colors for the Gantt panel. (ceiling_kt, label, hex)
 SSHWS = [
     (33,  "TD",  "#fff5cc"),
     (63,  "TS",  "#4ade80"),
@@ -99,10 +106,24 @@ SSHWS = [
     (999, "C5",  "#c084fc"),
 ]
 
+# Legend strip: same categories with knot ranges as readable captions.
+SSHWS_LEGEND = [
+    ("TD", "≤33 kt",   "#fff5cc"),
+    ("TS", "34–63",    "#4ade80"),
+    ("C1", "64–82",    "#5dd3ff"),
+    ("C2", "83–95",    "#ffb83a"),
+    ("C3", "96–112",   "#ec4899"),
+    ("C4", "113–136",  "#ef4444"),
+    ("C5", "≥137",     "#c084fc"),
+]
+
 
 def sshws_color(peak_kt: float | None) -> tuple[str, str]:
+    """Return (label, hex). Storms with unknown peak winds fall back to TS
+    (most common named-storm strength) so the pill is still drawn — the
+    storm name label uses '?' instead of a category to flag the gap."""
     if peak_kt is None or not np.isfinite(peak_kt):
-        return ("--", COL["muted"])
+        return ("?", "#4ade80")
     for ceiling, label, color in SSHWS:
         if peak_kt <= ceiling:
             return (label, color)
@@ -326,56 +347,91 @@ def render_panel(basin: str, year: int, out_path: Path,
 
     # Per-storm tracks (may be None for pre-1970 historical years)
     tracks = load_tracks(basin, year, current_year)
-    storms = tracks.get("storms", []) if tracks else []
+    storms_raw = tracks.get("storms", []) if tracks else []
     daily = daily_ace_from_tracks(tracks, basin, year) if tracks else np.zeros(367)
 
-    # ----------- figure layout -----------
-    # Panel 4 height scales with storm count so each row has enough vertical
-    # space for a readable 9pt name (≈ 0.18 in/row) without crushing big
-    # seasons (44 storms in WP 1994) or wasting space in quiet ones.
-    n_storms = len(storms)
-    panel4_in = max(2.6, n_storms * 0.20 + 1.0)
-    panel123_in = 8.0 + 1.7 + 1.7    # ACE curve, rank traj, daily bars
-    margin_in = 1.1                  # header + bottom + hspace allowance
-    fig_h = panel123_in + panel4_in + margin_in
+    # Parse storm dates once, drop any storm with missing/unparseable dates
+    # (we log a warning rather than crash). Sort by formation ascending.
+    parsed_storms = []
+    for s in storms_raw:
+        start_raw = s.get("start")
+        end_raw = s.get("end")
+        if not start_raw or not end_raw:
+            print(f"  [warn] {basin} {year}: storm {s.get('name','?')} missing start/end — skipped")
+            continue
+        try:
+            start = dt.datetime.fromisoformat(start_raw)
+            end = dt.datetime.fromisoformat(end_raw)
+        except ValueError:
+            print(f"  [warn] {basin} {year}: storm {s.get('name','?')} bad date format — skipped")
+            continue
+        parsed_storms.append((s, start, end))
+    parsed_storms.sort(key=lambda t: t[1])
 
-    fig = plt.figure(figsize=(14, fig_h), dpi=110, facecolor=COL["bg"])
-    gs = GridSpec(4, 1, figure=fig,
-                  height_ratios=[8.0, 1.7, 1.7, panel4_in],
-                  hspace=0.32, left=0.13, right=0.965,
-                  top=1.0 - 0.6 / fig_h,
-                  bottom=0.5 / fig_h)
+    # Greedy bin-pack into rows. A storm goes in the first row where the
+    # last storm's dissipation + LABEL_PAD_DAYS is before this storm's
+    # formation; otherwise a new row is opened. The pad reserves horizontal
+    # space for the right-side "Name (Cat)" label of the previous storm —
+    # at 10pt and 180 DPI a typical 10-char label spans ~12 days on the
+    # 366-day axis, so 14 keeps labels from bleeding into the next pill.
+    LABEL_PAD_DAYS = 14
+    rows: list[list[tuple]] = []
+    for entry in parsed_storms:
+        s, start, end = entry
+        placed = False
+        for row in rows:
+            _, _, prev_end = row[-1]
+            if start > prev_end + dt.timedelta(days=LABEL_PAD_DAYS):
+                row.append(entry)
+                placed = True
+                break
+        if not placed:
+            rows.append([entry])
+    n_rows = len(rows) if rows else 1
+
+    # ----------- figure layout -----------
+    # Panel 4 height scales with the row-pack count, not raw storm count.
+    panel4_in = max(1.5, 0.45 * n_rows)
+    panel123_in = 8.0 + 1.7 + 1.7    # ACE curve, rank traj, daily bars
+    legend_in = 0.55                 # SSHWS category swatch strip
+    margin_in = 1.6                  # two-line header + bottom + hspace
+    fig_h = panel123_in + panel4_in + legend_in + margin_in
+
+    fig = plt.figure(figsize=(14, fig_h), dpi=DPI, facecolor=COL["bg"])
+    gs = GridSpec(5, 1, figure=fig,
+                  height_ratios=[8.0, 1.7, 1.7, panel4_in, legend_in],
+                  hspace=0.36, left=0.085, right=0.965,
+                  top=1.0 - 1.0 / fig_h,
+                  bottom=0.45 / fig_h)
 
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1], sharex=ax1)
     ax3 = fig.add_subplot(gs[2], sharex=ax1)
     ax4 = fig.add_subplot(gs[3], sharex=ax1)
+    ax5 = fig.add_subplot(gs[4])           # legend strip — own coord system
 
     for ax in (ax1, ax2, ax3, ax4):
         ax.set_facecolor(COL["panel"])
-        ax.tick_params(colors=COL["fg"], labelsize=9)
+        ax.tick_params(colors=COL["fg"], labelsize=11)
         for spine in ax.spines.values():
             spine.set_color(COL["border"])
-            spine.set_linewidth(0.8)
-        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.30, color=COL["border"])
+            spine.set_linewidth(1.2)
+        ax.grid(True, linestyle="--", linewidth=0.8, alpha=0.35, color=COL["border"])
         ax.set_xlim(1, 366)
 
-    # Hide top/right spines on sub-panels 2/3/4
     for ax in (ax2, ax3, ax4):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    locs, labels = month_tick_locs(year if not calendar.isleap(year) else year)
+    locs, labels = month_tick_locs(year)
     for ax in (ax1, ax2, ax3, ax4):
         ax.set_xticks(locs)
-    # Only the bottom panel shows the labels; intermediate panels keep ticks.
     ax1.set_xticklabels([])
     ax2.set_xticklabels([])
     ax3.set_xticklabels([])
     ax4.set_xticklabels(labels)
 
     # ===== Panel 1: ACE percentile curve =====
-    # nested fills, light → dark; legend values are end-of-season (climo final)
     ax1.fill_between(doy, band_min, band_max,
                      facecolor=COL["band_minmax"], linewidth=0,
                      label=f"Min–Max ({band_min[-1]:.1f} – {band_max[-1]:.1f})")
@@ -386,118 +442,146 @@ def render_panel(basin: str, year: int, out_path: Path,
                      facecolor=COL["band_p2575"], linewidth=0,
                      label=f"25–75% ({band_p25[-1]:.1f} – {band_p75[-1]:.1f})")
 
-    ax1.plot(doy, band_median, color=COL["cyan"],   linestyle="--", linewidth=1.2,
+    ax1.plot(doy, band_median, color=COL["cyan"],   linestyle="--", linewidth=1.8,
              label=f"Median ({band_median[-1]:.1f})")
-    ax1.plot(doy, band_mean,   color=COL["violet"], linestyle="--", linewidth=1.2,
+    ax1.plot(doy, band_mean,   color=COL["violet"], linestyle="--", linewidth=1.8,
              label=f"Average ({avg_total:.1f})")
 
-    # Selected year — white core w/ cyan halo
-    line, = ax1.plot(doy, cum_plot, color="#ffffff", linewidth=2.4,
-                     label=f"{year} ({total_ace:.1f})")
-    line.set_path_effects([
-        path_effects.Stroke(linewidth=5.6, foreground=COL["cyan"], alpha=0.55),
-        path_effects.Normal(),
-    ])
+    # Selected year — wider cyan halo painted first, white core on top.
+    # Two plt.plot calls give a much crisper edge than path_effects at 180 DPI.
+    ax1.plot(doy, cum_plot, color=COL["cyan"], linewidth=8.5, alpha=0.55,
+             solid_capstyle="round")
+    ax1.plot(doy, cum_plot, color="#ffffff",   linewidth=4.0,
+             solid_capstyle="round",
+             label=f"{year} ({total_ace:.1f})")
 
-    ax1.set_ylabel("Cumulative ACE (10⁴ kt²)", color=COL["fg"], fontsize=10)
+    ax1.set_ylabel("Cumulative ACE (10⁴ kt²)", color=COL["fg"], fontsize=14)
     ax1.set_ylim(bottom=0)
-    leg = ax1.legend(loc="upper left", fontsize=9, framealpha=0.85,
+    leg = ax1.legend(loc="upper left", fontsize=11, framealpha=0.85,
                      facecolor=COL["panel"], edgecolor=COL["border"], labelcolor=COL["fg"])
-    leg.get_frame().set_linewidth(0.8)
+    leg.get_frame().set_linewidth(1.0)
 
     # ===== Panel 2: rank trajectory =====
     if np.isfinite(ranks).any():
         finite = np.isfinite(ranks)
         rmask = ranks.astype(float).copy()
-        if year == current_year:
-            today_doy = ace_data.get("today_doy") or dt.date.today().timetuple().tm_yday
+        if is_current:
             rmask[today_doy:] = np.nan
-        ax2.plot(doy, rmask, color=COL["rank_line"], linewidth=1.8)
+        ax2.plot(doy, rmask, color=COL["rank_line"], linewidth=2.5,
+                 solid_capstyle="round")
         valid = ranks[finite]
-        if year == current_year:
+        if is_current:
             valid = ranks[:today_doy] if today_doy >= 1 else valid
         if len(valid):
             r_best = int(np.nanmin(valid))
             r_worst = int(np.nanmax(valid))
-            n_seasons = years_mat.shape[0]
-            ax2.plot([], [], ' ', label=f"Rank ({r_best} – {r_worst}, of {n_seasons})")
-            leg2 = ax2.legend(loc="upper left", fontsize=9, framealpha=0.85,
+            n_seasons_inner = years_mat.shape[0]
+            ax2.plot([], [], ' ',
+                     label=f"Rank ({r_best} – {r_worst}, of {n_seasons_inner})")
+            leg2 = ax2.legend(loc="upper left", fontsize=11, framealpha=0.85,
                               facecolor=COL["panel"], edgecolor=COL["border"],
                               labelcolor=COL["fg"], handlelength=0)
-            leg2.get_frame().set_linewidth(0.8)
+            leg2.get_frame().set_linewidth(1.0)
         ax2.invert_yaxis()
-        ax2.set_ylabel("Rank", color=COL["fg"], fontsize=10)
+        ax2.set_ylabel("Rank", color=COL["fg"], fontsize=14)
     else:
         ax2.text(0.5, 0.5, "Rank trajectory unavailable",
                  transform=ax2.transAxes, ha="center", va="center",
-                 color=COL["muted"], fontsize=10)
+                 color=COL["muted"], fontsize=12)
 
     # ===== Panel 3: daily ACE bars =====
     bars_x = np.arange(1, 367)
     bars_y = daily[1:367]
-    ax3.bar(bars_x, bars_y, color=COL["bar_cyan"], width=1.0, linewidth=0)
+    ax3.bar(bars_x, bars_y, color=COL["bar_cyan"], width=1.0,
+            linewidth=0, edgecolor="none")
     if bars_y.max() > 0:
         i_max = int(bars_y.argmax())
         peak_val = float(bars_y[i_max])
-        ax3.bar([i_max + 1], [peak_val], color=COL["accent"], width=1.0, linewidth=0,
+        ax3.bar([i_max + 1], [peak_val], color=COL["accent"], width=1.0,
+                linewidth=0, edgecolor="none",
                 label=f"Max Daily ACE ({peak_val:.4f})")
-        leg3 = ax3.legend(loc="upper left", fontsize=9, framealpha=0.85,
+        leg3 = ax3.legend(loc="upper left", fontsize=11, framealpha=0.85,
                           facecolor=COL["panel"], edgecolor=COL["border"],
                           labelcolor=COL["fg"])
-        leg3.get_frame().set_linewidth(0.8)
-    ax3.set_ylabel("Daily ACE", color=COL["fg"], fontsize=10)
+        leg3.get_frame().set_linewidth(1.0)
+    ax3.set_ylabel("Daily ACE", color=COL["fg"], fontsize=14)
     ax3.set_ylim(bottom=0)
 
-    # ===== Panel 4: storm Gantt =====
-    if storms:
-        # sort earliest start → latest, top to bottom
-        named = []
-        for s in storms:
-            try:
-                start = dt.datetime.fromisoformat(s["start"])
-                end = dt.datetime.fromisoformat(s["end"])
-            except (KeyError, ValueError):
-                continue
-            named.append((s, start, end))
-        named.sort(key=lambda t: t[1])
-        # Storm names render in a fixed left column at axes-fraction x = -0.005,
-        # data-coord y = row center. clip_on=False lets them extend into the
-        # figure's left margin (which we widened above to make room).
-        name_trans = blended_transform_factory(ax4.transAxes, ax4.transData)
-        n = len(named)
-        for i, (s, start, end) in enumerate(named):
-            row = n - 1 - i
-            d0 = start.timetuple().tm_yday + (start.hour + start.minute / 60.0) / 24.0
-            d1 = end.timetuple().tm_yday + (end.hour + end.minute / 60.0) / 24.0
-            d0 = max(1.0, min(366.0, d0))
-            d1 = max(1.0, min(366.0, d1))
-            if d1 <= d0:
-                d1 = d0 + 0.25
-            _, color = sshws_color(s.get("peak_wind_kt"))
-            patch = FancyBboxPatch(
-                (d0, row + 0.18),
-                d1 - d0, 0.64,
-                boxstyle="round,pad=0.0,rounding_size=0.18",
-                linewidth=0,
-                facecolor=color,
-                edgecolor="none",
-                mutation_aspect=1.0,
-            )
-            ax4.add_patch(patch)
-            name = (s.get("name") or s.get("sid") or "—").upper()
-            txt = ax4.text(-0.008, row + 0.5, name,
-                           transform=name_trans,
-                           ha="right", va="center", fontsize=9,
-                           fontweight="600", color=COL["fg"])
-            txt.set_clip_on(False)
-        ax4.set_ylim(-0.4, n + 0.4)
+    # ===== Panel 4: row-packed storm Gantt =====
+    if rows:
+        # Vertical month dividers — Wikipedia season-summary style.
+        for ml in locs:
+            ax4.axvline(ml, color=COL["border"], linewidth=0.6, alpha=0.5,
+                        linestyle="--", zorder=0)
+
+        # Top row at top of axes, last row at bottom — invert y so row 0 is up.
+        ax4.set_ylim(n_rows - 0.5, -0.5)
         ax4.set_yticks([])
-        ax4.set_ylabel("")
+
+        for r_idx, row in enumerate(rows):
+            for s, start, end in row:
+                d0 = start.timetuple().tm_yday + (start.hour + start.minute/60.0) / 24.0
+                d1 = end.timetuple().tm_yday   + (end.hour   + end.minute/60.0)   / 24.0
+                d0 = max(1.0, min(366.0, d0))
+                d1 = max(1.0, min(366.0, d1))
+                if d1 <= d0:
+                    d1 = d0 + 0.25
+
+                cat, color = sshws_color(s.get("peak_wind_kt"))
+                patch = FancyBboxPatch(
+                    (d0, r_idx - 0.18), d1 - d0, 0.36,
+                    boxstyle="round,pad=0.0,rounding_size=0.18",
+                    linewidth=0,
+                    facecolor=color,
+                    edgecolor=color,
+                )
+                ax4.add_patch(patch)
+
+                name = (s.get("name") or s.get("sid") or "—").upper()
+                label = f"{name} ({cat})"
+                txt = ax4.text(d1 + 0.5, r_idx, label,
+                               ha="left", va="center",
+                               fontsize=10, fontweight="600",
+                               color=COL["fg"])
+                txt.set_clip_on(False)
+
+        # Suppress y-axis spine and remove left/right spines so the panel
+        # reads as a flat timeline rather than a chart.
+        ax4.spines["left"].set_visible(False)
     else:
-        ax4.text(0.5, 0.5, "No per-storm tracks available for this year",
-                 transform=ax4.transAxes, ha="center", va="center",
-                 color=COL["muted"], fontsize=10)
+        # Empty-storm path — current year before any activity, or quiet
+        # historical year that somehow had no named storms in tracks.
+        ax4.set_ylim(0.5, -0.5)
         ax4.set_yticks([])
+        ax4.text(0.5, 0.5, "No named storms this season",
+                 transform=ax4.transAxes, ha="center", va="center",
+                 color=COL["muted"], fontsize=12, fontweight="600")
+        ax4.spines["left"].set_visible(False)
+
+    # ===== Panel 5: SSHWS category legend strip =====
+    ax5.set_xlim(0, 1)
+    ax5.set_ylim(0, 1)
+    ax5.set_xticks([])
+    ax5.set_yticks([])
+    ax5.set_facecolor(COL["bg"])
+    for spine in ax5.spines.values():
+        spine.set_visible(False)
+
+    n_cat = len(SSHWS_LEGEND)
+    total_w = 0.92
+    left_x  = (1 - total_w) / 2
+    slot_w  = total_w / n_cat
+    swatch_w = 0.020
+    swatch_h = 0.38
+    for i, (cat, krange, color) in enumerate(SSHWS_LEGEND):
+        x0 = left_x + i * slot_w
+        ax5.add_patch(Rectangle((x0, 0.31), swatch_w, swatch_h,
+                                facecolor=color,
+                                edgecolor=COL["border"], linewidth=1.0))
+        ax5.text(x0 + swatch_w + 0.006, 0.5,
+                 f"{cat} ({krange})",
+                 ha="left", va="center",
+                 color=COL["fg"], fontsize=11, fontweight="600")
 
     # ===== Header =====
     sign = "+" if delta >= 0 else "−"
@@ -508,18 +592,21 @@ def render_panel(basin: str, year: int, out_path: Path,
         f"ACE: {total_ace:.1f}  ({sign}{abs(delta):.1f} vs avg)      "
         f"Rank: {rank_disp}/{n_seasons}"
     )
-    header_right = (
-        f"@xrq | Plotted by @WeathermanAAA_  "
-        f"at {dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
-    )
-    header_y = 1.0 - 0.18 / fig_h
-    fig.text(0.13, header_y, header_left,
-             color=COL["fg"], fontsize=15, fontweight="700", ha="left", va="top")
-    fig.text(0.965, header_y, header_right,
-             color=COL["muted"], fontsize=9, ha="right", va="top")
+    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    header_credit = f"@WeathermanAAA_ · Triple-A-Tropics · {ts}"
+    # Two-line header: 20pt title row, then a small credit row below.
+    title_y  = 1.0 - 0.30 / fig_h
+    credit_y = 1.0 - 0.72 / fig_h
+    fig.text(0.085, title_y, header_left,
+             color=COL["fg"], fontsize=20, fontweight="700",
+             ha="left", va="top")
+    fig.text(0.085, credit_y, header_credit,
+             color=COL["muted"], fontsize=11, fontweight="500",
+             ha="left", va="top")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=110, facecolor=COL["bg"], bbox_inches=None)
+    fig.savefig(out_path, dpi=DPI, facecolor=COL["bg"],
+                bbox_inches="tight", pad_inches=0.25)
     plt.close(fig)
     return out_path
 
@@ -532,13 +619,16 @@ def panels_dir(basin: str) -> Path:
 
 
 def _render_one(args):
+    """Render a single (basin, year) panel. Catches every exception so that
+    one bad year never aborts the rest of the backfill. Returns
+    (basin, year, status) where status starts with 'ok', 'skip', 'no-tracks',
+    or 'FAIL: ...'."""
     basin, year, current_year, force = args
     out = panels_dir(basin) / f"{year}.png"
     if out.exists() and not force:
         return basin, year, "skip"
     try:
         ace_data = load_ace_data(basin)
-        # Only render if we have per-storm tracks for years < current
         if year < current_year:
             tracks_path = HERE / "historical" / basin / "tracks" / f"tracks_{year}.json"
             if not tracks_path.exists():
@@ -546,7 +636,8 @@ def _render_one(args):
         render_panel(basin, year, out, ace_data=ace_data, current_year=current_year)
         return basin, year, "ok"
     except Exception as e:
-        return basin, year, f"ERROR: {type(e).__name__}: {e}"
+        import traceback
+        return basin, year, f"FAIL: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
 def backfill(basins: list[str], year_start: int = 1970,
@@ -560,16 +651,46 @@ def backfill(basins: list[str], year_start: int = 1970,
         for y in range(year_start, year_end + 1):
             jobs.append((basin, y, current_year, force))
     print(f"[backfill] {len(jobs)} panels across {basins} years {year_start}-{year_end}")
+
+    results: list[tuple[str, int, str]] = []
     if workers <= 1:
         for j in jobs:
-            basin, year, status = _render_one(j)
-            print(f"  {basin} {year}: {status}")
-        return
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futures = {ex.submit(_render_one, j): j for j in jobs}
-        for f in as_completed(futures):
-            basin, year, status = f.result()
-            print(f"  {basin} {year}: {status}")
+            r = _render_one(j)
+            results.append(r)
+            basin, year, status = r
+            print(f"  {basin} {year}: {status.splitlines()[0]}")
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(_render_one, j): j for j in jobs}
+            for f in as_completed(futures):
+                r = f.result()
+                results.append(r)
+                basin, year, status = r
+                print(f"  {basin} {year}: {status.splitlines()[0]}")
+
+    # ---- Summary ----
+    ok = [(b, y) for (b, y, s) in results if s == "ok"]
+    skipped = [(b, y) for (b, y, s) in results if s in ("skip", "no-tracks")]
+    failed = [(b, y, s) for (b, y, s) in results if s.startswith("FAIL")]
+    total = len(results)
+    print()
+    print(f"Backfill complete: {len(ok)}/{total} years rendered successfully across all basins")
+    if failed:
+        print(f"Failed years ({len(failed)}):")
+        for b, y, s in sorted(failed):
+            first_line = s.splitlines()[0]
+            print(f"  {b} {y}: {first_line}")
+        # Full traceback dump for the first few
+        print()
+        print("First 3 tracebacks (for debugging):")
+        for b, y, s in failed[:3]:
+            print(f"--- {b} {y} ---")
+            print(s)
+    if skipped:
+        skip_summary = ", ".join(f"{b} {y}" for b, y, _ in
+                                 [(b, y, None) for (b, y) in skipped[:8]])
+        more = f" (+{len(skipped) - 8} more)" if len(skipped) > 8 else ""
+        print(f"Skipped: {len(skipped)}{f' — {skip_summary}{more}' if skipped else ''}")
 
 
 # ---------------------------------------------------------------------------
