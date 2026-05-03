@@ -403,6 +403,7 @@ a:hover { text-decoration: underline; }
 .climo-panel-img {
   flex: 1 1 70%;
   min-width: 0;
+  position: relative;
 }
 .climo-panel-img img {
   display: block;
@@ -410,6 +411,20 @@ a:hover { text-decoration: underline; }
   height: auto;
   border-radius: 8px;
   background: var(--bg);
+}
+.climo-panel-msg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 .climo-rank-table {
   flex: 0 0 30%;
