@@ -52,32 +52,11 @@
   </div>
 </section>
 
-<section class="chart-section">
-  <div class="chart-card climo-panel-card">
-    <div class="climo-panel-img">
-      <img id="climoPanel" src="panels/2026.png" alt="2026 East Pacific climatology panel" loading="lazy">
-      <p id="climoPanelMsg" class="climo-panel-msg" hidden></p>
-    </div>
-    <aside class="climo-rank-table">
-      <h3>Season profile</h3>
-      <p class="climo-rank-hint">Click any year for its full panel</p>
-      <ol id="rankList"></ol>
-    </aside>
-  </div>
-</section>
-
 <section class="about">
   <h2>What am I looking at?</h2>
-  <p>This page packs <b>two visualizations</b> of Northeast Pacific tropical cyclone climatology.</p>
-  <p>The <b>live interactive chart</b> at the top shows cumulative ACE versus the 1991–2020 statistical envelope (min–max, 10–90% and 25–75% bands plus the 30-year mean). The amber line is the current season; the violet line is last year for reference. <b>Click any year</b> in the in-chart ranking table to overlay that season's trajectory in hot pink — it's the fastest way to compare seasons head-to-head.</p>
-  <p>The <b>season profile</b> below it is a static 4-panel snapshot of any one year:</p>
-  <ol>
-    <li><b>Cumulative ACE curve</b> overlaid on the 1991–2020 climatology — nested blue bands for the min–max envelope, the 10th–90th percentile range, and the 25th–75th interquartile range, with dashed cyan and violet lines for the climo median and mean.</li>
-    <li><b>Rank trajectory</b> through the season: where this year sat versus every other in Northeast Pacific history at each calendar day (rank 1 = best at the top).</li>
-    <li><b>Daily ACE intensity</b> bars, with the season's most active day highlighted in amber.</li>
-    <li><b>Storm Gantt timeline</b> in a Wikipedia-style row-packed layout: every named system, color-coded by its peak Saffir–Simpson category, with a category legend strip below.</li>
-  </ol>
-  <p>Pick any past season from the rankings list on the right of the season profile (sorted by full-season ACE, back to 1876).</p>
+  <p>Accumulated Cyclone Energy (ACE) measures the total energy released by tropical cyclones during a season. It's the sum of a storm's sustained wind speed squared, taken every six hours while the storm is at tropical-storm strength or stronger.</p>
+  <p>The blue bands show the statistical envelope of the last 30 years: the outer band is every season's min-to-max range, the middle band is the 10th–90th percentiles, and the inner band is the interquartile range (25th–75th percentile). The dashed cyan line is the 30-year climatological mean.</p>
+  <p>The solid amber line is the current season. The violet line is the prior season for reference. The ranking table on the right shows where the current year stands versus every other season at this same point in the calendar. <b>Click any year in the table</b> to overlay that season's trajectory on the chart in hot pink.</p>
 
   <h2>Where does the data come from?</h2>
   <p>Historical and provisional track data come from NOAA NCEI's <a href="https://www.ncei.noaa.gov/products/international-best-track-archive" target="_blank" rel="noopener">IBTrACS v04r01</a> dataset. During an active season, the current-season line is kept fresh from live <a href="https://www.nhc.noaa.gov/" target="_blank" rel="noopener">NHC</a> ATCF best-track files as soon as they're issued.</p>
@@ -108,59 +87,6 @@
     setTimeout(resizeFrame, 800);
   });
   window.addEventListener('resize', resizeFrame);
-
-  const BASIN_DATA = '/ep_ace_data.json';
-  const PANEL_DIR  = 'panels';
-  const FIRST_PANEL_YEAR = 1970;
-  const climoImg = document.getElementById('climoPanel');
-  const climoMsg = document.getElementById('climoPanelMsg');
-  climoImg.addEventListener('error', () => {
-    climoMsg.textContent = 'Panel not available for this year.';
-    climoMsg.hidden = false;
-  });
-  climoImg.addEventListener('load', () => {
-    climoMsg.hidden = true;
-  });
-
-  fetch(BASIN_DATA, { cache: 'no-cache' })
-    .then(r => r.json())
-    .then(data => {
-      const rows = (data.rankings || [])
-        .slice()
-        .sort((a, b) => (b.total ?? 0) - (a.total ?? 0));
-      const list = document.getElementById('rankList');
-      const currentYear = new Date().getUTCFullYear();
-      let activeLi = null;
-      rows.forEach((row, i) => {
-        const li = document.createElement('li');
-        const total = (row.total ?? 0).toFixed(1);
-        li.textContent = `${i + 1}. ${row.year} — ACE ${total}`;
-        li.dataset.year = row.year;
-        const clickable = row.year >= FIRST_PANEL_YEAR;
-        li.dataset.clickable = clickable ? 'true' : 'false';
-        if (clickable) {
-          li.addEventListener('click', () => {
-            climoImg.src = `${PANEL_DIR}/${row.year}.png`;
-            climoImg.alt = `${row.year} East Pacific climatology panel`;
-            if (activeLi) activeLi.classList.remove('active');
-            li.classList.add('active');
-            activeLi = li;
-            climoImg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          });
-        }
-        if (row.year === currentYear) {
-          li.classList.add('active');
-          activeLi = li;
-        }
-        list.appendChild(li);
-      });
-      if (activeLi) {
-        activeLi.scrollIntoView({ block: 'center' });
-      }
-    })
-    .catch(err => {
-      console.error('Failed to load rankings', err);
-    });
 </script>
 
 </body>

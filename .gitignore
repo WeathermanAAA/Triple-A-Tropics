@@ -1,6 +1,8 @@
-# The IBTrACS CSV is huge (~110 MB) and is re-downloaded fresh by the
-# GitHub Action on every run, so we don't need to check it in.
+# The IBTrACS CSVs are huge (~50–110 MB each) and re-downloaded fresh by
+# the GitHub Action on every run, so we don't need to check them in.
 ibtracs.WP.list.v04r01.csv
+ibtracs.NA.list.v04r01.csv
+ibtracs.EP.list.v04r01.csv
 
 # Python
 __pycache__/
