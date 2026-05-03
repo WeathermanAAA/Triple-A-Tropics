@@ -28,28 +28,30 @@
     font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
   }
 
-  .sat-wrap {
-    max-width: 1380px;
-    margin: 0 auto;
-    padding: 18px 18px 24px;
-  }
-
-  /* Two-pane layout: map LEFT, controls RIGHT. Stacks on narrow screens. */
+  /* Map + panel split-view sits flush inside the .chart-card chrome —
+     the card supplies the bg, border, radius, and drop shadow; the
+     children fill it edge-to-edge. */
   .sat-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 360px;
-    gap: 16px;
+    gap: 0;
   }
-  @media (max-width: 920px) {
+  @media (max-width: 760px) {
     .sat-grid { grid-template-columns: 1fr; }
   }
 
+  .sat-map-wrap { position: relative; }
   #sat-map {
-    height: 560px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+    height: 700px;
     background: #0a0d12;
+    /* Inset shadow + right divider make the map sit "in" the card. */
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.55);
+  }
+  @media (min-width: 761px) {
+    #sat-map { border-right: 1px solid var(--border); }
+  }
+  @media (max-width: 760px) {
+    #sat-map { height: 520px; }
   }
   /* Leaflet inherits font from body, but the attribution looks chunky in
      Metropolis — push it back to system sans for legibility. */
@@ -61,38 +63,43 @@
 
   .sat-controls {
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px 18px;
-    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
     color: var(--fg);
+    padding: 18px 20px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+  }
+  @media (max-width: 760px) {
+    .sat-controls { border-top: 1px solid var(--border); }
   }
   .sat-controls h2 {
-    margin: 0;
-    font-size: 14px;
+    margin: 0 0 4px;
+    font-size: 12px;
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
     color: var(--muted);
-    font-weight: 600;
+    font-weight: 700;
   }
+  /* Each parameter row is its own bordered band so the panel reads as
+     stacked sections (Time / Channel / Enhancement / BBox / Render). */
   .sat-field {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
   }
+  .sat-field:first-of-type { padding-top: 8px; }
   .sat-field label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.6px;
+    font-weight: 700;
   }
   .sat-field input[type=datetime-local],
   .sat-field select,
   .sat-field input[type=text] {
-    background: #0e1014;
+    background: var(--bg);
     color: var(--fg);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -112,9 +119,13 @@
     gap: 8px;
     font-size: 13px;
     color: var(--fg);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 600;
   }
+  .sat-checkbox input[type=checkbox] { accent-color: var(--accent-2); }
   .sat-bbox-display {
-    background: #0a0d12;
+    background: var(--bg);
     border: 1px dashed var(--border);
     border-radius: 6px;
     padding: 8px 10px;
@@ -128,39 +139,46 @@
     border-style: solid;
     border-color: var(--accent-2);
   }
+  .sat-render-row {
+    padding-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
   .sat-render-btn {
-    background: linear-gradient(180deg, var(--accent-2) 0%, #3aa7d1 100%);
-    color: #0a0d12;
+    background: var(--accent-2);
+    color: #0b0e13;
     border: none;
     border-radius: 8px;
     padding: 12px 16px;
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.05s ease;
+    transition: filter 0.15s ease, transform 0.05s ease;
   }
-  .sat-render-btn:hover:not(:disabled) {
-    opacity: 0.92;
-  }
-  .sat-render-btn:active:not(:disabled) {
-    transform: translateY(1px);
-  }
+  .sat-render-btn:hover:not(:disabled) { filter: brightness(1.1); }
+  .sat-render-btn:active:not(:disabled) { transform: translateY(1px); }
   .sat-render-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
 
-  /* Result section spans full width below the grid. */
-  .sat-result {
-    margin-top: 18px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    color: var(--fg);
-    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+  /* "How it works" hint inside the panel — kept compact so the panel
+     doesn't outrun the map height on desktop. */
+  .sat-help {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+    font-weight: 600;
   }
+  .sat-help b { color: var(--fg); font-weight: 700; }
+
+  /* Result card: same chart-card chrome as the map+panel section. */
   .sat-result-head {
     display: flex;
     justify-content: space-between;
@@ -173,6 +191,7 @@
   .sat-result-meta {
     color: var(--muted);
     font-size: 13px;
+    font-weight: 600;
   }
   .sat-result-actions {
     display: flex;
@@ -185,12 +204,14 @@
     border-radius: 6px;
     padding: 6px 12px;
     font-size: 13px;
+    font-weight: 700;
     cursor: pointer;
     text-decoration: none;
   }
   .sat-action-btn:hover {
     border-color: var(--accent-2);
     color: var(--accent-2);
+    text-decoration: none;
   }
   .sat-result-img-wrap {
     background: #0a0d12;
@@ -204,16 +225,22 @@
     display: inline-block;
   }
 
-  /* Spinner / status overlay over the map while rendering. */
+  /* Status / spinner sits as an overlay inside the map wrap so it
+     doesn't grow the layout when it appears. */
   .sat-status {
-    margin-top: 8px;
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
     display: none;
-    background: rgba(20, 24, 32, 0.95);
+    background: rgba(20, 24, 32, 0.92);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
     color: var(--fg);
     font-size: 13px;
+    font-weight: 600;
+    z-index: 500;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
   }
   .sat-status.visible { display: flex; align-items: center; gap: 10px; }
   .sat-spinner {
@@ -242,17 +269,6 @@
     z-index: 9999;
   }
   .sat-toast.visible { display: block; }
-
-  .sat-help {
-    background: #0a0d12;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-  .sat-help b { color: var(--fg); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -274,68 +290,73 @@
 </nav>
 
 <header class="page-head">
-  <h1>Satellite Plots</h1>
-  <p>Custom GOES-19 ABI renders. Draw a box on the map, pick a time and channel, get back a cropped high-resolution PNG. Renders are cached, so identical re-requests come back instantly.</p>
+  <h1>Custom Satellite Zooms</h1>
+  <p>Draw a rectangle anywhere in the Americas/Atlantic and get a custom GOES-19 render — IR, water vapor, or visible — cropped tight to the box you picked.</p>
 </header>
 
-<div class="sat-wrap">
-
-  <div class="sat-grid">
-    <div>
-      <div id="sat-map"></div>
-      <div id="sat-status" class="sat-status">
-        <div class="sat-spinner"></div>
-        <span id="sat-status-text">Rendering…</span>
+<section class="chart-section">
+  <div class="chart-card">
+    <div class="sat-grid">
+      <div class="sat-map-wrap">
+        <div id="sat-map"></div>
+        <div id="sat-status" class="sat-status">
+          <div class="sat-spinner"></div>
+          <span id="sat-status-text">Rendering…</span>
+        </div>
       </div>
+
+      <aside class="sat-controls">
+        <h2>Render parameters</h2>
+
+        <div class="sat-field">
+          <label class="sat-checkbox">
+            <input type="checkbox" id="sat-latest" checked>
+            Use latest available scan
+          </label>
+        </div>
+
+        <div class="sat-field">
+          <label for="sat-time">Time (UTC)</label>
+          <input type="datetime-local" id="sat-time" disabled step="60">
+        </div>
+
+        <div class="sat-field">
+          <label for="sat-channel">Channel</label>
+          <select id="sat-channel">
+            <option value="13">IR · Channel 13 (clean longwave, 10.3 µm)</option>
+            <option value="8">Upper WV · Channel 8 (6.2 µm)</option>
+            <option value="2">Visible · Channel 2 (0.64 µm)</option>
+          </select>
+        </div>
+
+        <div class="sat-field">
+          <label for="sat-enh">Enhancement</label>
+          <select id="sat-enh">
+            <option value="tat_neon">TAT Neon</option>
+            <option value="dvorak_bd">Dvorak BD</option>
+            <option value="grayscale">Grayscale</option>
+          </select>
+        </div>
+
+        <div class="sat-field">
+          <label>Bounding box (drag on map)</label>
+          <div id="sat-bbox" class="sat-bbox-display">— no rectangle drawn —</div>
+        </div>
+
+        <div class="sat-render-row">
+          <button id="sat-render" class="sat-render-btn" disabled>Render</button>
+        </div>
+
+        <div class="sat-help">
+          <b>How it works:</b> draw a rectangle (max 30°×30°) over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
+        </div>
+      </aside>
     </div>
-
-    <aside class="sat-controls">
-      <h2>Render parameters</h2>
-
-      <div class="sat-field">
-        <label class="sat-checkbox">
-          <input type="checkbox" id="sat-latest" checked>
-          Use latest available scan
-        </label>
-      </div>
-
-      <div class="sat-field">
-        <label for="sat-time">Time (UTC)</label>
-        <input type="datetime-local" id="sat-time" disabled step="60">
-      </div>
-
-      <div class="sat-field">
-        <label for="sat-channel">Channel</label>
-        <select id="sat-channel">
-          <option value="13">IR · Channel 13 (clean longwave, 10.3 µm)</option>
-          <option value="8">Upper WV · Channel 8 (6.2 µm)</option>
-          <option value="2">Visible · Channel 2 (0.64 µm)</option>
-        </select>
-      </div>
-
-      <div class="sat-field">
-        <label for="sat-enh">Enhancement</label>
-        <select id="sat-enh">
-          <option value="tat_neon">TAT Neon</option>
-          <option value="dvorak_bd">Dvorak BD</option>
-          <option value="grayscale">Grayscale</option>
-        </select>
-      </div>
-
-      <div class="sat-field">
-        <label>Bbox (drag to draw)</label>
-        <div id="sat-bbox" class="sat-bbox-display">— no rectangle drawn —</div>
-      </div>
-
-      <button id="sat-render" class="sat-render-btn" disabled>Render</button>
-
-      <div class="sat-help">
-        <b>How it works:</b> draw a rectangle (max 30°×30°) over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
-      </div>
-    </aside>
   </div>
+</section>
 
-  <section id="sat-result" class="sat-result" style="display:none">
+<section class="chart-section" id="sat-result-section" style="display:none">
+  <div class="chart-card">
     <div class="sat-result-head">
       <div class="sat-result-meta" id="sat-result-meta">—</div>
       <div class="sat-result-actions">
@@ -346,11 +367,17 @@
     <div class="sat-result-img-wrap">
       <img id="sat-result-img" alt="Rendered satellite image">
     </div>
-  </section>
+  </div>
+</section>
 
-</div>
+<section class="about">
+  <h2>How it works</h2>
+  <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel — IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail — and an enhancement preset. Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
+  <p>Bboxes are capped at 30° per axis to keep render times bounded. The backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits, then CONUS, then Full Disk) so the source resolution is as fine as possible. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
 
-<div id="sat-toast" class="sat-toast"></div>
+  <h2>Coverage</h2>
+  <p>Currently GOES-19 (GOES-East) only — operational disk roughly from 152°W to 6°E, 75°S to 75°N. That covers the entire Atlantic basin, the East Pacific, the Americas, and the eastern half of the Pacific. Himawari (West Pacific) and GOES-18 (full Pacific coverage) are on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters once GOES-19 mesoscale tracking is wired in.</p>
+</section>
 
 <footer>
   <div class="footer-inner">
@@ -358,6 +385,8 @@
     <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Imagery: NOAA GOES-19 ABI via NOAA AWS Open Data</div>
   </div>
 </footer>
+
+<div id="sat-toast" class="sat-toast"></div>
 
 <script>
 (function() {
@@ -368,10 +397,20 @@
   // GOES-East operational disk (matches backend validator)
   const GOES_DISK = { lonMin: -152.04, latMin: -75, lonMax: 6.04, latMax: 75 };
 
+  // Bbox rectangle style — cyan accent matches the rest of the site palette.
+  const BBOX_STYLE = {
+    color: '#5dd3ff',
+    weight: 2,
+    fillOpacity: 0.10,
+    fillColor: '#5dd3ff',
+  };
+
   // ---- Map ----
+  // Default view centered on the Caribbean / west Atlantic — TC-relevant
+  // geography lands users in the right place by default.
   const map = L.map('sat-map', {
     center: [22, -65],
-    zoom: 3,
+    zoom: 4,
     worldCopyJump: false,
     attributionControl: true,
   });
@@ -393,14 +432,7 @@
       circle: false,
       circlemarker: false,
       marker: false,
-      rectangle: {
-        shapeOptions: {
-          color: '#5dd3ff',
-          weight: 2,
-          fillOpacity: 0.08,
-          fillColor: '#5dd3ff',
-        },
-      },
+      rectangle: { shapeOptions: BBOX_STYLE },
     },
   });
   map.addControl(drawControl);
@@ -556,7 +588,7 @@
       document.getElementById('sat-download').download = fname;
       document.getElementById('sat-result-meta').textContent =
         productHdr + ' · ' + cacheHdr + ' · ' + (renderMs/1000).toFixed(2) + 's render · ' + elapsed + 's total';
-      document.getElementById('sat-result').style.display = 'block';
+      document.getElementById('sat-result-section').style.display = 'block';
 
       // Push deep-link state to history
       const params = new URLSearchParams();
@@ -598,7 +630,7 @@
     // Draw rectangle on map
     const rect = L.rectangle(
       [[latMin, lonMin], [latMax, lonMax]],
-      { color: '#5dd3ff', weight: 2, fillOpacity: 0.08, fillColor: '#5dd3ff' }
+      BBOX_STYLE
     );
     drawn.addLayer(rect);
     map.fitBounds(rect.getBounds(), { padding: [40, 40] });
