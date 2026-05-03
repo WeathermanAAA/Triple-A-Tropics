@@ -382,7 +382,7 @@
         </div>
 
         <div class="sat-help">
-          <b>How it works:</b> draw a rectangle (max 30°×30°) over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
+          <b>How it works:</b> draw any rectangle over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop, auto-downsampling huge bboxes to stay within a 16M-pixel budget. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
         </div>
       </aside>
     </div>
@@ -407,7 +407,7 @@
 <section class="about">
   <h2>How it works</h2>
   <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel — IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail — and an enhancement preset. Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
-  <p>Bboxes are capped at 30° per axis to keep render times bounded. The backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits, then CONUS, then Full Disk) so the source resolution is as fine as possible. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
+  <p>Any bbox size works — the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
 
   <h2>Coverage</h2>
   <p>Currently GOES-19 (GOES-East) only — operational disk roughly from 152°W to 6°E, 75°S to 75°N. That covers the entire Atlantic basin, the East Pacific, the Americas, and the eastern half of the Pacific. Himawari (West Pacific) and GOES-18 (full Pacific coverage) are on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters once GOES-19 mesoscale tracking is wired in.</p>
@@ -427,7 +427,11 @@
   document.getElementById('year').textContent = new Date().getFullYear();
 
   const RENDER_API = "https://web-production-b88d.up.railway.app/render";
-  const MAX_BBOX_DEG = 30;
+  // Soft sanity cap — backend now auto-downsamples any bbox to a 16M-pixel
+  // budget, so there's no hard size limit. 80° catches obviously-broken
+  // input (e.g. someone dragging a rectangle across the entire disk by
+  // accident) without blocking the legitimate large-bbox use case.
+  const MAX_BBOX_DEG = 80;
   // GOES-East operational disk (matches backend validator)
   const GOES_DISK = { lonMin: -152.04, latMin: -75, lonMax: 6.04, latMax: 75 };
 
@@ -659,6 +663,12 @@
       const cacheHdr = resp.headers.get('X-Cache') || '?';
       const productHdr = resp.headers.get('X-Product') || '?';
       const renderMs = resp.headers.get('X-Render-Ms') || '?';
+      // X-Downsample is forward-compatible: only badge when the header is
+      // present AND the factor is >1 (factor=1 means no downsampling, no
+      // need to call it out). Old backend builds without the header just
+      // skip the badge silently.
+      const downsampleHdr = resp.headers.get('X-Downsample');
+      const downsampleN = downsampleHdr ? parseInt(downsampleHdr, 10) : 1;
 
       const url = URL.createObjectURL(blob);
       document.getElementById('sat-result-img').src = url;
@@ -666,8 +676,12 @@
       const fname = 'goes19_ch' + body.channel + '_' + body.enhancement + '_' +
         body.bbox.map(v => v.toFixed(1)).join('_') + '.png';
       document.getElementById('sat-download').download = fname;
-      document.getElementById('sat-result-meta').textContent =
-        productHdr + ' · ' + cacheHdr + ' · ' + (renderMs/1000).toFixed(2) + 's render · ' + elapsed + 's total';
+      let metaText = productHdr + ' · ' + cacheHdr + ' · ' +
+        (renderMs/1000).toFixed(2) + 's render · ' + elapsed + 's total';
+      if (downsampleN > 1) {
+        metaText += ' · auto-downsampled ' + downsampleN + '×';
+      }
+      document.getElementById('sat-result-meta').textContent = metaText;
       document.getElementById('sat-result-section').style.display = 'block';
 
       // Push deep-link state to history
