@@ -321,7 +321,7 @@
 
 <header class="page-head">
   <h1>Custom Satellite Zooms</h1>
-  <p>Draw a rectangle anywhere in the Americas/Atlantic and get a custom GOES-19 render — IR, water vapor, or visible — cropped tight to the box you picked.</p>
+  <p>Draw a rectangle anywhere in GOES-East coverage (Americas, Atlantic, eastern Pacific). Himawari (Western Pacific) and METEOSAT (Atlantic east / Africa / Europe) coverage coming soon.</p>
 </header>
 
 <section class="chart-section">
@@ -449,11 +449,17 @@
   // ---- Map ----
   // Default view centered on the Caribbean / west Atlantic — TC-relevant
   // geography lands users in the right place by default.
+  // maxBounds clamps to one world copy with mild viscosity so the user can
+  // drag past the edge briefly but the map snaps back rather than scrolling
+  // into infinity at low zoom. Top/bottom clipped to ±85° to keep Mercator
+  // distortion finite.
   const map = L.map('sat-map', {
     center: [22, -65],
     zoom: 4,
     worldCopyJump: false,
     attributionControl: true,
+    maxBounds: [[-85, -180], [85, 180]],
+    maxBoundsViscosity: 0.7,
   });
 
   // Natural Earth GeoJSON basemap — matches the SVG basemap rendered by
@@ -468,10 +474,44 @@
   basemapAttribution.addAttribution('Coastlines: Natural Earth');
   basemapAttribution.addTo(map);
 
+  // Antimeridian split — Himawari prep. Several Natural Earth features in
+  // the Western Pacific (Russia, Fiji, Kiribati, NZ, Tonga, Tuvalu, RMI…)
+  // are single MultiPolygons whose component rings live on both sides of
+  // ±180°. Leaflet's renderer can drop or smear such features into a
+  // horizontal stripe across the world. We pre-split each cross-dateline
+  // feature into an east copy and a west copy so each renders cleanly.
+  // Same logic applies to MultiLineString coastlines.
+  function splitAntimeridianFeatures(fc) {
+    const out = [];
+    for (const feat of fc.features) {
+      const t = feat.geometry.type;
+      if (t !== 'MultiPolygon' && t !== 'MultiLineString') {
+        out.push(feat);
+        continue;
+      }
+      const east = [], west = [];
+      for (const part of feat.geometry.coordinates) {
+        // MultiPolygon: part[0][0][0] = first lon of outer ring of polygon
+        // MultiLineString: part[0][0]  = first lon of line
+        const sample = (t === 'MultiPolygon') ? part[0][0][0] : part[0][0];
+        (sample >= 0 ? east : west).push(part);
+      }
+      if (east.length && west.length) {
+        out.push({ ...feat, geometry: { type: t, coordinates: east } });
+        out.push({ ...feat, geometry: { type: t, coordinates: west } });
+      } else {
+        out.push(feat);
+      }
+    }
+    return { ...fc, features: out };
+  }
+
   Promise.all([
     fetch('/ne_50m_admin_0_countries.geojson').then(r => r.json()),
     fetch('/ne_50m_coastline.geojson').then(r => r.json()),
   ]).then(([countriesData, coastlineData]) => {
+    countriesData = splitAntimeridianFeatures(countriesData);
+    coastlineData = splitAntimeridianFeatures(coastlineData);
     // Countries first so coastlines paint on top of country fills.
     L.geoJSON(countriesData, {
       style: {
