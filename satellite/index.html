@@ -43,7 +43,10 @@
   .sat-map-wrap { position: relative; }
   #sat-map {
     height: 700px;
-    background: #0a0d12;
+    /* Ocean fill — same blue as the static TC tracker basemap
+       (generate_tracks_plot.py:render_basemap_svg). Shows through
+       under the GeoJSON layers and during zoom transitions. */
+    background: #2463a0;
     /* Inset shadow + right divider make the map sit "in" the card. */
     box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.55);
   }
@@ -253,6 +256,33 @@
   @keyframes sat-spin {
     to { transform: rotate(360deg); }
   }
+
+  /* Centered basemap-loading veil — covers the map while the two GeoJSON
+     fetches resolve, then fades out (300ms) once both layers attach. */
+  .sat-basemap-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: rgba(36, 99, 160, 0.55);
+    color: #f0f6ff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    z-index: 600;
+    transition: opacity 300ms ease;
+    pointer-events: none;
+  }
+  .sat-basemap-loading.faded {
+    opacity: 0;
+  }
+  .sat-basemap-loading .sat-spinner {
+    border-color: rgba(255, 255, 255, 0.35);
+    border-top-color: #ffffff;
+  }
+
   .sat-toast {
     position: fixed;
     right: 20px;
@@ -299,6 +329,10 @@
     <div class="sat-grid">
       <div class="sat-map-wrap">
         <div id="sat-map"></div>
+        <div id="sat-basemap-loading" class="sat-basemap-loading">
+          <div class="sat-spinner"></div>
+          <span>Loading basemap…</span>
+        </div>
         <div id="sat-status" class="sat-status">
           <div class="sat-spinner"></div>
           <span id="sat-status-text">Rendering…</span>
@@ -397,11 +431,14 @@
   // GOES-East operational disk (matches backend validator)
   const GOES_DISK = { lonMin: -152.04, latMin: -75, lonMax: 6.04, latMax: 75 };
 
-  // Bbox rectangle style — cyan accent matches the rest of the site palette.
+  // Bbox rectangle style — cyan accent matches the rest of the site
+  // palette. Fill alpha 0.15 (vs. 0.10 elsewhere) is a deliberate bump:
+  // the basemap ocean is #2463a0 which sits in the same hue family as
+  // our #5dd3ff cyan, and a 0.10 fill effectively disappears against it.
   const BBOX_STYLE = {
     color: '#5dd3ff',
     weight: 2,
-    fillOpacity: 0.10,
+    fillOpacity: 0.15,
     fillColor: '#5dd3ff',
   };
 
@@ -414,12 +451,55 @@
     worldCopyJump: false,
     attributionControl: true,
   });
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png', {
-    maxZoom: 10,
-    minZoom: 2,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
-  }).addTo(map);
+
+  // Natural Earth GeoJSON basemap — matches the SVG basemap rendered by
+  // generate_tracks_plot.py (render_basemap_svg). Ocean is the #sat-map
+  // CSS background; countries+coastlines load as two separate layers so
+  // we can paint country borders and coastlines at independent weights.
+  // 50m resolution (not 110m) because the satellite map zooms in close
+  // to the Lesser Antilles / Bahamas / Florida Keys, where 110m drops
+  // small islands.
+  const basemapLoading = document.getElementById('sat-basemap-loading');
+  const basemapAttribution = L.control.attribution({ prefix: false });
+  basemapAttribution.addAttribution('Coastlines: Natural Earth');
+  basemapAttribution.addTo(map);
+
+  Promise.all([
+    fetch('/ne_50m_admin_0_countries.geojson').then(r => r.json()),
+    fetch('/ne_50m_coastline.geojson').then(r => r.json()),
+  ]).then(([countriesData, coastlineData]) => {
+    // Countries first so coastlines paint on top of country fills.
+    L.geoJSON(countriesData, {
+      style: {
+        fillColor: '#aeb2b5',
+        fillOpacity: 1,
+        color: '#ffffff',
+        weight: 1.6,
+        opacity: 0.95,
+        lineJoin: 'round',
+        lineCap: 'round',
+      },
+      interactive: false,
+    }).addTo(map);
+    L.geoJSON(coastlineData, {
+      style: {
+        color: '#ffffff',
+        weight: 0.8,
+        opacity: 0.85,
+        fill: false,
+        lineJoin: 'round',
+        lineCap: 'round',
+      },
+      interactive: false,
+    }).addTo(map);
+
+    // Fade out the loading veil (CSS transition, then remove from DOM).
+    basemapLoading.classList.add('faded');
+    setTimeout(() => basemapLoading.remove(), 320);
+  }).catch(err => {
+    console.error('Basemap load failed:', err);
+    basemapLoading.querySelector('span').textContent = 'Basemap failed to load';
+  });
 
   // ---- leaflet-draw rectangle, single-rectangle policy ----
   const drawn = new L.FeatureGroup();
