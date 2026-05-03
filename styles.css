@@ -91,7 +91,11 @@ a:hover { text-decoration: underline; }
 /* ---- Top navigation, metallic brand bar ---- */
 
 .nav {
-  position: sticky; top: 0; z-index: 10;
+  /* z-index 1100: Leaflet pane stack starts at 200 and its controls
+     (zoom buttons, leaflet-draw toolbar) sit at 1000. Anything below
+     that and our sticky nav gets painted over by the map on /satellite/
+     when the user scrolls. */
+  position: sticky; top: 0; z-index: 1100;
   /* Horizontal-banded metallic gradient: dark at the top and bottom,
      a wider lighter band in the middle for the "glossy" sheen. */
   background:
