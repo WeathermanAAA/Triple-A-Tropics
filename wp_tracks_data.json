@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-04 04:31 UTC",
+  "updated": "2026-05-04 05:21 UTC",
   "header": {
     "named": 3,
     "cat1plus": 1,
@@ -36,7 +36,7 @@
         {
           "t": "2026-05-04T00:00:00",
           "lat": 8.0,
-          "lon": 138.7,
+          "lon": 138.5,
           "wind_kt": 15.0,
           "pressure_mb": 1008.0,
           "cls": "TD",
