@@ -246,9 +246,9 @@ def cumulative_by_doy(points: pd.DataFrame) -> pd.DataFrame:
 def extract_storms_by_year(points: pd.DataFrame, min_year: int = 1970) -> dict:
     """Per-storm summaries grouped by season, derived from the same filtered
     points used for ACE. For each (season, SID) we record: storm name,
-    formation = first 6-hourly TS+ observation, dissipation = last, and
-    peak_wind_kt = max wind during the storm's TS+ life. Sorted by formation
-    within each year.
+    formation = first 6-hourly TS+ observation, dissipation = last, peak
+    wind + the time at which it occurred, and the storm's ACE contribution.
+    Sorted by formation within each year.
 
     Pre-`min_year` seasons are excluded because the per-storm Gantt is the
     only consumer and IBTrACS metadata is sparse/unreliable that far back —
@@ -268,9 +268,16 @@ def extract_storms_by_year(points: pd.DataFrame, min_year: int = 1970) -> dict:
         dissipation = rows["ISO_TIME"].max()
         if pd.isna(formation) or pd.isna(dissipation):
             continue
-        peak_w = rows["WIND_KT"].max() if "WIND_KT" in rows.columns else None
-        if pd.isna(peak_w):
-            peak_w = None
+        peak_time = None
+        peak_w = None
+        if "WIND_KT" in rows.columns and rows["WIND_KT"].notna().any():
+            peak_idx = rows["WIND_KT"].idxmax()
+            peak_w = float(rows.loc[peak_idx, "WIND_KT"])
+            pt = rows.loc[peak_idx, "ISO_TIME"]
+            if pd.notna(pt):
+                peak_time = pt
+        ace_total = float(rows["ace_increment"].sum()) \
+            if "ace_increment" in rows.columns else 0.0
         # NAME is sometimes blank/UNNAMED; use the first non-blank value
         # if any 6-hourly point in the storm's life had a name.
         name = ""
@@ -287,7 +294,11 @@ def extract_storms_by_year(points: pd.DataFrame, min_year: int = 1970) -> dict:
                          else str(formation),
             "dissipation": dissipation.isoformat() if hasattr(dissipation, "isoformat")
                            else str(dissipation),
-            "peak_wind_kt": float(peak_w) if peak_w is not None else None,
+            "peak_wind_kt": peak_w,
+            "peak_wind_time": peak_time.isoformat()
+                              if peak_time is not None and hasattr(peak_time, "isoformat")
+                              else None,
+            "ace_total": round(ace_total, 3),
         }
         out.setdefault(season_int, []).append(record)
     for year in out:
