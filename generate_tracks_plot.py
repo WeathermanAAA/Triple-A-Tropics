@@ -145,7 +145,10 @@ BASINS: dict[str, dict] = {
         # Pacific-centered: Africa LEFT (lon=-25), Asia/Pacific MIDDLE
         # (lon=180), Americas RIGHT (lon=270 = -90), with a sliver of
         # Africa wrapping around to the right edge (lon=335 = -25).
-        "extent": (-25.0, 335.0, -60.0, 60.0),
+        # Latitude -90..90 gives the standard equirectangular 2:1 aspect
+        # — the polar caps render empty (no TC activity above ~70°) but
+        # the map looks right and matches other global TC views.
+        "extent": (-25.0, 335.0, -90.0, 90.0),
         "vocab": {"named": "named storms",
                   "cat1plus": "category 1+ storms",
                   "cat3plus": "major (cat 3+) storms",
@@ -905,9 +908,15 @@ MAP_W = 1400    # SVG viewport width
 MAP_H = 900     # SVG viewport height
 
 
-def build_projection(extent: tuple[float, float, float, float]):
+def build_projection(extent: tuple[float, float, float, float],
+                     map_w: int = MAP_W, map_h: int = MAP_H):
     """Return (project, extent_info). project(lon, lat) -> (x, y) in the
     map's SVG coordinate system.
+
+    map_w / map_h default to the module constants (1400×900) which give
+    a slightly squashed look on per-basin extents. The global Pacific-
+    centered extent overrides to 1400×700 so 360°×180° gets rendered at
+    a true 2:1 equirectangular aspect.
 
     When the extent crosses the antimeridian (lon_max > 180), longitudes
     that fall below lon_min are wrapped by +360 so a Pacific-centered
@@ -919,25 +928,26 @@ def build_projection(extent: tuple[float, float, float, float]):
     def project(lon: float, lat: float) -> tuple[float, float]:
         if crosses_antimeridian and lon < lon_min:
             lon += 360
-        x = (lon - lon_min) / (lon_max - lon_min) * MAP_W
-        y = (lat_max - lat) / (lat_max - lat_min) * MAP_H
+        x = (lon - lon_min) / (lon_max - lon_min) * map_w
+        y = (lat_max - lat) / (lat_max - lat_min) * map_h
         return (x, y)
 
     return project, {
         "lon_min": lon_min, "lon_max": lon_max,
         "lat_min": lat_min, "lat_max": lat_max,
-        "width": MAP_W, "height": MAP_H,
+        "width": map_w, "height": map_h,
     }
 
 
-def _ring_to_svg_path(ring: list, project) -> str:
+def _ring_to_svg_path(ring: list, project,
+                      map_w: int = MAP_W, map_h: int = MAP_H) -> str:
     """Convert a GeoJSON LineString/ring to an SVG path `d` string.
     Clips very loosely by skipping coords outside the extent by a big margin.
 
     For the global Pacific-centered view, features that cross the
     projection's wrap boundary (e.g. Greenland straddling lon=-25 in a
     -25..335 extent) produce huge horizontal jumps in projected space.
-    Detect those (jump > 50% of MAP_W) and start a new "M" subpath at
+    Detect those (jump > 50% of map_w) and start a new "M" subpath at
     the boundary so the polygon doesn't draw as a stripe across the
     whole canvas."""
     parts = []
@@ -952,9 +962,9 @@ def _ring_to_svg_path(ring: list, project) -> str:
     # Skip paths entirely outside the viewport
     xs = [p[0] for p in parts]
     ys = [p[1] for p in parts]
-    if max(xs) < -MAP_W or min(xs) > MAP_W * 2 or max(ys) < -MAP_H or min(ys) > MAP_H * 2:
+    if max(xs) < -map_w or min(xs) > map_w * 2 or max(ys) < -map_h or min(ys) > map_h * 2:
         return ""
-    JUMP_THRESHOLD = MAP_W * 0.5
+    JUMP_THRESHOLD = map_w * 0.5
     d_parts: list[str] = []
     prev_x: float | None = None
     for x, y in parts:
@@ -976,7 +986,8 @@ def load_natural_earth(path: Path) -> dict | None:
 
 
 def render_basemap_svg(extent, countries_geojson: dict | None,
-                       coastline_geojson: dict | None) -> str:
+                       coastline_geojson: dict | None,
+                       map_w: int = MAP_W, map_h: int = MAP_H) -> str:
     """Build the SVG basemap: ocean fill, land polygons, coastlines, grid.
 
     Color palette (matches user-supplied reference):
@@ -985,12 +996,12 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
       borders #ffffff  white, bold
       grid    dashed white w/ low opacity
     """
-    project, _ = build_projection(extent)
+    project, _ = build_projection(extent, map_w, map_h)
     lon_min, lon_max, lat_min, lat_max = extent
     parts = []
 
     # Ocean background
-    parts.append(f'<rect x="0" y="0" width="{MAP_W}" height="{MAP_H}" fill="#2463a0"/>')
+    parts.append(f'<rect x="0" y="0" width="{map_w}" height="{map_h}" fill="#2463a0"/>')
 
     # Countries / land polygons (filled)
     if countries_geojson is not None:
@@ -1006,7 +1017,7 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
                 polys = coords
             for poly in polys:
                 for ring in poly:
-                    d = _ring_to_svg_path(ring, project)
+                    d = _ring_to_svg_path(ring, project, map_w, map_h)
                     if d:
                         parts.append(f'<path d="{d}" />')
         parts.append('</g>')
@@ -1026,7 +1037,7 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
                 polys = coords
             for poly in polys:
                 for ring in poly:
-                    d = _ring_to_svg_path(ring, project)
+                    d = _ring_to_svg_path(ring, project, map_w, map_h)
                     if d:
                         parts.append(f'<path d="{d}" />')
         parts.append('</g>')
@@ -1049,7 +1060,7 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
             elif gtype == "MultiLineString":
                 lines = coords
             for line in lines:
-                d = _ring_to_svg_path(line, project)
+                d = _ring_to_svg_path(line, project, map_w, map_h)
                 if d:
                     parts.append(f'<path d="{d}" />')
         parts.append('</g>')
@@ -1084,7 +1095,7 @@ def render_basemap_svg(extent, countries_geojson: dict | None,
     while lon <= lon_max:
         x, _ = project(lon, lat_min)
         label = _fmt_lon(lon)
-        parts.append(f'<text x="{x:.1f}" y="{MAP_H - 8}" text-anchor="middle">{label}</text>')
+        parts.append(f'<text x="{x:.1f}" y="{map_h - 8}" text-anchor="middle">{label}</text>')
         lon += 10
     lat = math.ceil(lat_min / 10) * 10
     while lat <= lat_max:
@@ -1121,7 +1132,8 @@ def _fmt_lat(lat: float) -> str:
 # Track + active-storm overlay rendering
 # ---------------------------------------------------------------------------
 
-def render_tracks_svg(storms: list[dict], extent) -> str:
+def render_tracks_svg(storms: list[dict], extent,
+                      map_w: int = MAP_W, map_h: int = MAP_H) -> str:
     """Draw each storm as a thin connecting polyline plus a colored dot
     at every 6-hour observation. Colors follow SSHWS.
 
@@ -1130,7 +1142,7 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
     fetch. Dots for the same storm share a data-sid so clicking one can
     open that storm's detail placard.
     """
-    project, _ = build_projection(extent)
+    project, _ = build_projection(extent, map_w, map_h)
     parts = ['<g class="tracks">']
     # Stash per-invest current-position coordinates from the first pass
     # so the second pass can draw the red X + label on top of every
@@ -1158,7 +1170,7 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
             # track that crosses our projection's wrap boundary (relevant
             # only for the global Pacific-centered extent) doesn't draw
             # as a horizontal stripe.
-            JUMP_THRESHOLD = MAP_W * 0.5
+            JUMP_THRESHOLD = map_w * 0.5
             d_parts: list[str] = []
             prev_x: float | None = None
             for x, y in xy:
@@ -1350,7 +1362,8 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
     return "\n".join(parts)
 
 
-def render_active_icons(storms: list[dict], extent) -> str:
+def render_active_icons(storms: list[dict], extent,
+                        map_w: int = MAP_W, map_h: int = MAP_H) -> str:
     """For each active storm, place a marker at its most recent position:
       - TS+ (peak ≥ 34 kt and not flagged as an invest): the spinning,
         glowing TAT hurricane icon with category label inside.
@@ -1362,7 +1375,7 @@ def render_active_icons(storms: list[dict], extent) -> str:
     marker, not a "warning is in effect right now" marker. The "L"
     matches NHC's surface-analysis convention for low-pressure systems
     and tells the reader at a glance that the system is being warned on."""
-    project, _ = build_projection(extent)
+    project, _ = build_projection(extent, map_w, map_h)
     parts = ['<g class="active-storms">']
     for storm in storms:
         if not storm.get("is_active"):
@@ -1877,7 +1890,7 @@ HTML_TEMPLATE = """<!doctype html>
   .active-icon .name {{ fill: #f1f7fd; font-size: 12px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }}
-  .active-icon {{ cursor: pointer; }}
+  body.interactive .active-icon {{ cursor: pointer; }}
   /* Invest current-position label (atcf_id like "91W"). Same typography
      as .active-icon .name but tinted red to match the X glow. */
   .invest-label {{ fill: #ff5050; font-size: 12px; font-weight: 700;
@@ -1973,9 +1986,12 @@ HTML_TEMPLATE = """<!doctype html>
 
   /* Hover tooltip for track dots (applies to circle + polygon markers).
      `r: 6.5` is a no-op for polygons but still enlarges circles; the
-     stroke-width bump + white stroke highlights both shapes uniformly. */
-  .track-dot {{ cursor: pointer; }}
-  .track-dot:hover {{ r: 6.5; stroke: #fff; stroke-width: 1.6;
+     stroke-width bump + white stroke highlights both shapes uniformly.
+     All cursor:pointer / hover-effect rules are GATED on the .interactive
+     body class — global mode adds it, per-basin maps don't (they ship
+     no JS and act as static SVG, so a pointer cursor would mislead). */
+  body.interactive .track-dot {{ cursor: pointer; }}
+  body.interactive .track-dot:hover {{ r: 6.5; stroke: #fff; stroke-width: 1.6;
     filter: brightness(1.15); }}
   #dot-tooltip {{ position: fixed; z-index: 9000; pointer-events: none;
     background: rgba(10,18,34,0.96); color: var(--fg);
@@ -1996,10 +2012,12 @@ HTML_TEMPLATE = """<!doctype html>
     border-radius: 999px; font-size: 10px; font-weight: 700;
     color: #07101c; margin-top: 2px; }}
 
-  /* Clickable storm cards (every card is clickable now) */
-  .storm-card.clickable {{ cursor: pointer; transition: background 0.15s; }}
-  .storm-card.clickable:hover {{ background: rgba(255,255,255,0.04); }}
-  .storm-card.clickable.active:hover {{ background: rgba(255,184,58,0.14); }}
+  /* Clickable storm cards. Same body.interactive gate as the dots —
+     per-basin static maps have no toggle handler, so the card stays
+     visually inert. */
+  body.interactive .storm-card.clickable {{ cursor: pointer; transition: background 0.15s; }}
+  body.interactive .storm-card.clickable:hover {{ background: rgba(255,255,255,0.04); }}
+  body.interactive .storm-card.clickable.active:hover {{ background: rgba(255,184,58,0.14); }}
   .click-hint {{ font-size: 10px; color: var(--muted); margin-top: 4px;
     text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
     opacity: 0.6; }}
@@ -2047,7 +2065,7 @@ HTML_TEMPLATE = """<!doctype html>
   .chart-empty {{ padding: 12px; font-size: 12px; color: var(--muted); }}
 </style>
 </head>
-<body>
+<body class="{body_class}">
 <div class="wrap">
   <div class="map-box">
     <div class="map-head">
@@ -2085,21 +2103,12 @@ HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
 
-  <div class="side">
-    <div class="panel-title">{year} Season · {storm_count_label}</div>
-    <div class="storm-list" id="storms">
-      {storm_cards}
-    </div>
-  </div>
+  {side_panel_html}
 </div>
 
 <div id="dot-tooltip" hidden></div>
 
-<script id="storms-payload" type="application/json">{storms_json}</script>
-<script>
-{tracks_js}
-</script>
-{zoom_pan_script}
+{interactive_js}
 </body>
 </html>
 """
@@ -2118,6 +2127,19 @@ ZOOM_PAN_SCRIPT = r"""
   var viewBox = svg.viewBox.baseVal;
   var original = { x: viewBox.x, y: viewBox.y, w: viewBox.width, h: viewBox.height };
 
+  // Wrap-snap for the global Pacific-centered map. The basemap renders
+  // 3 copies (left/middle/right at offsets -W/0/+W). When the user pans
+  // far enough that the visible center crosses past the middle copy's
+  // center by more than half a world, snap viewBox.x by ±W. The snap is
+  // imperceptible because all 3 copies are pixel-identical.
+  var SNAP_THRESHOLD = original.w / 2;
+  function applyWrapSnap() {
+    var centerX = viewBox.x + viewBox.width / 2;
+    var middleCenter = original.x + original.w / 2;
+    if (centerX > middleCenter + SNAP_THRESHOLD)      viewBox.x -= original.w;
+    else if (centerX < middleCenter - SNAP_THRESHOLD) viewBox.x += original.w;
+  }
+
   // Wheel = zoom toward cursor. Limit zoom-in to 5% of original (20×
   // zoom) so a user can't get lost zooming infinitely; zoom-out clamps
   // to original so the map can't be smaller than its natural extent.
@@ -2135,6 +2157,7 @@ ZOOM_PAN_SCRIPT = r"""
     viewBox.y = cursor.y - (cursor.y - viewBox.y) * (newH / viewBox.height);
     viewBox.width = newW;
     viewBox.height = newH;
+    applyWrapSnap();
   }, { passive: false });
 
   // Drag = pan. Skip if the mousedown landed on an interactive element
@@ -2158,6 +2181,7 @@ ZOOM_PAN_SCRIPT = r"""
     var dy = (e.clientY - lastY) * inv.d;
     viewBox.x -= dx; viewBox.y -= dy;
     lastX = e.clientX; lastY = e.clientY;
+    applyWrapSnap();
   });
   window.addEventListener('mouseup', function () {
     if (!dragging) return;
@@ -2263,23 +2287,69 @@ def render_storm_card(storm: dict) -> str:
 
 
 def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> str:
-    basemap_svg = render_basemap_svg(extent, countries_geojson, coastline_geojson)
-    tracks_svg = render_tracks_svg(payload["storms"], extent)
-    active_svg = render_active_icons(payload["storms"], extent)
     is_global = payload.get("basin") == "global"
+    # Global mode uses a 2:1 viewBox (1400×700) for true equirectangular
+    # aspect across 360° lon × 180° lat. Per-basin keeps the legacy
+    # 1400×900 dimensions so existing maps don't change visually.
+    map_w = MAP_W
+    map_h = MAP_W // 2 if is_global else MAP_H
+    basemap_svg = render_basemap_svg(extent, countries_geojson, coastline_geojson,
+                                     map_w, map_h)
+    tracks_svg = render_tracks_svg(payload["storms"], extent, map_w, map_h)
+    active_svg = render_active_icons(payload["storms"], extent, map_w, map_h)
+
+    if is_global:
+        # Triple-copy the world for seamless horizontal panning. Basemap
+        # is rendered ONCE and instantiated twice via SVG <use> (saves
+        # ~7 MB of HTML over literal triplication and basemap doesn't
+        # need pointer events). Tracks + active markers are duplicated
+        # LITERALLY via <g transform> so hover/click events fire on
+        # dots in the side copies the same as the middle.
+        basemap_svg = (
+            f'<g id="basemap-globe">{basemap_svg}</g>'
+            f'<use href="#basemap-globe" transform="translate(-{map_w},0)"/>'
+            f'<use href="#basemap-globe" transform="translate({map_w},0)"/>'
+        )
+        tracks_svg = (
+            f'<g transform="translate(-{map_w},0)">{tracks_svg}</g>'
+            f'{tracks_svg}'
+            f'<g transform="translate({map_w},0)">{tracks_svg}</g>'
+        )
+        active_svg = (
+            f'<g transform="translate(-{map_w},0)">{active_svg}</g>'
+            f'{active_svg}'
+            f'<g transform="translate({map_w},0)">{active_svg}</g>'
+        )
+
     zoom_hint_html = ZOOM_HINT_HTML if is_global else ""
     zoom_pan_script = ZOOM_PAN_SCRIPT if is_global else ""
-    storm_cards = "\n".join(render_storm_card(s) for s in payload["storms"]) or (
-        '<div class="storm-card"><div class="storm-meta">'
-        'No storms yet this year.</div></div>'
-    )
-    header = payload["header"]
-    vocab = payload["vocab"]
-    # Slim payload for client-side — only the fields the placard/tooltip
-    # actually read. Keeps the inline blob small.
-    slim_storms = []
-    for s in payload["storms"]:
-        slim_storms.append({
+
+    # Side panel is per-basin only. The global map fills the chart-card
+    # full-width because navigating 100+ storms in a list is not the
+    # global view's job — the map IS the navigator.
+    if is_global:
+        side_panel_html = ""
+    else:
+        storm_cards = "\n".join(render_storm_card(s) for s in payload["storms"]) or (
+            '<div class="storm-card"><div class="storm-meta">'
+            'No storms yet this year.</div></div>'
+        )
+        side_panel_html = (
+            f'<div class="side">'
+            f'<div class="panel-title">{payload["year"]} Season &middot; '
+            f'{_storm_count_label(payload["storms"])}</div>'
+            f'<div class="storm-list" id="storms">'
+            f'{storm_cards}'
+            f'</div>'
+            f'</div>'
+        )
+
+    # Per-basin maps are rendered as STATIC SVG (no JS) so they're
+    # copy/paste friendly. Global keeps tooltips, click-highlight, and
+    # the zoom/pan gesture set. body.interactive class gates the
+    # cursor:pointer rules; absent → default cursor.
+    if is_global:
+        slim_storms = [{
             "sid": s.get("sid"),
             "name": s.get("name"),
             "is_active": s.get("is_active"),
@@ -2288,11 +2358,23 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
             "max_category": s.get("max_category"),
             "ace": s.get("ace"),
             "points": s.get("points"),
-        })
-    storms_json = json.dumps({"storms": slim_storms}, separators=(",", ":"))
-    # Guard against </script> accidentally appearing in a storm name —
-    # standard JSON-in-script escape.
-    storms_json = storms_json.replace("</", "<\\/")
+        } for s in payload["storms"]]
+        storms_json = json.dumps({"storms": slim_storms}, separators=(",", ":"))
+        storms_json = storms_json.replace("</", "<\\/")
+        interactive_js = (
+            f'<script id="storms-payload" type="application/json">'
+            f'{storms_json}'
+            f'</script>'
+            f'<script>{TRACKS_JS}</script>'
+            f'{zoom_pan_script}'
+        )
+        body_class = "interactive"
+    else:
+        interactive_js = ""
+        body_class = ""
+
+    header = payload["header"]
+    vocab = payload["vocab"]
     return HTML_TEMPLATE.format(
         basin_name=payload["basin_name"],
         year=payload["year"],
@@ -2301,18 +2383,16 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         cat1plus=header["cat1plus"], cat1plus_label=vocab["cat1plus"],
         cat5=header["cat5"], cat5_label=vocab["cat5"],
         total_ace=f"{header['total_ace']:.2f}",
-        map_w=MAP_W, map_h=MAP_H,
+        map_w=map_w, map_h=map_h,
         defs=SVG_DEFS,
         basemap_svg=basemap_svg,
         tracks_svg=tracks_svg,
         active_svg=active_svg,
-        wm_x=MAP_W - 20, wm_y=40,
-        storm_cards=storm_cards,
-        storm_count_label=_storm_count_label(payload["storms"]),
-        storms_json=storms_json,
-        tracks_js=TRACKS_JS,
+        wm_x=map_w - 20, wm_y=40,
+        side_panel_html=side_panel_html,
         zoom_hint_html=zoom_hint_html,
-        zoom_pan_script=zoom_pan_script,
+        interactive_js=interactive_js,
+        body_class=body_class,
     )
 
 
