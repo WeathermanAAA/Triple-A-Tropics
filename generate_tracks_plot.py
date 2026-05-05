@@ -1943,25 +1943,31 @@ def build_global_geojson(storms: list[dict]) -> dict:
                 },
             })
 
-        # Active / invest marker — one Point at the latest position.
-        # Two emit triggers (matching the per-basin SVG convention):
-        #   * is_invest: every recent invest (90-99) gets a red "L" with
-        #     its ATCF designation, regardless of is_active. Per-basin
-        #     handles this via render_tracks_svg's invest second-pass;
-        #     for global, we fold it into a single active-marker
-        #     feature. Storms that survive merge_and_extract_storms'
-        #     filter are always recent_invest=True for invests, so no
-        #     extra recency check is needed here.
-        #   * is_active (and not invest): the operationally-active
-        #     numbered TC. peak < 34 kt → "L"; peak ≥ 34 → spinning
-        #     hurricane. Mirrors render_active_icons' is_invest_marker
-        #     fork (PART 8 of the original task asked us to keep it).
-        if (is_invest or is_active) and points:
+        # Current-position marker — one Point at the latest position.
+        # Three flavors, matching the per-basin SVG convention exactly:
+        #   * "invest_x": is_invest AND not is_active. Small red glowing X
+        #     with a red designation label to the right. Per-basin emits
+        #     this from render_tracks_svg's invest_current_positions
+        #     second pass.
+        #   * "L": is_active AND (is_invest OR peak < 34 kt). Big bold
+        #     red "L" + white designation below. Per-basin emits this
+        #     from render_active_icons' is_invest_marker branch.
+        #   * "hurricane": is_active AND peak >= 34 kt. Spinning
+        #     hurricane glyph + name. Per-basin emits this from
+        #     render_active_icons' default branch.
+        # All three live under kind="active_marker" so the JS marker
+        # iteration loop picks them up uniformly; marker_type drives the
+        # rendered shape.
+        marker_type = None
+        if is_active:
+            peak_for_test = peak_kt if peak_kt is not None else 0.0
+            marker_type = "L" if (is_invest or peak_for_test < 34.0) else "hurricane"
+        elif is_invest:
+            marker_type = "invest_x"
+        if marker_type and points:
             last = points[-1]
             current_kt = last.get("wind_kt")
             current_cls = storm.get("current_category") or "TD"
-            peak_for_test = peak_kt if peak_kt is not None else 0.0
-            is_l = is_invest or peak_for_test < 34.0
             features.append({
                 "type": "Feature",
                 "geometry": {
@@ -1976,7 +1982,7 @@ def build_global_geojson(storms: list[dict]) -> dict:
                     "current_intensity_kt": (None if current_kt is None
                                              else float(current_kt)),
                     "current_category": current_cls,
-                    "marker_type": ("L" if is_l else "hurricane"),
+                    "marker_type": marker_type,
                 },
             })
 
@@ -2388,12 +2394,29 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     color: #07101c; margin-top: 2px; }
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
-     and red "L" appearance survive without a WebGL rebuild. */
+     and red marker appearance survive without a WebGL rebuild.
+     Three flavours match the per-basin SVG renderer:
+       * .invest-x-marker   — recent inactive invest (small red glowing X
+                              with red side-label). Per-basin reference:
+                              render_tracks_svg invest_current_positions.
+       * .active-l          — active sub-TS storm (big red L + white
+                              designation below). Per-basin reference:
+                              render_active_icons is_invest_marker fork.
+       * .active-hurricane  — active TS+ storm (spinning hurricane glyph
+                              with category letter inside + name beside).
+                              Per-basin reference: render_active_icons.
+     Sizing here is in *unzoomed* CSS pixels — MapLibre keeps marker
+     elements at constant pixel size while the map zooms, exactly like
+     the per-basin SVG when its viewBox stays put. */
   .active-marker { position: absolute; transform: translate(-50%, -50%);
     pointer-events: none; }
+  .active-marker svg { display: block; overflow: visible;
+    width: 100%; height: 100%; }
+
+  /* Hurricane spinner */
   .active-marker.active-hurricane { width: 50px; height: 50px; }
-  .active-marker.active-hurricane svg { width: 100%; height: 100%;
-    overflow: visible; display: block; filter: drop-shadow(0 0 6px currentColor); }
+  .active-marker.active-hurricane svg {
+    filter: drop-shadow(0 0 6px currentColor); }
   @keyframes tat-spin { from { transform: rotate(360deg); }
                         to   { transform: rotate(0deg); } }
   .active-marker .spinning {
@@ -2407,24 +2430,30 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     font-weight: 700; paint-order: stroke;
     stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
 
-  .active-marker.active-l { width: 70px; height: 56px;
-    display: flex; flex-direction: column; align-items: center;
-    line-height: 1; text-align: center;
+  /* Active sub-TS "L" — text styling lifted verbatim from
+     render_active_icons (font-size 34, weight 900, fill #ef4444, dark
+     stroke 2.5) and label (font-size 13, weight 800, fill #ffffff,
+     stroke 2.5). The container is sized to match that SVG group's
+     bounding box so the marker reads at the same physical size as the
+     per-basin version. */
+  .active-marker.active-l { width: 60px; height: 50px;
     filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
-  .active-marker.active-l .l-glyph { font-size: 34px; font-weight: 900;
-    color: #ef4444;
-    text-shadow:
-      -1px -1px 0 rgba(0,0,0,0.55),
-       1px -1px 0 rgba(0,0,0,0.55),
-      -1px  1px 0 rgba(0,0,0,0.55),
-       1px  1px 0 rgba(0,0,0,0.55); }
-  .active-marker.active-l .l-label { margin-top: 3px;
-    font-size: 12px; font-weight: 800; color: #ffffff;
-    text-shadow:
-      -1px -1px 0 rgba(0,0,0,0.7),
-       1px -1px 0 rgba(0,0,0,0.7),
-      -1px  1px 0 rgba(0,0,0,0.7),
-       1px  1px 0 rgba(0,0,0,0.7); }
+  .active-marker .l-glyph { font-size: 34px; font-weight: 900;
+    fill: #ef4444; paint-order: stroke;
+    stroke: rgba(0,0,0,0.55); stroke-width: 2.5; stroke-linejoin: round; }
+  .active-marker .l-label { font-size: 13px; font-weight: 800;
+    fill: #ffffff; paint-order: stroke;
+    stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
+
+  /* Inactive recent invest "X" — text/path styling lifted verbatim from
+     render_tracks_svg invest_current_positions (path stroke #ff2a2a /
+     width 2.4) and the .invest-label CSS rule (#ff5050 / 12px / weight
+     700 / dark stroke 3). */
+  .active-marker.invest-x-marker { width: 92px; height: 32px; }
+  .active-marker .invest-label { fill: #ff5050; font-size: 12px;
+    font-weight: 700; paint-order: stroke; stroke: #07101c;
+    stroke-width: 3; stroke-linejoin: round;
+    dominant-baseline: middle; }
 
   @media (max-width: 820px) {
     .legend { display: none; }
@@ -2512,14 +2541,22 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       }
     },
     "layers": [
+      // Background paints LAND color; water layer paints oceans on top.
+      // Reason: at low zoom Protomaps' earth tiles can have hairline gaps
+      // along polygon edges where the underlying background bleeds through
+      // and anti-aliases the visible land toward the background hue. With
+      // background=land, gaps in earth coverage default to the canonical
+      // #aeb2b5 instead of cooling toward ocean blue. The water layer
+      // covers oceans/seas reliably so this inversion doesn't lose
+      // anything visually — it just plugs the AA seams.
       { "id": "background", "type": "background",
-        "paint": { "background-color": "#2463a0" } },
-      { "id": "earth", "type": "fill",
-        "source": "protomaps", "source-layer": "earth",
-        "paint": { "fill-color": "#aeb2b5" } },
+        "paint": { "background-color": "#aeb2b5" } },
       { "id": "water", "type": "fill",
         "source": "protomaps", "source-layer": "water",
         "paint": { "fill-color": "#2463a0" } },
+      { "id": "earth", "type": "fill",
+        "source": "protomaps", "source-layer": "earth",
+        "paint": { "fill-color": "#aeb2b5" } },
       { "id": "coastline", "type": "line",
         "source": "protomaps", "source-layer": "earth",
         "paint": {
@@ -2697,6 +2734,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     });
   }
 
+  // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
+  // page would otherwise collide on a shared "invest-red-glow" id.
+  var investGlowSeq = 0;
+
   function addActiveMarkers(geojson) {
     // Clear any markers from a prior load.
     activeMarkers.forEach(function (m) { m.remove(); });
@@ -2707,13 +2748,57 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       var lngLat = f.geometry.coordinates;
       var el = document.createElement("div");
       el.className = "active-marker";
-      if (props.marker_type === "L") {
-        el.classList.add("active-l");
-        var designation = String(props.designation || props.name || "").toUpperCase();
+      var designation = String(props.designation || props.name || "").toUpperCase();
+
+      if (props.marker_type === "invest_x") {
+        // Recent invest, NOT operationally active. Per-basin's
+        // render_tracks_svg invest_current_positions emits a small red
+        // glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at stroke
+        // #ff2a2a / 2.4 width, with a red invest-label to the right
+        // (offset +11 +4 from the X centre). Replicate verbatim.
+        el.classList.add("invest-x-marker");
+        var fid = "invest-red-glow-" + (++investGlowSeq);
+        // Anchor of the marker is the X center; the SVG's viewBox is
+        // centred on (0,0) and sized large enough to contain both the
+        // glowing X and the side label without clipping.
         el.innerHTML =
-          '<span class="l-glyph">L</span>' +
-          '<span class="l-label">' + escapeHtml(designation) + '</span>';
+          '<svg viewBox="-22 -16 92 32" xmlns="http://www.w3.org/2000/svg">' +
+            '<defs><filter id="' + fid + '" ' +
+              'x="-200%" y="-200%" width="500%" height="500%">' +
+              '<feGaussianBlur in="SourceAlpha" stdDeviation="3.2" ' +
+                'result="blur"/>' +
+              '<feFlood flood-color="#ff0000" flood-opacity="0.95" ' +
+                'result="red"/>' +
+              '<feComposite in="red" in2="blur" operator="in" ' +
+                'result="redblur"/>' +
+              '<feMerge><feMergeNode in="redblur"/>' +
+                '<feMergeNode in="redblur"/>' +
+                '<feMergeNode in="SourceGraphic"/></feMerge>' +
+            '</filter></defs>' +
+            '<g filter="url(#' + fid + ')">' +
+              '<path d="M -7 -7 L 7 7 M -7 7 L 7 -7" ' +
+                'stroke="#ff2a2a" stroke-width="2.4" ' +
+                'stroke-linecap="round" fill="none"/>' +
+            '</g>' +
+            '<text class="invest-label" x="11" y="4" ' +
+              'text-anchor="start">' + escapeHtml(designation) + '</text>' +
+          '</svg>';
+      } else if (props.marker_type === "L") {
+        // Active sub-TS / active invest. Per-basin's render_active_icons
+        // emits a bold red "L" (font-size 34, weight 900, fill #ef4444,
+        // dark stroke 2.5) with a white designation below (size 13,
+        // weight 800, dark stroke 2.5).
+        el.classList.add("active-l");
+        el.innerHTML =
+          '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
+            '<text class="l-glyph" x="0" y="0" ' +
+              'text-anchor="middle" dominant-baseline="central">L</text>' +
+            '<text class="l-label" x="0" y="22" ' +
+              'text-anchor="middle" dominant-baseline="hanging">' +
+              escapeHtml(designation) + '</text>' +
+          '</svg>';
       } else {
+        // Active TS+ — spinning hurricane glyph.
         el.classList.add("active-hurricane");
         var cls = props.current_category || "TD";
         var color = SSHS_COLORS[cls] || "#888";
