@@ -73,11 +73,96 @@
       lonConvention: '-180-180',
       needsDatelineWrap: false,
     },
+    // Global mode (data-basin="global"): combined NA+EP+WP storms on a
+    // Pacific-centered Mercator-style canvas (Africa LEFT, Pacific
+    // MIDDLE, Americas RIGHT). _loadYearData() forks here to fetch all
+    // three per-basin tracks_data.json + ace_data.json, then sums them.
+    // Historical multi-basin replay isn't supported yet — only the
+    // current year — because each year's per-basin tracks_*.json doesn't
+    // always exist for older years.
+    global: {
+      fullName: 'Global',
+      extent: [-25, 335, -60, 60],
+      xticks: [[0, 60, 120, 180, 240, 300],
+               ['0°', '60°E', '120°E', '180°', '120°W', '60°W']],
+      lonConvention: 'global-pacific',
+      needsDatelineWrap: true,
+    },
   };
 
   function normalizeLon(lon, conv) {
     if (conv === '0-360') return lon < 0 ? lon + 360 : lon;
+    if (conv === 'global-pacific') {
+      // Visible window is [-25, 335]; longitudes west of -25° (the Atlantic
+      // off Africa) get +360 so they fall on the right edge instead of
+      // off-canvas to the left.
+      return lon < -25 ? lon + 360 : lon;
+    }
     return lon > 180 ? lon - 360 : lon;
+  }
+
+  // Sum two or more per-basin _ace_data.json documents into a single
+  // global-equivalent doc with summed climo bands, summed all_years,
+  // and a doy-aligned current curve. Output schema matches the per-basin
+  // schema closely enough that the existing _drawAce code path works.
+  function sumAces(aces) {
+    if (!aces.length) return null;
+    const ref = aces.reduce((a, b) =>
+      (a.doy && a.doy.length >= ((b.doy && b.doy.length) || 0)) ? a : b);
+    const climoKeys = ['min', 'p10', 'p25', 'mean', 'p75', 'p90', 'max'];
+    const out = {
+      doy: ref.doy.slice(),
+      today_doy: Math.max.apply(null, aces.map(a => a.today_doy || 0)),
+      climo: {},
+      current: {
+        label: (ref.current && ref.current.label) || '',
+        doy: [],
+        values: [],
+        latest_value: 0,
+      },
+      prior_year: null,
+      all_years: {},
+      // Rank against summed history — _buildSeasonState recomputes from
+      // all_years so we don't need to pre-compute current_rank here.
+      current_rank: null,
+      total_seasons: 0,
+      rankings: [],
+      storms_by_year: {},
+    };
+    for (const k of climoKeys) {
+      if (!ref.climo || !ref.climo[k]) continue;
+      out.climo[k] = ref.doy.map((_, i) =>
+        aces.reduce((s, a) =>
+          s + ((a.climo && a.climo[k] && a.climo[k][i]) || 0), 0));
+    }
+    // Current-year curve: align by doy across the three feeds.
+    const curMap = {};
+    for (const a of aces) {
+      const cd = (a.current && a.current.doy) || [];
+      const cv = (a.current && a.current.values) || [];
+      for (let i = 0; i < cd.length; i++) {
+        const d = cd[i];
+        curMap[d] = (curMap[d] || 0) + (cv[i] || 0);
+      }
+    }
+    const sortedDoys = Object.keys(curMap).map(Number).sort((a, b) => a - b);
+    out.current.doy = sortedDoys;
+    out.current.values = sortedDoys.map(d => curMap[d]);
+    out.current.latest_value = out.current.values.length ?
+      out.current.values[out.current.values.length - 1] : 0;
+    // all_years: union of years; sum element-wise to the longest array.
+    const yearKeys = new Set();
+    aces.forEach(a => Object.keys(a.all_years || {}).forEach(y => yearKeys.add(y)));
+    for (const y of yearKeys) {
+      const vals = aces.map(a => (a.all_years || {})[y] || []);
+      const maxLen = Math.max.apply(null, vals.map(v => v.length).concat([0]));
+      const sum = [];
+      for (let i = 0; i < maxLen; i++) {
+        sum.push(vals.reduce((s, v) => s + (v[i] || 0), 0));
+      }
+      out.all_years[y] = sum;
+    }
+    return out;
   }
 
   function clearCache() { /* no-op, reserved for future */ }
@@ -298,6 +383,14 @@
     }
 
     async _loadYearList() {
+      // Global mode: only the current year is supported (historical
+      // replay would need each year's per-basin tracks_*.json to all
+      // exist, which isn't always the case for older years).
+      if (this.basin === 'global') {
+        this.select.innerHTML =
+          `<option value="${this.year}" selected>${this.year}</option>`;
+        return;
+      }
       try {
         const url = `/historical/${this.basin}/years.json`;
         const j = await (await fetch(url)).json();
@@ -330,6 +423,62 @@
     }
 
     async _loadYearData(year) {
+      if (this.basin === 'global') {
+        if (this.tracksByYear.has(year)) {
+          this.tracks = this.tracksByYear.get(year);
+        } else if (year === this.currentYear) {
+          // Combine current-year tracks across NA/EP/WP into one doc.
+          const subBasins = ['al', 'ep', 'wp'];
+          const docs = await Promise.all(subBasins.map(b =>
+            fetch(`/${b}_tracks_data.json`)
+              .then(r => r.ok ? r.json() : null)
+              .catch(() => null)
+          ));
+          const combined = {
+            basin: 'global',
+            basin_name: 'Global',
+            year,
+            updated: '',
+            header: { named: 0, cat1plus: 0, cat3plus: 0, cat5: 0, total_ace: 0 },
+            storms: [],
+          };
+          let latestUpdated = '';
+          for (let i = 0; i < docs.length; i++) {
+            const d = docs[i];
+            if (!d) continue;
+            for (const s of (d.storms || [])) {
+              s.basin = d.basin || subBasins[i];
+              combined.storms.push(s);
+            }
+            if (d.header) {
+              for (const k of ['named', 'cat1plus', 'cat3plus', 'cat5', 'total_ace']) {
+                combined.header[k] += d.header[k] || 0;
+              }
+            }
+            if (d.updated && d.updated > latestUpdated) latestUpdated = d.updated;
+          }
+          combined.updated = latestUpdated;
+          this._prepareTracks(combined);
+          this.tracksByYear.set(year, combined);
+          this.tracks = combined;
+        } else {
+          throw new Error('global mode: only the current year is supported');
+        }
+        if (!this.ace) {
+          const subBasins = ['al', 'ep', 'wp'];
+          const aceDocs = await Promise.all(subBasins.map(b =>
+            fetch(`/${b}_ace_data.json`)
+              .then(r => r.ok ? r.json() : null)
+              .catch(() => null)
+          ));
+          const validAces = aceDocs.filter(Boolean);
+          if (!validAces.length) throw new Error('no ACE feeds available');
+          this.ace = sumAces(validAces);
+        }
+        this._buildSeasonState();
+        return;
+      }
+
       if (this.tracksByYear.has(year)) {
         this.tracks = this.tracksByYear.get(year);
       } else {

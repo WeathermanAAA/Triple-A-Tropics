@@ -133,6 +133,29 @@ BASINS: dict[str, dict] = {
         "vocab": {"named": "named storms", "cat1plus": "hurricanes",
                   "cat3plus": "major hurricanes", "cat5": "category 5s"},
     },
+    # Global mode: composes the three per-basin JSONs (al/ep/wp) onto
+    # one Pacific-centered Mercator-style extent. Triggered by
+    # `--basin global`. main() bypasses IBTrACS load + live ATCF fetch
+    # for this entry — it reads the per-basin tracks JSONs that earlier
+    # workflow steps already produced. See main() for the special path.
+    "global": {
+        "short": "global",
+        "name": "Global",
+        "full_name": "Global",
+        # Pacific-centered: Africa LEFT (lon=-25), Asia/Pacific MIDDLE
+        # (lon=180), Americas RIGHT (lon=270 = -90), with a sliver of
+        # Africa wrapping around to the right edge (lon=335 = -25).
+        "extent": (-25.0, 335.0, -60.0, 60.0),
+        "vocab": {"named": "named storms",
+                  "cat1plus": "category 1+ storms",
+                  "cat3plus": "major (cat 3+) storms",
+                  "cat5": "category 5s"},
+        # Marker indicating main() should compose per-basin JSONs rather
+        # than load IBTrACS directly. No agency / atcf / ibtracs_file_code
+        # is meaningful for global; missing keys here would crash earlier
+        # code paths if accidentally invoked.
+        "compose_from_basins": ["al", "ep", "wp"],
+    },
 }
 
 HERE = Path(__file__).resolve().parent
@@ -884,14 +907,18 @@ MAP_H = 900     # SVG viewport height
 
 def build_projection(extent: tuple[float, float, float, float]):
     """Return (project, extent_info). project(lon, lat) -> (x, y) in the
-    map's SVG coordinate system."""
+    map's SVG coordinate system.
+
+    When the extent crosses the antimeridian (lon_max > 180), longitudes
+    that fall below lon_min are wrapped by +360 so a Pacific-centered
+    global view can render features at lon=-30 (Africa) at the right
+    side of the canvas instead of off-canvas to the left."""
     lon_min, lon_max, lat_min, lat_max = extent
+    crosses_antimeridian = lon_max > 180
 
     def project(lon: float, lat: float) -> tuple[float, float]:
-        # Equirectangular (plate carrée). East pacific needs the caller
-        # to pre-wrap positive longitudes into negative (or vice versa)
-        # if they cross the date line. For our basins WP (100..180) and
-        # EP (-180..-80) don't wrap.
+        if crosses_antimeridian and lon < lon_min:
+            lon += 360
         x = (lon - lon_min) / (lon_max - lon_min) * MAP_W
         y = (lat_max - lat) / (lat_max - lat_min) * MAP_H
         return (x, y)
@@ -905,7 +932,14 @@ def build_projection(extent: tuple[float, float, float, float]):
 
 def _ring_to_svg_path(ring: list, project) -> str:
     """Convert a GeoJSON LineString/ring to an SVG path `d` string.
-    Clips very loosely by skipping coords outside the extent by a big margin."""
+    Clips very loosely by skipping coords outside the extent by a big margin.
+
+    For the global Pacific-centered view, features that cross the
+    projection's wrap boundary (e.g. Greenland straddling lon=-25 in a
+    -25..335 extent) produce huge horizontal jumps in projected space.
+    Detect those (jump > 50% of MAP_W) and start a new "M" subpath at
+    the boundary so the polygon doesn't draw as a stripe across the
+    whole canvas."""
     parts = []
     for lon, lat in ring:
         try:
@@ -920,8 +954,16 @@ def _ring_to_svg_path(ring: list, project) -> str:
     ys = [p[1] for p in parts]
     if max(xs) < -MAP_W or min(xs) > MAP_W * 2 or max(ys) < -MAP_H or min(ys) > MAP_H * 2:
         return ""
-    d = "M " + " L ".join(f"{x:.1f},{y:.1f}" for x, y in parts)
-    return d
+    JUMP_THRESHOLD = MAP_W * 0.5
+    d_parts: list[str] = []
+    prev_x: float | None = None
+    for x, y in parts:
+        if prev_x is None or abs(x - prev_x) > JUMP_THRESHOLD:
+            d_parts.append(f"M {x:.1f},{y:.1f}")
+        else:
+            d_parts.append(f"L {x:.1f},{y:.1f}")
+        prev_x = x
+    return " ".join(d_parts)
 
 
 def load_natural_earth(path: Path) -> dict | None:
@@ -1112,7 +1154,20 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
             x, y = project(lon, p["lat"])
             xy.append((x, y))
         if len(xy) >= 2:
-            d = "M " + " L ".join(f"{x:.1f},{y:.1f}" for x, y in xy)
+            # Build the path with "M" breaks on big horizontal jumps so a
+            # track that crosses our projection's wrap boundary (relevant
+            # only for the global Pacific-centered extent) doesn't draw
+            # as a horizontal stripe.
+            JUMP_THRESHOLD = MAP_W * 0.5
+            d_parts: list[str] = []
+            prev_x: float | None = None
+            for x, y in xy:
+                if prev_x is None or abs(x - prev_x) > JUMP_THRESHOLD:
+                    d_parts.append(f"M {x:.1f},{y:.1f}")
+                else:
+                    d_parts.append(f"L {x:.1f},{y:.1f}")
+                prev_x = x
+            d = " ".join(d_parts)
             # Dashed line for invests (90-99); solid for numbered TCs.
             # Keeping the dot styling identical so the wind-class colors
             # still convey intensity — only the connecting line changes.
@@ -1255,7 +1310,12 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
     # Second pass: every invest's red glowing X + atcf_id label, drawn
     # last so it sits on top of any neighboring storm's past markers
     # (triangles, dots, polygons) regardless of source order.
+    # Active invests are SKIPPED here — render_active_icons paints a
+    # bold red "L" + designation marker over their current position,
+    # which would otherwise stack on top of the X.
     for storm, x, y, p in invest_current_positions:
+        if storm.get("is_active"):
+            continue
         sid = storm.get("sid") or ""
         sname = (storm.get("name") or "UNNAMED").replace('"', '')
         atcf_id = storm.get("atcf_id") or sname
@@ -1291,10 +1351,17 @@ def render_tracks_svg(storms: list[dict], extent) -> str:
 
 
 def render_active_icons(storms: list[dict], extent) -> str:
-    """For each active storm, place a spinning+glowing hurricane-symbol
-    icon at its most recent position. Two comma-shaped arms in S-curve
-    (NHC classic), rotating counterclockwise (NH cyclone direction),
-    with a bold white category number in the center."""
+    """For each active storm, place a marker at its most recent position:
+      - TS+ (peak ≥ 34 kt and not flagged as an invest): the spinning,
+        glowing TAT hurricane icon with category label inside.
+      - Active invest / sub-TS disturbance: a bold red "L" + designation
+        ("92W", "AL90") rendered last, overlaying any other markers.
+
+    Active invests historically rendered only as a red X via
+    render_tracks_svg's invest path, but that X reads as a track-history
+    marker, not a "warning is in effect right now" marker. The "L"
+    matches NHC's surface-analysis convention for low-pressure systems
+    and tells the reader at a glance that the system is being warned on."""
     project, _ = build_projection(extent)
     parts = ['<g class="active-storms">']
     for storm in storms:
@@ -1308,6 +1375,35 @@ def render_active_icons(storms: list[dict], extent) -> str:
         if extent[1] > 180 and lon < extent[0]:
             lon += 360
         x, y = project(lon, last["lat"])
+        sid = storm.get("sid") or ""
+        peak_kt = storm.get("peak_wind_kt") or 0.0
+        # Invest condition: any active storm flagged as an invest by the
+        # source agency, OR an active disturbance whose peak intensity
+        # never reached TS strength (so the spinning icon would render
+        # a "D" but a red "L" reads more clearly as "currently warning
+        # on a sub-TS system").
+        is_invest_marker = bool(storm.get("is_invest")) or peak_kt < 34.0
+
+        if is_invest_marker:
+            atcf_id = storm.get("atcf_id") or storm.get("name") or ""
+            atcf_id = str(atcf_id).replace('"', '').upper()
+            parts.append(
+                f'<g class="active-icon active-invest" data-sid="{sid}" '
+                f'transform="translate({x:.1f},{y:.1f})" '
+                f'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">'
+                f'<text text-anchor="middle" dominant-baseline="central" '
+                f'font-size="34" font-weight="900" fill="#ef4444" '
+                f'paint-order="stroke" stroke="rgba(0,0,0,0.55)" '
+                f'stroke-width="2.5" stroke-linejoin="round">L</text>'
+                f'<text x="0" y="22" text-anchor="middle" '
+                f'dominant-baseline="hanging" font-size="13" '
+                f'font-weight="800" fill="#ffffff" paint-order="stroke" '
+                f'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" '
+                f'stroke-linejoin="round">{atcf_id}</text>'
+                f'</g>'
+            )
+            continue
+
         cls = storm.get("current_category") or "TD"
         color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
         label = sshs_label(cls)
@@ -1848,10 +1944,21 @@ HTML_TEMPLATE = """<!doctype html>
   .legend .sep {{ height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }}
 
+  /* Zoom/pan hint pill — bottom-left of the map. Visible on global
+     mode only (the per-basin pages don't ship the zoom/pan JS, so the
+     hint would lie). Mobile hides it because wheel/dblclick gestures
+     don't translate to touch. */
+  .zoom-hint {{ position: absolute; bottom: 8px; left: 12px;
+    background: rgba(11,26,48,0.75); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font-size: 11px;
+    color: var(--muted); letter-spacing: 0.3px; font-weight: 600;
+    backdrop-filter: blur(3px); pointer-events: none; user-select: none; }}
+
   @media (max-width: 820px) {{
     .side {{ flex: 1 1 100%; }}
     .storm-list {{ max-height: 500px; }}
     .legend {{ display: none; }}
+    .zoom-hint {{ display: none; }}
   }}
 
   /* Watermark — same size as before, just more visible. The dark
@@ -1954,7 +2061,7 @@ HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
     <div class="map-svg-wrap">
-      <svg class="map" viewBox="0 0 {map_w} {map_h}" preserveAspectRatio="xMidYMid meet">
+      <svg id="chart" class="map" viewBox="0 0 {map_w} {map_h}" preserveAspectRatio="xMidYMid meet">
         {defs}
         {basemap_svg}
         {tracks_svg}
@@ -1974,6 +2081,7 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
       </div>
+      {zoom_hint_html}
     </div>
   </div>
 
@@ -1991,9 +2099,89 @@ HTML_TEMPLATE = """<!doctype html>
 <script>
 {tracks_js}
 </script>
+{zoom_pan_script}
 </body>
 </html>
 """
+
+
+# Inline zoom/pan JS for the global map. Wheel zooms toward the cursor,
+# drag pans, double-click resets. We don't enable this on per-basin
+# pages because the user-given gesture set (wheel/drag/dblclick) would
+# fight the existing storm-card click handler that fires when a user
+# clicks an active-icon — drag-to-pan would steal those clicks.
+ZOOM_PAN_SCRIPT = r"""
+<script>
+(function () {
+  var svg = document.getElementById('chart');
+  if (!svg || !svg.viewBox || !svg.viewBox.baseVal) return;
+  var viewBox = svg.viewBox.baseVal;
+  var original = { x: viewBox.x, y: viewBox.y, w: viewBox.width, h: viewBox.height };
+
+  // Wheel = zoom toward cursor. Limit zoom-in to 5% of original (20×
+  // zoom) so a user can't get lost zooming infinitely; zoom-out clamps
+  // to original so the map can't be smaller than its natural extent.
+  svg.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var scale = e.deltaY > 0 ? 1.15 : 0.87;
+    var pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    var ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    var cursor = pt.matrixTransform(ctm.inverse());
+    var newW = Math.max(original.w * 0.05, Math.min(original.w, viewBox.width * scale));
+    var newH = newW * (original.h / original.w);
+    viewBox.x = cursor.x - (cursor.x - viewBox.x) * (newW / viewBox.width);
+    viewBox.y = cursor.y - (cursor.y - viewBox.y) * (newH / viewBox.height);
+    viewBox.width = newW;
+    viewBox.height = newH;
+  }, { passive: false });
+
+  // Drag = pan. Skip if the mousedown landed on an interactive element
+  // (track-dot, active-icon, storm-card) — those have their own click
+  // handlers we don't want to steal.
+  var dragging = false, lastX = 0, lastY = 0;
+  svg.addEventListener('mousedown', function (e) {
+    var t = e.target;
+    if (t && (t.classList.contains('track-dot') ||
+              (t.closest && t.closest('.active-icon')))) return;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    svg.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  svg.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    var ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    var inv = ctm.inverse();
+    var dx = (e.clientX - lastX) * inv.a;
+    var dy = (e.clientY - lastY) * inv.d;
+    viewBox.x -= dx; viewBox.y -= dy;
+    lastX = e.clientX; lastY = e.clientY;
+  });
+  window.addEventListener('mouseup', function () {
+    if (!dragging) return;
+    dragging = false; svg.style.cursor = 'grab';
+  });
+
+  // Double-click anywhere = reset to original extent.
+  svg.addEventListener('dblclick', function () {
+    viewBox.x = original.x; viewBox.y = original.y;
+    viewBox.width = original.w; viewBox.height = original.h;
+  });
+
+  svg.style.cursor = 'grab';
+})();
+</script>
+"""
+
+# Hint pill ("Drag to pan · Scroll to zoom · Double-click to reset")
+# rendered alongside the SVG. CSS for .zoom-hint is in HTML_TEMPLATE.
+ZOOM_HINT_HTML = (
+    '<div class="zoom-hint">'
+    'Drag to pan &middot; Scroll to zoom &middot; Double-click to reset'
+    '</div>'
+)
 
 
 def _cat_style(cls: str) -> tuple[str, str]:
@@ -2078,6 +2266,9 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
     basemap_svg = render_basemap_svg(extent, countries_geojson, coastline_geojson)
     tracks_svg = render_tracks_svg(payload["storms"], extent)
     active_svg = render_active_icons(payload["storms"], extent)
+    is_global = payload.get("basin") == "global"
+    zoom_hint_html = ZOOM_HINT_HTML if is_global else ""
+    zoom_pan_script = ZOOM_PAN_SCRIPT if is_global else ""
     storm_cards = "\n".join(render_storm_card(s) for s in payload["storms"]) or (
         '<div class="storm-card"><div class="storm-meta">'
         'No storms yet this year.</div></div>'
@@ -2120,6 +2311,8 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         storm_count_label=_storm_count_label(payload["storms"]),
         storms_json=storms_json,
         tracks_js=TRACKS_JS,
+        zoom_hint_html=zoom_hint_html,
+        zoom_pan_script=zoom_pan_script,
     )
 
 
@@ -2163,6 +2356,74 @@ def main(argv: Iterable[str] | None = None) -> int:
     basin_cfg = BASINS[basin]
     log = f"[{basin}-tracks]"
     year = dt.date.today().year
+
+    # ---- Global mode: compose from per-basin JSONs and exit early ----
+    # The per-basin generators have already done all the IBTrACS / live
+    # ATCF work upstream in the workflow and written
+    # /{basin}_tracks_data.json. Re-running that work here would
+    # double the CI cost and risk drift between the per-basin maps and
+    # the global one. Instead we read those JSONs directly.
+    if basin == "global":
+        compose = basin_cfg.get("compose_from_basins") or []
+        storms: list[dict] = []
+        latest_updated = ""
+        for sub in compose:
+            sub_json = OUTPUT_DIR / f"{sub}_tracks_data.json"
+            if not sub_json.exists():
+                print(f"{log} WARN: missing {sub_json} — skipping {sub}",
+                      file=sys.stderr)
+                continue
+            try:
+                sub_data = json.loads(sub_json.read_text())
+            except Exception as e:
+                print(f"{log} WARN: failed to parse {sub_json}: {e}",
+                      file=sys.stderr)
+                continue
+            for s in sub_data.get("storms", []):
+                # Stamp basin onto each storm so the storm-card renderer
+                # can show a basin badge in the side panel.
+                s["basin"] = sub
+                storms.append(s)
+            up = sub_data.get("updated") or ""
+            if up > latest_updated:
+                latest_updated = up
+        header = compute_header_stats(storms)
+        payload = {
+            "basin": "global",
+            "basin_name": basin_cfg["full_name"],
+            "year": year,
+            "updated": latest_updated or
+                       dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            "header": header,
+            "vocab": basin_cfg["vocab"],
+            "storms": storms,
+        }
+        if args.dump_json:
+            print(json.dumps(payload, indent=2, default=str))
+            return 0
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        # No JSON output for global — the per-basin JSONs are the source
+        # of truth. We only emit the rendered HTML.
+        if args.json_only:
+            print(f"{log} --json-only is a no-op for global mode "
+                  f"(per-basin JSONs are the source).")
+            return 0
+        countries = (load_natural_earth(HERE / "ne_50m_admin_0_countries.geojson")
+                     or load_natural_earth(HERE / "ne_110m_admin_0_countries.geojson"))
+        coast = (load_natural_earth(HERE / "ne_50m_coastline.geojson")
+                 or load_natural_earth(HERE / "ne_110m_coastline.geojson"))
+        if countries is None and coast is None:
+            print(f"{log} WARN: no Natural Earth GeoJSON found — basemap will "
+                  f"only show the grid.")
+        html = render_html(payload, basin_cfg["extent"], countries, coast)
+        html_path = OUTPUT_DIR / "global_tracks.html"
+        html_path.write_text(html, encoding="utf-8")
+        print(f"{log} wrote {html_path}")
+        active = [s for s in storms if s.get("is_active")]
+        print(f"{log} {year}: {header['named']} named · "
+              f"{header['cat1plus']} cat1+ · {header['cat5']} cat5 · "
+              f"{header['total_ace']} ACE · {len(active)} active")
+        return 0
 
     csv_path = Path(args.csv) if args.csv else (
         Path(os.environ.get(f"IBTRACS_{basin.upper()}_CSV",
