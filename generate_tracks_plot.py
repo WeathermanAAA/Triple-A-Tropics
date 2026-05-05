@@ -1842,6 +1842,138 @@ TRACKS_JS = r"""
 
 
 # ---------------------------------------------------------------------------
+# Global GeoJSON (consumed client-side by MapLibre on /global_tracks.html)
+# ---------------------------------------------------------------------------
+
+# Hurricane glyph path used by both the per-basin SVG renderer and (now
+# also) the MapLibre HTML markers on the global page.
+HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z"
+
+
+def _split_at_antimeridian(coords: list[list[float]]) -> list[list[list[float]]]:
+    """Split a [lon, lat] coordinate list into segments wherever successive
+    longitudes jump > 180° (the dateline-crossing tell). MapLibre's
+    renderWorldCopies handles infinite horizontal pan on its own, but the
+    GeoJSON spec still requires LineStrings to not cross ±180° as a single
+    feature — otherwise the renderer draws a horizontal line across the
+    whole world. Each output segment has at least 2 points so it remains a
+    valid LineString geometry."""
+    if len(coords) < 2:
+        return []
+    segments: list[list[list[float]]] = [[coords[0]]]
+    for i in range(1, len(coords)):
+        prev_lon = coords[i - 1][0]
+        curr_lon = coords[i][0]
+        if abs(curr_lon - prev_lon) > 180:
+            segments.append([coords[i]])
+        else:
+            segments[-1].append(coords[i])
+    return [s for s in segments if len(s) >= 2]
+
+
+def build_global_geojson(storms: list[dict]) -> dict:
+    """Assemble the FeatureCollection consumed by MapLibre on
+    /global_tracks.html.
+
+    Three feature kinds are emitted:
+      * "track" — one LineString per storm (split at the antimeridian),
+        carries storm-level metadata for styling/hover.
+      * "observation" — one Point per 6-hour fix, carrying intensity,
+        pressure, time, and SSHWS class. The MapLibre `circle` layer
+        styles these with the TAT palette.
+      * "active_marker" — one Point per active storm/invest, carrying
+        marker_type ("hurricane" for spinning icon, "L" for red invest
+        label). Rendered as HTML markers, not GL layers, so existing
+        spin animations and label layouts work without WebGL plumbing.
+    """
+    features: list[dict] = []
+    for storm in storms:
+        sid = storm.get("sid") or ""
+        name = storm.get("name") or "UNNAMED"
+        basin = storm.get("basin") or ""
+        peak_kt = storm.get("peak_wind_kt")
+        is_active = bool(storm.get("is_active"))
+        is_invest = bool(storm.get("is_invest"))
+        designation = storm.get("atcf_id") or ""
+        max_cls = storm.get("max_category") or "TD"
+        points = storm.get("points") or []
+
+        # Track LineString(s): split into one feature per dateline segment
+        if len(points) >= 2:
+            coords = [[float(p["lon"]), float(p["lat"])] for p in points]
+            for seg in _split_at_antimeridian(coords):
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": seg},
+                    "properties": {
+                        "kind": "track",
+                        "storm_id": sid,
+                        "name": name,
+                        "basin": basin,
+                        "peak_intensity": max_cls,
+                        "peak_kt": peak_kt,
+                        "is_active": is_active,
+                        "is_invest": is_invest,
+                        "designation": designation,
+                    },
+                })
+
+        # Per-observation Points
+        for p in points:
+            wind = p.get("wind_kt")
+            cls = p.get("cls") or "TD"
+            nature = (p.get("nature") or "").upper()
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(p["lon"]), float(p["lat"])],
+                },
+                "properties": {
+                    "kind": "observation",
+                    "storm_id": sid,
+                    "storm_name": name,
+                    "basin": basin,
+                    "intensity_kt": (None if wind is None else float(wind)),
+                    "mslp_mb": p.get("pressure_mb"),
+                    "time_iso": p.get("t"),
+                    "sshws_cat": cls,
+                    "is_subtropical": (nature == "SS"),
+                    "is_nontropical": (nature in {"ET", "DS", "DB", "LO"}),
+                },
+            })
+
+        # Active marker — one Point at the latest position. Same red-L vs
+        # spinning-hurricane decision as render_active_icons (spec PART 8
+        # asks us to keep that fix).
+        if is_active and points:
+            last = points[-1]
+            current_kt = last.get("wind_kt")
+            current_cls = storm.get("current_category") or "TD"
+            peak_for_test = peak_kt if peak_kt is not None else 0.0
+            is_l = is_invest or peak_for_test < 34.0
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(last["lon"]), float(last["lat"])],
+                },
+                "properties": {
+                    "kind": "active_marker",
+                    "storm_id": sid,
+                    "name": name,
+                    "designation": designation or name,
+                    "current_intensity_kt": (None if current_kt is None
+                                             else float(current_kt)),
+                    "current_category": current_cls,
+                    "marker_type": ("L" if is_l else "hurricane"),
+                },
+            })
+
+    return {"type": "FeatureCollection", "features": features}
+
+
+# ---------------------------------------------------------------------------
 # Full HTML template
 # ---------------------------------------------------------------------------
 
@@ -2114,98 +2246,522 @@ HTML_TEMPLATE = """<!doctype html>
 """
 
 
-# Inline zoom/pan JS for the global map. Wheel zooms toward the cursor,
-# drag pans, double-click resets. We don't enable this on per-basin
-# pages because the user-given gesture set (wheel/drag/dblclick) would
-# fight the existing storm-card click handler that fires when a user
-# clicks an active-icon — drag-to-pan would steal those clicks.
-ZOOM_PAN_SCRIPT = r"""
+# ---------------------------------------------------------------------------
+# Global page: MapLibre GL JS + Protomaps vector tiles
+# ---------------------------------------------------------------------------
+# The global map is a separate code path from the per-basin SVG renderer.
+# It loads MapLibre, fetches /global_storms.geojson at runtime, and lets
+# MapLibre handle pan/zoom/world-wrapping natively. Per-basin pages still
+# render via HTML_TEMPLATE / render_html — the entire SVG pipeline above
+# is for them.
+#
+# Protomaps API key is restricted by CORS to triple-a-tropics.com /
+# www.triple-a-tropics.com / localhost:8000, so committing it to the
+# public repo is safe.
+
+PROTOMAPS_API_KEY = "9d1a52d8fc230b5f"
+
+GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Global TC Tracks &middot; __YEAR__</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root {
+    --bg: #07101c; --panel: #0f1a2a; --border: #1a2840;
+    --fg: #e5edf6; --muted: #8ea2bd;
+    --td: #3fa4ff; --ts: #46c56a;
+    --c1: #ffe14d; --c2: #ff9a2f; --c3: #ff4d3b;
+    --c4: #e33ad4; --c5: #b03bff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  .wrap { display: flex; gap: 12px; padding: 10px;
+    max-width: 1400px; margin: 0 auto; flex-wrap: wrap; }
+  .map-box { flex: 1 1 820px; min-width: 0;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; position: relative; }
+  .map-head { padding: 10px 14px 6px; display: flex; justify-content: space-between;
+    flex-wrap: wrap; gap: 8px; font-size: 14px; }
+  .map-head .title { font-weight: 700; color: #f1f7fd; font-size: 15px; }
+  .map-head .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .map-head .stats { color: var(--muted); font-size: 12px; text-align: right; }
+  .map-head .stats b { color: #f1f7fd; }
+  .map-head .stats .ace { color: var(--c1); font-weight: 700; }
+
+  /* Map container — same 2:1 aspect ratio as the previous SVG viewBox
+     (1400×700) so the iframe height matches what the homepage's
+     resizeFrame() observed on the SVG version. The fallback height
+     covers the case where aspect-ratio isn't honored (older browsers). */
+  .map-svg-wrap { position: relative; }
+  #globalMap { width: 100%; aspect-ratio: 2 / 1; min-height: 360px;
+    background: #0b2a48; }
+
+  /* Legend — overlaid top-right on the map. Lifted verbatim from the
+     SVG version; only the .dot/.sq/.tri/.dashline glyphs survived since
+     all observation dots now render as MapLibre circles. The shape
+     legend rows stay so subtropical / non-tropical / invest classes are
+     still indexed visually for the reader. */
+  .legend { position: absolute; top: 12px; right: 12px;
+    background: rgba(11,26,48,0.85); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-size: 11px;
+    color: var(--muted); backdrop-filter: blur(4px); z-index: 5;
+    pointer-events: none; }
+  .legend .item { display: flex; align-items: center; gap: 6px;
+    margin: 3px 0; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .legend .sq { width: 10px; height: 10px; background: #ffffff; }
+  .legend .tri { width: 10px; height: 10px; position: relative; }
+  .legend .tri::before { content: ""; position: absolute; left: 0; top: 1px;
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 9px solid #ffffff; }
+  .legend .dashline { width: 14px; height: 2px; position: relative; }
+  .legend .dashline::before { content: ""; position: absolute; inset: 0;
+    background-image: linear-gradient(to right, #ffffff 4px,
+      transparent 4px, transparent 7px); background-size: 7px 100%;
+    background-repeat: repeat-x; opacity: 0.7; }
+  .legend .sep { height: 1px; background: var(--border);
+    margin: 6px 0 4px; opacity: 0.6; }
+
+  /* Zoom hint pill — bottom-left. */
+  .zoom-hint { position: absolute; bottom: 26px; left: 12px;
+    background: rgba(11,26,48,0.75); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font-size: 11px;
+    color: var(--muted); letter-spacing: 0.3px; font-weight: 600;
+    backdrop-filter: blur(3px); pointer-events: none; user-select: none;
+    z-index: 5; }
+
+  /* Brand watermark — bottom-right. Replaces the SVG <text class="wm">
+     element from the previous renderer. Same color/size/shadow recipe. */
+  .brand-wm { position: absolute; bottom: 14px; right: 18px;
+    color: rgba(255,255,255,0.55); font-weight: 700; font-size: 22px;
+    letter-spacing: 0.5px; pointer-events: none;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.55), 0 0 4px rgba(0,0,0,0.45);
+    z-index: 5; }
+
+  /* MapLibre's NavigationControl matches the panel palette. */
+  .maplibregl-ctrl-group { background: rgba(11,26,48,0.9) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4) !important; }
+  .maplibregl-ctrl-group button { background-color: transparent !important; }
+  .maplibregl-ctrl-group button:hover {
+    background-color: rgba(255,255,255,0.08) !important; }
+  .maplibregl-ctrl-icon { filter: invert(0.85); }
+
+  /* Popup styling — tooltip-flavored override. The default popup arrow
+     gets dropped (display:none on the tip) and the inner panel adopts
+     the TAT palette with same border radius, blur, and font scale as
+     the legend. */
+  .maplibregl-popup-tip { display: none !important; }
+  .maplibregl-popup-content { background: rgba(10,18,34,0.96) !important;
+    color: var(--fg) !important;
+    border: 1px solid #2a3e5c; border-radius: 8px;
+    padding: 8px 12px !important; font-size: 12px; line-height: 1.45;
+    min-width: 170px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.55); backdrop-filter: blur(4px); }
+  .tt-name { font-weight: 800; color: #f1f7fd;
+    font-size: 13px; letter-spacing: 0.3px; }
+  .tt-time { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .tt-row { display: flex; justify-content: space-between;
+    gap: 10px; margin-top: 2px; }
+  .tt-lbl { color: var(--muted); }
+  .tt-val { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .tt-cat { display: inline-block; padding: 1px 8px;
+    border-radius: 999px; font-size: 10px; font-weight: 700;
+    color: #07101c; margin-top: 2px; }
+
+  /* Active-storm markers (HTML, not GL) so the existing spin animation
+     and red "L" appearance survive without a WebGL rebuild. */
+  .active-marker { position: absolute; transform: translate(-50%, -50%);
+    pointer-events: none; }
+  .active-marker.active-hurricane { width: 50px; height: 50px; }
+  .active-marker.active-hurricane svg { width: 100%; height: 100%;
+    overflow: visible; display: block; filter: drop-shadow(0 0 6px currentColor); }
+  @keyframes tat-spin { from { transform: rotate(360deg); }
+                        to   { transform: rotate(0deg); } }
+  .active-marker .spinning {
+    animation: tat-spin 2.6s linear infinite;
+    transform-origin: 50% 50%; transform-box: fill-box; }
+  .active-marker .hurricane-label { font-size: 14px; font-weight: 900;
+    fill: #ffffff; paint-order: stroke;
+    stroke: rgba(0,0,0,0.55); stroke-width: 1.8;
+    stroke-linejoin: round; }
+  .active-marker .hurricane-name { fill: #f1f7fd; font-size: 12px;
+    font-weight: 700; paint-order: stroke;
+    stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
+
+  .active-marker.active-l { width: 70px; height: 56px;
+    display: flex; flex-direction: column; align-items: center;
+    line-height: 1; text-align: center;
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
+  .active-marker.active-l .l-glyph { font-size: 34px; font-weight: 900;
+    color: #ef4444;
+    text-shadow:
+      -1px -1px 0 rgba(0,0,0,0.55),
+       1px -1px 0 rgba(0,0,0,0.55),
+      -1px  1px 0 rgba(0,0,0,0.55),
+       1px  1px 0 rgba(0,0,0,0.55); }
+  .active-marker.active-l .l-label { margin-top: 3px;
+    font-size: 12px; font-weight: 800; color: #ffffff;
+    text-shadow:
+      -1px -1px 0 rgba(0,0,0,0.7),
+       1px -1px 0 rgba(0,0,0,0.7),
+      -1px  1px 0 rgba(0,0,0,0.7),
+       1px  1px 0 rgba(0,0,0,0.7); }
+
+  @media (max-width: 820px) {
+    .legend { display: none; }
+    .zoom-hint { display: none; }
+    .brand-wm { font-size: 18px; bottom: 8px; right: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="map-box">
+    <div class="map-head">
+      <div>
+        <div class="title">__YEAR__ Global TC Tracks</div>
+        <div class="sub">As of __UPDATED__</div>
+      </div>
+      <div class="stats">
+        <b>__NAMED__</b> __NAMED_LABEL__ &middot; <b>__CAT1PLUS__</b> __CAT1PLUS_LABEL__ &middot;
+        <b>__CAT5__</b> __CAT5_LABEL__ &middot; <span class="ace">__TOTAL_ACE__ ACE</span>
+      </div>
+    </div>
+    <div class="map-svg-wrap">
+      <div id="globalMap"></div>
+      <div class="legend">
+        <div class="item"><span class="dot" style="background:var(--td)"></span>TD (&lt;34 kt)</div>
+        <div class="item"><span class="dot" style="background:var(--ts)"></span>TS (34&ndash;63)</div>
+        <div class="item"><span class="dot" style="background:var(--c1)"></span>Cat 1 (64&ndash;82)</div>
+        <div class="item"><span class="dot" style="background:var(--c2)"></span>Cat 2 (83&ndash;95)</div>
+        <div class="item"><span class="dot" style="background:var(--c3)"></span>Cat 3 (96&ndash;112)</div>
+        <div class="item"><span class="dot" style="background:var(--c4)"></span>Cat 4 (113&ndash;136)</div>
+        <div class="item"><span class="dot" style="background:var(--c5)"></span>Cat 5 (&ge;137)</div>
+        <div class="sep"></div>
+        <div class="item"><span class="sq"></span>Subtropical</div>
+        <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
+        <div class="item"><span class="dashline"></span>Invest (90-99)</div>
+      </div>
+      <div class="zoom-hint">Drag to pan &middot; Scroll to zoom &middot; Double-click to reset</div>
+      <div class="brand-wm">@WeathermanAAA_</div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
-  var svg = document.getElementById('chart');
-  if (!svg || !svg.viewBox || !svg.viewBox.baseVal) return;
-  var viewBox = svg.viewBox.baseVal;
-  var original = { x: viewBox.x, y: viewBox.y, w: viewBox.width, h: viewBox.height };
-
-  // Wrap-snap for the global Pacific-centered map. The basemap renders
-  // 3 copies (left/middle/right at offsets -W/0/+W). When the user pans
-  // far enough that the visible center crosses past the middle copy's
-  // center by more than half a world, snap viewBox.x by ±W. The snap is
-  // imperceptible because all 3 copies are pixel-identical.
-  var SNAP_THRESHOLD = original.w / 2;
-  function applyWrapSnap() {
-    var centerX = viewBox.x + viewBox.width / 2;
-    var middleCenter = original.x + original.w / 2;
-    if (centerX > middleCenter + SNAP_THRESHOLD)      viewBox.x -= original.w;
-    else if (centerX < middleCenter - SNAP_THRESHOLD) viewBox.x += original.w;
+  var SSHS_COLORS = {
+    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
+    "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
+  };
+  var CAT_LABELS = {
+    "TD": "Depression", "TS": "Tropical Storm",
+    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
+    "C4": "Category 4", "C5": "Category 5"
+  };
+  function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function fmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var hh = String(d.getUTCHours()).padStart(2,"0");
+    var mm = String(d.getUTCMinutes()).padStart(2,"0");
+    return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  function sshsLabel(cls) {
+    if (cls === "TD") return "D";
+    if (cls === "TS") return "S";
+    return (cls || "").replace("C", "") || "D";
   }
 
-  // Wheel = zoom toward cursor. Limit zoom-in to 5% of original (20×
-  // zoom) so a user can't get lost zooming infinitely; zoom-out clamps
-  // to original so the map can't be smaller than its natural extent.
-  svg.addEventListener('wheel', function (e) {
-    e.preventDefault();
-    var scale = e.deltaY > 0 ? 1.15 : 0.87;
-    var pt = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    var ctm = svg.getScreenCTM();
-    if (!ctm) return;
-    var cursor = pt.matrixTransform(ctm.inverse());
-    var newW = Math.max(original.w * 0.05, Math.min(original.w, viewBox.width * scale));
-    var newH = newW * (original.h / original.w);
-    viewBox.x = cursor.x - (cursor.x - viewBox.x) * (newW / viewBox.width);
-    viewBox.y = cursor.y - (cursor.y - viewBox.y) * (newH / viewBox.height);
-    viewBox.width = newW;
-    viewBox.height = newH;
-    applyWrapSnap();
-  }, { passive: false });
+  // ---- Style spec: TAT palette + Protomaps vector tiles ----
+  var STYLE = {
+    "version": 8,
+    "name": "TAT Global TC Tracks",
+    "sources": {
+      "protomaps": {
+        "type": "vector",
+        "tiles": ["https://api.protomaps.com/tiles/v3/{z}/{x}/{y}.mvt?key=__PROTOMAPS_KEY__"],
+        "minzoom": 0,
+        "maxzoom": 14,
+        "attribution": "&copy; <a href=\"https://protomaps.com\">Protomaps</a> &copy; <a href=\"https://openstreetmap.org/copyright\">OSM</a>"
+      }
+    },
+    "layers": [
+      { "id": "background", "type": "background",
+        "paint": { "background-color": "#2463a0" } },
+      { "id": "earth", "type": "fill",
+        "source": "protomaps", "source-layer": "earth",
+        "paint": { "fill-color": "#aeb2b5" } },
+      { "id": "water", "type": "fill",
+        "source": "protomaps", "source-layer": "water",
+        "paint": { "fill-color": "#2463a0" } },
+      { "id": "coastline", "type": "line",
+        "source": "protomaps", "source-layer": "earth",
+        "paint": {
+          "line-color": "#ffffff", "line-opacity": 0.85,
+          "line-width": ["interpolate", ["linear"], ["zoom"],
+            0, 0.4, 4, 0.8, 8, 1.2, 12, 1.8]
+        } },
+      { "id": "country-border", "type": "line",
+        "source": "protomaps", "source-layer": "boundaries",
+        "filter": ["==", ["get", "kind"], "country"],
+        "paint": {
+          "line-color": "#ffffff", "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"],
+            0, 0.6, 4, 1.0, 8, 1.4, 12, 2.0]
+        } },
+      { "id": "state-border", "type": "line",
+        "source": "protomaps", "source-layer": "boundaries",
+        "filter": ["==", ["get", "kind"], "region"],
+        "minzoom": 4,
+        "paint": {
+          "line-color": "#ffffff", "line-opacity": 0.5,
+          "line-width": ["interpolate", ["linear"], ["zoom"],
+            4, 0.3, 8, 0.6, 12, 1.0]
+        } }
+    ]
+  };
 
-  // Drag = pan. Skip if the mousedown landed on an interactive element
-  // (track-dot, active-icon, storm-card) — those have their own click
-  // handlers we don't want to steal.
-  var dragging = false, lastX = 0, lastY = 0;
-  svg.addEventListener('mousedown', function (e) {
-    var t = e.target;
-    if (t && (t.classList.contains('track-dot') ||
-              (t.closest && t.closest('.active-icon')))) return;
-    dragging = true; lastX = e.clientX; lastY = e.clientY;
-    svg.style.cursor = 'grabbing';
-    e.preventDefault();
+  var map = new maplibregl.Map({
+    container: "globalMap",
+    style: STYLE,
+    center: [180, 10],
+    zoom: 1.5,
+    minZoom: 1,
+    maxZoom: 14,
+    renderWorldCopies: true,
+    attributionControl: false
   });
-  svg.addEventListener('mousemove', function (e) {
-    if (!dragging) return;
-    var ctm = svg.getScreenCTM();
-    if (!ctm) return;
-    var inv = ctm.inverse();
-    var dx = (e.clientX - lastX) * inv.a;
-    var dy = (e.clientY - lastY) * inv.d;
-    viewBox.x -= dx; viewBox.y -= dy;
-    lastX = e.clientX; lastY = e.clientY;
-    applyWrapSnap();
-  });
-  window.addEventListener('mouseup', function () {
-    if (!dragging) return;
-    dragging = false; svg.style.cursor = 'grab';
+  map.addControl(new maplibregl.NavigationControl({
+    visualizePitch: false, showCompass: false
+  }), "top-left");
+  map.dragRotate.disable();
+  map.touchZoomRotate.disableRotation();
+  // Double-click resets to the home view (matches the previous SVG
+  // dblclick-reset behavior). MapLibre's default dblclick-zoom is fine
+  // to leave on as a fallback but the explicit reset matches operator
+  // expectations from the SVG era.
+  map.doubleClickZoom.disable();
+  map.on("dblclick", function () {
+    map.easeTo({ center: [180, 10], zoom: 1.5, duration: 400 });
   });
 
-  // Double-click anywhere = reset to original extent.
-  svg.addEventListener('dblclick', function () {
-    viewBox.x = original.x; viewBox.y = original.y;
-    viewBox.width = original.w; viewBox.height = original.h;
-  });
+  // ---- Storm features + interactive layers ----
+  var activeMarkers = [];
+  function addStormLayers(geojson) {
+    map.addSource("storms", { type: "geojson", data: geojson });
 
-  svg.style.cursor = 'grab';
+    // Two line layers because MapLibre's line-dasharray paint property
+    // doesn't support data-driven feature expressions — only zoom-based.
+    // Splitting by is_invest in the layer filter is the standard fix.
+    map.addLayer({
+      id: "tracks-line-solid",
+      type: "line",
+      source: "storms",
+      filter: ["all",
+        ["==", ["geometry-type"], "LineString"],
+        ["!=", ["get", "is_invest"], true]
+      ],
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-opacity": 0.4,
+        "line-width": 1.0
+      }
+    });
+    map.addLayer({
+      id: "tracks-line-invest",
+      type: "line",
+      source: "storms",
+      filter: ["all",
+        ["==", ["geometry-type"], "LineString"],
+        ["==", ["get", "is_invest"], true]
+      ],
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-opacity": 0.4,
+        "line-width": 1.0,
+        "line-dasharray": [4, 3]
+      }
+    });
+
+    map.addLayer({
+      id: "observations",
+      type: "circle",
+      source: "storms",
+      filter: ["all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "kind"], "observation"]
+      ],
+      paint: {
+        "circle-color": [
+          "interpolate", ["linear"], ["coalesce", ["get", "intensity_kt"], 0],
+          0,   "#fff5cc",
+          34,  "#46c56a",
+          64,  "#ffe14d",
+          83,  "#ff9a2f",
+          96,  "#ff4d3b",
+          113, "#e33ad4",
+          137, "#b03bff"
+        ],
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"],
+          0, 2.0, 4, 3.0, 8, 4.0, 12, 5.0
+        ],
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 0.5,
+        "circle-stroke-opacity": 0.7
+      }
+    });
+
+    // ---- Hover popup on observations ----
+    var popup = null;
+    map.on("mouseenter", "observations", function (e) {
+      map.getCanvas().style.cursor = "pointer";
+      var f = e.features[0];
+      var props = f.properties || {};
+      var coords = f.geometry.coordinates.slice();
+      // Snap horizontally so the popup tracks the wrapped copy nearest
+      // the cursor (renderWorldCopies puts the same point at every
+      // multiple of 360°).
+      while (e.lngLat.lng - coords[0] > 180)  coords[0] += 360;
+      while (e.lngLat.lng - coords[0] < -180) coords[0] -= 360;
+
+      var kt = props.intensity_kt;
+      var pres = props.mslp_mb;
+      var cls = props.sshws_cat || "TD";
+      var catLabel = CAT_LABELS[cls] || cls;
+      var color = SSHS_COLORS[cls] || "#888";
+      var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
+        ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
+        : "—";
+      var presTxt = (pres != null && pres !== "" && !isNaN(parseFloat(pres)))
+        ? (Math.round(parseFloat(pres)) + " mb")
+        : "—";
+      var html =
+        '<div class="tt-name">' + escapeHtml(props.storm_name || "Storm") + '</div>' +
+        '<div class="tt-time">' + fmtTime(props.time_iso) + '</div>' +
+        '<div class="tt-row"><span class="tt-cat" style="background:' +
+          color + '">' + catLabel + '</span></div>' +
+        '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
+          '<span class="tt-val">' + windTxt + '</span></div>' +
+        '<div class="tt-row"><span class="tt-lbl">Pressure</span>' +
+          '<span class="tt-val">' + presTxt + '</span></div>';
+      if (popup) popup.remove();
+      popup = new maplibregl.Popup({
+        closeButton: false, closeOnClick: false,
+        offset: 8, maxWidth: "240px"
+      }).setLngLat(coords).setHTML(html).addTo(map);
+    });
+    map.on("mousemove", "observations", function (e) {
+      if (!popup) return;
+      var f = e.features[0];
+      var coords = f.geometry.coordinates.slice();
+      while (e.lngLat.lng - coords[0] > 180)  coords[0] += 360;
+      while (e.lngLat.lng - coords[0] < -180) coords[0] -= 360;
+      popup.setLngLat(coords);
+    });
+    map.on("mouseleave", "observations", function () {
+      map.getCanvas().style.cursor = "";
+      if (popup) { popup.remove(); popup = null; }
+    });
+  }
+
+  function addActiveMarkers(geojson) {
+    // Clear any markers from a prior load.
+    activeMarkers.forEach(function (m) { m.remove(); });
+    activeMarkers = [];
+    (geojson.features || []).forEach(function (f) {
+      var props = f.properties || {};
+      if (props.kind !== "active_marker") return;
+      var lngLat = f.geometry.coordinates;
+      var el = document.createElement("div");
+      el.className = "active-marker";
+      if (props.marker_type === "L") {
+        el.classList.add("active-l");
+        var designation = String(props.designation || props.name || "").toUpperCase();
+        el.innerHTML =
+          '<span class="l-glyph">L</span>' +
+          '<span class="l-label">' + escapeHtml(designation) + '</span>';
+      } else {
+        el.classList.add("active-hurricane");
+        var cls = props.current_category || "TD";
+        var color = SSHS_COLORS[cls] || "#888";
+        var label = sshsLabel(cls);
+        el.style.color = color;  // drop-shadow inherits via currentColor
+        el.innerHTML =
+          '<svg viewBox="-34 -34 68 68" xmlns="http://www.w3.org/2000/svg">' +
+            '<g class="spinning">' +
+              '<path d="__HURRICANE_PATH__" fill="' + color + '" />' +
+            '</g>' +
+            '<text class="hurricane-label" x="0" y="0" ' +
+              'text-anchor="middle" dominant-baseline="central">' +
+              label + '</text>' +
+            '<text class="hurricane-name" x="36" y="6" ' +
+              'text-anchor="start">' + escapeHtml(props.name || "") + '</text>' +
+          '</svg>';
+      }
+      var marker = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat(lngLat).addTo(map);
+      activeMarkers.push(marker);
+    });
+  }
+
+  map.on("load", function () {
+    fetch("global_storms.geojson", { cache: "no-cache" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        addStormLayers(data);
+        addActiveMarkers(data);
+      })
+      .catch(function (e) {
+        console.error("Failed to load global_storms.geojson:", e);
+      });
+  });
 })();
 </script>
+</body>
+</html>
 """
 
-# Hint pill ("Drag to pan · Scroll to zoom · Double-click to reset")
-# rendered alongside the SVG. CSS for .zoom-hint is in HTML_TEMPLATE.
-ZOOM_HINT_HTML = (
-    '<div class="zoom-hint">'
-    'Drag to pan &middot; Scroll to zoom &middot; Double-click to reset'
-    '</div>'
-)
+
+def render_global_maplibre_html(payload: dict) -> str:
+    """Render the MapLibre-based global tracks page. The storms are
+    served from a sibling /global_storms.geojson file (fetched at
+    runtime), so this template is essentially static across refreshes —
+    only the header pill (year, updated, season-stats) changes."""
+    header = payload["header"]
+    vocab = payload["vocab"]
+    return (
+        GLOBAL_MAPLIBRE_HTML
+        .replace("__YEAR__", str(payload["year"]))
+        .replace("__UPDATED__", payload["updated"])
+        .replace("__NAMED__", str(header["named"]))
+        .replace("__NAMED_LABEL__", vocab["named"])
+        .replace("__CAT1PLUS__", str(header["cat1plus"]))
+        .replace("__CAT1PLUS_LABEL__", vocab["cat1plus"])
+        .replace("__CAT5__", str(header["cat5"]))
+        .replace("__CAT5_LABEL__", vocab["cat5"])
+        .replace("__TOTAL_ACE__", f"{header['total_ace']:.2f}")
+        .replace("__PROTOMAPS_KEY__", PROTOMAPS_API_KEY)
+        .replace("__HURRICANE_PATH__", HURRICANE_PATH)
+    )
 
 
 def _cat_style(cls: str) -> tuple[str, str]:
@@ -2287,91 +2843,28 @@ def render_storm_card(storm: dict) -> str:
 
 
 def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> str:
-    is_global = payload.get("basin") == "global"
-    # Global mode uses a 2:1 viewBox (1400×700) for true equirectangular
-    # aspect across 360° lon × 180° lat. Per-basin keeps the legacy
-    # 1400×900 dimensions so existing maps don't change visually.
+    """Render a per-basin static SVG tracks page. Global mode is no longer
+    routed here — see render_global_maplibre_html for the MapLibre path."""
     map_w = MAP_W
-    map_h = MAP_W // 2 if is_global else MAP_H
+    map_h = MAP_H
     basemap_svg = render_basemap_svg(extent, countries_geojson, coastline_geojson,
                                      map_w, map_h)
     tracks_svg = render_tracks_svg(payload["storms"], extent, map_w, map_h)
     active_svg = render_active_icons(payload["storms"], extent, map_w, map_h)
 
-    if is_global:
-        # Triple-copy the world for seamless horizontal panning. Basemap
-        # is rendered ONCE and instantiated twice via SVG <use> (saves
-        # ~7 MB of HTML over literal triplication and basemap doesn't
-        # need pointer events). Tracks + active markers are duplicated
-        # LITERALLY via <g transform> so hover/click events fire on
-        # dots in the side copies the same as the middle.
-        basemap_svg = (
-            f'<g id="basemap-globe">{basemap_svg}</g>'
-            f'<use href="#basemap-globe" transform="translate(-{map_w},0)"/>'
-            f'<use href="#basemap-globe" transform="translate({map_w},0)"/>'
-        )
-        tracks_svg = (
-            f'<g transform="translate(-{map_w},0)">{tracks_svg}</g>'
-            f'{tracks_svg}'
-            f'<g transform="translate({map_w},0)">{tracks_svg}</g>'
-        )
-        active_svg = (
-            f'<g transform="translate(-{map_w},0)">{active_svg}</g>'
-            f'{active_svg}'
-            f'<g transform="translate({map_w},0)">{active_svg}</g>'
-        )
-
-    zoom_hint_html = ZOOM_HINT_HTML if is_global else ""
-    zoom_pan_script = ZOOM_PAN_SCRIPT if is_global else ""
-
-    # Side panel is per-basin only. The global map fills the chart-card
-    # full-width because navigating 100+ storms in a list is not the
-    # global view's job — the map IS the navigator.
-    if is_global:
-        side_panel_html = ""
-    else:
-        storm_cards = "\n".join(render_storm_card(s) for s in payload["storms"]) or (
-            '<div class="storm-card"><div class="storm-meta">'
-            'No storms yet this year.</div></div>'
-        )
-        side_panel_html = (
-            f'<div class="side">'
-            f'<div class="panel-title">{payload["year"]} Season &middot; '
-            f'{_storm_count_label(payload["storms"])}</div>'
-            f'<div class="storm-list" id="storms">'
-            f'{storm_cards}'
-            f'</div>'
-            f'</div>'
-        )
-
-    # Per-basin maps are rendered as STATIC SVG (no JS) so they're
-    # copy/paste friendly. Global keeps tooltips, click-highlight, and
-    # the zoom/pan gesture set. body.interactive class gates the
-    # cursor:pointer rules; absent → default cursor.
-    if is_global:
-        slim_storms = [{
-            "sid": s.get("sid"),
-            "name": s.get("name"),
-            "is_active": s.get("is_active"),
-            "is_invest": s.get("is_invest"),
-            "current_category": s.get("current_category"),
-            "max_category": s.get("max_category"),
-            "ace": s.get("ace"),
-            "points": s.get("points"),
-        } for s in payload["storms"]]
-        storms_json = json.dumps({"storms": slim_storms}, separators=(",", ":"))
-        storms_json = storms_json.replace("</", "<\\/")
-        interactive_js = (
-            f'<script id="storms-payload" type="application/json">'
-            f'{storms_json}'
-            f'</script>'
-            f'<script>{TRACKS_JS}</script>'
-            f'{zoom_pan_script}'
-        )
-        body_class = "interactive"
-    else:
-        interactive_js = ""
-        body_class = ""
+    storm_cards = "\n".join(render_storm_card(s) for s in payload["storms"]) or (
+        '<div class="storm-card"><div class="storm-meta">'
+        'No storms yet this year.</div></div>'
+    )
+    side_panel_html = (
+        f'<div class="side">'
+        f'<div class="panel-title">{payload["year"]} Season &middot; '
+        f'{_storm_count_label(payload["storms"])}</div>'
+        f'<div class="storm-list" id="storms">'
+        f'{storm_cards}'
+        f'</div>'
+        f'</div>'
+    )
 
     header = payload["header"]
     vocab = payload["vocab"]
@@ -2390,9 +2883,9 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         active_svg=active_svg,
         wm_x=map_w - 20, wm_y=40,
         side_panel_html=side_panel_html,
-        zoom_hint_html=zoom_hint_html,
-        interactive_js=interactive_js,
-        body_class=body_class,
+        zoom_hint_html="",
+        interactive_js="",
+        body_class="",
     )
 
 
@@ -2483,19 +2976,22 @@ def main(argv: Iterable[str] | None = None) -> int:
             return 0
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         # No JSON output for global — the per-basin JSONs are the source
-        # of truth. We only emit the rendered HTML.
+        # of truth. We emit the MapLibre HTML page + a sibling
+        # global_storms.geojson that the page fetches at runtime.
         if args.json_only:
             print(f"{log} --json-only is a no-op for global mode "
                   f"(per-basin JSONs are the source).")
             return 0
-        countries = (load_natural_earth(HERE / "ne_50m_admin_0_countries.geojson")
-                     or load_natural_earth(HERE / "ne_110m_admin_0_countries.geojson"))
-        coast = (load_natural_earth(HERE / "ne_50m_coastline.geojson")
-                 or load_natural_earth(HERE / "ne_110m_coastline.geojson"))
-        if countries is None and coast is None:
-            print(f"{log} WARN: no Natural Earth GeoJSON found — basemap will "
-                  f"only show the grid.")
-        html = render_html(payload, basin_cfg["extent"], countries, coast)
+        # MapLibre + Protomaps vector tiles renders the basemap natively,
+        # so the Natural Earth loads from the SVG era are no longer needed
+        # on the global page. (Per-basin pages still use them.)
+        geojson_path = OUTPUT_DIR / "global_storms.geojson"
+        geojson = build_global_geojson(storms)
+        geojson_path.write_text(json.dumps(geojson, separators=(",", ":")),
+                                encoding="utf-8")
+        print(f"{log} wrote {geojson_path} "
+              f"({len(geojson['features'])} features)")
+        html = render_global_maplibre_html(payload)
         html_path = OUTPUT_DIR / "global_tracks.html"
         html_path.write_text(html, encoding="utf-8")
         print(f"{log} wrote {html_path}")
