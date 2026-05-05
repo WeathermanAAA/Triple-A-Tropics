@@ -1943,10 +1943,20 @@ def build_global_geojson(storms: list[dict]) -> dict:
                 },
             })
 
-        # Active marker — one Point at the latest position. Same red-L vs
-        # spinning-hurricane decision as render_active_icons (spec PART 8
-        # asks us to keep that fix).
-        if is_active and points:
+        # Active / invest marker — one Point at the latest position.
+        # Two emit triggers (matching the per-basin SVG convention):
+        #   * is_invest: every recent invest (90-99) gets a red "L" with
+        #     its ATCF designation, regardless of is_active. Per-basin
+        #     handles this via render_tracks_svg's invest second-pass;
+        #     for global, we fold it into a single active-marker
+        #     feature. Storms that survive merge_and_extract_storms'
+        #     filter are always recent_invest=True for invests, so no
+        #     extra recency check is needed here.
+        #   * is_active (and not invest): the operationally-active
+        #     numbered TC. peak < 34 kt → "L"; peak ≥ 34 → spinning
+        #     hurricane. Mirrors render_active_icons' is_invest_marker
+        #     fork (PART 8 of the original task asked us to keep it).
+        if (is_invest or is_active) and points:
             last = points[-1]
             current_kt = last.get("wind_kt")
             current_cls = storm.get("current_category") or "TD"
@@ -2610,15 +2620,19 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         ["==", ["get", "kind"], "observation"]
       ],
       paint: {
+        // SSHWS is a step function — each category is a flat color from
+        // its lower threshold to just below the next. An "interpolate"
+        // here would render a 25 kt TD as 73% along the TD→TS gradient
+        // (visibly green), which mismatches the legend swatch.
         "circle-color": [
-          "interpolate", ["linear"], ["coalesce", ["get", "intensity_kt"], 0],
-          0,   "#fff5cc",
-          34,  "#46c56a",
-          64,  "#ffe14d",
-          83,  "#ff9a2f",
-          96,  "#ff4d3b",
-          113, "#e33ad4",
-          137, "#b03bff"
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          "#fff5cc",       // <34 kt: TD (default below first stop)
+          34,  "#46c56a",  // 34-63: TS
+          64,  "#ffe14d",  // 64-82: C1
+          83,  "#ff9a2f",  // 83-95: C2
+          96,  "#ff4d3b",  // 96-112: C3
+          113, "#e33ad4",  // 113-136: C4
+          137, "#b03bff"   // ≥137: C5
         ],
         "circle-radius": [
           "interpolate", ["linear"], ["zoom"],
