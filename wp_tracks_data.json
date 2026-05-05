@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-05 20:01 UTC",
+  "updated": "2026-05-05 20:47 UTC",
   "header": {
     "named": 3,
     "cat1plus": 1,
@@ -39,33 +39,6 @@
           "lon": 135.0,
           "wind_kt": 15.0,
           "pressure_mb": 1008.0,
-          "cls": "TD",
-          "nature": "DS"
-        }
-      ]
-    },
-    {
-      "sid": "JTWC_WP932026",
-      "name": "93W",
-      "season": 2026,
-      "start": "2026-05-05T18:00:00",
-      "end": "2026-05-05T18:00:00",
-      "peak_wind_kt": 20.0,
-      "peak_pressure_mb": 1005.0,
-      "ace": 0.0,
-      "max_category": "TD",
-      "current_category": "TD",
-      "is_active": false,
-      "is_invest": true,
-      "recent_invest": true,
-      "atcf_id": "93W",
-      "points": [
-        {
-          "t": "2026-05-05T18:00:00",
-          "lat": 8.5,
-          "lon": 148.5,
-          "wind_kt": 20.0,
-          "pressure_mb": 1005.0,
           "cls": "TD",
           "nature": "DS"
         }
