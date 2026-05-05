@@ -347,15 +347,19 @@
         ["==", ["get", "kind"], "observation"]
       ],
       paint: {
+        // SSHWS is a step function — each category is a flat color from
+        // its lower threshold to just below the next. An "interpolate"
+        // here would render a 25 kt TD as 73% along the TD→TS gradient
+        // (visibly green), which mismatches the legend swatch.
         "circle-color": [
-          "interpolate", ["linear"], ["coalesce", ["get", "intensity_kt"], 0],
-          0,   "#fff5cc",
-          34,  "#46c56a",
-          64,  "#ffe14d",
-          83,  "#ff9a2f",
-          96,  "#ff4d3b",
-          113, "#e33ad4",
-          137, "#b03bff"
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          "#fff5cc",       // <34 kt: TD (default below first stop)
+          34,  "#46c56a",  // 34-63: TS
+          64,  "#ffe14d",  // 64-82: C1
+          83,  "#ff9a2f",  // 83-95: C2
+          96,  "#ff4d3b",  // 96-112: C3
+          113, "#e33ad4",  // 113-136: C4
+          137, "#b03bff"   // ≥137: C5
         ],
         "circle-radius": [
           "interpolate", ["linear"], ["zoom"],
