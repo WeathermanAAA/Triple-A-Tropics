@@ -15,35 +15,23 @@
 <link rel="stylesheet" href="/styles.css">
 <style>
   /* Force Metropolis everywhere on the page, overriding anything
-     styles.css still has hard-coded to Oswald / Montserrat / Arial.
-     !important because styles.css targets many selectors with high
-     specificity (e.g. .nav-links a) that would otherwise win. */
+     styles.css still has hard-coded to other faces. */
   html, body,
   h1, h2, h3, h4, h5, h6,
   p, a, span, div, li, button, input, textarea, select, label,
-  nav, header, footer, section, article,
-  .brand, .nav-links, .nav-links a, .hero h1, .hero p, .handle {
+  nav, header, footer, section, article {
     font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
   }
 </style>
 <style>
-  /* Homepage-only polish. Overrides the generic .card system with a
-     pro-weather-site card treatment: a data-visual banner graphic
-     across the top of each card, then title/desc/meta strip.
+  /* Homepage layout: small page-head → global TC map (hero) → existing
+     home cards (Climatology / SST / Satellite) → about → footer. The map
+     subsumes the old live-status strip — visitors see active storms
+     visually instead of as a row of text counts. */
 
-     Everything here uses new class names (.home-*) so the base
-     styles.css rules stay intact for other pages that still depend
-     on them. */
-
-  .home-wrap {
-    max-width: 1180px;
-    margin: 0 auto;
-    padding: 24px 20px 28px;
-  }
-
-  /* Screen-reader-only: hide visually but leave text available to
-     assistive tech + SEO. Used on card h2s since the banner images
-     already carry the title. */
+  /* Screen-reader-only: hide visually but leave text for assistive
+     tech + SEO. Card h2s use this since the banner images already
+     carry the title visually. */
   .sr-only {
     position: absolute;
     width: 1px; height: 1px;
@@ -52,179 +40,258 @@
     white-space: nowrap; border: 0;
   }
 
-  /* Live status strip: one row per basin, each with activity dot,
-     YTD count, and season context (countdown before season start,
-     live ACE / rank during season, final stats after season ends).
-     Populated by the script at the bottom of the file from the
-     JSON feeds the climatology page already publishes every 6 h.
-     Fails silently if a feed is missing (local preview, slow net). */
-  .home-status {
-    margin-bottom: 22px;
-    border-radius: 12px;
+  /* ---- Global TC map (hero) ---- */
+  /* Lives inside the standard .chart-section wrapper for outer padding,
+     but the inner chart-card switches to flex(row) so the SVG and the
+     storm-list sidebar sit side-by-side on desktop. The map fills
+     ~70% of the card width; the list sidebar fills the rest. */
+  .global-map-section { padding-top: 12px; padding-bottom: 8px; }
+  .global-map-card {
+    padding: 0;
     overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
-    color: var(--muted);
-    letter-spacing: 0.25px;
-  }
-
-  /* Header bar: EXACT copy of the site .nav gradient + inset shadows
-     (see styles.css .nav rule) so the strip reads as a sibling of the
-     top navigation. */
-  .status-head {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 14px 20px;
-    background: linear-gradient(180deg,
-      #0a1a2e 0%,
-      #1d3a5c 22%,
-      #2b4976 50%,
-      #1d3a5c 78%,
-      #0a1a2e 100%);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.92);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.14),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.40),
-      0 0 6px rgba(255, 255, 255, 0.55),
-      0 0 14px rgba(255, 255, 255, 0.25);
-    text-align: center;
-    flex-wrap: wrap;
+    flex-direction: row;
+    align-items: stretch;
+    min-height: 0;
   }
-  /* Matches .brand / .nav-links typography from the nav so the strip
-     reads as a sibling of the top navigation. */
-  .status-head .status-label {
-    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
-    font-weight: 700;
-    font-size: 16px;
-    letter-spacing: 1.2px;
-    color: #ffffff;
-    text-transform: uppercase;
-    text-shadow:
-      0 1px 0 rgba(0, 0, 0, 0.55),
-      0 2px 3px rgba(0, 0, 0, 0.45);
+  .global-map-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: #2463a0;
+    position: relative;
   }
-  .status-head .status-hint {
-    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
-    font-size: 14px;
-    font-weight: 700;
-    color: #c8d4e7;
-    letter-spacing: 0.9px;
-    text-transform: uppercase;
-    text-shadow:
-      0 1px 0 rgba(0, 0, 0, 0.55),
-      0 2px 3px rgba(0, 0, 0, 0.45);
+  .global-map-wrap svg {
+    display: block;
+    width: 100%;
+    height: auto;
   }
-
-  /* Basin rows: same vertical-gradient structure as the header but in
-     neutral gray so the blue bar stays the focal point. */
-  .basin-grid {
+  /* Side panel: vertical list of every storm of the season. Fixed-ish
+     width on desktop, internal scroll. Below 1024px the card stacks and
+     this becomes a max-height scroll region beneath the map. */
+  .global-storm-list {
+    flex: 0 0 320px;
+    max-width: 320px;
+    border-left: 1px solid var(--border);
+    background: var(--panel);
     display: flex;
     flex-direction: column;
+    min-height: 0;
   }
-  /* Basin rows: same Oswald / uppercase / white-with-shadow typography
-     as the .status-head so everything in the strip reads as one
-     cohesive piece. Only the background differs (lighter gray so the
-     blue header stays the focal point). */
-  .basin-row {
+  .global-storm-list .gm-list-head {
+    padding: 14px 16px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .global-storm-list h3 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--accent-2);
+  }
+  .global-storm-list .gm-list-summary {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .global-storm-list .gm-list-hint {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    margin-top: 4px;
+    font-style: italic;
+  }
+  .global-storm-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0 8px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .gm-list-row {
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(42, 46, 54, 0.5);
+    cursor: pointer;
+    transition: background 0.12s, border-left-color 0.12s;
+    border-left: 3px solid transparent;
+    outline: 0;
+  }
+  .gm-list-row:hover, .gm-list-row:focus-visible {
+    background: rgba(93, 211, 255, 0.04);
+  }
+  .gm-list-row.gm-list-active {
+    border-left-color: var(--accent-2);
+    background: rgba(93, 211, 255, 0.06);
+  }
+  .gm-list-row.gm-list-selected {
+    background: rgba(93, 211, 255, 0.14);
+    border-left-color: var(--accent-2);
+  }
+  .gm-list-top {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 22px;
-    padding: 13px 20px;
-    background: linear-gradient(180deg,
-                  #5a6070 0%,
-                  #484e5c 55%,
-                  #363b47 100%);
-    border-top: 1px solid rgba(255,255,255,0.08);
-    text-decoration: none;
-    color: #ffffff;
-    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
-    font-size: 14px;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .gm-list-basin {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 10px;
     font-weight: 700;
+    letter-spacing: 0.6px;
     text-transform: uppercase;
-    letter-spacing: 1.2px;
-    text-shadow:
-      0 1px 0 rgba(0, 0, 0, 0.55),
-      0 2px 3px rgba(0, 0, 0, 0.45);
-    text-align: center;
-    flex-wrap: wrap;
-    transition: filter 0.18s, color 0.18s;
   }
-  .basin-row:first-child { border-top: none; }
-  .basin-row:hover {
-    filter: brightness(1.18);
-    color: #ffffff;
-    text-decoration: none;
-  }
-  .basin-row .basin-head {
-    display: inline-flex; align-items: center;
-    gap: 9px;
-    font-size: 16px;
-    font-weight: 700;
-    letter-spacing: 1.2px;
-    color: #ffffff;
-    min-width: 72px;
-    justify-content: center;
-  }
-  .basin-row .dot {
-    width: 9px; height: 9px;
-    border-radius: 50%;
-    background: #c5cad5;
-    transition: background 0.3s, box-shadow 0.3s;
-  }
-  .basin-row.active .dot {
-    background: #6ff0a0;
-    box-shadow: 0 0 10px rgba(111, 240, 160, 0.8);
-    animation: home-pulse 1.7s ease-in-out infinite;
-  }
-  .basin-row.active .basin-head .code { color: #e8ffe8; }
-
-  .basin-row .bstat {
+  .gm-list-name {
+    flex: 1 1 auto;
+    color: var(--fg);
     font-size: 14px;
-    color: #ffffff;
-    letter-spacing: 1.2px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* Mid-dot separator before every .bstat so the row reads
-     "BASIN · COUNT · SEASON" with the same divider that was already
-     used inside the season/ACE fragments. Matches the existing inline
-     .sep styling (color #d8dce5). */
-  .basin-row .bstat::before {
-    content: "·";
-    color: #d8dce5;
-    padding-right: 18px;
-    font-weight: 700;
+  .gm-list-chip {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: #131519;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.4px;
   }
-  .basin-row .bstat.count {
-    color: #ffffff;
-    font-weight: 700;
+  .gm-list-stats {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
   }
-  .basin-row .bstat b { color: #ffffff; font-weight: 700; }
-  .basin-row .sep { color: #d8dce5; padding: 0 4px; }
+  .gm-list-stats b {
+    color: var(--fg);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
 
-  @media (max-width: 620px) {
-    .status-head { padding: 12px 14px; gap: 10px; }
-    .status-head .status-label { font-size: 15px; }
-    .status-head .status-hint { font-size: 12px; }
-    .basin-row {
-      gap: 10px;
-      padding: 11px 14px;
-      font-size: 13px;
+  /* Tooltip (HTML element absolutely positioned over body, repositioned
+     by JS on mousemove). */
+  .gm-tooltip {
+    position: fixed;
+    z-index: 1300;
+    pointer-events: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.45;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+    max-width: 280px;
+  }
+  .gm-tooltip.gm-tooltip-bottom { box-shadow: 0 -6px 22px rgba(0, 0, 0, 0.45); }
+  .gm-tt-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .gm-tt-head b {
+    color: var(--fg);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .gm-tt-cat {
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: #131519;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+  }
+  .gm-tt-row {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+  .gm-tt-muted { color: var(--muted); }
+  .gm-tt-hint {
+    color: var(--accent-2);
+    font-size: 11px;
+    font-weight: 700;
+    margin-top: 4px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+
+  /* SVG element classes for selection state. */
+  #globalMap { cursor: default; }
+  #globalMap .gm-dot,
+  #globalMap .gm-hit,
+  #globalMap .gm-marker { cursor: pointer; }
+  #globalMap .gm-storm-dimmed { opacity: 0.15; transition: opacity 0.15s; }
+  #globalMap .gm-storm-selected { opacity: 1.0; transition: opacity 0.15s; }
+  #globalMap .gm-marker-dimmed { opacity: 0.2; transition: opacity 0.15s; }
+  /* When a storm is selected its dots get a slightly larger radius via
+     class-based override. SVG attr `r` doesn't transition, but visual
+     change is fine without animation. */
+  #globalMap .gm-storm-selected .gm-dot { r: 1.4; }
+
+  /* Fallback shown if init() throws. */
+  .gm-fallback {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .gm-fallback-sub {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    opacity: 0.7;
+  }
+
+  /* Stack on smaller screens. */
+  @media (max-width: 1024px) {
+    .global-map-card { flex-direction: column; }
+    .global-storm-list {
+      flex: 0 0 auto;
+      max-width: none;
+      border-left: 0;
+      border-top: 1px solid var(--border);
     }
-    .basin-row .bstat { font-size: 13px; }
+    .global-storm-list ul { max-height: 50vh; }
+  }
+  @media (max-width: 760px) {
+    .gm-list-row { padding: 9px 14px; }
+    .gm-list-name { font-size: 13px; }
+    .gm-list-stats { font-size: 11px; }
   }
 
-  /* Card grid */
+  /* ---- Card grid (Climatology / SST / Satellite) ---- */
+  /* Wrapper sits below the map. Same card visual as before — banner art
+     up top, gray gradient body, blue meta strip footer. */
+  .home-cards-wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 12px 20px 28px;
+  }
   .home-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 18px;
   }
-
-  /* Each card is a stack: graphic banner → body → meta. Uses its own
-     class so the old `.card` rules (used elsewhere) are unaffected. */
   .home-card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -242,9 +309,6 @@
     transform: translateY(-2px);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
   }
-
-  /* Banner graphic area: wide-aspect so it reads as a poster strip
-     across the top of the card rather than a square thumbnail. */
   .home-card-banner {
     aspect-ratio: 7 / 2;
     position: relative;
@@ -257,8 +321,6 @@
     width: 100%; height: 100%;
     display: block;
     object-fit: cover;
-    /* Subtle bottom fade so the card body merges into the banner
-       instead of hard-cutting off the poster art. */
   }
   .home-card-banner::after {
     content: "";
@@ -268,9 +330,6 @@
       rgba(7,11,23,0.35) 100%);
     pointer-events: none;
   }
-
-  /* Body text. Gray gradient matching the basin rows in the live
-     status strip so the whole homepage reads as one color system. */
   .home-card-body {
     padding: 18px 20px 16px;
     flex: 1;
@@ -302,10 +361,6 @@
       0 1px 0 rgba(0, 0, 0, 0.45),
       0 2px 3px rgba(0, 0, 0, 0.35);
   }
-
-  /* Bottom meta strip: EXACT same nav-blue gradient + white glow
-     hairline as .status-head so the card footer mirrors the live
-     status bar header. */
   .home-card-meta {
     display: flex; align-items: center; justify-content: center;
     gap: 12px;
@@ -353,13 +408,12 @@
     0%, 100% { opacity: 0.7; }
     50%      { opacity: 1;   }
   }
-
   @media (max-width: 560px) {
     .home-cards { grid-template-columns: 1fr; }
     .home-card-banner { aspect-ratio: 16 / 7; }
   }
 
-  /* About section: tightened rhythm + source-attribution chip row */
+  /* ---- About section ---- */
   .home-about {
     max-width: 860px; margin: 0 auto;
     padding: 22px 20px 80px;
@@ -373,35 +427,6 @@
   .home-about p {
     color: var(--muted); font-size: 15px; line-height: 1.7;
     margin: 0 0 14px;
-  }
-  .home-about .chips {
-    margin-top: 18px;
-    display: flex; flex-wrap: wrap; gap: 8px;
-  }
-  .home-about .chip {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 11px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--muted);
-    background: rgba(255, 255, 255, 0.02);
-    text-decoration: none;
-    transition: color 0.15s, border-color 0.15s, background 0.15s;
-  }
-  .home-about .chip:hover {
-    color: var(--fg);
-    border-color: var(--accent-2);
-    background: rgba(93, 211, 255, 0.05);
-    text-decoration: none;
-  }
-  .home-about .chip-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--accent-2);
-    box-shadow: 0 0 6px rgba(93, 211, 255, 0.4);
   }
 </style>
 </head>
@@ -423,82 +448,30 @@
   </div>
 </nav>
 
-<header class="hero">
-  <div class="hero-title">
-    <!-- Left hurricane: spins CCW (top sweeps left, away from the
-         title). Blue "A" is placed OUTSIDE the rotating group so it
-         stays upright. -->
-    <svg class="hero-icon hero-icon-left" viewBox="-34 -34 68 68" aria-hidden="true">
-      <g>
-        <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="#1e3a8a"/>
-        <animateTransform attributeName="transform" attributeType="XML"
-          type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>
-      </g>
-      <text x="0" y="0" text-anchor="middle" dominant-baseline="central"
-            font-size="22" font-weight="900" fill="#ffffff"
-            font-family="Metropolis, 'Helvetica Neue', Arial, sans-serif"
-            letter-spacing="0">A</text>
-    </svg>
-
-    <h1>Triple-A-Tropics</h1>
-
-    <!-- Right hurricane: outer group flips horizontally (scale -1,1),
-         so the inner rotation (same SMIL direction as the left) is
-         mirrored visually, making the top sweep RIGHT (away from the
-         title). Text sits outside the mirror so the "A" reads
-         correctly. -->
-    <svg class="hero-icon hero-icon-right" viewBox="-34 -34 68 68" aria-hidden="true">
-      <g transform="scale(-1, 1)">
-        <g>
-          <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="#1e3a8a"/>
-          <animateTransform attributeName="transform" attributeType="XML"
-            type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>
-        </g>
-      </g>
-      <text x="0" y="0" text-anchor="middle" dominant-baseline="central"
-            font-size="22" font-weight="900" fill="#ffffff"
-            font-family="Metropolis, 'Helvetica Neue', Arial, sans-serif"
-            letter-spacing="0">A</text>
-    </svg>
-  </div>
-  <p>Real-time tropical cyclone analysis, climatology, and tracking. Auto-updated every six hours.</p>
-  <div class="handle">Curated by <b>Andrew Austin-Adler</b></div>
+<header class="page-head">
+  <h1>Live Tropical Activity</h1>
+  <p>Every named storm and active disturbance, every basin, this season.</p>
 </header>
 
-<section class="home-wrap">
-
-  <!-- Live status strip. One row per basin, showing activity dot,
-       YTD named-storm count, and season context. Populated by the
-       script at the bottom of the file. -->
-  <div class="home-status">
-    <div class="status-head">
-      <span class="status-label">Live status</span>
-      <span class="status-hint">Auto-refresh every 6 h</span>
+<section class="chart-section global-map-section">
+  <div class="chart-card global-map-card">
+    <div class="global-map-wrap">
+      <svg id="globalMap" preserveAspectRatio="xMidYMid meet"></svg>
     </div>
-    <div class="basin-grid">
-      <a class="basin-row" data-basin="al" href="/climatology/">
-        <span class="basin-head"><span class="dot"></span><span class="code">ATL</span></span>
-        <span class="bstat count" data-role="count">loading</span>
-        <span class="bstat season" data-role="season">loading</span>
-      </a>
-      <a class="basin-row" data-basin="ep" href="/climatology/">
-        <span class="basin-head"><span class="dot"></span><span class="code">EPAC</span></span>
-        <span class="bstat count" data-role="count">loading</span>
-        <span class="bstat season" data-role="season">loading</span>
-      </a>
-      <a class="basin-row" data-basin="wp" href="/climatology/">
-        <span class="basin-head"><span class="dot"></span><span class="code">WPAC</span></span>
-        <span class="bstat count" data-role="count">loading</span>
-        <span class="bstat season" data-role="season">loading</span>
-      </a>
-    </div>
+    <aside class="global-storm-list" aria-label="Season storms">
+      <div class="gm-list-head">
+        <h3>Season storms</h3>
+        <div class="gm-list-summary" id="stormListHeader">Loading…</div>
+        <div class="gm-list-hint">Click any storm to highlight its track</div>
+      </div>
+      <ul id="stormList" role="listbox"></ul>
+    </aside>
   </div>
+</section>
 
+<section class="home-cards-wrap">
   <div class="home-cards">
 
-    <!-- Climatology card: banner image is a 2005-Atlantic poster with
-         baked-in title. h2 is visually hidden so the image text carries
-         the heading without duplication. -->
     <a class="home-card" href="/climatology/">
       <div class="home-card-banner">
         <img src="Climatology-page.jpg"
@@ -514,7 +487,6 @@
       </div>
     </a>
 
-    <!-- SST card: banner image is an SST poster with baked-in title. -->
     <a class="home-card" href="/sst/">
       <div class="home-card-banner">
         <img src="sst-page.jpg"
@@ -530,10 +502,6 @@
       </div>
     </a>
 
-    <!-- Satellite Plots card: banner image is the Irma neon IR with
-         baked-in title. Links to /satellite/ which doesn't exist yet —
-         leave the link as a placeholder and we'll wire it when the page
-         lands. -->
     <a class="home-card" href="/satellite/">
       <div class="home-card-banner">
         <img src="Satoshiplot.jpg"
@@ -565,117 +533,9 @@
 </footer>
 
 <script>
-  // Stamp the current year into the footer.
-  (function () {
-    var y = new Date().getFullYear();
-    var f = document.getElementById('year');
-    if (f) f.textContent = y;
-  })();
-
-  // --- Live basin status rows -----------------------------------------
-  // For each basin (ATL / EPAC / WPAC) we hydrate two cells:
-  //   1. "count":  either "N active" (pulsing green) or "N named YTD"
-  //   2. "season": countdown to season start, live ACE + %-of-normal
-  //                 during season, or final rank after season ends.
-  //                 WPAC has no official start/end so it always shows
-  //                 the live ACE form.
-  //
-  // All fetches are tolerant: a missing JSON leaves the default
-  // "loading" text in place but does not break the rest of the page.
-  (function () {
-    var now = new Date();
-    var y = now.getUTCFullYear();
-
-    // Basin definitions. `start`/`end` are month (0-indexed) + day
-    // pairs in UTC. `yearRound: true` disables the countdown logic
-    // so WPAC always reports live stats.
-    var BASINS = [
-      { code: 'al', label: 'June 1',  start: [5, 1],  end: [10, 30] },
-      { code: 'ep', label: 'May 15',  start: [4, 15], end: [10, 30] },
-      { code: 'wp', label: null,      start: null,    end: null, yearRound: true }
-    ];
-
-    function daysUntil(d) {
-      return Math.max(0, Math.ceil((d - now) / 86400000));
-    }
-
-    // Safe fetch → JSON or null.
-    function fetchJSON(path) {
-      return fetch(path, { cache: 'no-cache' })
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .catch(function () { return null; });
-    }
-
-    // Populate one basin row.
-    function hydrate(basin) {
-      var row = document.querySelector('.basin-row[data-basin="' + basin.code + '"]');
-      if (!row) return;
-      var countEl  = row.querySelector('[data-role="count"]');
-      var seasonEl = row.querySelector('[data-role="season"]');
-
-      Promise.all([
-        fetchJSON(basin.code + '_tracks_data.json'),
-        fetchJSON(basin.code + '_ace_data.json')
-      ]).then(function (res) {
-        var t = res[0], a = res[1];
-
-        // Count cell: "active" beats "named" for surfacing live storms.
-        var named = (t && t.header && typeof t.header.named === 'number') ? t.header.named : 0;
-        var activeStorms = (t && Array.isArray(t.storms))
-          ? t.storms.filter(function (s) { return s && s.is_active; })
-          : [];
-        if (activeStorms.length > 0) {
-          row.classList.add('active');
-          if (countEl) countEl.innerHTML = '<b>' + activeStorms.length + '</b> active';
-        } else {
-          row.classList.remove('active');
-          if (countEl) countEl.innerHTML = '<b>' + named + '</b> named YTD';
-        }
-
-        // Season cell. Mode picked by basin + today's date.
-        if (!seasonEl) return;
-        var ace   = (a && a.current && typeof a.current.latest_value === 'number') ? a.current.latest_value : null;
-        var doy   = (a && typeof a.today_doy === 'number') ? a.today_doy : 0;
-        var norm  = (a && a.climo && a.climo.mean && doy > 0) ? a.climo.mean[doy - 1] : null;
-        var rank  = a ? a.current_rank : null;
-        var total = a ? a.total_seasons : null;
-
-        function inSeasonText() {
-          if (ace === null) return 'Live feed loading';
-          var parts = ['ACE <b>' + ace.toFixed(1) + '</b>'];
-          if (norm && norm > 0) {
-            parts.push('<b>' + Math.round((ace / norm) * 100) + '%</b> of normal');
-          }
-          if (rank && total) parts.push('rank <b>' + rank + '</b>/' + total);
-          return parts.join(' <span class="sep">·</span> ');
-        }
-
-        if (basin.yearRound) {
-          seasonEl.innerHTML = inSeasonText();
-          return;
-        }
-
-        var seasonStart = new Date(Date.UTC(y, basin.start[0], basin.start[1]));
-        var seasonEnd   = new Date(Date.UTC(y, basin.end[0], basin.end[1], 23, 59, 59));
-        if (now < seasonStart) {
-          seasonEl.innerHTML = 'Season starts <b>' + basin.label + '</b> ' +
-                               '<span class="sep">·</span> <b>' + daysUntil(seasonStart) + '</b> days';
-        } else if (now > seasonEnd) {
-          if (ace !== null && rank && total) {
-            seasonEl.innerHTML = 'Final ACE <b>' + ace.toFixed(1) + '</b> ' +
-                                 '<span class="sep">·</span> rank <b>' + rank + '</b>/' + total;
-          } else {
-            seasonEl.innerHTML = 'Season complete';
-          }
-        } else {
-          seasonEl.innerHTML = inSeasonText();
-        }
-      });
-    }
-
-    BASINS.forEach(hydrate);
-  })();
+  document.getElementById('year').textContent = new Date().getFullYear();
 </script>
+<script src="/global_map.js" defer></script>
 
 </body>
 </html>
