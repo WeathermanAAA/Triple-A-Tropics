@@ -2153,6 +2153,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--no-live", action="store_true")
     parser.add_argument("--dump-json", action="store_true",
                         help="Just print the extracted storm data JSON and exit.")
+    parser.add_argument("--json-only", action="store_true",
+                        help="Write {basin}_tracks_data.json but skip the heavy "
+                             "{basin}_tracks.html SVG render. Used by the homepage "
+                             "global map widget which only consumes the JSON.")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     basin = args.basin
@@ -2192,25 +2196,26 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(json.dumps(payload, indent=2, default=str))
         return 0
 
-    # Load Natural Earth basemap — prefer 50m (shows small islands) and
-    # fall back to 110m if the higher-res files aren't present.
-    countries = (load_natural_earth(HERE / "ne_50m_admin_0_countries.geojson")
-                 or load_natural_earth(HERE / "ne_110m_admin_0_countries.geojson"))
-    coast = (load_natural_earth(HERE / "ne_50m_coastline.geojson")
-             or load_natural_earth(HERE / "ne_110m_coastline.geojson"))
-    if countries is None and coast is None:
-        print(f"{log} WARN: no Natural Earth GeoJSON found — basemap will "
-              f"only show the grid. Workflow downloads these into the repo.")
-
-    html = render_html(payload, basin_cfg["extent"], countries, coast)
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     json_path = OUTPUT_DIR / f"{basin}_tracks_data.json"
-    html_path = OUTPUT_DIR / f"{basin}_tracks.html"
     json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    html_path.write_text(html, encoding="utf-8")
     print(f"{log} wrote {json_path}")
-    print(f"{log} wrote {html_path}")
+
+    if not args.json_only:
+        # Load Natural Earth basemap — prefer 50m (shows small islands) and
+        # fall back to 110m if the higher-res files aren't present.
+        countries = (load_natural_earth(HERE / "ne_50m_admin_0_countries.geojson")
+                     or load_natural_earth(HERE / "ne_110m_admin_0_countries.geojson"))
+        coast = (load_natural_earth(HERE / "ne_50m_coastline.geojson")
+                 or load_natural_earth(HERE / "ne_110m_coastline.geojson"))
+        if countries is None and coast is None:
+            print(f"{log} WARN: no Natural Earth GeoJSON found — basemap will "
+                  f"only show the grid. Workflow downloads these into the repo.")
+
+        html = render_html(payload, basin_cfg["extent"], countries, coast)
+        html_path = OUTPUT_DIR / f"{basin}_tracks.html"
+        html_path.write_text(html, encoding="utf-8")
+        print(f"{log} wrote {html_path}")
     print(f"{log} {year}: {header['named']} named · "
           f"{header['cat1plus']} {basin_cfg['vocab']['cat1plus']} · "
           f"{header['cat5']} {basin_cfg['vocab']['cat5']} · "
