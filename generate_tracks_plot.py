@@ -2648,42 +2648,123 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       }
     });
 
+    // SSHWS color step expression — shared across the three phase-shape
+    // layers (tropical circles, subtropical squares, non-tropical
+    // triangles) so a 50 kt subtropical storm and a 50 kt tropical storm
+    // read the same TS green. Step (not interpolate) because each
+    // category is a flat color band; an "interpolate" would render a
+    // 25 kt TD as 73% along the TD→TS gradient (visibly green),
+    // mismatching the legend swatch.
+    var COLOR_STEP = [
+      "step", ["coalesce", ["get", "intensity_kt"], 0],
+      "#3fa4ff",       // <34 kt: TD (default below first stop)
+      34,  "#46c56a",  // 34-63: TS
+      64,  "#ffe14d",  // 64-82: C1
+      83,  "#ff9a2f",  // 83-95: C2
+      96,  "#ff4d3b",  // 96-112: C3
+      113, "#e33ad4",  // 113-136: C4
+      137, "#b03bff"   // ≥137: C5
+    ];
+    // Shared zoom-radius/icon-size ramp so circles and symbols read at
+    // the same physical pixel footprint (the per-basin SVG uses r=3 for
+    // TD, r=4 for TS, r=5 for major; this approximates that progression
+    // across MapLibre's zoom range).
+    var ZOOM_RADIUS = ["interpolate", ["linear"], ["zoom"],
+      0, 2.0, 4, 3.0, 8, 4.0, 12, 5.0];
+    // For 24px-base SDF icons, icon-size = displayDiameter / 24.
+    // Targeting ~4/6/8/10 px diameters at zoom 0/4/8/12.
+    var ZOOM_ICON_SIZE = ["interpolate", ["linear"], ["zoom"],
+      0, 0.20, 4, 0.28, 8, 0.36, 12, 0.45];
+
+    // Tropical observations — filled circle, intensity-colored.
+    // The white halo is dropped for TDs (<34 kt) because at 2-3 px
+    // radii a 0.5 px white stroke covers a meaningful fraction of the
+    // visible dot, washing the cream toward white. TS+ keep the halo
+    // because its larger radius leaves the fill dominant.
     map.addLayer({
-      id: "observations",
+      id: "observations-tropical",
       type: "circle",
       source: "storms",
       filter: ["all",
         ["==", ["geometry-type"], "Point"],
-        ["==", ["get", "kind"], "observation"]
+        ["==", ["get", "kind"], "observation"],
+        ["!=", ["get", "is_subtropical"], true],
+        ["!=", ["get", "is_nontropical"], true]
       ],
       paint: {
-        // SSHWS is a step function — each category is a flat color from
-        // its lower threshold to just below the next. An "interpolate"
-        // here would render a 25 kt TD as 73% along the TD→TS gradient
-        // (visibly green), which mismatches the legend swatch.
-        "circle-color": [
+        "circle-color": COLOR_STEP,
+        "circle-radius": ZOOM_RADIUS,
+        "circle-stroke-color": [
           "step", ["coalesce", ["get", "intensity_kt"], 0],
-          "#fff5cc",       // <34 kt: TD (default below first stop)
-          34,  "#46c56a",  // 34-63: TS
-          64,  "#ffe14d",  // 64-82: C1
-          83,  "#ff9a2f",  // 83-95: C2
-          96,  "#ff4d3b",  // 96-112: C3
-          113, "#e33ad4",  // 113-136: C4
-          137, "#b03bff"   // ≥137: C5
+          "rgba(63,164,255,0)",  // TD: transparent (no visible halo)
+          34, "#ffffff"          // TS+: white halo
         ],
-        "circle-radius": [
-          "interpolate", ["linear"], ["zoom"],
-          0, 2.0, 4, 3.0, 8, 4.0, 12, 5.0
+        "circle-stroke-width": [
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          0,    // TD: no stroke
+          34, 0.5
         ],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 0.5,
         "circle-stroke-opacity": 0.7
       }
     });
 
-    // ---- Hover popup on observations ----
+    // Subtropical observations — filled square, intensity-colored,
+    // white halo (matches the per-basin SVG's <rect fill=color
+    // stroke=#ffffff stroke-width=0.9>).
+    map.addLayer({
+      id: "observations-subtropical",
+      type: "symbol",
+      source: "storms",
+      filter: ["all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "kind"], "observation"],
+        ["==", ["get", "is_subtropical"], true]
+      ],
+      layout: {
+        "icon-image": "phase-square",
+        "icon-size": ZOOM_ICON_SIZE,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true
+      },
+      paint: {
+        "icon-color": COLOR_STEP,
+        "icon-halo-color": "#ffffff",
+        "icon-halo-width": 1.0
+      }
+    });
+
+    // Non-tropical observations (extratropical / pre-TC disturbance /
+    // remnant low) — filled up-triangle, intensity-colored, white halo.
+    map.addLayer({
+      id: "observations-nontropical",
+      type: "symbol",
+      source: "storms",
+      filter: ["all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "kind"], "observation"],
+        ["==", ["get", "is_nontropical"], true]
+      ],
+      layout: {
+        "icon-image": "phase-triangle",
+        "icon-size": ZOOM_ICON_SIZE,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true
+      },
+      paint: {
+        "icon-color": COLOR_STEP,
+        "icon-halo-color": "#ffffff",
+        "icon-halo-width": 1.0
+      }
+    });
+
+    // ---- Hover popup on observations (all three phase-shape layers) ----
+    var OBS_LAYERS = [
+      "observations-tropical",
+      "observations-subtropical",
+      "observations-nontropical"
+    ];
     var popup = null;
-    map.on("mouseenter", "observations", function (e) {
+    function onObsEnter(e) {
       map.getCanvas().style.cursor = "pointer";
       var f = e.features[0];
       var props = f.properties || {};
@@ -2719,18 +2800,23 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         closeButton: false, closeOnClick: false,
         offset: 8, maxWidth: "240px"
       }).setLngLat(coords).setHTML(html).addTo(map);
-    });
-    map.on("mousemove", "observations", function (e) {
+    }
+    function onObsMove(e) {
       if (!popup) return;
       var f = e.features[0];
       var coords = f.geometry.coordinates.slice();
       while (e.lngLat.lng - coords[0] > 180)  coords[0] += 360;
       while (e.lngLat.lng - coords[0] < -180) coords[0] -= 360;
       popup.setLngLat(coords);
-    });
-    map.on("mouseleave", "observations", function () {
+    }
+    function onObsLeave() {
       map.getCanvas().style.cursor = "";
       if (popup) { popup.remove(); popup = null; }
+    }
+    OBS_LAYERS.forEach(function (id) {
+      map.on("mouseenter", id, onObsEnter);
+      map.on("mousemove",  id, onObsMove);
+      map.on("mouseleave", id, onObsLeave);
     });
   }
 
@@ -2822,7 +2908,43 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     });
   }
 
+  // Register SDF icons used by the subtropical/non-tropical observation
+  // layers. We render filled black shapes onto a 24×24 transparent
+  // canvas; with sdf:true, MapLibre treats the alpha channel as a mask
+  // and tints with `icon-color` per feature. Pixels outside the shape
+  // are alpha=0 so the surrounding canvas never paints. The 24 px base
+  // pairs with the icon-size ramp above (display diameter = size × 24).
+  function registerPhaseIcons() {
+    var size = 24;
+    function makeShape(draw) {
+      var canvas = document.createElement("canvas");
+      canvas.width = size; canvas.height = size;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#000000";
+      draw(ctx, size);
+      return ctx.getImageData(0, 0, size, size);
+    }
+    if (!map.hasImage("phase-square")) {
+      map.addImage("phase-square", makeShape(function (ctx, s) {
+        var pad = 4;
+        ctx.fillRect(pad, pad, s - 2 * pad, s - 2 * pad);
+      }), { sdf: true });
+    }
+    if (!map.hasImage("phase-triangle")) {
+      map.addImage("phase-triangle", makeShape(function (ctx, s) {
+        var pad = 3;
+        ctx.beginPath();
+        ctx.moveTo(s / 2, pad);
+        ctx.lineTo(s - pad, s - pad);
+        ctx.lineTo(pad, s - pad);
+        ctx.closePath();
+        ctx.fill();
+      }), { sdf: true });
+    }
+  }
+
   map.on("load", function () {
+    registerPhaseIcons();
     fetch("global_storms.geojson", { cache: "no-cache" })
       .then(function (r) { return r.json(); })
       .then(function (data) {
