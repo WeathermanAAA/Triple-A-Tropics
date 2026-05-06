@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-06 05:02 UTC",
+  "updated": "2026-05-06 08:41 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 42.85
+    "total_ace": 42.97
   },
   "vocab": {
     "named": "named storms",
@@ -22,10 +22,10 @@
       "name": "FIVE",
       "season": 2026,
       "start": "2026-05-06T00:00:00",
-      "end": "2026-05-06T00:00:00",
+      "end": "2026-05-06T06:00:00",
       "peak_wind_kt": 35.0,
       "peak_pressure_mb": 1003.0,
-      "ace": 0.12,
+      "ace": 0.24,
       "max_category": "TS",
       "current_category": "TS",
       "is_active": true,
@@ -125,8 +125,8 @@
         },
         {
           "t": "2026-05-05T18:00:00",
-          "lat": 7.7,
-          "lon": 147.8,
+          "lat": 7.8,
+          "lon": 147.9,
           "wind_kt": 30.0,
           "pressure_mb": 1004.0,
           "cls": "TD",
@@ -134,8 +134,17 @@
         },
         {
           "t": "2026-05-06T00:00:00",
-          "lat": 7.3,
-          "lon": 146.8,
+          "lat": 7.6,
+          "lon": 147.5,
+          "wind_kt": 35.0,
+          "pressure_mb": 1003.0,
+          "cls": "TS",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-05-06T06:00:00",
+          "lat": 7.4,
+          "lon": 146.9,
           "wind_kt": 35.0,
           "pressure_mb": 1003.0,
           "cls": "TS",
@@ -147,8 +156,8 @@
       "sid": "JTWC_WP942026",
       "name": "94W",
       "season": 2026,
-      "start": "2026-05-06T00:00:00",
-      "end": "2026-05-06T00:00:00",
+      "start": "2026-05-06T06:00:00",
+      "end": "2026-05-06T06:00:00",
       "peak_wind_kt": 15.0,
       "peak_pressure_mb": 1009.0,
       "ace": 0.0,
@@ -160,9 +169,9 @@
       "atcf_id": "94W",
       "points": [
         {
-          "t": "2026-05-06T00:00:00",
-          "lat": 3.0,
-          "lon": 158.7,
+          "t": "2026-05-06T06:00:00",
+          "lat": 2.8,
+          "lon": 157.7,
           "wind_kt": 15.0,
           "pressure_mb": 1009.0,
           "cls": "TD",
