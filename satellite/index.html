@@ -321,7 +321,7 @@
 
 <header class="page-head">
   <h1>Custom Satellite Zooms</h1>
-  <p>Draw a rectangle anywhere in GOES-East coverage (Americas, Atlantic, eastern Pacific). Himawari (Western Pacific) and METEOSAT (Atlantic east / Africa / Europe) coverage coming soon.</p>
+  <p>Draw a rectangle anywhere in GOES-East (Americas, Atlantic, eastern Pacific) or Himawari (Western Pacific, via Himawari-9 and Himawari-8 archive back to 2017) coverage. METEOSAT (Atlantic east / Africa / Europe) coming soon.</p>
 </header>
 
 <section class="chart-section">
@@ -413,7 +413,7 @@
   <p>Any bbox size works — the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
 
   <h2>Coverage</h2>
-  <p>Currently GOES-19 (GOES-East) only — operational disk roughly from 152°W to 6°E, 75°S to 75°N. That covers the entire Atlantic basin, the East Pacific, the Americas, and the eastern half of the Pacific. Himawari (West Pacific) and GOES-18 (full Pacific coverage) are on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters once GOES-19 mesoscale tracking is wired in.</p>
+  <p>Two satellite families today: <b>GOES-East</b> (currently GOES-19, with the GOES-16 archive back to 2017) covers ~135°W to 5°W — the entire Atlantic basin, East Pacific, and the Americas. <b>Himawari-Pacific</b> (Himawari-9 since 2022-12-13, with the Himawari-8 archive back to 2017) covers ~60°E to 220°E — Western Pacific, East Asia, Oceania. The picker auto-routes by bbox center, so any Western Pacific or East Pacific zoom works without picking a satellite by hand. METEOSAT (Atlantic east / Africa / Europe) and GOES-18 (full Pacific) are on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters.</p>
 </section>
 
 <footer>
