@@ -357,9 +357,12 @@
         <div class="sat-field">
           <label for="sat-channel">Channel</label>
           <select id="sat-channel">
-            <option value="13">IR · Channel 13 (clean longwave, 10.3 µm)</option>
-            <option value="8">Upper WV · Channel 8 (6.2 µm)</option>
-            <option value="2">Visible · Channel 2 (0.64 µm)</option>
+            <option value="clean_ir">Clean IR · 10.4 µm</option>
+            <option value="ir_window">IR window · 11.2 µm</option>
+            <option value="wv_upper">Upper WV · 6.2 µm</option>
+            <option value="wv_lower">Lower WV · 7.3 µm</option>
+            <option value="shortwave_ir">Shortwave IR · 3.9 µm</option>
+            <option value="visible_red">Visible · 0.64 µm</option>
           </select>
         </div>
 
@@ -662,8 +665,22 @@
   }
 
   // ---- Render call ----
+  // Legacy numeric -> generic channel map. Used to silently rewrite old
+  // share-link URLs (?channel=13) into the current generic-name API. The
+  // backend still accepts numeric channels with an X-Deprecated-Channel-API
+  // header, but every NEW request from this page uses generic names so we
+  // don't accumulate deprecation hits.
+  const NUMERIC_TO_GENERIC = {
+    2:  'visible_red',
+    7:  'shortwave_ir',
+    8:  'wv_upper',
+    10: 'wv_lower',
+    13: 'clean_ir',
+    14: 'ir_window',
+  };
+
   function buildRequestBody() {
-    const channel = parseInt(document.getElementById('sat-channel').value, 10);
+    const channel = document.getElementById('sat-channel').value;  // generic name
     const enhancement = document.getElementById('sat-enh').value;
     let time = 'latest';
     if (!latestCheckbox.checked && timeInput.value) {
@@ -709,17 +726,31 @@
       // skip the badge silently.
       const downsampleHdr = resp.headers.get('X-Downsample');
       const downsampleN = downsampleHdr ? parseInt(downsampleHdr, 10) : 1;
+      // Satellite identity headers — A1 ships these. Older deploys without
+      // them gracefully degrade (the satellite line just skips).
+      const satHdr = resp.headers.get('X-Satellite');
+      const satFamilyHdr = resp.headers.get('X-Satellite-Family');
+      const sensorHdr = resp.headers.get('X-Sensor');
 
       const url = URL.createObjectURL(blob);
       document.getElementById('sat-result-img').src = url;
       document.getElementById('sat-download').href = url;
-      const fname = 'goes19_ch' + body.channel + '_' + body.enhancement + '_' +
+      // Filename uses the satellite name from the header when present
+      // (e.g. goes19 / goes16 — auto-tracks the time-based picker).
+      const satSlug = satHdr ? satHdr.toLowerCase().replace('-', '') : 'sat';
+      const fname = satSlug + '_' + body.channel + '_' + body.enhancement + '_' +
         body.bbox.map(v => v.toFixed(1)).join('_') + '.png';
       document.getElementById('sat-download').download = fname;
       let metaText = productHdr + ' · ' + cacheHdr + ' · ' +
         (renderMs/1000).toFixed(2) + 's render · ' + elapsed + 's total';
       if (downsampleN > 1) {
         metaText += ' · auto-downsampled ' + downsampleN + '×';
+      }
+      if (satHdr) {
+        let satLine = 'Satellite: ' + satHdr;
+        if (sensorHdr) satLine += ' (' + sensorHdr + ')';
+        if (satFamilyHdr) satLine += ' · ' + satFamilyHdr + ' family';
+        metaText += '  ·  ' + satLine;
       }
       document.getElementById('sat-result-meta').textContent = metaText;
       document.getElementById('sat-result-section').style.display = 'block';
@@ -770,7 +801,15 @@
     map.fitBounds(rect.getBounds(), { padding: [40, 40] });
 
     const channel = p.get('channel');
-    if (channel) document.getElementById('sat-channel').value = channel;
+    if (channel) {
+      // Legacy share links carry numeric channels (e.g. ?channel=13).
+      // Quietly rewrite to the generic name the dropdown understands; the
+      // backend would still accept the numeric form (with a deprecation
+      // header), but the channel <select> only has generic-name options.
+      const asNum = parseInt(channel, 10);
+      const generic = (Number.isFinite(asNum) && NUMERIC_TO_GENERIC[asNum]) || channel;
+      document.getElementById('sat-channel').value = generic;
+    }
     const enh = p.get('enhance');
     if (enh) document.getElementById('sat-enh').value = enh;
     const time = p.get('time');
