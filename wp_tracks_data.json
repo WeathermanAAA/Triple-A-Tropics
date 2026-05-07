@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-07 10:11 UTC",
+  "updated": "2026-05-07 14:46 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 43.47
+    "total_ace": 43.59
   },
   "vocab": {
     "named": "named storms",
@@ -22,10 +22,10 @@
       "name": "HAGUPIT",
       "season": 2026,
       "start": "2026-05-06T00:00:00",
-      "end": "2026-05-07T06:00:00",
+      "end": "2026-05-07T12:00:00",
       "peak_wind_kt": 35.0,
       "peak_pressure_mb": 1001.0,
-      "ace": 0.74,
+      "ace": 0.86,
       "max_category": "TS",
       "current_category": "TS",
       "is_active": true,
@@ -181,6 +181,15 @@
           "t": "2026-05-07T06:00:00",
           "lat": 7.5,
           "lon": 142.9,
+          "wind_kt": 35.0,
+          "pressure_mb": 1001.0,
+          "cls": "TS",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-05-07T12:00:00",
+          "lat": 7.7,
+          "lon": 142.2,
           "wind_kt": 35.0,
           "pressure_mb": 1001.0,
           "cls": "TS",
