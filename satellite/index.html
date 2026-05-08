@@ -437,6 +437,12 @@
   const MAX_BBOX_DEG = 80;
   // GOES-East operational disk (matches backend validator)
   const GOES_DISK = { lonMin: -152.04, latMin: -75, lonMax: 6.04, latMax: 75 };
+  // Himawari operational disk. Sub-sat 140.7°E; full disk wraps to ~220°E,
+  // but Leaflet maxBounds clamps drawing to ±180° so a 60–180 east-hemisphere
+  // window covers everything reachable from this UI. The backend picker
+  // routes by bbox center, so this is purely a "did the user land somewhere
+  // a satellite can see" gate.
+  const HIMAWARI_DISK = { lonMin: 60.0, latMin: -75, lonMax: 180.0, latMax: 75 };
 
   // Bbox rectangle style — cyan accent matches the rest of the site
   // palette. Fill alpha 0.15 (vs. 0.10 elsewhere) is a deliberate bump:
@@ -589,14 +595,19 @@
     return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   }
 
+  function overlapsDisk(bbox, disk) {
+    const [lonMin, latMin, lonMax, latMax] = bbox;
+    return !(lonMax < disk.lonMin || lonMin > disk.lonMax ||
+             latMax < disk.latMin || latMin > disk.latMax);
+  }
+
   function validateBbox(bbox) {
     const [lonMin, latMin, lonMax, latMax] = bbox;
     if (lonMax - lonMin > MAX_BBOX_DEG || latMax - latMin > MAX_BBOX_DEG) {
       return 'Bbox must be ≤ ' + MAX_BBOX_DEG + '° per axis.';
     }
-    if (lonMax < GOES_DISK.lonMin || lonMin > GOES_DISK.lonMax ||
-        latMax < GOES_DISK.latMin || latMin > GOES_DISK.latMax) {
-      return 'Bbox must overlap the GOES-19 visible disk.';
+    if (!overlapsDisk(bbox, GOES_DISK) && !overlapsDisk(bbox, HIMAWARI_DISK)) {
+      return 'Bbox must overlap GOES-East or Himawari coverage.';
     }
     return null;
   }
