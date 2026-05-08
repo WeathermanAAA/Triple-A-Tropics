@@ -435,14 +435,6 @@
   // input (e.g. someone dragging a rectangle across the entire disk by
   // accident) without blocking the legitimate large-bbox use case.
   const MAX_BBOX_DEG = 80;
-  // GOES-East operational disk (matches backend validator)
-  const GOES_DISK = { lonMin: -152.04, latMin: -75, lonMax: 6.04, latMax: 75 };
-  // Himawari operational disk. Sub-sat 140.7°E; full disk wraps to ~220°E,
-  // but Leaflet maxBounds clamps drawing to ±180° so a 60–180 east-hemisphere
-  // window covers everything reachable from this UI. The backend picker
-  // routes by bbox center, so this is purely a "did the user land somewhere
-  // a satellite can see" gate.
-  const HIMAWARI_DISK = { lonMin: 60.0, latMin: -75, lonMax: 180.0, latMax: 75 };
 
   // Bbox rectangle style — cyan accent matches the rest of the site
   // palette. Fill alpha 0.15 (vs. 0.10 elsewhere) is a deliberate bump:
@@ -595,19 +587,20 @@
     return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   }
 
-  function overlapsDisk(bbox, disk) {
-    const [lonMin, latMin, lonMax, latMax] = bbox;
-    return !(lonMax < disk.lonMin || lonMin > disk.lonMax ||
-             latMax < disk.latMin || latMin > disk.latMax);
-  }
-
+  // Shape-only validator. Coverage gating belongs to the backend picker,
+  // which knows about every active satellite + roadmap placeholders and
+  // returns a 422 with a user-facing message naming the right satellite
+  // for the region. Mirroring that here just creates frontend/backend drift.
   function validateBbox(bbox) {
+    if (!Array.isArray(bbox) || bbox.length !== 4 || bbox.some(v => !Number.isFinite(v))) {
+      return 'Bbox is malformed.';
+    }
     const [lonMin, latMin, lonMax, latMax] = bbox;
+    if (lonMin >= lonMax || latMin >= latMax) {
+      return 'Bbox is malformed (min must be less than max).';
+    }
     if (lonMax - lonMin > MAX_BBOX_DEG || latMax - latMin > MAX_BBOX_DEG) {
       return 'Bbox must be ≤ ' + MAX_BBOX_DEG + '° per axis.';
-    }
-    if (!overlapsDisk(bbox, GOES_DISK) && !overlapsDisk(bbox, HIMAWARI_DISK)) {
-      return 'Bbox must overlap GOES-East or Himawari coverage.';
     }
     return null;
   }
@@ -719,12 +712,20 @@
         body: JSON.stringify(body),
       });
       if (!resp.ok) {
-        let msg = 'render failed (' + resp.status + ')';
+        let detail = null;
         try {
           const j = await resp.json();
-          if (j.detail) msg = (typeof j.detail === 'string') ? j.detail : JSON.stringify(j.detail);
+          if (j.detail) detail = (typeof j.detail === 'string') ? j.detail : JSON.stringify(j.detail);
         } catch {}
-        throw new Error(msg);
+        // 422 = backend coverage / validation error. The picker emits a
+        // user-facing message naming the right satellite for the region
+        // (or the METEOSAT placeholder), so surface it as-is rather than
+        // wrapping it in a generic "Render failed:" prefix.
+        if (resp.status === 422 && detail) {
+          showToast(detail);
+          return;
+        }
+        throw new Error(detail || 'render failed (' + resp.status + ')');
       }
       const blob = await resp.blob();
       const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
