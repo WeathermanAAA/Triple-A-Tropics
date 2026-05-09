@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-08 20:43 UTC",
+  "updated": "2026-05-09 03:53 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 44.28
+    "total_ace": 44.4
   },
   "vocab": {
     "named": "named storms",
@@ -22,10 +22,10 @@
       "name": "HAGUPIT",
       "season": 2026,
       "start": "2026-05-06T00:00:00",
-      "end": "2026-05-08T18:00:00",
+      "end": "2026-05-09T00:00:00",
       "peak_wind_kt": 40.0,
       "peak_pressure_mb": 999.0,
-      "ace": 1.55,
+      "ace": 1.67,
       "max_category": "TS",
       "current_category": "TS",
       "is_active": true,
@@ -239,6 +239,15 @@
           "pressure_mb": 1002.0,
           "cls": "TS",
           "nature": "TS"
+        },
+        {
+          "t": "2026-05-09T00:00:00",
+          "lat": 8.7,
+          "lon": 136.1,
+          "wind_kt": 35.0,
+          "pressure_mb": 1002.0,
+          "cls": "TS",
+          "nature": "TS"
         }
       ]
     },
@@ -246,8 +255,8 @@
       "sid": "JTWC_WP952026",
       "name": "95W",
       "season": 2026,
-      "start": "2026-05-08T18:00:00",
-      "end": "2026-05-08T18:00:00",
+      "start": "2026-05-09T00:00:00",
+      "end": "2026-05-09T00:00:00",
       "peak_wind_kt": 15.0,
       "peak_pressure_mb": 1007.0,
       "ace": 0.0,
@@ -259,9 +268,9 @@
       "atcf_id": "95W",
       "points": [
         {
-          "t": "2026-05-08T18:00:00",
-          "lat": 5.7,
-          "lon": 155.0,
+          "t": "2026-05-09T00:00:00",
+          "lat": 6.2,
+          "lon": 154.0,
           "wind_kt": 15.0,
           "pressure_mb": 1007.0,
           "cls": "TD",
