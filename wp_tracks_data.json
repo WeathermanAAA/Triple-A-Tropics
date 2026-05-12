@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-12 05:27 UTC",
+  "updated": "2026-05-12 08:53 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
@@ -21,10 +21,10 @@
       "sid": "JTWC_WP962026",
       "name": "96W",
       "season": 2026,
-      "start": "2026-05-12T00:00:00",
-      "end": "2026-05-12T00:00:00",
+      "start": "2026-05-12T06:00:00",
+      "end": "2026-05-12T06:00:00",
       "peak_wind_kt": 20.0,
-      "peak_pressure_mb": 1007.0,
+      "peak_pressure_mb": 1006.0,
       "ace": 0.0,
       "max_category": "TD",
       "current_category": "TD",
@@ -34,11 +34,11 @@
       "atcf_id": "96W",
       "points": [
         {
-          "t": "2026-05-12T00:00:00",
-          "lat": 9.6,
-          "lon": 139.4,
+          "t": "2026-05-12T06:00:00",
+          "lat": 8.1,
+          "lon": 138.2,
           "wind_kt": 20.0,
-          "pressure_mb": 1007.0,
+          "pressure_mb": 1006.0,
           "cls": "TD",
           "nature": "DS"
         }
@@ -1268,10 +1268,19 @@
         },
         {
           "t": "2026-05-12T00:00:00",
-          "lat": 12.6,
-          "lon": 129.0,
+          "lat": 12.7,
+          "lon": 128.9,
           "wind_kt": 20.0,
           "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-12T06:00:00",
+          "lat": 13.3,
+          "lon": 129.0,
+          "wind_kt": 20.0,
+          "pressure_mb": 1005.0,
           "cls": "TD",
           "nature": "DS"
         }
