@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-17 14:48 UTC",
+  "updated": "2026-05-17 19:25 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
@@ -17,6 +17,33 @@
     "cat5": "super typhoons"
   },
   "storms": [
+    {
+      "sid": "JTWC_WP982026",
+      "name": "98W",
+      "season": 2026,
+      "start": "2026-05-17T18:00:00",
+      "end": "2026-05-17T18:00:00",
+      "peak_wind_kt": 25.0,
+      "peak_pressure_mb": 1006.0,
+      "ace": 0.0,
+      "max_category": "TD",
+      "current_category": "TD",
+      "is_active": false,
+      "is_invest": true,
+      "recent_invest": true,
+      "atcf_id": "98W",
+      "points": [
+        {
+          "t": "2026-05-17T18:00:00",
+          "lat": 20.7,
+          "lon": 130.6,
+          "wind_kt": 25.0,
+          "pressure_mb": 1006.0,
+          "cls": "TD",
+          "nature": "TS"
+        }
+      ]
+    },
     {
       "sid": "JTWC_WP042026",
       "name": "SINLAKU",
