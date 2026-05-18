@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-18 15:56 UTC",
+  "updated": "2026-05-18 16:09 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 44.52
+    "total_ace": 44.48
   },
   "vocab": {
     "named": "named storms",
@@ -45,14 +45,14 @@
       ]
     },
     {
-      "sid": "JTWC_WP042026",
+      "sid": "2026099N09152",
       "name": "SINLAKU",
       "season": 2026,
       "start": "2026-04-09T18:00:00",
-      "end": "2026-04-19T06:00:00",
-      "peak_wind_kt": 160.0,
-      "peak_pressure_mb": 890.0,
-      "ace": 39.97,
+      "end": "2026-04-20T00:00:00",
+      "peak_wind_kt": 154.0,
+      "peak_pressure_mb": 896.0,
+      "ace": 39.93,
       "max_category": "C5",
       "current_category": "TS",
       "is_active": false,
@@ -61,135 +61,9 @@
       "atcf_id": null,
       "points": [
         {
-          "t": "2026-04-05T12:00:00",
-          "lat": 3.0,
-          "lon": 160.9,
-          "wind_kt": 15.0,
-          "pressure_mb": 1009.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-05T18:00:00",
-          "lat": 3.8,
-          "lon": 160.5,
-          "wind_kt": 15.0,
-          "pressure_mb": 1009.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-06T00:00:00",
-          "lat": 4.3,
-          "lon": 160.3,
-          "wind_kt": 15.0,
-          "pressure_mb": 1006.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-06T06:00:00",
-          "lat": 4.0,
-          "lon": 160.0,
-          "wind_kt": 15.0,
-          "pressure_mb": 1004.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-06T12:00:00",
-          "lat": 4.0,
-          "lon": 158.5,
-          "wind_kt": 15.0,
-          "pressure_mb": 1003.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-06T18:00:00",
-          "lat": 4.0,
-          "lon": 157.0,
-          "wind_kt": 15.0,
-          "pressure_mb": 1003.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-07T00:00:00",
-          "lat": 4.1,
-          "lon": 156.2,
-          "wind_kt": 15.0,
-          "pressure_mb": 1003.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-07T06:00:00",
-          "lat": 4.3,
-          "lon": 155.2,
-          "wind_kt": 15.0,
-          "pressure_mb": 1002.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-07T12:00:00",
-          "lat": 5.0,
-          "lon": 154.1,
-          "wind_kt": 15.0,
-          "pressure_mb": 1002.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-07T18:00:00",
-          "lat": 5.7,
-          "lon": 153.4,
-          "wind_kt": 15.0,
-          "pressure_mb": 1002.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-08T00:00:00",
-          "lat": 6.4,
-          "lon": 153.0,
-          "wind_kt": 15.0,
-          "pressure_mb": 1002.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-08T06:00:00",
-          "lat": 7.5,
-          "lon": 153.3,
-          "wind_kt": 20.0,
-          "pressure_mb": 1002.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-08T12:00:00",
-          "lat": 8.0,
-          "lon": 153.0,
-          "wind_kt": 20.0,
-          "pressure_mb": 1002.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-04-08T18:00:00",
-          "lat": 8.1,
-          "lon": 152.7,
-          "wind_kt": 20.0,
-          "pressure_mb": 1000.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
           "t": "2026-04-09T00:00:00",
-          "lat": 8.1,
-          "lon": 152.4,
+          "lat": 8.7,
+          "lon": 152.1,
           "wind_kt": 25.0,
           "pressure_mb": 1000.0,
           "cls": "TD",
@@ -198,27 +72,27 @@
         {
           "t": "2026-04-09T06:00:00",
           "lat": 8.1,
-          "lon": 152.2,
-          "wind_kt": 30.0,
-          "pressure_mb": 998.0,
+          "lon": 152.1,
+          "wind_kt": 29.0,
+          "pressure_mb": 997.0,
           "cls": "TD",
           "nature": "TS"
         },
         {
           "t": "2026-04-09T12:00:00",
-          "lat": 8.2,
+          "lat": 8.1,
           "lon": 151.8,
-          "wind_kt": 30.0,
+          "wind_kt": 29.0,
           "pressure_mb": 997.0,
           "cls": "TD",
           "nature": "TS"
         },
         {
           "t": "2026-04-09T18:00:00",
-          "lat": 8.3,
-          "lon": 151.5,
+          "lat": 8.4,
+          "lon": 151.6,
           "wind_kt": 35.0,
-          "pressure_mb": 995.0,
+          "pressure_mb": 994.0,
           "cls": "TS",
           "nature": "TS"
         },
@@ -226,8 +100,8 @@
           "t": "2026-04-10T00:00:00",
           "lat": 8.2,
           "lon": 151.2,
-          "wind_kt": 40.0,
-          "pressure_mb": 993.0,
+          "wind_kt": 39.0,
+          "pressure_mb": 994.0,
           "cls": "TS",
           "nature": "TS"
         },
@@ -242,27 +116,27 @@
         },
         {
           "t": "2026-04-10T12:00:00",
-          "lat": 8.0,
+          "lat": 8.1,
           "lon": 150.9,
-          "wind_kt": 55.0,
+          "wind_kt": 54.0,
           "pressure_mb": 986.0,
           "cls": "TS",
           "nature": "TS"
         },
         {
           "t": "2026-04-10T18:00:00",
-          "lat": 8.1,
-          "lon": 151.3,
-          "wind_kt": 65.0,
+          "lat": 8.0,
+          "lon": 151.0,
+          "wind_kt": 60.0,
           "pressure_mb": 983.0,
-          "cls": "C1",
+          "cls": "TS",
           "nature": "TS"
         },
         {
           "t": "2026-04-11T00:00:00",
           "lat": 8.5,
-          "lon": 151.6,
-          "wind_kt": 75.0,
+          "lon": 151.5,
+          "wind_kt": 74.0,
           "pressure_mb": 972.0,
           "cls": "C1",
           "nature": "TS"
@@ -270,7 +144,7 @@
         {
           "t": "2026-04-11T06:00:00",
           "lat": 8.8,
-          "lon": 151.6,
+          "lon": 151.4,
           "wind_kt": 80.0,
           "pressure_mb": 968.0,
           "cls": "C1",
@@ -278,36 +152,36 @@
         },
         {
           "t": "2026-04-11T12:00:00",
-          "lat": 8.9,
-          "lon": 151.4,
-          "wind_kt": 85.0,
+          "lat": 9.0,
+          "lon": 151.1,
+          "wind_kt": 84.0,
           "pressure_mb": 965.0,
           "cls": "C2",
           "nature": "TS"
         },
         {
           "t": "2026-04-11T18:00:00",
-          "lat": 9.2,
-          "lon": 151.4,
-          "wind_kt": 95.0,
+          "lat": 9.3,
+          "lon": 151.5,
+          "wind_kt": 93.0,
           "pressure_mb": 957.0,
           "cls": "C2",
           "nature": "TS"
         },
         {
           "t": "2026-04-12T00:00:00",
-          "lat": 9.8,
+          "lat": 9.9,
           "lon": 151.2,
-          "wind_kt": 115.0,
-          "pressure_mb": 939.0,
-          "cls": "C4",
+          "wind_kt": 109.0,
+          "pressure_mb": 944.0,
+          "cls": "C3",
           "nature": "TS"
         },
         {
           "t": "2026-04-12T06:00:00",
           "lat": 10.3,
           "lon": 150.6,
-          "wind_kt": 130.0,
+          "wind_kt": 128.0,
           "pressure_mb": 921.0,
           "cls": "C4",
           "nature": "TS"
@@ -316,7 +190,7 @@
           "t": "2026-04-12T12:00:00",
           "lat": 11.1,
           "lon": 150.2,
-          "wind_kt": 150.0,
+          "wind_kt": 148.0,
           "pressure_mb": 902.0,
           "cls": "C5",
           "nature": "TS"
@@ -325,16 +199,16 @@
           "t": "2026-04-12T18:00:00",
           "lat": 11.6,
           "lon": 149.5,
-          "wind_kt": 160.0,
-          "pressure_mb": 890.0,
+          "wind_kt": 154.0,
+          "pressure_mb": 896.0,
           "cls": "C5",
           "nature": "TS"
         },
         {
           "t": "2026-04-13T00:00:00",
           "lat": 12.2,
-          "lon": 148.8,
-          "wind_kt": 155.0,
+          "lon": 148.9,
+          "wind_kt": 154.0,
           "pressure_mb": 897.0,
           "cls": "C5",
           "nature": "TS"
@@ -343,7 +217,7 @@
           "t": "2026-04-13T06:00:00",
           "lat": 12.7,
           "lon": 148.0,
-          "wind_kt": 150.0,
+          "wind_kt": 148.0,
           "pressure_mb": 903.0,
           "cls": "C5",
           "nature": "TS"
@@ -352,8 +226,8 @@
           "t": "2026-04-13T12:00:00",
           "lat": 13.1,
           "lon": 147.4,
-          "wind_kt": 150.0,
-          "pressure_mb": 904.0,
+          "wind_kt": 148.0,
+          "pressure_mb": 903.0,
           "cls": "C5",
           "nature": "TS"
         },
@@ -361,7 +235,7 @@
           "t": "2026-04-13T18:00:00",
           "lat": 13.7,
           "lon": 147.0,
-          "wind_kt": 145.0,
+          "wind_kt": 144.0,
           "pressure_mb": 906.0,
           "cls": "C5",
           "nature": "TS"
@@ -370,7 +244,7 @@
           "t": "2026-04-14T00:00:00",
           "lat": 14.3,
           "lon": 146.5,
-          "wind_kt": 135.0,
+          "wind_kt": 134.0,
           "pressure_mb": 919.0,
           "cls": "C4",
           "nature": "TS"
@@ -379,7 +253,7 @@
           "t": "2026-04-14T06:00:00",
           "lat": 14.6,
           "lon": 146.0,
-          "wind_kt": 130.0,
+          "wind_kt": 128.0,
           "pressure_mb": 925.0,
           "cls": "C4",
           "nature": "TS"
@@ -388,7 +262,7 @@
           "t": "2026-04-14T12:00:00",
           "lat": 14.9,
           "lon": 145.8,
-          "wind_kt": 125.0,
+          "wind_kt": 124.0,
           "pressure_mb": 930.0,
           "cls": "C4",
           "nature": "TS"
@@ -396,9 +270,9 @@
         {
           "t": "2026-04-14T18:00:00",
           "lat": 15.2,
-          "lon": 145.5,
+          "lon": 145.4,
           "wind_kt": 115.0,
-          "pressure_mb": 939.0,
+          "pressure_mb": 937.0,
           "cls": "C4",
           "nature": "TS"
         },
@@ -406,7 +280,7 @@
           "t": "2026-04-15T00:00:00",
           "lat": 15.6,
           "lon": 145.2,
-          "wind_kt": 110.0,
+          "wind_kt": 109.0,
           "pressure_mb": 944.0,
           "cls": "C3",
           "nature": "TS"
@@ -415,7 +289,7 @@
           "t": "2026-04-15T06:00:00",
           "lat": 16.0,
           "lon": 144.9,
-          "wind_kt": 110.0,
+          "wind_kt": 109.0,
           "pressure_mb": 944.0,
           "cls": "C3",
           "nature": "TS"
@@ -424,7 +298,7 @@
           "t": "2026-04-15T12:00:00",
           "lat": 16.2,
           "lon": 144.6,
-          "wind_kt": 110.0,
+          "wind_kt": 109.0,
           "pressure_mb": 943.0,
           "cls": "C3",
           "nature": "TS"
@@ -432,17 +306,17 @@
         {
           "t": "2026-04-15T18:00:00",
           "lat": 16.7,
-          "lon": 144.4,
-          "wind_kt": 105.0,
+          "lon": 144.5,
+          "wind_kt": 115.0,
           "pressure_mb": 942.0,
-          "cls": "C3",
+          "cls": "C4",
           "nature": "TS"
         },
         {
           "t": "2026-04-16T00:00:00",
           "lat": 17.1,
           "lon": 144.4,
-          "wind_kt": 100.0,
+          "wind_kt": 99.0,
           "pressure_mb": 955.0,
           "cls": "C3",
           "nature": "TS"
@@ -451,7 +325,7 @@
           "t": "2026-04-16T06:00:00",
           "lat": 17.7,
           "lon": 144.5,
-          "wind_kt": 100.0,
+          "wind_kt": 99.0,
           "pressure_mb": 953.0,
           "cls": "C3",
           "nature": "TS"
@@ -460,7 +334,7 @@
           "t": "2026-04-16T12:00:00",
           "lat": 18.4,
           "lon": 144.8,
-          "wind_kt": 90.0,
+          "wind_kt": 89.0,
           "pressure_mb": 963.0,
           "cls": "C2",
           "nature": "TS"
@@ -469,7 +343,7 @@
           "t": "2026-04-16T18:00:00",
           "lat": 19.0,
           "lon": 145.0,
-          "wind_kt": 85.0,
+          "wind_kt": 84.0,
           "pressure_mb": 966.0,
           "cls": "C2",
           "nature": "TS"
@@ -477,7 +351,7 @@
         {
           "t": "2026-04-17T00:00:00",
           "lat": 19.5,
-          "lon": 145.3,
+          "lon": 145.4,
           "wind_kt": 80.0,
           "pressure_mb": 971.0,
           "cls": "C1",
@@ -485,26 +359,26 @@
         },
         {
           "t": "2026-04-17T06:00:00",
-          "lat": 20.1,
-          "lon": 145.7,
+          "lat": 20.0,
+          "lon": 145.8,
           "wind_kt": 80.0,
-          "pressure_mb": 971.0,
+          "pressure_mb": 970.0,
           "cls": "C1",
           "nature": "TS"
         },
         {
           "t": "2026-04-17T12:00:00",
           "lat": 20.8,
-          "lon": 146.0,
-          "wind_kt": 75.0,
-          "pressure_mb": 974.0,
+          "lon": 146.2,
+          "wind_kt": 80.0,
+          "pressure_mb": 971.0,
           "cls": "C1",
           "nature": "TS"
         },
         {
           "t": "2026-04-17T18:00:00",
-          "lat": 21.5,
-          "lon": 146.2,
+          "lat": 21.3,
+          "lon": 146.5,
           "wind_kt": 70.0,
           "pressure_mb": 974.0,
           "cls": "C1",
@@ -512,9 +386,9 @@
         },
         {
           "t": "2026-04-18T00:00:00",
-          "lat": 22.2,
+          "lat": 22.3,
           "lon": 146.4,
-          "wind_kt": 65.0,
+          "wind_kt": 64.0,
           "pressure_mb": 979.0,
           "cls": "C1",
           "nature": "TS"
@@ -523,15 +397,15 @@
           "t": "2026-04-18T06:00:00",
           "lat": 23.3,
           "lon": 146.8,
-          "wind_kt": 65.0,
-          "pressure_mb": 978.0,
-          "cls": "C1",
+          "wind_kt": 60.0,
+          "pressure_mb": 981.0,
+          "cls": "TS",
           "nature": "TS"
         },
         {
           "t": "2026-04-18T12:00:00",
           "lat": 24.3,
-          "lon": 147.4,
+          "lon": 147.5,
           "wind_kt": 60.0,
           "pressure_mb": 981.0,
           "cls": "TS",
@@ -539,9 +413,9 @@
         },
         {
           "t": "2026-04-18T18:00:00",
-          "lat": 25.4,
-          "lon": 148.3,
-          "wind_kt": 55.0,
+          "lat": 25.3,
+          "lon": 148.5,
+          "wind_kt": 54.0,
           "pressure_mb": 983.0,
           "cls": "TS",
           "nature": "TS"
@@ -550,7 +424,7 @@
           "t": "2026-04-19T00:00:00",
           "lat": 26.5,
           "lon": 149.5,
-          "wind_kt": 55.0,
+          "wind_kt": 54.0,
           "pressure_mb": 983.0,
           "cls": "TS",
           "nature": "TS"
@@ -559,8 +433,8 @@
           "t": "2026-04-19T06:00:00",
           "lat": 27.6,
           "lon": 151.4,
-          "wind_kt": 55.0,
-          "pressure_mb": 983.0,
+          "wind_kt": 51.0,
+          "pressure_mb": 984.0,
           "cls": "TS",
           "nature": "TS"
         },
@@ -568,37 +442,28 @@
           "t": "2026-04-19T12:00:00",
           "lat": 28.3,
           "lon": 153.7,
-          "wind_kt": 55.0,
+          "wind_kt": 54.0,
           "pressure_mb": 983.0,
           "cls": "TS",
-          "nature": "SS"
+          "nature": "TS"
         },
         {
           "t": "2026-04-19T18:00:00",
-          "lat": 28.9,
+          "lat": 28.7,
           "lon": 156.1,
-          "wind_kt": 50.0,
+          "wind_kt": 51.0,
           "pressure_mb": 986.0,
           "cls": "TS",
-          "nature": "ET"
+          "nature": "TS"
         },
         {
           "t": "2026-04-20T00:00:00",
           "lat": 29.6,
           "lon": 158.8,
-          "wind_kt": 45.0,
-          "pressure_mb": 988.0,
+          "wind_kt": 51.0,
+          "pressure_mb": 986.0,
           "cls": "TS",
-          "nature": "ET"
-        },
-        {
-          "t": "2026-04-20T06:00:00",
-          "lat": 29.8,
-          "lon": 161.2,
-          "wind_kt": 45.0,
-          "pressure_mb": 988.0,
-          "cls": "TS",
-          "nature": "ET"
+          "nature": "TS"
         }
       ]
     },
