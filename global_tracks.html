@@ -116,13 +116,17 @@
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
      and red marker appearance survive without a WebGL rebuild.
-     Three flavours match the per-basin SVG renderer:
+     Four flavours match the per-basin SVG renderer:
        * .invest-x-marker   — recent inactive invest (small red glowing X
                               with red side-label). Per-basin reference:
                               render_tracks_svg invest_current_positions.
-       * .active-l          — active sub-TS storm (big red L + white
+       * .active-l          — active invest (big red L + white
                               designation below). Per-basin reference:
-                              render_active_icons is_invest_marker fork.
+                              render_active_icons is_invest branch.
+       * .active-td         — active designated TD that's not an invest
+                              (hollow blue circle + white designation
+                              below). Per-basin reference:
+                              render_active_icons peak<34 branch.
        * .active-hurricane  — active TS+ storm (spinning hurricane glyph
                               with category letter inside + name beside).
                               Per-basin reference: render_active_icons.
@@ -151,7 +155,7 @@
     font-weight: 700; paint-order: stroke;
     stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
 
-  /* Active sub-TS "L" — text styling lifted verbatim from
+  /* Active invest "L" — text styling lifted verbatim from
      render_active_icons (font-size 34, weight 900, fill #ef4444, dark
      stroke 2.5) and label (font-size 13, weight 800, fill #ffffff,
      stroke 2.5). The container is sized to match that SVG group's
@@ -163,6 +167,19 @@
     fill: #ef4444; paint-order: stroke;
     stroke: rgba(0,0,0,0.55); stroke-width: 2.5; stroke-linejoin: round; }
   .active-marker .l-label { font-size: 13px; font-weight: 800;
+    fill: #ffffff; paint-order: stroke;
+    stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
+
+  /* Active designated-TD circle — hollow blue ring (TD palette colour)
+     + white designation/name label below. Matches the per-basin
+     render_active_icons peak<34 branch: r=12, stroke 2.5, label at
+     y=22 with the same paint-order/stroke-width as the L label so the
+     two markers carry visually consistent label backings. */
+  .active-marker.active-td { width: 60px; height: 50px;
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
+  .active-marker .td-circle { stroke: var(--td); stroke-width: 2.5;
+    fill: none; }
+  .active-marker .td-label { font-size: 13px; font-weight: 800;
     fill: #ffffff; paint-order: stroke;
     stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
@@ -189,7 +206,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Global TC Tracks</div>
-        <div class="sub">As of 2026-05-19 05:53 UTC</div>
+        <div class="sub">As of 2026-05-19 10:05 UTC</div>
       </div>
       <div class="stats">
         <b>4</b> named storms &middot; <b>1</b> category 1+ storms &middot;
@@ -591,16 +608,31 @@
               'text-anchor="start">' + escapeHtml(designation) + '</text>' +
           '</svg>';
       } else if (props.marker_type === "L") {
-        // Active sub-TS / active invest. Per-basin's render_active_icons
-        // emits a bold red "L" (font-size 34, weight 900, fill #ef4444,
-        // dark stroke 2.5) with a white designation below (size 13,
-        // weight 800, dark stroke 2.5).
+        // Active invest (90-99 designation). Per-basin's
+        // render_active_icons emits a bold red "L" (font-size 34, weight
+        // 900, fill #ef4444, dark stroke 2.5) with a white designation
+        // below (size 13, weight 800, dark stroke 2.5).
         el.classList.add("active-l");
         el.innerHTML =
           '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
             '<text class="l-glyph" x="0" y="0" ' +
               'text-anchor="middle" dominant-baseline="central">L</text>' +
             '<text class="l-label" x="0" y="22" ' +
+              'text-anchor="middle" dominant-baseline="hanging">' +
+              escapeHtml(designation) + '</text>' +
+          '</svg>';
+      } else if (props.marker_type === "td_circle") {
+        // Active designated TD that's not an invest (e.g. Hagupit at
+        // TD strength). Per-basin's render_active_icons emits a hollow
+        // blue circle (r=12, stroke 2.5, no fill) + white name/
+        // designation label below — a third tier between the spinning
+        // TS+ icon and the invest "L" so a numbered TD reads as an
+        // operational TC rather than an invest.
+        el.classList.add("active-td");
+        el.innerHTML =
+          '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
+            '<circle class="td-circle" cx="0" cy="0" r="12"/>' +
+            '<text class="td-label" x="0" y="22" ' +
               'text-anchor="middle" dominant-baseline="hanging">' +
               escapeHtml(designation) + '</text>' +
           '</svg>';
