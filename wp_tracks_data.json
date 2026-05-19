@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-19 10:51 UTC",
+  "updated": "2026-05-19 15:48 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
@@ -21,8 +21,8 @@
       "sid": "JTWC_WP982026",
       "name": "98W",
       "season": 2026,
-      "start": "2026-05-19T06:00:00",
-      "end": "2026-05-19T06:00:00",
+      "start": "2026-05-19T12:00:00",
+      "end": "2026-05-19T12:00:00",
       "peak_wind_kt": 25.0,
       "peak_pressure_mb": 1008.0,
       "ace": 0.0,
@@ -34,9 +34,9 @@
       "atcf_id": "98W",
       "points": [
         {
-          "t": "2026-05-19T06:00:00",
-          "lat": 25.9,
-          "lon": 128.4,
+          "t": "2026-05-19T12:00:00",
+          "lat": 26.3,
+          "lon": 128.7,
           "wind_kt": 25.0,
           "pressure_mb": 1008.0,
           "cls": "TD",
