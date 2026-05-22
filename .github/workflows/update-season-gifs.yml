@@ -75,17 +75,22 @@ jobs:
         run: |
           python generate_season_gif.py --basin ep --year ${{ steps.year.outputs.y }}
 
-      - name: Commit and push if anything changed
+      - name: Upload season GIFs to R2 (cdn.triple-a-tropics.com/)
+        # Current-year GIFs live at the bucket root (mirrors the
+        # historical convention of root-level current-year files), so
+        # frontend code constructs https://cdn.triple-a-tropics.com/<slug>_<year>_season.gif.
+        # GIFs are no longer committed to git — see R2 phase 1.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: |
           set -euo pipefail
           Y=${{ steps.year.outputs.y }}
-          git config --local user.name  "github-actions[bot]"
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # The generator uses slugs wpac/atl/epac for current-year files.
-          git add "wpac_${Y}_season.gif" "atl_${Y}_season.gif" "epac_${Y}_season.gif" 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "chore: refresh season GIFs for ${Y} ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-            git push
-          fi
+          for f in "wpac_${Y}_season.gif" "atl_${Y}_season.gif" "epac_${Y}_season.gif"; do
+            if [ -f "$f" ]; then
+              bash scripts/upload_to_r2.sh "$f" "$f"
+            else
+              echo "(generator did not emit $f — skipping upload)"
+            fi
+          done
