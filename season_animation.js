@@ -302,8 +302,8 @@
       // The two naming conventions are intentional — see generate_season_gif.py.
       const slug = {wp: 'wpac', al: 'atl', ep: 'epac'}[this.basin];
       return year === this.currentYear
-        ? `/${slug}_${year}_season.gif`
-        : `/historical/${this.basin}/gifs/${this.basin}_${year}_season.gif`;
+        ? `https://cdn.triple-a-tropics.com/${slug}_${year}_season.gif`
+        : `https://cdn.triple-a-tropics.com/historical/${this.basin}/gifs/${this.basin}_${year}_season.gif`;
     }
 
     // years.json advertises every year we have tracks for, but only a few

@@ -20,3 +20,19 @@ venv/
 # `mp4-artifacts` branch — neither belongs on main.
 _frame_cache/
 _mp4_build/
+
+# ----------------------------------------------------------------------
+# R2 phase 1: workflow-generated media + large static files now live on
+# cdn.triple-a-tropics.com (Cloudflare R2). The scheduled workflows
+# upload here on every cron run; the live site fetches cross-origin.
+# Listed paths are no longer tracked in git.
+# ----------------------------------------------------------------------
+sst/*.png
+subsurface/*.png
+armor3d/*.png
+*_season.gif
+historical/*/gifs/*.gif
+global_storms.geojson
+Climatology-page.jpg
+sst-page.jpg
+Satoshiplot.jpg
