@@ -3088,9 +3088,11 @@
       138,
       139,
       140,
-      141
+      141,
+      142
     ],
     "values": [
+      0.0,
       0.0,
       0.0,
       0.0,
@@ -3975,7 +3977,7 @@
     ],
     "latest_value": 127.297
   },
-  "today_doy": 141,
+  "today_doy": 142,
   "rankings": [
     {
       "year": 1992,
@@ -4028,14 +4030,14 @@
     },
     {
       "year": 1984,
-      "ytd": 1.97,
+      "ytd": 2.45,
       "total": 193.65,
       "current": false,
       "rank": 8
     },
     {
       "year": 2003,
-      "ytd": 1.52,
+      "ytd": 2.42,
       "total": 56.61,
       "current": false,
       "rank": 9
@@ -4048,65 +4050,65 @@
       "rank": 10
     },
     {
+      "year": 1971,
+      "ytd": 1.44,
+      "total": 138.29,
+      "current": false,
+      "rank": 11
+    },
+    {
       "year": 1989,
       "ytd": 1.08,
       "total": 111.85,
       "current": false,
-      "rank": 11
+      "rank": 12
+    },
+    {
+      "year": 1983,
+      "ytd": 1.02,
+      "total": 206.18,
+      "current": false,
+      "rank": 13
     },
     {
       "year": 2013,
       "ytd": 1.02,
       "total": 74.84,
       "current": false,
-      "rank": 12
+      "rank": 14
+    },
+    {
+      "year": 1982,
+      "ytd": 0.99,
+      "total": 161.19,
+      "current": false,
+      "rank": 15
     },
     {
       "year": 1980,
       "ytd": 0.69,
       "total": 78.34,
       "current": false,
-      "rank": 13
+      "rank": 16
     },
     {
       "year": 1996,
       "ytd": 0.65,
       "total": 53.59,
       "current": false,
-      "rank": 14
+      "rank": 17
     },
     {
       "year": 2021,
       "ytd": 0.61,
       "total": 94.46,
       "current": false,
-      "rank": 15
+      "rank": 18
     },
     {
       "year": 2017,
       "ytd": 0.53,
       "total": 100.72,
-      "current": false,
-      "rank": 16
-    },
-    {
-      "year": 1971,
-      "ytd": 0.41,
-      "total": 138.29,
-      "current": false,
-      "rank": 17
-    },
-    {
-      "year": 1983,
-      "ytd": 0.16,
-      "total": 206.18,
-      "current": false,
-      "rank": 18
-    },
-    {
-      "year": 1982,
-      "ytd": 0.12,
-      "total": 161.19,
       "current": false,
       "rank": 19
     },
