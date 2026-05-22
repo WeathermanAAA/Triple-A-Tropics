@@ -1,0 +1,117 @@
+name: R2 Backfill (one-shot)
+
+# Manual one-shot uploader for the R2 phase-1 migration. Restores every
+# tracked media file from HEAD into the runner's workspace, then mirrors
+# the per-workflow R2 upload patterns to push everything to
+# cdn.triple-a-tropics.com in a single pass.
+#
+# After this runs successfully, the follow-up commit removes the
+# migrated paths from git tracking. The scheduled workflows
+# (update-sst.yml, update-subsurface.yml, update-armor3d.yml,
+# update-season-gifs.yml, update-ace.yml) keep R2 fresh on their normal
+# cadence — this workflow exists only to seed R2 with the existing
+# committed media so the live site doesn't 404 between the untrack
+# commit and the next cron.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+
+    steps:
+      - name: Check out repo
+        # actions/checkout@v4 leaves a clean working tree (every tracked
+        # file restored). Even though main currently shows ~1200 media
+        # files as deleted in the dev's working tree, the blobs are still
+        # in git, so a fresh CI checkout materializes them.
+        uses: actions/checkout@v4
+
+      - name: Sync sst/ to R2
+        # Same pattern as update-sst.yml. Whole-directory sync uploads
+        # the static PNGs (the only thing the frontend now reads from
+        # R2) plus the small meta JSONs and index.html (harmless dupes
+        # — those stay authoritative on origin).
+        run: bash scripts/upload_to_r2.sh sst sst
+
+      - name: Sync subsurface/ to R2
+        # Same pattern as update-subsurface.yml.
+        run: bash scripts/upload_to_r2.sh subsurface subsurface
+
+      - name: Sync armor3d/ PNGs to R2 (exclude .nc climatology + meta)
+        # Mirrors update-armor3d.yml: only PNGs go to R2. The 58 MiB
+        # armor3d_climatology.nc is a workflow INPUT (used to compute
+        # anomalies) and stays in git for now — explicitly excluded
+        # here so we don't pay R2 storage on an unused copy.
+        run: |
+          set -euo pipefail
+          aws s3 sync armor3d/ s3://triple-a-tropics-media/armor3d/ \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=300" \
+            --exclude "*" --include "*.png" \
+            --size-only \
+            --only-show-errors
+
+      - name: Upload current-season GIFs to R2
+        # The committed {wpac,atl,epac}_<year>_season.gif files at repo
+        # root. season_animation.js now fetches these from R2. Listed
+        # explicitly (not a glob) so we fail loudly if a basin's gif
+        # is missing.
+        run: |
+          set -euo pipefail
+          for f in *_season.gif; do
+            if [ -f "$f" ]; then
+              bash scripts/upload_to_r2.sh "$f" "$f"
+            fi
+          done
+
+      - name: Sync historical season GIFs to R2
+        # historical/{al,ep,wp}/gifs/*.gif — six committed files. One-shot
+        # migration (no churn — see CLAUDE.md note about category B).
+        # Per-basin loop because we want each basin's gifs/ to land at
+        # the matching R2 prefix.
+        run: |
+          set -euo pipefail
+          for basin in al ep wp; do
+            dir="historical/${basin}/gifs"
+            if [ -d "$dir" ]; then
+              bash scripts/upload_to_r2.sh "$dir" "$dir"
+            fi
+          done
+
+      - name: Upload static page JPGs to R2
+        # index.html banners — Climatology-page.jpg, sst-page.jpg,
+        # Satoshiplot.jpg — now load from cdn.triple-a-tropics.com.
+        run: |
+          set -euo pipefail
+          for f in Climatology-page.jpg sst-page.jpg Satoshiplot.jpg; do
+            if [ -f "$f" ]; then
+              bash scripts/upload_to_r2.sh "$f" "$f"
+            fi
+          done
+
+      - name: Upload global_storms.geojson to R2
+        # generate_tracks_plot.py / global_tracks.html now fetch this
+        # cross-origin from R2. Seed R2 with the currently committed
+        # copy so the live MapLibre page works between the untrack
+        # commit and the next update-ace.yml run.
+        run: |
+          set -euo pipefail
+          if [ -f global_storms.geojson ]; then
+            bash scripts/upload_to_r2.sh global_storms.geojson global_storms.geojson
+          else
+            echo "global_storms.geojson missing from HEAD — skipping"
+          fi

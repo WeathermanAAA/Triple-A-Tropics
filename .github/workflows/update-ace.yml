@@ -97,14 +97,36 @@ jobs:
       - name: Regenerate Tracks — Global composite
         run: python generate_tracks_plot.py --basin global
 
+      - name: Upload global_storms.geojson to R2
+        # The MapLibre global page fetches global_storms.geojson at
+        # runtime; the file refreshes every 6 h with the ACE workflow.
+        # Moved to R2 (cdn.triple-a-tropics.com/global_storms.geojson)
+        # in R2 phase 1. The iframed HTML pages stay on origin to
+        # preserve same-origin iframe-resize JS; only the geojson
+        # data file is fetched cross-origin (CORS allows it).
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          if [ -f global_storms.geojson ]; then
+            bash scripts/upload_to_r2.sh global_storms.geojson global_storms.geojson
+          else
+            echo "(generator did not emit global_storms.geojson — skipping upload)"
+          fi
+
       - name: Commit and push if anything changed
         run: |
           set -eo pipefail
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # global_storms.geojson is NOT staged — it lives on R2 now.
+          # The iframed *_tracks.html / *_ace.html pages remain on
+          # origin (category C in R2 phase 1) so the parent-page
+          # iframe-resize JS keeps working same-origin.
           git add wp_ace.html wp_ace_data.json al_ace.html al_ace_data.json ep_ace.html ep_ace_data.json \
                   wp_tracks.html wp_tracks_data.json al_tracks.html al_tracks_data.json ep_tracks.html ep_tracks_data.json \
-                  global_tracks.html global_storms.geojson \
+                  global_tracks.html \
                   ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson \
                   ne_110m_coastline.geojson ne_110m_admin_0_countries.geojson 2>/dev/null || true
           if git diff --cached --quiet; then

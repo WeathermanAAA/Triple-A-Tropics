@@ -76,17 +76,38 @@ jobs:
           COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
         run: python generate_armor3d_plots.py
 
-      - name: Commit and push if anything changed
+      - name: Upload ARMOR3D PNGs to R2 (cdn.triple-a-tropics.com/armor3d/)
+        # PNGs live on R2 — only the small meta JSON still commits.
+        # armor3d_climatology.nc stays in git for now: it's a one-shot
+        # workflow INPUT (anomaly rendering reads it), not output, and
+        # migrating it requires a fetch step here. Deferred to a follow-
+        # up. See R2 phase 1.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        # Sync only the PNGs — exclude the meta JSON (committed to git)
+        # and the climatology NetCDF (one-shot artifact, won't be in
+        # this workspace at all once it's untracked).
+        run: |
+          set -euo pipefail
+          # `sync` uploads every PNG under armor3d/; --exclude defaults
+          # to including everything, so we explicitly drop non-PNGs.
+          aws s3 sync armor3d/ s3://triple-a-tropics-media/armor3d/ \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=300" \
+            --exclude "*" --include "*.png" \
+            --size-only \
+            --only-show-errors
+
+      - name: Commit and push ARMOR3D metadata to main
         run: |
           set -eo pipefail
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # armor3d_climatology.nc is NOT staged here — it's a one-time
-          # pre-compute that lives in the repo already. We only ship the
-          # freshly rendered PNGs + the meta JSON.
-          git add armor3d/*.png armor3d/armor3d_meta.json 2>/dev/null || true
+          git add armor3d/armor3d_meta.json 2>/dev/null || true
           if git diff --cached --quiet; then
-            echo "No ARMOR3D changes to commit."
+            echo "No ARMOR3D metadata changes to commit."
             exit 0
           fi
           git commit -m "chore: refresh ARMOR3D weekly maps ($(date -u +'%Y-%m-%d %H:%M UTC'))"

@@ -85,19 +85,29 @@ jobs:
         # 20–35 min on a GH-hosted runner.
         run: python generate_sst_plots.py
 
-      - name: Commit and push static SST PNGs to main
-        # Push the static plots to main BEFORE the animation render so
-        # they update reliably even if the OISST cold render later hits
-        # the 6-hour timeout. Only this step pushes to main — the
-        # animation steps push to the orphan `mp4-artifacts` branch in
-        # Job 2.
+      - name: Upload SST PNGs to R2 (cdn.triple-a-tropics.com/sst/)
+        # The PNGs are no longer committed to main — they live on R2
+        # behind the CDN. The small *_meta.json files DO still commit
+        # (frontend widgets fetch them from origin). See R2 phase 1.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: bash scripts/upload_to_r2.sh sst sst
+
+      - name: Commit and push SST metadata to main
+        # Only the small meta JSONs go to git now; the PNGs are on R2.
+        # We still commit BEFORE the animation render so meta updates
+        # land even if the OISST cold render later hits the 6-hour
+        # timeout. Only this step pushes to main — the animation steps
+        # push to the orphan `mp4-artifacts` branch in Job 2.
         run: |
           set -eo pipefail
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add sst/*.png sst/sst_meta.json sst/crw_meta.json 2>/dev/null || true
+          git add sst/sst_meta.json sst/crw_meta.json 2>/dev/null || true
           if git diff --cached --quiet; then
-            echo "No SST changes to commit."
+            echo "No SST metadata changes to commit."
             exit 0
           fi
           git commit -m "chore: refresh SST maps ($(date -u +'%Y-%m-%d %H:%M UTC'))"
@@ -106,10 +116,9 @@ jobs:
           # run. Rebase conflicts limited to these paths are auto-
           # resolvable: every scheduled run overwrites them from
           # scratch, so whichever side we pick is thrown away within
-          # a day. Conflicts on anything OUTSIDE this list (a PNG we
-          # rendered, unexpected changes to code/data) are genuinely
-          # ambiguous and need a human — we abort and fail loudly in
-          # that case.
+          # a day. Conflicts on anything OUTSIDE this list (unexpected
+          # changes to code/data) are genuinely ambiguous and need a
+          # human — we abort and fail loudly in that case.
           META_FILES=(
             sst/sst_meta.json
             sst/crw_meta.json
