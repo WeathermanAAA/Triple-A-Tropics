@@ -85,7 +85,7 @@
   <div class="chart-card sst-chart">
     <img id="subCsImage"
          class="sst-image"
-         src="/armor3d/enso_anomaly.png"
+         src="https://cdn.triple-a-tropics.com/armor3d/enso_anomaly.png"
          alt="Equatorial subsurface cross-section">
     <div class="sst-caption" id="subCsCaption">ENSO Regions: 5°S–5°N temperature anomaly cross-section (ARMOR3D).</div>
   </div>
@@ -163,7 +163,7 @@
     function update() {
       const r = sel.value;
       const v = view.value;
-      img.src = `/armor3d/${r}_${v}.png?t=${Date.now()}`;
+      img.src = `https://cdn.triple-a-tropics.com/armor3d/${r}_${v}.png?t=${Date.now()}`;
       const label = VIEW_LABELS[v] || 'temperature';
       img.alt = `${CS_REGION_LABELS[r] || r}: 5°S–5°N ${label} cross-section`;
       cap.textContent = `${CS_REGION_LABELS[r] || r}: 5°S–5°N ${label} cross-section (ARMOR3D).`;

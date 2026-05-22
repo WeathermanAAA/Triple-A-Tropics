@@ -2301,7 +2301,7 @@ HTML_TEMPLATE = """<!doctype html>
 # Global page: MapLibre GL JS + Protomaps vector tiles
 # ---------------------------------------------------------------------------
 # The global map is a separate code path from the per-basin SVG renderer.
-# It loads MapLibre, fetches /global_storms.geojson at runtime, and lets
+# It loads MapLibre, fetches global_storms.geojson from R2 (cdn.triple-a-tropics.com) at runtime, and lets
 # MapLibre handle pan/zoom/world-wrapping natively. Per-basin pages still
 # render via HTML_TEMPLATE / render_html — the entire SVG pipeline above
 # is for them.
@@ -3012,7 +3012,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 
   map.on("load", function () {
     registerPhaseIcons();
-    fetch("global_storms.geojson", { cache: "no-cache" })
+    fetch("https://cdn.triple-a-tropics.com/global_storms.geojson", { cache: "no-cache" })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         addStormLayers(data);
@@ -3031,9 +3031,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 
 def render_global_maplibre_html(payload: dict) -> str:
     """Render the MapLibre-based global tracks page. The storms are
-    served from a sibling /global_storms.geojson file (fetched at
-    runtime), so this template is essentially static across refreshes —
-    only the header pill (year, updated, season-stats) changes."""
+    served from global_storms.geojson on R2 (cdn.triple-a-tropics.com,
+    fetched at runtime), so this template is essentially static across
+    refreshes — only the header pill (year, updated, season-stats)
+    changes."""
     header = payload["header"]
     vocab = payload["vocab"]
     return (
