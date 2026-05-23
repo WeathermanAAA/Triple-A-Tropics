@@ -3089,9 +3089,11 @@
       139,
       140,
       141,
-      142
+      142,
+      143
     ],
     "values": [
+      0.0,
       0.0,
       0.0,
       0.0,
@@ -3977,11 +3979,11 @@
     ],
     "latest_value": 130.772
   },
-  "today_doy": 142,
+  "today_doy": 143,
   "rankings": [
     {
       "year": 1951,
-      "ytd": 18.44,
+      "ytd": 20.7,
       "total": 126.32,
       "current": false,
       "rank": 1
@@ -4057,51 +4059,51 @@
       "rank": 11
     },
     {
+      "year": 1940,
+      "ytd": 2.92,
+      "total": 67.79,
+      "current": false,
+      "rank": 12
+    },
+    {
       "year": 1970,
       "ytd": 2.55,
       "total": 66.63,
       "current": false,
-      "rank": 12
+      "rank": 13
     },
     {
       "year": 2015,
       "ytd": 2.12,
       "total": 62.69,
       "current": false,
-      "rank": 13
+      "rank": 14
+    },
+    {
+      "year": 2012,
+      "ytd": 1.87,
+      "total": 132.63,
+      "current": false,
+      "rank": 15
     },
     {
       "year": 2020,
       "ytd": 1.75,
       "total": 180.37,
       "current": false,
-      "rank": 14
+      "rank": 16
     },
     {
       "year": 1935,
       "ytd": 1.75,
       "total": 106.21,
       "current": false,
-      "rank": 15
-    },
-    {
-      "year": 1940,
-      "ytd": 1.71,
-      "total": 67.79,
-      "current": false,
-      "rank": 16
+      "rank": 17
     },
     {
       "year": 1978,
       "ytd": 1.69,
       "total": 66.55,
-      "current": false,
-      "rank": 17
-    },
-    {
-      "year": 2012,
-      "ytd": 1.62,
-      "total": 132.63,
       "current": false,
       "rank": 18
     },
@@ -4148,16 +4150,16 @@
       "rank": 24
     },
     {
-      "year": 1981,
-      "ytd": 0.73,
-      "total": 100.33,
+      "year": 2021,
+      "ytd": 0.81,
+      "total": 145.56,
       "current": false,
       "rank": 25
     },
     {
-      "year": 2021,
-      "ytd": 0.37,
-      "total": 145.56,
+      "year": 1981,
+      "ytd": 0.73,
+      "total": 100.33,
       "current": false,
       "rank": 26
     },
