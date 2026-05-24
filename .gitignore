@@ -36,3 +36,9 @@ global_storms.geojson
 Climatology-page.jpg
 sst-page.jpg
 Satoshiplot.jpg
+
+# R2 phase 2: the ~56 MiB ARMOR3D climatology is a build INPUT (read by
+# generate_armor3d_plots.py for anomaly overlays), not a browser asset.
+# build-armor3d-climatology.yml uploads it to R2; update-armor3d.yml
+# fetches it from cdn.triple-a-tropics.com before rendering.
+armor3d/armor3d_climatology.nc
