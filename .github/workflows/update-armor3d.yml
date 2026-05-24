@@ -34,8 +34,8 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
-        # No need for LFS — armor3d_climatology.nc is checked into plain
-        # git (~15 MB, well under GitHub's hard size limit).
+        # armor3d_climatology.nc is no longer in git — it's a ~56 MiB
+        # build INPUT fetched from R2 in the step below (see R2 phase 2).
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -63,6 +63,26 @@ jobs:
             fi
           done
 
+      - name: Fetch ARMOR3D climatology from R2 (anomaly-overlay build input)
+        # armor3d_climatology.nc is a ~56 MiB build INPUT (read to compute
+        # TCHP/cross-section anomalies), not a browser asset, so it lives
+        # on R2 rather than in git. Pull it into the workspace before
+        # rendering. Non-fatal: if R2 is unreachable the generator falls
+        # back to raw (no-overlay) maps. Skip the fetch if a copy is
+        # already present (e.g. a transitional run before the untrack
+        # commit lands) so we never clobber an existing file.
+        run: |
+          set -uo pipefail
+          mkdir -p armor3d
+          if [ -f armor3d/armor3d_climatology.nc ]; then
+            echo "climatology already present in workspace; skipping R2 fetch."
+          else
+            curl -fsSL https://cdn.triple-a-tropics.com/armor3d/armor3d_climatology.nc \
+              -o armor3d/armor3d_climatology.nc \
+              || { echo "climatology unavailable from R2; anomaly overlays will be skipped."; \
+                   rm -f armor3d/armor3d_climatology.nc; }
+          fi
+
       - name: Generate ARMOR3D weekly plots
         # Fetches one weekly slice of ARMOR3D (T at 0-500 m, global,
         # ~8 MB) via the Copernicus Marine subsetter, derives D26 + TCHP,
@@ -70,7 +90,7 @@ jobs:
         # plus 4 equatorial cross-sections = ~112 PNGs. Typically runs
         # in 5-9 min on a GH-hosted runner. Anomaly panels + climo
         # overlays are skipped automatically if armor3d_climatology.nc
-        # is missing from the repo.
+        # is missing from the workspace (e.g. R2 fetch above failed).
         env:
           COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
           COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
@@ -78,10 +98,10 @@ jobs:
 
       - name: Upload ARMOR3D PNGs to R2 (cdn.triple-a-tropics.com/armor3d/)
         # PNGs live on R2 — only the small meta JSON still commits.
-        # armor3d_climatology.nc stays in git for now: it's a one-shot
-        # workflow INPUT (anomaly rendering reads it), not output, and
-        # migrating it requires a fetch step here. Deferred to a follow-
-        # up. See R2 phase 1.
+        # armor3d_climatology.nc is a build INPUT (not output) and now
+        # lives on R2 too: fetched in the step above, uploaded by
+        # build-armor3d-climatology.yml. The PNG-only sync below leaves
+        # the fetched .nc untouched in the workspace.
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
