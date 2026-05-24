@@ -708,8 +708,12 @@ def _encode_mp4(frames: list[Path], out_path: Path, fps: int = FPS) -> int:
 def _write_poster(last_frame: Path, out_path: Path) -> None:
     """Re-save the last frame as a small JPG for <video poster=…>."""
     img = Image.open(last_frame).convert("RGB")
-    # Cap poster width so the JPG stays small (~50 KB target).
-    max_w = 1200
+    # Cap poster width to keep the JPG modest while staying sharp. 1920
+    # (was 1200) so the still shown before play isn't visibly downscaled
+    # on wide regions whose frames render ~2175 px wide at FRAME_DPI=150.
+    # Narrower regions are left at native width (no upscaling). ~100-200
+    # KB at quality=92 — fine for a poster fetched on page load.
+    max_w = 1920
     if img.width > max_w:
         h = int(img.height * (max_w / img.width))
         img = img.resize((max_w, h), Image.LANCZOS)
