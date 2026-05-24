@@ -206,7 +206,11 @@ PRODUCTS: dict[str, dict] = {
             "black contour = 1993–2020 climatological 20 °C isotherm."
         ),
         "title_suffix": "Subsurface Temperature",
-        "cache_version": 1,
+        # Bumped 1→2 when the overlay isotherm moved 26 °C → 20 °C: the
+        # render-once frame cache won't auto-upgrade existing frames, so
+        # a fresh cache_version path forces all 90 days to re-render with
+        # the new 20 °C line (see _product_cache_key).
+        "cache_version": 2,
     },
     "cs_anomaly": {
         "slug": "anomaly",
@@ -220,7 +224,8 @@ PRODUCTS: dict[str, dict] = {
             "lines mark the current and climatological 20 °C isotherm."
         ),
         "title_suffix": "Subsurface Temperature Anomalies",
-        "cache_version": 1,
+        # Bumped 1→2 with the 26 °C → 20 °C overlay change (see cs_actual).
+        "cache_version": 2,
     },
 }
 
