@@ -132,3 +132,58 @@ jobs:
           else
             echo "global_storms.geojson missing from HEAD — skipping"
           fi
+
+      - name: Seed mp4-artifacts media to R2 (R2 phase 3 — animations)
+        # The animation MP4s/JPGs/manifests (~456 files, ~1.4 GB across 7
+        # family dirs: sst, aoml_{tchp,d26}, armor3d_{tchp,d26},
+        # armor3d_crosssection_{actual,anomaly}) currently live ONLY on the
+        # orphan `mp4-artifacts` branch, served via raw.githubusercontent.
+        # Mirror the branch paths verbatim to the cdn root so
+        # product_animator.js can repoint from raw.githubusercontent →
+        # cdn.triple-a-tropics.com without changing any paths.
+        #
+        # Content-types are set EXPLICITLY per extension (not left to the
+        # aws CLI's extension guessing): video/mp4 is required for <video>
+        # playback + range scrubbing, image/jpeg for posters,
+        # application/json for the manifests the widget fetches (CORS).
+        # Three sync passes, one Content-Type each. Manifests skip
+        # --size-only so a re-run always refreshes them (only 7 tiny files).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SRC=/tmp/mp4-artifacts
+          rm -rf "$SRC"
+          # Shallow single-branch clone of the orphan branch into a temp
+          # dir (the job's own checkout is `main`). Token auth keeps us off
+          # anonymous rate limits.
+          git clone --depth 1 --branch mp4-artifacts \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$SRC"
+          rm -rf "$SRC/.git"
+          echo "--- branch contents to seed ---"
+          find "$SRC" -type f | sed "s#$SRC/##" | sort | sed -n '1,5p'
+          echo "    ... ($(find "$SRC" -type f | wc -l) files total)"
+
+          BUCKET=s3://triple-a-tropics-media
+          CC="public, max-age=300"
+
+          echo "--- pass 1/3: *.mp4 → video/mp4 ---"
+          aws s3 sync "$SRC" "$BUCKET/" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "$CC" \
+            --content-type "video/mp4" \
+            --exclude "*" --include "*.mp4" --size-only --only-show-errors
+
+          echo "--- pass 2/3: *.jpg → image/jpeg ---"
+          aws s3 sync "$SRC" "$BUCKET/" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "$CC" \
+            --content-type "image/jpeg" \
+            --exclude "*" --include "*.jpg" --size-only --only-show-errors
+
+          echo "--- pass 3/3: *.json → application/json (no --size-only) ---"
+          aws s3 sync "$SRC" "$BUCKET/" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "$CC" \
+            --content-type "application/json" \
+            --exclude "*" --include "*.json" --only-show-errors
+
+          echo "Done. Seeded mp4-artifacts media to cdn.triple-a-tropics.com (paths mirrored)."
