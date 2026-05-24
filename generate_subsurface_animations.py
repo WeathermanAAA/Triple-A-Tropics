@@ -202,8 +202,8 @@ PRODUCTS: dict[str, dict] = {
         "description": (
             "5°S–5°N zonal-mean temperature versus depth (0–500 m), "
             "derived from ARMOR3D. Color fill = absolute temperature; "
-            "solid black contour = current 26 °C isotherm; dashed "
-            "black contour = 1993–2020 climatological 26 °C isotherm."
+            "solid black contour = current 20 °C isotherm; dashed "
+            "black contour = 1993–2020 climatological 20 °C isotherm."
         ),
         "title_suffix": "Subsurface Temperature",
         "cache_version": 1,
@@ -217,7 +217,7 @@ PRODUCTS: dict[str, dict] = {
             "5°S–5°N zonal-mean temperature anomaly versus depth, "
             "ARMOR3D minus the 1993–2020 weekly climatology. Reds = "
             "warmer than normal, blues = cooler. Solid + dashed black "
-            "lines mark the current and climatological 26 °C isotherm."
+            "lines mark the current and climatological 20 °C isotherm."
         ),
         "title_suffix": "Subsurface Temperature Anomalies",
         "cache_version": 1,

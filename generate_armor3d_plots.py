@@ -542,7 +542,10 @@ def climatology_slice_for(
 # --- Cross-section rendering -------------------------------------------
 
 
-CS_ISOTHERM_C = 26.0  # overlay isotherm on cross-section panels (°C)
+CS_ISOTHERM_C = 20.0  # overlay isotherm on cross-section panels (°C)
+# 20 °C, not 26 °C: on the equatorial cross-sections the 20 °C isotherm
+# is the standard thermocline-depth proxy. (The D26/TCHP *products* are
+# defined at the 26 °C isotherm — see T_REF above — and are unaffected.)
 
 
 def plot_cross_section(
@@ -557,7 +560,7 @@ def plot_cross_section(
     *,
     mode: str = "anomaly",
 ) -> bool:
-    """5°S-5°N longitude-depth cross-section with 26 °C isotherm overlay.
+    """5°S-5°N longitude-depth cross-section with 20 °C isotherm overlay.
 
     Two render modes:
       * ``mode="actual"``  — fill = absolute T (sequential cool→warm).
@@ -567,8 +570,8 @@ def plot_cross_section(
 
     Common overlays in both modes:
       * small inset map at the top showing the averaged latitude band
-      * solid black contour at the 26 °C isotherm of the current field
-      * dashed black contour at the 26 °C isotherm of the climatology
+      * solid black contour at the 20 °C isotherm of the current field
+      * dashed black contour at the 20 °C isotherm of the climatology
         (only when climatology is supplied)
 
     ``t_arr_climo`` may be either:
@@ -788,7 +791,7 @@ def plot_cross_section(
     ax_cs.invert_yaxis()
     ax_cs.set_ylim(500, 0)
 
-    # 26°C isotherm overlays — current (solid) + climo (dashed).
+    # 20°C isotherm overlays — current (solid) + climo (dashed).
     try:
         cs_now = ax_cs.contour(
             LON2, DEPTH2, T_now_m, levels=[CS_ISOTHERM_C],
