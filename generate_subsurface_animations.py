@@ -1030,6 +1030,8 @@ def _load_cs_climatology(log: str = "[sub-anim]"
     except Exception as exc:  # noqa: BLE001
         print(f"{log} CS climatology load failed: {exc}", file=sys.stderr)
         return None, None
+    print(f"{log} CS climatology: AVAILABLE — anomaly frames will use real "
+          f"anomalies (t_climo_eq {tuple(t_climo_eq.shape)}).")
     return t_climo_eq, climo_lon
 
 
