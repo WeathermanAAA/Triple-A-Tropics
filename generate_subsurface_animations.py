@@ -225,7 +225,14 @@ PRODUCTS: dict[str, dict] = {
         ),
         "title_suffix": "Subsurface Temperature Anomalies",
         # Bumped 1→2 with the 26 °C → 20 °C overlay change (see cs_actual).
-        "cache_version": 2,
+        # Bumped 2→3 to cold-re-render the frames that v2 baked WRONG: the
+        # animation workflow wasn't fetching armor3d_climatology.nc, so
+        # plot_cross_section degraded mode="anomaly" to absolute-T fill and
+        # render-once locked those actual-T frames into anomaly_v2/. The
+        # workflow now fetches the climatology (fatally), and anomaly_v3/
+        # forces a fresh render of all 90 days with real anomaly data.
+        # cs_actual stays at v2 — its frames were always correct.
+        "cache_version": 3,
     },
 }
 
@@ -1109,6 +1116,10 @@ def _render_cs_all_frames(dates: list[dt.date],
                         out_path=target,
                         climo_lon=climo_lon,
                         mode=mode,
+                        # Refuse to silently render absolute-T under the
+                        # anomaly path — that wrong-but-plausible frame
+                        # would be cached forever (render-once).
+                        strict_anomaly=(mode == "anomaly"),
                     )
                 except Exception as exc:  # noqa: BLE001
                     print(f"{log}   ! CS render {fam}/{region_key}/{d} "
@@ -1380,6 +1391,20 @@ def main(argv=None):
     if cs_families_selected:
         t_cs = time.time()
         climo_t_eq, climo_lon_arr = _load_cs_climatology(log)
+        # Belt-and-suspenders: the workflow already fetches the climatology
+        # fatally, but if it's somehow still missing when an anomaly CS
+        # family is selected, fail loudly rather than render absolute-T
+        # under the anomaly path (which render-once would then lock in).
+        anomaly_cs_selected = any(
+            PRODUCTS[FAMILIES[f]["product"]].get("mode") == "anomaly"
+            for f in cs_families_selected
+        )
+        if anomaly_cs_selected and climo_t_eq is None:
+            print(f"{log} FATAL: anomaly cross-section family selected but "
+                  f"climatology unavailable — refusing to render absolute-T "
+                  f"as an anomaly. Ensure armor3d/armor3d_climatology.nc is "
+                  f"present (fetched from R2).", file=sys.stderr)
+            return 1
         cs_stats = _render_cs_all_frames(
             dates, climo_t_eq, climo_lon_arr,
             countries, coast, log,
