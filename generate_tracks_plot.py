@@ -2872,6 +2872,25 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     });
   }
 
+  // Popup body for an active-storm marker. Mirrors the observation hover
+  // card (same tt-* classes) but reads the active_marker feature props:
+  // name/designation, current SSHWS category, current intensity.
+  function activeMarkerPopupHtml(props) {
+    var cls = props.current_category || "TD";
+    var catLabel = CAT_LABELS[cls] || cls;
+    var color = SSHS_COLORS[cls] || "#888";
+    var kt = props.current_intensity_kt;
+    var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
+      ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
+      : "—";
+    var title = props.name || props.designation || "Active system";
+    return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
+      '<div class="tt-row"><span class="tt-cat" style="background:' +
+        color + '">' + escapeHtml(catLabel) + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
+        '<span class="tt-val">' + windTxt + '</span></div>';
+  }
+
   // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
   // page would otherwise collide on a shared "invest-red-glow" id.
   var investGlowSeq = 0;
@@ -2972,6 +2991,40 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       var marker = new maplibregl.Marker({ element: el, anchor: "center" })
         .setLngLat(lngLat).addTo(map);
       activeMarkers.push(marker);
+
+      // Restore hover/click interactivity lost in the SVG→MapLibre
+      // migration. `.active-marker` CSS sets pointer-events:none, so
+      // re-enable it on this element and wire a popup: hover to peek,
+      // click to pin (with a close button). `props`/`lngLat` are fresh
+      // per forEach iteration, so each marker closes over its own.
+      el.style.pointerEvents = "auto";
+      el.style.cursor = "pointer";
+      var mPopup = null, pinned = false;
+      var openActivePopup = function (withClose) {
+        if (mPopup) mPopup.remove();
+        mPopup = new maplibregl.Popup({
+          closeButton: withClose, closeOnClick: false,
+          offset: 16, maxWidth: "240px"
+        }).setLngLat(lngLat)
+          .setHTML(activeMarkerPopupHtml(props))
+          .addTo(map);
+        if (withClose) {
+          mPopup.on("close", function () { pinned = false; mPopup = null; });
+        }
+      };
+      el.addEventListener("mouseenter", function () {
+        map.getCanvas().style.cursor = "pointer";
+        if (!pinned) openActivePopup(false);
+      });
+      el.addEventListener("mouseleave", function () {
+        map.getCanvas().style.cursor = "";
+        if (!pinned && mPopup) { mPopup.remove(); mPopup = null; }
+      });
+      el.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        pinned = true;
+        openActivePopup(true);
+      });
     });
   }
 
