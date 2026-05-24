@@ -95,6 +95,25 @@ jobs:
           restore-keys: |
             subsurface-mp4-frames-v1-
 
+      - name: Fetch ARMOR3D climatology from R2 (REQUIRED for anomaly cross-sections)
+        # armor3d_climatology.nc is a ~56 MiB build INPUT — the 5°S–5°N
+        # zonal-mean T climatology read by the anomaly cross-section render.
+        # It lives on R2, not in git (.gitignore), and is NOT in the frame
+        # cache. Unlike update-armor3d.yml (where a missing climo just
+        # downgrades to no-overlay maps), this fetch is FATAL: without it
+        # plot_cross_section's mode="anomaly" silently falls back to
+        # absolute-T fill, and the render-once frame cache bakes those
+        # wrong-but-plausible frames under the anomaly path permanently.
+        # `set -e` + `curl -f` + `test -s` => the run fails loud if the
+        # climatology can't be fetched, rather than shipping mislabeled data.
+        run: |
+          set -euo pipefail
+          mkdir -p armor3d
+          curl -fsSL https://cdn.triple-a-tropics.com/armor3d/armor3d_climatology.nc \
+            -o armor3d/armor3d_climatology.nc
+          test -s armor3d/armor3d_climatology.nc
+          echo "climatology fetched: $(du -h armor3d/armor3d_climatology.nc | cut -f1)"
+
       - name: Generate subsurface MP4 animations
         # Cold render (empty cache) on first run is ~2.5-3.5 h:
         #   * AOML: 90 OPeNDAP slice fetches + ~3,240 frame renders

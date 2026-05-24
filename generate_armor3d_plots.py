@@ -559,6 +559,7 @@ def plot_cross_section(
     climo_lon: np.ndarray | None = None,
     *,
     mode: str = "anomaly",
+    strict_anomaly: bool = False,
 ) -> bool:
     """5°S-5°N longitude-depth cross-section with 20 °C isotherm overlay.
 
@@ -566,7 +567,13 @@ def plot_cross_section(
       * ``mode="actual"``  — fill = absolute T (sequential cool→warm).
       * ``mode="anomaly"`` — fill = T − T_climo (diverging). Falls back to
         ``actual`` if ``t_arr_climo`` is None so we never label raw T as
-        an "anomaly" by accident.
+        an "anomaly" by accident — *unless* ``strict_anomaly=True``, in
+        which case a missing climatology raises ``ValueError`` instead of
+        degrading. The animation pipeline sets this: a silent fall-back
+        there renders absolute-T frames that get cached permanently under
+        the anomaly path (render-once), shipping wrong-but-plausible data.
+        Static maps keep the lenient default so a transient R2 outage just
+        downgrades to raw (no-overlay) cross-sections.
 
     Common overlays in both modes:
       * small inset map at the top showing the averaged latitude band
@@ -657,8 +664,18 @@ def plot_cross_section(
     else:
         T_cl_m = None
 
-    # Effective fill mode. mode="anomaly" without climatology degrades
-    # cleanly to "actual" — never label raw T as an anomaly.
+    # Effective fill mode. mode="anomaly" without climatology normally
+    # degrades cleanly to "actual" — never label raw T as an anomaly.
+    # When strict_anomaly is set (animation pipeline), refuse to degrade:
+    # a wrong-but-plausible absolute-T frame cached forever under the
+    # anomaly path is far worse than a loud failure here.
+    if mode == "anomaly" and T_cl_m is None and strict_anomaly:
+        raise ValueError(
+            f"anomaly cross-section for {region_key} requested but "
+            "climatology is unavailable (t_arr_climo is None); refusing "
+            "to render absolute-T as an anomaly. Ensure "
+            "armor3d/armor3d_climatology.nc is present."
+        )
     fill_mode = "anomaly" if (mode == "anomaly" and T_cl_m is not None) else "actual"
     anom = (T_now_m - T_cl_m) if fill_mode == "anomaly" else None
 
