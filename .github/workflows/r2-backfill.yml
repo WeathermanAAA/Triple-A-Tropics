@@ -52,10 +52,10 @@ jobs:
         run: bash scripts/upload_to_r2.sh subsurface subsurface
 
       - name: Sync armor3d/ PNGs to R2 (exclude .nc climatology + meta)
-        # Mirrors update-armor3d.yml: only PNGs go to R2. The 58 MiB
-        # armor3d_climatology.nc is a workflow INPUT (used to compute
-        # anomalies) and stays in git for now — explicitly excluded
-        # here so we don't pay R2 storage on an unused copy.
+        # Mirrors update-armor3d.yml: only PNGs go via this sync. The
+        # ~56 MiB armor3d_climatology.nc is handled by the dedicated
+        # single-file step below (it's a build INPUT, not a browser
+        # asset).
         run: |
           set -euo pipefail
           aws s3 sync armor3d/ s3://triple-a-tropics-media/armor3d/ \
@@ -64,6 +64,23 @@ jobs:
             --exclude "*" --include "*.png" \
             --size-only \
             --only-show-errors
+
+      - name: Upload armor3d climatology .nc to R2 (build input)
+        # armor3d_climatology.nc migrated off git → R2 (R2 phase 2) to
+        # stop the 56 MiB file bloating history. It's a build INPUT:
+        # update-armor3d.yml fetches it to render anomaly overlays, and
+        # build-armor3d-climatology.yml uploads fresh copies. This step
+        # seeds R2 from the still-tracked git blob so the daily plot
+        # workflow keeps overlays through the untrack commit. Listed
+        # explicitly (single-file cp) so we fail loudly if it's missing.
+        run: |
+          set -euo pipefail
+          if [ -f armor3d/armor3d_climatology.nc ]; then
+            bash scripts/upload_to_r2.sh \
+              armor3d/armor3d_climatology.nc armor3d/armor3d_climatology.nc
+          else
+            echo "armor3d_climatology.nc missing from HEAD — skipping"
+          fi
 
       - name: Upload current-season GIFs to R2
         # The committed {wpac,atl,epac}_<year>_season.gif files at repo

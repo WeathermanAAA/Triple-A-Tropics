@@ -118,42 +118,28 @@ jobs:
           path: .armor3d_climo_state
           key: armor3d-climo-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Commit climatology file if it was built
+      - name: Upload climatology to R2 if it was built
         # armor3d_climatology.nc only appears when the combine step
         # runs successfully — i.e. all requested years had state.
         # On a partial run we just noop and wait for a re-invoke.
+        #
+        # It's a ~56 MiB build INPUT (update-armor3d.yml fetches it to
+        # compute anomalies), not a browser asset, so it goes to R2
+        # instead of being committed to git — keeping it out of repo
+        # history. update-armor3d.yml fetches it from
+        # cdn.triple-a-tropics.com/armor3d/armor3d_climatology.nc.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: |
-          set -eo pipefail
+          set -euo pipefail
           if [ ! -f armor3d/armor3d_climatology.nc ]; then
             echo "No climatology file produced this run — per-year state is still accumulating."
             echo "Re-run this workflow once the cache has saved; already-fetched years will be skipped."
             exit 0
           fi
-          git config --local user.name  "github-actions[bot]"
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add armor3d/armor3d_climatology.nc
-          if git diff --cached --quiet; then
-            echo "armor3d_climatology.nc already up-to-date."
-            exit 0
-          fi
-          git commit -m "chore: build ARMOR3D 1993-2020 climatology"
-
-          # Same rebase-and-push loop as the other workflows — this
-          # one-off run may still race with scheduled SST / ARMOR3D
-          # updates pushing to main.
-          for attempt in 1 2 3 4 5; do
-            if git push; then
-              echo "Pushed on attempt $attempt."
-              exit 0
-            fi
-            echo "Push rejected on attempt $attempt — fetching + rebasing..."
-            git fetch origin main
-            git rebase origin/main || {
-              echo "Rebase failed (unexpected conflict)." >&2
-              git rebase --abort || true
-              exit 1
-            }
-            sleep $((attempt * 2))
-          done
-          echo "Push still failing after 5 attempts." >&2
-          exit 1
+          echo "Uploading armor3d/armor3d_climatology.nc to R2..."
+          bash scripts/upload_to_r2.sh \
+            armor3d/armor3d_climatology.nc armor3d/armor3d_climatology.nc
+          echo "Done → https://cdn.triple-a-tropics.com/armor3d/armor3d_climatology.nc"
