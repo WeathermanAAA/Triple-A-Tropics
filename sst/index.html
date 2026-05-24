@@ -93,13 +93,13 @@
 
 <!-- ============================================================ -->
 <!-- SST Animations (90-day MP4 player)                           -->
-<!-- Reads its manifest(s) from the orphan `mp4-artifacts` branch -->
-<!-- via raw.githubusercontent.com. Data-source dropdown mirrors  -->
-<!-- the static widget (OISST / CRW / AOML / ARMOR3D). AOML and   -->
-<!-- ARMOR3D each fan out to two orphan-branch families behind    -->
+<!-- Reads its manifest(s) from Cloudflare R2                     -->
+<!-- (cdn.triple-a-tropics.com/{family}/). Data-source dropdown   -->
+<!-- mirrors the static widget (OISST / CRW / AOML / ARMOR3D).    -->
+<!-- AOML and ARMOR3D each fan out to two families behind         -->
 <!-- the scenes — TCHP and D26 — exposed as PRODUCTS within one   -->
 <!-- source. Per-product `family` overrides in data-sources tell  -->
-<!-- the widget which `mp4-artifacts/{family}/manifest.json` to   -->
+<!-- the widget which `{family}/manifest.json` to                 -->
 <!-- read for each product slug.                                  -->
 <!-- Static and animator selections are INDEPENDENT — no syncing. -->
 <!-- ============================================================ -->
