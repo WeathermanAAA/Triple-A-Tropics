@@ -23,17 +23,17 @@
  *
  *   `products` may be an array of slug strings (uses the source-level
  *   `family`) OR an array of objects `{slug, label?, family?}` so that
- *   one source can fan out across multiple `mp4-artifacts/{family}/`
- *   directories — each product picks its own manifest. The widget
+ *   one source can fan out across multiple `{family}/` directories
+ *   on the CDN — each product picks its own manifest. The widget
  *   fetches each distinct family's manifest on demand (and memoizes),
  *   merges products + regions across them, and swaps the active
  *   manifest when the user changes product. Disabled sources show a
  *   status message and freeze the video surface.
  *
- * URLs it hits:
- *   .../mp4-artifacts/{family}/manifest.json
- *   .../mp4-artifacts/{family}/{region}_{product}.mp4
- *   .../mp4-artifacts/{family}/{region}_{product}.jpg
+ * URLs it hits (on cdn.triple-a-tropics.com / Cloudflare R2):
+ *   .../{family}/manifest.json
+ *   .../{family}/{region}_{product}.mp4
+ *   .../{family}/{region}_{product}.jpg
  *
  * Cache-busting: every URL gets ?v=encodeURIComponent(generated_at)
  * appended so a fresh workflow run invalidates browser/CDN cache.
@@ -41,8 +41,11 @@
 (function () {
   'use strict';
 
-  const ARTIFACTS_BASE =
-    'https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/mp4-artifacts';
+  // Media lives on Cloudflare R2 (cdn.triple-a-tropics.com), with the
+  // mp4-artifacts family paths mirrored verbatim at the CDN root:
+  //   {family}/manifest.json, {family}/{region}_{product}.{mp4,jpg}.
+  // (Was raw.githubusercontent.com/.../mp4-artifacts before R2 phase 3.)
+  const ARTIFACTS_BASE = 'https://cdn.triple-a-tropics.com';
 
   const SPEED_OPTIONS = [0.5, 1, 2, 4];
 
@@ -283,8 +286,8 @@
         }).catch((e) => {
           if (this.sourceSlug !== slug) return;
           this._setStatus(
-            `Animations are not available yet — the orphan ` +
-            `\`mp4-artifacts\` branch hasn't been published for ` +
+            `Animations are not available yet — the CDN hasn't ` +
+            `published media for ` +
             `${families.join(', ') || src.family || src.slug}. (${e.message})`
           );
         });
