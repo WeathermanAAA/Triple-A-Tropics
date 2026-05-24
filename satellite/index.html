@@ -228,6 +228,30 @@
     display: inline-block;
   }
 
+  /* GIBS "latest pass" section — region dropdown reuses the same control
+     chrome as the panel selects so the two products read as one page. */
+  .gibs-head-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--muted);
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .gibs-region-select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .gibs-region-select:focus {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 1px;
+  }
+
   /* Status / spinner sits as an overlay inside the map wrap so it
      doesn't grow the layout when it appears. */
   .sat-status {
@@ -407,7 +431,29 @@
   </div>
 </section>
 
+<section class="chart-section" id="gibs-section">
+  <div class="chart-card">
+    <div class="sat-result-head">
+      <div>
+        <div class="gibs-head-title">Latest Polar Pass · MODIS / VIIRS True Color</div>
+        <div class="sat-result-meta" id="gibs-meta">Loading latest true-color pass…</div>
+      </div>
+      <div class="sat-result-actions">
+        <label for="gibs-region" class="sr-only" style="position:absolute;left:-9999px;">Region</label>
+        <select id="gibs-region" class="gibs-region-select" aria-label="Region"></select>
+        <a id="gibs-download" class="sat-action-btn" download href="#">Download</a>
+      </div>
+    </div>
+    <div class="sat-result-img-wrap">
+      <img id="gibs-img" alt="Latest MODIS/VIIRS true-color image">
+    </div>
+  </div>
+</section>
+
 <section class="about">
+  <h2>Latest polar pass (250 m photographic)</h2>
+  <p>The <b>Latest Polar Pass</b> panel above is a daily, high-resolution photographic snapshot per region — NASA's <b>MODIS</b> (Terra/Aqua, ~250 m) and <b>VIIRS</b> (SNPP/NOAA-20, ~375 m) true-color corrected-reflectance composites, served via <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api" target="_blank" rel="noopener">NASA GIBS</a>. Unlike the geostationary tool above, polar-orbiting sensors image each spot once or twice a day, so this is the freshest <em>complete</em> daily pass — gaps between orbit swaths are filled across sensors. Pick a region from the dropdown; the caption shows which sensor and day you're seeing.</p>
+
   <h2>How it works</h2>
   <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel — IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail — and an enhancement preset. Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
   <p>Any bbox size works — the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
@@ -838,6 +884,78 @@
     // Auto-fire render to make screenshots reproducible
     setTimeout(doRender, 200);
   }
+})();
+</script>
+
+<script>
+// ---- GIBS "latest pass" stills -------------------------------------------
+// Reads cdn.triple-a-tropics.com/gibs/manifest.json (written by the
+// update-gibs.yml workflow) and shows the selected region's daily MODIS/VIIRS
+// true-color JPEG. Self-contained: no Leaflet, no backend, just the manifest
+// + one <img>. Cache-busted on the manifest's generated_utc so a fresh daily
+// run shows through the 5-min R2 cache-control immediately.
+(function() {
+  const CDN = 'https://cdn.triple-a-tropics.com/gibs';
+  const sel = document.getElementById('gibs-region');
+  const img = document.getElementById('gibs-img');
+  const meta = document.getElementById('gibs-meta');
+  const dl = document.getElementById('gibs-download');
+  const section = document.getElementById('gibs-section');
+  let manifest = null;
+
+  function cacheBust() {
+    return manifest && manifest.generated_utc
+      ? '?v=' + encodeURIComponent(manifest.generated_utc) : '';
+  }
+
+  function show(slug) {
+    const r = manifest.regions.find(x => x.slug === slug) || manifest.regions[0];
+    if (!r) return;
+    const url = CDN + '/' + r.file + cacheBust();
+    img.src = url;
+    img.alt = r.label + ' true color — ' + r.sensor + ' ' + r.date;
+    dl.href = url;
+    dl.download = r.file;
+    meta.textContent = r.sensor + ' · ' + r.date + ' · ~' + r.native_res_m + ' m · ' + r.label;
+    // Reflect the choice in the URL so a region is shareable/bookmarkable.
+    const p = new URLSearchParams(window.location.search);
+    p.set('gibs', r.slug);
+    window.history.replaceState({}, '', window.location.pathname + '?' + p.toString());
+  }
+
+  fetch(CDN + '/manifest.json', { cache: 'no-cache' })
+    .then(r => { if (!r.ok) throw new Error('manifest HTTP ' + r.status); return r.json(); })
+    .then(m => {
+      manifest = m;
+      if (!m.regions || !m.regions.length) {
+        meta.textContent = 'No latest-pass imagery available yet.';
+        return;
+      }
+      sel.innerHTML = '';
+      m.regions.forEach(r => {
+        const o = document.createElement('option');
+        o.value = r.slug;
+        o.textContent = r.label;
+        sel.appendChild(o);
+      });
+      // Default: deep-link ?gibs=slug, else western-atlantic, else first.
+      const want = new URLSearchParams(window.location.search).get('gibs');
+      const has = (s) => m.regions.some(r => r.slug === s);
+      const def = (want && has(want)) ? want
+                : has('western-atlantic') ? 'western-atlantic'
+                : m.regions[0].slug;
+      sel.value = def;
+      show(def);
+    })
+    .catch(e => {
+      // Hide the whole section if the manifest isn't on R2 yet — better than
+      // showing a broken-image box. (First go-live: hidden until the workflow
+      // has run once.)
+      console.error('GIBS manifest load failed:', e);
+      if (section) section.style.display = 'none';
+    });
+
+  sel.addEventListener('change', () => show(sel.value));
 })();
 </script>
 
