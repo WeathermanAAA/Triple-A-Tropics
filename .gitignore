@@ -30,6 +30,8 @@ _mp4_build/
 sst/*.png
 subsurface/*.png
 armor3d/*.png
+gibs/*.jpg
+gibs/manifest.json
 *_season.gif
 historical/*/gifs/*.gif
 global_storms.geojson
