@@ -39,6 +39,12 @@ Climatology-page.jpg
 sst-page.jpg
 Satoshiplot.jpg
 
+# SST climatology curves: the per-region daily-mean cache is a build
+# INPUT rewritten daily (computed by generate_sst_climatology.py, staged
+# here, served from cdn.triple-a-tropics.com/sst/sst_region_daily_means.npz).
+# Like armor3d_climatology.nc it lives on R2, not in git.
+_sst_clim_build/
+
 # R2 phase 2: the ~56 MiB ARMOR3D climatology is a build INPUT (read by
 # generate_armor3d_plots.py for anomaly overlays), not a browser asset.
 # build-armor3d-climatology.yml uploads it to R2; update-armor3d.yml
