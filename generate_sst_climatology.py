@@ -74,11 +74,48 @@ PANEL = "#1b1e24"     # header bar / card surface
 BORDER = "#2a2e36"    # spines, gridlines, inset frame
 FG = "#e8ebef"        # near-white text + climatology mean line
 MUTED = "#9199a4"     # secondary text, spaghetti, ticks
-CYAN = "#5dd3ff"      # current year
-AMBER = "#ffb83a"     # current year − 2
-RED = "#ef5350"       # current year − 1
+CYAN = "#5dd3ff"      # current year (always highlighted)
+AMBER = "#ffb83a"     # 2nd highlight colour
+RED = "#ef5350"       # lead highlight colour
 
 WATERMARK = "@WeathermanAAA_"
+
+# --- Highlighted years (per region) -------------------------------------
+# The CURRENT year is ALWAYS highlighted — bold CYAN, drawn only to the
+# latest available day, with the end dot + dotted "now" line. The lists
+# here name the ADDITIONAL, fully-drawn past years to colour on top of the
+# gray spaghetti: each takes the next colour from HIGHLIGHT_PALETTE
+# (newest-first) and gets its own legend entry. The whole 1982-present
+# record is already in the R2 cache, so highlighting a past year is just a
+# matter of listing it — no backfill needed.
+#
+# A region NOT listed here falls back to the previous two completed years,
+# reproducing the original "current + 2" look.
+HIGHLIGHT_YEARS: dict[str, list[int]] = {
+    "east-pacific": [2015, 2018],
+}
+
+# Colours for the non-current highlighted years, applied newest-first so
+# the most recent past year leads with RED (matching the original look).
+HIGHLIGHT_PALETTE: list[str] = [
+    RED, AMBER, "#c792ea", "#7bd88f", "#ff8a65", "#f06292",
+]
+
+
+def highlight_spec(slug: str, cur: int) -> dict[int, tuple[str, float, str]]:
+    """{year: (colour, linewidth, label)} for the coloured lines drawn over
+    the spaghetti. The current year is always present (CYAN); the
+    region-configured past years — or the default previous two — follow,
+    newest-first, in HIGHLIGHT_PALETTE order."""
+    past = HIGHLIGHT_YEARS.get(slug)
+    if past is None:
+        past = [cur - 1, cur - 2]            # default: previous two years
+    # Newest first, de-duplicated, current year dropped (always its own CYAN).
+    past = sorted({y for y in past if y != cur}, reverse=True)
+    spec: dict[int, tuple[str, float, str]] = {cur: (CYAN, 3.0, str(cur))}
+    for i, y in enumerate(past):
+        spec[y] = (HIGHLIGHT_PALETTE[i % len(HIGHLIGHT_PALETTE)], 2.0, str(y))
+    return spec
 
 HERE = Path(__file__).resolve().parent
 SST_DIR = HERE / "sst"
@@ -332,9 +369,7 @@ def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
     clim = climatology_curve(records, region_idx)
 
     cur = dt.datetime.utcnow().date().year
-    highlight = {cur: (CYAN, 3.0, str(cur)),
-                 cur - 1: (RED, 2.0, str(cur - 1)),
-                 cur - 2: (AMBER, 2.0, str(cur - 2))}
+    highlight = highlight_spec(slug, cur)
 
     fig = plt.figure(figsize=(11.0, 7.0), facecolor=BG)
 
@@ -359,7 +394,7 @@ def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
     ax = fig.add_axes([0.07, 0.16, 0.80, 0.70])
     ax.set_facecolor(BG)
 
-    # Gray spaghetti — every historical year except the highlighted three
+    # Gray spaghetti — every historical year except the highlighted ones
     # (those get drawn in color on top).
     for y in sorted(series):
         if y in highlight:
@@ -373,8 +408,10 @@ def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
     ax.plot(xs, clim[1:367], color=FG, linewidth=2.2, linestyle="--",
             zorder=4, label="1991–2020 mean")
 
-    # Highlighted recent years (older → newer so cyan sits on top).
-    for y in (cur - 2, cur - 1):
+    # Highlighted past years — full-year coloured lines over the spaghetti,
+    # drawn oldest → newest so more-recent years sit on top (the current
+    # year, below, then sits on top of all of them).
+    for y in sorted(y for y in highlight if y != cur):
         if y in series:
             color, lw, lab = highlight[y]
             pos, val = series[y]
