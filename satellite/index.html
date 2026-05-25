@@ -381,6 +381,7 @@
         <div class="sat-field">
           <label for="sat-channel">Channel</label>
           <select id="sat-channel">
+            <option value="true_color">True Color (RGB) · day/night</option>
             <option value="clean_ir">Clean IR · 10.4 µm</option>
             <option value="ir_window">IR window · 11.2 µm</option>
             <option value="wv_upper">Upper WV · 6.2 µm</option>
@@ -455,7 +456,7 @@
   <p>The <b>Latest Polar Pass</b> panel above is a daily, high-resolution photographic snapshot per region — NASA's <b>MODIS</b> (Terra/Aqua, ~250 m) and <b>VIIRS</b> (SNPP/NOAA-20, ~375 m) true-color corrected-reflectance composites, served via <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api" target="_blank" rel="noopener">NASA GIBS</a>. Unlike the geostationary tool above, polar-orbiting sensors image each spot once or twice a day, so this is the freshest <em>complete</em> daily pass — gaps between orbit swaths are filled across sensors. Pick a region from the dropdown; the caption shows which sensor and day you're seeing.</p>
 
   <h2>How it works</h2>
-  <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel — IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail — and an enhancement preset. Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
+  <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel — <b>True Color (RGB)</b> for a natural photographic look (synthetic green on GOES, native green on Himawari; fades to clean-IR at night), IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail — and an enhancement preset (ignored for true color). Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
   <p>Any bbox size works — the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
 
   <h2>Coverage</h2>
@@ -676,6 +677,17 @@
   }
   latestCheckbox.addEventListener('change', syncTimeInput);
   syncTimeInput();
+
+  // ---- Channel/enhancement coupling ----
+  // True color is its own RGB product; the IR/visible enhancement presets
+  // don't apply, so grey the enhancement picker out when it's selected.
+  const channelSelect = document.getElementById('sat-channel');
+  const enhSelect = document.getElementById('sat-enh');
+  function syncEnhForChannel() {
+    enhSelect.disabled = (channelSelect.value === 'true_color');
+  }
+  channelSelect.addEventListener('change', syncEnhForChannel);
+  syncEnhForChannel();
 
   // ---- Toasts ----
   const toast = document.getElementById('sat-toast');
