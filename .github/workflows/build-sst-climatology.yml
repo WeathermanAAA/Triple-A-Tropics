@@ -1,0 +1,151 @@
+name: Build SST Climatology Cache
+
+# One-off (re-runnable) workflow that builds the per-region daily-mean
+# SST cache feeding the kouya-style climatology curves. Fire it from the
+# Actions tab:
+#     Actions → "Build SST Climatology Cache" → "Run workflow".
+#
+# It walks OISST 1982→present, downloads each daily global grid once,
+# computes the 18 region means, and DISCARDS the grid immediately (the
+# full ~26 GB of NetCDF won't fit on a runner). The product is a single
+# ~0.7 MB compressed npz:
+#     sst/sst_region_daily_means.npz   (R2 build INPUT, never committed)
+#
+# Runtime is dominated by NCEI download throughput (~16k files). GitHub's
+# hard 6-hour job limit may clip a from-scratch build, so it is resumable
+# at the *day* level:
+#   • --time-budget-minutes makes the script stop cleanly before the
+#     timeout, so the partial cache is flushed and uploaded.
+#   • The partial npz is stashed in the Actions cache between runs.
+#   • On a fresh campaign the partial is seeded from the R2 copy (which
+#     the daily update-sst.yml run also maintains), so backfill EXTENDS
+#     the existing cache instead of clobbering it — load merges by date.
+# If the workflow times out, just re-run it; already-cached days are
+# skipped automatically and the final upload happens on whichever run
+# finally reaches the present.
+on:
+  workflow_dispatch:
+    inputs:
+      start_year:
+        description: "First year to backfill"
+        default: "1982"
+      end_year:
+        description: "Last year (inclusive; blank = current year)"
+        default: ""
+
+permissions:
+  contents: read
+
+# One build at a time — hours-long, makes real NCEI requests, and shares
+# the R2 cache object with the daily run; double-running would race.
+concurrency:
+  group: build-sst-climatology
+  cancel-in-progress: false
+
+env:
+  CACHE_FILE: _sst_clim_build/sst_region_daily_means.npz
+  R2_PUBLIC_URL: https://cdn.triple-a-tropics.com/sst/sst_region_daily_means.npz
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Just under GH's 360-minute ceiling so the post-job cache save and
+    # the R2 upload have a chance to run before the runner is force-killed.
+    timeout-minutes: 340
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # matplotlib is needed only because generate_sst_climatology
+          # imports generate_sst_plots (module-level matplotlib import);
+          # the backfill itself renders nothing.
+          pip install numpy matplotlib netCDF4 requests
+
+      - name: Restore partial cache from Actions cache (campaign resume)
+        id: state-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: _sst_clim_build
+          # Unique per run so save always writes a fresh entry.
+          key: sst-clim-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          # Prefix-match so we pick up the newest save from any prior run.
+          restore-keys: |
+            sst-clim-cache-v1-
+
+      - name: Seed cache from R2 if no local partial (cold start)
+        # On the first run of a campaign the Actions cache is empty. Pull
+        # the published copy (maintained by update-sst.yml's daily append)
+        # so the backfill EXTENDS it rather than starting blank. Public
+        # read — no credentials needed. 404 on the very first ever build
+        # is fine; we start from nothing.
+        run: |
+          set -euo pipefail
+          mkdir -p _sst_clim_build
+          if [ -f "$CACHE_FILE" ]; then
+            echo "Local partial present from Actions cache — using it."
+          else
+            echo "No local partial; trying R2 seed: $R2_PUBLIC_URL"
+            if curl -fsSL "$R2_PUBLIC_URL" -o "$CACHE_FILE"; then
+              echo "Seeded cache from R2 ($(stat -c%s "$CACHE_FILE") bytes)."
+            else
+              echo "No R2 copy yet — building from scratch."
+              rm -f "$CACHE_FILE"
+            fi
+          fi
+
+      - name: Backfill region-mean cache (resumable)
+        # --time-budget-minutes 320 leaves ~20 min headroom for the cache
+        # save + R2 upload to run on a quiescent filesystem before the
+        # 340-min step timeout.
+        run: |
+          set -eo pipefail
+          ARGS="--backfill --start-year ${{ inputs.start_year }} --time-budget-minutes 320"
+          if [ -n "${{ inputs.end_year }}" ]; then
+            ARGS="$ARGS --end-year ${{ inputs.end_year }}"
+          fi
+          echo "Running: python generate_sst_climatology.py $ARGS"
+          python generate_sst_climatology.py $ARGS
+
+      - name: Flush disk buffers before cache save
+        if: always()
+        run: |
+          sync || true
+          sleep 5
+
+      - name: Save partial cache to Actions cache
+        # always() so a clipped run still persists progress for the next
+        # invocation to resume from.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: _sst_clim_build
+          key: sst-clim-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload cache to R2
+        # always() — publish whatever we have (partial or complete) so the
+        # daily run and the frontend pick up the latest history. Tiny file,
+        # so an unconditional upload is cheap.
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f "$CACHE_FILE" ]; then
+            echo "No cache file produced — nothing to upload."
+            exit 0
+          fi
+          echo "Uploading $CACHE_FILE → R2 (sst/sst_region_daily_means.npz)..."
+          bash scripts/upload_to_r2.sh "$CACHE_FILE" sst/sst_region_daily_means.npz
+          echo "Done → $R2_PUBLIC_URL"
