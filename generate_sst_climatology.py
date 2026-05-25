@@ -48,6 +48,11 @@ import sys
 import time
 from pathlib import Path
 
+import matplotlib as mpl
+
+mpl.use("Agg")
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 
 # Reuse the OISST plumbing + region definitions from the map generator.
@@ -55,9 +60,25 @@ import numpy as np
 import generate_sst_plots as gsp
 from generate_sst_plots import (
     REGIONS,
+    _draw_basemap,
+    _load_geojson,
     _subset_to_extent,
     compute_global_mean,
 )
+
+# --- TAT-dark palette (the climatology curves' own theme) ---------------
+# Intentionally NOT generate_sst_plots' navy BG_COLOR (#07101c) — these
+# curves match the site's neutral dark theme in styles.css :root.
+BG = "#131519"        # figure background
+PANEL = "#1b1e24"     # header bar / card surface
+BORDER = "#2a2e36"    # spines, gridlines, inset frame
+FG = "#e8ebef"        # near-white text + climatology mean line
+MUTED = "#9199a4"     # secondary text, spaghetti, ticks
+CYAN = "#5dd3ff"      # current year
+AMBER = "#ffb83a"     # current year − 2
+RED = "#ef5350"       # current year − 1
+
+WATERMARK = "@WeathermanAAA_"
 
 HERE = Path(__file__).resolve().parent
 SST_DIR = HERE / "sst"
@@ -225,6 +246,227 @@ def _fetch_days_concurrent(days: list[dt.date]) -> dict[dt.date, Path]:
     return out
 
 
+# --- Series + climatology derivation ------------------------------------
+
+def region_series(records: dict[dt.date, np.ndarray],
+                  region_idx: int) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """{year: (doy_positions, values)} for one region, sorted by position.
+
+    Drops days whose value is NaN (NCEI gaps). Positions are the
+    calendar-aligned 1..366 day-of-year slots."""
+    by_year: dict[int, list[tuple[int, float]]] = {}
+    for d, row in records.items():
+        v = float(row[region_idx])
+        if not np.isfinite(v):
+            continue
+        by_year.setdefault(d.year, []).append((doy_pos(d), v))
+    out: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for y, pairs in by_year.items():
+        pairs.sort()
+        out[y] = (np.array([p for p, _ in pairs], dtype=np.int32),
+                  np.array([v for _, v in pairs], dtype=np.float32))
+    return out
+
+
+def climatology_curve(records: dict[dt.date, np.ndarray], region_idx: int,
+                      y0: int = CLIMO_START, y1: int = CLIMO_END
+                      ) -> np.ndarray:
+    """1991–2020 daily-of-year mean as an array indexed by position 1..366.
+
+    Position 0 is unused; positions with no contributing year are NaN
+    (only Feb 29 could be thin, and the baseline's 8 leap years cover it)."""
+    sums = np.zeros(367, dtype=np.float64)
+    cnts = np.zeros(367, dtype=np.float64)
+    for d, row in records.items():
+        if y0 <= d.year <= y1:
+            v = float(row[region_idx])
+            if np.isfinite(v):
+                p = doy_pos(d)
+                sums[p] += v
+                cnts[p] += 1
+    with np.errstate(invalid="ignore", divide="ignore"):
+        clim = np.where(cnts > 0, sums / cnts, np.nan)
+    return clim
+
+
+# --- Plotting -----------------------------------------------------------
+
+def _render_inset(ax, slug: str, anom: np.ndarray, lat: np.ndarray,
+                  lon: np.ndarray, countries, coast) -> None:
+    """Draw the region's current SST-anomaly map into the inset axes.
+
+    Clean re-render from the latest OISST `anom` field (same data the
+    pipeline's anomaly map uses), RdBu_r −3…+3 °C, no colorbar/watermark —
+    the shared right-margin colorbar is its key. Dashed muted frame."""
+    extent = REGIONS[slug]["extent"]
+    sub, la, lo = _subset_to_extent(anom, lat, lon, extent)
+    if sub.size:
+        LON2, LAT2 = np.meshgrid(lo, la)
+        ax.pcolormesh(LON2, LAT2, sub, cmap="RdBu_r",
+                      norm=mcolors.Normalize(-3.0, 3.0),
+                      shading="auto", rasterized=True, zorder=1)
+        _draw_basemap(ax, extent, countries, coast)
+        ax.set_xlim(float(lo.min()), float(lo.max()))
+        ax.set_ylim(float(la.min()), float(la.max()))
+    ax.set_facecolor(PANEL)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_edgecolor(MUTED)
+        sp.set_linewidth(0.9)
+        sp.set_linestyle((0, (4, 2)))  # dashed bbox
+    ax.set_title("current SST anomaly", color=MUTED, fontsize=8,
+                 fontweight="bold", pad=3)
+
+
+def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
+                      region_idx: int, latest_date: dt.date,
+                      anom_grid: tuple[np.ndarray, np.ndarray, np.ndarray] | None,
+                      countries, coast, out_path: Path) -> bool:
+    """Render one region's kouya-style climatology curve PNG. Returns
+    True on success, False if the region has too little data."""
+    series = region_series(records, region_idx)
+    if not series:
+        print(f"{LOG} {slug}: no data, skip render")
+        return False
+    clim = climatology_curve(records, region_idx)
+
+    cur = dt.datetime.utcnow().date().year
+    highlight = {cur: (CYAN, 3.0, str(cur)),
+                 cur - 1: (RED, 2.0, str(cur - 1)),
+                 cur - 2: (AMBER, 2.0, str(cur - 2))}
+
+    fig = plt.figure(figsize=(11.0, 7.0), facecolor=BG)
+
+    # --- Header bar -----------------------------------------------------
+    hax = fig.add_axes([0.0, 0.915, 1.0, 0.085])
+    hax.set_facecolor(PANEL)
+    hax.set_xlim(0, 1)
+    hax.set_ylim(0, 1)
+    hax.set_xticks([])
+    hax.set_yticks([])
+    for sp in hax.spines.values():
+        sp.set_visible(False)
+    # Thin bottom border.
+    hax.axhline(0.02, color=BORDER, linewidth=1.2, zorder=5)
+    hax.text(0.012, 0.5, REGIONS[slug]["label"], color=FG, fontsize=16,
+             fontweight="bold", va="center", ha="left")
+    hax.text(0.988, 0.5,
+             f"daily SST climatology  ·  as of {latest_date:%Y-%m-%d}",
+             color=MUTED, fontsize=11, va="center", ha="right")
+
+    # --- Main plot ------------------------------------------------------
+    ax = fig.add_axes([0.07, 0.16, 0.80, 0.70])
+    ax.set_facecolor(BG)
+
+    # Gray spaghetti — every historical year except the highlighted three
+    # (those get drawn in color on top).
+    for y in sorted(series):
+        if y in highlight:
+            continue
+        pos, val = series[y]
+        ax.plot(pos, val, color=MUTED, alpha=0.18, linewidth=0.6,
+                zorder=1, solid_capstyle="round")
+
+    # 1991–2020 daily mean — dashed, near-white.
+    xs = np.arange(1, 367)
+    ax.plot(xs, clim[1:367], color=FG, linewidth=2.2, linestyle="--",
+            zorder=4, label="1991–2020 mean")
+
+    # Highlighted recent years (older → newer so cyan sits on top).
+    for y in (cur - 2, cur - 1):
+        if y in series:
+            color, lw, lab = highlight[y]
+            pos, val = series[y]
+            ax.plot(pos, val, color=color, linewidth=lw, zorder=5, label=lab)
+
+    # Current year — only through the latest available day, with an end
+    # dot and a dotted "now" line.
+    if cur in series:
+        color, lw, lab = highlight[cur]
+        pos, val = series[cur]
+        ax.plot(pos, val, color=color, linewidth=lw, zorder=7, label=lab)
+        ax.plot(pos[-1], val[-1], "o", color=color, markersize=5.5,
+                markeredgecolor=BG, markeredgewidth=0.8, zorder=8)
+        ax.axvline(pos[-1], color=color, linewidth=1.0, linestyle=":",
+                   alpha=0.55, zorder=3)
+
+    # A faint proxy entry so the legend documents the gray lines.
+    ax.plot([], [], color=MUTED, alpha=0.5, linewidth=1.2,
+            label="all years 1982–present")
+
+    # Auto y-limits with ~0.5 °C headroom so warm-year peaks never clip.
+    allvals = np.concatenate([v for _, v in series.values()])
+    finite = allvals[np.isfinite(allvals)]
+    if finite.size:
+        ymin, ymax = float(np.min(finite)), float(np.max(finite))
+        ax.set_ylim(ymin - 0.3, ymax + 0.5)
+
+    ax.set_xlim(1, 366)
+    pos_ticks, lab_ticks = month_tick_positions()
+    ax.set_xticks(pos_ticks)
+    ax.set_xticklabels(lab_ticks)
+    ax.set_ylabel("region-mean SST (°C)", color=FG, fontsize=11)
+    ax.tick_params(colors=MUTED, labelsize=9)
+    for sp in ax.spines.values():
+        sp.set_color(BORDER)
+    ax.grid(True, color=BORDER, linewidth=0.5, alpha=0.55)
+    ax.set_axisbelow(True)
+
+    # --- Inset anomaly map (top-left) -----------------------------------
+    if anom_grid is not None:
+        iax = fig.add_axes([0.105, 0.585, 0.255, 0.245])
+        _render_inset(iax, slug, anom_grid[0], anom_grid[1], anom_grid[2],
+                      countries, coast)
+
+    # --- Shared anomaly colorbar (right margin, off-plot, centered) -----
+    cax = fig.add_axes([0.905, 0.30, 0.018, 0.40])
+    sm = plt.cm.ScalarMappable(cmap="RdBu_r",
+                               norm=mcolors.Normalize(-3.0, 3.0))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cax, extend="both")
+    cbar.set_label("SST anomaly (°C)", color=MUTED, fontsize=9)
+    cbar.set_ticks(np.arange(-3, 4, 1))
+    cbar.ax.yaxis.set_tick_params(color=MUTED, labelcolor=MUTED, labelsize=8)
+    cbar.outline.set_edgecolor(BORDER)
+
+    # --- Legend — frameless, single row, centered below the plot --------
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center",
+               bbox_to_anchor=(0.47, 0.045), ncol=len(labels),
+               frameon=False, fontsize=10, labelcolor=FG,
+               handlelength=1.8, columnspacing=1.6)
+
+    # --- Footer ---------------------------------------------------------
+    fig.text(0.07, 0.018, "source: NOAA OISST", color=MUTED, fontsize=9,
+             ha="left", va="bottom")
+    fig.text(0.872, 0.018, WATERMARK, color=MUTED, fontsize=9,
+             ha="right", va="bottom", fontweight="bold")
+
+    fig.savefig(out_path, dpi=150, facecolor=BG)
+    plt.close(fig)
+    return True
+
+
+def render_all(records: dict[dt.date, np.ndarray], latest_date: dt.date,
+               anom_grid, slugs: list[str]) -> int:
+    """Render the curve PNG for each requested region into sst/."""
+    countries = (_load_geojson("ne_50m_admin_0_countries.geojson")
+                 or _load_geojson("ne_110m_admin_0_countries.geojson"))
+    coast = (_load_geojson("ne_50m_coastline.geojson")
+             or _load_geojson("ne_110m_coastline.geojson"))
+    n = 0
+    for slug in slugs:
+        idx = REGION_SLUGS.index(slug)
+        out_path = SST_DIR / f"{slug}_climatology.png"
+        if plot_region_curve(slug, records, idx, latest_date, anom_grid,
+                             countries, coast, out_path):
+            print(f"{LOG} wrote {out_path}")
+            n += 1
+    print(f"{LOG} rendered {n}/{len(slugs)} region curve(s)")
+    return n
+
+
 # --- Commands -----------------------------------------------------------
 
 def cmd_backfill(cache_path: Path, start_year: int, end_year: int | None) -> int:
@@ -307,20 +549,59 @@ def cmd_backfill(cache_path: Path, start_year: int, end_year: int | None) -> int
     return 0
 
 
-def cmd_update(cache_path: Path) -> int:
-    """Append the newest available OISST day's region means to the cache."""
+def _resolve_slugs(arg: str | None) -> list[str]:
+    """Comma-separated --regions filter → validated slug list (all if None)."""
+    if not arg:
+        return list(REGION_SLUGS)
+    out = []
+    for s in arg.split(","):
+        s = s.strip()
+        if not s:
+            continue
+        if s not in REGION_SLUGS:
+            raise SystemExit(f"{LOG} unknown region '{s}'. "
+                             f"Known: {', '.join(REGION_SLUGS)}")
+        out.append(s)
+    return out
+
+
+def cmd_update(cache_path: Path, regions: str | None,
+               render: bool = True) -> int:
+    """Append the newest available OISST day, then render the curves.
+
+    The latest day's grid doubles as the inset anomaly source and fixes
+    the 'as of' date + the current-year line's endpoint, so we read it
+    once for both purposes."""
     records = load_records(cache_path)
     before = len(records)
     d, p = gsp.latest_available_day(LOG)  # cache hit if plots step ran first
+    sst, lat, lon = gsp.read_sst_grid(p)
     if d in records:
         print(f"{LOG} latest available {d} already in cache "
-              f"({before} days); nothing to append.")
-        return 0
-    sst, lat, lon = gsp.read_sst_grid(p)
-    records[d] = region_means_for_grid(sst, lat, lon)
-    save_records(cache_path, records)
-    print(f"{LOG} appended {d}; cache now {len(records)} days "
-          f"(was {before}).")
+              f"({before} days); not appending.")
+    else:
+        records[d] = region_means_for_grid(sst, lat, lon)
+        save_records(cache_path, records)
+        print(f"{LOG} appended {d}; cache now {len(records)} days "
+              f"(was {before}).")
+    if render:
+        anom, alat, alon = gsp.read_sst_grid(p, var_name="anom")
+        render_all(records, d, (anom, alat, alon), _resolve_slugs(regions))
+    return 0
+
+
+def cmd_render_only(cache_path: Path, regions: str | None) -> int:
+    """Re-render curves from the existing cache without appending a day.
+
+    Still fetches the latest available grid (cache hit in CI) for the
+    inset map + the 'as of' date. Handy for local style iteration."""
+    records = load_records(cache_path)
+    if not records:
+        raise SystemExit(f"{LOG} cache {cache_path} is empty — run "
+                         f"--backfill or --update first.")
+    d, p = gsp.latest_available_day(LOG)
+    anom, alat, alon = gsp.read_sst_grid(p, var_name="anom")
+    render_all(records, d, (anom, alat, alon), _resolve_slugs(regions))
     return 0
 
 
@@ -333,9 +614,16 @@ def parse_args(argv):
                       help="One-time: build the full 1982-present cache "
                            "(resumable).")
     mode.add_argument("--update", action="store_true",
-                      help="Daily: append the latest available day.")
+                      help="Daily: append the latest available day, then "
+                           "render the curves.")
+    mode.add_argument("--render-only", action="store_true",
+                      help="Re-render curves from the cache without "
+                           "appending (local iteration).")
     p.add_argument("--cache", type=Path, default=DEFAULT_CACHE_PATH,
                    help="Cache npz path (default: %(default)s).")
+    p.add_argument("--regions", default=None,
+                   help="Comma-separated region slugs to render "
+                        "(default: all 18).")
     p.add_argument("--start-year", type=int, default=OISST_START.year,
                    help="Backfill start year (default: %(default)s).")
     p.add_argument("--end-year", type=int, default=None,
@@ -351,7 +639,9 @@ def main(argv=None) -> int:
     _arm_budget(args.time_budget_minutes)
     if args.backfill:
         return cmd_backfill(args.cache, args.start_year, args.end_year)
-    return cmd_update(args.cache)
+    if args.render_only:
+        return cmd_render_only(args.cache, args.regions)
+    return cmd_update(args.cache, args.regions)
 
 
 if __name__ == "__main__":
