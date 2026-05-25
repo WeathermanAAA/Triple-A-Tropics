@@ -11,6 +11,7 @@
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/styles.css">
 <script src="/sst/static_widget.js" defer></script>
+<script src="/sst/climatology_widget.js" defer></script>
 <script src="/product_animator.js" defer></script>
 </head>
 <body>
@@ -49,6 +50,22 @@
 </header>
 <section class="chart-section">
   <div id="sstStatic" data-manifest="/sst/static_manifest.json"></div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SST Climatology curves (kouya-style spaghetti)               -->
+<!-- One PNG per region from generate_sst_climatology.py, read     -->
+<!-- from R2 via sst/climatology_manifest.json. The header bar,    -->
+<!-- legend, anomaly colorbar, and current-anomaly inset all live  -->
+<!-- inside the rendered PNG, so the widget is just a region       -->
+<!-- selector. Independent of the static-map widget above.         -->
+<!-- ============================================================ -->
+<header class="page-head section-divider">
+  <h2 class="section-h2">SST Climatology</h2>
+  <p>Where does this year sit against the whole record? Each region's daily mean SST is plotted across the calendar year: every season since 1982 in gray, the 1991–2020 daily mean dashed, and the three most recent years highlighted — current year in cyan through the latest available day. The inset shows the region's current SST-anomaly map.</p>
+</header>
+<section class="chart-section">
+  <div id="sstClimatology" data-manifest="/sst/climatology_manifest.json"></div>
 </section>
 
 <!-- ============================================================ -->

@@ -1,0 +1,33 @@
+{
+  "_comment": "Manifest for sst/climatology_widget.js — the kouya-style daily-SST climatology curves. One PNG per region ({region}_climatology.png on R2), rendered by generate_sst_climatology.py and published by update-sst.yml. region_labels + region_groups mirror static_manifest.json; keep them in sync if a region is added/removed.",
+  "subtitle": "Region-mean SST through the calendar year. Every year since 1982 is drawn in gray; the dashed line is the 1991–2020 daily mean; the three most recent years are highlighted, with the current year in cyan through the latest available day. Inset: the region's current SST-anomaly map.",
+  "path_template": "https://cdn.triple-a-tropics.com/sst/{region}_climatology.png",
+  "meta_url": "/sst/sst_meta.json",
+  "region_labels": {
+    "global":              "Global",
+    "global-tropics":      "Global Tropics",
+    "enso":                "ENSO Regions",
+    "north-atlantic":      "North Atlantic",
+    "tropical-atlantic":   "Tropical Atlantic",
+    "western-atlantic":    "Western Atlantic",
+    "equatorial-atlantic": "Equatorial Atlantic",
+    "south-atlantic":      "South Atlantic",
+    "northeast-pacific":   "Northeast Pacific",
+    "east-pacific":        "East Pacific",
+    "central-pacific":     "Central Pacific",
+    "northwest-pacific":   "Northwest Pacific",
+    "north-pacific":       "North Pacific",
+    "southwest-pacific":   "Southwest Pacific",
+    "southeast-pacific":   "Southeast Pacific",
+    "australia":           "Australia",
+    "indian-ocean":        "Indian Ocean",
+    "mediterranean":       "Mediterranean"
+  },
+  "region_groups": [
+    { "label": "Overview",     "regions": ["global", "global-tropics", "enso"] },
+    { "label": "Atlantic",     "regions": ["north-atlantic", "tropical-atlantic", "western-atlantic", "equatorial-atlantic", "south-atlantic"] },
+    { "label": "Pacific",      "regions": ["northeast-pacific", "east-pacific", "central-pacific", "northwest-pacific", "north-pacific", "southwest-pacific", "southeast-pacific"] },
+    { "label": "Other basins", "regions": ["australia", "indian-ocean", "mediterranean"] }
+  ],
+  "default_region": "north-atlantic"
+}
