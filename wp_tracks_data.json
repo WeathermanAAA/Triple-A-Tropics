@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-25 16:12 UTC",
+  "updated": "2026-05-25 19:56 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
@@ -21,10 +21,10 @@
       "sid": "JTWC_WP992026",
       "name": "99W",
       "season": 2026,
-      "start": "2026-05-25T12:00:00",
-      "end": "2026-05-25T12:00:00",
+      "start": "2026-05-25T18:00:00",
+      "end": "2026-05-25T18:00:00",
       "peak_wind_kt": 15.0,
-      "peak_pressure_mb": 1007.0,
+      "peak_pressure_mb": 1005.0,
       "ace": 0.0,
       "max_category": "TD",
       "current_category": "TD",
@@ -34,11 +34,11 @@
       "atcf_id": "99W",
       "points": [
         {
-          "t": "2026-05-25T12:00:00",
-          "lat": 8.1,
-          "lon": 140.0,
+          "t": "2026-05-25T18:00:00",
+          "lat": 8.2,
+          "lon": 139.3,
           "wind_kt": 15.0,
-          "pressure_mb": 1007.0,
+          "pressure_mb": 1005.0,
           "cls": "TD",
           "nature": "DS"
         }
