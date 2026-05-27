@@ -1372,6 +1372,26 @@ def render_tracks_svg(storms: list[dict], extent,
     return "\n".join(parts)
 
 
+def _xml_escape(s: str) -> str:
+    """Minimal escaping for text inside SVG <title>/<text> nodes."""
+    return (str(s).replace("&", "&amp;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _fmt_last_fix(iso: str | None) -> str:
+    """ISO timestamp -> 'YYYY-MM-DD HH:MM UTC'. Used for the native-tooltip
+    <title> on active-storm markers — per-basin pages are intentionally
+    static SVG (no JS, for copy/paste), so a browser-native <title> is the
+    no-script way to surface the latest fix time on hover."""
+    if not iso:
+        return ""
+    try:
+        d = dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return str(iso)
+    return d.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def render_active_icons(storms: list[dict], extent,
                         map_w: int = MAP_W, map_h: int = MAP_H) -> str:
     """For each active storm, place a marker at its most recent position:
@@ -1409,6 +1429,15 @@ def render_active_icons(storms: list[dict], extent,
         sid = storm.get("sid") or ""
         peak_kt = storm.get("peak_wind_kt") or 0.0
         is_invest = bool(storm.get("is_invest"))
+        # Native-tooltip <title> (no JS) showing the storm name + the
+        # timestamp of its most recent fix. Inserted as the first child of
+        # whichever marker group is drawn below, so hovering any active
+        # marker on the static page surfaces "NAME — Last fix: … UTC".
+        disp_name = storm.get("name") or storm.get("atcf_id") or ""
+        last_fix = _fmt_last_fix(last.get("t"))
+        title_txt = (f"{disp_name} — Last fix: {last_fix}"
+                     if last_fix else disp_name)
+        title_el = f'<title>{_xml_escape(title_txt)}</title>' if title_txt else ''
         # Three-way fork on the marker style:
         #   * is_invest  → red "L"          (operational invest 90-99)
         #   * peak < 34  → blue hollow ○    (designated TD, not yet TS)
@@ -1420,6 +1449,7 @@ def render_active_icons(storms: list[dict], extent,
                 f'<g class="active-icon active-invest" data-sid="{sid}" '
                 f'transform="translate({x:.1f},{y:.1f})" '
                 f'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">'
+                f'{title_el}'
                 f'<text text-anchor="middle" dominant-baseline="central" '
                 f'font-size="34" font-weight="900" fill="#ef4444" '
                 f'paint-order="stroke" stroke="rgba(0,0,0,0.55)" '
@@ -1436,13 +1466,23 @@ def render_active_icons(storms: list[dict], extent,
         if peak_kt < 34.0:
             label = storm.get("name") or storm.get("atcf_id") or ""
             label = str(label).replace('"', '').upper()
+            # Hollow TD marker: a chunky bright-cyan ring (TAT accent-2
+            # #5dd3ff) wrapped in a white outer halo, so a designated TD
+            # carries the same visual weight as the TS+ spinning icons.
+            # The white circle is drawn first (wider stroke) and the cyan
+            # ring sits centred on top (narrower stroke), leaving white
+            # peeking on both edges = a haloed ring. Centre stays hollow —
+            # that's the TD signal, distinct from the filled TS+ dots.
             parts.append(
                 f'<g class="active-icon active-td" data-sid="{sid}" '
                 f'transform="translate({x:.1f},{y:.1f})" '
-                f'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">'
-                f'<circle cx="0" cy="0" r="12" fill="none" '
-                f'stroke="{SSHS_COLORS["TD"]}" stroke-width="2.5"/>'
-                f'<text x="0" y="22" text-anchor="middle" '
+                f'style="filter:drop-shadow(0 0 5px rgba(0,0,0,0.65));">'
+                f'{title_el}'
+                f'<circle cx="0" cy="0" r="14" fill="none" '
+                f'stroke="#ffffff" stroke-width="6.5"/>'
+                f'<circle cx="0" cy="0" r="14" fill="none" '
+                f'stroke="#5dd3ff" stroke-width="3.5"/>'
+                f'<text x="0" y="26" text-anchor="middle" '
                 f'dominant-baseline="hanging" font-size="13" '
                 f'font-weight="800" fill="#ffffff" paint-order="stroke" '
                 f'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" '
@@ -1462,7 +1502,7 @@ def render_active_icons(storms: list[dict], extent,
         # group because <animateTransform> replaces its own element's
         # transform attribute. CCW spin for NH cyclones.
         sid = storm.get("sid") or ""
-        parts.append(f'''<g class="active-icon" data-sid="{sid}" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">
+        parts.append(f'''<g class="active-icon" data-sid="{sid}" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">{title_el}
   <g transform="scale(0.7)">
     <g class="spin-wrap">
       <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="{color}"/>
@@ -2028,6 +2068,9 @@ def build_global_geojson(storms: list[dict]) -> dict:
                                              else float(current_kt)),
                     "current_category": current_cls,
                     "marker_type": marker_type,
+                    # Timestamp of the most recent observation, surfaced as
+                    # "Last fix" in the active-marker hover/click popup.
+                    "last_fix": last.get("t"),
                 },
             })
 
@@ -2437,6 +2480,8 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
   .tt-cat { display: inline-block; padding: 1px 8px;
     border-radius: 999px; font-size: 10px; font-weight: 700;
     color: #07101c; margin-top: 2px; }
+  .tt-foot { color: var(--muted); font-size: 11px; margin-top: 5px;
+    padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.08); }
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
      and red marker appearance survive without a WebGL rebuild.
@@ -2494,14 +2539,19 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     fill: #ffffff; paint-order: stroke;
     stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
-  /* Active designated-TD circle — hollow blue ring (TD palette colour)
-     + white designation/name label below. Matches the per-basin
-     render_active_icons peak<34 branch: r=12, stroke 2.5, label at
-     y=22 with the same paint-order/stroke-width as the L label so the
-     two markers carry visually consistent label backings. */
-  .active-marker.active-td { width: 60px; height: 50px;
-    filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
-  .active-marker .td-circle { stroke: var(--td); stroke-width: 2.5;
+  /* Active designated-TD circle — a chunky bright-cyan ring (TAT
+     accent-2 #5dd3ff) wrapped in a white outer halo, hollow centre, with
+     the white name/designation label below. Mirrors render_active_icons'
+     peak<34 branch (r=14; white halo stroke 6.5 drawn first, cyan ring
+     stroke 3.5 centred on top, leaving white peeking both edges; label at
+     y=26). The halo gives the TD the same visual weight as the TS+
+     spinning icons; the hollow centre keeps it distinct from filled
+     TS+ observation dots. */
+  .active-marker.active-td { width: 64px; height: 54px;
+    filter: drop-shadow(0 0 5px rgba(0,0,0,0.65)); }
+  .active-marker .td-halo { stroke: #ffffff; stroke-width: 6.5;
+    fill: none; }
+  .active-marker .td-circle { stroke: #5dd3ff; stroke-width: 3.5;
     fill: none; }
   .active-marker .td-label { font-size: 13px; font-weight: 800;
     fill: #ffffff; paint-order: stroke;
@@ -2582,6 +2632,17 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     var hh = String(d.getUTCHours()).padStart(2,"0");
     var mm = String(d.getUTCMinutes()).padStart(2,"0");
     return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  // "2026-05-27 12:00 UTC" — explicit calendar form used for the
+  // "Last fix" line in the active-storm popup.
+  function fmtUTC(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var p = function(n) { return String(n).padStart(2, "0"); };
+    return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" +
+           p(d.getUTCDate()) + " " + p(d.getUTCHours()) + ":" +
+           p(d.getUTCMinutes()) + " UTC";
   }
   function sshsLabel(cls) {
     if (cls === "TD") return "D";
@@ -2894,11 +2955,13 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
       : "—";
     var title = props.name || props.designation || "Active system";
+    var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
       '<div class="tt-row"><span class="tt-cat" style="background:' +
         color + '">' + escapeHtml(catLabel) + '</span></div>' +
       '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
-        '<span class="tt-val">' + windTxt + '</span></div>';
+        '<span class="tt-val">' + windTxt + '</span></div>' +
+      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '');
   }
 
   // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
@@ -2974,8 +3037,9 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         el.classList.add("active-td");
         el.innerHTML =
           '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
-            '<circle class="td-circle" cx="0" cy="0" r="12"/>' +
-            '<text class="td-label" x="0" y="22" ' +
+            '<circle class="td-halo" cx="0" cy="0" r="14"/>' +
+            '<circle class="td-circle" cx="0" cy="0" r="14"/>' +
+            '<text class="td-label" x="0" y="26" ' +
               'text-anchor="middle" dominant-baseline="hanging">' +
               escapeHtml(designation) + '</text>' +
           '</svg>';
