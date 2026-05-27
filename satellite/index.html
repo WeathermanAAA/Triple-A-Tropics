@@ -432,6 +432,31 @@
   </div>
 </section>
 
+<!-- Live storm-following floaters. Populated from the floater poller's R2
+     manifest (cdn.triple-a-tropics.com/floaters/manifest.json). Self-hides
+     when no storm is active; shows a storm dropdown only when >1 are. -->
+<section class="chart-section" id="floater-section" style="display:none">
+  <div class="chart-card">
+    <div class="sat-result-head">
+      <div>
+        <div class="gibs-head-title">Live Storm Floaters · auto-tracking active systems</div>
+        <div class="sat-result-meta" id="floater-meta">Loading active storms…</div>
+      </div>
+      <div class="sat-result-actions">
+        <label for="floater-storm" class="sr-only" style="position:absolute;left:-9999px;">Active storm</label>
+        <select id="floater-storm" class="gibs-region-select" aria-label="Active storm" style="display:none"></select>
+        <label for="floater-band" class="sr-only" style="position:absolute;left:-9999px;">Band</label>
+        <select id="floater-band" class="gibs-region-select" aria-label="Band"></select>
+        <a id="floater-loop" class="sat-action-btn" href="#">Loop &#9654;</a>
+        <a id="floater-download" class="sat-action-btn" download href="#">Download</a>
+      </div>
+    </div>
+    <div class="sat-result-img-wrap">
+      <img id="floater-img" alt="Live storm-centered satellite floater">
+    </div>
+  </div>
+</section>
+
 <section class="chart-section" id="gibs-section">
   <div class="chart-card">
     <div class="sat-result-head">
@@ -900,6 +925,132 @@
 </script>
 
 <script>
+// ---- Live storm floaters --------------------------------------------------
+// Reads cdn.triple-a-tropics.com/floaters/manifest.json (written by the
+// floater poller — a second Railway service alongside /render). Shows the
+// latest storm-centered crop per band, refreshing ~30 s; the Loop button opens
+// the dedicated animated loop page. Self-hides when no storm is active (same
+// pattern as the GIBS section below).
+(function() {
+  const CDN_ROOT = 'https://cdn.triple-a-tropics.com';
+  const TOP_MANIFEST = CDN_ROOT + '/floaters/manifest.json';
+  const BAND_ORDER = ['ir', 'irbd', 'wv_up', 'wv_low', 'truecolor', 'swir'];
+  const LIVE_REFRESH_MS = 30000;   // live image
+  const TOP_REFRESH_MS = 300000;   // storm-set churn (storms update every 6 h)
+
+  const section = document.getElementById('floater-section');
+  const stormSel = document.getElementById('floater-storm');
+  const bandSel  = document.getElementById('floater-band');
+  const img  = document.getElementById('floater-img');
+  const meta = document.getElementById('floater-meta');
+  const loop = document.getElementById('floater-loop');
+  const dl   = document.getElementById('floater-download');
+  if (!section) return;
+
+  let storms = [];
+  let current = null;        // selected storm (top-manifest entry)
+  let stormManifest = null;  // per-storm manifest
+  let liveTimer = null;
+
+  function url(key) { return CDN_ROOT + '/' + key; }
+
+  function setLiveImg() {
+    if (!current || !stormManifest) return;
+    const bandKey = bandSel.value;
+    const b = (stormManifest.bands || {})[bandKey];
+    if (!b || !b.latest) { meta.textContent = current.name + ' · no frames yet for this band.'; return; }
+    const bust = '?v=' + encodeURIComponent(stormManifest.generated_utc || '');
+    img.src = url(b.latest) + bust;
+    img.alt = current.name + ' — ' + (b.label || bandKey);
+    dl.href = url(b.latest) + bust;
+    dl.download = current.slug + '_' + bandKey + '.png';
+    loop.href = '/satellite/floater-loop/?storm=' + encodeURIComponent(current.slug) +
+                '&band=' + encodeURIComponent(bandKey);
+    const n = (b.frames || []).length;
+    meta.textContent = current.name + ' · ' + current.basin + ' · ' + (current.category || 'TD') +
+      (current.intensity_kt != null ? ' · ' + Math.round(current.intensity_kt) + ' kt' : '') +
+      ' · ' + n + ' frame' + (n === 1 ? '' : 's');
+    const p = new URLSearchParams(location.search);
+    p.set('floater', current.slug); p.set('band', bandKey);
+    history.replaceState({}, '', location.pathname + '?' + p.toString());
+  }
+
+  function populateBands() {
+    const bands = (stormManifest && stormManifest.bands) || {};
+    const keys = BAND_ORDER.filter(k => bands[k] && bands[k].latest);
+    bandSel.innerHTML = '';
+    keys.forEach(k => {
+      const o = document.createElement('option');
+      o.value = k; o.textContent = bands[k].label || k;
+      bandSel.appendChild(o);
+    });
+    const wantBand = qs('band');
+    bandSel.value = (wantBand && keys.includes(wantBand)) ? wantBand : (keys[0] || '');
+  }
+
+  function qs(k) { return new URLSearchParams(location.search).get(k); }
+
+  function loadStorm(slug, isUserPick) {
+    current = storms.find(s => s.slug === slug) || storms[0];
+    if (!current) return;
+    fetch(url(current.manifest), { cache: 'no-cache' })
+      .then(r => { if (!r.ok) throw new Error('manifest ' + r.status); return r.json(); })
+      .then(m => {
+        stormManifest = m;
+        populateBands();
+        setLiveImg();
+        if (liveTimer) clearInterval(liveTimer);
+        liveTimer = setInterval(refreshLive, LIVE_REFRESH_MS);
+      })
+      .catch(e => { meta.textContent = 'Floater data unavailable.'; console.error(e); });
+  }
+
+  function refreshLive() {
+    if (!current) return;
+    fetch(url(current.manifest), { cache: 'no-cache' })
+      .then(r => r.ok ? r.json() : null)
+      .then(m => { if (m) { stormManifest = m; setLiveImg(); } })
+      .catch(() => {});
+  }
+
+  function applyTop(m) {
+    storms = (m && m.storms) || [];
+    if (!storms.length) { section.style.display = 'none'; if (liveTimer) clearInterval(liveTimer); return; }
+    section.style.display = '';
+    // Storm dropdown only when more than one is active.
+    stormSel.style.display = storms.length > 1 ? '' : 'none';
+    stormSel.innerHTML = '';
+    storms.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.slug; o.textContent = s.name + ' (' + s.basin + ')';
+      stormSel.appendChild(o);
+    });
+    const want = qs('floater');
+    const has = (x) => storms.some(s => s.slug === x);
+    const pick = (current && has(current.slug)) ? current.slug
+               : (want && has(want)) ? want : storms[0].slug;
+    stormSel.value = pick;
+    loadStorm(pick);
+  }
+
+  function refreshTop() {
+    fetch(TOP_MANIFEST, { cache: 'no-cache' })
+      .then(r => { if (!r.ok) throw new Error('top manifest ' + r.status); return r.json(); })
+      .then(applyTop)
+      .catch(e => {
+        // Hidden until the poller has run once (R2 manifest absent) — better
+        // than a broken-image box, same as the GIBS section.
+        console.error('floater manifest load failed:', e);
+        section.style.display = 'none';
+      });
+  }
+
+  stormSel.addEventListener('change', () => loadStorm(stormSel.value, true));
+  bandSel.addEventListener('change', setLiveImg);
+  refreshTop();
+  setInterval(refreshTop, TOP_REFRESH_MS);
+})();
+
 // ---- GIBS "latest pass" stills -------------------------------------------
 // Reads cdn.triple-a-tropics.com/gibs/manifest.json (written by the
 // update-gibs.yml workflow) and shows the selected region's daily MODIS/VIIRS
