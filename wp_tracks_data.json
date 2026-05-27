@@ -2,7 +2,7 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-27 16:31 UTC",
+  "updated": "2026-05-27 16:53 UTC",
   "header": {
     "named": 4,
     "cat1plus": 1,
@@ -17,6 +17,159 @@
     "cat5": "super typhoons"
   },
   "storms": [
+    {
+      "sid": "JTWC_WP062026",
+      "name": "JANGMI",
+      "season": 2026,
+      "start": "2026-05-24T00:00:00",
+      "end": "2026-05-27T12:00:00",
+      "peak_wind_kt": 25.0,
+      "peak_pressure_mb": 1003.0,
+      "ace": 0.0,
+      "max_category": "TD",
+      "current_category": "TD",
+      "is_active": true,
+      "is_invest": false,
+      "recent_invest": false,
+      "atcf_id": null,
+      "points": [
+        {
+          "t": "2026-05-24T00:00:00",
+          "lat": 7.3,
+          "lon": 144.3,
+          "wind_kt": 15.0,
+          "pressure_mb": 1008.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-24T06:00:00",
+          "lat": 7.3,
+          "lon": 143.7,
+          "wind_kt": 15.0,
+          "pressure_mb": 1006.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-24T12:00:00",
+          "lat": 7.3,
+          "lon": 143.0,
+          "wind_kt": 15.0,
+          "pressure_mb": 1008.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-24T18:00:00",
+          "lat": 7.4,
+          "lon": 142.4,
+          "wind_kt": 15.0,
+          "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-25T00:00:00",
+          "lat": 7.5,
+          "lon": 141.7,
+          "wind_kt": 15.0,
+          "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-25T06:00:00",
+          "lat": 7.8,
+          "lon": 140.8,
+          "wind_kt": 15.0,
+          "pressure_mb": 1005.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-25T12:00:00",
+          "lat": 8.1,
+          "lon": 140.0,
+          "wind_kt": 15.0,
+          "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-25T18:00:00",
+          "lat": 8.2,
+          "lon": 139.3,
+          "wind_kt": 15.0,
+          "pressure_mb": 1005.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-26T00:00:00",
+          "lat": 8.3,
+          "lon": 138.4,
+          "wind_kt": 20.0,
+          "pressure_mb": 1005.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-26T06:00:00",
+          "lat": 8.4,
+          "lon": 137.8,
+          "wind_kt": 20.0,
+          "pressure_mb": 1005.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-26T12:00:00",
+          "lat": 8.6,
+          "lon": 137.7,
+          "wind_kt": 20.0,
+          "pressure_mb": 1004.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-26T18:00:00",
+          "lat": 8.8,
+          "lon": 137.7,
+          "wind_kt": 20.0,
+          "pressure_mb": 1004.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-27T00:00:00",
+          "lat": 9.2,
+          "lon": 137.7,
+          "wind_kt": 25.0,
+          "pressure_mb": 1004.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-05-27T06:00:00",
+          "lat": 9.7,
+          "lon": 137.5,
+          "wind_kt": 25.0,
+          "pressure_mb": 1003.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-05-27T12:00:00",
+          "lat": 10.3,
+          "lon": 137.2,
+          "wind_kt": 25.0,
+          "pressure_mb": 1003.0,
+          "cls": "TD",
+          "nature": "TS"
+        }
+      ]
+    },
     {
       "sid": "JTWC_WP042026",
       "name": "SINLAKU",
@@ -1850,159 +2003,6 @@
           "pressure_mb": 1002.0,
           "cls": "TD",
           "nature": "DS"
-        }
-      ]
-    },
-    {
-      "sid": "JTWC_WP062026",
-      "name": "JANGMI",
-      "season": 2026,
-      "start": "2026-05-24T00:00:00",
-      "end": "2026-05-27T12:00:00",
-      "peak_wind_kt": 25.0,
-      "peak_pressure_mb": 1003.0,
-      "ace": 0.0,
-      "max_category": "TD",
-      "current_category": "TD",
-      "is_active": false,
-      "is_invest": false,
-      "recent_invest": false,
-      "atcf_id": null,
-      "points": [
-        {
-          "t": "2026-05-24T00:00:00",
-          "lat": 7.3,
-          "lon": 144.3,
-          "wind_kt": 15.0,
-          "pressure_mb": 1008.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-24T06:00:00",
-          "lat": 7.3,
-          "lon": 143.7,
-          "wind_kt": 15.0,
-          "pressure_mb": 1006.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-24T12:00:00",
-          "lat": 7.3,
-          "lon": 143.0,
-          "wind_kt": 15.0,
-          "pressure_mb": 1008.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-24T18:00:00",
-          "lat": 7.4,
-          "lon": 142.4,
-          "wind_kt": 15.0,
-          "pressure_mb": 1007.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-25T00:00:00",
-          "lat": 7.5,
-          "lon": 141.7,
-          "wind_kt": 15.0,
-          "pressure_mb": 1007.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-25T06:00:00",
-          "lat": 7.8,
-          "lon": 140.8,
-          "wind_kt": 15.0,
-          "pressure_mb": 1005.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-25T12:00:00",
-          "lat": 8.1,
-          "lon": 140.0,
-          "wind_kt": 15.0,
-          "pressure_mb": 1007.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-25T18:00:00",
-          "lat": 8.2,
-          "lon": 139.3,
-          "wind_kt": 15.0,
-          "pressure_mb": 1005.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-26T00:00:00",
-          "lat": 8.3,
-          "lon": 138.4,
-          "wind_kt": 20.0,
-          "pressure_mb": 1005.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-26T06:00:00",
-          "lat": 8.4,
-          "lon": 137.8,
-          "wind_kt": 20.0,
-          "pressure_mb": 1005.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-26T12:00:00",
-          "lat": 8.6,
-          "lon": 137.7,
-          "wind_kt": 20.0,
-          "pressure_mb": 1004.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-26T18:00:00",
-          "lat": 8.8,
-          "lon": 137.7,
-          "wind_kt": 20.0,
-          "pressure_mb": 1004.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-27T00:00:00",
-          "lat": 9.2,
-          "lon": 137.7,
-          "wind_kt": 25.0,
-          "pressure_mb": 1004.0,
-          "cls": "TD",
-          "nature": "DS"
-        },
-        {
-          "t": "2026-05-27T06:00:00",
-          "lat": 9.7,
-          "lon": 137.5,
-          "wind_kt": 25.0,
-          "pressure_mb": 1003.0,
-          "cls": "TD",
-          "nature": "TS"
-        },
-        {
-          "t": "2026-05-27T12:00:00",
-          "lat": 10.3,
-          "lon": 137.2,
-          "wind_kt": 25.0,
-          "pressure_mb": 1003.0,
-          "cls": "TD",
-          "nature": "TS"
         }
       ]
     }
