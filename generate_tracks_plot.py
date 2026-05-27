@@ -808,18 +808,28 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         start_t = ace_start or life_start
         end_t = ace_end or life_end
 
-        # Active = (1) last observation is recent, AND (2) it still shows
-        # a valid tropical-storm-strength wind, AND (3) nature hasn't gone
-        # extratropical. Otherwise the storm has weakened/dissipated and
-        # shouldn't get the spinning icon.
+        # Active = (1) last observation is recent, AND (2) its nature is
+        # still tropical/subtropical (not extratropical, not a pre-genesis
+        # / post-dissipation disturbance), AND (3) it has a valid wind.
+        # We deliberately do NOT require >=34 kt here: a designated
+        # tropical depression is an active system too (e.g. JMA-recognised
+        # Jangmi 2026 — last fix 25 kt, TS-nature). Both renderers already
+        # carry a dedicated marker for the peak<34 kt case — the hollow
+        # blue TD circle (render_active_icons' peak<34 branch and
+        # build_global_geojson's "td_circle" marker_type). Gating on 34 kt
+        # made that marker unreachable (is_active could never be True while
+        # peak<34), so designated TDs silently dropped off both the
+        # per-basin and home-page maps. Weakening/dissipation is still
+        # caught by the nature gate: a system that decays to a remnant low
+        # or goes extratropical flips to DS/ET and falls out of "active".
         recent_obs = (len(points) > 0
                       and points[-1]["time"] >= active_cutoff)
         is_active = False
         if len(points) > 0:
             last = points[-1]
-            strong = pd.notna(last["wind_kt"]) and last["wind_kt"] >= 34
+            has_wind = pd.notna(last["wind_kt"]) and last["wind_kt"] > 0
             tropical = (last["nature"] or "") not in {"ET", "DS"}
-            is_active = recent_obs and strong and tropical
+            is_active = recent_obs and has_wind and tropical
         # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
         # from any row in the group; IBTrACS rows have NaN and are ignored
         # since IBTrACS doesn't archive invests.
