@@ -135,14 +135,31 @@ jobs:
           fi
           git commit -m "chore: refresh ACE + tracks ($(date -u +'%Y-%m-%d %H:%M UTC'))"
 
-          # Rebase-and-push loop — the SST / subsurface / ARMOR3D
-          # workflows can push to main while this job is still running
-          # (the ACE render takes a couple of minutes and overlaps with
-          # their cron slots). A plain `git push` loses the race and
-          # fails with `[rejected] main -> main (fetch first)`. Retry
-          # with rebase; our commits only touch ACE / tracks / Natural
-          # Earth assets, so genuine conflicts are effectively
-          # impossible.
+          # Files this workflow regenerates in full on every run. A
+          # conflict limited to these is auto-resolvable: every ACE run
+          # (and the next scheduled one) overwrites them from scratch, so
+          # whichever side we keep is replaced within hours. Conflicts on
+          # anything OUTSIDE this list are genuinely ambiguous and need a
+          # human — we abort and fail loudly in that case.
+          REGEN_FILES=(
+            wp_ace.html wp_ace_data.json al_ace.html al_ace_data.json
+            ep_ace.html ep_ace_data.json
+            wp_tracks.html wp_tracks_data.json al_tracks.html al_tracks_data.json
+            ep_tracks.html ep_tracks_data.json global_tracks.html
+            ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson
+            ne_110m_coastline.geojson ne_110m_admin_0_countries.geojson
+          )
+
+          # Rebase-and-push loop. Another push can land on main while this
+          # job renders: the SST / subsurface / ARMOR3D workflows (which
+          # touch disjoint files), but ALSO another update-ace run — a
+          # manual workflow_dispatch racing the scheduled cron, or a
+          # backup cron, regenerating these SAME files. When that happens
+          # every output file conflicts on rebase, so a plain abort takes
+          # the whole run down (and with it any freshly-formed system like
+          # a new TD). Both sides are equally-fresh renders, so resolve
+          # such conflicts by keeping OUR commit's version (--theirs in
+          # rebase terms) and continue; abort only on unexpected paths.
           for attempt in 1 2 3 4 5; do
             if git push; then
               echo "Pushed on attempt $attempt."
@@ -150,11 +167,41 @@ jobs:
             fi
             echo "Push rejected on attempt $attempt — fetching + rebasing..."
             git fetch origin main
-            git rebase origin/main || {
-              echo "Rebase failed (unexpected conflict)." >&2
-              git rebase --abort || true
-              exit 1
-            }
+            if ! git rebase origin/main; then
+              conflicted="$(git diff --name-only --diff-filter=U)"
+              if [ -z "$conflicted" ]; then
+                echo "Rebase failed but no conflicted paths listed." >&2
+                git rebase --abort || true
+                exit 1
+              fi
+              echo "Rebase hit conflicts on:"
+              echo "$conflicted"
+              unresolvable=""
+              while IFS= read -r f; do
+                match=0
+                for allow in "${REGEN_FILES[@]}"; do
+                  if [ "$f" = "$allow" ]; then match=1; break; fi
+                done
+                if [ "$match" -eq 0 ]; then
+                  unresolvable="$unresolvable $f"
+                fi
+              done <<< "$conflicted"
+              if [ -n "$unresolvable" ]; then
+                echo "Non-regen conflicts — aborting:$unresolvable" >&2
+                git rebase --abort || true
+                exit 1
+              fi
+              echo "All conflicts are regenerated outputs — auto-resolving via --theirs."
+              while IFS= read -r f; do
+                git checkout --theirs -- "$f"
+                git add -- "$f"
+              done <<< "$conflicted"
+              if ! GIT_EDITOR=true git rebase --continue; then
+                echo "Rebase --continue failed after auto-resolve." >&2
+                git rebase --abort || true
+                exit 1
+              fi
+            fi
             sleep $((attempt * 2))
           done
           echo "Push still failing after 5 attempts." >&2
