@@ -113,6 +113,8 @@
   .tt-cat { display: inline-block; padding: 1px 8px;
     border-radius: 999px; font-size: 10px; font-weight: 700;
     color: #07101c; margin-top: 2px; }
+  .tt-foot { color: var(--muted); font-size: 11px; margin-top: 5px;
+    padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.08); }
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
      and red marker appearance survive without a WebGL rebuild.
@@ -170,14 +172,19 @@
     fill: #ffffff; paint-order: stroke;
     stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
-  /* Active designated-TD circle — hollow blue ring (TD palette colour)
-     + white designation/name label below. Matches the per-basin
-     render_active_icons peak<34 branch: r=12, stroke 2.5, label at
-     y=22 with the same paint-order/stroke-width as the L label so the
-     two markers carry visually consistent label backings. */
-  .active-marker.active-td { width: 60px; height: 50px;
-    filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
-  .active-marker .td-circle { stroke: var(--td); stroke-width: 2.5;
+  /* Active designated-TD circle — a chunky bright-cyan ring (TAT
+     accent-2 #5dd3ff) wrapped in a white outer halo, hollow centre, with
+     the white name/designation label below. Mirrors render_active_icons'
+     peak<34 branch (r=14; white halo stroke 6.5 drawn first, cyan ring
+     stroke 3.5 centred on top, leaving white peeking both edges; label at
+     y=26). The halo gives the TD the same visual weight as the TS+
+     spinning icons; the hollow centre keeps it distinct from filled
+     TS+ observation dots. */
+  .active-marker.active-td { width: 64px; height: 54px;
+    filter: drop-shadow(0 0 5px rgba(0,0,0,0.65)); }
+  .active-marker .td-halo { stroke: #ffffff; stroke-width: 6.5;
+    fill: none; }
+  .active-marker .td-circle { stroke: #5dd3ff; stroke-width: 3.5;
     fill: none; }
   .active-marker .td-label { font-size: 13px; font-weight: 800;
     fill: #ffffff; paint-order: stroke;
@@ -206,7 +213,7 @@
     <div class="map-head">
       <div>
         <div class="title">2026 Global TC Tracks</div>
-        <div class="sub">As of 2026-05-27 16:54 UTC</div>
+        <div class="sub">As of 2026-05-27 17:32 UTC</div>
       </div>
       <div class="stats">
         <b>4</b> named storms &middot; <b>1</b> category 1+ storms &middot;
@@ -258,6 +265,17 @@
     var hh = String(d.getUTCHours()).padStart(2,"0");
     var mm = String(d.getUTCMinutes()).padStart(2,"0");
     return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  // "2026-05-27 12:00 UTC" — explicit calendar form used for the
+  // "Last fix" line in the active-storm popup.
+  function fmtUTC(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var p = function(n) { return String(n).padStart(2, "0"); };
+    return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" +
+           p(d.getUTCDate()) + " " + p(d.getUTCHours()) + ":" +
+           p(d.getUTCMinutes()) + " UTC";
   }
   function sshsLabel(cls) {
     if (cls === "TD") return "D";
@@ -570,11 +588,13 @@
       ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
       : "—";
     var title = props.name || props.designation || "Active system";
+    var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
       '<div class="tt-row"><span class="tt-cat" style="background:' +
         color + '">' + escapeHtml(catLabel) + '</span></div>' +
       '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
-        '<span class="tt-val">' + windTxt + '</span></div>';
+        '<span class="tt-val">' + windTxt + '</span></div>' +
+      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '');
   }
 
   // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
@@ -650,8 +670,9 @@
         el.classList.add("active-td");
         el.innerHTML =
           '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
-            '<circle class="td-circle" cx="0" cy="0" r="12"/>' +
-            '<text class="td-label" x="0" y="22" ' +
+            '<circle class="td-halo" cx="0" cy="0" r="14"/>' +
+            '<circle class="td-circle" cx="0" cy="0" r="14"/>' +
+            '<text class="td-label" x="0" y="26" ' +
               'text-anchor="middle" dominant-baseline="hanging">' +
               escapeHtml(designation) + '</text>' +
           '</svg>';
