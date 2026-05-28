@@ -394,9 +394,10 @@
         <div class="sat-field">
           <label for="sat-enh">Enhancement</label>
           <select id="sat-enh">
-            <option value="tat_neon">TAT Neon</option>
+            <option value="rainbow_ir">Rainbow IR</option>
             <option value="dvorak_bd">Dvorak BD</option>
-            <option value="grayscale">Grayscale</option>
+            <option value="tat_neon">TAT Neon</option>
+            <option value="ir_gray">Grayscale IR</option>
           </select>
         </div>
 
@@ -703,16 +704,50 @@
   latestCheckbox.addEventListener('change', syncTimeInput);
   syncTimeInput();
 
-  // ---- Channel/enhancement coupling ----
-  // True color is its own RGB product; the IR/visible enhancement presets
-  // don't apply, so grey the enhancement picker out when it's selected.
+  // ---- Channel <-> enhancement coupling ----
+  // Each channel has a "domain" that picks which enhancement presets apply.
+  // True color is its own RGB product and visible is always rendered
+  // grayscale, so the enhancement picker is disabled for both. IR and WV
+  // channels get their domain-appropriate list (rainbow_ir is the default
+  // for IR; wv_tat for WV; ir_gray is offered in both). The list is rebuilt
+  // on every channel change so users never see a preset the backend would
+  // ignore or reject for that channel.
   const channelSelect = document.getElementById('sat-channel');
   const enhSelect = document.getElementById('sat-enh');
-  function syncEnhForChannel() {
-    enhSelect.disabled = (channelSelect.value === 'true_color');
+  const ENH_BY_DOMAIN = {
+    ir: [['rainbow_ir', 'Rainbow IR'], ['dvorak_bd', 'Dvorak BD'],
+         ['tat_neon', 'TAT Neon'], ['ir_gray', 'Grayscale IR']],
+    wv: [['wv_tat', 'Water Vapor'], ['ir_gray', 'Grayscale IR']],
+  };
+  const CHANNEL_DOMAIN = {
+    clean_ir: 'ir', ir_window: 'ir', shortwave_ir: 'ir',
+    wv_upper: 'wv', wv_lower: 'wv',
+    visible_red: 'vis', true_color: 'rgb',
+  };
+  function populateEnhForChannel(preferred) {
+    const domain = CHANNEL_DOMAIN[channelSelect.value] || 'ir';
+    // Enhancement is ignored by the backend for true color + visible.
+    if (domain === 'rgb' || domain === 'vis') {
+      enhSelect.disabled = true;
+      return;
+    }
+    enhSelect.disabled = false;
+    let prev = preferred || enhSelect.value;
+    if (prev === 'grayscale') prev = 'ir_gray';   // legacy alias
+    const opts = ENH_BY_DOMAIN[domain] || ENH_BY_DOMAIN.ir;
+    enhSelect.innerHTML = '';
+    opts.forEach(([val, label]) => {
+      const o = document.createElement('option');
+      o.value = val;
+      o.textContent = label;
+      enhSelect.appendChild(o);
+    });
+    // Keep the prior/preferred choice when it's valid for this domain,
+    // else fall back to the domain default (first option).
+    enhSelect.value = opts.some(([v]) => v === prev) ? prev : opts[0][0];
   }
-  channelSelect.addEventListener('change', syncEnhForChannel);
-  syncEnhForChannel();
+  channelSelect.addEventListener('change', () => populateEnhForChannel());
+  populateEnhForChannel();
 
   // ---- Toasts ----
   const toast = document.getElementById('sat-toast');
@@ -905,8 +940,11 @@
       const generic = (Number.isFinite(asNum) && NUMERIC_TO_GENERIC[asNum]) || channel;
       document.getElementById('sat-channel').value = generic;
     }
+    // Rebuild the enhancement list for the (now-set) channel before applying
+    // the deep-linked enhancement, so the preferred value is honored when
+    // it's valid for that channel's domain (else it falls back to default).
     const enh = p.get('enhance');
-    if (enh) document.getElementById('sat-enh').value = enh;
+    populateEnhForChannel(enh || undefined);
     const time = p.get('time');
     if (time && time !== 'latest') {
       latestCheckbox.checked = false;
