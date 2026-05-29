@@ -21,6 +21,7 @@ Generators are grouped by data product. Each generator is a **self-contained, ba
 | `generate_subsurface_plots.py` | `update-subsurface.yml` | daily 14:23 UTC | `subsurface/*.png` (AOML TCHP + D26) |
 | `generate_armor3d_plots.py` | `update-armor3d.yml` | daily 14:43 UTC | `armor3d/*.png` (TCHP/D26/anom/cross-sections) |
 | `generate_season_gif.py --basin --year` | `update-season-gifs.yml` | daily 03:23 UTC | `{wpac,atl,epac}_{YEAR}_season.gif` |
+| `generate_hafs_plots.py` | `update-hafs.yml` | every 6h (00/06/12/18Z + :27 backup) | `models/hafs/{model}/{storm}/{domain}/f{FFF}.png` + `models/hafs/manifest.json` — **R2-only, not committed** |
 | `build_armor3d_climatology.py` | `build-armor3d-climatology.yml` | manual, resumable | `armor3d/armor3d_climatology.nc` (one-off, committed) |
 | `build_historical_tracks.py` | (local) | manual | `historical/{basin}/tracks/tracks_{YYYY}.json` |
 | `generate_pacific_tchp_gif.py` | `make-pacific-tchp-gif.yml` | manual, artifact only | GIF as artifact (not committed) |
@@ -45,6 +46,7 @@ Climatology bands are 1991–2020 (NHC standard); min/max envelope uses **all** 
 
 ### Known gotchas (carried from README)
 
+- **HAFS plots (`generate_hafs_plots.py` / `update-hafs.yml` / `/models/`) are read-only → R2**, like GIBS: `permissions: contents: read`, commits nothing to `main`; all output is `aws s3 sync`'d to `s3://triple-a-tropics-media/models/hafs/` and the frontend (`models/index.html` + `models/hafs.js`, both tracked; `models/hafs/` output is gitignored) reads it from `cdn.triple-a-tropics.com`. Fetch+render reuse `hafs_plot.py`'s `fetch_hafs_frame`/`render_frame` (AWS-first Herbie template override; no cartopy — vendored Natural Earth GeoJSON). Storms are enumerated from the public bucket with an S3 `delimiter='.'` list (storm id is each key's filename prefix). The builder renders only the **latest *complete* cycle** (storm nest reached `f126`) and **per-pair** requires the terminal frame, so a still-uploading HAFS-B/parent domain is skipped, not published half-written. Storm **name = the ATCF id** (e.g. `13L`) on purpose — the HAFS trak deck has no usable name. On a **total render failure** (storms found but 0 frames) the builder exits non-zero so the workflow aborts before the pruning `--delete` sync and the prior cycle stays live; genuine off-season writes an empty manifest and the prune correctly clears R2.
 - **Current year = `dt.date.today().year`**, not `max(points.season)`. Otherwise pre-season basins relabel last year as "current".
 - **IBTrACS `NATURE == "NR"` is tropical** when `TRACK_TYPE == "PROVISIONAL"` (current season, before NCEI QC backfill). Without this, current-season ACE is zero.
 - **JTWC `metoc.navy.mil` 403s on GH Actions IPs.** ATCF fetches try in order: our Cloudflare Worker proxy → natyphoon.top mirror → JTWC. The proxy is the primary — do not remove it.

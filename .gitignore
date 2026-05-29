@@ -32,6 +32,13 @@ subsurface/*.png
 armor3d/*.png
 gibs/*.jpg
 gibs/manifest.json
+# HAFS model plots: PNG frames + manifest are rendered each cycle and synced
+# to cdn.triple-a-tropics.com/models/hafs/ by update-hafs.yml — the frontend
+# (models/index.html, models/hafs.js, both tracked) reads them cross-origin.
+# Only the rendered output under models/hafs/ is ignored, not the page.
+models/hafs/
+# Dev artifact from the standalone single-frame slice (python hafs_plot.py).
+hafs_test.png
 *_season.gif
 historical/*/gifs/*.gif
 global_storms.geojson
