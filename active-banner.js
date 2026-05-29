@@ -64,7 +64,7 @@
       var bearing = (Math.atan2(lonm, latm) * 180 / Math.PI + 360) % 360;
       return compass(bearing) + " at " + ktToMph(kt) + " mph";
     }
-    return "\u2014";
+    return "-";
   }
   function bannerTextColor(cls) {
     // Dark text on bright yellow/green/orange; white on the reds/magenta/purples.
@@ -106,7 +106,7 @@
     var cat = CAT_LABELS[cls] || cls;
     var windKt = lastValid.wind_kt || 0;
     var pres = lastValid.pressure_mb;
-    var loc = (last.lat != null && last.lon != null) ? fmtLatLon(last.lat, last.lon) : "\u2014";
+    var loc = (last.lat != null && last.lon != null) ? fmtLatLon(last.lat, last.lon) : "-";
     var movement = computeMovement(pts);
     return (
       '<div class="active-banner" style="background:' + color + ';color:' + txt + '">' +
@@ -120,7 +120,7 @@
         '<div class="ab-deets">' +
           '<div><span>Updated</span><b>' + fmtTime(last.t) + '</b></div>' +
           '<div><span>Location</span><b>' + loc + '</b></div>' +
-          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "\u2014") + '</b></div>' +
+          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "-") + '</b></div>' +
           '<div><span>Movement</span><b>' + movement + '</b></div>' +
         '</div>' +
       '</div>'

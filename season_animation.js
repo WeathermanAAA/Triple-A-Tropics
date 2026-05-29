@@ -264,7 +264,7 @@
         <div class="anim-scrub-wrap">
           <input id="animScrub" type="range" min="0" max="1000" value="0"
                  class="anim-scrub" aria-label="Scrub through season">
-          <div id="animDateLabel" class="anim-date">—</div>
+          <div id="animDateLabel" class="anim-date">-</div>
         </div>
         <div id="animStatus" class="anim-status"></div>
       `;
@@ -879,7 +879,7 @@
     }
 
     _drawDateLabel() {
-      this.dateLabel.textContent = this._lastDateStr || '—';
+      this.dateLabel.textContent = this._lastDateStr || '-';
     }
 
     _drawAce(ctx, x, y, w, h) {

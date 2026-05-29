@@ -78,6 +78,7 @@
       <a href="/climatology/">Climatology</a>
       <a href="/sst/">SST</a>
       <a href="/satellite/" class="active">Satellite</a>
+      <a href="/models/">Models</a>
       <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
     </div>
   </div>
@@ -349,7 +350,7 @@
   function loadStorm(slug) {
     current = storms.find(s => s.slug === slug) || storms[0];
     if (!current) return;
-    els.h1.textContent = current.name + ' — Floater Loop';
+    els.h1.textContent = current.name + ': Floater Loop';
     els.meta.textContent = current.name + ' · ' + current.basin + ' · ' + (current.category || 'TD') +
       (current.intensity_kt != null ? ' · ' + Math.round(current.intensity_kt) + ' kt' : '');
     fetch(url(current.manifest), { cache: 'no-cache' })
@@ -413,7 +414,7 @@
   function closeGifDialog() { gifModal.classList.remove('open'); encoding = false; }
 
   function makeGif() {
-    if (typeof window.GIF === 'undefined') { alert('GIF library still loading — try again in a second.'); return; }
+    if (typeof window.GIF === 'undefined') { alert('GIF library still loading, try again in a second.'); return; }
     const total = frames.length;
     let n = parseInt(document.getElementById('fl-gifn').value, 10) || total;
     n = Math.max(2, Math.min(total, n));
@@ -424,7 +425,7 @@
     let sel = frames.slice(total - n);                  // last N frames (most recent)
     if (skip > 0) sel = sel.filter((_, i) => i % (skip + 1) === 0);  // thin
     sel = sel.filter(f => f.img && f.img.naturalWidth);  // only loaded frames
-    if (sel.length < 2) { alert('Not enough loaded frames for a GIF — let it preload, or lower "Skip every".'); return; }
+    if (sel.length < 2) { alert('Not enough loaded frames for a GIF; let it preload, or lower "Skip every".'); return; }
 
     const W0 = sel[0].img.naturalWidth, H0 = sel[0].img.naturalHeight;
     const scale = Math.min(1, GIF_MAX_W / W0);

@@ -68,7 +68,7 @@
     {
       "slug": "aoml",
       "label": "AOML",
-      "subtitle": "NOAA AOML PhOD subsurface analysis (0.25°, daily, 2022-present). No anomaly — archive too short for a stable climatology.",
+      "subtitle": "NOAA AOML PhOD subsurface analysis (0.25°, daily, 2022-present). No anomaly: archive too short for a stable climatology.",
       "path_template": "https://cdn.triple-a-tropics.com/subsurface/{region}_{variant}{suffix}.png",
       "meta_url": "/subsurface/subsurface_meta.json",
       "supports_15d": false,

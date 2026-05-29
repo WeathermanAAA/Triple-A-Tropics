@@ -89,7 +89,7 @@
       const url = this.m.path_template.replace('{region}', this.regionSlug);
       this.image.src = url + '?t=' + Date.now();
       const label = this.m.region_labels[this.regionSlug] || this.regionSlug;
-      this.image.alt = `${label} — daily SST climatology curve`;
+      this.image.alt = `${label}: daily SST climatology curve`;
       this.captionEl.textContent =
         `${label}: region-mean SST by day of year vs the 1991–2020 daily ` +
         `climatology and the full 1982-present record (NOAA OISST).`;

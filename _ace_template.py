@@ -326,9 +326,9 @@ function doyToDate(doy, year) {{
     {{ month: "short", day: "numeric", timeZone: "UTC" }});
 }}
 function fmtDateLong(iso) {{
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
+  if (isNaN(d.getTime())) return "-";
   return d.toLocaleDateString(undefined, {{
     month: "short", day: "numeric", year: "numeric",
     timeZone: "UTC"
@@ -781,9 +781,9 @@ function showGanttTip(s, seasonAceTotal, evt) {{
     ? (100 * s.ace / seasonAceTotal) : 0;
   const peakWind = (s.pk != null && !isNaN(s.pk))
     ? `${{Math.round(s.pk)}} kt`
-    : "—";
-  const peakAt = s.pkTime ? fmtDateLong(s.pkTime) : "—";
-  const ace = s.ace != null ? s.ace.toFixed(1) : "—";
+    : "-";
+  const peakAt = s.pkTime ? fmtDateLong(s.pkTime) : "-";
+  const ace = s.ace != null ? s.ace.toFixed(1) : "-";
   tipGantt.innerHTML =
     '<div class="head">' +
       '<span class="dot" style="background:' + color +
@@ -792,7 +792,7 @@ function showGanttTip(s, seasonAceTotal, evt) {{
     '</div>' +
     '<div>Formation: ' + fmtDateLong(s.formationIso) +
       ' · Dissipation: ' + fmtDateLong(s.dissipationIso) +
-      ' · Duration: ' + (dur != null ? dur.toFixed(1) : "—") + ' d</div>' +
+      ' · Duration: ' + (dur != null ? dur.toFixed(1) : "-") + ' d</div>' +
     '<div>Peak winds: ' + peakWind + ' at ' + peakAt + '</div>' +
     '<div>ACE contribution: ' + ace + ' (~' + pct.toFixed(1) + '% of season)</div>';
   tipGantt.style.opacity = 1;
@@ -910,15 +910,15 @@ function drawCrosshair(evt, sourceSvg) {{
       rank = cachedRankAtDoy[idx];
     }}
   }}
-  const fmt1 = v => (v == null ? "—" : v.toFixed(1));
-  const fmt2 = v => (v == null ? "—" : v.toFixed(2));
-  const totalSeasons = DATA.total_seasons || "—";
+  const fmt1 = v => (v == null ? "-" : v.toFixed(1));
+  const fmt2 = v => (v == null ? "-" : v.toFixed(2));
+  const totalSeasons = DATA.total_seasons || "-";
   const dateLabel = doyToDate(doy, selectedYear);
   tipShared.innerHTML =
     '<div class="head">' + selectedYear + ' · ' + dateLabel +
       ' <span style="color:var(--muted);font-weight:500;">(DOY ' + doy + ')</span></div>' +
     '<div>Cumulative ACE: <b>' + fmt1(cum) + '</b></div>' +
-    '<div>Rank: <b>' + (rank != null ? rank : '—') + '</b>' +
+    '<div>Rank: <b>' + (rank != null ? rank : '-') + '</b>' +
       '<span style="color:var(--muted);font-weight:500;"> / ' + totalSeasons + '</span></div>' +
     '<div>Daily ACE: <b>' + fmt2(daily) + '</b></div>';
   // Position relative to chartbox container at the source SVG's screen coords
@@ -948,7 +948,7 @@ attachCrosshair(dailySvg);
 
 // ===== Header =====
 function fmtNum(n, dp) {{
-  if (n == null || isNaN(n)) return "—";
+  if (n == null || isNaN(n)) return "-";
   return n.toFixed(dp);
 }}
 function renderHeader(year) {{
@@ -992,8 +992,8 @@ function renderHeader(year) {{
       ? '<span class="' + deltaCls + '"> (' + sign + fmtNum(Math.abs(deltaAce), 1) + ' vs avg' + suffix + ')</span>'
       : '') +
     '<span class="sep">·</span>' +
-    'Rank: <span class="rank-val">' + (rankShow != null ? rankShow : '—') +
-    '/' + (DATA.total_seasons || '—') + '</span>';
+    'Rank: <span class="rank-val">' + (rankShow != null ? rankShow : '-') +
+    '/' + (DATA.total_seasons || '-') + '</span>';
 }}
 
 // ===== Top-level setSelectedYear: update all 4 panels + header =====
@@ -1068,7 +1068,7 @@ window.WPAceChart = {{
     if (!clickable) li.classList.add("is-disabled");
     if (r.year === CURRENT_YEAR) {{
       li.classList.add("is-current");
-      li.title = "Live current season — YTD";
+      li.title = "Live current season: YTD";
       li.setAttribute("aria-current", "true");
     }}
     const isCur = r.year === CURRENT_YEAR;

@@ -538,10 +538,10 @@
       var color = SSHS_COLORS[cls] || "#888";
       var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
         ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
-        : "—";
+        : "-";
       var presTxt = (pres != null && pres !== "" && !isNaN(parseFloat(pres)))
         ? (Math.round(parseFloat(pres)) + " mb")
-        : "—";
+        : "-";
       var html =
         '<div class="tt-name">' + escapeHtml(props.storm_name || "Storm") + '</div>' +
         '<div class="tt-time">' + fmtTime(props.time_iso) + '</div>' +
@@ -586,7 +586,7 @@
     var kt = props.current_intensity_kt;
     var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
       ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
-      : "—";
+      : "-";
     var title = props.name || props.designation || "Active system";
     var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +

@@ -124,10 +124,10 @@
               <select class="pa-select" data-role="timescale" disabled></select>
             </label>
             <label class="pa-ctrl"
-                   title="Affects playback only — downloaded MP4s play at native FPS.">
+                   title="Affects playback only: downloaded MP4s play at native FPS.">
               <span>Speed <span class="pa-meta">(playback)</span></span>
               <select class="pa-select" data-role="speed" disabled
-                      title="Affects playback only — downloaded MP4s play at native FPS.">
+                      title="Affects playback only: downloaded MP4s play at native FPS.">
                 ${SPEED_OPTIONS.map(s =>
                   `<option value="${s}"${s === 1 ? ' selected' : ''}>${s}×</option>`
                 ).join('')}
@@ -148,7 +148,7 @@
           <input class="pa-scrub" data-role="scrub" type="range"
                  min="0" max="1000" step="1" value="0"
                  aria-label="Seek" disabled>
-          <span class="pa-date" data-role="date">—</span>
+          <span class="pa-date" data-role="date">-</span>
         </div>
         <div class="pa-caption" data-role="caption"></div>
       `;
@@ -269,7 +269,7 @@
         this.downloadBtn.hidden = true;
         this.playBtn.disabled = true;
         this.scrub.disabled = true;
-        this.dateEl.textContent = '—';
+        this.dateEl.textContent = '-';
         this.captionEl.textContent = '';
         this.familyLabelEl.textContent = src.label;
         this._setStatus(src.disabledReason || 'Animations coming soon.');
@@ -286,7 +286,7 @@
         }).catch((e) => {
           if (this.sourceSlug !== slug) return;
           this._setStatus(
-            `Animations are not available yet — the CDN hasn't ` +
+            `Animations are not available yet, the CDN hasn't ` +
             `published media for ` +
             `${families.join(', ') || src.family || src.slug}. (${e.message})`
           );
@@ -461,7 +461,7 @@
         this.downloadBtn.removeAttribute('href');
         this.scrub.disabled = true;
         this.playBtn.disabled = true;
-        this.dateEl.textContent = '—';
+        this.dateEl.textContent = '-';
         return;
       }
       this._setStatus('');
@@ -508,10 +508,10 @@
         : '';
       const sizeMB = clip.bytes ? ` · ${(clip.bytes / (1024 * 1024)).toFixed(1)} MB` : '';
       this.captionEl.innerHTML =
-        `<b>${escapeHTML((region && region.label) || this.regionSlug)}</b> — ` +
+        `<b>${escapeHTML((region && region.label) || this.regionSlug)}</b>: ` +
         `${escapeHTML(desc || '')}` +
         `<span class="pa-meta">${range}${sizeMB}</span>`;
-      this.dateEl.textContent = clip.first_frame ? fmtDate(clip.first_frame) : '—';
+      this.dateEl.textContent = clip.first_frame ? fmtDate(clip.first_frame) : '-';
     }
 
     _applyClipBounds() {
