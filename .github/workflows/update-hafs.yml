@@ -1,0 +1,136 @@
+name: Update HAFS Model Plots
+
+# HAFS-A/HAFS-B forecast plots (MSLP + 10 m wind) for the /models/ page —
+# the first model product. Renders every active storm × {HAFS-A,HAFS-B} ×
+# {storm nest, parent domain} × forecast hour for the latest *complete* HAFS
+# cycle, then syncs the PNGs + manifest.json to R2. The frontend
+# (models/index.html) reads the manifest from cdn.triple-a-tropics.com.
+#
+# HAFS runs four cycles/day (00/06/12/18Z) and finishes uploading ~6 h after
+# each synoptic time. We run ~6 h 53 m after (00→06:53, 06→12:53, 12→18:53,
+# 18→00:53) with a backup ~34 min later. The builder resolves the latest cycle
+# whose storm-nest run reached f126, so an early run just picks the prior
+# complete cycle rather than a half-written one. Non-round minutes per the
+# repo's stagger convention; :53 and :27 are clear of every other scheduled
+# slot (ACE :07/:37/:53, SST 13:17/13:47, subsurface 14:23/14:53, ARMOR3D
+# 14:43/15:13, sub-anim 16:33/17:03, season-gifs 03:23, GIBS 22:07/22:37).
+on:
+  schedule:
+    - cron: "53 0,6,12,18 * * *"
+    - cron: "27 1,7,13,19 * * *"
+  workflow_dispatch: {}
+
+# Read-only: this workflow commits NOTHING to main (same as update-gibs.yml).
+# All output — PNG frames + manifest.json — is synced to R2; the live site
+# fetches it cross-origin from cdn.triple-a-tropics.com/models/hafs/.
+permissions:
+  contents: read
+
+# One HAFS run at a time. Each run fully rebuilds models/hafs/ for the latest
+# cycle then syncs (with --delete) to R2; overlapping runs would duplicate the
+# same downloads and could race the sync. Don't cancel a run mid-flight — a
+# partial sync is worse than waiting.
+concurrency:
+  group: update-hafs
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # generous; a busy 4-storm cycle is ~20 min
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        # Herbie does AWS-Open-Data .idx byte-range subsetting; cfgrib+eccodes
+        # decode the GRIB2 messages; matplotlib/numpy render; requests drives
+        # the S3 listing + Herbie HTTP. The eccodes wheel bundles the ecCodes
+        # binary, so no apt step. No cartopy (vendored Natural Earth GeoJSON is
+        # checked in and the script reads it from the repo root).
+        run: |
+          python -m pip install --upgrade pip
+          pip install herbie-data cfgrib eccodes matplotlib numpy xarray requests
+          python -c "import cfgrib; print('cfgrib', cfgrib.__version__)"
+
+      - name: Ensure Natural Earth basemap files exist
+        # hafs_plot.py reads these from the repo root for coastlines/borders.
+        # They are committed, so this is normally a no-op — but match the other
+        # rendering workflows and re-fetch if a file ever goes missing.
+        run: |
+          set -euo pipefail
+          NE="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
+          for f in ne_50m_coastline.geojson ne_50m_admin_0_countries.geojson \
+                   ne_110m_coastline.geojson ne_110m_admin_0_countries.geojson; do
+            if [ ! -f "$f" ]; then
+              echo "--- Downloading $f ---"
+              curl -fSL --retry 3 --retry-delay 10 -o "$f" "$NE/$f" || true
+            fi
+          done
+
+      - name: Generate HAFS plots (latest complete cycle)
+        # Resolves the newest cycle whose storm nest reached f126, enumerates
+        # its storms from the public bucket, and renders all frames into
+        # models/hafs/ with a manifest.json. Off-season (no storms) it writes
+        # an empty manifest and exits 0 — the frontend then shows "no runs".
+        env:
+          HERBIE_DATA: ${{ runner.temp }}/herbie_data
+        run: |
+          python generate_hafs_plots.py --jobs 4
+          echo "---- rendered frames ----"
+          find models/hafs -name '*.png' | wc -l
+          echo "---- manifest ----"
+          python -c "import json; m=json.load(open('models/hafs/manifest.json')); print('cycle', m['cycle'], '| storms', [s['id'] for s in m['storms']])"
+
+      - name: Upload HAFS plots to R2 (cdn.triple-a-tropics.com/models/hafs/)
+        # Three passes with EXPLICIT content-types (image/png frames,
+        # application/json manifest — the manifest is fetched cross-origin and
+        # needs the right type). NO --size-only: each cycle's f###.png reuses
+        # the same key with new content, so a coincidental same-size frame must
+        # NOT be skipped (default size+mtime re-uploads the fresh files).
+        #
+        # Ordering matters for consistency:
+        #   1. Upload new PNG frames WITHOUT --delete (old frames stay live).
+        #   2. Upload the manifest — it now references this cycle's frames,
+        #      which are all present from step 1 → no 404 window.
+        #   3. Prune orphan PNGs with --delete (frames from storms no longer in
+        #      the manifest). The filter scopes --delete to *.png, so it never
+        #      touches the manifest; and because it runs AFTER the manifest is
+        #      live, the deleted frames are already unreferenced → no 404.
+        #
+        # Off-season the generator writes an empty manifest (storms:[]) and the
+        # prune wipes all remote PNGs — correct, nothing is active. A TOTAL
+        # render failure does NOT reach here: the generator exits non-zero when
+        # storms were found but nothing rendered, so this step never runs and
+        # the prior cycle stays live.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          SRC=models/hafs
+          if [ ! -f "$SRC/manifest.json" ]; then
+            echo "No HAFS manifest at $SRC — generator did not produce output."
+            exit 1
+          fi
+          CC="public, max-age=300"
+          DST=s3://triple-a-tropics-media/models/hafs/
+          # 1. new frames (no delete)
+          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "$CC" --content-type "image/png" \
+            --exclude "*" --include "*.png" --only-show-errors
+          # 2. manifest (now references only frames that exist)
+          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "$CC" --content-type "application/json" \
+            --exclude "*" --include "*.json" --only-show-errors
+          # 3. prune orphan frames (scoped to *.png so the manifest is untouched)
+          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "$CC" --content-type "image/png" \
+            --exclude "*" --include "*.png" --delete --only-show-errors

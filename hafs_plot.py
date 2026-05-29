@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""HAFS forecast plots — vertical slice (v1: MSLP + 10 m wind).
+
+First feature of the new ``/models/`` page on triple-a-tropics.com. This script
+fetches ONE (model, storm, domain, forecast-hour) HAFS field set and renders a
+TAT-styled PNG of mean-sea-level pressure (isobars) over 10 m wind speed
+(filled, knots, Saffir-Simpson-flavored palette).
+
+Run it standalone to validate a single frame, then ``generate_hafs_plots.py``
+(the full-cycle builder) reuses the fetch + render functions here to loop every
+active storm × {hafsa,hafsb} × {storm.atm,parent.atm} × forecast hour.
+
+Data source — Herbie + AWS Open Data
+------------------------------------
+HAFS GRIB2 lives in the public ``noaa-nws-hafs-pds`` S3 bucket (archive back to
+2023-06-19) and on NOMADS (recent cycles only). The Herbie HAFS template that
+ships in ``herbie-data`` only knows NOMADS *and* builds its product list from a
+**live** lookup of currently-active storms — so it can neither reach the
+historical archive nor be constructed for a past storm (``storm_name`` resolves
+to ``None`` → ``None.title()`` crash). ``install_hafs_templates()`` below
+replaces ``herbie.models.hafsa``/``hafsb`` with AWS-first templates that don't
+depend on that live lookup, which is what makes the dev cycle reachable.
+
+Herbie does ``.idx`` byte-range subsetting, so even though a storm.atm file is
+~240 MB we only pull the three messages we need (PRMSL + UGRD/VGRD 10 m).
+
+Why no cartopy
+--------------
+Per CLAUDE.md the repo deliberately avoids cartopy; the vendored Natural Earth
+GeoJSON (``ne_50m_*``) is the basemap. HAFS grids are regular lat/lon
+(PlateCarree), so we plot straight in lon/lat and overlay the GeoJSON
+coastlines/borders exactly like ``generate_sst_plots.py``.
+
+Dev cycle (has data): ``2023-09-09 00:00``, ``hafsa``, storm ``13l`` (Lee),
+``storm.atm``, fxx 12.
+
+    python hafs_plot.py            # renders the dev cycle to hafs_test.png
+    python hafs_plot.py --model hafsb --storm 13l --product parent.atm --fxx 24
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import logging
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+
+import matplotlib
+
+matplotlib.use("Agg")  # headless
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.ticker as mticker
+from matplotlib import patheffects as pe
+
+log = logging.getLogger("hafs-plot")
+
+HERE = Path(__file__).resolve().parent
+
+# ---------------------------------------------------------------------------
+# TAT render palette (the satellite-page look from the handoff brief — note
+# these are the *image* colors, distinct from styles.css :root which themes the
+# HTML page).
+# ---------------------------------------------------------------------------
+DARK_BG = "#0a0d12"
+TEXT_COLOR = "#e8eef5"
+ACCENT_COLOR = "#79f0d6"
+MUTED_COLOR = "#9199a4"
+GRID_COLOR = "#3a4252"
+COAST_COLOR = "#000000"
+BORDER_COLOR = "#000000"
+WATERMARK = "@WeathermanAAA_"
+
+KT_PER_MS = 1.94384  # m s-1 → knots
+
+# ---------------------------------------------------------------------------
+# Wind-speed colormap — Saffir-Simpson-flavored. Boundaries sit on the TC
+# intensity thresholds (34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5)
+# with sub-steps so the sub-hurricane field still has texture. The palette runs
+# cool (calm) → green/yellow (TS) → gold/orange (Cat1-2) → red/magenta (Cat3-4)
+# → violet (Cat5+). 17 bins → 17 colors; >185 kt folds into set_over.
+# ---------------------------------------------------------------------------
+WIND_LEVELS_KT = [0, 10, 20, 30, 34, 45, 55, 64, 75, 83, 90, 96,
+                  105, 113, 125, 137, 150, 185]
+WIND_COLORS = [
+    "#5a6b87",  # 0-10   calm slate
+    "#4d8bb0",  # 10-20  blue
+    "#3fb4c0",  # 20-30  cyan
+    "#41c98c",  # 30-34  green
+    "#8ce05a",  # 34-45  TS green-yellow
+    "#c8e85a",  # 45-55  yellow-green
+    "#f2e641",  # 55-64  yellow
+    "#f7c33a",  # 64-75  Cat1 gold
+    "#f99a32",  # 75-83  orange
+    "#f76d2b",  # 83-90  Cat2 orange
+    "#ef4a3c",  # 90-96  orange-red
+    "#e0314f",  # 96-105 Cat3 red
+    "#cf1f6b",  # 105-113 crimson
+    "#b81e8e",  # 113-125 Cat4 magenta
+    "#9b2fb0",  # 125-137 purple
+    "#c569d8",  # 137-150 Cat5 violet
+    "#e8b6ec",  # 150-185 pale violet
+]
+
+
+def _wind_cmap_norm():
+    cmap = mcolors.ListedColormap(WIND_COLORS)
+    cmap.set_over("#f5e6f7")
+    cmap.set_under(WIND_COLORS[0])
+    cmap.set_bad(alpha=0.0)  # NaN padding → transparent (shows panel bg)
+    norm = mcolors.BoundaryNorm(WIND_LEVELS_KT, cmap.N)
+    return cmap, norm
+
+
+# ---------------------------------------------------------------------------
+# Herbie HAFS template override (AWS-first, no live storm-name dependency)
+# ---------------------------------------------------------------------------
+def install_hafs_templates() -> None:
+    """Monkeypatch ``herbie.models.hafsa``/``hafsb`` with AWS-first templates.
+
+    Idempotent. See module docstring for why the stock template is unusable.
+    The S3 key layout (verified against the live bucket) is::
+
+        hfs{a,b}/{YYYYMMDD}/{HH}/{storm}.{YYYYMMDDHH}.hfs{a,b}.{product}.f{FFF}.grb2
+
+    NOMADS keeps the same name with a ``hfs{a,b}.{YYYYMMDD}/{HH}/`` directory and
+    serves as a recent-cycle fallback.
+    """
+    import herbie.models as models
+
+    def _make_template(flavor: str):
+        def template(self):  # called as models.hafsX.template(herbie_instance)
+            storm = str(self.storm).lower()
+            self.DESCRIPTION = f"Hurricane Analysis and Forecast System (HAFS-{flavor.upper()})"
+            self.DETAILS = {
+                "AWS Open Data": "https://registry.opendata.aws/noaa-nws-hafs-pds/",
+                "HFIP": "https://hfip.org/hafs",
+            }
+            # Map each product key to itself — the stock template derived these
+            # from a live storm-name lookup we deliberately drop. The fetch path
+            # uses self.product directly, so the values are cosmetic.
+            self.PRODUCTS = {
+                "storm.atm": "storm-following atmospheric nest (~2 km)",
+                "parent.atm": "parent atmospheric domain (~6 km)",
+                "storm.sat": "storm-following synthetic satellite",
+                "parent.sat": "parent synthetic satellite",
+            }
+            fname = (f"{storm}.{self.date:%Y%m%d%H}.hfs{flavor}"
+                     f".{self.product}.f{self.fxx:03d}.grb2")
+            self.SOURCES = {
+                "aws": (f"https://noaa-nws-hafs-pds.s3.amazonaws.com/"
+                        f"hfs{flavor}/{self.date:%Y%m%d}/{self.date:%H}/{fname}"),
+                "nomads": (f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/hafs/prod/"
+                           f"hfs{flavor}.{self.date:%Y%m%d}/{self.date:%H}/{fname}"),
+            }
+            self.IDX_SUFFIX = [".grb2.idx"]
+            self.EXPECT_IDX_FILE = "remote"
+            self.LOCALFILE = f"{self.get_remoteFileName}"
+
+        return template
+
+    for name, flavor in (("hafsa", "a"), ("hafsb", "b")):
+        cls = type(name, (), {"template": _make_template(flavor)})
+        setattr(models, name, cls)
+
+
+# ---------------------------------------------------------------------------
+# Fetch
+# ---------------------------------------------------------------------------
+@dataclass
+class HafsFrame:
+    model: str            # "hafsa" / "hafsb"
+    storm: str            # "13l"
+    product: str          # "storm.atm" / "parent.atm"
+    fxx: int
+    init_time: dt.datetime
+    valid_time: dt.datetime
+    lon: np.ndarray       # 1-D, -180..180, ascending, trimmed to finite extent
+    lat: np.ndarray       # 1-D, ascending, trimmed
+    mslp_hpa: np.ndarray  # (lat, lon)
+    wind_kt: np.ndarray   # (lat, lon)
+    extent: tuple         # (lon_min, lon_max, lat_min, lat_max) of finite data
+
+
+def _to_180(lon: np.ndarray) -> np.ndarray:
+    return ((lon + 180.0) % 360.0) - 180.0
+
+
+def _monotonic(a: np.ndarray) -> bool:
+    d = np.diff(a)
+    return bool(np.all(d > 0) or np.all(d < 0))
+
+
+def _choose_lon_frame(raw: np.ndarray) -> np.ndarray:
+    """Pick a MONOTONIC longitude axis for the nest.
+
+    A regular contour/extent needs a monotonic X axis. Normal nests live in
+    signed -180..180 (e.g. the Atlantic at -82..-52). A nest straddling the
+    antimeridian (West Pacific) becomes non-monotonic under ``_to_180`` (it
+    jumps +180 → -180), which would otherwise blow the extent out to ~360°. For
+    those we keep a CONTINUOUS frame that runs past +180 (e.g. 168..188); the
+    >180 values are labeled as °W by ``_lon_label`` and the basemap is wrapped
+    into the same frame by ``_draw_feature_lines``.
+    """
+    lon180 = _to_180(np.asarray(raw, dtype=float))
+    if _monotonic(lon180):
+        return lon180
+    cont = lon180.copy()
+    cont[cont < 0] += 360.0       # stitch across the dateline → continuous
+    if _monotonic(cont):
+        return cont
+    raw_f = np.asarray(raw, dtype=float)
+    if _monotonic(raw_f):
+        return raw_f
+    return lon180                 # last resort — pathological grid
+
+
+def _wrap_into(x: float, lon_min: float, lon_max: float) -> float:
+    """Shift a basemap longitude by ±360 so it lands in the nest's frame.
+
+    No-op when the extent is the usual -180..180 (so non-dateline plots are
+    unchanged); for a continuous dateline frame (e.g. 168..188) it maps a
+    coastline point at -175 (=185°E) to 185 so it draws in the right place.
+    """
+    while x < lon_min - 180.0:
+        x += 360.0
+    while x > lon_max + 180.0:
+        x -= 360.0
+    return x
+
+
+def fetch_hafs_frame(
+    model: str,
+    storm: str,
+    product: str,
+    date: dt.datetime,
+    fxx: int,
+    save_dir: str,
+    remove_grib: bool = False,
+) -> HafsFrame:
+    """Fetch PRMSL + 10 m wind for one HAFS frame and return a trimmed HafsFrame.
+
+    Two separate byte-range subset reads (PRMSL is meanSea typeOfLevel, winds
+    are heightAboveGround) so cfgrib doesn't have to reconcile two hypercubes.
+
+    ``remove_grib=True`` deletes each idx-subset GRIB after it is read into
+    xarray. The standalone slice keeps them (default ``False``) for inspection;
+    the full-cycle builder sets it so hundreds of frames don't fill the runner
+    disk. The two reads use different search strings → different subset files,
+    so removing one never starves the other.
+    """
+    import herbie
+
+    install_hafs_templates()
+    H = herbie.Herbie(
+        date, model=model, storm=storm, product=product, fxx=fxx,
+        priority=["aws", "nomads"], save_dir=save_dir, verbose=False,
+    )
+    if H.grib is None:
+        raise FileNotFoundError(
+            f"no HAFS GRIB found for {model} {storm} {product} "
+            f"{date:%Y-%m-%d %HZ} f{fxx:03d}"
+        )
+
+    ds_p = H.xarray(":PRMSL:mean sea level:", remove_grib=remove_grib)
+    ds_w = H.xarray(":(UGRD|VGRD):10 m above ground:", remove_grib=remove_grib)
+    if isinstance(ds_p, list):
+        ds_p = ds_p[0]
+    if isinstance(ds_w, list):
+        ds_w = ds_w[0]
+
+    lat = ds_p["latitude"].values
+    # Monotonic longitude frame (continuous past +180 for dateline-crossing
+    # West Pacific nests; plain signed -180..180 otherwise).
+    lon = _choose_lon_frame(ds_p["longitude"].values)
+
+    mslp = ds_p["prmsl"].values / 100.0  # Pa → hPa
+    wind = np.hypot(ds_w["u10"].values, ds_w["v10"].values) * KT_PER_MS
+
+    # Ensure ascending lat/lon so contour/imshow orient correctly.
+    if lat[0] > lat[-1]:
+        lat = lat[::-1]
+        mslp = mslp[::-1, :]
+        wind = wind[::-1, :]
+    if lon[0] > lon[-1]:
+        lon = lon[::-1]
+        mslp = mslp[:, ::-1]
+        wind = wind[:, ::-1]
+
+    # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
+    # regular grid. Keep rows/cols that carry any finite data.
+    finite = np.isfinite(mslp) | np.isfinite(wind)
+    rows = np.where(finite.any(axis=1))[0]
+    cols = np.where(finite.any(axis=0))[0]
+    if rows.size == 0 or cols.size == 0:
+        raise ValueError("all-NaN field after fetch — unexpected")
+    r0, r1, c0, c1 = rows.min(), rows.max() + 1, cols.min(), cols.max() + 1
+    lat, lon = lat[r0:r1], lon[c0:c1]
+    mslp, wind = mslp[r0:r1, c0:c1], wind[r0:r1, c0:c1]
+
+    init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
+    valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
+
+    return HafsFrame(
+        model=model, storm=storm, product=product, fxx=fxx,
+        init_time=init_time, valid_time=valid_time,
+        lon=lon, lat=lat, mslp_hpa=mslp, wind_kt=wind,
+        extent=(float(lon.min()), float(lon.max()),
+                float(lat.min()), float(lat.max())),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Basemap (Natural Earth GeoJSON) — adapted from generate_sst_plots.py
+# ---------------------------------------------------------------------------
+def _load_geojson(name: str) -> Optional[dict]:
+    p = HERE / name
+    if not p.exists():
+        return None
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _feature_linestrings(feat: dict) -> list[list[tuple[float, float]]]:
+    geom = feat.get("geometry") or {}
+    t = geom.get("type")
+    out: list[list[tuple[float, float]]] = []
+    if t == "LineString":
+        out.append([(p[0], p[1]) for p in geom["coordinates"]])
+    elif t == "MultiLineString":
+        for line in geom["coordinates"]:
+            out.append([(p[0], p[1]) for p in line])
+    elif t == "Polygon":
+        for ring in geom["coordinates"]:
+            out.append([(p[0], p[1]) for p in ring])
+    elif t == "MultiPolygon":
+        for poly in geom["coordinates"]:
+            for ring in poly:
+                out.append([(p[0], p[1]) for p in ring])
+    return out
+
+
+def _draw_feature_lines(ax, features, extent, color, linewidth, zorder):
+    """Plot GeoJSON line/polygon edges that intersect the extent.
+
+    Coordinates are -180..180 (matching our converted lon). HAFS storm/parent
+    domains are small and don't cross the antimeridian, so no wrap handling is
+    needed; a feature is drawn if its bounding box overlaps the (margined)
+    extent.
+    """
+    lon_min, lon_max, lat_min, lat_max = extent
+    mlon = (lon_max - lon_min) * 0.05 + 1.0
+    mlat = (lat_max - lat_min) * 0.05 + 1.0
+    for feat in features:
+        for ring in _feature_linestrings(feat):
+            if len(ring) < 2:
+                continue
+            # Wrap each point into the nest's longitude frame so dateline-
+            # crossing (West Pacific) nests still get their coastlines; a no-op
+            # for ordinary -180..180 extents.
+            xs = [_wrap_into(p[0], lon_min, lon_max) for p in ring]
+            ys = [p[1] for p in ring]
+            if (max(xs) < lon_min - mlon or min(xs) > lon_max + mlon
+                    or max(ys) < lat_min - mlat or min(ys) > lat_max + mlat):
+                continue
+            ax.plot(xs, ys, color=color, linewidth=linewidth, zorder=zorder,
+                    solid_capstyle="round", solid_joinstyle="round")
+
+
+def _lon_label(x: float, _pos) -> str:
+    v = x
+    while v > 180:
+        v -= 360
+    while v < -180:
+        v += 360
+    iv = int(round(v))
+    if iv in (0, 180, -180):
+        return f"{abs(iv)}°"
+    return f"{iv}°E" if iv > 0 else f"{-iv}°W"
+
+
+def _lat_label(y: float, _pos) -> str:
+    iv = int(round(y))
+    if iv == 0:
+        return "0°"
+    return f"{abs(iv)}°{'N' if iv > 0 else 'S'}"
+
+
+# ---------------------------------------------------------------------------
+# Render
+# ---------------------------------------------------------------------------
+PRODUCT_LABEL = {
+    "storm.atm": "Storm nest (~2 km)",
+    "parent.atm": "Parent (~6 km)",
+}
+MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
+
+
+def render_frame(frame: HafsFrame, out_path: str,
+                 countries: Optional[dict], coast: Optional[dict]) -> None:
+    lon_min, lon_max, lat_min, lat_max = frame.extent
+    mean_lat = 0.5 * (lat_min + lat_max)
+    # PlateCarree aspect: 1° lon is cos(lat)× shorter than 1° lat.
+    geo_aspect = 1.0 / max(np.cos(np.deg2rad(mean_lat)), 0.1)
+    lon_span = lon_max - lon_min
+    lat_span = (lat_max - lat_min) * geo_aspect
+    # Target ~10.5" on the long axis; leave room for the right colorbar.
+    base = 10.5
+    if lon_span >= lat_span:
+        fig_w, fig_h = base, base * lat_span / lon_span
+    else:
+        fig_w, fig_h = base * lon_span / lat_span, base
+    fig_w += 1.6  # colorbar gutter
+
+    fig = plt.figure(figsize=(fig_w, max(fig_h, 4.2)), facecolor=DARK_BG)
+    ax = fig.add_axes([0.045, 0.05, 0.80, 0.83])
+    ax.set_facecolor(DARK_BG)
+
+    cmap, norm = _wind_cmap_norm()
+    Lon, Lat = np.meshgrid(frame.lon, frame.lat)
+
+    wind = np.ma.masked_invalid(frame.wind_kt)
+    cf = ax.contourf(Lon, Lat, wind, levels=WIND_LEVELS_KT, cmap=cmap,
+                     norm=norm, extend="max", zorder=2)
+
+    # MSLP isobars every 4 hPa, white with a dark halo so they read over both
+    # cool and warm wind colors. Inline labels every other contour.
+    mslp = np.ma.masked_invalid(frame.mslp_hpa)
+    if mslp.count():
+        lo = int(np.floor(mslp.min() / 4.0) * 4)
+        hi = int(np.ceil(mslp.max() / 4.0) * 4)
+        clevs = np.arange(lo, hi + 4, 4)
+        cs = ax.contour(Lon, Lat, mslp, levels=clevs, colors="#ffffff",
+                        linewidths=0.7, zorder=4)
+        # mpl ≥3.8: ContourSet is itself a Collection (no .collections list).
+        cs.set_path_effects([pe.withStroke(linewidth=1.7, foreground="#000000")])
+        lbls = ax.clabel(cs, levels=clevs[::2], inline=True, fontsize=7,
+                         fmt="%d")
+        for t in lbls:
+            t.set_color("#ffffff")
+            t.set_path_effects([pe.withStroke(linewidth=1.6, foreground="#000000")])
+
+    # Coastlines + borders (bold black) on top of the filled field.
+    if coast:
+        _draw_feature_lines(ax, coast.get("features", []), frame.extent,
+                            COAST_COLOR, 1.2, 5)
+    if countries:
+        _draw_feature_lines(ax, countries.get("features", []), frame.extent,
+                            BORDER_COLOR, 0.8, 5)
+
+    ax.set_xlim(lon_min, lon_max)
+    ax.set_ylim(lat_min, lat_max)
+    ax.set_aspect(geo_aspect)
+    ax.xaxis.set_major_locator(mticker.MaxNLocator(6, steps=[1, 2, 2.5, 5, 10]))
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(6, steps=[1, 2, 2.5, 5, 10]))
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(_lon_label))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_lat_label))
+    ax.grid(True, linewidth=0.3, color=GRID_COLOR, alpha=0.7, zorder=3)
+    ax.tick_params(colors=MUTED_COLOR, labelsize=9)
+    for spine in ax.spines.values():
+        spine.set_color(MUTED_COLOR)
+        spine.set_linewidth(0.6)
+
+    # Title strip: model · storm · domain · F-hour · init/valid
+    storm_disp = frame.storm.upper()
+    title = (f"{MODEL_LABEL.get(frame.model, frame.model.upper())}  ·  "
+             f"{storm_disp}  ·  MSLP + 10 m Wind")
+    subtitle = (f"{PRODUCT_LABEL.get(frame.product, frame.product)}  ·  "
+                f"F{frame.fxx:03d}  ·  "
+                f"Init {frame.init_time:%Y-%m-%d %HZ}  ·  "
+                f"Valid {frame.valid_time:%Y-%m-%d %HZ}")
+    ax.text(0.0, 1.045, title, transform=ax.transAxes, color=TEXT_COLOR,
+            fontsize=15, fontweight="bold", va="bottom")
+    ax.text(0.0, 1.012, subtitle, transform=ax.transAxes, color=MUTED_COLOR,
+            fontsize=10, va="bottom")
+
+    # Watermark top-left, inside the map.
+    ax.text(0.012, 0.975, WATERMARK, transform=ax.transAxes, ha="left",
+            va="top", fontsize=11, fontweight="bold", color="#ffffff",
+            alpha=0.85, zorder=6,
+            path_effects=[pe.withStroke(linewidth=1.4, foreground="#000000")])
+
+    # Right-side labeled colorbar (knots), ticks on the SS thresholds.
+    cax = fig.add_axes([0.86, 0.08, 0.022, 0.78])
+    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=WIND_LEVELS_KT)
+    cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
+    cb.ax.yaxis.set_tick_params(color=MUTED_COLOR, labelcolor=MUTED_COLOR,
+                                labelsize=8)
+    cb.outline.set_edgecolor(MUTED_COLOR)
+    cb.outline.set_linewidth(0.4)
+
+    fig.savefig(out_path, dpi=130, facecolor=DARK_BG,
+                bbox_inches="tight", pad_inches=0.12)
+    plt.close(fig)
+    log.info("wrote %s", out_path)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--model", default="hafsa", choices=["hafsa", "hafsb"])
+    ap.add_argument("--storm", default="13l", help="storm id, e.g. 13l")
+    ap.add_argument("--product", default="storm.atm",
+                    choices=["storm.atm", "parent.atm"])
+    ap.add_argument("--date", default="2023-09-09 00:00",
+                    help="cycle init time, 'YYYY-MM-DD HH:MM'")
+    ap.add_argument("--fxx", type=int, default=12, help="forecast hour")
+    ap.add_argument("--out", default="hafs_test.png")
+    ap.add_argument("--save-dir", default=os.environ.get("HERBIE_DATA", "/tmp/herbie_data"))
+    args = ap.parse_args()
+
+    date = dt.datetime.strptime(args.date, "%Y-%m-%d %H:%M")
+
+    log.info("fetching %s %s %s %s f%03d …", args.model, args.storm,
+             args.product, args.date, args.fxx)
+    frame = fetch_hafs_frame(args.model, args.storm, args.product, date,
+                             args.fxx, args.save_dir)
+    log.info("  grid %d×%d  extent lon[%.2f,%.2f] lat[%.2f,%.2f]  "
+             "wind max %.0f kt  mslp min %.1f hPa",
+             frame.lat.size, frame.lon.size, *frame.extent,
+             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa))
+
+    countries = (_load_geojson("ne_50m_admin_0_countries.geojson")
+                 or _load_geojson("ne_110m_admin_0_countries.geojson"))
+    coast = (_load_geojson("ne_50m_coastline.geojson")
+             or _load_geojson("ne_110m_coastline.geojson"))
+    if not coast:
+        log.warning("no coastline GeoJSON found — map will have no coastlines")
+
+    render_frame(frame, args.out, countries, coast)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
