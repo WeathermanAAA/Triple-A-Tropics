@@ -181,7 +181,7 @@
 
   let storms = [], current = null, manifest = null;
   let frames = [], idx = 0, playing = false, ready = false;
-  let raf = null, lastTick = 0, loadTimer = null, buildToken = 0;
+  let raf = null, lastTick = 0, loadTimer = null, buildToken = 0, encoding = false;
 
   const qs = (k) => new URLSearchParams(location.search).get(k);
   const url = (key) => CDN_ROOT + '/' + key;
@@ -202,16 +202,20 @@
     return out;
   }
 
-  function buildFrames() {
+  // The frame list the current band/window SHOULD show (no img objects yet).
+  function desiredFrames() {
     const bandKey = els.band.value;
     const b = (manifest && manifest.bands && manifest.bands[bandKey]) || null;
     const all = (b && b.frames) ? b.frames.slice().sort((a, c) => a.t < c.t ? -1 : 1) : [];
-    if (!all.length) { frames = []; return; }
+    if (!all.length) return [];
     const lastT = new Date(all[all.length - 1].t).getTime();
     const winMs = WINDOWS[els.mode.value] * 3600 * 1000;
     const inWin = all.filter(f => (lastT - new Date(f.t).getTime()) <= winMs);
-    frames = subsample(inWin.length ? inWin : all, FRAME_CAP)
-      .map(f => ({ t: f.t, src: url(f.key), img: null, ok: false }));
+    return subsample(inWin.length ? inWin : all, FRAME_CAP)
+      .map(f => ({ t: f.t, src: url(f.key) }));
+  }
+  function buildFrames() {
+    frames = desiredFrames().map(d => ({ t: d.t, src: d.src, img: null, ok: false }));
   }
 
   // Preload + DECODE every frame (retained on the frame objects so they're not
@@ -406,7 +410,7 @@
     document.getElementById('fl-gifmake').disabled = false;
     gifModal.classList.add('open');
   }
-  function closeGifDialog() { gifModal.classList.remove('open'); }
+  function closeGifDialog() { gifModal.classList.remove('open'); encoding = false; }
 
   function makeGif() {
     if (typeof window.GIF === 'undefined') { alert('GIF library still loading — try again in a second.'); return; }
@@ -431,6 +435,7 @@
     const status = document.getElementById('fl-gifstatus');
     const mk = document.getElementById('fl-gifmake');
     status.style.display = ''; status.textContent = 'Encoding… 0%'; mk.disabled = true;
+    encoding = true;   // pause auto-refresh so frames don't change mid-encode
 
     ensureGifWorker(function (worker) {
       const gif = new window.GIF({
@@ -452,6 +457,52 @@
       gif.render();
     });
   }
+
+  // ---- Auto-update --------------------------------------------------------
+  // Poll the storm manifest on a timer and splice changes into the RUNNING
+  // loop: preload+append genuinely-new frames, prune frames that aged out of
+  // the window, keep playing on the same timestamp. No manual refresh needed.
+  const REFRESH_MS = 60000;
+  function refreshLoop() {
+    if (!current || !ready || encoding || !manifest) return;
+    fetch(url(current.manifest), { cache: 'no-cache' })
+      .then(r => r.ok ? r.json() : null)
+      .then(m => {
+        if (!m) return;
+        manifest = m;
+        const desired = desiredFrames();
+        if (!desired.length) return;
+        const wantT = new Set(desired.map(d => d.t));
+        const haveT = new Set(frames.map(f => f.t));
+        const kept = frames.filter(f => wantT.has(f.t));     // drop aged-out
+        const toAdd = desired.filter(d => !haveT.has(d.t));   // genuinely new
+        if (!toAdd.length && kept.length === frames.length) return;  // no change
+        const curT = frames[idx] ? frames[idx].t : null;
+        const newFrames = [];
+        let pending = toAdd.length;
+        const merge = () => {
+          frames = kept.concat(newFrames).sort((a, b) => a.t < b.t ? -1 : 1);
+          const ni = curT ? frames.findIndex(f => f.t === curT) : -1;
+          idx = ni >= 0 ? ni : frames.length - 1;
+          els.scrub.max = Math.max(0, frames.length - 1);
+          els.scrub.value = idx;
+          els.count.textContent = frames.length + ' frames · last ' + WINDOWS[els.mode.value] + ' h';
+        };
+        if (!toAdd.length) { merge(); return; }
+        toAdd.forEach(d => {
+          const im = new Image();
+          im.crossOrigin = 'anonymous'; im.decoding = 'async';
+          const f = { t: d.t, src: d.src, img: im, ok: false };
+          newFrames.push(f);
+          const fin = (ok) => { f.ok = ok; if (--pending <= 0) merge(); };
+          im.onload = () => { (im.decode ? im.decode().then(() => fin(true)).catch(() => fin(true)) : fin(true)); };
+          im.onerror = () => fin(false);
+          im.src = d.src + (d.src.indexOf('?') >= 0 ? '&' : '?') + 'cors=1';
+        });
+      })
+      .catch(() => {});
+  }
+  setInterval(refreshLoop, REFRESH_MS);
 
   els.play.addEventListener('click', togglePlay);
   els.scrub.addEventListener('input', () => { pause(); showFrame(parseInt(els.scrub.value, 10)); });
