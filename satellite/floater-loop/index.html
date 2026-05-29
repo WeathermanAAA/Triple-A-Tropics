@@ -239,6 +239,10 @@
 
     frames.forEach((f) => {
       const im = new Image();
+      // CORS-clean load so the GIF encoder can read canvas pixels (otherwise
+      // the cross-origin CDN image taints the canvas and gif.js stalls at 0%).
+      // The R2/CDN sends CORS headers (the manifest fetch relies on the same).
+      im.crossOrigin = 'anonymous';
       im.decoding = 'async';
       f.img = im;
       const done = (ok) => {
@@ -249,7 +253,9 @@
       };
       im.onload = () => { (im.decode ? im.decode().then(() => done(true)).catch(() => done(true)) : done(true)); };
       im.onerror = () => done(false);
-      im.src = f.src;
+      // ?cors=1 forces a distinct cache entry fetched WITH CORS, so a copy the
+      // widget previously cached without CORS can't taint this one.
+      im.src = f.src + (f.src.indexOf('?') >= 0 ? '&' : '?') + 'cors=1';
     });
 
     clearTimeout(loadTimer);
