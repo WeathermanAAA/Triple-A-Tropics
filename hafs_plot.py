@@ -412,7 +412,7 @@ def _lat_label(y: float, _pos) -> str:
 # ---------------------------------------------------------------------------
 PRODUCT_LABEL = {
     "storm.atm": "Storm nest (~2 km)",
-    "parent.atm": "Parent (~6 km)",
+    "parent.atm": "Parent domain (~6 km)",
 }
 MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
 
@@ -423,7 +423,34 @@ CBAR_TICKS_KT = [34, 64, 83, 96, 113, 137]
 # Target number of wind barbs across each axis. The per-axis stride is derived
 # from the grid size, so the (fine, small) nest and the (coarse, large) parent
 # both land near this count and stay readable.
-BARB_TARGET = 22
+BARB_TARGET = 17
+
+# Header title-bar background, a touch lighter than the map bg so the band reads
+# like the site nav bar.
+BAND_BG = "#11161f"
+
+# SSHWS category chip colors (TAT intensity system), keyed off the frame VMAX:
+# TD blue, TS lime, C1 yellow, C2 amber, C3 red, C4 pink, C5 violet. Each entry
+# is (kt threshold, label, fill, text color).
+_CAT_CHIP = [
+    (137, "C5", "#b06bd8", "#ffffff"),
+    (113, "C4", "#ee5da6", "#0a1324"),
+    (96,  "C3", "#ef4a3c", "#ffffff"),
+    (83,  "C2", "#f7a83a", "#0a1324"),
+    (64,  "C1", "#f2e641", "#0a1324"),
+    (34,  "TS", "#8ce05a", "#0a1324"),
+    (0,   "TD", "#4d8bb0", "#ffffff"),
+]
+
+
+def _sshws_chip(vmax_kt: float) -> tuple[str, str, str]:
+    """Return (category label, chip fill, chip text color) for a 10 m VMAX (kt)."""
+    if not np.isfinite(vmax_kt):
+        return "NA", "#5a6b87", "#ffffff"
+    for thresh, label, fill, txt in _CAT_CHIP:
+        if vmax_kt >= thresh:
+            return label, fill, txt
+    return _CAT_CHIP[-1][1:]
 
 
 def render_frame(frame: HafsFrame, out_path: str,
@@ -434,29 +461,42 @@ def render_frame(frame: HafsFrame, out_path: str,
     geo_aspect = 1.0 / max(np.cos(np.deg2rad(mean_lat)), 0.1)
     lon_span = lon_max - lon_min
     lat_span = (lat_max - lat_min) * geo_aspect
-    # Target ~10.5" on the long axis; leave room for the right colorbar.
-    base = 10.5
-    if lon_span >= lat_span:
-        fig_w, fig_h = base, base * lat_span / lon_span
-    else:
-        fig_w, fig_h = base * lon_span / lat_span, base
-    fig_w += 1.6  # colorbar gutter
 
-    fig = plt.figure(figsize=(fig_w, max(fig_h, 4.2)), facecolor=DARK_BG)
-    ax = fig.add_axes([0.045, 0.05, 0.80, 0.83])
+    # Inch-based layout (no tight bbox) so the full-width header band, the map,
+    # the right colorbar, and the credit footer all land at exact positions.
+    base = 10.5  # ~longest map axis, inches
+    if lon_span >= lat_span:
+        map_w, map_h = base, base * lat_span / lon_span
+    else:
+        map_w, map_h = base * lon_span / lat_span, base
+    map_h = max(map_h, 4.2)
+    left_in, cbar_in = 0.62, 1.55     # lat-label gutter / right colorbar gutter
+    band_in, foot_in, botpad_in = 0.74, 0.40, 0.06
+    fig_w = left_in + map_w + cbar_in
+    fig_h = botpad_in + foot_in + map_h + band_in
+    map_bottom = botpad_in + foot_in
+
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor=DARK_BG)
+    ax = fig.add_axes([left_in / fig_w, map_bottom / fig_h,
+                       map_w / fig_w, map_h / fig_h])
     ax.set_facecolor(DARK_BG)
 
     cmap, norm = _wind_cmap_norm()
     Lon, Lat = np.meshgrid(frame.lon, frame.lat)
 
-    # (1) 10 m wind-speed fill (Saffir-Simpson palette).
+    # (1) 10 m wind-speed fill (Saffir-Simpson palette). PNG output rasterizes
+    # the whole figure at the save DPI, so the fill is raster either way; what
+    # keeps the barbs / isobars / labels from looking pixelated is the high save
+    # DPI plus antialiased vector line drawing on top (matplotlib ignores
+    # set_rasterized on a ContourSet, so there is nothing to toggle here).
     wind = np.ma.masked_invalid(frame.wind_kt)
     cf = ax.contourf(Lon, Lat, wind, levels=WIND_LEVELS_KT, cmap=cmap,
                      norm=norm, extend="max", zorder=2)
 
-    # (2) 10 m wind barbs, subsampled to ~BARB_TARGET across each axis. White
-    # with a thin dark outline reads clearly over both the cool (dark) and warm
-    # (bright) ends of the fill palette; emptybarb=0 drops the calm-air circle.
+    # (2) 10 m wind barbs, subsampled to ~BARB_TARGET across each axis. White,
+    # antialiased, kept vector (not rasterized) with a subtle dark halo so they
+    # stay sharp and legible over both the cool (dark) and warm (bright) ends of
+    # the fill palette; emptybarb=0 drops the calm-air circle.
     nlat, nlon = frame.wind_kt.shape
     si = max(1, int(round(nlat / BARB_TARGET)))
     sj = max(1, int(round(nlon / BARB_TARGET)))
@@ -464,27 +504,32 @@ def render_frame(frame: HafsFrame, out_path: str,
     v = np.ma.masked_invalid(frame.v_kt)
     barbs = ax.barbs(
         Lon[::si, ::sj], Lat[::si, ::sj], u[::si, ::sj], v[::si, ::sj],
-        length=5.6, linewidth=0.6, color="#ffffff", zorder=4,
-        pivot="middle", sizes=dict(emptybarb=0.0),
+        length=6.8, linewidth=1.1, color="#ffffff", zorder=4,
+        pivot="middle", sizes=dict(emptybarb=0.0), antialiased=True,
     )
-    barbs.set_path_effects([pe.withStroke(linewidth=1.1, foreground="#0a0d12")])
+    barbs.set_rasterized(False)
+    # Subtle dark halo just narrower than the white line so the barbs read as
+    # white (legible over the bright fill) with a thin dark edge, not as dark.
+    barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
 
     # (3) MSLP isobars every 4 mb, thin white with a dark halo so they read over
-    # both cool and warm wind colors. Inline labels every other contour.
+    # both cool and warm wind colors. Inline labels every other contour. Vector.
     mslp = np.ma.masked_invalid(frame.mslp_hpa)
     if mslp.count():
         lo = int(np.floor(mslp.min() / 4.0) * 4)
         hi = int(np.ceil(mslp.max() / 4.0) * 4)
         clevs = np.arange(lo, hi + 4, 4)
         cs = ax.contour(Lon, Lat, mslp, levels=clevs, colors="#ffffff",
-                        linewidths=0.7, zorder=5)
+                        linewidths=0.8, zorder=5)
         # mpl >=3.8: ContourSet is itself a Collection (no .collections list).
-        cs.set_path_effects([pe.withStroke(linewidth=1.7, foreground="#000000")])
+        cs.set_rasterized(False)
+        cs.set_path_effects([pe.withStroke(linewidth=1.8, foreground="#000000")])
         lbls = ax.clabel(cs, levels=clevs[::2], inline=True, fontsize=7,
                          fmt="%d")
         for t in lbls:
             t.set_color("#ffffff")
             t.set_zorder(7)
+            t.set_rasterized(False)
             t.set_path_effects([pe.withStroke(linewidth=1.6, foreground="#000000")])
 
     # (4) Coastlines + borders (bold black) on top of the filled field.
@@ -521,32 +566,10 @@ def render_frame(frame: HafsFrame, out_path: str,
         spine.set_color(MUTED_COLOR)
         spine.set_linewidth(0.6)
 
-    # (6) Two-line header above the map, TAT style. Line 1 is the small init /
-    # valid / attribution strip; line 2 is the bold model + storm + field title.
-    model_label = MODEL_LABEL.get(frame.model, frame.model.upper())
-    storm_disp = frame.storm.upper()
-    domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
-    info = (f"Init: {frame.init_time:%Y-%m-%d %HZ}  ·  Hour: {frame.fxx}  ·  "
-            f"Valid: {frame.valid_time:%Y-%m-%d %HZ}  ·  {WATERMARK}  ·  "
-            f"triple-a-tropics.com")
-    title = (f"{model_label} {storm_disp}  ·  {domain_label}  ·  "
-             f"10m Wind [kt] & MSLP [mb]")
-    ax.text(0.0, 1.055, info, transform=ax.transAxes, color=MUTED_COLOR,
-            fontsize=9, va="bottom")
-    ax.text(0.0, 1.012, title, transform=ax.transAxes, color=TEXT_COLOR,
-            fontsize=15, fontweight="bold", va="bottom")
-
-    # (7) Per-frame max wind / min pressure stat box, top-right inside the map.
-    vmax = float(np.nanmax(frame.wind_kt)) if np.isfinite(frame.wind_kt).any() else float("nan")
-    pmin_box = float(np.nanmin(frame.mslp_hpa)) if np.isfinite(frame.mslp_hpa).any() else float("nan")
-    stat = f"Max Wind: {vmax:.1f} kt  |  Min Pressure: {pmin_box:.1f} mb"
-    ax.text(0.985, 0.975, stat, transform=ax.transAxes, ha="right", va="top",
-            fontsize=10, fontweight="bold", color=TEXT_COLOR, zorder=9,
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="#0a0d12",
-                      edgecolor=MUTED_COLOR, linewidth=0.8, alpha=0.82))
-
-    # (8) Right-side labeled colorbar (knots), ticks on the SS thresholds.
-    cax = fig.add_axes([0.86, 0.08, 0.022, 0.78])
+    # (6) Right-side labeled colorbar (knots), ticks on the SS thresholds.
+    cax = fig.add_axes([(left_in + map_w + 0.30) / fig_w,
+                        (map_bottom + 0.05 * map_h) / fig_h,
+                        0.16 / fig_w, (0.90 * map_h) / fig_h])
     cb = fig.colorbar(cf, cax=cax, extend="max", ticks=CBAR_TICKS_KT)
     cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
     cb.ax.yaxis.set_tick_params(color=MUTED_COLOR, labelcolor=MUTED_COLOR,
@@ -554,8 +577,64 @@ def render_frame(frame: HafsFrame, out_path: str,
     cb.outline.set_edgecolor(MUTED_COLOR)
     cb.outline.set_linewidth(0.4)
 
-    fig.savefig(out_path, dpi=130, facecolor=DARK_BG,
-                bbox_inches="tight", pad_inches=0.12)
+    # (7) Header BAND: a slim dark title bar across the top (TAT nav-bar look),
+    # NOT the reference two-line header. Left: bold model + id, an SSHWS category
+    # chip keyed off VMAX, and a muted field/domain subtitle. Right: a teal
+    # VMAX/MSLP line and a muted Init -> F-hour -> Valid time-flow line.
+    vmax = float(np.nanmax(frame.wind_kt)) if np.isfinite(frame.wind_kt).any() else float("nan")
+    pmin_hdr = float(np.nanmin(frame.mslp_hpa)) if np.isfinite(frame.mslp_hpa).any() else float("nan")
+    model_label = MODEL_LABEL.get(frame.model, frame.model.upper())
+    storm_disp = frame.storm.upper()
+    domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
+    cat_label, chip_fill, chip_txt = _sshws_chip(vmax)
+
+    band = fig.add_axes([0.0, (map_bottom + map_h) / fig_h, 1.0, band_in / fig_h])
+    band.set_facecolor(BAND_BG)
+    band.set_xlim(0, 1)
+    band.set_ylim(0, 1)
+    band.set_xticks([])
+    band.set_yticks([])
+    for s in band.spines.values():
+        s.set_visible(False)
+
+    pad_x = left_in / fig_w           # align band edges with the map
+    y_top, y_bot = 0.62, 0.27
+    t_title = band.text(pad_x, y_top, f"{model_label}  {storm_disp}",
+                        ha="left", va="center", fontsize=15, fontweight="bold",
+                        color=TEXT_COLOR, transform=band.transAxes)
+    # Place the category chip immediately after the title via its measured width.
+    try:
+        rend = fig.canvas.get_renderer()
+        x_after = band.transAxes.inverted().transform(
+            (t_title.get_window_extent(renderer=rend).x1, 0.0))[0]
+    except Exception:
+        x_after = pad_x + 0.10
+    band.text(x_after + 0.012, y_top, cat_label, ha="left", va="center",
+              fontsize=11, fontweight="bold", color=chip_txt,
+              transform=band.transAxes, zorder=3,
+              bbox=dict(boxstyle="round,pad=0.34", facecolor=chip_fill,
+                        edgecolor="none"))
+    band.text(pad_x, y_bot, f"10m Wind (kt) & MSLP (mb)  /  {domain_label}",
+              ha="left", va="center", fontsize=9.5, color=MUTED_COLOR,
+              transform=band.transAxes)
+
+    rx = 1.0 - pad_x
+    band.text(rx, y_top, f"VMAX {vmax:.1f} kt   /   MSLP {pmin_hdr:.1f} mb",
+              ha="right", va="center", fontsize=12, fontweight="bold",
+              color=ACCENT_COLOR, transform=band.transAxes)
+    band.text(rx, y_bot,
+              f"Init {frame.init_time:%Y-%m-%d %HZ}  ->  F{frame.fxx:03d}"
+              f"  ->  Valid {frame.valid_time:%Y-%m-%d %HZ}",
+              ha="right", va="center", fontsize=9.5, color=MUTED_COLOR,
+              transform=band.transAxes)
+
+    # (8) Credit footer under the map, kept out of the header so the top stays
+    # clean and does not read like the reference.
+    fig.text(left_in / fig_w, (botpad_in + 0.12) / fig_h,
+             f"{WATERMARK}  /  triple-a-tropics.com", ha="left", va="center",
+             fontsize=9, color=MUTED_COLOR)
+
+    fig.savefig(out_path, dpi=155, facecolor=DARK_BG)
     plt.close(fig)
     log.info("wrote %s", out_path)
 
