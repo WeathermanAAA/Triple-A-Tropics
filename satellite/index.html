@@ -395,7 +395,7 @@
           <label for="sat-enh">Enhancement</label>
           <select id="sat-enh">
             <option value="rainbow_ir">Rainbow IR</option>
-            <option value="dvorak_bd">Dvorak BD</option>
+            <option value="dvorak">Dvorak</option>
             <option value="tat_neon">TAT Neon</option>
             <option value="ir_gray">Grayscale IR</option>
           </select>
@@ -715,7 +715,7 @@
   const channelSelect = document.getElementById('sat-channel');
   const enhSelect = document.getElementById('sat-enh');
   const ENH_BY_DOMAIN = {
-    ir: [['rainbow_ir', 'Rainbow IR'], ['dvorak_bd', 'Dvorak BD'],
+    ir: [['rainbow_ir', 'Rainbow IR'], ['dvorak', 'Dvorak'],
          ['tat_neon', 'TAT Neon'], ['ir_gray', 'Grayscale IR']],
     wv: [['wv_tat', 'Water Vapor'], ['ir_gray', 'Grayscale IR']],
   };
@@ -734,6 +734,7 @@
     enhSelect.disabled = false;
     let prev = preferred || enhSelect.value;
     if (prev === 'grayscale') prev = 'ir_gray';   // legacy alias
+    if (prev === 'dvorak_bd') prev = 'dvorak';    // legacy alias
     const opts = ENH_BY_DOMAIN[domain] || ENH_BY_DOMAIN.ir;
     enhSelect.innerHTML = '';
     opts.forEach(([val, label]) => {
