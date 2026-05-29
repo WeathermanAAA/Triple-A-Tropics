@@ -10,6 +10,8 @@
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
 <link rel="stylesheet" href="/styles.css">
+<!-- gif.js: client-side animated-GIF encoder (CDN) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
 <style>
   html, body, h1, h2, h3, p, a, span, div, button, input, select, label {
     font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
@@ -45,6 +47,22 @@
   .fl-spin { width:14px; height:14px; border:2px solid var(--border);
     border-top-color:var(--accent-2); border-radius:50%; animation:flspin .8s linear infinite; }
   @keyframes flspin { to { transform:rotate(360deg); } }
+  /* GIF Maker modal */
+  .fl-modal { position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.55); z-index:9999; }
+  .fl-modal.open { display:flex; }
+  .fl-dialog { background:var(--panel,#141821); border:1px solid var(--border); border-radius:10px;
+    padding:16px 20px 18px; width:300px; box-shadow:0 14px 44px rgba(0,0,0,0.6); }
+  .fl-dialog h3 { margin:0 0 8px; font-size:15px; color:var(--fg); display:flex;
+    justify-content:space-between; align-items:center; }
+  .fl-dialog .row { display:flex; justify-content:space-between; align-items:center;
+    margin:10px 0; font-size:13px; color:var(--muted); }
+  .fl-dialog input { width:74px; background:var(--bg); color:var(--fg); border:1px solid var(--border);
+    border-radius:6px; padding:5px 8px; font-size:13px; text-align:right; }
+  .fl-dialog .mk { color:var(--accent-2); cursor:pointer; font-weight:800; background:none;
+    border:none; font-size:14px; padding:4px 0; }
+  .fl-dialog .mk:disabled { opacity:0.5; cursor:not-allowed; }
+  .fl-x { cursor:pointer; color:var(--muted); background:none; border:none; font-size:20px; line-height:1; }
 </style>
 </head>
 <body>
@@ -110,10 +128,23 @@
           <option value="8">8&times;</option>
         </select>
       </div>
+      <button class="fl-btn" id="fl-gif" type="button">Make GIF</button>
       <span class="fl-note" id="fl-count"></span>
     </div>
   </div>
 </section>
+
+<!-- GIF Maker popup -->
+<div class="fl-modal" id="fl-gifmodal">
+  <div class="fl-dialog">
+    <h3>GIF Maker <button class="fl-x" id="fl-gifx" type="button" aria-label="Close">&times;</button></h3>
+    <div class="row"><label for="fl-gifn">Number of frames</label><input type="number" id="fl-gifn" min="2" value="20"></div>
+    <div class="row"><label for="fl-giffps">Frames per second</label><input type="number" id="fl-giffps" min="1" max="30" value="10"></div>
+    <div class="row"><label for="fl-gifskip">Skip every</label><input type="number" id="fl-gifskip" min="0" value="0"></div>
+    <div class="row" style="justify-content:flex-end"><button class="mk" id="fl-gifmake" type="button">MAKE GIF</button></div>
+    <div class="row" id="fl-gifstatus" style="display:none;color:var(--accent-2);justify-content:flex-end"></div>
+  </div>
+</div>
 
 <footer class="site-foot">
   <div>Imagery: NOAA GOES / JMA Himawari ABI/AHI · auto-tracking active systems</div>
@@ -343,12 +374,89 @@
     })
     .catch(e => { els.meta.textContent = 'Floater data unavailable.'; els.empty.style.display = ''; els.canvas.style.display = 'none'; console.error(e); });
 
+  // ---- GIF maker (gif.js) -------------------------------------------------
+  // The loop already keeps every frame decoded (frames[i].img), so we feed
+  // those straight into gif.js — no screen capture needed. Worker is fetched
+  // as a blob URL to dodge CORS, with a CDN fallback.
+  const GIF_MAX_W = 900;  // downscale long side for shareable file sizes
+  const gifModal = document.getElementById('fl-gifmodal');
+  let gifWorkerUrl = null;
+
+  function ensureGifWorker(cb) {
+    if (gifWorkerUrl) { cb(gifWorkerUrl); return; }
+    const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js';
+    fetch(CDN).then(r => r.text()).then(src => {
+      gifWorkerUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      cb(gifWorkerUrl);
+    }).catch(() => cb(CDN));
+  }
+
+  function openGifDialog() {
+    if (!frames.length) return;
+    const n = document.getElementById('fl-gifn');
+    n.max = frames.length;
+    n.value = Math.min(frames.length, 30);
+    document.getElementById('fl-gifstatus').style.display = 'none';
+    document.getElementById('fl-gifmake').disabled = false;
+    gifModal.classList.add('open');
+  }
+  function closeGifDialog() { gifModal.classList.remove('open'); }
+
+  function makeGif() {
+    if (typeof window.GIF === 'undefined') { alert('GIF library still loading — try again in a second.'); return; }
+    const total = frames.length;
+    let n = parseInt(document.getElementById('fl-gifn').value, 10) || total;
+    n = Math.max(2, Math.min(total, n));
+    const fps = Math.max(1, parseInt(document.getElementById('fl-giffps').value, 10) || 10);
+    const skip = Math.max(0, parseInt(document.getElementById('fl-gifskip').value, 10) || 0);
+    const delay = Math.round(1000 / fps);
+
+    let sel = frames.slice(total - n);                  // last N frames (most recent)
+    if (skip > 0) sel = sel.filter((_, i) => i % (skip + 1) === 0);  // thin
+    sel = sel.filter(f => f.img && f.img.naturalWidth);  // only loaded frames
+    if (sel.length < 2) { alert('Not enough loaded frames for a GIF — let it preload, or lower "Skip every".'); return; }
+
+    const W0 = sel[0].img.naturalWidth, H0 = sel[0].img.naturalHeight;
+    const scale = Math.min(1, GIF_MAX_W / W0);
+    const W = Math.round(W0 * scale), H = Math.round(H0 * scale);
+    const oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+    const octx = oc.getContext('2d');
+
+    const status = document.getElementById('fl-gifstatus');
+    const mk = document.getElementById('fl-gifmake');
+    status.style.display = ''; status.textContent = 'Encoding… 0%'; mk.disabled = true;
+
+    ensureGifWorker(function (worker) {
+      const gif = new window.GIF({
+        workers: 2, quality: 10, width: W, height: H,
+        workerScript: worker, background: '#0a0d12',
+      });
+      gif.on('progress', p => { status.textContent = 'Encoding… ' + Math.round(p * 100) + '%'; });
+      gif.on('finished', function (blob) {
+        const u = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = u;
+        a.download = (current ? current.slug : 'floater') + '_' + els.band.value + '.gif';
+        a.click();
+        requestAnimationFrame(() => URL.revokeObjectURL(u));
+        status.textContent = 'Done!'; mk.disabled = false;
+        setTimeout(closeGifDialog, 700);
+      });
+      sel.forEach(f => { octx.clearRect(0, 0, W, H); octx.drawImage(f.img, 0, 0, W, H); gif.addFrame(octx, { copy: true, delay: delay }); });
+      gif.render();
+    });
+  }
+
   els.play.addEventListener('click', togglePlay);
   els.scrub.addEventListener('input', () => { pause(); showFrame(parseInt(els.scrub.value, 10)); });
   els.speed.addEventListener('change', () => { if (playing) play(); });
   els.mode.addEventListener('change', rebuild);
   els.band.addEventListener('change', rebuild);
   els.storm.addEventListener('change', () => loadStorm(els.storm.value));
+  document.getElementById('fl-gif').addEventListener('click', openGifDialog);
+  document.getElementById('fl-gifx').addEventListener('click', closeGifDialog);
+  document.getElementById('fl-gifmake').addEventListener('click', makeGif);
+  gifModal.addEventListener('click', e => { if (e.target === gifModal) closeGifDialog(); });
 })();
 </script>
 
