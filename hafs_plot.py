@@ -81,41 +81,45 @@ WATERMARK = "@WeathermanAAA_"
 KT_PER_MS = 1.94384  # m s-1 → knots
 
 # ---------------------------------------------------------------------------
-# Wind-speed colormap - Saffir-Simpson-flavored. Boundaries sit on the TC
-# intensity thresholds (34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5)
-# with sub-steps so the sub-hurricane field still has texture. The palette runs
-# cool (calm) → green/yellow (TS) → gold/orange (Cat1-2) → red/magenta (Cat3-4)
-# → violet (Cat5+). 17 bins → 17 colors; >185 kt folds into set_over.
+# Wind-speed colormap - vivid, high-contrast TAT table. A LinearSegmentedColormap
+# normalized over 0 to 165 kt: deep indigo (calm), through blues and teal, to
+# green and lime at the TS threshold, yellow and orange across Cat1-2, hot red
+# and magenta-pink through Cat3-4, a purple break exactly at the Cat5 threshold
+# (137 kt), and a pale-violet cap. A high N keeps the fill smooth; winds above
+# 165 kt fold into set_over. The SSHWS thresholds (34/64/83/96/113/137 kt) still
+# drive the colorbar ticks.
 # ---------------------------------------------------------------------------
-WIND_LEVELS_KT = [0, 10, 20, 30, 34, 45, 55, 64, 75, 83, 90, 96,
-                  105, 113, 125, 137, 150, 185]
-WIND_COLORS = [
-    "#5a6b87",  # 0-10   calm slate
-    "#4d8bb0",  # 10-20  blue
-    "#3fb4c0",  # 20-30  cyan
-    "#41c98c",  # 30-34  green
-    "#8ce05a",  # 34-45  TS green-yellow
-    "#c8e85a",  # 45-55  yellow-green
-    "#f2e641",  # 55-64  yellow
-    "#f7c33a",  # 64-75  Cat1 gold
-    "#f99a32",  # 75-83  orange
-    "#f76d2b",  # 83-90  Cat2 orange
-    "#ef4a3c",  # 90-96  orange-red
-    "#e0314f",  # 96-105 Cat3 red
-    "#cf1f6b",  # 105-113 crimson
-    "#b81e8e",  # 113-125 Cat4 magenta
-    "#9b2fb0",  # 125-137 purple
-    "#c569d8",  # 137-150 Cat5 violet
-    "#e8b6ec",  # 150-185 pale violet
+WIND_VMAX_KT = 165.0
+WIND_OVER_COLOR = "#f3e0ff"
+# (kt, hex) anchors; positions are normalized by WIND_VMAX_KT in _wind_cmap_norm.
+_WIND_ANCHORS_KT = [
+    (0,   "#14245f"),   # calm, deep indigo
+    (12,  "#1f5fd0"),
+    (22,  "#15a8e0"),
+    (30,  "#14d6c0"),
+    (34,  "#1fd17a"),   # TS threshold
+    (42,  "#4ee23f"),
+    (52,  "#b6f02a"),
+    (64,  "#ffe617"),   # C1
+    (74,  "#ffae12"),
+    (83,  "#ff7d0a"),   # C2
+    (96,  "#ff2f1c"),   # C3
+    (113, "#ff1f8c"),   # C4, hot magenta-pink
+    (125, "#e62ac0"),   # upper C4, magenta
+    (137, "#9b30ee"),   # C5, purple break starts exactly here
+    (150, "#bf72f2"),
+    (165, "#f3e0ff"),   # extreme cap
 ]
 
 
 def _wind_cmap_norm():
-    cmap = mcolors.ListedColormap(WIND_COLORS)
-    cmap.set_over("#f5e6f7")
-    cmap.set_under(WIND_COLORS[0])
-    cmap.set_bad(alpha=0.0)  # NaN padding → transparent (shows panel bg)
-    norm = mcolors.BoundaryNorm(WIND_LEVELS_KT, cmap.N)
+    """Vivid continuous 0-165 kt wind colormap and its Normalize."""
+    anchors = [(kt / WIND_VMAX_KT, hexc) for kt, hexc in _WIND_ANCHORS_KT]
+    cmap = mcolors.LinearSegmentedColormap.from_list("tat_wind", anchors, N=512)
+    cmap.set_over(WIND_OVER_COLOR)
+    cmap.set_under(_WIND_ANCHORS_KT[0][1])
+    cmap.set_bad(alpha=0.0)  # NaN padding -> transparent (shows panel bg)
+    norm = mcolors.Normalize(vmin=0.0, vmax=WIND_VMAX_KT)
     return cmap, norm
 
 
@@ -425,6 +429,11 @@ CBAR_TICKS_KT = [34, 64, 83, 96, 113, 137]
 # both land near this count and stay readable.
 BARB_TARGET = 17
 
+# Degrees to crop off EACH side of the data extent before plotting, so the storm
+# fills more of the frame (larger data, lower on-screen isobar density). Clamped
+# per-side to a fraction of the span so small domains are never over-cropped.
+BBOX_TRIM_DEG = 1.5
+
 # Header title-bar background, a touch lighter than the map bg so the band reads
 # like the site nav bar.
 BAND_BG = "#11161f"
@@ -456,6 +465,14 @@ def _sshws_chip(vmax_kt: float) -> tuple[str, str, str]:
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict]) -> None:
     lon_min, lon_max, lat_min, lat_max = frame.extent
+    # Crop the view in by BBOX_TRIM_DEG per side (clamped to at most 15% of the
+    # span so small domains keep their storm) to enlarge the data on the plot.
+    # The fill, barbs, contours, and coastlines are still drawn on the full grid
+    # and simply clipped to these limits, so nothing at the new edge is missing.
+    tlon = min(BBOX_TRIM_DEG, 0.15 * (lon_max - lon_min))
+    tlat = min(BBOX_TRIM_DEG, 0.15 * (lat_max - lat_min))
+    lon_min, lon_max = lon_min + tlon, lon_max - tlon
+    lat_min, lat_max = lat_min + tlat, lat_max - tlat
     mean_lat = 0.5 * (lat_min + lat_max)
     # PlateCarree aspect: 1 deg lon is cos(lat)x shorter than 1 deg lat.
     geo_aspect = 1.0 / max(np.cos(np.deg2rad(mean_lat)), 0.1)
@@ -484,14 +501,14 @@ def render_frame(frame: HafsFrame, out_path: str,
     cmap, norm = _wind_cmap_norm()
     Lon, Lat = np.meshgrid(frame.lon, frame.lat)
 
-    # (1) 10 m wind-speed fill (Saffir-Simpson palette). PNG output rasterizes
-    # the whole figure at the save DPI, so the fill is raster either way; what
-    # keeps the barbs / isobars / labels from looking pixelated is the high save
-    # DPI plus antialiased vector line drawing on top (matplotlib ignores
-    # set_rasterized on a ContourSet, so there is nothing to toggle here).
+    # (1) 10 m wind-speed fill, the vivid 0-165 kt TAT colormap. pcolormesh
+    # renders the continuous colormap as a smooth gradient (no banding). PNG
+    # output rasterizes the whole figure at the save DPI, so the fill is raster
+    # either way; the barbs / isobars / labels stay crisp via the high DPI plus
+    # antialiased vector line drawing on top.
     wind = np.ma.masked_invalid(frame.wind_kt)
-    cf = ax.contourf(Lon, Lat, wind, levels=WIND_LEVELS_KT, cmap=cmap,
-                     norm=norm, extend="max", zorder=2)
+    cf = ax.pcolormesh(Lon, Lat, wind, cmap=cmap, norm=norm,
+                       shading="nearest", zorder=2)
 
     # (2) 10 m wind barbs, subsampled to ~BARB_TARGET across each axis. White,
     # antialiased, kept vector (not rasterized) with a subtle dark halo so they
@@ -519,11 +536,13 @@ def render_frame(frame: HafsFrame, out_path: str,
         lo = int(np.floor(mslp.min() / 4.0) * 4)
         hi = int(np.ceil(mslp.max() / 4.0) * 4)
         clevs = np.arange(lo, hi + 4, 4)
+        # Same 4 mb interval / density as before; lightly softened (alpha + a
+        # thinner dark halo) so the vivid fill reads through the dense core.
         cs = ax.contour(Lon, Lat, mslp, levels=clevs, colors="#ffffff",
-                        linewidths=0.8, zorder=5)
+                        linewidths=0.75, alpha=0.9, zorder=5)
         # mpl >=3.8: ContourSet is itself a Collection (no .collections list).
         cs.set_rasterized(False)
-        cs.set_path_effects([pe.withStroke(linewidth=1.8, foreground="#000000")])
+        cs.set_path_effects([pe.withStroke(linewidth=1.4, foreground="#000000")])
         lbls = ax.clabel(cs, levels=clevs[::2], inline=True, fontsize=7,
                          fmt="%d")
         for t in lbls:
