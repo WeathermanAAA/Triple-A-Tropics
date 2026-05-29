@@ -20,7 +20,8 @@
     color:var(--muted); font-weight:700; margin-bottom:2px; }
   .fl-meta { color:var(--muted); font-size:13px; font-weight:600; }
   .fl-stage { background:#0a0d12; text-align:center; padding:8px; position:relative; }
-  .fl-stage img { max-width:100%; height:auto; border-radius:6px; display:inline-block; }
+  /* Canvas (not <img>) for flash-free frame swaps. */
+  .fl-stage canvas { max-width:100%; height:auto; border-radius:6px; display:inline-block; }
   .fl-stamp { position:absolute; left:14px; bottom:14px; background:rgba(10,18,34,0.82);
     border:1px solid var(--border); border-radius:6px; padding:4px 10px;
     font-size:12px; font-weight:700; color:var(--fg); font-variant-numeric:tabular-nums; }
@@ -29,13 +30,21 @@
   .fl-btn { background:transparent; color:var(--fg); border:1px solid var(--border);
     border-radius:6px; padding:6px 14px; font-size:14px; font-weight:700; cursor:pointer; }
   .fl-btn:hover { border-color:var(--accent-2); color:var(--accent-2); }
+  .fl-btn:disabled { opacity:0.4; cursor:not-allowed; }
   .fl-sel { background:var(--bg); color:var(--fg); border:1px solid var(--border);
     border-radius:6px; padding:6px 10px; font-size:13px; font-weight:600; }
   .fl-scrub { flex:1 1 220px; min-width:160px; accent-color:var(--accent-2); }
   .fl-grp { display:flex; align-items:center; gap:6px; }
   .fl-grp label { color:var(--muted); font-size:12px; font-weight:700; }
-  .fl-note { color:var(--muted); font-size:12px; }
+  .fl-note { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
   .fl-empty { padding:40px 16px; text-align:center; color:var(--muted); }
+  /* Loading veil over the stage while frames preload. */
+  .fl-loading { position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; gap:10px; background:rgba(10,13,18,0.6); color:#e8eef5;
+    font-size:13px; font-weight:700; letter-spacing:0.3px; border-radius:6px; }
+  .fl-spin { width:14px; height:14px; border:2px solid var(--border);
+    border-top-color:var(--accent-2); border-radius:50%; animation:flspin .8s linear infinite; }
+  @keyframes flspin { to { transform:rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -58,7 +67,7 @@
 
 <header class="page-head">
   <h1 id="fl-h1">Storm Floater Loop</h1>
-  <p><a href="/satellite/">&#8592; Back to satellite</a> · Animated storm-following satellite loop. Frames are pre-rendered to R2 by the floater poller; this page subsamples them to a smooth in-browser loop.</p>
+  <p><a href="/satellite/">&#8592; Back to satellite</a> · Animated storm-following satellite loop. Frames are pre-rendered to R2 by the floater poller; this page preloads them for a smooth, flash-free in-browser loop.</p>
 </header>
 
 <section class="chart-section">
@@ -76,12 +85,13 @@
       </div>
     </div>
     <div class="fl-stage">
-      <img id="fl-img" alt="Storm floater frame">
+      <canvas id="fl-canvas" width="800" height="800"></canvas>
       <div class="fl-stamp" id="fl-stamp"></div>
+      <div class="fl-loading" id="fl-loading" style="display:none"><span class="fl-spin"></span><span id="fl-loadtxt">Loading frames…</span></div>
       <div class="fl-empty" id="fl-empty" style="display:none">No frames available yet for this storm/band.</div>
     </div>
     <div class="fl-controls">
-      <button class="fl-btn" id="fl-play" type="button">&#9654; Play</button>
+      <button class="fl-btn" id="fl-play" type="button" disabled>&#9654; Play</button>
       <input type="range" class="fl-scrub" id="fl-scrub" min="0" max="0" value="0" step="1" aria-label="Scrub">
       <div class="fl-grp">
         <label for="fl-mode">Window</label>
@@ -94,9 +104,10 @@
         <label for="fl-speed">Speed</label>
         <select id="fl-speed" class="fl-sel">
           <option value="0.5">0.5&times;</option>
-          <option value="1" selected>1&times;</option>
-          <option value="2">2&times;</option>
+          <option value="1">1&times;</option>
+          <option value="2" selected>2&times;</option>
           <option value="4">4&times;</option>
+          <option value="8">8&times;</option>
         </select>
       </div>
       <span class="fl-note" id="fl-count"></span>
@@ -105,7 +116,7 @@
 </section>
 
 <footer class="site-foot">
-  <div>Imagery: NOAA GOES / JMA Himawari ABI/AHI via tat-satellite-render · auto-tracking active systems</div>
+  <div>Imagery: NOAA GOES / JMA Himawari ABI/AHI · auto-tracking active systems</div>
 </footer>
 
 <script>
@@ -113,15 +124,19 @@
   const CDN_ROOT = 'https://cdn.triple-a-tropics.com';
   const TOP_MANIFEST = CDN_ROOT + '/floaters/manifest.json';
   const BAND_ORDER = ['ir', 'irbd', 'wv_up', 'wv_low', 'truecolor', 'swir'];
-  const FRAME_CAP = 90;          // max frames preloaded/animated per loop
-  const BASE_MS = 140;           // per-frame at 1x
+  const FRAME_CAP = 90;            // max frames preloaded/animated per loop
+  const BASE_MS = 240;             // per-frame at 1x (240/2x ≈ 120ms ≈ 8 fps)
+  const LAST_FRAME_DWELL = 6;      // hold newest frame Nx longer before looping
+  const PRELOAD_TIMEOUT_MS = 9000; // start anyway if some frames are slow
   const WINDOWS = { recent: 6, '24h': 24 };  // hours
 
   const els = {
     h1: document.getElementById('fl-h1'),
     meta: document.getElementById('fl-meta'),
-    img: document.getElementById('fl-img'),
+    canvas: document.getElementById('fl-canvas'),
     stamp: document.getElementById('fl-stamp'),
+    loading: document.getElementById('fl-loading'),
+    loadtxt: document.getElementById('fl-loadtxt'),
     empty: document.getElementById('fl-empty'),
     play: document.getElementById('fl-play'),
     scrub: document.getElementById('fl-scrub'),
@@ -131,9 +146,11 @@
     storm: document.getElementById('fl-storm'),
     count: document.getElementById('fl-count'),
   };
+  const ctx = els.canvas.getContext('2d');
 
   let storms = [], current = null, manifest = null;
-  let frames = [], idx = 0, timer = null, playing = false;
+  let frames = [], idx = 0, playing = false, ready = false;
+  let raf = null, lastTick = 0, loadTimer = null, buildToken = 0;
 
   const qs = (k) => new URLSearchParams(location.search).get(k);
   const url = (key) => CDN_ROOT + '/' + key;
@@ -163,32 +180,91 @@
     const winMs = WINDOWS[els.mode.value] * 3600 * 1000;
     const inWin = all.filter(f => (lastT - new Date(f.t).getTime()) <= winMs);
     frames = subsample(inWin.length ? inWin : all, FRAME_CAP)
-      .map(f => ({ t: f.t, src: url(f.key) }));
+      .map(f => ({ t: f.t, src: url(f.key), img: null, ok: false }));
   }
 
-  function preload() {
-    frames.forEach(f => { const im = new Image(); im.src = f.src; });
+  // Preload + DECODE every frame (retained on the frame objects so they're not
+  // GC'd), then start playback. Start early if all are ready, or after a
+  // safety timeout with whatever has loaded — never hang on one slow frame.
+  function preloadAndStart() {
+    const token = ++buildToken;     // guards against a newer rebuild superseding us
+    ready = false;
+    let loaded = 0; const N = frames.length;
+    els.play.disabled = true;
+    els.loading.style.display = 'flex';
+    els.loadtxt.textContent = 'Loading frames… 0/' + N;
+    let started = false;
+
+    const start = () => {
+      if (started || token !== buildToken) return;
+      started = true; ready = true;
+      els.loading.style.display = 'none';
+      sizeCanvas();
+      showFrame(0);
+      els.play.disabled = frames.length < 2;
+      els.count.textContent = frames.length + ' frames · last ' + WINDOWS[els.mode.value] + ' h';
+      if (frames.length >= 2) play();
+    };
+
+    frames.forEach((f) => {
+      const im = new Image();
+      im.decoding = 'async';
+      f.img = im;
+      const done = (ok) => {
+        if (token !== buildToken) return;
+        f.ok = !!ok; loaded++;
+        if (!started) els.loadtxt.textContent = 'Loading frames… ' + loaded + '/' + N;
+        if (loaded >= N) start();
+      };
+      im.onload = () => { (im.decode ? im.decode().then(() => done(true)).catch(() => done(true)) : done(true)); };
+      im.onerror = () => done(false);
+      im.src = f.src;
+    });
+
+    clearTimeout(loadTimer);
+    loadTimer = setTimeout(start, PRELOAD_TIMEOUT_MS);
+  }
+
+  function sizeCanvas() {
+    const f = frames.find(fr => fr.img && fr.img.naturalWidth);
+    const w = f ? f.img.naturalWidth : 800;
+    const h = f ? f.img.naturalHeight : 800;
+    if (els.canvas.width !== w) els.canvas.width = w;
+    if (els.canvas.height !== h) els.canvas.height = h;
   }
 
   function showFrame(i) {
     if (!frames.length) return;
     idx = (i + frames.length) % frames.length;
-    els.img.src = frames[idx].src;
-    els.stamp.textContent = fmtUTC(frames[idx].t);
+    const f = frames[idx];
+    if (f.img && f.img.complete && f.img.naturalWidth) {
+      ctx.drawImage(f.img, 0, 0, els.canvas.width, els.canvas.height);
+    }
+    els.stamp.textContent = fmtUTC(f.t);
     els.scrub.value = idx;
   }
 
   function stepInterval() { return BASE_MS / (parseFloat(els.speed.value) || 1); }
 
+  // requestAnimationFrame loop with a timestamp accumulator (even cadence, no
+  // setInterval drift). Dwell on the newest frame before wrapping.
+  function tick(ts) {
+    if (!playing) return;
+    const atLast = idx === frames.length - 1;
+    const interval = stepInterval() * (atLast ? LAST_FRAME_DWELL : 1);
+    if (ts - lastTick >= interval) { lastTick = ts; showFrame(idx + 1); }
+    raf = requestAnimationFrame(tick);
+  }
+
   function play() {
-    if (frames.length < 2) return;
+    if (!ready || frames.length < 2) return;
     playing = true; els.play.innerHTML = '&#10073;&#10073; Pause';
-    clearInterval(timer);
-    timer = setInterval(() => showFrame(idx + 1), stepInterval());
+    cancelAnimationFrame(raf); lastTick = 0;
+    raf = requestAnimationFrame(tick);
   }
   function pause() {
     playing = false; els.play.innerHTML = '&#9654; Play';
-    clearInterval(timer); timer = null;
+    cancelAnimationFrame(raf); raf = null;
   }
   function togglePlay() { playing ? pause() : play(); }
 
@@ -203,20 +279,17 @@
     pause();
     buildFrames();
     if (!frames.length) {
-      els.empty.style.display = ''; els.img.style.display = 'none';
+      els.empty.style.display = ''; els.canvas.style.display = 'none';
+      els.loading.style.display = 'none';
       els.stamp.textContent = ''; els.scrub.max = 0; els.count.textContent = '';
-      els.play.disabled = true;
+      els.play.disabled = true; ready = false;
+      reflectURL();
       return;
     }
-    els.empty.style.display = 'none'; els.img.style.display = '';
-    els.play.disabled = false;
+    els.empty.style.display = 'none'; els.canvas.style.display = '';
     els.scrub.max = frames.length - 1;
-    preload();
-    showFrame(0);
-    const span = WINDOWS[els.mode.value];
-    els.count.textContent = frames.length + ' frames · last ' + span + ' h';
     reflectURL();
-    play();
+    preloadAndStart();
   }
 
   function populateBands() {
@@ -249,7 +322,10 @@
     .then(r => { if (!r.ok) throw new Error('top ' + r.status); return r.json(); })
     .then(m => {
       storms = (m && m.storms) || [];
-      if (!storms.length) { els.meta.textContent = 'No active storms right now.'; els.empty.style.display = ''; els.img.style.display = 'none'; return; }
+      if (!storms.length) {
+        els.meta.textContent = 'No active storms right now.';
+        els.empty.style.display = ''; els.canvas.style.display = 'none'; return;
+      }
       els.storm.style.display = storms.length > 1 ? '' : 'none';
       els.storm.innerHTML = '';
       storms.forEach(s => {
@@ -265,7 +341,7 @@
       if (wantMode && WINDOWS[wantMode]) els.mode.value = wantMode;
       loadStorm(pick);
     })
-    .catch(e => { els.meta.textContent = 'Floater data unavailable.'; els.empty.style.display = ''; els.img.style.display = 'none'; console.error(e); });
+    .catch(e => { els.meta.textContent = 'Floater data unavailable.'; els.empty.style.display = ''; els.canvas.style.display = 'none'; console.error(e); });
 
   els.play.addEventListener('click', togglePlay);
   els.scrub.addEventListener('input', () => { pause(); showFrame(parseInt(els.scrub.value, 10)); });
