@@ -239,7 +239,7 @@
         .replace('{suffix}', suffix);
       this.image.src = url + '?t=' + Date.now();
       const regionLabel = this.m.region_labels[this.regionSlug] || this.regionSlug;
-      this.image.alt = `${regionLabel} — ${src.label} ${variant.label}`;
+      this.image.alt = `${regionLabel}: ${src.label} ${variant.label}`;
       this.captionEl.textContent =
         `${regionLabel}: ${variant.caption || ''}` +
         (this.use15d ? ' · 15-day running mean.' : '') +

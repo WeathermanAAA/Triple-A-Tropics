@@ -404,7 +404,7 @@
 
         <div class="sat-field">
           <label>Bounding box (drag on map)</label>
-          <div id="sat-bbox" class="sat-bbox-display">— no rectangle drawn —</div>
+          <div id="sat-bbox" class="sat-bbox-display">no rectangle drawn</div>
         </div>
 
         <div class="sat-render-row">
@@ -422,7 +422,7 @@
 <section class="chart-section" id="sat-result-section" style="display:none">
   <div class="chart-card">
     <div class="sat-result-head">
-      <div class="sat-result-meta" id="sat-result-meta">—</div>
+      <div class="sat-result-meta" id="sat-result-meta">-</div>
       <div class="sat-result-actions">
         <a id="sat-download" class="sat-action-btn" download="satellite-render.png" href="#">Download</a>
         <button id="sat-share" class="sat-action-btn" type="button">Copy share link</button>
@@ -480,14 +480,14 @@
 
 <section class="about">
   <h2>Latest polar pass (250 m photographic)</h2>
-  <p>The <b>Latest Polar Pass</b> panel above is a daily, high-resolution photographic snapshot per region — NASA's <b>MODIS</b> (Terra/Aqua, ~250 m) and <b>VIIRS</b> (SNPP/NOAA-20, ~375 m) true-color corrected-reflectance composites, served via <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api" target="_blank" rel="noopener">NASA GIBS</a>. Unlike the geostationary tool above, polar-orbiting sensors image each spot once or twice a day, so this is the freshest <em>complete</em> daily pass — gaps between orbit swaths are filled across sensors. Pick a region from the dropdown; the caption shows which sensor and day you're seeing.</p>
+  <p>The <b>Latest Polar Pass</b> panel above is a daily, high-resolution photographic snapshot per region: NASA's <b>MODIS</b> (Terra/Aqua, ~250 m) and <b>VIIRS</b> (SNPP/NOAA-20, ~375 m) true-color corrected-reflectance composites, served via <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api" target="_blank" rel="noopener">NASA GIBS</a>. Unlike the geostationary tool above, polar-orbiting sensors image each spot once or twice a day, so this is the freshest <em>complete</em> daily pass; gaps between orbit swaths are filled across sensors. Pick a region from the dropdown; the caption shows which sensor and day you're seeing.</p>
 
   <h2>How it works</h2>
-  <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel — <b>True Color (RGB)</b> for a natural photographic look (synthetic green on GOES, native green on Himawari; fades to clean-IR at night), IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail — and an enhancement preset (ignored for true color). Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
-  <p>Any bbox size works — the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
+  <p>Pick a bbox by dragging a rectangle on the map (the rectangle tool is the topmost button on the left toolbar). Choose a channel, <b>True Color (RGB)</b> for a natural photographic look (synthetic green on GOES, native green on Himawari; fades to clean-IR at night), IR Channel 13 for nighttime convection, upper-level water vapor for steering, or visible for daytime detail, and an enhancement preset (ignored for true color). Hit <b>Render</b> and the backend crops a tile just for your bbox and returns it as a PNG.</p>
+  <p>Any bbox size works: the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
 
   <h2>Coverage</h2>
-  <p>Three satellite families today: <b>GOES-East</b> (currently GOES-19, with the GOES-16 archive back to 2017) covers ~135°W to 5°W — the Atlantic basin, eastern Pacific, and the Americas. <b>GOES-West</b> (currently GOES-18, with the GOES-17 archive back to 2019-02-12) covers ~160°E to ~-65°W via the antimeridian — Hawaii, Alaska, central + eastern Pacific. <b>Himawari-Pacific</b> (Himawari-9 since 2022-12-13, with the Himawari-8 archive back to 2017) covers ~60°E to 220°E — Western Pacific, East Asia, Oceania. The picker auto-routes by bbox center, so any zoom in any basin works without picking a satellite by hand. METEOSAT (Atlantic east / Africa / Europe) is next on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters.</p>
+  <p>Three satellite families today: <b>GOES-East</b> (currently GOES-19, with the GOES-16 archive back to 2017) covers ~135°W to 5°W, the Atlantic basin, eastern Pacific, and the Americas. <b>GOES-West</b> (currently GOES-18, with the GOES-17 archive back to 2019-02-12) covers ~160°E to ~-65°W via the antimeridian, Hawaii, Alaska, central + eastern Pacific. <b>Himawari-Pacific</b> (Himawari-9 since 2022-12-13, with the Himawari-8 archive back to 2017) covers ~60°E to 220°E, Western Pacific, East Asia, Oceania. The picker auto-routes by bbox center, so any zoom in any basin works without picking a satellite by hand. METEOSAT (Atlantic east / Africa / Europe) is next on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters.</p>
 </section>
 
 <footer>
@@ -643,7 +643,7 @@
     const display = document.getElementById('sat-bbox');
     const btn = document.getElementById('sat-render');
     if (!bbox) {
-      display.textContent = '— no rectangle drawn —';
+      display.textContent = 'no rectangle drawn';
       display.classList.remove('has-bbox');
       btn.disabled = true;
       return;
@@ -1001,7 +1001,7 @@
     if (!b || !b.latest) { meta.textContent = current.name + ' · no frames yet for this band.'; return; }
     const bust = '?v=' + encodeURIComponent(stormManifest.generated_utc || '');
     img.src = url(b.latest) + bust;
-    img.alt = current.name + ' — ' + (b.label || bandKey);
+    img.alt = current.name + ': ' + (b.label || bandKey);
     dl.href = url(b.latest) + bust;
     dl.download = current.slug + '_' + bandKey + '.png';
     loop.href = '/satellite/floater-loop/?storm=' + encodeURIComponent(current.slug) +
@@ -1116,7 +1116,7 @@
     if (!r) return;
     const url = CDN + '/' + r.file + cacheBust();
     img.src = url;
-    img.alt = r.label + ' true color — ' + r.sensor + ' ' + r.date;
+    img.alt = r.label + ' true color, ' + r.sensor + ' ' + r.date;
     dl.href = url;
     dl.download = r.file;
     meta.textContent = r.sensor + ' · ' + r.date + ' · ~' + r.native_res_m + ' m · ' + r.label;

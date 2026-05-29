@@ -1435,7 +1435,7 @@ def render_active_icons(storms: list[dict], extent,
         # marker on the static page surfaces "NAME — Last fix: … UTC".
         disp_name = storm.get("name") or storm.get("atcf_id") or ""
         last_fix = _fmt_last_fix(last.get("t"))
-        title_txt = (f"{disp_name} — Last fix: {last_fix}"
+        title_txt = (f"{disp_name} - Last fix: {last_fix}"
                      if last_fix else disp_name)
         title_el = f'<title>{_xml_escape(title_txt)}</title>' if title_txt else ''
         # Three-way fork on the marker style:
@@ -1605,8 +1605,8 @@ TRACKS_JS = r"""
     var windKt = d.wind ? parseFloat(d.wind) : null;
     var windTxt = windKt != null && !isNaN(windKt)
       ? (Math.round(windKt) + " kt · " + ktToMph5(windKt) + " mph")
-      : "\u2014";
-    var presTxt = d.pres && d.pres !== "" ? (Math.round(parseFloat(d.pres)) + " mb") : "\u2014";
+      : "-";
+    var presTxt = d.pres && d.pres !== "" ? (Math.round(parseFloat(d.pres)) + " mb") : "-";
     var cls = d.cls || "TD";
     var catTxt = CAT_LABELS[cls] || cls;
     tip.innerHTML =
@@ -1740,7 +1740,7 @@ TRACKS_JS = r"""
       var bearing = (Math.atan2(lonm, latm) * 180 / Math.PI + 360) % 360;
       return compass(bearing) + " at " + ktToMph(speedKt) + " mph";
     }
-    return "\u2014";
+    return "-";
   }
   // Dark vs. white banner text based on category color luminance.
   function bannerTextColor(cls) {
@@ -1775,7 +1775,7 @@ TRACKS_JS = r"""
         '<div class="pl-deets">' +
           '<div><span>Updated</span><b>' + fmtTime(last.t) + '</b></div>' +
           '<div><span>Location</span><b>' + loc + '</b></div>' +
-          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "\u2014") + '</b></div>' +
+          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "-") + '</b></div>' +
           '<div><span>Movement</span><b>' + movement + '</b></div>' +
         '</div>' +
       '</div>' +
@@ -1822,8 +1822,8 @@ TRACKS_JS = r"""
         '<div class="pl-deets">' +
           '<div><span>Reached</span><b>' + fmtTime(peak.t) + '</b></div>' +
           '<div><span>Location</span><b>' + loc + '</b></div>' +
-          '<div><span>Min pressure</span><b>' + (minPres ? Math.round(minPres) + " mb" : "\u2014") + '</b></div>' +
-          '<div><span>ACE</span><b>' + (storm.ace != null ? storm.ace.toFixed(2) : "\u2014") + '</b></div>' +
+          '<div><span>Min pressure</span><b>' + (minPres ? Math.round(minPres) + " mb" : "-") + '</b></div>' +
+          '<div><span>ACE</span><b>' + (storm.ace != null ? storm.ace.toFixed(2) : "-") + '</b></div>' +
         '</div>' +
       '</div>' +
       '<div class="placard-chart-label">Wind history</div>' +
@@ -2905,10 +2905,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       var color = SSHS_COLORS[cls] || "#888";
       var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
         ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
-        : "—";
+        : "-";
       var presTxt = (pres != null && pres !== "" && !isNaN(parseFloat(pres)))
         ? (Math.round(parseFloat(pres)) + " mb")
-        : "—";
+        : "-";
       var html =
         '<div class="tt-name">' + escapeHtml(props.storm_name || "Storm") + '</div>' +
         '<div class="tt-time">' + fmtTime(props.time_iso) + '</div>' +
@@ -2953,7 +2953,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     var kt = props.current_intensity_kt;
     var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
       ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
-      : "—";
+      : "-";
     var title = props.name || props.designation || "Active system";
     var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
@@ -3204,7 +3204,7 @@ def _fmt_date_range(start: str | None, end: str | None) -> str:
         except Exception:
             return "?"
     if not start:
-        return "—"
+        return "-"
     s = fmt(start)
     e = fmt(end) if end else s
     return f"{s} – {e}" if s != e else s
@@ -3248,8 +3248,8 @@ def render_storm_card(storm: dict) -> str:
   </div>
   <div class="storm-meta">
     <div class="row"><span class="lbl">Active</span><span class="val">{_fmt_date_range(storm.get('start'), storm.get('end'))}</span></div>
-    <div class="row"><span class="lbl">Peak wind</span><span class="val">{peak_wind if peak_wind is not None else '—'} kt</span></div>
-    <div class="row"><span class="lbl">Peak pressure</span><span class="val">{peak_pres if peak_pres is not None else '—'} mb</span></div>
+    <div class="row"><span class="lbl">Peak wind</span><span class="val">{peak_wind if peak_wind is not None else '-'} kt</span></div>
+    <div class="row"><span class="lbl">Peak pressure</span><span class="val">{peak_pres if peak_pres is not None else '-'} mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">{ace:.2f}</span></div>
   </div>
   {click_hint}
