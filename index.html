@@ -436,6 +436,7 @@
       <a href="/climatology/">Climatology</a>
       <a href="/sst/">SST</a>
       <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
       <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
     </div>
   </div>
@@ -576,6 +577,48 @@
       <div class="home-card-body">
         <h2 class="sr-only">Satellite Plots</h2>
         <p>High-resolution satellite imagery for active and historical tropical cyclones. Visible, infrared, and water-vapor bands.</p>
+      </div>
+      <div class="home-card-meta">
+        <span class="live">Live</span>
+      </div>
+    </a>
+
+    <!-- Model Plots card: self-contained SVG banner (no CDN asset) echoing the
+         HAFS wind palette. Links to /models/ (HAFS-A/B forecast loops). -->
+    <a class="home-card" href="/models/">
+      <div class="home-card-banner">
+        <svg viewBox="0 0 700 200" preserveAspectRatio="xMidYMid slice" role="img"
+             aria-label="HAFS model plots banner">
+          <defs>
+            <linearGradient id="hafs-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#0a0d12"/>
+              <stop offset="1" stop-color="#161b24"/>
+            </linearGradient>
+            <radialGradient id="hafs-eye" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0"   stop-color="#0a0d12"/>
+              <stop offset="0.18" stop-color="#9b2fb0"/>
+              <stop offset="0.34" stop-color="#e0314f"/>
+              <stop offset="0.52" stop-color="#f7c33a"/>
+              <stop offset="0.70" stop-color="#8ce05a"/>
+              <stop offset="0.86" stop-color="#3fb4c0"/>
+              <stop offset="1"   stop-color="#5a6b87"/>
+            </radialGradient>
+          </defs>
+          <rect width="700" height="200" fill="url(#hafs-bg)"/>
+          <circle cx="540" cy="100" r="150" fill="url(#hafs-eye)" opacity="0.5"/>
+          <g fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.4">
+            <circle cx="540" cy="100" r="40"/><circle cx="540" cy="100" r="66"/>
+            <circle cx="540" cy="100" r="94"/><circle cx="540" cy="100" r="124"/>
+          </g>
+          <text x="40" y="96" fill="#e8eef5" font-family="Metropolis, Arial, sans-serif"
+                font-size="58" font-weight="800" letter-spacing="2">HAFS</text>
+          <text x="42" y="132" fill="#79f0d6" font-family="Metropolis, Arial, sans-serif"
+                font-size="20" font-weight="700" letter-spacing="3">MODEL&#160;PLOTS</text>
+        </svg>
+      </div>
+      <div class="home-card-body">
+        <h2 class="sr-only">HAFS Model Plots</h2>
+        <p>HAFS-A and HAFS-B forecast guidance for every active storm — MSLP and 10 m wind, storm-following nest and parent domain, scrubbable out to 126 hours.</p>
       </div>
       <div class="home-card-meta">
         <span class="live">Live</span>
