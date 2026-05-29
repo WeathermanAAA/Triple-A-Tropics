@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HAFS forecast plots — vertical slice (v1: MSLP + 10 m wind).
+"""HAFS forecast plots - vertical slice (v1: MSLP + 10 m wind).
 
 First feature of the new ``/models/`` page on triple-a-tropics.com. This script
 fetches ONE (model, storm, domain, forecast-hour) HAFS field set and renders a
@@ -10,12 +10,12 @@ Run it standalone to validate a single frame, then ``generate_hafs_plots.py``
 (the full-cycle builder) reuses the fetch + render functions here to loop every
 active storm × {hafsa,hafsb} × {storm.atm,parent.atm} × forecast hour.
 
-Data source — Herbie + AWS Open Data
+Data source - Herbie + AWS Open Data
 ------------------------------------
 HAFS GRIB2 lives in the public ``noaa-nws-hafs-pds`` S3 bucket (archive back to
 2023-06-19) and on NOMADS (recent cycles only). The Herbie HAFS template that
 ships in ``herbie-data`` only knows NOMADS *and* builds its product list from a
-**live** lookup of currently-active storms — so it can neither reach the
+**live** lookup of currently-active storms - so it can neither reach the
 historical archive nor be constructed for a past storm (``storm_name`` resolves
 to ``None`` → ``None.title()`` crash). ``install_hafs_templates()`` below
 replaces ``herbie.models.hafsa``/``hafsb`` with AWS-first templates that don't
@@ -65,7 +65,7 @@ log = logging.getLogger("hafs-plot")
 HERE = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------------------
-# TAT render palette (the satellite-page look from the handoff brief — note
+# TAT render palette (the satellite-page look from the handoff brief - note
 # these are the *image* colors, distinct from styles.css :root which themes the
 # HTML page).
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ WATERMARK = "@WeathermanAAA_"
 KT_PER_MS = 1.94384  # m s-1 → knots
 
 # ---------------------------------------------------------------------------
-# Wind-speed colormap — Saffir-Simpson-flavored. Boundaries sit on the TC
+# Wind-speed colormap - Saffir-Simpson-flavored. Boundaries sit on the TC
 # intensity thresholds (34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5)
 # with sub-steps so the sub-hurricane field still has texture. The palette runs
 # cool (calm) → green/yellow (TS) → gold/orange (Cat1-2) → red/magenta (Cat3-4)
@@ -143,7 +143,7 @@ def install_hafs_templates() -> None:
                 "AWS Open Data": "https://registry.opendata.aws/noaa-nws-hafs-pds/",
                 "HFIP": "https://hfip.org/hafs",
             }
-            # Map each product key to itself — the stock template derived these
+            # Map each product key to itself - the stock template derived these
             # from a live storm-name lookup we deliberately drop. The fetch path
             # uses self.product directly, so the values are cosmetic.
             self.PRODUCTS = {
@@ -185,7 +185,9 @@ class HafsFrame:
     lon: np.ndarray       # 1-D, -180..180, ascending, trimmed to finite extent
     lat: np.ndarray       # 1-D, ascending, trimmed
     mslp_hpa: np.ndarray  # (lat, lon)
-    wind_kt: np.ndarray   # (lat, lon)
+    wind_kt: np.ndarray   # (lat, lon) wind speed magnitude, knots
+    u_kt: np.ndarray      # (lat, lon) 10 m eastward wind, knots (for barbs)
+    v_kt: np.ndarray      # (lat, lon) 10 m northward wind, knots (for barbs)
     extent: tuple         # (lon_min, lon_max, lat_min, lat_max) of finite data
 
 
@@ -219,7 +221,7 @@ def _choose_lon_frame(raw: np.ndarray) -> np.ndarray:
     raw_f = np.asarray(raw, dtype=float)
     if _monotonic(raw_f):
         return raw_f
-    return lon180                 # last resort — pathological grid
+    return lon180                 # last resort - pathological grid
 
 
 def _wrap_into(x: float, lon_min: float, lon_max: float) -> float:
@@ -281,18 +283,29 @@ def fetch_hafs_frame(
     # West Pacific nests; plain signed -180..180 otherwise).
     lon = _choose_lon_frame(ds_p["longitude"].values)
 
-    mslp = ds_p["prmsl"].values / 100.0  # Pa → hPa
-    wind = np.hypot(ds_w["u10"].values, ds_w["v10"].values) * KT_PER_MS
+    mslp = ds_p["prmsl"].values / 100.0  # Pa -> hPa
+    # Keep the vector components (for barbs) AND the magnitude (for the fill);
+    # all three are reordered/trimmed in lockstep below so they stay aligned.
+    u_kt = ds_w["u10"].values * KT_PER_MS
+    v_kt = ds_w["v10"].values * KT_PER_MS
+    wind = np.hypot(u_kt, v_kt)
 
-    # Ensure ascending lat/lon so contour/imshow orient correctly.
+    # Ensure ascending lat/lon so contour/imshow orient correctly. Reordering
+    # the axes only reorders grid columns/rows; the physical u (eastward) and
+    # v (northward) values at each point are unchanged, so we slice them the
+    # same way as wind/mslp without any sign flip.
     if lat[0] > lat[-1]:
         lat = lat[::-1]
         mslp = mslp[::-1, :]
         wind = wind[::-1, :]
+        u_kt = u_kt[::-1, :]
+        v_kt = v_kt[::-1, :]
     if lon[0] > lon[-1]:
         lon = lon[::-1]
         mslp = mslp[:, ::-1]
         wind = wind[:, ::-1]
+        u_kt = u_kt[:, ::-1]
+        v_kt = v_kt[:, ::-1]
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
     # regular grid. Keep rows/cols that carry any finite data.
@@ -300,10 +313,11 @@ def fetch_hafs_frame(
     rows = np.where(finite.any(axis=1))[0]
     cols = np.where(finite.any(axis=0))[0]
     if rows.size == 0 or cols.size == 0:
-        raise ValueError("all-NaN field after fetch — unexpected")
+        raise ValueError("all-NaN field after fetch, unexpected")
     r0, r1, c0, c1 = rows.min(), rows.max() + 1, cols.min(), cols.max() + 1
     lat, lon = lat[r0:r1], lon[c0:c1]
     mslp, wind = mslp[r0:r1, c0:c1], wind[r0:r1, c0:c1]
+    u_kt, v_kt = u_kt[r0:r1, c0:c1], v_kt[r0:r1, c0:c1]
 
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
@@ -311,14 +325,14 @@ def fetch_hafs_frame(
     return HafsFrame(
         model=model, storm=storm, product=product, fxx=fxx,
         init_time=init_time, valid_time=valid_time,
-        lon=lon, lat=lat, mslp_hpa=mslp, wind_kt=wind,
+        lon=lon, lat=lat, mslp_hpa=mslp, wind_kt=wind, u_kt=u_kt, v_kt=v_kt,
         extent=(float(lon.min()), float(lon.max()),
                 float(lat.min()), float(lat.max())),
     )
 
 
 # ---------------------------------------------------------------------------
-# Basemap (Natural Earth GeoJSON) — adapted from generate_sst_plots.py
+# Basemap (Natural Earth GeoJSON) - adapted from generate_sst_plots.py
 # ---------------------------------------------------------------------------
 def _load_geojson(name: str) -> Optional[dict]:
     p = HERE / name
@@ -402,12 +416,21 @@ PRODUCT_LABEL = {
 }
 MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
 
+# Colorbar ticks on the SSHWS category thresholds (kt) so the bar doubles as a
+# Saffir-Simpson reference: 34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5.
+CBAR_TICKS_KT = [34, 64, 83, 96, 113, 137]
+
+# Target number of wind barbs across each axis. The per-axis stride is derived
+# from the grid size, so the (fine, small) nest and the (coarse, large) parent
+# both land near this count and stay readable.
+BARB_TARGET = 22
+
 
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict]) -> None:
     lon_min, lon_max, lat_min, lat_max = frame.extent
     mean_lat = 0.5 * (lat_min + lat_max)
-    # PlateCarree aspect: 1° lon is cos(lat)× shorter than 1° lat.
+    # PlateCarree aspect: 1 deg lon is cos(lat)x shorter than 1 deg lat.
     geo_aspect = 1.0 / max(np.cos(np.deg2rad(mean_lat)), 0.1)
     lon_span = lon_max - lon_min
     lat_span = (lat_max - lat_min) * geo_aspect
@@ -426,34 +449,64 @@ def render_frame(frame: HafsFrame, out_path: str,
     cmap, norm = _wind_cmap_norm()
     Lon, Lat = np.meshgrid(frame.lon, frame.lat)
 
+    # (1) 10 m wind-speed fill (Saffir-Simpson palette).
     wind = np.ma.masked_invalid(frame.wind_kt)
     cf = ax.contourf(Lon, Lat, wind, levels=WIND_LEVELS_KT, cmap=cmap,
                      norm=norm, extend="max", zorder=2)
 
-    # MSLP isobars every 4 hPa, white with a dark halo so they read over both
-    # cool and warm wind colors. Inline labels every other contour.
+    # (2) 10 m wind barbs, subsampled to ~BARB_TARGET across each axis. White
+    # with a thin dark outline reads clearly over both the cool (dark) and warm
+    # (bright) ends of the fill palette; emptybarb=0 drops the calm-air circle.
+    nlat, nlon = frame.wind_kt.shape
+    si = max(1, int(round(nlat / BARB_TARGET)))
+    sj = max(1, int(round(nlon / BARB_TARGET)))
+    u = np.ma.masked_invalid(frame.u_kt)
+    v = np.ma.masked_invalid(frame.v_kt)
+    barbs = ax.barbs(
+        Lon[::si, ::sj], Lat[::si, ::sj], u[::si, ::sj], v[::si, ::sj],
+        length=5.6, linewidth=0.6, color="#ffffff", zorder=4,
+        pivot="middle", sizes=dict(emptybarb=0.0),
+    )
+    barbs.set_path_effects([pe.withStroke(linewidth=1.1, foreground="#0a0d12")])
+
+    # (3) MSLP isobars every 4 mb, thin white with a dark halo so they read over
+    # both cool and warm wind colors. Inline labels every other contour.
     mslp = np.ma.masked_invalid(frame.mslp_hpa)
     if mslp.count():
         lo = int(np.floor(mslp.min() / 4.0) * 4)
         hi = int(np.ceil(mslp.max() / 4.0) * 4)
         clevs = np.arange(lo, hi + 4, 4)
         cs = ax.contour(Lon, Lat, mslp, levels=clevs, colors="#ffffff",
-                        linewidths=0.7, zorder=4)
-        # mpl ≥3.8: ContourSet is itself a Collection (no .collections list).
+                        linewidths=0.7, zorder=5)
+        # mpl >=3.8: ContourSet is itself a Collection (no .collections list).
         cs.set_path_effects([pe.withStroke(linewidth=1.7, foreground="#000000")])
         lbls = ax.clabel(cs, levels=clevs[::2], inline=True, fontsize=7,
                          fmt="%d")
         for t in lbls:
             t.set_color("#ffffff")
+            t.set_zorder(7)
             t.set_path_effects([pe.withStroke(linewidth=1.6, foreground="#000000")])
 
-    # Coastlines + borders (bold black) on top of the filled field.
+    # (4) Coastlines + borders (bold black) on top of the filled field.
     if coast:
         _draw_feature_lines(ax, coast.get("features", []), frame.extent,
-                            COAST_COLOR, 1.2, 5)
+                            COAST_COLOR, 1.2, 6)
     if countries:
         _draw_feature_lines(ax, countries.get("features", []), frame.extent,
-                            BORDER_COLOR, 0.8, 5)
+                            BORDER_COLOR, 0.8, 6)
+
+    # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
+    if mslp.count():
+        kmin = np.unravel_index(np.ma.argmin(mslp), mslp.shape)
+        l_lon, l_lat = float(frame.lon[kmin[1]]), float(frame.lat[kmin[0]])
+        pmin = float(mslp.min())
+        l_off = (lat_max - lat_min) * 0.05
+        ax.text(l_lon, l_lat, "L", ha="center", va="center", fontsize=24,
+                fontweight="bold", color="#ffffff", zorder=8,
+                path_effects=[pe.withStroke(linewidth=2.8, foreground="#000000")])
+        ax.text(l_lon, l_lat - l_off, f"{pmin:.0f}", ha="center", va="top",
+                fontsize=9, fontweight="bold", color="#ffffff", zorder=8,
+                path_effects=[pe.withStroke(linewidth=1.8, foreground="#000000")])
 
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
@@ -468,28 +521,33 @@ def render_frame(frame: HafsFrame, out_path: str,
         spine.set_color(MUTED_COLOR)
         spine.set_linewidth(0.6)
 
-    # Title strip: model · storm · domain · F-hour · init/valid
+    # (6) Two-line header above the map, TAT style. Line 1 is the small init /
+    # valid / attribution strip; line 2 is the bold model + storm + field title.
+    model_label = MODEL_LABEL.get(frame.model, frame.model.upper())
     storm_disp = frame.storm.upper()
-    title = (f"{MODEL_LABEL.get(frame.model, frame.model.upper())}  ·  "
-             f"{storm_disp}  ·  MSLP + 10 m Wind")
-    subtitle = (f"{PRODUCT_LABEL.get(frame.product, frame.product)}  ·  "
-                f"F{frame.fxx:03d}  ·  "
-                f"Init {frame.init_time:%Y-%m-%d %HZ}  ·  "
-                f"Valid {frame.valid_time:%Y-%m-%d %HZ}")
-    ax.text(0.0, 1.045, title, transform=ax.transAxes, color=TEXT_COLOR,
+    domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
+    info = (f"Init: {frame.init_time:%Y-%m-%d %HZ}  ·  Hour: {frame.fxx}  ·  "
+            f"Valid: {frame.valid_time:%Y-%m-%d %HZ}  ·  {WATERMARK}  ·  "
+            f"triple-a-tropics.com")
+    title = (f"{model_label} {storm_disp}  ·  {domain_label}  ·  "
+             f"10m Wind [kt] & MSLP [mb]")
+    ax.text(0.0, 1.055, info, transform=ax.transAxes, color=MUTED_COLOR,
+            fontsize=9, va="bottom")
+    ax.text(0.0, 1.012, title, transform=ax.transAxes, color=TEXT_COLOR,
             fontsize=15, fontweight="bold", va="bottom")
-    ax.text(0.0, 1.012, subtitle, transform=ax.transAxes, color=MUTED_COLOR,
-            fontsize=10, va="bottom")
 
-    # Watermark top-left, inside the map.
-    ax.text(0.012, 0.975, WATERMARK, transform=ax.transAxes, ha="left",
-            va="top", fontsize=11, fontweight="bold", color="#ffffff",
-            alpha=0.85, zorder=6,
-            path_effects=[pe.withStroke(linewidth=1.4, foreground="#000000")])
+    # (7) Per-frame max wind / min pressure stat box, top-right inside the map.
+    vmax = float(np.nanmax(frame.wind_kt)) if np.isfinite(frame.wind_kt).any() else float("nan")
+    pmin_box = float(np.nanmin(frame.mslp_hpa)) if np.isfinite(frame.mslp_hpa).any() else float("nan")
+    stat = f"Max Wind: {vmax:.1f} kt  |  Min Pressure: {pmin_box:.1f} mb"
+    ax.text(0.985, 0.975, stat, transform=ax.transAxes, ha="right", va="top",
+            fontsize=10, fontweight="bold", color=TEXT_COLOR, zorder=9,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="#0a0d12",
+                      edgecolor=MUTED_COLOR, linewidth=0.8, alpha=0.82))
 
-    # Right-side labeled colorbar (knots), ticks on the SS thresholds.
+    # (8) Right-side labeled colorbar (knots), ticks on the SS thresholds.
     cax = fig.add_axes([0.86, 0.08, 0.022, 0.78])
-    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=WIND_LEVELS_KT)
+    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=CBAR_TICKS_KT)
     cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
     cb.ax.yaxis.set_tick_params(color=MUTED_COLOR, labelcolor=MUTED_COLOR,
                                 labelsize=8)
@@ -536,7 +594,7 @@ def main() -> int:
     coast = (_load_geojson("ne_50m_coastline.geojson")
              or _load_geojson("ne_110m_coastline.geojson"))
     if not coast:
-        log.warning("no coastline GeoJSON found — map will have no coastlines")
+        log.warning("no coastline GeoJSON found - map will have no coastlines")
 
     render_frame(frame, args.out, countries, coast)
     return 0
