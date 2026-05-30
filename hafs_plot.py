@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import sys
+from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -56,6 +57,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
+import matplotlib.cm as mcm
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
 from matplotlib import patheffects as pe
@@ -121,6 +123,92 @@ def _wind_cmap_norm():
     cmap.set_bad(alpha=0.0)  # NaN padding -> transparent (shows panel bg)
     norm = mcolors.Normalize(vmin=0.0, vmax=WIND_VMAX_KT)
     return cmap, norm
+
+
+# ---------------------------------------------------------------------------
+# Reflectivity colortable from a .pal file (source of truth)
+# ---------------------------------------------------------------------------
+# A GRLevelX-style ``.pal`` color table parsed into a DISCRETE matplotlib
+# colormap. NOT HAFS-specific: any file with ``step:`` and ``solidcolor:`` lines
+# parses, so the same ``assets/TAT-radar.pal`` will drive the future site radar
+# viewer. ``steps`` are the per-bin START values (dBZ); ``colors`` are RGBA; a
+# change to the palette is a new ``.pal``, no code edit.
+PalCmap = namedtuple("PalCmap", ["cmap", "norm", "steps", "colors", "step"])
+
+REFL_PAL_PATH = HERE / "assets" / "TAT-radar.pal"
+# The colorbar shows discrete blocks over [first step, REFL_CBAR_TOP]; values
+# above fold into a single white set_over arrow rather than a long run of
+# identical white blocks (the top of the table is solid white above ~70 dBZ).
+REFL_CBAR_TOP = 70
+
+
+def load_pal_cmap(pal_path, *, under=(0.0, 0.0, 0.0, 0.0), over=None) -> PalCmap:
+    """Parse a ``.pal`` color table into a discrete ListedColormap + BoundaryNorm.
+
+    Reads each ``solidcolor: <value> <r> <g> <b>`` line (0-255 channels). Each
+    color is held FLAT across the bin ``[value, value + step)`` - stepped, NOT
+    interpolated. Bin edges fall at every step value plus a final edge at
+    ``last + step``. Values below the first edge map to ``under`` (default fully
+    transparent so non-precip shows the map beneath); values above the top map
+    to ``over`` (default = the top color, which for a radar table is white).
+
+    Reusable / not HAFS-specific - parse a file once and hand the cmap/norm to
+    any field in dBZ.
+    """
+    steps: list[float] = []
+    colors: list[tuple] = []
+    step: Optional[float] = None
+    for raw in Path(pal_path).read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line[0] in "#;":
+            continue
+        key, _, rest = line.partition(":")
+        key, rest = key.strip().lower(), rest.strip()
+        if key == "step":
+            try:
+                step = float(rest.split()[0])
+            except (ValueError, IndexError):
+                pass
+        elif key == "solidcolor":
+            parts = rest.replace(",", " ").split()
+            if len(parts) < 4:
+                continue
+            val, r, g, b = (float(parts[0]), float(parts[1]),
+                            float(parts[2]), float(parts[3]))
+            steps.append(val)
+            colors.append((r / 255.0, g / 255.0, b / 255.0, 1.0))
+    if not colors:
+        raise ValueError(f"no solidcolor entries parsed from {pal_path}")
+    if step is None:  # derive from spacing when the header omits it
+        step = (steps[1] - steps[0]) if len(steps) > 1 else 5.0
+    edges = steps + [steps[-1] + step]
+    cmap = mcolors.ListedColormap(colors, name=f"pal_{Path(pal_path).stem}")
+    cmap.set_under(under)
+    cmap.set_over(over if over is not None else colors[-1])
+    cmap.set_bad(alpha=0.0)
+    norm = mcolors.BoundaryNorm(edges, ncolors=len(colors))
+    return PalCmap(cmap=cmap, norm=norm, steps=steps, colors=colors, step=step)
+
+
+def _refl_pal() -> PalCmap:
+    """Discrete reflectivity colormap from ``assets/TAT-radar.pal`` (parsed at
+    render time so a palette change is a .pal edit, no code change)."""
+    return load_pal_cmap(REFL_PAL_PATH)
+
+
+def _refl_colorbar(pal: PalCmap, top: float = REFL_CBAR_TOP):
+    """Discrete colorbar artifacts from a PalCmap: one block per step over
+    ``[first, top]``, with set_over capping everything above ``top`` as a single
+    white arrow. Returns ``(cmap, norm, tick_edges)`` ready for ``fig.colorbar``.
+    """
+    keep = [(s, c) for s, c in zip(pal.steps, pal.colors) if s < top]
+    cb_colors = [c for _, c in keep]
+    cb_edges = [s for s, _ in keep] + [float(top)]
+    cb_cmap = mcolors.ListedColormap(cb_colors)
+    cb_cmap.set_over(pal.cmap.get_over())
+    cb_cmap.set_under((0.0, 0.0, 0.0, 0.0))
+    cb_norm = mcolors.BoundaryNorm(cb_edges, ncolors=len(cb_colors))
+    return cb_cmap, cb_norm, cb_edges
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +281,9 @@ class HafsFrame:
     u_kt: np.ndarray      # (lat, lon) 10 m eastward wind, knots (for barbs)
     v_kt: np.ndarray      # (lat, lon) 10 m northward wind, knots (for barbs)
     extent: tuple         # (lon_min, lon_max, lat_min, lat_max) of finite data
+    # Composite radar reflectivity (dBZ), (lat, lon). Only fetched when the
+    # caller asks for the reflectivity product; None for a wind-only fetch.
+    refl_dbz: Optional[np.ndarray] = None
 
 
 def _to_180(lon: np.ndarray) -> np.ndarray:
@@ -250,17 +341,22 @@ def fetch_hafs_frame(
     fxx: int,
     save_dir: str,
     remove_grib: bool = False,
+    want_refl: bool = False,
 ) -> HafsFrame:
     """Fetch PRMSL + 10 m wind for one HAFS frame and return a trimmed HafsFrame.
 
     Two separate byte-range subset reads (PRMSL is meanSea typeOfLevel, winds
     are heightAboveGround) so cfgrib doesn't have to reconcile two hypercubes.
+    With ``want_refl=True`` a third read pulls ``:REFC:`` (Maximum/Composite
+    radar reflectivity, entire-atmosphere single layer, dBZ) into
+    ``frame.refl_dbz``. We always read the winds even for the reflectivity
+    product because the header band's SSHWS category chip is keyed off VMAX.
 
     ``remove_grib=True`` deletes each idx-subset GRIB after it is read into
     xarray. The standalone slice keeps them (default ``False``) for inspection;
     the full-cycle builder sets it so hundreds of frames don't fill the runner
-    disk. The two reads use different search strings → different subset files,
-    so removing one never starves the other.
+    disk. Each read uses a different search string → a different subset file, so
+    removing one never starves the others.
     """
     import herbie
 
@@ -281,6 +377,15 @@ def fetch_hafs_frame(
         ds_p = ds_p[0]
     if isinstance(ds_w, list):
         ds_w = ds_w[0]
+
+    refl = None
+    if want_refl:
+        ds_r = H.xarray(":REFC:", remove_grib=remove_grib)
+        if isinstance(ds_r, list):
+            ds_r = ds_r[0]
+        # cfgrib names the message 'refc'; fall back to the lone data var.
+        rvar = "refc" if "refc" in ds_r.data_vars else list(ds_r.data_vars)[0]
+        refl = ds_r[rvar].values.astype(float)
 
     lat = ds_p["latitude"].values
     # Monotonic longitude frame (continuous past +180 for dateline-crossing
@@ -304,15 +409,21 @@ def fetch_hafs_frame(
         wind = wind[::-1, :]
         u_kt = u_kt[::-1, :]
         v_kt = v_kt[::-1, :]
+        if refl is not None:
+            refl = refl[::-1, :]
     if lon[0] > lon[-1]:
         lon = lon[::-1]
         mslp = mslp[:, ::-1]
         wind = wind[:, ::-1]
         u_kt = u_kt[:, ::-1]
         v_kt = v_kt[:, ::-1]
+        if refl is not None:
+            refl = refl[:, ::-1]
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
-    # regular grid. Keep rows/cols that carry any finite data.
+    # regular grid. Keep rows/cols that carry any finite data. The mask is built
+    # from mslp|wind only (refl's no-echo fill is a finite -20, so including it
+    # would defeat the trim); refl is sliced to the SAME rectangle in lockstep.
     finite = np.isfinite(mslp) | np.isfinite(wind)
     rows = np.where(finite.any(axis=1))[0]
     cols = np.where(finite.any(axis=0))[0]
@@ -322,6 +433,8 @@ def fetch_hafs_frame(
     lat, lon = lat[r0:r1], lon[c0:c1]
     mslp, wind = mslp[r0:r1, c0:c1], wind[r0:r1, c0:c1]
     u_kt, v_kt = u_kt[r0:r1, c0:c1], v_kt[r0:r1, c0:c1]
+    if refl is not None:
+        refl = refl[r0:r1, c0:c1]
 
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
@@ -332,6 +445,7 @@ def fetch_hafs_frame(
         lon=lon, lat=lat, mslp_hpa=mslp, wind_kt=wind, u_kt=u_kt, v_kt=v_kt,
         extent=(float(lon.min()), float(lon.max()),
                 float(lat.min()), float(lat.max())),
+        refl_dbz=refl,
     )
 
 
@@ -463,7 +577,20 @@ def _sshws_chip(vmax_kt: float) -> tuple[str, str, str]:
 
 
 def render_frame(frame: HafsFrame, out_path: str,
-                 countries: Optional[dict], coast: Optional[dict]) -> None:
+                 countries: Optional[dict], coast: Optional[dict],
+                 product: str = "mslp_wind") -> None:
+    """Render one TAT-styled HAFS frame.
+
+    ``product`` selects the filled field and its legend/header text, sharing all
+    of the layout, MSLP isobars, L marker, coastlines, header band, and footer:
+      - ``"mslp_wind"`` (default): 10 m wind-speed fill + wind barbs, knots bar.
+      - ``"refl"``: composite reflectivity fill (discrete .pal table), NO barbs,
+        a dBZ bar. The SSHWS chip stays keyed off VMAX for both.
+    """
+    is_refl = product == "refl"
+    if is_refl and frame.refl_dbz is None:
+        raise ValueError("render_frame(product='refl') needs frame.refl_dbz "
+                         "(fetch with want_refl=True)")
     lon_min, lon_max, lat_min, lat_max = frame.extent
     # Crop the view in by BBOX_TRIM_DEG per side (clamped to at most 15% of the
     # span so small domains keep their storm) to enlarge the data on the plot.
@@ -498,36 +625,44 @@ def render_frame(frame: HafsFrame, out_path: str,
                        map_w / fig_w, map_h / fig_h])
     ax.set_facecolor(DARK_BG)
 
-    cmap, norm = _wind_cmap_norm()
+    if is_refl:
+        pal = _refl_pal()
+        cmap, norm, field = pal.cmap, pal.norm, frame.refl_dbz
+    else:
+        pal = None
+        cmap, norm = _wind_cmap_norm()
+        field = frame.wind_kt
     Lon, Lat = np.meshgrid(frame.lon, frame.lat)
 
-    # (1) 10 m wind-speed fill, the vivid 0-165 kt TAT colormap. pcolormesh
-    # renders the continuous colormap as a smooth gradient (no banding). PNG
-    # output rasterizes the whole figure at the save DPI, so the fill is raster
-    # either way; the barbs / isobars / labels stay crisp via the high DPI plus
-    # antialiased vector line drawing on top.
-    wind = np.ma.masked_invalid(frame.wind_kt)
-    cf = ax.pcolormesh(Lon, Lat, wind, cmap=cmap, norm=norm,
+    # (1) Filled field. Wind: the vivid continuous 0-165 kt TAT colormap.
+    # Reflectivity: the discrete .pal table; values below the first edge (10 dBZ)
+    # fall to set_under = transparent, so non-precip shows the dark map beneath.
+    # pcolormesh renders the fill as a raster at the save DPI; the barbs /
+    # isobars / labels stay crisp via the high DPI plus antialiased vector lines.
+    fill = np.ma.masked_invalid(field)
+    cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
                        shading="nearest", zorder=2)
 
-    # (2) 10 m wind barbs, subsampled to ~BARB_TARGET across each axis. White,
-    # antialiased, kept vector (not rasterized) with a subtle dark halo so they
-    # stay sharp and legible over both the cool (dark) and warm (bright) ends of
-    # the fill palette; emptybarb=0 drops the calm-air circle.
-    nlat, nlon = frame.wind_kt.shape
-    si = max(1, int(round(nlat / BARB_TARGET)))
-    sj = max(1, int(round(nlon / BARB_TARGET)))
-    u = np.ma.masked_invalid(frame.u_kt)
-    v = np.ma.masked_invalid(frame.v_kt)
-    barbs = ax.barbs(
-        Lon[::si, ::sj], Lat[::si, ::sj], u[::si, ::sj], v[::si, ::sj],
-        length=6.8, linewidth=1.1, color="#ffffff", zorder=4,
-        pivot="middle", sizes=dict(emptybarb=0.0), antialiased=True,
-    )
-    barbs.set_rasterized(False)
-    # Subtle dark halo just narrower than the white line so the barbs read as
-    # white (legible over the bright fill) with a thin dark edge, not as dark.
-    barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
+    # (2) 10 m wind barbs (wind product only - reflectivity carries no barbs),
+    # subsampled to ~BARB_TARGET across each axis. White, antialiased, kept
+    # vector (not rasterized) with a subtle dark halo so they stay sharp and
+    # legible over both the cool (dark) and warm (bright) ends of the fill
+    # palette; emptybarb=0 drops the calm-air circle.
+    if not is_refl:
+        nlat, nlon = frame.wind_kt.shape
+        si = max(1, int(round(nlat / BARB_TARGET)))
+        sj = max(1, int(round(nlon / BARB_TARGET)))
+        u = np.ma.masked_invalid(frame.u_kt)
+        v = np.ma.masked_invalid(frame.v_kt)
+        barbs = ax.barbs(
+            Lon[::si, ::sj], Lat[::si, ::sj], u[::si, ::sj], v[::si, ::sj],
+            length=6.8, linewidth=1.1, color="#ffffff", zorder=4,
+            pivot="middle", sizes=dict(emptybarb=0.0), antialiased=True,
+        )
+        barbs.set_rasterized(False)
+        # Subtle dark halo just narrower than the white line so the barbs read as
+        # white (legible over the bright fill) with a thin dark edge, not as dark.
+        barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
 
     # (3) MSLP isobars every 4 mb, thin white with a dark halo so they read over
     # both cool and warm wind colors. Inline labels every other contour. Vector.
@@ -585,12 +720,20 @@ def render_frame(frame: HafsFrame, out_path: str,
         spine.set_color(MUTED_COLOR)
         spine.set_linewidth(0.6)
 
-    # (6) Right-side labeled colorbar (knots), ticks on the SS thresholds.
+    # (6) Right-side labeled colorbar. Wind: continuous knots, ticks on the SS
+    # thresholds. Reflectivity: a DISCRETE bar (one block per 5 dBZ step) from
+    # the .pal, ticked at the step values 10..70 with a white set_over arrow.
     cax = fig.add_axes([(left_in + map_w + 0.30) / fig_w,
                         (map_bottom + 0.05 * map_h) / fig_h,
                         0.16 / fig_w, (0.90 * map_h) / fig_h])
-    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=CBAR_TICKS_KT)
-    cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
+    if is_refl:
+        cb_cmap, cb_norm, cb_ticks = _refl_colorbar(pal)
+        sm = mcm.ScalarMappable(norm=cb_norm, cmap=cb_cmap)
+        cb = fig.colorbar(sm, cax=cax, extend="max", ticks=cb_ticks)
+        cb.set_label("Composite reflectivity (dBZ)", color=TEXT_COLOR, fontsize=10)
+    else:
+        cb = fig.colorbar(cf, cax=cax, extend="max", ticks=CBAR_TICKS_KT)
+        cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
     cb.ax.yaxis.set_tick_params(color=MUTED_COLOR, labelcolor=MUTED_COLOR,
                                 labelsize=8)
     cb.outline.set_edgecolor(MUTED_COLOR)
@@ -605,7 +748,20 @@ def render_frame(frame: HafsFrame, out_path: str,
     model_label = MODEL_LABEL.get(frame.model, frame.model.upper())
     storm_disp = frame.storm.upper()
     domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
+    # The SSHWS category chip stays keyed off VMAX for BOTH products.
     cat_label, chip_fill, chip_txt = _sshws_chip(vmax)
+
+    # Per-product subtitle (lower-left) and right-side stat (upper-right). Refl
+    # replaces VMAX with the peak of the plotted reflectivity field; both keep
+    # the MSLP minimum.
+    if is_refl:
+        rmax = (float(np.nanmax(frame.refl_dbz))
+                if np.isfinite(frame.refl_dbz).any() else float("nan"))
+        subtitle = f"Composite Reflectivity (dBZ) & MSLP (mb)  /  {domain_label}"
+        right_stat = f"MAX {rmax:.0f} dBZ   /   MSLP {pmin_hdr:.1f} mb"
+    else:
+        subtitle = f"10m Wind (kt) & MSLP (mb)  /  {domain_label}"
+        right_stat = f"VMAX {vmax:.1f} kt   /   MSLP {pmin_hdr:.1f} mb"
 
     band = fig.add_axes([0.0, (map_bottom + map_h) / fig_h, 1.0, band_in / fig_h])
     band.set_facecolor(BAND_BG)
@@ -633,12 +789,12 @@ def render_frame(frame: HafsFrame, out_path: str,
               transform=band.transAxes, zorder=3,
               bbox=dict(boxstyle="round,pad=0.34", facecolor=chip_fill,
                         edgecolor="none"))
-    band.text(pad_x, y_bot, f"10m Wind (kt) & MSLP (mb)  /  {domain_label}",
+    band.text(pad_x, y_bot, subtitle,
               ha="left", va="center", fontsize=9.5, color=MUTED_COLOR,
               transform=band.transAxes)
 
     rx = 1.0 - pad_x
-    band.text(rx, y_top, f"VMAX {vmax:.1f} kt   /   MSLP {pmin_hdr:.1f} mb",
+    band.text(rx, y_top, right_stat,
               ha="right", va="center", fontsize=12, fontweight="bold",
               color=ACCENT_COLOR, transform=band.transAxes)
     band.text(rx, y_bot,
@@ -668,7 +824,11 @@ def main() -> int:
     ap.add_argument("--model", default="hafsa", choices=["hafsa", "hafsb"])
     ap.add_argument("--storm", default="13l", help="storm id, e.g. 13l")
     ap.add_argument("--product", default="storm.atm",
-                    choices=["storm.atm", "parent.atm"])
+                    choices=["storm.atm", "parent.atm"],
+                    help="HAFS domain (Herbie product key)")
+    ap.add_argument("--field", default="wind", choices=["wind", "refl"],
+                    help="which product to render: 10 m wind or composite "
+                         "reflectivity (both overlay MSLP)")
     ap.add_argument("--date", default="2023-09-09 00:00",
                     help="cycle init time, 'YYYY-MM-DD HH:MM'")
     ap.add_argument("--fxx", type=int, default=12, help="forecast hour")
@@ -677,15 +837,18 @@ def main() -> int:
     args = ap.parse_args()
 
     date = dt.datetime.strptime(args.date, "%Y-%m-%d %H:%M")
+    want_refl = args.field == "refl"
+    render_product = "refl" if want_refl else "mslp_wind"
 
-    log.info("fetching %s %s %s %s f%03d …", args.model, args.storm,
-             args.product, args.date, args.fxx)
+    log.info("fetching %s %s %s %s f%03d (field=%s) …", args.model, args.storm,
+             args.product, args.date, args.fxx, args.field)
     frame = fetch_hafs_frame(args.model, args.storm, args.product, date,
-                             args.fxx, args.save_dir)
+                             args.fxx, args.save_dir, want_refl=want_refl)
+    rmax = (np.nanmax(frame.refl_dbz) if frame.refl_dbz is not None else float("nan"))
     log.info("  grid %d×%d  extent lon[%.2f,%.2f] lat[%.2f,%.2f]  "
-             "wind max %.0f kt  mslp min %.1f hPa",
+             "wind max %.0f kt  mslp min %.1f hPa  refl max %.1f dBZ",
              frame.lat.size, frame.lon.size, *frame.extent,
-             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa))
+             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa), rmax)
 
     countries = (_load_geojson("ne_50m_admin_0_countries.geojson")
                  or _load_geojson("ne_110m_admin_0_countries.geojson"))
@@ -694,7 +857,7 @@ def main() -> int:
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
 
-    render_frame(frame, args.out, countries, coast)
+    render_frame(frame, args.out, countries, coast, product=render_product)
     return 0
 
 

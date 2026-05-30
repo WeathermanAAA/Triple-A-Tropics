@@ -1,10 +1,10 @@
 name: Update HAFS Model Plots
 
-# HAFS-A/HAFS-B forecast plots (MSLP + 10 m wind) for the /models/ page —
-# the first model product. Renders every active storm × {HAFS-A,HAFS-B} ×
-# {storm nest, parent domain} × forecast hour for the latest *complete* HAFS
-# cycle, then syncs the PNGs + manifest.json to R2. The frontend
-# (models/index.html) reads the manifest from cdn.triple-a-tropics.com.
+# HAFS-A/HAFS-B forecast plots for the /models/ page. Renders every active
+# storm x {HAFS-A,HAFS-B} x {storm nest, parent domain} x {MSLP + 10 m wind,
+# composite reflectivity} x forecast hour for the latest *complete* HAFS cycle,
+# then syncs the PNGs + manifest.json to R2. The frontend (models/index.html)
+# reads the manifest from cdn.triple-a-tropics.com.
 #
 # HAFS runs four cycles/day (00/06/12/18Z) and finishes uploading ~6 h after
 # each synoptic time. We run ~6 h 53 m after (00→06:53, 06→12:53, 12→18:53,
@@ -21,14 +21,14 @@ on:
   workflow_dispatch: {}
 
 # Read-only: this workflow commits NOTHING to main (same as update-gibs.yml).
-# All output — PNG frames + manifest.json — is synced to R2; the live site
+# All output - PNG frames + manifest.json - is synced to R2; the live site
 # fetches it cross-origin from cdn.triple-a-tropics.com/models/hafs/.
 permissions:
   contents: read
 
 # One HAFS run at a time. Each run fully rebuilds models/hafs/ for the latest
 # cycle then syncs (with --delete) to R2; overlapping runs would duplicate the
-# same downloads and could race the sync. Don't cancel a run mid-flight — a
+# same downloads and could race the sync. Don't cancel a run mid-flight - a
 # partial sync is worse than waiting.
 concurrency:
   group: update-hafs
@@ -61,7 +61,7 @@ jobs:
 
       - name: Ensure Natural Earth basemap files exist
         # hafs_plot.py reads these from the repo root for coastlines/borders.
-        # They are committed, so this is normally a no-op — but match the other
+        # They are committed, so this is normally a no-op - but match the other
         # rendering workflows and re-fetch if a file ever goes missing.
         run: |
           set -euo pipefail
@@ -78,7 +78,7 @@ jobs:
         # Resolves the newest cycle whose storm nest reached f126, enumerates
         # its storms from the public bucket, and renders all frames into
         # models/hafs/ with a manifest.json. Off-season (no storms) it writes
-        # an empty manifest and exits 0 — the frontend then shows "no runs".
+        # an empty manifest and exits 0 - the frontend then shows "no runs".
         env:
           HERBIE_DATA: ${{ runner.temp }}/herbie_data
         run: |
@@ -90,14 +90,14 @@ jobs:
 
       - name: Upload HAFS plots to R2 (cdn.triple-a-tropics.com/models/hafs/)
         # Three passes with EXPLICIT content-types (image/png frames,
-        # application/json manifest — the manifest is fetched cross-origin and
+        # application/json manifest - the manifest is fetched cross-origin and
         # needs the right type). NO --size-only: each cycle's f###.png reuses
         # the same key with new content, so a coincidental same-size frame must
         # NOT be skipped (default size+mtime re-uploads the fresh files).
         #
         # Ordering matters for consistency:
         #   1. Upload new PNG frames WITHOUT --delete (old frames stay live).
-        #   2. Upload the manifest — it now references this cycle's frames,
+        #   2. Upload the manifest - it now references this cycle's frames,
         #      which are all present from step 1 → no 404 window.
         #   3. Prune orphan PNGs with --delete (frames from storms no longer in
         #      the manifest). The filter scopes --delete to *.png, so it never
@@ -105,7 +105,7 @@ jobs:
         #      live, the deleted frames are already unreferenced → no 404.
         #
         # Off-season the generator writes an empty manifest (storms:[]) and the
-        # prune wipes all remote PNGs — correct, nothing is active. A TOTAL
+        # prune wipes all remote PNGs - correct, nothing is active. A TOTAL
         # render failure does NOT reach here: the generator exits non-zero when
         # storms were found but nothing rendered, so this step never runs and
         # the prior cycle stays live.
@@ -117,7 +117,7 @@ jobs:
           set -euo pipefail
           SRC=models/hafs
           if [ ! -f "$SRC/manifest.json" ]; then
-            echo "No HAFS manifest at $SRC — generator did not produce output."
+            echo "No HAFS manifest at $SRC - generator did not produce output."
             exit 1
           fi
           CC="public, max-age=300"

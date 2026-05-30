@@ -1,28 +1,38 @@
 /*
- * hafs.js — Triple-A-Tropics /models/ HAFS viewer
+ * hafs.js - Triple-A-Tropics /models/ HAFS viewer
  * ---------------------------------------------------------------------------
- * Manifest-driven forecast-loop viewer for the HAFS model plots (MSLP + 10 m
- * wind). Reads a manifest published to Cloudflare R2 by generate_hafs_plots.py
- * and lets the user pick a storm → model (HAFS-A/B) → domain (storm nest /
- * parent) and scrub / play the forecast hours.
+ * Manifest-driven forecast-loop viewer for the HAFS model plots. Reads a
+ * manifest published to Cloudflare R2 by generate_hafs_plots.py and lets the
+ * user pick a storm -> model (HAFS-A/B) -> domain (storm nest / parent) ->
+ * product (Wind / Reflectivity) and scrub / play the forecast hours.
  *
  * Manifest shape (models/hafs/manifest.json on cdn.triple-a-tropics.com):
  *   {
  *     "generated_at": "2026-05-29T06:53:00Z",
- *     "product": {"slug":"mslp_wind","label":"MSLP + 10 m Wind"},
- *     "models":  [{"slug":"hafsa","label":"HAFS-A"}, …],
- *     "domains": [{"slug":"storm","label":"Storm nest (~2 km)","raw":"storm.atm"}, …],
+ *     "product":  {"slug":"mslp_wind","label":"MSLP + 10 m Wind","short":"Wind"},
+ *     "products": [{"slug":"mslp_wind",...,"short":"Wind"},
+ *                  {"slug":"refl",...,"short":"Reflectivity"}],
+ *     "models":  [{"slug":"hafsa","label":"HAFS-A"}, ...],
+ *     "domains": [{"slug":"storm","label":"Storm nest (~2 km)","raw":"storm.atm"}, ...],
  *     "fxx_step": 3, "fxx_pad": 3,
- *     "path_template": "{model}/{storm}/{domain}/f{fxx}.png",
+ *     "path_template": "{model}/{storm}/{domain}/{product}/f{fxx}.png",
  *     "cycle": "2023090900",
  *     "storms": [
  *       {"id":"13l","name":"13L","basin":"al","basin_label":"North Atlantic",
  *        "cycle":"2023090900","init":"2023-09-09T00:00:00Z",
- *        "frames": {"hafsa": {"storm":[0,3,…,126], "parent":[…]}, "hafsb": {…}}}
+ *        "frames": {"hafsa": {"storm": {"mslp_wind":[0,3,...,126], "refl":[...]},
+ *                             "parent": {...}}, "hafsb": {...}}}
  *     ]
  *   }
  *
- * Frame URL: {BASE}/models/hafs/{model}/{storm}/{domain}/f{FFF}.png
+ * Backward-tolerant: an older manifest may omit "products" (singular "product"
+ * used) and nest frames as {model:{domain:[fxx,...]}} (no product level). Such a
+ * frame entry is read as the default product, and the frame URL is built from
+ * the manifest's own path_template, so an older manifest still resolves until
+ * the next cycle republishes the current schema.
+ *
+ * Frame URL: derived from path_template, e.g.
+ *   {BASE}/models/hafs/{model}/{storm}/{domain}/{product}/f{FFF}.png
  * Every URL gets ?v=encodeURIComponent(generated_at) so a fresh cycle busts
  * the browser/CDN cache.
  */
@@ -55,6 +65,7 @@
     this.storm = null;     // storm object
     this.model = null;     // slug
     this.domain = null;    // slug
+    this.product = null;   // slug (defaults to the first manifest product = Wind)
     this.fxxList = [];     // available forecast hours for the selection
     this.idx = 0;          // index into fxxList
     this.playing = false;
@@ -72,6 +83,7 @@
       stormSel: el('hafs-storm'),
       models:   el('hafs-models'),
       domains:  el('hafs-domains'),
+      products: el('hafs-products'),
       scrub:    el('hafs-scrub'),
       play:     el('hafs-play'),
       stepB:    el('hafs-step-back'),
@@ -132,7 +144,7 @@
       this.dom.empty.style.display = 'block';
       return;
     }
-    // Clear the "Loading manifest…" overlay now that we have storms — otherwise
+    // Clear the "Loading manifest…" overlay now that we have storms - otherwise
     // the translucent spinner box sits over every frame for the whole session.
     this._setStatus(null, false);
     this.dom.empty.style.display = 'none';
@@ -160,13 +172,67 @@
     return null;
   };
 
+  // Product definitions, in manifest order. New manifests carry a "products"
+  // list; older ones only a singular "product"; fall back to a Wind default.
+  HafsViewer.prototype._productDefs = function () {
+    var m = this.manifest || {};
+    if (m.products && m.products.length) return m.products;
+    if (m.product) return [m.product];
+    return [{ slug: 'mslp_wind', label: 'MSLP + 10 m Wind', short: 'Wind' }];
+  };
+
+  HafsViewer.prototype._defaultProductSlug = function () {
+    return this._productDefs()[0].slug;
+  };
+
+  // Normalize a (storm, model, domain) frame entry to a product -> [fxx] map.
+  // New schema: {product: [...]}. Old schema: [...] (read as the default
+  // product) so a stale manifest still works until the next cycle.
+  HafsViewer.prototype._domFrames = function (storm, model, domain) {
+    var fr = (storm.frames[model] || {})[domain];
+    if (!fr) return {};
+    if (Array.isArray(fr)) {
+      var o = {};
+      o[this._defaultProductSlug()] = fr;
+      return o;
+    }
+    return fr;
+  };
+
+  // Any non-empty fxx list anywhere under a model's {domain: {product: [...]}}
+  // (or the old {domain: [...]}) tree.
+  HafsViewer.prototype._anyFrames = function (byDomain) {
+    for (var d in byDomain) {
+      if (!byDomain.hasOwnProperty(d)) continue;
+      var entry = byDomain[d];
+      if (Array.isArray(entry)) {
+        if (entry.length) return true;
+      } else {
+        for (var p in entry) {
+          if (entry.hasOwnProperty(p) && entry[p] && entry[p].length) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // True if a domain entry (new object or old array shape) has any frames.
+  HafsViewer.prototype._domainHasFrames = function (entry) {
+    if (!entry) return false;
+    if (Array.isArray(entry)) return entry.length > 0;
+    for (var p in entry) {
+      if (entry.hasOwnProperty(p) && entry[p] && entry[p].length) return true;
+    }
+    return false;
+  };
+
   // Models that actually have frames for the current storm, in manifest order.
   HafsViewer.prototype._modelsFor = function (storm) {
     var out = [];
     var defs = this.manifest.models || [];
     for (var i = 0; i < defs.length; i++) {
       var slug = defs[i].slug;
-      if (storm.frames[slug] && Object.keys(storm.frames[slug]).length) {
+      if (storm.frames[slug] && this._anyFrames(storm.frames[slug])) {
         out.push(defs[i]);
       }
     }
@@ -178,6 +244,17 @@
     var out = [];
     var defs = this.manifest.domains || [];
     var fr = storm.frames[model] || {};
+    for (var i = 0; i < defs.length; i++) {
+      if (this._domainHasFrames(fr[defs[i].slug])) out.push(defs[i]);
+    }
+    return out;
+  };
+
+  // Products with frames for the current storm+model+domain, in manifest order.
+  HafsViewer.prototype._productsFor = function (storm, model, domain) {
+    var out = [];
+    var defs = this._productDefs();
+    var fr = this._domFrames(storm, model, domain);
     for (var i = 0; i < defs.length; i++) {
       var slug = defs[i].slug;
       if (fr[slug] && fr[slug].length) out.push(defs[i]);
@@ -211,12 +288,31 @@
   HafsViewer.prototype._selectDomain = function (slug) {
     this.domain = slug;
     this._highlight(this.dom.domains, slug);
-    var fr = (this.storm.frames[this.model] || {})[slug] || [];
+    // Pick first available product, preferring to keep the current one (so a
+    // Wind/Reflectivity choice survives storm/model/domain switches). Default on
+    // first load is the first manifest product = Wind, so the view is unchanged.
+    var products = this._productsFor(this.storm, this.model, slug);
+    var keep = null;
+    for (var i = 0; i < products.length; i++) if (products[i].slug === this.product) keep = this.product;
+    var pick = keep || (products[0] && products[0].slug);
+    this._buildToggle(this.dom.products, products, pick,
+                      this._selectProduct.bind(this), 'short');
+    this._selectProduct(pick);
+  };
+
+  HafsViewer.prototype._selectProduct = function (slug) {
+    this.product = slug;
+    this._highlight(this.dom.products, slug);
+    var fr = this._domFrames(this.storm, this.model, this.domain)[slug] || [];
+    // Keep the same forecast HOUR across selection changes when possible (Wind
+    // and Reflectivity share an fxx list, so a product toggle holds the hour;
+    // a domain switch keeps it when present, else clamps the index).
+    var prev = this.fxxList || [];
+    var curF = prev.length ? prev[Math.min(this.idx, prev.length - 1)] : 0;
     this.fxxList = fr.slice();
-    // Keep the same forecast hour across selection changes when possible.
-    var curF = this.fxxList.length ? this.fxxList[Math.min(this.idx, this.fxxList.length - 1)] : 0;
     var newIdx = this.fxxList.indexOf(curF);
-    this.idx = newIdx >= 0 ? newIdx : 0;
+    this.idx = newIdx >= 0 ? newIdx
+             : Math.min(this.idx, Math.max(0, this.fxxList.length - 1));
 
     var sc = this.dom.scrub;
     sc.min = 0;
@@ -224,19 +320,23 @@
     sc.value = this.idx;
     sc.disabled = this.fxxList.length <= 1;
 
+    this._updateCaption();
     this._show(this.idx);
     this._preloadAll();
   };
 
-  // Build a segmented button group; calls onPick(slug) on click.
-  HafsViewer.prototype._buildToggle = function (container, defs, active, onPick) {
+  // Build a segmented button group; calls onPick(slug) on click. labelKey picks
+  // which field labels the buttons (default 'label'; the product toggle uses
+  // 'short' so it reads "Wind" / "Reflectivity").
+  HafsViewer.prototype._buildToggle = function (container, defs, active, onPick, labelKey) {
     container.innerHTML = '';
+    labelKey = labelKey || 'label';
     for (var i = 0; i < defs.length; i++) {
       (function (def) {
         var b = document.createElement('button');
         b.type = 'button';
         b.className = 'hafs-seg' + (def.slug === active ? ' active' : '');
-        b.textContent = def.label;
+        b.textContent = def[labelKey] || def.label;
         b.setAttribute('data-slug', def.slug);
         b.addEventListener('click', function () { onPick(def.slug); });
         container.appendChild(b);
@@ -254,9 +354,20 @@
   };
 
   HafsViewer.prototype._frameUrl = function (fxx) {
-    var pad3 = pad(fxx, this.manifest.fxx_pad || 3);
-    var u = BASE + '/models/hafs/' + this.model + '/' + this.storm.id + '/' +
-            this.domain + '/f' + pad3 + '.png';
+    var m = this.manifest;
+    var pad3 = pad(fxx, m.fxx_pad || 3);
+    // Build from the manifest's own path_template so an older template without
+    // a {product} segment still resolves (the empty substitution + slash
+    // collapse yields the legacy path).
+    var tmpl = m.path_template || '{model}/{storm}/{domain}/{product}/f{fxx}.png';
+    var rel = tmpl
+      .replace('{model}', this.model)
+      .replace('{storm}', this.storm.id)
+      .replace('{domain}', this.domain)
+      .replace('{product}', this.product || '')
+      .replace('{fxx}', pad3)
+      .replace(/\/{2,}/g, '/');
+    var u = BASE + '/models/hafs/' + rel;
     return this.cacheBust ? (u + '?v=' + this.cacheBust) : u;
   };
 
@@ -273,6 +384,28 @@
     var valid = new Date(init.getTime() + fxx * 3600 * 1000);
     this.dom.valid.textContent = 'Valid ' + fmtUTC(valid) +
       '  ·  Init ' + fmtUTC(init);
+  };
+
+  // Caption describing the active product's shading. No em-dashes.
+  HafsViewer.prototype._updateCaption = function () {
+    var c = this.dom.caption;
+    if (!c) return;
+    if (this.product === 'refl') {
+      c.textContent =
+        'Filled shading: composite (column-maximum) radar reflectivity (dBZ), ' +
+        'stepped TAT radar palette (light blue/green light returns, through ' +
+        'yellow/orange/red heavy convection, to magenta extreme cores). ' +
+        'Non-precip areas (below 10 dBZ) are transparent, showing the dark map ' +
+        'and coastlines. White contours: MSLP every 4 hPa. The storm-nest ' +
+        'domain follows the cyclone, so playback is roughly storm-centered.';
+    } else {
+      c.textContent =
+        'Filled shading: 10 m wind speed (kt), Saffir-Simpson-flavored palette ' +
+        '(calm, to green TS, to gold/orange Cat 1-2, to red/magenta Cat 3-4, to ' +
+        'violet Cat 5). White barbs: 10 m wind. White contours: MSLP every ' +
+        '4 hPa. The storm-nest domain follows the cyclone, so playback is ' +
+        'roughly storm-centered.';
+    }
   };
 
   // Preload every frame of the current selection so scrub/play is smooth.
