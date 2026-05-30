@@ -294,9 +294,11 @@ _COAST: Optional[dict] = None
 def _worker_init() -> None:
     """Load the Natural Earth basemap once per pool worker."""
     global _COUNTRIES, _COAST
-    _COUNTRIES = (hp._load_geojson("ne_50m_admin_0_countries.geojson")
+    _COUNTRIES = (hp._load_geojson("ne_10m_admin_0_countries.geojson")
+                  or hp._load_geojson("ne_50m_admin_0_countries.geojson")
                   or hp._load_geojson("ne_110m_admin_0_countries.geojson"))
-    _COAST = (hp._load_geojson("ne_50m_coastline.geojson")
+    _COAST = (hp._load_geojson("ne_10m_coastline.geojson")
+              or hp._load_geojson("ne_50m_coastline.geojson")
               or hp._load_geojson("ne_110m_coastline.geojson"))
 
 
