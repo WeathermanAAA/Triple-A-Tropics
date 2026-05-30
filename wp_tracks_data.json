@@ -2,13 +2,13 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-05-30 05:37 UTC",
+  "updated": "2026-05-30 08:41 UTC",
   "header": {
     "named": 5,
-    "cat1plus": 1,
+    "cat1plus": 2,
     "cat3plus": 1,
     "cat5": 1,
-    "total_ace": 46.0
+    "total_ace": 46.48
   },
   "vocab": {
     "named": "named storms",
@@ -22,12 +22,12 @@
       "name": "JANGMI",
       "season": 2026,
       "start": "2026-05-28T06:00:00",
-      "end": "2026-05-30T00:00:00",
-      "peak_wind_kt": 55.0,
-      "peak_pressure_mb": 983.0,
-      "ace": 1.48,
-      "max_category": "TS",
-      "current_category": "TS",
+      "end": "2026-05-30T06:00:00",
+      "peak_wind_kt": 65.0,
+      "peak_pressure_mb": 979.0,
+      "ace": 1.96,
+      "max_category": "C1",
+      "current_category": "C1",
       "is_active": true,
       "is_invest": false,
       "recent_invest": false,
@@ -243,7 +243,7 @@
         {
           "t": "2026-05-29T18:00:00",
           "lat": 16.7,
-          "lon": 130.9,
+          "lon": 131.0,
           "wind_kt": 50.0,
           "pressure_mb": 989.0,
           "cls": "TS",
@@ -251,11 +251,20 @@
         },
         {
           "t": "2026-05-30T00:00:00",
-          "lat": 17.5,
-          "lon": 130.1,
-          "wind_kt": 55.0,
+          "lat": 17.4,
+          "lon": 130.2,
+          "wind_kt": 60.0,
           "pressure_mb": 983.0,
           "cls": "TS",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-05-30T06:00:00",
+          "lat": 18.3,
+          "lon": 129.6,
+          "wind_kt": 65.0,
+          "pressure_mb": 979.0,
+          "cls": "C1",
           "nature": "TS"
         }
       ]
