@@ -486,10 +486,18 @@ def _feature_linestrings(feat: dict) -> list[list[tuple[float, float]]]:
 def _draw_feature_lines(ax, features, extent, color, linewidth, zorder):
     """Plot GeoJSON line/polygon edges that intersect the extent.
 
-    Coordinates are -180..180 (matching our converted lon). HAFS storm/parent
-    domains are small and don't cross the antimeridian, so no wrap handling is
-    needed; a feature is drawn if its bounding box overlaps the (margined)
-    extent.
+    Coordinates are -180..180 (matching our converted lon). Each point is wrapped
+    into the view's longitude frame via ``_wrap_into`` so dateline-crossing (West
+    Pacific) views still get their coastlines; a no-op for ordinary -180..180
+    extents. A feature is drawn if its bounding box overlaps the (margined)
+    extent, and the axes clip path trims it to the view.
+
+    Antimeridian split: wrapping each point independently can place two
+    *consecutive* points on opposite sides of the wrap seam (one ~+180, the next
+    ~-180), which ``ax.plot`` would otherwise join with a long horizontal stripe
+    straight across the map. We insert a NaN wherever consecutive wrapped points
+    jump more than 180 deg of longitude, lifting the pen so each real coastline
+    segment draws on its own side and no stripe appears.
     """
     lon_min, lon_max, lat_min, lat_max = extent
     mlon = (lon_max - lon_min) * 0.05 + 1.0
@@ -498,14 +506,18 @@ def _draw_feature_lines(ax, features, extent, color, linewidth, zorder):
         for ring in _feature_linestrings(feat):
             if len(ring) < 2:
                 continue
-            # Wrap each point into the nest's longitude frame so dateline-
-            # crossing (West Pacific) nests still get their coastlines; a no-op
-            # for ordinary -180..180 extents.
-            xs = [_wrap_into(p[0], lon_min, lon_max) for p in ring]
-            ys = [p[1] for p in ring]
-            if (max(xs) < lon_min - mlon or min(xs) > lon_max + mlon
-                    or max(ys) < lat_min - mlat or min(ys) > lat_max + mlat):
+            xs = np.array([_wrap_into(p[0], lon_min, lon_max) for p in ring],
+                          dtype=float)
+            ys = np.array([p[1] for p in ring], dtype=float)
+            if (xs.max() < lon_min - mlon or xs.min() > lon_max + mlon
+                    or ys.max() < lat_min - mlat or ys.min() > lat_max + mlat):
                 continue
+            # Break the polyline at every antimeridian seam crossing so the wrap
+            # never draws a stripe across the whole frame.
+            seam = np.where(np.abs(np.diff(xs)) > 180.0)[0] + 1
+            if seam.size:
+                xs = np.insert(xs, seam, np.nan)
+                ys = np.insert(ys, seam, np.nan)
             ax.plot(xs, ys, color=color, linewidth=linewidth, zorder=zorder,
                     solid_capstyle="round", solid_joinstyle="round")
 
@@ -550,7 +562,15 @@ BARB_TARGET = 17
 # Degrees to crop off EACH side of the data extent before plotting, so the storm
 # fills more of the frame (larger data, lower on-screen isobar density). Clamped
 # per-side to a fraction of the span so small domains are never over-cropped.
+# Applies to the STORM NEST only; the parent uses a fixed storm-centered window.
 BBOX_TRIM_DEG = 1.5
+
+# Parent-domain framing: the parent (~6 km) covers a huge, frame-to-frame
+# variable area, so instead of plotting its full extent we crop every parent
+# frame to a FIXED square window of (2 x PARENT_HALF_DEG) degrees centered on the
+# storm (the MSLP minimum, the same center the L marker uses). 20 deg per side =
+# a 40 x 40 deg synoptic view. The nest is untouched.
+PARENT_HALF_DEG = 20.0
 
 # Header title-bar background, a touch lighter than the map bg so the band reads
 # like the site nav bar.
@@ -596,7 +616,9 @@ def _category_pill(frame: HafsFrame) -> tuple[float, tuple[str, str, str]]:
 
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict],
-                 product: str = "mslp_wind") -> None:
+                 product: str = "mslp_wind",
+                 countries_lo: Optional[dict] = None,
+                 coast_lo: Optional[dict] = None) -> None:
     """Render one TAT-styled HAFS frame.
 
     ``product`` selects the filled field and its legend/header text, sharing all
@@ -604,20 +626,53 @@ def render_frame(frame: HafsFrame, out_path: str,
       - ``"mslp_wind"`` (default): 10 m wind-speed fill + wind barbs, knots bar.
       - ``"refl"``: composite reflectivity fill (discrete .pal table), NO barbs,
         a dBZ bar. The SSHWS chip stays keyed off VMAX for both.
+
+    Domain framing differs by ``frame.product`` (the HAFS domain, NOT the field
+    above): the STORM NEST keeps its per-side ``BBOX_TRIM_DEG`` trim, while the
+    PARENT is cropped to a fixed 40 x 40 deg window centered on the storm (see
+    ``PARENT_HALF_DEG``) and drawn with the coarser 110 m basemap + a calmer
+    (wider-interval, softer) isobar field. ``countries_lo`` / ``coast_lo`` are the
+    110 m Natural Earth GeoJSON used for the parent; when omitted the parent falls
+    back to ``countries`` / ``coast``.
     """
     is_refl = product == "refl"
     if is_refl and frame.refl_dbz is None:
         raise ValueError("render_frame(product='refl') needs frame.refl_dbz "
                          "(fetch with want_refl=True)")
+    is_parent = frame.product == "parent.atm"
     lon_min, lon_max, lat_min, lat_max = frame.extent
-    # Crop the view in by BBOX_TRIM_DEG per side (clamped to at most 15% of the
-    # span so small domains keep their storm) to enlarge the data on the plot.
-    # The fill, barbs, contours, and coastlines are still drawn on the full grid
-    # and simply clipped to these limits, so nothing at the new edge is missing.
-    tlon = min(BBOX_TRIM_DEG, 0.15 * (lon_max - lon_min))
-    tlat = min(BBOX_TRIM_DEG, 0.15 * (lat_max - lat_min))
-    lon_min, lon_max = lon_min + tlon, lon_max - tlon
-    lat_min, lat_max = lat_min + tlat, lat_max - tlat
+    if is_parent:
+        # Parent: a fixed 40 x 40 deg window centered on the storm (the MSLP
+        # minimum, the same center the L marker uses) so the frame is stable
+        # cycle to cycle and the storm is always centered. Fall back to the data-
+        # extent center if MSLP is somehow unusable. The center comes from
+        # ``frame.lon`` (the monotonic frame, continuous past +180 for a West
+        # Pacific dateline crosser), so the window stays in that frame and the
+        # basemap wrap / labels handle the antimeridian automatically.
+        mslp0 = np.ma.masked_invalid(frame.mslp_hpa)
+        if mslp0.count():
+            kc = np.unravel_index(np.ma.argmin(mslp0), mslp0.shape)
+            clon, clat = float(frame.lon[kc[1]]), float(frame.lat[kc[0]])
+        else:
+            clon, clat = 0.5 * (lon_min + lon_max), 0.5 * (lat_min + lat_max)
+        lon_min, lon_max = clon - PARENT_HALF_DEG, clon + PARENT_HALF_DEG
+        lat_min, lat_max = clat - PARENT_HALF_DEG, clat + PARENT_HALF_DEG
+        # Clamp latitude to the valid range if the box would run past a pole.
+        lat_min, lat_max = max(lat_min, -90.0), min(lat_max, 90.0)
+    else:
+        # Nest: crop the view in by BBOX_TRIM_DEG per side (clamped to at most 15%
+        # of the span so small domains keep their storm) to enlarge the data on
+        # the plot. The fill, barbs, contours, and coastlines are still drawn on
+        # the full grid and simply clipped to these limits, so nothing at the new
+        # edge is missing.
+        tlon = min(BBOX_TRIM_DEG, 0.15 * (lon_max - lon_min))
+        tlat = min(BBOX_TRIM_DEG, 0.15 * (lat_max - lat_min))
+        lon_min, lon_max = lon_min + tlon, lon_max - tlon
+        lat_min, lat_max = lat_min + tlat, lat_max - tlat
+    # Extent the coastline/border features are clipped against: the cropped view
+    # for the parent (so far-away land is rejected), the data extent for the nest
+    # (unchanged behavior). Axes clipping trims whatever crosses the edge.
+    feat_extent = (lon_min, lon_max, lat_min, lat_max) if is_parent else frame.extent
     mean_lat = 0.5 * (lat_min + lat_max)
     # PlateCarree aspect: 1 deg lon is cos(lat)x shorter than 1 deg lat.
     geo_aspect = 1.0 / max(np.cos(np.deg2rad(mean_lat)), 0.1)
@@ -694,21 +749,29 @@ def render_frame(frame: HafsFrame, out_path: str,
         # white (legible over the bright fill) with a thin dark edge, not as dark.
         barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
 
-    # (3) MSLP isobars every 4 mb, thin white with a dark halo so they read over
-    # both cool and warm wind colors. Inline labels every other contour. Vector.
+    # (3) MSLP isobars. The NEST keeps a tight 4 mb interval, thin white with a
+    # dark halo, labels every other contour. The PARENT spans ~40 deg where a
+    # 4 mb interval stacks into an illegible thicket, so it widens to an 8 mb
+    # interval and softens the lines (thinner, lower alpha, lighter halo) and
+    # labels so the isobars read as gentle synoptic guidance rather than noise.
     mslp = np.ma.masked_invalid(frame.mslp_hpa)
     if mslp.count():
-        lo = int(np.floor(mslp.min() / 4.0) * 4)
-        hi = int(np.ceil(mslp.max() / 4.0) * 4)
-        clevs = np.arange(lo, hi + 4, 4)
-        # Same 4 mb interval / density as before; lightly softened (alpha + a
-        # thinner dark halo) so the vivid fill reads through the dense core.
+        mslp_iv = 8 if is_parent else 4
+        lw = 0.6 if is_parent else 0.75
+        alpha = 0.65 if is_parent else 0.9
+        halo = 1.0 if is_parent else 1.4
+        lo = int(np.floor(mslp.min() / mslp_iv) * mslp_iv)
+        hi = int(np.ceil(mslp.max() / mslp_iv) * mslp_iv)
+        clevs = np.arange(lo, hi + mslp_iv, mslp_iv)
         cs = ax.contour(Lon, Lat, mslp, levels=clevs, colors="#ffffff",
-                        linewidths=0.75, alpha=0.9, zorder=5)
+                        linewidths=lw, alpha=alpha, zorder=5)
         # mpl >=3.8: ContourSet is itself a Collection (no .collections list).
         cs.set_rasterized(False)
-        cs.set_path_effects([pe.withStroke(linewidth=1.4, foreground="#000000")])
-        lbls = ax.clabel(cs, levels=clevs[::2], inline=True, fontsize=7,
+        cs.set_path_effects([pe.withStroke(linewidth=halo, foreground="#000000")])
+        # Thin the inline labels: every other contour on the nest, every third on
+        # the wider parent so the few isobars there aren't crowded with numbers.
+        label_levs = clevs[::3] if is_parent else clevs[::2]
+        lbls = ax.clabel(cs, levels=label_levs, inline=True, fontsize=7,
                          fmt="%d")
         for t in lbls:
             t.set_color("#ffffff")
@@ -724,11 +787,19 @@ def render_frame(frame: HafsFrame, out_path: str,
     coast_color = REFL_COAST_COLOR if is_refl else COAST_COLOR
     border_color = REFL_COAST_COLOR if is_refl else BORDER_COLOR
     coast_lw = 1.3 if is_refl else 1.2
-    if coast:
-        _draw_feature_lines(ax, coast.get("features", []), frame.extent,
+    # The parent (~40 deg view) uses the coarser 110 m Natural Earth basemap: at
+    # this span the 50 m data is needlessly heavy and its dense small islands
+    # smear into clutter, while 110 m gives clean continental coasts. The nest
+    # keeps the detailed 50 m basemap it is handed. Per-product colors are
+    # unchanged (black on wind, neon green on reflectivity).
+    use_coast = (coast_lo if coast_lo is not None else coast) if is_parent else coast
+    use_countries = (countries_lo if countries_lo is not None
+                     else countries) if is_parent else countries
+    if use_coast:
+        _draw_feature_lines(ax, use_coast.get("features", []), feat_extent,
                             coast_color, coast_lw, 6)
-    if countries:
-        _draw_feature_lines(ax, countries.get("features", []), frame.extent,
+    if use_countries:
+        _draw_feature_lines(ax, use_countries.get("features", []), feat_extent,
                             border_color, 0.8, 6)
 
     # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
@@ -893,10 +964,15 @@ def main() -> int:
                  or _load_geojson("ne_110m_admin_0_countries.geojson"))
     coast = (_load_geojson("ne_50m_coastline.geojson")
              or _load_geojson("ne_110m_coastline.geojson"))
+    # Coarser 110 m basemap for the parent domain's ~40 deg view (falls back to
+    # the 50 m set if the 110 m files are absent).
+    countries_lo = _load_geojson("ne_110m_admin_0_countries.geojson") or countries
+    coast_lo = _load_geojson("ne_110m_coastline.geojson") or coast
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
 
-    render_frame(frame, args.out, countries, coast, product=render_product)
+    render_frame(frame, args.out, countries, coast, product=render_product,
+                 countries_lo=countries_lo, coast_lo=coast_lo)
     return 0
 
 
