@@ -78,6 +78,10 @@ MUTED_COLOR = "#9199a4"
 GRID_COLOR = "#3a4252"
 COAST_COLOR = "#000000"
 BORDER_COLOR = "#000000"
+# Reflectivity-product coast/border color: bold neon green. White conflicted with
+# the white MSLP isobars; neon green reads cleanly against both the dark ocean and
+# the bright radar cores. Wind keeps the black coasts above.
+REFL_COAST_COLOR = "#39ff14"
 WATERMARK = "@WeathermanAAA_"
 
 KT_PER_MS = 1.94384  # m s-1 → knots
@@ -713,13 +717,16 @@ def render_frame(frame: HafsFrame, out_path: str,
             t.set_path_effects([pe.withStroke(linewidth=1.6, foreground="#000000")])
 
     # (4) Coastlines + borders on top of the filled field. Wind uses bold BLACK
-    # (reads over the colorful wind fill); reflectivity uses WHITE so the coasts
-    # read against the dark radar background (non-precip areas are dark there).
-    coast_color = "#ffffff" if is_refl else COAST_COLOR
-    border_color = "#ffffff" if is_refl else BORDER_COLOR
+    # (reads over the colorful wind fill); reflectivity uses bold NEON GREEN
+    # (#39ff14), which stands clean against both the dark ocean and the bright
+    # radar cores without clashing with the white MSLP isobars. The refl coast is
+    # a touch heavier so it reads as a crisp bold outline.
+    coast_color = REFL_COAST_COLOR if is_refl else COAST_COLOR
+    border_color = REFL_COAST_COLOR if is_refl else BORDER_COLOR
+    coast_lw = 1.3 if is_refl else 1.2
     if coast:
         _draw_feature_lines(ax, coast.get("features", []), frame.extent,
-                            coast_color, 1.2, 6)
+                            coast_color, coast_lw, 6)
     if countries:
         _draw_feature_lines(ax, countries.get("features", []), frame.extent,
                             border_color, 0.8, 6)
