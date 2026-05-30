@@ -27,7 +27,8 @@ Herbie does ``.idx`` byte-range subsetting, so even though a storm.atm file is
 Why no cartopy
 --------------
 Per CLAUDE.md the repo deliberately avoids cartopy; the vendored Natural Earth
-GeoJSON (``ne_50m_*``) is the basemap. HAFS grids are regular lat/lon
+GeoJSON (``ne_10m_*``, with 50 m / 110 m fallbacks) is the basemap. HAFS
+grids are regular lat/lon
 (PlateCarree), so we plot straight in lon/lat and overlay the GeoJSON
 coastlines/borders exactly like ``generate_sst_plots.py``.
 
@@ -687,7 +688,7 @@ def render_frame(frame: HafsFrame, out_path: str,
     parent center is ``cen_lat`` / ``cen_lon`` (the storm track fix, the same
     vortex the storm-following nest is built on); without it the strongest-wind-
     anchored pressure minimum is used so the crop still locks onto the cyclone.
-    Both domains draw the same 50 m Natural Earth basemap.
+    Both domains draw the same 10 m Natural Earth basemap.
     """
     is_refl = product == "refl"
     if is_refl and frame.refl_dbz is None:
@@ -862,7 +863,7 @@ def render_frame(frame: HafsFrame, out_path: str,
     coast_color = REFL_COAST_COLOR if is_refl else COAST_COLOR
     border_color = REFL_COAST_COLOR if is_refl else BORDER_COLOR
     coast_lw = 1.3 if is_refl else 1.2
-    # Both domains draw the 50 m Natural Earth basemap (crisp coastlines at the
+    # Both domains draw the 10 m Natural Earth basemap (crisp coastlines at the
     # parent ~40 deg span as well as the nest). Features are clipped to
     # ``feat_extent`` (the storm-centered crop on the parent) so far-away land is
     # dropped. Per-product colors are unchanged (black on wind, neon green on
@@ -1042,9 +1043,11 @@ def main() -> int:
              frame.lat.size, frame.lon.size, *frame.extent,
              np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa), rmax)
 
-    countries = (_load_geojson("ne_50m_admin_0_countries.geojson")
+    countries = (_load_geojson("ne_10m_admin_0_countries.geojson")
+                 or _load_geojson("ne_50m_admin_0_countries.geojson")
                  or _load_geojson("ne_110m_admin_0_countries.geojson"))
-    coast = (_load_geojson("ne_50m_coastline.geojson")
+    coast = (_load_geojson("ne_10m_coastline.geojson")
+             or _load_geojson("ne_50m_coastline.geojson")
              or _load_geojson("ne_110m_coastline.geojson"))
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
