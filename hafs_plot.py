@@ -572,6 +572,12 @@ BBOX_TRIM_DEG = 1.5
 # a 40 x 40 deg synoptic view. The nest is untouched.
 PARENT_HALF_DEG = 20.0
 
+# When no storm track fix is supplied, the parent center falls back to the
+# pressure minimum within this many degrees of the peak 10 m wind, so a deeper
+# but far-off midlatitude low cannot capture the crop. Wide enough to span a
+# large TC circulation, tight enough to exclude a separate synoptic low.
+PARENT_WIND_SEARCH_DEG = 8.0
+
 # Header title-bar background, a touch lighter than the map bg so the band reads
 # like the site nav bar.
 BAND_BG = "#11161f"
@@ -614,11 +620,58 @@ def _category_pill(frame: HafsFrame) -> tuple[float, tuple[str, str, str]]:
     return vmax, _sshws_chip(vmax)
 
 
+def _clamp_window(a: float, b: float, lo: float, hi: float) -> tuple:
+    """Slide the window ``[a, b]`` to lie within data bounds ``[lo, hi]`` without
+    changing its width, so a storm-centered crop near the parent edge shifts in
+    rather than opening a black void. If the data is narrower than the window,
+    fall back to the full data span."""
+    w = b - a
+    if hi - lo <= w:
+        return lo, hi
+    if a < lo:
+        return lo, lo + w
+    if b > hi:
+        return hi - w, hi
+    return a, b
+
+
+def _parent_storm_center(frame, cen_lat=None, cen_lon=None) -> tuple:
+    """(lat, lon) the parent 40x40 box centers on, in ``frame.lon`` coordinates.
+
+    Order of preference: the storm track fix (``cen_lat`` / ``cen_lon``, snapped
+    to the nearest parent grid cell so it lands in the frame longitude system),
+    then the pressure minimum within ``PARENT_WIND_SEARCH_DEG`` of the strongest
+    winds (the TC eyewall is the windiest feature, so this locks onto the cyclone
+    rather than a deeper but far-off midlatitude low), then the whole-domain
+    pressure minimum, then the data-extent center."""
+    lon, lat = frame.lon, frame.lat
+    if cen_lat is not None and cen_lon is not None:
+        jc = int(np.argmin(np.abs(lat - cen_lat)))
+        flon = _wrap_into(cen_lon, float(lon.min()), float(lon.max()))
+        ic = int(np.argmin(np.abs(lon - flon)))
+        return float(lat[jc]), float(lon[ic])
+    mslp = np.ma.masked_invalid(frame.mslp_hpa)
+    wind = np.ma.masked_invalid(frame.wind_kt)
+    if mslp.count() and wind.count():
+        jw, iw = np.unravel_index(int(np.ma.argmax(wind)), wind.shape)
+        near = ((np.abs(lat[:, None] - float(lat[jw])) > PARENT_WIND_SEARCH_DEG)
+                | (np.abs(lon[None, :] - float(lon[iw])) > PARENT_WIND_SEARCH_DEG))
+        sub = np.ma.masked_where(near, mslp)
+        if sub.count():
+            kc = np.unravel_index(int(np.ma.argmin(sub)), sub.shape)
+            return float(lat[kc[0]]), float(lon[kc[1]])
+    if mslp.count():
+        kc = np.unravel_index(int(np.ma.argmin(mslp)), mslp.shape)
+        return float(lat[kc[0]]), float(lon[kc[1]])
+    return (0.5 * (float(lat.min()) + float(lat.max())),
+            0.5 * (float(lon.min()) + float(lon.max())))
+
+
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict],
                  product: str = "mslp_wind",
-                 countries_lo: Optional[dict] = None,
-                 coast_lo: Optional[dict] = None) -> None:
+                 cen_lat: Optional[float] = None,
+                 cen_lon: Optional[float] = None) -> None:
     """Render one TAT-styled HAFS frame.
 
     ``product`` selects the filled field and its legend/header text, sharing all
@@ -630,10 +683,11 @@ def render_frame(frame: HafsFrame, out_path: str,
     Domain framing differs by ``frame.product`` (the HAFS domain, NOT the field
     above): the STORM NEST keeps its per-side ``BBOX_TRIM_DEG`` trim, while the
     PARENT is cropped to a fixed 40 x 40 deg window centered on the storm (see
-    ``PARENT_HALF_DEG``) and drawn with the coarser 110 m basemap + a calmer
-    (wider-interval, softer) isobar field. ``countries_lo`` / ``coast_lo`` are the
-    110 m Natural Earth GeoJSON used for the parent; when omitted the parent falls
-    back to ``countries`` / ``coast``.
+    ``PARENT_HALF_DEG``) with a calmer (wider-interval, softer) isobar field. The
+    parent center is ``cen_lat`` / ``cen_lon`` (the storm track fix, the same
+    vortex the storm-following nest is built on); without it the strongest-wind-
+    anchored pressure minimum is used so the crop still locks onto the cyclone.
+    Both domains draw the same 50 m Natural Earth basemap.
     """
     is_refl = product == "refl"
     if is_refl and frame.refl_dbz is None:
@@ -641,24 +695,26 @@ def render_frame(frame: HafsFrame, out_path: str,
                          "(fetch with want_refl=True)")
     is_parent = frame.product == "parent.atm"
     lon_min, lon_max, lat_min, lat_max = frame.extent
+    d_lon_min, d_lon_max, d_lat_min, d_lat_max = frame.extent
     if is_parent:
-        # Parent: a fixed 40 x 40 deg window centered on the storm (the MSLP
-        # minimum, the same center the L marker uses) so the frame is stable
-        # cycle to cycle and the storm is always centered. Fall back to the data-
-        # extent center if MSLP is somehow unusable. The center comes from
-        # ``frame.lon`` (the monotonic frame, continuous past +180 for a West
-        # Pacific dateline crosser), so the window stays in that frame and the
-        # basemap wrap / labels handle the antimeridian automatically.
-        mslp0 = np.ma.masked_invalid(frame.mslp_hpa)
-        if mslp0.count():
-            kc = np.unravel_index(np.ma.argmin(mslp0), mslp0.shape)
-            clon, clat = float(frame.lon[kc[1]]), float(frame.lat[kc[0]])
-        else:
-            clon, clat = 0.5 * (lon_min + lon_max), 0.5 * (lat_min + lat_max)
+        # Parent: a fixed 40 x 40 deg window centered on the STORM, not on the
+        # parent-domain-wide pressure minimum (which snaps to a deeper midlatitude
+        # low and shoves the TC to the edge). The center is the storm track fix
+        # (``cen_lat`` / ``cen_lon``, the same vortex the storm-following nest is
+        # built on), with a wind-anchored pressure-minimum fallback. It comes back
+        # in ``frame.lon`` monotonic coordinates (continuous past +180 for a West
+        # Pacific dateline crosser) so the basemap wrap / labels keep handling the
+        # antimeridian.
+        clat, clon = _parent_storm_center(frame, cen_lat, cen_lon)
         lon_min, lon_max = clon - PARENT_HALF_DEG, clon + PARENT_HALF_DEG
         lat_min, lat_max = clat - PARENT_HALF_DEG, clat + PARENT_HALF_DEG
-        # Clamp latitude to the valid range if the box would run past a pole.
-        lat_min, lat_max = max(lat_min, -90.0), min(lat_max, 90.0)
+        # Keep the window inside the valid lat range and the parent data
+        # footprint: if a side runs past the data edge, slide the window back in
+        # (preserving width) so the frame never shows a black void.
+        lat_min, lat_max = _clamp_window(lat_min, lat_max,
+                                         max(d_lat_min, -90.0),
+                                         min(d_lat_max, 90.0))
+        lon_min, lon_max = _clamp_window(lon_min, lon_max, d_lon_min, d_lon_max)
     else:
         # Nest: crop the view in by BBOX_TRIM_DEG per side (clamped to at most 15%
         # of the span so small domains keep their storm) to enlarge the data on
@@ -787,26 +843,33 @@ def render_frame(frame: HafsFrame, out_path: str,
     coast_color = REFL_COAST_COLOR if is_refl else COAST_COLOR
     border_color = REFL_COAST_COLOR if is_refl else BORDER_COLOR
     coast_lw = 1.3 if is_refl else 1.2
-    # The parent (~40 deg view) uses the coarser 110 m Natural Earth basemap: at
-    # this span the 50 m data is needlessly heavy and its dense small islands
-    # smear into clutter, while 110 m gives clean continental coasts. The nest
-    # keeps the detailed 50 m basemap it is handed. Per-product colors are
-    # unchanged (black on wind, neon green on reflectivity).
-    use_coast = (coast_lo if coast_lo is not None else coast) if is_parent else coast
-    use_countries = (countries_lo if countries_lo is not None
-                     else countries) if is_parent else countries
-    if use_coast:
-        _draw_feature_lines(ax, use_coast.get("features", []), feat_extent,
+    # Both domains draw the 50 m Natural Earth basemap (crisp coastlines at the
+    # parent ~40 deg span as well as the nest). Features are clipped to
+    # ``feat_extent`` (the storm-centered crop on the parent) so far-away land is
+    # dropped. Per-product colors are unchanged (black on wind, neon green on
+    # reflectivity).
+    if coast:
+        _draw_feature_lines(ax, coast.get("features", []), feat_extent,
                             coast_color, coast_lw, 6)
-    if use_countries:
-        _draw_feature_lines(ax, use_countries.get("features", []), feat_extent,
+    if countries:
+        _draw_feature_lines(ax, countries.get("features", []), feat_extent,
                             border_color, 0.8, 6)
 
     # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
-    if mslp.count():
-        kmin = np.unravel_index(np.ma.argmin(mslp), mslp.shape)
+    # On the parent, restrict the L to the cropped window so it marks the storm in
+    # view (coinciding with the storm-centered box center) instead of a deeper low
+    # elsewhere in the full domain. The nest searches its full grid.
+    lmslp = mslp
+    if is_parent and mslp.count():
+        out = ((frame.lat[:, None] < lat_min) | (frame.lat[:, None] > lat_max)
+               | (frame.lon[None, :] < lon_min) | (frame.lon[None, :] > lon_max))
+        win = np.ma.masked_where(out, mslp)
+        if win.count():
+            lmslp = win
+    if lmslp.count():
+        kmin = np.unravel_index(int(np.ma.argmin(lmslp)), lmslp.shape)
         l_lon, l_lat = float(frame.lon[kmin[1]]), float(frame.lat[kmin[0]])
-        pmin = float(mslp.min())
+        pmin = float(lmslp.min())
         l_off = (lat_max - lat_min) * 0.05
         ax.text(l_lon, l_lat, "L", ha="center", va="center", fontsize=24,
                 fontweight="bold", color="#ffffff", zorder=8,
@@ -964,15 +1027,10 @@ def main() -> int:
                  or _load_geojson("ne_110m_admin_0_countries.geojson"))
     coast = (_load_geojson("ne_50m_coastline.geojson")
              or _load_geojson("ne_110m_coastline.geojson"))
-    # Coarser 110 m basemap for the parent domain's ~40 deg view (falls back to
-    # the 50 m set if the 110 m files are absent).
-    countries_lo = _load_geojson("ne_110m_admin_0_countries.geojson") or countries
-    coast_lo = _load_geojson("ne_110m_coastline.geojson") or coast
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
 
-    render_frame(frame, args.out, countries, coast, product=render_product,
-                 countries_lo=countries_lo, coast_lo=coast_lo)
+    render_frame(frame, args.out, countries, coast, product=render_product)
     return 0
 
 
