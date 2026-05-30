@@ -805,6 +805,25 @@ def render_frame(frame: HafsFrame, out_path: str,
         # white (legible over the bright fill) with a thin dark edge, not as dark.
         barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
 
+        # (2b) Thin black wind-speed contour LINES over the fill (wind product
+        # only), styled like the integer-degree contours on the SST actual plot.
+        # Levels are the Saffir-Simpson category thresholds (CBAR_TICKS_KT: 34
+        # TS, 64 C1, 83 C2, 96 C3, 113 C4, 137 C5) - the SAME values the colorbar
+        # ticks, so each black line marks a category boundary. Only thresholds
+        # that fall inside the frame's wind range are drawn. Thin and slightly
+        # translucent so they add storm structure without muddying the bright
+        # fill. Unlabeled and SEPARATE from the white MSLP isobars below - these
+        # follow wind speed, not pressure.
+        wfill = np.ma.masked_invalid(frame.wind_kt)
+        if wfill.count():
+            wmin, wmax = float(wfill.min()), float(wfill.max())
+            wlevs = [t for t in CBAR_TICKS_KT if wmin < t < wmax]
+            if wlevs:
+                wcs = ax.contour(Lon, Lat, wfill, levels=wlevs,
+                                 colors="#000000", linewidths=0.6, alpha=0.7,
+                                 zorder=3.5)
+                wcs.set_rasterized(False)
+
     # (3) MSLP isobars. The NEST keeps a tight 4 mb interval, thin white with a
     # dark halo, labels every other contour. The PARENT spans ~40 deg where a
     # 4 mb interval stacks into an illegible thicket, so it widens to an 8 mb
