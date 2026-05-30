@@ -576,6 +576,20 @@ def _sshws_chip(vmax_kt: float) -> tuple[str, str, str]:
     return _CAT_CHIP[-1][1:]
 
 
+def _category_pill(frame: HafsFrame) -> tuple[float, tuple[str, str, str]]:
+    """SSHWS category pill from the storm's 10 m wind VMAX - the SINGLE source
+    for the header chip on EVERY product.
+
+    Returns ``(vmax_kt, (label, fill, text_color))``. The pill is derived ONLY
+    from ``frame.wind_kt`` (the same field the wind product fetches, never the
+    plotted reflectivity), so the reflectivity frame shows the identical category
+    and color as the wind frame for the same storm/model/domain/forecast-hour.
+    """
+    vmax = (float(np.nanmax(frame.wind_kt))
+            if np.isfinite(frame.wind_kt).any() else float("nan"))
+    return vmax, _sshws_chip(vmax)
+
+
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict],
                  product: str = "mslp_wind") -> None:
@@ -634,14 +648,26 @@ def render_frame(frame: HafsFrame, out_path: str,
         field = frame.wind_kt
     Lon, Lat = np.meshgrid(frame.lon, frame.lat)
 
-    # (1) Filled field. Wind: the vivid continuous 0-165 kt TAT colormap.
-    # Reflectivity: the discrete .pal table; values below the first edge (10 dBZ)
-    # fall to set_under = transparent, so non-precip shows the dark map beneath.
-    # pcolormesh renders the fill as a raster at the save DPI; the barbs /
-    # isobars / labels stay crisp via the high DPI plus antialiased vector lines.
+    # (1) Filled field.
     fill = np.ma.masked_invalid(field)
-    cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
-                       shading="nearest", zorder=2)
+    if is_refl:
+        # Reflectivity: contourf over the palette's discrete step edges. contourf
+        # interpolates the band boundaries, so the fill looks SMOOTH (no blocky
+        # grid cells) while the colors stay locked to the TAT-radar.pal dBZ steps
+        # via the same ListedColormap + BoundaryNorm. It does NOT fill below the
+        # lowest level (10 dBZ), so non-precip - including the -20 no-echo fill -
+        # and masked cells stay unfilled = transparent = the dark map shows
+        # through. extend="max" routes any rare >top value to the white set_over,
+        # matching the discrete colorbar.
+        levels = list(norm.boundaries)        # 10,15,...,100 (the .pal steps)
+        cf = ax.contourf(Lon, Lat, fill, levels=levels, cmap=cmap, norm=norm,
+                         extend="max", antialiased=True, zorder=2)
+    else:
+        # Wind: the vivid continuous 0-165 kt TAT colormap rendered as a smooth
+        # raster gradient. PNG output rasterizes at the save DPI; the barbs /
+        # isobars / labels stay crisp via the high DPI + antialiased vector lines.
+        cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
+                           shading="nearest", zorder=2)
 
     # (2) 10 m wind barbs (wind product only - reflectivity carries no barbs),
     # subsampled to ~BARB_TARGET across each axis. White, antialiased, kept
@@ -686,13 +712,17 @@ def render_frame(frame: HafsFrame, out_path: str,
             t.set_rasterized(False)
             t.set_path_effects([pe.withStroke(linewidth=1.6, foreground="#000000")])
 
-    # (4) Coastlines + borders (bold black) on top of the filled field.
+    # (4) Coastlines + borders on top of the filled field. Wind uses bold BLACK
+    # (reads over the colorful wind fill); reflectivity uses WHITE so the coasts
+    # read against the dark radar background (non-precip areas are dark there).
+    coast_color = "#ffffff" if is_refl else COAST_COLOR
+    border_color = "#ffffff" if is_refl else BORDER_COLOR
     if coast:
         _draw_feature_lines(ax, coast.get("features", []), frame.extent,
-                            COAST_COLOR, 1.2, 6)
+                            coast_color, 1.2, 6)
     if countries:
         _draw_feature_lines(ax, countries.get("features", []), frame.extent,
-                            BORDER_COLOR, 0.8, 6)
+                            border_color, 0.8, 6)
 
     # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
     if mslp.count():
@@ -743,13 +773,15 @@ def render_frame(frame: HafsFrame, out_path: str,
     # NOT the reference two-line header. Left: bold model + id, an SSHWS category
     # chip keyed off VMAX, and a muted field/domain subtitle. Right: a teal
     # VMAX/MSLP line and a muted Init -> F-hour -> Valid time-flow line.
-    vmax = float(np.nanmax(frame.wind_kt)) if np.isfinite(frame.wind_kt).any() else float("nan")
+    # The SSHWS category pill is derived ONLY from the storm's 10 m wind VMAX,
+    # via the shared _category_pill helper, on EVERY product - so the reflectivity
+    # frame shows the identical category + color as the wind frame for the same
+    # storm/model/domain/forecast-hour. It is never derived from the refl field.
+    vmax, (cat_label, chip_fill, chip_txt) = _category_pill(frame)
     pmin_hdr = float(np.nanmin(frame.mslp_hpa)) if np.isfinite(frame.mslp_hpa).any() else float("nan")
     model_label = MODEL_LABEL.get(frame.model, frame.model.upper())
     storm_disp = frame.storm.upper()
     domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
-    # The SSHWS category chip stays keyed off VMAX for BOTH products.
-    cat_label, chip_fill, chip_txt = _sshws_chip(vmax)
 
     # Per-product subtitle (lower-left) and right-side stat (upper-right). Refl
     # replaces VMAX with the peak of the plotted reflectivity field; both keep
