@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Model Plots · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="HAFS-A and HAFS-B hurricane model forecast plots: mean sea-level pressure and 10 m wind for every active storm, storm-following nest and parent domain, out to 126 hours.">
+<meta name="description" content="HAFS-A and HAFS-B hurricane model forecast plots: mean sea-level pressure over 10 m wind or composite radar reflectivity for every active storm, storm-following nest and parent domain, out to 126 hours.">
 <meta property="og:title" content="Model Plots · Triple-A-Tropics">
-<meta property="og:description" content="HAFS-A / HAFS-B forecast guidance: MSLP + 10 m wind, every active storm, out to 126 h.">
+<meta property="og:description" content="HAFS-A / HAFS-B forecast guidance: MSLP with 10 m wind or composite reflectivity, every active storm, out to 126 h.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
@@ -154,7 +154,7 @@
 
 <header class="page-head">
   <h1>HAFS Model Plots</h1>
-  <p>Hurricane Analysis and Forecast System guidance: mean sea-level pressure (isobars) over 10 m wind speed (knots), for every active storm. Pick a storm, switch between <b>HAFS-A</b> and <b>HAFS-B</b> and the storm-following nest (~2 km) or parent domain (~6 km), then scrub or play the forecast out to 126 hours.</p>
+  <p>Hurricane Analysis and Forecast System guidance for every active storm: mean sea-level pressure (isobars) over either 10 m wind speed (knots) or composite radar reflectivity (dBZ). Pick a storm, switch between <b>HAFS-A</b> and <b>HAFS-B</b>, the storm-following nest (~2 km) or parent domain (~6 km), and the <b>Wind</b> or <b>Reflectivity</b> product, then scrub or play the forecast out to 126 hours.</p>
 </header>
 
 <section class="chart-section">
@@ -175,11 +175,15 @@
           <label>Domain</label>
           <div id="hafs-domains" class="hafs-seg-group"></div>
         </div>
+        <div class="hafs-group">
+          <label>Product</label>
+          <div id="hafs-products" class="hafs-seg-group"></div>
+        </div>
       </div>
 
       <!-- Image stage -->
       <div id="hafs-stage" class="hafs-stage">
-        <img id="hafs-img" alt="HAFS MSLP and 10 m wind forecast frame">
+        <img id="hafs-img" alt="HAFS forecast frame: MSLP with 10 m wind or composite reflectivity">
         <div id="hafs-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span>
         </div>
@@ -203,10 +207,11 @@
       </div>
 
       <p id="hafs-caption" class="hafs-caption">
-        Filled shading: 10 m wind speed (kt), Saffir–Simpson-flavored palette
-        (calm → green TS → gold/orange Cat 1–2 → red/magenta Cat 3–4 → violet
-        Cat 5). White contours: MSLP every 4 hPa. The storm-nest domain follows
-        the cyclone, so playback is roughly storm-centered.
+        Filled shading: 10 m wind speed (kt), Saffir-Simpson-flavored palette
+        (calm, to green TS, to gold/orange Cat 1-2, to red/magenta Cat 3-4, to
+        violet Cat 5). White barbs: 10 m wind. White contours: MSLP every 4 hPa.
+        The storm-nest domain follows the cyclone, so playback is roughly
+        storm-centered.
       </p>
       <div id="hafs-meta"></div>
 
@@ -230,9 +235,10 @@
   run each cycle: <b>HAFS-A</b> and <b>HAFS-B</b>, differing in physics and data
   assimilation. Each uses a storm-following high-resolution nest (~2 km) embedded
   in a larger parent domain (~6 km), and forecasts to 126 hours. These plots show
-  the surface fields most useful for intensity and structure at a glance: the
-  pressure field and the 10 m wind. Plots are rendered straight from the GRIB2
-  output in the NOAA <a href="https://registry.opendata.aws/noaa-nws-hafs-pds/" target="_blank" rel="noopener">HAFS AWS Open Data</a> archive every cycle.</p>
+  the fields most useful for intensity and structure at a glance: the pressure
+  field with either the 10 m wind or the composite (column-maximum) radar
+  reflectivity. Plots are rendered straight from the GRIB2 output in the NOAA
+  <a href="https://registry.opendata.aws/noaa-nws-hafs-pds/" target="_blank" rel="noopener">HAFS AWS Open Data</a> archive every cycle.</p>
 </section>
 
 <footer>

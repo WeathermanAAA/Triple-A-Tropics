@@ -39,6 +39,8 @@ gibs/manifest.json
 models/hafs/
 # Dev artifact from the standalone single-frame slice (python hafs_plot.py).
 hafs_test.png
+# Local scratch renders used to eyeball palettes/masking before a full cycle.
+hafs_samples/
 *_season.gif
 historical/*/gifs/*.gif
 global_storms.geojson

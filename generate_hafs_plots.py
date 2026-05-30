@@ -3,9 +3,9 @@
 
 Scales the validated single-frame vertical slice in :mod:`hafs_plot` into a
 batch renderer that, for the latest complete HAFS cycle, loops every active
-storm × {HAFS-A, HAFS-B} × {storm nest, parent domain} × forecast hour and
-writes a TAT-styled MSLP+10 m-wind PNG per frame plus a ``manifest.json`` the
-``/models/`` frontend reads.
+storm × {HAFS-A, HAFS-B} × {storm nest, parent domain} × {MSLP+10 m wind,
+composite reflectivity} × forecast hour and writes a TAT-styled PNG per frame
+plus a ``manifest.json`` the ``/models/`` frontend reads.
 
 Pipeline (mirrors the GIBS still pattern - see ``generate_gibs_truecolor.py``):
 
@@ -16,17 +16,20 @@ Pipeline (mirrors the GIBS still pattern - see ``generate_gibs_truecolor.py``):
 2. Enumerate that cycle's storms with one ``delimiter=.`` list call (the storm
    id is each key's filename prefix, so S3 hands back the distinct ids directly).
 3. For each (storm, model, domain) list the available forecast hours, then
-   fetch + render each frame, reusing ``hafs_plot.fetch_hafs_frame`` /
-   ``render_frame``. Frames render in a process pool; a single failed frame is
-   logged and skipped, never fatal - partial coverage still publishes.
+   fetch + render each frame for every product, reusing
+   ``hafs_plot.fetch_hafs_frame`` / ``render_frame``. Frames render in a process
+   pool; a single failed frame is logged and skipped, never fatal - partial
+   coverage still publishes.
 4. Emit ``manifest.json`` listing, per storm, the fxx that actually rendered for
-   each (model, domain). The frontend derives valid times as init + fxx·3 h.
+   each (model, domain, product). The frontend derives valid times as
+   init + fxx·3 h.
 
 Output layout (also the R2 key layout under ``models/hafs/``)::
 
     models/hafs/manifest.json
-    models/hafs/{model}/{storm}/{domain}/f{FFF}.png
-      e.g. models/hafs/hafsa/13l/storm/f012.png
+    models/hafs/{model}/{storm}/{domain}/{product}/f{FFF}.png
+      e.g. models/hafs/hafsa/13l/storm/mslp_wind/f012.png
+           models/hafs/hafsa/13l/storm/refl/f012.png
 
 ``update-hafs.yml`` runs this with no args (live: latest cycle) and syncs
 ``models/hafs/`` to ``cdn.triple-a-tropics.com/models/hafs/``. Nothing is
@@ -97,7 +100,19 @@ BASIN_BY_LETTER = {
 STORM_ID_RE = re.compile(r"^\d{2}[a-z]$")
 FXX_RE = re.compile(r"\.f(\d{3})\.grb2$")
 
-PRODUCT = {"slug": "mslp_wind", "label": "MSLP + 10 m Wind"}
+# The product dimension: each (storm, model, domain, fxx) is rendered once per
+# product. Wind keeps its original "mslp_wind" slug (and R2 path segment) so the
+# default view is unchanged; reflectivity is the new "refl" slug. ``short`` is
+# the segmented-toggle label on the frontend. Both products come from the SAME
+# GRIB2 file, so a (model, domain)'s available forecast hours are identical
+# across products and the completeness check applies to both equally.
+PRODUCTS = {
+    "mslp_wind": {"slug": "mslp_wind", "label": "MSLP + 10 m Wind",
+                  "short": "Wind"},
+    "refl": {"slug": "refl", "label": "Composite Reflectivity + MSLP",
+             "short": "Reflectivity"},
+}
+DEFAULT_PRODUCTS = ["mslp_wind", "refl"]
 
 # A frame this far in the future from "now" can't possibly exist; the complete-
 # cycle check looks for this terminal hour to know a run finished uploading.
@@ -290,6 +305,7 @@ class FrameJob:
     model: str
     storm: str
     domain: str          # raw, e.g. "storm.atm"
+    product: str         # product slug, e.g. "mslp_wind" / "refl"
     fxx: int
     cycle_dt: dt.datetime
     out_path: str
@@ -312,18 +328,20 @@ def _render_one(job: FrameJob) -> dict:
     reported present, a FileNotFoundError here is far more likely a blip than a
     true absence - so we retry it too, and only give up after the last attempt.
     """
+    want_refl = job.product == "refl"
     last_err: Optional[Exception] = None
     for attempt in range(1, _RENDER_RETRIES + 1):
         try:
             frame = hp.fetch_hafs_frame(
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
-                job.save_dir, remove_grib=True,
+                job.save_dir, remove_grib=True, want_refl=want_refl,
             )
             os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
-            hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST)
+            hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
+                            product=job.product)
             return {
                 "ok": True, "model": job.model, "storm": job.storm,
-                "domain": job.domain, "fxx": job.fxx,
+                "domain": job.domain, "product": job.product, "fxx": job.fxx,
                 "valid": frame.valid_time.replace(microsecond=0).isoformat() + "Z",
             }
         except Exception as e:  # noqa: BLE001 - one bad frame must not sink the run
@@ -331,7 +349,7 @@ def _render_one(job: FrameJob) -> dict:
             if attempt < _RENDER_RETRIES:
                 time.sleep(0.6 * attempt)
     return {"ok": False, "model": job.model, "storm": job.storm,
-            "domain": job.domain, "fxx": job.fxx,
+            "domain": job.domain, "product": job.product, "fxx": job.fxx,
             "error": f"{type(last_err).__name__}: {last_err}"}
 
 
@@ -339,20 +357,27 @@ def _render_one(job: FrameJob) -> dict:
 # Build
 # ---------------------------------------------------------------------------
 def _manifest_skeleton(models: Sequence[str], domains: Sequence[str],
-                       fxx_step: int, cycle: Optional[str],
-                       storms: list) -> dict:
+                       products: Sequence[str], fxx_step: int,
+                       cycle: Optional[str], storms: list) -> dict:
     """The manifest shape, in ONE place, so the off-season/empty path in main()
-    can't drift from build_cycle's output."""
+    can't drift from build_cycle's output.
+
+    Each storm's ``frames`` is nested model -> domain -> product -> [fxx]; the
+    ``path_template`` carries the ``{product}`` segment. ``product`` (singular)
+    is retained pointing at the default product so a reader of the prior schema
+    still resolves a sensible default.
+    """
     return {
         "generated_at": dt.datetime.now(dt.timezone.utc)
                           .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "product": PRODUCT,
+        "product": PRODUCTS[products[0]],
+        "products": [PRODUCTS[p] for p in products],
         "models": [{"slug": m, "label": MODEL_LABEL[m]} for m in models],
         "domains": [{"slug": DOMAINS[d][0], "label": DOMAINS[d][1], "raw": d}
                     for d in domains],
         "fxx_step": fxx_step,
         "fxx_pad": 3,
-        "path_template": "{model}/{storm}/{domain}/f{fxx}.png",
+        "path_template": "{model}/{storm}/{domain}/{product}/f{fxx}.png",
         "cycle": cycle,
         "storms": storms,
     }
@@ -360,6 +385,7 @@ def _manifest_skeleton(models: Sequence[str], domains: Sequence[str],
 
 def build_cycle(date: str, hh: str, out_dir: Path, *,
                 models: Sequence[str], domains: Sequence[str],
+                products: Sequence[str],
                 storms_filter: Optional[Sequence[str]] = None,
                 basins_filter: Optional[Sequence[str]] = None,
                 max_fxx: int = TERMINAL_FXX, fxx_step: int = 3,
@@ -429,12 +455,17 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                              model, storm, domain, max(avail), terminal)
                     continue
                 dom_slug = DOMAINS[domain][0]
+                # Both products share this (model, domain)'s GRIB files, so each
+                # available fxx is rendered once per product into its own path
+                # segment (.../<dom_slug>/<product>/f###.png).
                 for fxx in avail:
-                    out_path = str(out_dir / model / storm / dom_slug
-                                   / f"f{fxx:03d}.png")
-                    jobs_list.append(FrameJob(
-                        model=model, storm=storm, domain=domain, fxx=fxx,
-                        cycle_dt=cycle_dt, out_path=out_path, save_dir=save_dir))
+                    for product in products:
+                        out_path = str(out_dir / model / storm / dom_slug
+                                       / product / f"f{fxx:03d}.png")
+                        jobs_list.append(FrameJob(
+                            model=model, storm=storm, domain=domain,
+                            product=product, fxx=fxx, cycle_dt=cycle_dt,
+                            out_path=out_path, save_dir=save_dir))
 
     log.info("planned %d frames across %d storm(s) - rendering with %d worker(s)",
              len(jobs_list), len(storms), jobs)
@@ -448,7 +479,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             n_ok += 1
             dom_slug = DOMAINS[res["domain"]][0]
             fr = storm_meta[res["storm"]]["frames"]
-            fr.setdefault(res["model"], {}).setdefault(dom_slug, []).append(res["fxx"])
+            (fr.setdefault(res["model"], {})
+               .setdefault(dom_slug, {})
+               .setdefault(res["product"], [])
+               .append(res["fxx"]))
         else:
             n_fail += 1
             log.warning("frame failed: %s %s %s f%03d - %s", res["model"],
@@ -488,17 +522,23 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                             pool_attempt, len(remaining))
         for job in remaining:
             _record({"ok": False, "model": job.model, "storm": job.storm,
-                     "domain": job.domain, "fxx": job.fxx,
+                     "domain": job.domain, "product": job.product, "fxx": job.fxx,
                      "error": "BrokenProcessPool (unrecoverable after retries)"})
 
     # Sort the per-pair fxx lists (pool completion order is nondeterministic),
-    # and drop storms/models/domains that produced nothing.
+    # and drop storms/models/domains/products that produced nothing.
     storms_out = []
     for storm in storms:
         meta = storm_meta[storm]
         for model in list(meta["frames"]):
             for dom_slug in list(meta["frames"][model]):
-                meta["frames"][model][dom_slug].sort()
+                prods = meta["frames"][model][dom_slug]
+                for prod in list(prods):
+                    prods[prod].sort()
+                    if not prods[prod]:
+                        del prods[prod]
+                if not prods:
+                    del meta["frames"][model][dom_slug]
             if not meta["frames"][model]:
                 del meta["frames"][model]
         if meta["frames"]:
@@ -506,7 +546,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
 
     log.info("rendered %d ok, %d failed in %.0fs", n_ok, n_fail, time.time() - t0)
 
-    manifest = _manifest_skeleton(models, domains, fxx_step,
+    manifest = _manifest_skeleton(models, domains, products, fxx_step,
                                   cycle if storms_out else None, storms_out)
     return manifest, len(storms), n_ok, n_fail
 
@@ -525,6 +565,8 @@ def main() -> int:
                     help="comma list of hafsa,hafsb")
     ap.add_argument("--domains", default="storm.atm,parent.atm",
                     help="comma list of storm.atm,parent.atm")
+    ap.add_argument("--products", default=",".join(DEFAULT_PRODUCTS),
+                    help="comma list of products to render: mslp_wind,refl")
     ap.add_argument("--storm", help="restrict to one or more storm ids (comma list)")
     ap.add_argument("--basins", help="restrict to basin slugs (al,ep,wp,…; comma list)")
     ap.add_argument("--max-fxx", type=int, default=TERMINAL_FXX)
@@ -538,12 +580,18 @@ def main() -> int:
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     domains = [d.strip() for d in args.domains.split(",") if d.strip()]
+    products = [p.strip() for p in args.products.split(",") if p.strip()]
     for m in models:
         if m not in MODEL_TOKEN:
             ap.error(f"unknown model {m!r}")
     for d in domains:
         if d not in DOMAINS:
             ap.error(f"unknown domain {d!r}")
+    for p in products:
+        if p not in PRODUCTS:
+            ap.error(f"unknown product {p!r}")
+    if not products:
+        ap.error("--products must list at least one of: " + ",".join(PRODUCTS))
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -557,13 +605,14 @@ def main() -> int:
         if resolved is None:
             log.warning("no complete cycle found - writing empty manifest")
             (out_dir / "manifest.json").write_text(json.dumps(
-                _manifest_skeleton(models, domains, args.fxx_step, None, []),
+                _manifest_skeleton(models, domains, products, args.fxx_step,
+                                   None, []),
                 indent=2))
             return 0
         date, hh = resolved
 
     manifest, n_storms, n_ok, n_fail = build_cycle(
-        date, hh, out_dir, models=models, domains=domains,
+        date, hh, out_dir, models=models, domains=domains, products=products,
         storms_filter=(args.storm.split(",") if args.storm else None),
         basins_filter=(args.basins.split(",") if args.basins else None),
         max_fxx=args.max_fxx, fxx_step=args.fxx_step,
