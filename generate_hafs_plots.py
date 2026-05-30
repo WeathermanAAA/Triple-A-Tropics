@@ -289,22 +289,15 @@ def storm_basin(storm: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 _COUNTRIES: Optional[dict] = None
 _COAST: Optional[dict] = None
-# Coarser 110 m basemap, used only for the parent domain's ~40 deg view (the
-# 50 m set above stays the nest basemap). Loaded once per worker alongside it.
-_COUNTRIES_LO: Optional[dict] = None
-_COAST_LO: Optional[dict] = None
 
 
 def _worker_init() -> None:
-    """Load the Natural Earth basemap (50 m nest + 110 m parent) per pool worker."""
-    global _COUNTRIES, _COAST, _COUNTRIES_LO, _COAST_LO
+    """Load the Natural Earth basemap once per pool worker."""
+    global _COUNTRIES, _COAST
     _COUNTRIES = (hp._load_geojson("ne_50m_admin_0_countries.geojson")
                   or hp._load_geojson("ne_110m_admin_0_countries.geojson"))
     _COAST = (hp._load_geojson("ne_50m_coastline.geojson")
               or hp._load_geojson("ne_110m_coastline.geojson"))
-    _COUNTRIES_LO = (hp._load_geojson("ne_110m_admin_0_countries.geojson")
-                     or _COUNTRIES)
-    _COAST_LO = (hp._load_geojson("ne_110m_coastline.geojson") or _COAST)
 
 
 @dataclass
@@ -317,6 +310,8 @@ class FrameJob:
     cycle_dt: dt.datetime
     out_path: str
     save_dir: str
+    cen_lat: Optional[float] = None
+    cen_lon: Optional[float] = None
 
 
 _RENDER_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
@@ -346,7 +341,7 @@ def _render_one(job: FrameJob) -> dict:
             os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
             hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
                             product=job.product,
-                            countries_lo=_COUNTRIES_LO, coast_lo=_COAST_LO)
+                            cen_lat=job.cen_lat, cen_lon=job.cen_lon)
             return {
                 "ok": True, "model": job.model, "storm": job.storm,
                 "domain": job.domain, "product": job.product, "fxx": job.fxx,
