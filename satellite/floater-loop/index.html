@@ -454,7 +454,16 @@
         status.textContent = 'Done!'; mk.disabled = false;
         setTimeout(closeGifDialog, 700);
       });
-      sel.forEach(f => { octx.clearRect(0, 0, W, H); octx.drawImage(f.img, 0, 0, W, H); gif.addFrame(octx, { copy: true, delay: delay }); });
+      // Hold the final (most recent) frame longer before the GIF loops back,
+      // mirroring the on-page player's LAST_FRAME_DWELL "hold on present" pause.
+      // Every frame uses `delay`; only the last gets delay * LAST_FRAME_DWELL.
+      const lastIdx = sel.length - 1;
+      sel.forEach((f, i) => {
+        octx.clearRect(0, 0, W, H);
+        octx.drawImage(f.img, 0, 0, W, H);
+        const d = (i === lastIdx) ? delay * LAST_FRAME_DWELL : delay;
+        gif.addFrame(octx, { copy: true, delay: d });
+      });
       gif.render();
     });
   }
