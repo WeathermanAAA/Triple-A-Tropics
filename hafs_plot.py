@@ -58,16 +58,16 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
-import matplotlib.cm as mcm
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
 from matplotlib import patheffects as pe
 
-# Canonical shared TAT color palettes (single source of truth, pip-installed
-# from the in-repo palette/ package). The simulated-satellite products render
-# brightness temperature with these enhancements - rainbow_ir for Clean IR,
-# wv_tat for Water Vapor - so a color edit there propagates here with no copy.
-import tat_palettes as tp
+# NOTE: the product catalog (which field/cmap/colorbar/coast/stat each product
+# uses) lives in hafs_registry.ProductSpec. render_frame imports it LAZILY (in
+# the function body) so there's no module-load cycle: hafs_registry imports the
+# low-level color primitives from THIS module at its top. tat_palettes (the
+# canonical shared color source for the simulated-satellite products) is now
+# imported by hafs_registry, not here.
 
 log = logging.getLogger("hafs-plot")
 
@@ -627,24 +627,15 @@ PRODUCT_LABEL = {
 }
 MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
 
-# ---------------------------------------------------------------------------
-# Simulated-satellite products. Each maps one render-product slug to the GRIB2
-# parameterNumber that selects its channel out of the sibling ``.sat`` file and
-# the default tat_palettes enhancement used to color it. The .sat file carries
-# brightness temperature in Kelvin under discipline=3, parmCategory=192; because
-# the local NCEP table is missing, cfgrib cannot name the message, so we select
-# it with an idx regex on ``parm=<N>:`` and read the lone (``unknown``) var.
-#   - Clean IR  : parm 58 = GOES-R ABI band 13, 10.3 um  -> rainbow_ir
-#   - Water Vapor: parm 53 = ABI band 8, 6.2 um (upper WV) -> wv_tat
-# Mid (54, 6.9 um) and low (55, 7.3 um) WV bands exist in the same file; only
-# upper WV ships for now (a single clean "Water Vapor" product) - adding them
-# would be three WV buttons on the flat product toggle, deferred by design.
-SAT_PRODUCTS = {
-    "clean_ir": {"parm": 58, "enhancement": "rainbow_ir",
-                 "channel": "Clean IR (10.3 um)"},
-    "water_vapor": {"parm": 53, "enhancement": "wv_tat",
-                    "channel": "Water Vapor (6.2 um)"},
-}
+# The per-product catalog - including each simulated-satellite channel's GRIB2
+# parameterNumber and default tat_palettes enhancement - now lives in
+# hafs_registry (ProductSpec). The .sat file carries brightness temperature in
+# Kelvin under discipline=3, parmCategory=192; because the local NCEP table is
+# missing, cfgrib cannot name the message, so fetch_hafs_frame selects it with an
+# idx regex on ``parm=<N>:`` (sat_parm comes from the spec) and reads the lone
+# (``unknown``) var. Clean IR = parm 58 (ABI band 13, 10.3 um); Water Vapor =
+# parm 53 (ABI band 8, 6.2 um, upper WV). Mid (54) / low (55) WV exist in the
+# same file but are deferred (one clean "Water Vapor" product for now).
 
 # Colorbar ticks on the SSHWS category thresholds (kt) so the bar doubles as a
 # Saffir-Simpson reference: 34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5.
@@ -793,18 +784,17 @@ def render_frame(frame: HafsFrame, out_path: str,
     anchored pressure minimum is used so the crop still locks onto the cyclone.
     Both domains draw the same 10 m Natural Earth basemap.
     """
-    is_refl = product == "refl"
-    is_bt = product in SAT_PRODUCTS
-    if is_refl and frame.refl_dbz is None:
-        raise ValueError("render_frame(product='refl') needs frame.refl_dbz "
-                         "(fetch with want_refl=True)")
-    if is_bt and frame.bt_c is None:
-        raise ValueError(f"render_frame(product={product!r}) needs frame.bt_c "
-                         "(fetch with sat_parm set)")
-    enh = None
-    if is_bt:
-        enh_name = enhancement or SAT_PRODUCTS[product]["enhancement"]
-        enh = tp.get_enhancement(enh_name)
+    # Look up the product's spec once; every per-product difference below (fill
+    # field/cmap/norm, fill method, barbs, coast styling, colorbar, header stat)
+    # is read off it - no product-name if/elif chains. Lazy import avoids a
+    # module-load cycle (hafs_registry imports primitives from this module).
+    import hafs_registry as reg
+    spec = reg.get_spec(product)
+    if spec.requires_attr and getattr(frame, spec.requires_attr) is None:
+        raise ValueError(
+            f"render_frame(product={product!r}) needs frame.{spec.requires_attr}; "
+            "fetch with the matching want_refl / sat_parm option")
+    enh_name = spec.resolve_enhancement(enhancement)
     is_parent = frame.product == "parent.atm"
     lon_min, lon_max, lat_min, lat_max = frame.extent
     d_lon_min, d_lon_max, d_lat_min, d_lat_max = frame.extent
@@ -866,48 +856,27 @@ def render_frame(frame: HafsFrame, out_path: str,
                        map_w / fig_w, map_h / fig_h])
     ax.set_facecolor(DARK_BG)
 
-    if is_refl:
-        pal = _refl_pal()
-        cmap, norm, field = pal.cmap, pal.norm, frame.refl_dbz
-    elif is_bt:
-        pal = None
-        # NaN (outside the nest) renders transparent so the dark panel shows
-        # through; with_extremes returns a copy so the shared registry cmap is
-        # never mutated.
-        cmap = enh["cmap"].with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
-        norm = tp.enhancement_norm(enh_name)
-        field = frame.bt_c
-    else:
-        pal = None
-        cmap, norm = _wind_cmap_norm()
-        field = frame.wind_kt
+    # Resolve the fill field + its cmap/norm through the spec's color factory
+    # (wind = continuous 0-165 kt TAT table; refl = discrete .pal table; BT =
+    # tat_palettes IR/WV enhancement with NaN -> transparent). ``colors`` also
+    # carries the .pal / enhancement extras the colorbar builder needs.
+    colors = spec.make_colors(spec, frame, enh_name)
+    cmap, norm, field = colors.cmap, colors.norm, colors.field
     Lon, Lat = np.meshgrid(frame.lon, frame.lat)
 
-    # (1) Filled field.
+    # (1) Filled field. Two rasterizations, chosen by the spec's fill method:
+    # contourf over the palette's discrete dBZ step edges (reflectivity - the
+    # interpolated band boundaries look smooth while the colors stay locked to
+    # the .pal steps; it does NOT fill below the lowest level, so non-precip /
+    # masked cells stay transparent and the dark map shows through; extend="max"
+    # routes any >top value to the white set_over), or a smooth pcolormesh raster
+    # gradient (wind + simulated-satellite BT; masked NaN cells stay transparent).
     fill = np.ma.masked_invalid(field)
-    if is_refl:
-        # Reflectivity: contourf over the palette's discrete step edges. contourf
-        # interpolates the band boundaries, so the fill looks SMOOTH (no blocky
-        # grid cells) while the colors stay locked to the TAT-radar.pal dBZ steps
-        # via the same ListedColormap + BoundaryNorm. It does NOT fill below the
-        # lowest level (10 dBZ), so non-precip - including the -20 no-echo fill -
-        # and masked cells stay unfilled = transparent = the dark map shows
-        # through. extend="max" routes any rare >top value to the white set_over,
-        # matching the discrete colorbar.
-        levels = list(norm.boundaries)        # 10,15,...,100 (the .pal steps)
+    if spec.fill_method is reg.FillMethod.CONTOURF_DISCRETE:
+        levels = list(norm.boundaries)        # the .pal step edges
         cf = ax.contourf(Lon, Lat, fill, levels=levels, cmap=cmap, norm=norm,
                          extend="max", antialiased=True, zorder=2)
-    elif is_bt:
-        # Simulated-satellite brightness temperature: the tat_palettes IR/WV
-        # enhancement (built over a degC domain, cold -> warm) as a smooth raster
-        # gradient, same as the wind fill. Masked (NaN) cells outside the nest
-        # stay transparent via the cmap's bad color set above.
-        cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
-                           shading="nearest", zorder=2)
     else:
-        # Wind: the vivid continuous 0-165 kt TAT colormap rendered as a smooth
-        # raster gradient. PNG output rasterizes at the save DPI; the barbs /
-        # isobars / labels stay crisp via the high DPI + antialiased vector lines.
         cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
                            shading="nearest", zorder=2)
 
@@ -916,9 +885,9 @@ def render_frame(frame: HafsFrame, out_path: str,
     # vector (not rasterized) with a subtle dark halo so they stay sharp and
     # legible over both the cool (dark) and warm (bright) ends of the fill
     # palette; emptybarb=0 drops the calm-air circle. Barbs and the wind-speed
-    # contour lines are the WIND product's signature only - reflectivity and the
-    # simulated-satellite products carry neither.
-    if not is_refl and not is_bt:
+    # contour lines are the WIND product's signature only (spec.draw_barbs) -
+    # reflectivity and the simulated-satellite products carry neither.
+    if spec.draw_barbs:
         nlat, nlon = frame.wind_kt.shape
         si = max(1, int(round(nlat / BARB_TARGET)))
         sj = max(1, int(round(nlon / BARB_TARGET)))
@@ -988,18 +957,12 @@ def render_frame(frame: HafsFrame, out_path: str,
     # (#39ff14), which stands clean against both the dark ocean and the bright
     # radar cores without clashing with the white MSLP isobars. The refl coast is
     # a touch heavier so it reads as a crisp bold outline.
-    # Wind: black. Reflectivity: neon green. Simulated satellite: a bright
-    # near-white line WITH a dark halo (coast_halo), legible over both the
-    # colorful cold tops and the grayscale warm halves of the IR/WV fills.
-    if is_refl:
-        coast_color = border_color = REFL_COAST_COLOR
-        coast_lw, coast_halo = 1.3, 0.0
-    elif is_bt:
-        coast_color = border_color = SAT_COAST_COLOR
-        coast_lw, coast_halo = 1.1, 1.6
-    else:
-        coast_color, border_color = COAST_COLOR, BORDER_COLOR
-        coast_lw, coast_halo = 1.2, 0.0
+    # Per-product coast styling from the spec: black (wind) / neon green (refl) /
+    # bright near-white with a dark halo (simulated satellite, legible over both
+    # the colorful cold tops and grayscale warm halves of the IR/WV fills). The
+    # coast and country borders share one color (equal for every product today).
+    coast_color = border_color = spec.coast_color
+    coast_lw, coast_halo = spec.coast_lw, spec.coast_halo
     # Both domains draw the 10 m Natural Earth basemap (crisp coastlines at the
     # parent ~40 deg span as well as the nest). Features are clipped to
     # ``feat_extent`` (the storm-centered crop on the parent) so far-away land is
@@ -1047,25 +1010,13 @@ def render_frame(frame: HafsFrame, out_path: str,
         spine.set_color(MUTED_COLOR)
         spine.set_linewidth(0.6)
 
-    # (6) Right-side labeled colorbar. Wind: continuous knots, ticks on the SS
-    # thresholds. Reflectivity: a DISCRETE bar (one block per 5 dBZ step) from
-    # the .pal, ticked at the step values 10..70 with a white set_over arrow.
+    # (6) Right-side labeled colorbar, built by the spec: continuous knots (wind,
+    # ticks on the SS thresholds) / discrete dBZ blocks (refl) / physical degC
+    # brightness temperature (BT). The tick + outline restyle below is shared.
     cax = fig.add_axes([(left_in + map_w + 0.30) / fig_w,
                         (map_bottom + 0.05 * map_h) / fig_h,
                         0.16 / fig_w, (0.90 * map_h) / fig_h])
-    if is_refl:
-        cb_cmap, cb_norm, cb_ticks = _refl_colorbar(pal)
-        sm = mcm.ScalarMappable(norm=cb_norm, cmap=cb_cmap)
-        cb = fig.colorbar(sm, cax=cax, extend="max", ticks=cb_ticks)
-        cb.set_label("Composite reflectivity (dBZ)", color=TEXT_COLOR, fontsize=10)
-    elif is_bt:
-        # Physical degC brightness-temperature bar from the enhancement (same as
-        # the satellite page): ticks + label come straight from tat_palettes.
-        cb = fig.colorbar(cf, cax=cax, ticks=enh["ticks"])
-        cb.set_label(enh["cbar_label"], color=TEXT_COLOR, fontsize=10)
-    else:
-        cb = fig.colorbar(cf, cax=cax, extend="max", ticks=CBAR_TICKS_KT)
-        cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
+    cb = spec.make_colorbar(fig, cax, cf, colors)
     cb.ax.yaxis.set_tick_params(color=MUTED_COLOR, labelcolor=MUTED_COLOR,
                                 labelsize=8)
     cb.outline.set_edgecolor(MUTED_COLOR)
@@ -1085,26 +1036,11 @@ def render_frame(frame: HafsFrame, out_path: str,
     storm_disp = frame.storm.upper()
     domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
 
-    # Per-product subtitle (lower-left) and right-side stat (upper-right). Refl
-    # replaces VMAX with the peak of the plotted reflectivity field; both keep
-    # the MSLP minimum.
-    if is_refl:
-        rmax = (float(np.nanmax(frame.refl_dbz))
-                if np.isfinite(frame.refl_dbz).any() else float("nan"))
-        subtitle = f"Composite Reflectivity (dBZ) & MSLP (mb)  /  {domain_label}"
-        right_stat = f"MAX {rmax:.0f} dBZ   /   MSLP {pmin_hdr:.1f} mb"
-    elif is_bt:
-        # Coldest cloud top replaces VMAX on the right; MSLP stays. Subtitle names
-        # the simulated channel per the SAT_PRODUCTS map.
-        channel = SAT_PRODUCTS[product]["channel"]
-        btmin = (float(np.nanmin(frame.bt_c))
-                 if np.isfinite(frame.bt_c).any() else float("nan"))
-        subtitle = (f"Simulated Satellite - {channel} & MSLP (mb)  /  "
-                    f"{domain_label}")
-        right_stat = f"MIN BT {btmin:.1f}°C   /   MSLP {pmin_hdr:.1f} mb"
-    else:
-        subtitle = f"10m Wind (kt) & MSLP (mb)  /  {domain_label}"
-        right_stat = f"VMAX {vmax:.1f} kt   /   MSLP {pmin_hdr:.1f} mb"
+    # Per-product subtitle (lower-left) and right-side stat (upper-right) from the
+    # spec: wind keeps VMAX, refl shows peak dBZ, BT shows the coldest cloud top;
+    # all keep the shared MSLP minimum and the VMAX-derived SSHWS pill above.
+    subtitle, right_stat = spec.make_stat(spec, frame, domain_label, vmax,
+                                          pmin_hdr)
 
     band = fig.add_axes([0.0, (map_bottom + map_h) / fig_h, 1.0, band_in / fig_h])
     band.set_facecolor(BAND_BG)
@@ -1184,11 +1120,12 @@ def main() -> int:
     ap.add_argument("--save-dir", default=os.environ.get("HERBIE_DATA", "/tmp/herbie_data"))
     args = ap.parse_args()
 
+    import hafs_registry as reg
     date = dt.datetime.strptime(args.date, "%Y-%m-%d %H:%M")
     want_refl = args.field == "refl"
     render_product = {"wind": "mslp_wind", "refl": "refl"}.get(
         args.field, args.field)
-    sat_parm = SAT_PRODUCTS.get(render_product, {}).get("parm")
+    sat_parm = reg.sat_parm(render_product)
 
     log.info("fetching %s %s %s %s f%03d (field=%s) …", args.model, args.storm,
              args.product, args.date, args.fxx, args.field)
