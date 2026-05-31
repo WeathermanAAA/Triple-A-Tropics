@@ -56,13 +56,19 @@ jobs:
         # checked in and the script reads it from the repo root).
         run: |
           python -m pip install --upgrade pip
-          pip install herbie-data cfgrib eccodes matplotlib numpy xarray requests
+          # netCDF4 backs the per-cycle field cache (hafs_cache): ingest writes
+          # decoded fields to per-fxx NetCDF, render reads them back, so each GRIB
+          # is fetched once per frame instead of once per product. It is also the
+          # repo's sanctioned NetCDF stack (the SST/subsurface/armor3d generators
+          # use it); xarray needs a backend to read/write .nc.
+          pip install herbie-data cfgrib eccodes matplotlib numpy xarray netCDF4 requests
           # Canonical shared color palettes (tat_palettes), the single source of
           # truth shared with the satellite backend. Installed from the in-repo
           # palette/ package so the upcoming sim-sat product can import
           # rainbow_ir / dvorak / wv_tat without copying anchors.
           pip install ./palette
           python -c "import cfgrib; print('cfgrib', cfgrib.__version__)"
+          python -c "import netCDF4; print('netCDF4', netCDF4.__version__)"
           python -m tat_palettes
 
       - name: Ensure Natural Earth basemap files exist

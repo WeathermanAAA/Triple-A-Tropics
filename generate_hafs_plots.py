@@ -8,7 +8,14 @@ composite reflectivity, simulated Clean IR, simulated Water Vapor} × forecast
 hour and writes a TAT-styled PNG per frame plus a ``manifest.json`` the
 ``/models/`` frontend reads. The two simulated-satellite products pull their
 brightness-temperature channel from the sibling ``.sat`` GRIB (the wind/refl
-products read ``.atm``); see ``hafs_plot.SAT_PRODUCTS``.
+products read ``.atm``); see ``hafs_registry`` for the product catalog.
+
+The build is split into an INGEST stage and a RENDER stage with a persistent
+per-cycle FIELD CACHE between them (see ``hafs_cache``), so each model-cycle GRIB
+is fetched + decoded ONCE: ingest writes every field a frame's products need into
+one cache entry; render reads decoded fields from the cache and never re-fetches.
+Previously fetch + render were fused per (product, fxx), so a frame's shared
+``.atm`` was re-downloaded once per product that read it.
 
 Pipeline (mirrors the GIBS still pattern - see ``generate_gibs_truecolor.py``):
 
@@ -18,11 +25,14 @@ Pipeline (mirrors the GIBS still pattern - see ``generate_gibs_truecolor.py``):
    i.e. the model finished and uploaded, so we never catch a half-written cycle.
 2. Enumerate that cycle's storms with one ``delimiter=.`` list call (the storm
    id is each key's filename prefix, so S3 hands back the distinct ids directly).
-3. For each (storm, model, domain) list the available forecast hours, then
-   fetch + render each frame for every product, reusing
-   ``hafs_plot.fetch_hafs_frame`` / ``render_frame``. Frames render in a process
-   pool; a single failed frame is logged and skipped, never fatal - partial
-   coverage still publishes.
+3. For each (storm, model, domain) list the available forecast hours. Stage 1
+   INGEST: one fetch+decode per (model, storm, domain, fxx) frame into the field
+   cache (``hafs_cache.ingest_frame``). Stage 2 RENDER: one task per (product,
+   frame) reads the cache (``hafs_cache.load_frame``) and draws via
+   ``hafs_plot.render_frame``. Both stages run in a process pool with shared
+   BrokenProcessPool retries; a failed ingest skips all its products, a failed
+   render skips one product - logged, never fatal, partial coverage still
+   publishes.
 4. Emit ``manifest.json`` listing, per storm, the fxx that actually rendered for
    each (model, domain, product). The frontend derives valid times as
    init + fxx·3 h.
@@ -73,6 +83,8 @@ import requests
 import hafs_plot as hp
 # Single source of product truth (identity, GRIB channel, color/colorbar/stat).
 import hafs_registry as reg
+# Persistent per-cycle field cache (the ingest/render split lives here).
+import hafs_cache as fc
 
 log = logging.getLogger("hafs-build")
 
@@ -311,64 +323,146 @@ def _worker_init() -> None:
 
 
 @dataclass
-class FrameJob:
+class IngestJob:
+    """One INGEST task: fetch + decode every GRIB a frame's products need, ONCE,
+    into the field cache. One per (model, storm, domain, fxx) - NOT per product."""
+    model: str
+    storm: str
+    domain: str          # raw, e.g. "storm.atm"
+    fxx: int
+    cycle_dt: dt.datetime
+    cache_path: str      # field-cache .nc to write
+    save_dir: str        # where Herbie stages its GRIB subsets
+    want_refl: bool      # cycle needs composite reflectivity
+    sat_parms: tuple     # GRIB2 parms for the sim-sat channels the cycle needs
+
+
+@dataclass
+class RenderJob:
+    """One RENDER task: read a frame's cached fields and render ONE product from
+    them - no GRIB fetch. One per (product, frame)."""
     model: str
     storm: str
     domain: str          # raw, e.g. "storm.atm"
     product: str         # product slug, e.g. "mslp_wind" / "refl"
     fxx: int
-    cycle_dt: dt.datetime
+    cache_path: str      # field-cache .nc to read
     out_path: str
-    save_dir: str
     cen_lat: Optional[float] = None
     cen_lon: Optional[float] = None
 
 
-_RENDER_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
-                      # the file is there, so a short retry clears the hole.
+def _frame_key(model: str, storm: str, domain: str, fxx: int) -> tuple:
+    """Identity of a frame across the ingest/render split."""
+    return (model, storm, domain, fxx)
 
 
-def _render_one(job: FrameJob) -> dict:
-    """Fetch + render a single frame. Returns a result dict (never raises).
+_INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
+                      # the file is there, so a short retry clears the hole. This
+                      # is the ONLY stage that touches the network now.
 
-    Retries transient fetch failures a few times - over the hundreds of frames
-    in a cycle these are routine and would otherwise leave random gaps. This
-    includes ``FileNotFoundError``: Herbie decides "no GRIB" from a ``HEAD``
-    whose ``.ok`` is False for *any* status >= 400, so a transient S3 5xx on the
-    existence check is indistinguishable from a real 404 and surfaces as
-    FileNotFoundError. Since build_cycle only plans frames that ``list_fxx``
-    reported present, a FileNotFoundError here is far more likely a blip than a
-    true absence - so we retry it too, and only give up after the last attempt.
+
+def _ingest_one(job: IngestJob) -> dict:
+    """INGEST one frame into the field cache. Returns a result dict (never raises).
+
+    Retries transient fetch failures - over hundreds of frames these are routine
+    and would otherwise leave gaps. Includes ``FileNotFoundError``: Herbie infers
+    "no GRIB" from a HEAD whose ``.ok`` is False for any status >= 400, so a
+    transient S3 5xx on the existence check is indistinguishable from a real 404;
+    since we only plan frames ``list_fxx`` reported present, retrying is right.
     """
-    want_refl = job.product == "refl"
-    # Simulated-satellite products pull their brightness-temperature channel from
-    # the sibling .sat file by GRIB2 parameterNumber (None for wind/refl), read
-    # off the product's registry spec.
-    sat_parm = reg.sat_parm(job.product)
     last_err: Optional[Exception] = None
-    for attempt in range(1, _RENDER_RETRIES + 1):
+    for attempt in range(1, _INGEST_RETRIES + 1):
         try:
-            frame = hp.fetch_hafs_frame(
+            fc.ingest_frame(
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
-                job.save_dir, remove_grib=True, want_refl=want_refl,
-                sat_parm=sat_parm,
+                Path(job.cache_path), job.save_dir,
+                want_refl=job.want_refl, sat_parms=job.sat_parms,
+                remove_grib=True,
             )
-            os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
-            hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
-                            product=job.product,
-                            cen_lat=job.cen_lat, cen_lon=job.cen_lon)
-            return {
-                "ok": True, "model": job.model, "storm": job.storm,
-                "domain": job.domain, "product": job.product, "fxx": job.fxx,
-                "valid": frame.valid_time.replace(microsecond=0).isoformat() + "Z",
-            }
+            return {"ok": True, "model": job.model, "storm": job.storm,
+                    "domain": job.domain, "fxx": job.fxx}
         except Exception as e:  # noqa: BLE001 - one bad frame must not sink the run
             last_err = e
-            if attempt < _RENDER_RETRIES:
+            if attempt < _INGEST_RETRIES:
                 time.sleep(0.6 * attempt)
     return {"ok": False, "model": job.model, "storm": job.storm,
-            "domain": job.domain, "product": job.product, "fxx": job.fxx,
+            "domain": job.domain, "fxx": job.fxx,
             "error": f"{type(last_err).__name__}: {last_err}"}
+
+
+def _render_one(job: RenderJob) -> dict:
+    """RENDER one product from the field cache - NO GRIB fetch. Never raises.
+
+    Reads the frame's cache entry and reconstructs exactly the HafsFrame this
+    product needs (the .atm fields for wind/refl, the matching .sat BT channel
+    for the sim-sat products). Failures here are deterministic (a degenerate BT
+    channel, a missing cache entry), so a single attempt is enough - the retry
+    that used to cover transient S3 reads now lives in the ingest stage. A failed
+    product is logged and skipped; the rest of the cycle still publishes.
+    """
+    want_refl = job.product == "refl"
+    # Sim-sat products read their BT channel by GRIB2 parameterNumber from the
+    # product's registry spec (None for wind/refl).
+    sat_parm = reg.sat_parm(job.product)
+    try:
+        frame = fc.load_frame(Path(job.cache_path), want_refl=want_refl,
+                              sat_parm=sat_parm)
+        os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
+        hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
+                        product=job.product,
+                        cen_lat=job.cen_lat, cen_lon=job.cen_lon)
+        return {
+            "ok": True, "model": job.model, "storm": job.storm,
+            "domain": job.domain, "product": job.product, "fxx": job.fxx,
+            "valid": frame.valid_time.replace(microsecond=0).isoformat() + "Z",
+        }
+    except Exception as e:  # noqa: BLE001 - one bad product must not sink the run
+        return {"ok": False, "model": job.model, "storm": job.storm,
+                "domain": job.domain, "product": job.product, "fxx": job.fxx,
+                "error": f"{type(e).__name__}: {e}"}
+
+
+def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
+              initializer=None) -> None:
+    """Run ``fn`` over ``jobs_list`` in a process pool, calling ``record(result)``
+    for each, with the BrokenProcessPool retry + per-task failure isolation shared
+    by BOTH the ingest and render stages.
+
+    ex.map() would discard the whole batch's results if one worker dies (a native
+    eccodes/cfgrib crash or OOM raises BrokenProcessPool), so we submit + track
+    which tasks haven't been recorded; if the pool breaks we rebuild it and re-run
+    only the unfinished ones. After a few rebuilds the stragglers are recorded as
+    failed (via ``straggler(job)``) so the run still publishes everything that did
+    complete. ``initializer`` runs once per worker (geojson for render; None for
+    ingest, which doesn't draw).
+    """
+    if jobs <= 1:
+        if initializer is not None:
+            initializer()
+        for job in jobs_list:
+            record(fn(job))
+        return
+    remaining = list(jobs_list)
+    for pool_attempt in range(1, 4):
+        if not remaining:
+            break
+        batch, remaining = remaining, []
+        not_done = set(range(len(batch)))
+        try:
+            with cf.ProcessPoolExecutor(max_workers=jobs,
+                                        initializer=initializer) as ex:
+                fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
+                for fut in cf.as_completed(fut_to_i):
+                    i = fut_to_i[fut]
+                    record(fut.result())
+                    not_done.discard(i)
+        except BrokenProcessPool:
+            remaining = [batch[i] for i in sorted(not_done)]
+            log.warning("worker pool died (attempt %d) - retrying %d unfinished "
+                        "task(s) in a fresh pool", pool_attempt, len(remaining))
+    for job in remaining:
+        record(straggler(job))
 
 
 # ---------------------------------------------------------------------------
@@ -431,8 +525,19 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
         storms = [s for s in storms if storm_basin(s)[0] in bw]
     log.info("cycle %s %sZ - storms: %s", date, hh, storms or "(none)")
 
-    # Plan every (storm, model, domain) frame up front so the pool stays busy.
-    jobs_list: list[FrameJob] = []
+    # The shared GRIB files a frame needs depend ONLY on which products this cycle
+    # renders, not on the frame: refl adds the .atm REFC read, each sim-sat
+    # product adds its .sat BT channel. PRMSL + 10 m wind are always read. So one
+    # ingest per frame serves every product. Computed once for the whole cycle.
+    cycle_want_refl = "refl" in products
+    cycle_sat_parms = tuple(sorted({reg.sat_parm(p) for p in products
+                                    if reg.sat_parm(p) is not None}))
+
+    # Plan two stages up front: one INGEST task per (model, storm, domain, fxx)
+    # frame, and one RENDER task per (product, frame). Ingest writes the field
+    # cache; render reads it.
+    ingest_jobs: list[IngestJob] = []
+    render_jobs: list[RenderJob] = []
     storm_meta: dict[str, dict] = {}
     for storm in storms:
         basin_slug, basin_label = storm_basin(storm)
@@ -473,20 +578,63 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                              model, storm, domain, max(avail), terminal)
                     continue
                 dom_slug = DOMAINS[domain][0]
-                # Both products share this (model, domain)'s GRIB files, so each
-                # available fxx is rendered once per product into its own path
-                # segment (.../<dom_slug>/<product>/f###.png).
                 for fxx in avail:
+                    cpath = str(fc.cache_path(save_dir, cycle, model, storm,
+                                              dom_slug, fxx))
+                    # ONE ingest per frame: fetch + decode each shared GRIB once.
+                    ingest_jobs.append(IngestJob(
+                        model=model, storm=storm, domain=domain, fxx=fxx,
+                        cycle_dt=cycle_dt, cache_path=cpath, save_dir=save_dir,
+                        want_refl=cycle_want_refl, sat_parms=cycle_sat_parms))
+                    # One render per product, each reading the SAME cache entry
+                    # into its own path segment (.../<dom_slug>/<product>/f###.png).
                     for product in products:
                         out_path = str(out_dir / model / storm / dom_slug
                                        / product / f"f{fxx:03d}.png")
-                        jobs_list.append(FrameJob(
+                        render_jobs.append(RenderJob(
                             model=model, storm=storm, domain=domain,
-                            product=product, fxx=fxx, cycle_dt=cycle_dt,
-                            out_path=out_path, save_dir=save_dir))
+                            product=product, fxx=fxx, cache_path=cpath,
+                            out_path=out_path))
 
-    log.info("planned %d frames across %d storm(s) - rendering with %d worker(s)",
-             len(jobs_list), len(storms), jobs)
+    log.info("planned %d ingest frame(s) + %d render task(s) across %d storm(s) "
+             "- %d worker(s)", len(ingest_jobs), len(render_jobs), len(storms),
+             jobs)
+
+    t0 = time.time()
+
+    # ----- Stage 1: INGEST. One fetch+decode per frame -> field cache. -----
+    ingested_ok: set = set()
+    n_ingest_fail = 0
+
+    def _record_ingest(res: dict) -> None:
+        nonlocal n_ingest_fail
+        if res["ok"]:
+            ingested_ok.add(_frame_key(res["model"], res["storm"],
+                                       res["domain"], res["fxx"]))
+        else:
+            n_ingest_fail += 1
+            log.warning("ingest failed: %s %s %s f%03d - %s", res["model"],
+                        res["storm"], res["domain"], res["fxx"], res["error"])
+
+    def _ingest_straggler(job: IngestJob) -> dict:
+        return {"ok": False, "model": job.model, "storm": job.storm,
+                "domain": job.domain, "fxx": job.fxx,
+                "error": "BrokenProcessPool (unrecoverable after retries)"}
+
+    # Ingest workers don't draw, so no geojson initializer (saves memory/time).
+    _run_pool(ingest_jobs, _ingest_one, jobs, _record_ingest, _ingest_straggler)
+    log.info("ingested %d/%d frame(s) ok (%d failed) in %.0fs",
+             len(ingested_ok), len(ingest_jobs), n_ingest_fail, time.time() - t0)
+
+    # ----- Stage 2: RENDER. Read the cache, render each product. No fetch. -----
+    # A frame whose ingest failed is skipped for ALL its products (logged once,
+    # never fatal), so render only touches frames with a cache entry.
+    runnable = [j for j in render_jobs
+                if _frame_key(j.model, j.storm, j.domain, j.fxx) in ingested_ok]
+    n_skipped = len(render_jobs) - len(runnable)
+    if n_skipped:
+        log.warning("skipping %d render task(s) whose frame ingest failed",
+                    n_skipped)
 
     # Accumulate successes into storm_meta[*]["frames"][model][dom_slug] = [fxx…]
     n_ok = n_fail = 0
@@ -503,45 +651,18 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                .append(res["fxx"]))
         else:
             n_fail += 1
-            log.warning("frame failed: %s %s %s f%03d - %s", res["model"],
-                        res["storm"], res["domain"], res["fxx"], res["error"])
+            log.warning("render failed: %s %s %s %s f%03d - %s", res["model"],
+                        res["storm"], res["domain"], res["product"], res["fxx"],
+                        res["error"])
 
-    t0 = time.time()
-    if jobs <= 1:
-        _worker_init()
-        for job in jobs_list:
-            _record(_render_one(job))
-    else:
-        # ex.map() would discard the WHOLE cycle's results if one worker dies
-        # (a native eccodes/cfgrib crash or OOM raises BrokenProcessPool). Use
-        # submit + as_completed and track which jobs haven't been recorded; if
-        # the pool breaks, rebuild it and re-run only the unfinished jobs. After
-        # a few rebuilds, record the stragglers as failed so the run still
-        # publishes every frame that did render.
-        remaining = list(jobs_list)
-        for pool_attempt in range(1, 4):
-            if not remaining:
-                break
-            batch, remaining = remaining, []
-            not_done = set(range(len(batch)))
-            try:
-                with cf.ProcessPoolExecutor(max_workers=jobs,
-                                            initializer=_worker_init) as ex:
-                    fut_to_i = {ex.submit(_render_one, job): i
-                                for i, job in enumerate(batch)}
-                    for fut in cf.as_completed(fut_to_i):
-                        i = fut_to_i[fut]
-                        _record(fut.result())
-                        not_done.discard(i)
-            except BrokenProcessPool:
-                remaining = [batch[i] for i in sorted(not_done)]
-                log.warning("worker pool died (attempt %d) - retrying %d "
-                            "unfinished frame(s) in a fresh pool",
-                            pool_attempt, len(remaining))
-        for job in remaining:
-            _record({"ok": False, "model": job.model, "storm": job.storm,
-                     "domain": job.domain, "product": job.product, "fxx": job.fxx,
-                     "error": "BrokenProcessPool (unrecoverable after retries)"})
+    def _render_straggler(job: RenderJob) -> dict:
+        return {"ok": False, "model": job.model, "storm": job.storm,
+                "domain": job.domain, "product": job.product, "fxx": job.fxx,
+                "error": "BrokenProcessPool (unrecoverable after retries)"}
+
+    # Render workers load the Natural Earth basemap once each (initializer).
+    _run_pool(runnable, _render_one, jobs, _record, _render_straggler,
+              initializer=_worker_init)
 
     # Sort the per-pair fxx lists (pool completion order is nondeterministic),
     # and drop storms/models/domains/products that produced nothing.

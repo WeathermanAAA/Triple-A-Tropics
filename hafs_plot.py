@@ -50,7 +50,7 @@ import sys
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -356,39 +356,38 @@ def _wrap_into(x: float, lon_min: float, lon_max: float) -> float:
     return x
 
 
-def fetch_hafs_frame(
+def _read_raw_fields(
     model: str,
     storm: str,
     product: str,
     date: dt.datetime,
     fxx: int,
     save_dir: str,
+    *,
     remove_grib: bool = False,
     want_refl: bool = False,
-    sat_parm: Optional[int] = None,
-) -> HafsFrame:
-    """Fetch PRMSL + 10 m wind for one HAFS frame and return a trimmed HafsFrame.
+    sat_parms: Sequence[int] = (),
+) -> dict:
+    """INGEST STAGE core: fetch + decode each REQUIRED GRIB file ONCE and return
+    the full reordered (pre-trim) field grid as a plain dict.
 
-    Two separate byte-range subset reads (PRMSL is meanSea typeOfLevel, winds
-    are heightAboveGround) so cfgrib doesn't have to reconcile two hypercubes.
-    With ``want_refl=True`` a third read pulls ``:REFC:`` (Maximum/Composite
-    radar reflectivity, entire-atmosphere single layer, dBZ) into
-    ``frame.refl_dbz``. We always read the winds even for the reflectivity
-    product because the header band's SSHWS category chip is keyed off VMAX.
+    This is the only place that touches the network/cfgrib. PRMSL + 10 m wind
+    always come from the ``.atm`` file (two byte-range subset reads, meanSea vs
+    heightAboveGround, so cfgrib doesn't reconcile two hypercubes). ``want_refl``
+    adds the ``:REFC:`` read from the SAME ``.atm``. ``sat_parms`` (GRIB2
+    parameterNumbers) each add a read from the SIBLING ``.sat`` file (one Herbie
+    object for the file, one byte-range read per channel) - Kelvin is converted
+    to degC. Decoding the union of every product's fields here, ONCE per frame,
+    is what lets the cache serve all products without re-fetching the shared GRIB.
 
-    With ``sat_parm`` set (a GRIB2 parameterNumber), a read of the SIBLING
-    ``.sat`` file (same storm/cycle/fxx, ``product`` with ``.atm`` -> ``.sat``)
-    pulls that channel's simulated brightness temperature, converts Kelvin to
-    DEGREES CELSIUS, and stores it in ``frame.bt_c``. The .sat nest is grid-
-    identical to the .atm nest, so bt rides the same lat/lon and is reordered /
-    trimmed in lockstep. PRMSL + wind still come from the .atm file so the
-    sim-sat frame keeps its MSLP isobars, L marker, and VMAX category chip.
-
-    ``remove_grib=True`` deletes each idx-subset GRIB after it is read into
-    xarray. The standalone slice keeps them (default ``False``) for inspection;
-    the full-cycle builder sets it so hundreds of frames don't fill the runner
-    disk. Each read uses a different search string → a different subset file, so
-    removing one never starves the others.
+    Returns a dict of full-grid (ascending lat/lon, untrimmed) arrays:
+    ``lon, lat, mslp_hpa, wind_kt, u_kt, v_kt`` always; ``refl_dbz`` when
+    ``want_refl``; ``bt`` is ``{parm: array_degC}`` for each requested channel;
+    plus ``init_time``/``valid_time``. ``_pack_frame`` (the RENDER-side trim +
+    guard) turns this into the exact HafsFrame ``fetch_hafs_frame`` would build -
+    so storing this dict (see hafs_cache) and packing later is byte-identical to
+    a direct fetch. The trim is deliberately NOT done here so the cached grid is
+    product-neutral and one cache entry feeds every product's own trim.
     """
     import herbie
 
@@ -419,8 +418,8 @@ def fetch_hafs_frame(
         rvar = "refc" if "refc" in ds_r.data_vars else list(ds_r.data_vars)[0]
         refl = ds_r[rvar].values.astype(float)
 
-    bt = None
-    if sat_parm is not None:
+    bt: dict[int, np.ndarray] = {}
+    if sat_parms:
         sat_product = product.replace(".atm", ".sat")
         H2 = herbie.Herbie(
             date, model=model, storm=storm, product=sat_product, fxx=fxx,
@@ -431,13 +430,14 @@ def fetch_hafs_frame(
                 f"no HAFS sat GRIB found for {model} {storm} {sat_product} "
                 f"{date:%Y-%m-%d %HZ} f{fxx:03d}"
             )
-        # cfgrib can't name the message (missing local table) -> the lone data
-        # var is 'unknown'. Select by parameterNumber via the idx regex.
-        ds_s = H2.xarray(f"parm={sat_parm}:", remove_grib=remove_grib)
-        if isinstance(ds_s, list):
-            ds_s = ds_s[0]
-        svar = list(ds_s.data_vars)[0]
-        bt = ds_s[svar].values.astype(float) - 273.15  # Kelvin -> degC
+        for parm in sat_parms:
+            # cfgrib can't name the message (missing local table) -> the lone
+            # data var is 'unknown'. Select by parameterNumber via the idx regex.
+            ds_s = H2.xarray(f"parm={parm}:", remove_grib=remove_grib)
+            if isinstance(ds_s, list):
+                ds_s = ds_s[0]
+            svar = list(ds_s.data_vars)[0]
+            bt[int(parm)] = ds_s[svar].values.astype(float) - 273.15  # K -> degC
 
     lat = ds_p["latitude"].values
     # Monotonic longitude frame (continuous past +180 for dateline-crossing
@@ -463,8 +463,7 @@ def fetch_hafs_frame(
         v_kt = v_kt[::-1, :]
         if refl is not None:
             refl = refl[::-1, :]
-        if bt is not None:
-            bt = bt[::-1, :]
+        bt = {p: a[::-1, :] for p, a in bt.items()}
     if lon[0] > lon[-1]:
         lon = lon[::-1]
         mslp = mslp[:, ::-1]
@@ -473,8 +472,37 @@ def fetch_hafs_frame(
         v_kt = v_kt[:, ::-1]
         if refl is not None:
             refl = refl[:, ::-1]
-        if bt is not None:
-            bt = bt[:, ::-1]
+        bt = {p: a[:, ::-1] for p, a in bt.items()}
+
+    init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
+    valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
+
+    return {
+        "model": model, "storm": storm, "product": product, "fxx": fxx,
+        "init_time": init_time, "valid_time": valid_time,
+        "lon": lon, "lat": lat, "mslp_hpa": mslp, "wind_kt": wind,
+        "u_kt": u_kt, "v_kt": v_kt, "refl_dbz": refl, "bt": bt,
+    }
+
+
+def _pack_frame(raw: dict, *, want_refl: bool = False,
+                sat_parm: Optional[int] = None) -> HafsFrame:
+    """RENDER-side core: trim a raw field grid (from ``_read_raw_fields`` or the
+    field cache) to its finite extent and return the HafsFrame ``render_frame``
+    consumes. Pure CPU - no network. Identical math whether ``raw`` is a freshly
+    decoded full grid or a cache entry, so the produced HafsFrame is byte-for-byte
+    what ``fetch_hafs_frame`` returned before the ingest/render split.
+
+    ``want_refl`` / ``sat_parm`` select which optional fields this product needs:
+    refl from ``raw['refl_dbz']``, the BT channel from ``raw['bt'][sat_parm]``.
+    The finite-mask trim and the degenerate-BT guard match the pre-split fetch
+    exactly (the bbox is built from mslp|wind, plus bt when present).
+    """
+    lon, lat = raw["lon"], raw["lat"]
+    mslp, wind = raw["mslp_hpa"], raw["wind_kt"]
+    u_kt, v_kt = raw["u_kt"], raw["v_kt"]
+    refl = raw["refl_dbz"] if want_refl else None
+    bt = raw["bt"].get(int(sat_parm)) if sat_parm is not None else None
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
     # regular grid. Keep rows/cols that carry any finite data. The mask is built
@@ -505,18 +533,46 @@ def fetch_hafs_frame(
         if fin.mean() < 0.5 or not fin.any() or float(np.nanmax(bt) - np.nanmin(bt)) < 1.0:
             raise ValueError("simulated-BT field is mostly-NaN or flat, skipping")
 
-    init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
-    valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
-
     return HafsFrame(
-        model=model, storm=storm, product=product, fxx=fxx,
-        init_time=init_time, valid_time=valid_time,
+        model=raw["model"], storm=raw["storm"], product=raw["product"],
+        fxx=raw["fxx"], init_time=raw["init_time"], valid_time=raw["valid_time"],
         lon=lon, lat=lat, mslp_hpa=mslp, wind_kt=wind, u_kt=u_kt, v_kt=v_kt,
         extent=(float(lon.min()), float(lon.max()),
                 float(lat.min()), float(lat.max())),
         refl_dbz=refl,
         bt_c=bt,
     )
+
+
+def fetch_hafs_frame(
+    model: str,
+    storm: str,
+    product: str,
+    date: dt.datetime,
+    fxx: int,
+    save_dir: str,
+    remove_grib: bool = False,
+    want_refl: bool = False,
+    sat_parm: Optional[int] = None,
+) -> HafsFrame:
+    """Fetch + decode + trim one HAFS frame for ONE product into a HafsFrame.
+
+    Thin wrapper over ``_read_raw_fields`` (the GRIB reads) + ``_pack_frame``
+    (the trim/guard), kept for the standalone CLI and any direct caller. The
+    full-cycle builder no longer calls this per product - it ingests the union of
+    fields once per frame into a field cache and renders from there (see
+    hafs_cache / generate_hafs_plots) - but the output here is unchanged.
+
+    ``remove_grib=True`` deletes each idx-subset GRIB after it is read into
+    xarray (the builder sets it so hundreds of frames don't fill the runner disk;
+    the standalone slice keeps them for inspection).
+    """
+    raw = _read_raw_fields(
+        model, storm, product, date, fxx, save_dir,
+        remove_grib=remove_grib, want_refl=want_refl,
+        sat_parms=(sat_parm,) if sat_parm is not None else (),
+    )
+    return _pack_frame(raw, want_refl=want_refl, sat_parm=sat_parm)
 
 
 # ---------------------------------------------------------------------------

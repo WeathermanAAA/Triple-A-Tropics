@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Persistent per-cycle FIELD CACHE between the HAFS ingest and render stages.
+
+The full-cycle builder used to FUSE fetch + render per (product, fxx): the wind
+job downloaded a frame's ``.atm`` GRIB, then the reflectivity job downloaded the
+SAME ``.atm`` again, and Clean IR / Water Vapor each re-downloaded the shared
+``.sat`` - the shared GRIB was re-fetched once per product that read it. This
+module removes that waste:
+
+  INGEST  - ``ingest_frame`` fetches + decodes each required GRIB for a frame
+            ONCE (via hafs_plot._read_raw_fields: the .atm for MSLP/wind/refl, the
+            .sat for the sim-sat channels) and writes ALL fields any product needs
+            into ONE cache entry keyed by cycle/model/storm/domain/fxx.
+  RENDER  - ``load_frame`` reads that entry and reconstructs the exact HafsFrame a
+            given product needs (hafs_plot._pack_frame) with NO GRIB fetch.
+
+CACHE FORMAT: per-fxx NetCDF (netCDF4 backend). Chosen over npz and Zarr:
+  - vs npz: NetCDF is self-describing (named variables + coords + attrs), which
+    matters for an R2-hosted cache a future on-demand renderer / debugger reads
+    with xarray.open_dataset; npz would bolt metadata on as side arrays. npz was
+    only ~5% smaller in measurement. netCDF4 is already a sanctioned repo dep
+    (the SST/subsurface/armor3d generators use it).
+  - vs Zarr: Zarr's win is chunked PARTIAL reads across a big array; here each
+    entry is one small frame read whole, so Zarr buys nothing and adds a dep.
+  Round-trip is bit-exact and dtype-preserving (measured), so rendering from the
+  cache is byte-identical to a direct fetch. zlib complevel 4 compresses the
+  NaN-padded grid to the same size as the trimmed frame (~6 MB nest, ~26 MB
+  parent for all seven fields), so we store the product-neutral PRE-TRIM grid and
+  let each product's _pack_frame apply its own trim/guard.
+
+CACHE VERSION: ``CACHE_VERSION`` is baked into the key/path, so invalidation is a
+version bump (old paths are simply not looked at), not a delete - matching the
+repo's path-based cache-busting convention (cf. the SST animator).
+
+R2-PORTABILITY: ``cache_relpath`` returns a slash-separated relative key with no
+local-FS assumptions; ``cache_path`` just joins it under a local root today. The
+same relpath could be an R2 object key tomorrow without changing the contract -
+this is exactly where the FUTURE on-demand render path would read the cache from
+(fetch the .nc for a requested model/storm/domain/fxx, _pack_frame, render). That
+on-demand path / cache-warming / pre-render hybrid is intentionally NOT built
+here; this module is only the ingest/render split + the field cache.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import logging
+from pathlib import Path
+from typing import Optional, Sequence
+
+import numpy as np
+
+import hafs_plot as hp
+
+log = logging.getLogger("hafs-cache")
+
+# Bump to invalidate every cache entry (e.g. if the stored field set or decode
+# changes). Old version paths are never read, so this is a bump, not a delete.
+CACHE_VERSION = "v1"
+
+# Sub-root under save_dir where the local field cache lives.
+CACHE_DIRNAME = "fieldcache"
+
+# Stored BT channels are named bt_<parm> so load can map a product's sat_parm
+# back to its variable.
+_BT_VAR = "bt_{parm}"
+_BT_PREFIX = "bt_"
+
+
+def cache_relpath(cycle: str, model: str, storm: str, domain_slug: str,
+                  fxx: int, version: str = CACHE_VERSION) -> str:
+    """R2-portable cache key for one frame: a slash-separated relative path with
+    the cache version first (so a version bump sidesteps every old entry). The
+    same string is a local sub-path today and could be an R2 object key tomorrow.
+    ``domain_slug`` is the short form ("storm"/"parent")."""
+    return f"{version}/{cycle}/{model}/{storm}/{domain_slug}/f{fxx:03d}.nc"
+
+
+def cache_path(save_dir: str, cycle: str, model: str, storm: str,
+               domain_slug: str, fxx: int,
+               version: str = CACHE_VERSION) -> Path:
+    """Local filesystem path for a frame's cache entry (save_dir / fieldcache /
+    <relpath>). The relpath part is the R2-portable key."""
+    return (Path(save_dir) / CACHE_DIRNAME
+            / cache_relpath(cycle, model, storm, domain_slug, fxx, version))
+
+
+def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
+                 fxx: int, path: Path, save_dir: str, *,
+                 want_refl: bool = False, sat_parms: Sequence[int] = (),
+                 remove_grib: bool = True, overwrite: bool = False) -> Path:
+    """INGEST one frame: fetch + decode the UNION of fields every selected product
+    needs (ONE read per GRIB file) and write them to the cache entry at ``path``.
+    ``save_dir`` is where Herbie stages its byte-range GRIB subsets (removed after
+    decode); ``path`` is the cache .nc to write.
+
+    ``want_refl`` adds composite reflectivity; ``sat_parms`` adds each requested
+    simulated-satellite BT channel. PRMSL + 10 m wind are always read (every
+    product overlays MSLP isobars + the VMAX-derived pill). Idempotent: an
+    existing entry is reused unless ``overwrite`` (so a re-run / backup cron skips
+    work the version path already holds). Returns ``path``.
+    """
+    if path.exists() and not overwrite:
+        return path
+
+    raw = hp._read_raw_fields(
+        model, storm, domain, cycle_dt, fxx, save_dir,
+        remove_grib=remove_grib, want_refl=want_refl, sat_parms=sat_parms,
+    )
+    _write_cache(raw, path)
+    return path
+
+
+def _write_cache(raw: dict, path: Path) -> None:
+    """Serialize a raw field dict (full pre-trim grid) to a per-fxx NetCDF, native
+    dtypes + zlib. Metadata that _pack_frame needs (model/storm/domain/fxx, init
+    + valid times) rides as dataset attributes."""
+    import xarray as xr
+
+    data_vars = {
+        "mslp_hpa": (("lat", "lon"), raw["mslp_hpa"]),
+        "wind_kt": (("lat", "lon"), raw["wind_kt"]),
+        "u_kt": (("lat", "lon"), raw["u_kt"]),
+        "v_kt": (("lat", "lon"), raw["v_kt"]),
+    }
+    if raw.get("refl_dbz") is not None:
+        data_vars["refl_dbz"] = (("lat", "lon"), raw["refl_dbz"])
+    for parm, arr in raw.get("bt", {}).items():
+        data_vars[_BT_VAR.format(parm=int(parm))] = (("lat", "lon"), arr)
+
+    ds = xr.Dataset(
+        data_vars,
+        coords={"lat": raw["lat"], "lon": raw["lon"]},
+        attrs={
+            "model": raw["model"], "storm": raw["storm"],
+            "product": raw["product"], "fxx": int(raw["fxx"]),
+            "init_time": raw["init_time"].isoformat(),
+            "valid_time": raw["valid_time"].isoformat(),
+            "cache_version": CACHE_VERSION,
+        },
+    )
+    enc = {v: {"zlib": True, "complevel": 4} for v in ds.data_vars}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Write to a temp sibling then atomically rename, so a crash mid-write never
+    # leaves a half-written .nc that a render worker would read as a real entry.
+    tmp = path.with_suffix(".nc.tmp")
+    ds.to_netcdf(tmp, encoding=enc)
+    ds.close()
+    tmp.replace(path)
+
+
+def _read_cache(path: Path) -> dict:
+    """Read a cache entry back into the raw field dict _pack_frame expects (the
+    inverse of _write_cache); bt vars are collected into ``{parm: array}``."""
+    import xarray as xr
+
+    with xr.open_dataset(path) as ds:
+        ds.load()
+        bt = {}
+        for name in ds.data_vars:
+            if name.startswith(_BT_PREFIX):
+                bt[int(name[len(_BT_PREFIX):])] = ds[name].values
+        return {
+            "model": ds.attrs["model"], "storm": ds.attrs["storm"],
+            "product": ds.attrs["product"], "fxx": int(ds.attrs["fxx"]),
+            "init_time": dt.datetime.fromisoformat(ds.attrs["init_time"]),
+            "valid_time": dt.datetime.fromisoformat(ds.attrs["valid_time"]),
+            "lon": ds["lon"].values, "lat": ds["lat"].values,
+            "mslp_hpa": ds["mslp_hpa"].values, "wind_kt": ds["wind_kt"].values,
+            "u_kt": ds["u_kt"].values, "v_kt": ds["v_kt"].values,
+            "refl_dbz": (ds["refl_dbz"].values if "refl_dbz" in ds.data_vars
+                         else None),
+            "bt": bt,
+        }
+
+
+def load_frame(path: Path, *, want_refl: bool = False,
+               sat_parm: Optional[int] = None) -> hp.HafsFrame:
+    """RENDER STAGE: read a frame's field cache entry and reconstruct the exact
+    HafsFrame the given product needs - NO GRIB fetch. ``want_refl`` / ``sat_parm``
+    pick the optional fields (the same flags fetch_hafs_frame took), so the result
+    is byte-identical to the pre-split fetch. Raises if a requested BT channel is
+    absent (a degenerate/never-ingested channel), which the render orchestration
+    treats as a per-product skip - never fatal to the rest of the frame.
+    """
+    raw = _read_cache(path)
+    if sat_parm is not None and int(sat_parm) not in raw["bt"]:
+        raise KeyError(
+            f"BT channel parm={sat_parm} not in cache {path.name}")
+    return hp._pack_frame(raw, want_refl=want_refl, sat_parm=sat_parm)
