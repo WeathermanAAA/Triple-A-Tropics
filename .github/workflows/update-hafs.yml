@@ -57,7 +57,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install herbie-data cfgrib eccodes matplotlib numpy xarray requests
+          # Canonical shared color palettes (tat_palettes), the single source of
+          # truth shared with the satellite backend. Installed from the in-repo
+          # palette/ package so the upcoming sim-sat product can import
+          # rainbow_ir / dvorak / wv_tat without copying anchors.
+          pip install ./palette
           python -c "import cfgrib; print('cfgrib', cfgrib.__version__)"
+          python -m tat_palettes
 
       - name: Ensure Natural Earth basemap files exist
         # hafs_plot.py reads these from the repo root for coastlines/borders.
