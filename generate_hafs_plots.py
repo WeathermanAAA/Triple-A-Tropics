@@ -4,8 +4,11 @@
 Scales the validated single-frame vertical slice in :mod:`hafs_plot` into a
 batch renderer that, for the latest complete HAFS cycle, loops every active
 storm × {HAFS-A, HAFS-B} × {storm nest, parent domain} × {MSLP+10 m wind,
-composite reflectivity} × forecast hour and writes a TAT-styled PNG per frame
-plus a ``manifest.json`` the ``/models/`` frontend reads.
+composite reflectivity, simulated Clean IR, simulated Water Vapor} × forecast
+hour and writes a TAT-styled PNG per frame plus a ``manifest.json`` the
+``/models/`` frontend reads. The two simulated-satellite products pull their
+brightness-temperature channel from the sibling ``.sat`` GRIB (the wind/refl
+products read ``.atm``); see ``hafs_plot.SAT_PRODUCTS``.
 
 Pipeline (mirrors the GIBS still pattern - see ``generate_gibs_truecolor.py``):
 
@@ -30,6 +33,8 @@ Output layout (also the R2 key layout under ``models/hafs/``)::
     models/hafs/{model}/{storm}/{domain}/{product}/f{FFF}.png
       e.g. models/hafs/hafsa/13l/storm/mslp_wind/f012.png
            models/hafs/hafsa/13l/storm/refl/f012.png
+           models/hafs/hafsa/13l/storm/clean_ir/f012.png
+           models/hafs/hafsa/13l/storm/water_vapor/f012.png
 
 ``update-hafs.yml`` runs this with no args (live: latest cycle) and syncs
 ``models/hafs/`` to ``cdn.triple-a-tropics.com/models/hafs/``. Nothing is
@@ -111,8 +116,20 @@ PRODUCTS = {
                   "short": "Wind"},
     "refl": {"slug": "refl", "label": "Composite Reflectivity + MSLP",
              "short": "Reflectivity"},
+    # Simulated-satellite products. The brightness-temperature field comes from
+    # the sibling .sat GRIB (same storm/cycle/fxx/domain), selected by GRIB2
+    # parameterNumber - see hafs_plot.SAT_PRODUCTS for the channel + enhancement
+    # mapping. They overlay the same MSLP isobars + L marker as the others.
+    "clean_ir": {"slug": "clean_ir",
+                 "label": "Simulated Clean IR (10.3 um) + MSLP",
+                 "short": "Clean IR"},
+    "water_vapor": {"slug": "water_vapor",
+                    "label": "Simulated Water Vapor (6.2 um) + MSLP",
+                    "short": "Water Vapor"},
 }
-DEFAULT_PRODUCTS = ["mslp_wind", "refl"]
+# Order here is the frontend product-toggle order; mslp_wind stays first so the
+# default view on load is unchanged (Wind).
+DEFAULT_PRODUCTS = ["mslp_wind", "refl", "clean_ir", "water_vapor"]
 
 # A frame this far in the future from "now" can't possibly exist; the complete-
 # cycle check looks for this terminal hour to know a run finished uploading.
@@ -333,12 +350,16 @@ def _render_one(job: FrameJob) -> dict:
     true absence - so we retry it too, and only give up after the last attempt.
     """
     want_refl = job.product == "refl"
+    # Simulated-satellite products pull their brightness-temperature channel from
+    # the sibling .sat file by GRIB2 parameterNumber (None for wind/refl).
+    sat_parm = hp.SAT_PRODUCTS.get(job.product, {}).get("parm")
     last_err: Optional[Exception] = None
     for attempt in range(1, _RENDER_RETRIES + 1):
         try:
             frame = hp.fetch_hafs_frame(
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
                 job.save_dir, remove_grib=True, want_refl=want_refl,
+                sat_parm=sat_parm,
             )
             os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
             hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
@@ -571,7 +592,8 @@ def main() -> int:
     ap.add_argument("--domains", default="storm.atm,parent.atm",
                     help="comma list of storm.atm,parent.atm")
     ap.add_argument("--products", default=",".join(DEFAULT_PRODUCTS),
-                    help="comma list of products to render: mslp_wind,refl")
+                    help="comma list of products to render: "
+                         "mslp_wind,refl,clean_ir,water_vapor")
     ap.add_argument("--storm", help="restrict to one or more storm ids (comma list)")
     ap.add_argument("--basins", help="restrict to basin slugs (al,ep,wp,…; comma list)")
     ap.add_argument("--max-fxx", type=int, default=TERMINAL_FXX)

@@ -63,6 +63,12 @@ import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
 from matplotlib import patheffects as pe
 
+# Canonical shared TAT color palettes (single source of truth, pip-installed
+# from the in-repo palette/ package). The simulated-satellite products render
+# brightness temperature with these enhancements - rainbow_ir for Clean IR,
+# wv_tat for Water Vapor - so a color edit there propagates here with no copy.
+import tat_palettes as tp
+
 log = logging.getLogger("hafs-plot")
 
 HERE = Path(__file__).resolve().parent
@@ -83,6 +89,13 @@ BORDER_COLOR = "#000000"
 # the white MSLP isobars; neon green reads cleanly against both the dark ocean and
 # the bright radar cores. Wind keeps the black coasts above.
 REFL_COAST_COLOR = "#39ff14"
+# Simulated-satellite (IR/WV) coast/border color: a bright near-white line drawn
+# WITH a dark halo (see _draw_feature_lines ``halo``). Neither black nor a single
+# hue reads cleanly across BOTH the colorful cold-cloud tops of the rainbow_ir /
+# wv_tat fills AND their grayscale warm halves; a haloed near-white line stays
+# legible over either, matching the satellite page's coastline treatment.
+SAT_COAST_COLOR = "#eef3f9"
+SAT_COAST_HALO = "#0a0d12"
 WATERMARK = "@WeathermanAAA_"
 
 KT_PER_MS = 1.94384  # m s-1 → knots
@@ -289,6 +302,11 @@ class HafsFrame:
     # Composite radar reflectivity (dBZ), (lat, lon). Only fetched when the
     # caller asks for the reflectivity product; None for a wind-only fetch.
     refl_dbz: Optional[np.ndarray] = None
+    # Simulated-satellite brightness temperature (DEGREES CELSIUS), (lat, lon),
+    # on the SAME grid as mslp/wind (the .sat and .atm nests are grid-identical),
+    # so it is trimmed in lockstep. One GRIB channel from the sibling .sat file
+    # (Clean IR band 13 or a Water Vapor band). None unless ``sat_parm`` is set.
+    bt_c: Optional[np.ndarray] = None
 
 
 def _to_180(lon: np.ndarray) -> np.ndarray:
@@ -347,6 +365,7 @@ def fetch_hafs_frame(
     save_dir: str,
     remove_grib: bool = False,
     want_refl: bool = False,
+    sat_parm: Optional[int] = None,
 ) -> HafsFrame:
     """Fetch PRMSL + 10 m wind for one HAFS frame and return a trimmed HafsFrame.
 
@@ -356,6 +375,14 @@ def fetch_hafs_frame(
     radar reflectivity, entire-atmosphere single layer, dBZ) into
     ``frame.refl_dbz``. We always read the winds even for the reflectivity
     product because the header band's SSHWS category chip is keyed off VMAX.
+
+    With ``sat_parm`` set (a GRIB2 parameterNumber), a read of the SIBLING
+    ``.sat`` file (same storm/cycle/fxx, ``product`` with ``.atm`` -> ``.sat``)
+    pulls that channel's simulated brightness temperature, converts Kelvin to
+    DEGREES CELSIUS, and stores it in ``frame.bt_c``. The .sat nest is grid-
+    identical to the .atm nest, so bt rides the same lat/lon and is reordered /
+    trimmed in lockstep. PRMSL + wind still come from the .atm file so the
+    sim-sat frame keeps its MSLP isobars, L marker, and VMAX category chip.
 
     ``remove_grib=True`` deletes each idx-subset GRIB after it is read into
     xarray. The standalone slice keeps them (default ``False``) for inspection;
@@ -392,6 +419,26 @@ def fetch_hafs_frame(
         rvar = "refc" if "refc" in ds_r.data_vars else list(ds_r.data_vars)[0]
         refl = ds_r[rvar].values.astype(float)
 
+    bt = None
+    if sat_parm is not None:
+        sat_product = product.replace(".atm", ".sat")
+        H2 = herbie.Herbie(
+            date, model=model, storm=storm, product=sat_product, fxx=fxx,
+            priority=["aws", "nomads"], save_dir=save_dir, verbose=False,
+        )
+        if H2.grib is None:
+            raise FileNotFoundError(
+                f"no HAFS sat GRIB found for {model} {storm} {sat_product} "
+                f"{date:%Y-%m-%d %HZ} f{fxx:03d}"
+            )
+        # cfgrib can't name the message (missing local table) -> the lone data
+        # var is 'unknown'. Select by parameterNumber via the idx regex.
+        ds_s = H2.xarray(f"parm={sat_parm}:", remove_grib=remove_grib)
+        if isinstance(ds_s, list):
+            ds_s = ds_s[0]
+        svar = list(ds_s.data_vars)[0]
+        bt = ds_s[svar].values.astype(float) - 273.15  # Kelvin -> degC
+
     lat = ds_p["latitude"].values
     # Monotonic longitude frame (continuous past +180 for dateline-crossing
     # West Pacific nests; plain signed -180..180 otherwise).
@@ -416,6 +463,8 @@ def fetch_hafs_frame(
         v_kt = v_kt[::-1, :]
         if refl is not None:
             refl = refl[::-1, :]
+        if bt is not None:
+            bt = bt[::-1, :]
     if lon[0] > lon[-1]:
         lon = lon[::-1]
         mslp = mslp[:, ::-1]
@@ -424,12 +473,18 @@ def fetch_hafs_frame(
         v_kt = v_kt[:, ::-1]
         if refl is not None:
             refl = refl[:, ::-1]
+        if bt is not None:
+            bt = bt[:, ::-1]
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
     # regular grid. Keep rows/cols that carry any finite data. The mask is built
     # from mslp|wind only (refl's no-echo fill is a finite -20, so including it
     # would defeat the trim); refl is sliced to the SAME rectangle in lockstep.
+    # bt IS genuinely NaN outside the nest, so it's safe to fold into the mask
+    # (guarantees no valid brightness-temperature pixels are clipped).
     finite = np.isfinite(mslp) | np.isfinite(wind)
+    if bt is not None:
+        finite = finite | np.isfinite(bt)
     rows = np.where(finite.any(axis=1))[0]
     cols = np.where(finite.any(axis=0))[0]
     if rows.size == 0 or cols.size == 0:
@@ -440,6 +495,15 @@ def fetch_hafs_frame(
     u_kt, v_kt = u_kt[r0:r1, c0:c1], v_kt[r0:r1, c0:c1]
     if refl is not None:
         refl = refl[r0:r1, c0:c1]
+    if bt is not None:
+        bt = bt[r0:r1, c0:c1]
+        # Degenerate-frame guard (mirrors the satellite render's scalar-IR guard):
+        # a healthy sim-sat nest is ~fully finite inside its trimmed rectangle, so
+        # a mostly-NaN or flat (no spread) field means the channel didn't render -
+        # skip it rather than publish an empty panel.
+        fin = np.isfinite(bt)
+        if fin.mean() < 0.5 or not fin.any() or float(np.nanmax(bt) - np.nanmin(bt)) < 1.0:
+            raise ValueError("simulated-BT field is mostly-NaN or flat, skipping")
 
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
@@ -451,6 +515,7 @@ def fetch_hafs_frame(
         extent=(float(lon.min()), float(lon.max()),
                 float(lat.min()), float(lat.max())),
         refl_dbz=refl,
+        bt_c=bt,
     )
 
 
@@ -484,7 +549,8 @@ def _feature_linestrings(feat: dict) -> list[list[tuple[float, float]]]:
     return out
 
 
-def _draw_feature_lines(ax, features, extent, color, linewidth, zorder):
+def _draw_feature_lines(ax, features, extent, color, linewidth, zorder,
+                        halo: float = 0.0):
     """Plot GeoJSON line/polygon edges that intersect the extent.
 
     Coordinates are -180..180 (matching our converted lon). Each point is wrapped
@@ -499,6 +565,11 @@ def _draw_feature_lines(ax, features, extent, color, linewidth, zorder):
     straight across the map. We insert a NaN wherever consecutive wrapped points
     jump more than 180 deg of longitude, lifting the pen so each real coastline
     segment draws on its own side and no stripe appears.
+
+    ``halo`` > 0 strokes each line with a dark outline that wide (added to
+    ``linewidth``), so a bright coastline stays legible over the colorful and
+    pale regions of the simulated-satellite fills alike. 0 = no halo (unchanged
+    for the wind / reflectivity products).
     """
     lon_min, lon_max, lat_min, lat_max = extent
     mlon = (lon_max - lon_min) * 0.05 + 1.0
@@ -519,8 +590,13 @@ def _draw_feature_lines(ax, features, extent, color, linewidth, zorder):
             if seam.size:
                 xs = np.insert(xs, seam, np.nan)
                 ys = np.insert(ys, seam, np.nan)
-            ax.plot(xs, ys, color=color, linewidth=linewidth, zorder=zorder,
-                    solid_capstyle="round", solid_joinstyle="round")
+            lines = ax.plot(xs, ys, color=color, linewidth=linewidth,
+                            zorder=zorder, solid_capstyle="round",
+                            solid_joinstyle="round")
+            if halo:
+                for ln in lines:
+                    ln.set_path_effects([pe.withStroke(
+                        linewidth=linewidth + halo, foreground=SAT_COAST_HALO)])
 
 
 def _lon_label(x: float, _pos) -> str:
@@ -550,6 +626,25 @@ PRODUCT_LABEL = {
     "parent.atm": "Parent domain (~6 km)",
 }
 MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
+
+# ---------------------------------------------------------------------------
+# Simulated-satellite products. Each maps one render-product slug to the GRIB2
+# parameterNumber that selects its channel out of the sibling ``.sat`` file and
+# the default tat_palettes enhancement used to color it. The .sat file carries
+# brightness temperature in Kelvin under discipline=3, parmCategory=192; because
+# the local NCEP table is missing, cfgrib cannot name the message, so we select
+# it with an idx regex on ``parm=<N>:`` and read the lone (``unknown``) var.
+#   - Clean IR  : parm 58 = GOES-R ABI band 13, 10.3 um  -> rainbow_ir
+#   - Water Vapor: parm 53 = ABI band 8, 6.2 um (upper WV) -> wv_tat
+# Mid (54, 6.9 um) and low (55, 7.3 um) WV bands exist in the same file; only
+# upper WV ships for now (a single clean "Water Vapor" product) - adding them
+# would be three WV buttons on the flat product toggle, deferred by design.
+SAT_PRODUCTS = {
+    "clean_ir": {"parm": 58, "enhancement": "rainbow_ir",
+                 "channel": "Clean IR (10.3 um)"},
+    "water_vapor": {"parm": 53, "enhancement": "wv_tat",
+                    "channel": "Water Vapor (6.2 um)"},
+}
 
 # Colorbar ticks on the SSHWS category thresholds (kt) so the bar doubles as a
 # Saffir-Simpson reference: 34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5.
@@ -672,7 +767,8 @@ def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict],
                  product: str = "mslp_wind",
                  cen_lat: Optional[float] = None,
-                 cen_lon: Optional[float] = None) -> None:
+                 cen_lon: Optional[float] = None,
+                 enhancement: Optional[str] = None) -> None:
     """Render one TAT-styled HAFS frame.
 
     ``product`` selects the filled field and its legend/header text, sharing all
@@ -680,6 +776,13 @@ def render_frame(frame: HafsFrame, out_path: str,
       - ``"mslp_wind"`` (default): 10 m wind-speed fill + wind barbs, knots bar.
       - ``"refl"``: composite reflectivity fill (discrete .pal table), NO barbs,
         a dBZ bar. The SSHWS chip stays keyed off VMAX for both.
+      - ``"clean_ir"`` / ``"water_vapor"``: simulated-satellite brightness
+        temperature fill (``frame.bt_c``, degC) colored by a tat_palettes
+        enhancement, NO barbs, a degC brightness-temperature bar, bright haloed
+        coastlines. ``enhancement`` overrides the per-product default
+        (``rainbow_ir`` for Clean IR, ``wv_tat`` for Water Vapor); ``dvorak`` is
+        a valid selectable IR enhancement too. The SSHWS chip stays keyed off
+        VMAX (from the .atm winds) and the right stat becomes the coldest BT.
 
     Domain framing differs by ``frame.product`` (the HAFS domain, NOT the field
     above): the STORM NEST keeps its per-side ``BBOX_TRIM_DEG`` trim, while the
@@ -691,9 +794,17 @@ def render_frame(frame: HafsFrame, out_path: str,
     Both domains draw the same 10 m Natural Earth basemap.
     """
     is_refl = product == "refl"
+    is_bt = product in SAT_PRODUCTS
     if is_refl and frame.refl_dbz is None:
         raise ValueError("render_frame(product='refl') needs frame.refl_dbz "
                          "(fetch with want_refl=True)")
+    if is_bt and frame.bt_c is None:
+        raise ValueError(f"render_frame(product={product!r}) needs frame.bt_c "
+                         "(fetch with sat_parm set)")
+    enh = None
+    if is_bt:
+        enh_name = enhancement or SAT_PRODUCTS[product]["enhancement"]
+        enh = tp.get_enhancement(enh_name)
     is_parent = frame.product == "parent.atm"
     lon_min, lon_max, lat_min, lat_max = frame.extent
     d_lon_min, d_lon_max, d_lat_min, d_lat_max = frame.extent
@@ -758,6 +869,14 @@ def render_frame(frame: HafsFrame, out_path: str,
     if is_refl:
         pal = _refl_pal()
         cmap, norm, field = pal.cmap, pal.norm, frame.refl_dbz
+    elif is_bt:
+        pal = None
+        # NaN (outside the nest) renders transparent so the dark panel shows
+        # through; with_extremes returns a copy so the shared registry cmap is
+        # never mutated.
+        cmap = enh["cmap"].with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
+        norm = tp.enhancement_norm(enh_name)
+        field = frame.bt_c
     else:
         pal = None
         cmap, norm = _wind_cmap_norm()
@@ -778,6 +897,13 @@ def render_frame(frame: HafsFrame, out_path: str,
         levels = list(norm.boundaries)        # 10,15,...,100 (the .pal steps)
         cf = ax.contourf(Lon, Lat, fill, levels=levels, cmap=cmap, norm=norm,
                          extend="max", antialiased=True, zorder=2)
+    elif is_bt:
+        # Simulated-satellite brightness temperature: the tat_palettes IR/WV
+        # enhancement (built over a degC domain, cold -> warm) as a smooth raster
+        # gradient, same as the wind fill. Masked (NaN) cells outside the nest
+        # stay transparent via the cmap's bad color set above.
+        cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
+                           shading="nearest", zorder=2)
     else:
         # Wind: the vivid continuous 0-165 kt TAT colormap rendered as a smooth
         # raster gradient. PNG output rasterizes at the save DPI; the barbs /
@@ -789,8 +915,10 @@ def render_frame(frame: HafsFrame, out_path: str,
     # subsampled to ~BARB_TARGET across each axis. White, antialiased, kept
     # vector (not rasterized) with a subtle dark halo so they stay sharp and
     # legible over both the cool (dark) and warm (bright) ends of the fill
-    # palette; emptybarb=0 drops the calm-air circle.
-    if not is_refl:
+    # palette; emptybarb=0 drops the calm-air circle. Barbs and the wind-speed
+    # contour lines are the WIND product's signature only - reflectivity and the
+    # simulated-satellite products carry neither.
+    if not is_refl and not is_bt:
         nlat, nlon = frame.wind_kt.shape
         si = max(1, int(round(nlat / BARB_TARGET)))
         sj = max(1, int(round(nlon / BARB_TARGET)))
@@ -860,20 +988,28 @@ def render_frame(frame: HafsFrame, out_path: str,
     # (#39ff14), which stands clean against both the dark ocean and the bright
     # radar cores without clashing with the white MSLP isobars. The refl coast is
     # a touch heavier so it reads as a crisp bold outline.
-    coast_color = REFL_COAST_COLOR if is_refl else COAST_COLOR
-    border_color = REFL_COAST_COLOR if is_refl else BORDER_COLOR
-    coast_lw = 1.3 if is_refl else 1.2
+    # Wind: black. Reflectivity: neon green. Simulated satellite: a bright
+    # near-white line WITH a dark halo (coast_halo), legible over both the
+    # colorful cold tops and the grayscale warm halves of the IR/WV fills.
+    if is_refl:
+        coast_color = border_color = REFL_COAST_COLOR
+        coast_lw, coast_halo = 1.3, 0.0
+    elif is_bt:
+        coast_color = border_color = SAT_COAST_COLOR
+        coast_lw, coast_halo = 1.1, 1.6
+    else:
+        coast_color, border_color = COAST_COLOR, BORDER_COLOR
+        coast_lw, coast_halo = 1.2, 0.0
     # Both domains draw the 10 m Natural Earth basemap (crisp coastlines at the
     # parent ~40 deg span as well as the nest). Features are clipped to
     # ``feat_extent`` (the storm-centered crop on the parent) so far-away land is
-    # dropped. Per-product colors are unchanged (black on wind, neon green on
-    # reflectivity).
+    # dropped.
     if coast:
         _draw_feature_lines(ax, coast.get("features", []), feat_extent,
-                            coast_color, coast_lw, 6)
+                            coast_color, coast_lw, 6, halo=coast_halo)
     if countries:
         _draw_feature_lines(ax, countries.get("features", []), feat_extent,
-                            border_color, 0.8, 6)
+                            border_color, 0.8, 6, halo=coast_halo)
 
     # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
     # On the parent, restrict the L to the cropped window so it marks the storm in
@@ -922,6 +1058,11 @@ def render_frame(frame: HafsFrame, out_path: str,
         sm = mcm.ScalarMappable(norm=cb_norm, cmap=cb_cmap)
         cb = fig.colorbar(sm, cax=cax, extend="max", ticks=cb_ticks)
         cb.set_label("Composite reflectivity (dBZ)", color=TEXT_COLOR, fontsize=10)
+    elif is_bt:
+        # Physical degC brightness-temperature bar from the enhancement (same as
+        # the satellite page): ticks + label come straight from tat_palettes.
+        cb = fig.colorbar(cf, cax=cax, ticks=enh["ticks"])
+        cb.set_label(enh["cbar_label"], color=TEXT_COLOR, fontsize=10)
     else:
         cb = fig.colorbar(cf, cax=cax, extend="max", ticks=CBAR_TICKS_KT)
         cb.set_label("10 m wind speed (kt)", color=TEXT_COLOR, fontsize=10)
@@ -952,6 +1093,15 @@ def render_frame(frame: HafsFrame, out_path: str,
                 if np.isfinite(frame.refl_dbz).any() else float("nan"))
         subtitle = f"Composite Reflectivity (dBZ) & MSLP (mb)  /  {domain_label}"
         right_stat = f"MAX {rmax:.0f} dBZ   /   MSLP {pmin_hdr:.1f} mb"
+    elif is_bt:
+        # Coldest cloud top replaces VMAX on the right; MSLP stays. Subtitle names
+        # the simulated channel per the SAT_PRODUCTS map.
+        channel = SAT_PRODUCTS[product]["channel"]
+        btmin = (float(np.nanmin(frame.bt_c))
+                 if np.isfinite(frame.bt_c).any() else float("nan"))
+        subtitle = (f"Simulated Satellite - {channel} & MSLP (mb)  /  "
+                    f"{domain_label}")
+        right_stat = f"MIN BT {btmin:.1f}°C   /   MSLP {pmin_hdr:.1f} mb"
     else:
         subtitle = f"10m Wind (kt) & MSLP (mb)  /  {domain_label}"
         right_stat = f"VMAX {vmax:.1f} kt   /   MSLP {pmin_hdr:.1f} mb"
@@ -1019,9 +1169,14 @@ def main() -> int:
     ap.add_argument("--product", default="storm.atm",
                     choices=["storm.atm", "parent.atm"],
                     help="HAFS domain (Herbie product key)")
-    ap.add_argument("--field", default="wind", choices=["wind", "refl"],
-                    help="which product to render: 10 m wind or composite "
-                         "reflectivity (both overlay MSLP)")
+    ap.add_argument("--field", default="wind",
+                    choices=["wind", "refl", "clean_ir", "water_vapor"],
+                    help="which product to render: 10 m wind, composite "
+                         "reflectivity, simulated Clean IR, or simulated Water "
+                         "Vapor (all overlay MSLP)")
+    ap.add_argument("--enhancement", default=None,
+                    help="override the tat_palettes enhancement for the "
+                         "sim-sat fields (e.g. dvorak for clean_ir)")
     ap.add_argument("--date", default="2023-09-09 00:00",
                     help="cycle init time, 'YYYY-MM-DD HH:MM'")
     ap.add_argument("--fxx", type=int, default=12, help="forecast hour")
@@ -1031,17 +1186,22 @@ def main() -> int:
 
     date = dt.datetime.strptime(args.date, "%Y-%m-%d %H:%M")
     want_refl = args.field == "refl"
-    render_product = "refl" if want_refl else "mslp_wind"
+    render_product = {"wind": "mslp_wind", "refl": "refl"}.get(
+        args.field, args.field)
+    sat_parm = SAT_PRODUCTS.get(render_product, {}).get("parm")
 
     log.info("fetching %s %s %s %s f%03d (field=%s) …", args.model, args.storm,
              args.product, args.date, args.fxx, args.field)
     frame = fetch_hafs_frame(args.model, args.storm, args.product, date,
-                             args.fxx, args.save_dir, want_refl=want_refl)
+                             args.fxx, args.save_dir, want_refl=want_refl,
+                             sat_parm=sat_parm)
     rmax = (np.nanmax(frame.refl_dbz) if frame.refl_dbz is not None else float("nan"))
+    btmin = (np.nanmin(frame.bt_c) if frame.bt_c is not None else float("nan"))
     log.info("  grid %d×%d  extent lon[%.2f,%.2f] lat[%.2f,%.2f]  "
-             "wind max %.0f kt  mslp min %.1f hPa  refl max %.1f dBZ",
+             "wind max %.0f kt  mslp min %.1f hPa  refl max %.1f dBZ  "
+             "bt min %.1f degC",
              frame.lat.size, frame.lon.size, *frame.extent,
-             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa), rmax)
+             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa), rmax, btmin)
 
     countries = (_load_geojson("ne_10m_admin_0_countries.geojson")
                  or _load_geojson("ne_50m_admin_0_countries.geojson")
@@ -1052,7 +1212,8 @@ def main() -> int:
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
 
-    render_frame(frame, args.out, countries, coast, product=render_product)
+    render_frame(frame, args.out, countries, coast, product=render_product,
+                 enhancement=args.enhancement)
     return 0
 
 
