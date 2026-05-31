@@ -71,6 +71,8 @@ import requests
 # Reuse the validated fetch + render from the single-frame slice. Importing it
 # also pulls matplotlib (Agg) and the Herbie template override.
 import hafs_plot as hp
+# Single source of product truth (identity, GRIB channel, color/colorbar/stat).
+import hafs_registry as reg
 
 log = logging.getLogger("hafs-build")
 
@@ -111,25 +113,14 @@ FXX_RE = re.compile(r"\.f(\d{3})\.grb2$")
 # the segmented-toggle label on the frontend. Both products come from the SAME
 # GRIB2 file, so a (model, domain)'s available forecast hours are identical
 # across products and the completeness check applies to both equally.
-PRODUCTS = {
-    "mslp_wind": {"slug": "mslp_wind", "label": "MSLP + 10 m Wind",
-                  "short": "Wind"},
-    "refl": {"slug": "refl", "label": "Composite Reflectivity + MSLP",
-             "short": "Reflectivity"},
-    # Simulated-satellite products. The brightness-temperature field comes from
-    # the sibling .sat GRIB (same storm/cycle/fxx/domain), selected by GRIB2
-    # parameterNumber - see hafs_plot.SAT_PRODUCTS for the channel + enhancement
-    # mapping. They overlay the same MSLP isobars + L marker as the others.
-    "clean_ir": {"slug": "clean_ir",
-                 "label": "Simulated Clean IR (10.3 um) + MSLP",
-                 "short": "Clean IR"},
-    "water_vapor": {"slug": "water_vapor",
-                    "label": "Simulated Water Vapor (6.2 um) + MSLP",
-                    "short": "Water Vapor"},
-}
-# Order here is the frontend product-toggle order; mslp_wind stays first so the
-# default view on load is unchanged (Wind).
-DEFAULT_PRODUCTS = ["mslp_wind", "refl", "clean_ir", "water_vapor"]
+# The product catalog is derived from the single registry (hafs_registry), so
+# there is ONE source of product truth. PRODUCTS keeps its {slug,label,short}
+# shape (the manifest + frontend read it); DEFAULT_PRODUCTS is the toggle/render
+# order (mslp_wind first, so the default view on load is unchanged = Wind). The
+# simulated-satellite products' GRIB channel + color live on the same specs (see
+# _render_one's reg.sat_parm lookup). Add or restyle a product in the registry.
+PRODUCTS = reg.products_dict()
+DEFAULT_PRODUCTS = reg.default_order()
 
 # A frame this far in the future from "now" can't possibly exist; the complete-
 # cycle check looks for this terminal hour to know a run finished uploading.
@@ -351,8 +342,9 @@ def _render_one(job: FrameJob) -> dict:
     """
     want_refl = job.product == "refl"
     # Simulated-satellite products pull their brightness-temperature channel from
-    # the sibling .sat file by GRIB2 parameterNumber (None for wind/refl).
-    sat_parm = hp.SAT_PRODUCTS.get(job.product, {}).get("parm")
+    # the sibling .sat file by GRIB2 parameterNumber (None for wind/refl), read
+    # off the product's registry spec.
+    sat_parm = reg.sat_parm(job.product)
     last_err: Optional[Exception] = None
     for attempt in range(1, _RENDER_RETRIES + 1):
         try:
