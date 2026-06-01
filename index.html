@@ -667,6 +667,13 @@
       { code: 'wp', label: null,      start: null,    end: null, yearRound: true }
     ];
 
+    // Live ACE + tracks feeds moved to R2 (cdn.triple-a-tropics.com/feeds/)
+    // so the streaming poller can refresh them without a git commit per
+    // update. Fetched cross-origin, same as the floater frames; CORS on
+    // the bucket already allows the site origin. cache:'no-cache' below
+    // keeps the strip current when the poller writes a new value.
+    var FEEDS = 'https://cdn.triple-a-tropics.com/feeds/';
+
     function daysUntil(d) {
       return Math.max(0, Math.ceil((d - now) / 86400000));
     }
@@ -686,8 +693,8 @@
       var seasonEl = row.querySelector('[data-role="season"]');
 
       Promise.all([
-        fetchJSON(basin.code + '_tracks_data.json'),
-        fetchJSON(basin.code + '_ace_data.json')
+        fetchJSON(FEEDS + basin.code + '_tracks_data.json'),
+        fetchJSON(FEEDS + basin.code + '_ace_data.json')
       ]).then(function (res) {
         var t = res[0], a = res[1];
 
