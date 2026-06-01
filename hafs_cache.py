@@ -25,7 +25,7 @@ CACHE FORMAT: per-fxx NetCDF (netCDF4 backend). Chosen over npz and Zarr:
   Round-trip is bit-exact and dtype-preserving (measured), so rendering from the
   cache is byte-identical to a direct fetch. zlib complevel 4 compresses the
   NaN-padded grid to the same size as the trimmed frame (~6 MB nest, ~26 MB
-  parent for all seven fields), so we store the product-neutral PRE-TRIM grid and
+  parent for all the fields), so we store the product-neutral PRE-TRIM grid and
   let each product's _pack_frame apply its own trim/guard.
 
 CACHE VERSION: ``CACHE_VERSION`` is baked into the key/path, so invalidation is a
@@ -55,7 +55,8 @@ log = logging.getLogger("hafs-cache")
 
 # Bump to invalidate every cache entry (e.g. if the stored field set or decode
 # changes). Old version paths are never read, so this is a bump, not a delete.
-CACHE_VERSION = "v1"
+# v2: added the PWAT field (precipitable water, mm) to the cached field set.
+CACHE_VERSION = "v2"
 
 # Sub-root under save_dir where the local field cache lives.
 CACHE_DIRNAME = "fieldcache"
@@ -86,15 +87,17 @@ def cache_path(save_dir: str, cycle: str, model: str, storm: str,
 
 def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
                  fxx: int, path: Path, save_dir: str, *,
-                 want_refl: bool = False, sat_parms: Sequence[int] = (),
+                 want_refl: bool = False, want_pwat: bool = False,
+                 sat_parms: Sequence[int] = (),
                  remove_grib: bool = True, overwrite: bool = False) -> Path:
     """INGEST one frame: fetch + decode the UNION of fields every selected product
     needs (ONE read per GRIB file) and write them to the cache entry at ``path``.
     ``save_dir`` is where Herbie stages its byte-range GRIB subsets (removed after
     decode); ``path`` is the cache .nc to write.
 
-    ``want_refl`` adds composite reflectivity; ``sat_parms`` adds each requested
-    simulated-satellite BT channel. PRMSL + 10 m wind are always read (every
+    ``want_refl`` adds composite reflectivity; ``want_pwat`` adds precipitable
+    water (mm); ``sat_parms`` adds each requested simulated-satellite BT channel.
+    PRMSL + 10 m wind are always read (every
     product overlays MSLP isobars + the VMAX-derived pill). Idempotent: an
     existing entry is reused unless ``overwrite`` (so a re-run / backup cron skips
     work the version path already holds). Returns ``path``.
@@ -104,7 +107,8 @@ def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
 
     raw = hp._read_raw_fields(
         model, storm, domain, cycle_dt, fxx, save_dir,
-        remove_grib=remove_grib, want_refl=want_refl, sat_parms=sat_parms,
+        remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
+        sat_parms=sat_parms,
     )
     _write_cache(raw, path)
     return path
@@ -124,6 +128,8 @@ def _write_cache(raw: dict, path: Path) -> None:
     }
     if raw.get("refl_dbz") is not None:
         data_vars["refl_dbz"] = (("lat", "lon"), raw["refl_dbz"])
+    if raw.get("pwat") is not None:
+        data_vars["pwat"] = (("lat", "lon"), raw["pwat"])
     for parm, arr in raw.get("bt", {}).items():
         data_vars[_BT_VAR.format(parm=int(parm))] = (("lat", "lon"), arr)
 
@@ -169,21 +175,26 @@ def _read_cache(path: Path) -> dict:
             "u_kt": ds["u_kt"].values, "v_kt": ds["v_kt"].values,
             "refl_dbz": (ds["refl_dbz"].values if "refl_dbz" in ds.data_vars
                          else None),
+            "pwat": (ds["pwat"].values if "pwat" in ds.data_vars else None),
             "bt": bt,
         }
 
 
-def load_frame(path: Path, *, want_refl: bool = False,
+def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
                sat_parm: Optional[int] = None) -> hp.HafsFrame:
     """RENDER STAGE: read a frame's field cache entry and reconstruct the exact
-    HafsFrame the given product needs - NO GRIB fetch. ``want_refl`` / ``sat_parm``
-    pick the optional fields (the same flags fetch_hafs_frame took), so the result
-    is byte-identical to the pre-split fetch. Raises if a requested BT channel is
-    absent (a degenerate/never-ingested channel), which the render orchestration
-    treats as a per-product skip - never fatal to the rest of the frame.
+    HafsFrame the given product needs - NO GRIB fetch. ``want_refl`` /
+    ``want_pwat`` / ``sat_parm`` pick the optional fields (the same flags
+    fetch_hafs_frame took), so the result is byte-identical to the pre-split
+    fetch. Raises if a requested BT channel is absent (a degenerate/never-ingested
+    channel), which the render orchestration treats as a per-product skip - never
+    fatal to the rest of the frame.
     """
     raw = _read_cache(path)
     if sat_parm is not None and int(sat_parm) not in raw["bt"]:
         raise KeyError(
             f"BT channel parm={sat_parm} not in cache {path.name}")
-    return hp._pack_frame(raw, want_refl=want_refl, sat_parm=sat_parm)
+    if want_pwat and raw.get("pwat") is None:
+        raise KeyError(f"PWAT field not in cache {path.name}")
+    return hp._pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
+                          sat_parm=sat_parm)

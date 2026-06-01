@@ -9,7 +9,7 @@ Run via ``python -m tat_palettes`` or the pytest in palette/tests/.
 """
 from __future__ import annotations
 
-from . import get_enhancement, enhancement_norm
+from . import get_enhancement, enhancement_norm, TAT_PWAT_CMAP, pwat_norm
 
 # (temp_degC, (r, g, b, a)) golden tuples, captured pre-refactor.
 GOLDEN = {
@@ -79,6 +79,24 @@ GOLDEN = {
 }
 
 
+# (input_mm, (r, g, b, a)) golden tuples for the tat_pwat colormap, captured
+# from the as-built implementation. They pin the dry/green/moist ramp plus the
+# set_over (>90 mm) and set_under (<0 mm) caps, so any change to the anchors,
+# N, or normalization trips the check. mm == kg/m^2.
+GOLDEN_PWAT = [
+    (0,  (0.10980392156862745, 0.0784313725490196, 0.0392156862745098, 1.0)),
+    (20, (0.35171328805494806, 0.28904493304170986, 0.171781589348068, 1.0)),
+    (34, (0.8035787831114181, 0.733000780220764, 0.4155225560543852, 1.0)),
+    (40, (0.6202089968407454, 0.7958737833032756, 0.3531458245398616, 1.0)),
+    (50, (0.24685417546013844, 0.6822122456288452, 0.29081002263919253, 1.0)),
+    (62, (0.1216095570648351, 0.5608354757428086, 0.6900579409846129, 1.0)),
+    (74, (0.3521711881099472, 0.24791834542035998, 0.753227683767571, 1.0)),
+    (90, (1.0, 0.8156862745098039, 0.9607843137254902, 1.0)),   # warmest anchor
+    (95, (1.0, 0.8156862745098039, 0.9607843137254902, 1.0)),   # set_over (>90)
+    (-5, (0.10980392156862745, 0.0784313725490196, 0.0392156862745098, 1.0)),  # set_under (<0)
+]
+
+
 def verify_no_drift() -> int:
     """Assert every golden RGBA reproduces exactly. Returns count checked."""
     checked = 0
@@ -91,4 +109,11 @@ def verify_no_drift() -> int:
                 raise AssertionError(
                     f"DRIFT {name} @ {temp} degC: got {got} != {expected}")
             checked += 1
+    pnorm = pwat_norm()
+    for mm, expected in GOLDEN_PWAT:
+        got = tuple(float(c) for c in TAT_PWAT_CMAP(pnorm(mm)))
+        if got != expected:
+            raise AssertionError(
+                f"DRIFT tat_pwat @ {mm} mm: got {got} != {expected}")
+        checked += 1
     return checked

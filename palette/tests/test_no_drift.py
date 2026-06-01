@@ -3,12 +3,12 @@
 Proves the shared tat_palettes module reproduces the pre-refactor RGBA values
 byte-for-byte. Also runnable directly: ``python palette/tests/test_no_drift.py``.
 """
-from tat_palettes._selftest import verify_no_drift, GOLDEN
+from tat_palettes._selftest import verify_no_drift, GOLDEN, GOLDEN_PWAT
 
 
 def test_no_drift():
     n = verify_no_drift()
-    assert n == sum(len(rows) for rows in GOLDEN.values())
+    assert n == sum(len(rows) for rows in GOLDEN.values()) + len(GOLDEN_PWAT)
 
 
 if __name__ == "__main__":
