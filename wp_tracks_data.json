@@ -2,10 +2,10 @@
   "basin": "wp",
   "basin_name": "Western North Pacific",
   "year": 2026,
-  "updated": "2026-06-01 20:10 UTC",
-  "generated_utc": "2026-06-01T20:10:07Z",
+  "updated": "2026-06-01 21:53 UTC",
+  "generated_utc": "2026-06-01T21:53:11Z",
   "latest_fix_valid_utc": "2026-06-01T18:00:00Z",
-  "staleness_minutes": 130,
+  "staleness_minutes": 233,
   "header": {
     "named": 5,
     "cat1plus": 2,

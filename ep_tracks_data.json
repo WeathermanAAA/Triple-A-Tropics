@@ -2,10 +2,10 @@
   "basin": "ep",
   "basin_name": "Northeast Pacific",
   "year": 2026,
-  "updated": "2026-06-01 20:10 UTC",
-  "generated_utc": "2026-06-01T20:10:20Z",
+  "updated": "2026-06-01 21:53 UTC",
+  "generated_utc": "2026-06-01T21:53:25Z",
   "latest_fix_valid_utc": "2026-06-01T18:00:00Z",
-  "staleness_minutes": 130,
+  "staleness_minutes": 233,
   "header": {
     "named": 0,
     "cat1plus": 0,
