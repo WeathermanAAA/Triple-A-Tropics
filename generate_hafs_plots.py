@@ -4,8 +4,8 @@
 Scales the validated single-frame vertical slice in :mod:`hafs_plot` into a
 batch renderer that, for the latest complete HAFS cycle, loops every active
 storm × {HAFS-A, HAFS-B} × {storm nest, parent domain} × {MSLP+10 m wind,
-composite reflectivity, simulated Clean IR, simulated Water Vapor} × forecast
-hour and writes a TAT-styled PNG per frame plus a ``manifest.json`` the
+composite reflectivity, simulated Clean IR, simulated Water Vapor, MSLP+PWAT}
+× forecast hour and writes a TAT-styled PNG per frame plus a ``manifest.json`` the
 ``/models/`` frontend reads. The two simulated-satellite products pull their
 brightness-temperature channel from the sibling ``.sat`` GRIB (the wind/refl
 products read ``.atm``); see ``hafs_registry`` for the product catalog.
@@ -334,6 +334,7 @@ class IngestJob:
     cache_path: str      # field-cache .nc to write
     save_dir: str        # where Herbie stages its GRIB subsets
     want_refl: bool      # cycle needs composite reflectivity
+    want_pwat: bool      # cycle needs precipitable water (mm)
     sat_parms: tuple     # GRIB2 parms for the sim-sat channels the cycle needs
 
 
@@ -377,8 +378,8 @@ def _ingest_one(job: IngestJob) -> dict:
             fc.ingest_frame(
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
                 Path(job.cache_path), job.save_dir,
-                want_refl=job.want_refl, sat_parms=job.sat_parms,
-                remove_grib=True,
+                want_refl=job.want_refl, want_pwat=job.want_pwat,
+                sat_parms=job.sat_parms, remove_grib=True,
             )
             return {"ok": True, "model": job.model, "storm": job.storm,
                     "domain": job.domain, "fxx": job.fxx}
@@ -402,12 +403,13 @@ def _render_one(job: RenderJob) -> dict:
     product is logged and skipped; the rest of the cycle still publishes.
     """
     want_refl = job.product == "refl"
+    want_pwat = job.product == "mslp_pwat"
     # Sim-sat products read their BT channel by GRIB2 parameterNumber from the
-    # product's registry spec (None for wind/refl).
+    # product's registry spec (None for wind/refl/pwat).
     sat_parm = reg.sat_parm(job.product)
     try:
         frame = fc.load_frame(Path(job.cache_path), want_refl=want_refl,
-                              sat_parm=sat_parm)
+                              want_pwat=want_pwat, sat_parm=sat_parm)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
         hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
                         product=job.product,
@@ -530,6 +532,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     # product adds its .sat BT channel. PRMSL + 10 m wind are always read. So one
     # ingest per frame serves every product. Computed once for the whole cycle.
     cycle_want_refl = "refl" in products
+    cycle_want_pwat = "mslp_pwat" in products
     cycle_sat_parms = tuple(sorted({reg.sat_parm(p) for p in products
                                     if reg.sat_parm(p) is not None}))
 
@@ -585,7 +588,8 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     ingest_jobs.append(IngestJob(
                         model=model, storm=storm, domain=domain, fxx=fxx,
                         cycle_dt=cycle_dt, cache_path=cpath, save_dir=save_dir,
-                        want_refl=cycle_want_refl, sat_parms=cycle_sat_parms))
+                        want_refl=cycle_want_refl, want_pwat=cycle_want_pwat,
+                        sat_parms=cycle_sat_parms))
                     # One render per product, each reading the SAME cache entry
                     # into its own path segment (.../<dom_slug>/<product>/f###.png).
                     for product in products:
@@ -706,7 +710,7 @@ def main() -> int:
                     help="comma list of storm.atm,parent.atm")
     ap.add_argument("--products", default=",".join(DEFAULT_PRODUCTS),
                     help="comma list of products to render: "
-                         "mslp_wind,refl,clean_ir,water_vapor")
+                         "mslp_wind,refl,clean_ir,water_vapor,mslp_pwat")
     ap.add_argument("--storm", help="restrict to one or more storm ids (comma list)")
     ap.add_argument("--basins", help="restrict to basin slugs (al,ep,wp,…; comma list)")
     ap.add_argument("--max-fxx", type=int, default=TERMINAL_FXX)

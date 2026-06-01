@@ -216,6 +216,57 @@ IR_GRAY_CMAP = _seg_cmap("ir_gray", _IR_GRAY_ANCHORS)
 
 
 # ---------------------------------------------------------------------------
+# tat_pwat - total-column precipitable water (mm == kg/m^2)
+# ---------------------------------------------------------------------------
+# NOT a brightness-temperature enhancement: a standalone scalar fill for the
+# HAFS "MSLP & PWAT" product (and any future PWAT map). Domain 0..90 mm, dry ->
+# moist. Dry air is a dark, background-friendly brown ramp (so coastlines and
+# isobars read over it); the green band marks the climatological tropical-
+# atmosphere PWAT (~40-55 mm); deep teal/blue/violet/magenta flag the very moist
+# tropical envelope (>=62 mm); the palest magenta caps the extreme (>=86 mm) and
+# is also the set_over color for anything past 90 mm. The mm anchors are EXACT
+# (do not alter); positions are normalized by PWAT_VMAX_MM below.
+PWAT_VMIN_MM = 0.0
+PWAT_VMAX_MM = 90.0
+PWAT_OVER = "#ffd0f5"   # >90 mm cap (== the warmest anchor)
+# (mm, hex) anchors, dry -> moist.
+_PWAT_ANCHORS_MM = [
+    (0,  "#1c140a"),
+    (10, "#3a2c18"),
+    (20, "#5a4a2c"),
+    (28, "#8a7a4a"),
+    (34, "#cdbb6a"),
+    (40, "#9ecb5a"),
+    (50, "#3fae4a"),
+    (56, "#2fa37a"),
+    (62, "#1f8fb0"),
+    (68, "#2f6fd0"),
+    (74, "#5a3fc0"),
+    (80, "#9b2fd0"),
+    (86, "#e070e0"),
+    (90, "#ffd0f5"),
+]
+
+
+def _pwat_cmap() -> LinearSegmentedColormap:
+    """The tat_pwat colormap: a smooth 0..90 mm fill (high N for no banding),
+    transparent for masked/non-finite cells, capped at the warmest anchor for
+    values over 90 mm."""
+    anchors = [(mm / PWAT_VMAX_MM, hexc) for mm, hexc in _PWAT_ANCHORS_MM]
+    cmap = LinearSegmentedColormap.from_list("tat_pwat", anchors, N=512)
+    cmap.set_over(PWAT_OVER)
+    cmap.set_under(_PWAT_ANCHORS_MM[0][1])
+    cmap.set_bad(alpha=0.0)   # NaN outside the nest -> transparent (panel bg)
+    return cmap
+
+
+TAT_PWAT_CMAP = _pwat_cmap()
+
+# Colorbar ticks (mm): 0..90 by 10, matching the brief.
+PWAT_TICKS_MM = list(range(0, 91, 10))
+
+
+# ---------------------------------------------------------------------------
 # colorbar tick sets (°C)
 # ---------------------------------------------------------------------------
 _RAINBOW_TICKS = [40, 30, 20, 10, 0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
@@ -280,6 +331,16 @@ def enhancement_norm(name: str) -> Normalize:
     """Fresh Normalize over the preset's °C domain (per-call, not shared)."""
     e = get_enhancement(name)
     return Normalize(vmin=e["vmin_c"], vmax=e["vmax_c"])
+
+
+def pwat_cmap() -> LinearSegmentedColormap:
+    """The tat_pwat colormap (the module-level ``TAT_PWAT_CMAP`` singleton)."""
+    return TAT_PWAT_CMAP
+
+
+def pwat_norm() -> Normalize:
+    """Fresh Normalize over the PWAT 0..90 mm domain (per-call, not shared)."""
+    return Normalize(vmin=PWAT_VMIN_MM, vmax=PWAT_VMAX_MM)
 
 
 def list_enhancements_for_domain(domain: str):

@@ -131,6 +131,13 @@ def _refl_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
     return FillColors(cmap=pal.cmap, norm=pal.norm, field=frame.refl_dbz, pal=pal)
 
 
+def _pwat_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
+    # tat_pwat smooth fill over 0..90 mm; masked NaN renders transparent (the
+    # cmap's set_bad). The cmap is the shared canonical singleton - never mutated.
+    return FillColors(cmap=tp.TAT_PWAT_CMAP, norm=tp.pwat_norm(),
+                      field=frame.pwat)
+
+
 def _bt_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
     enh = tp.get_enhancement(enh_name)
     # NaN (outside the nest) renders transparent; with_extremes returns a copy so
@@ -165,6 +172,12 @@ def _bt_colorbar(fig, cax, cf, colors: FillColors):
     return cb
 
 
+def _pwat_colorbar(fig, cax, cf, colors: FillColors):
+    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=tp.PWAT_TICKS_MM)
+    cb.set_label("Precipitable Water (mm)", color=hp.TEXT_COLOR, fontsize=10)
+    return cb
+
+
 # ---------------------------------------------------------------------------
 # Header right-stat + subtitle builders. The SSHWS VMAX pill and the MSLP
 # minimum are shared (computed once in render_frame and passed in).
@@ -192,10 +205,21 @@ def _bt_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
     return subtitle, right_stat
 
 
+def _pwat_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
+    # Right stat is the frame's moisture peak (MAX PWAT in mm); MSLP stays.
+    pwmax = (float(np.nanmax(frame.pwat))
+             if np.isfinite(frame.pwat).any() else float("nan"))
+    subtitle = f"Precipitable Water (mm) & MSLP (mb)  /  {domain_label}"
+    right_stat = f"MAX PWAT {pwmax:.0f} mm   /   MSLP {pmin:.1f} mb"
+    return subtitle, right_stat
+
+
 # ---------------------------------------------------------------------------
-# The four HAFS product specs, in toggle order. mslp_wind stays first so the
-# default frontend view is unchanged (Wind). Values are byte-for-byte the ones
-# the pre-refactor render_frame / SAT_PRODUCTS used.
+# The HAFS product specs, in toggle order. mslp_wind stays first so the default
+# frontend view is unchanged (Wind), and the four pre-existing products keep
+# their original order; mslp_pwat is appended LAST so adding it perturbs neither
+# the default view nor the existing toggle order. The first four products' values
+# are byte-for-byte the ones the pre-refactor render_frame / SAT_PRODUCTS used.
 # ---------------------------------------------------------------------------
 _SPECS = (
     ProductSpec(
@@ -242,6 +266,21 @@ _SPECS = (
         coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("wv")),
+    ),
+    ProductSpec(
+        key="mslp_pwat", slug="mslp_pwat", label="MSLP & PWAT",
+        short="PWAT", order=4,
+        grib="atm", sat_parm=None, field_attr="pwat", requires_attr="pwat",
+        default_enhancement=None, channel=None, make_colors=_pwat_colors,
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_pwat_colorbar,
+        draw_barbs=False,
+        # PWAT is an .atm-surface product: its MSLP isobars + bold L + pressure
+        # label are drawn exactly like mslp_wind (no wind barbs). The fill spans a
+        # dark dry-brown background and bright moist colors, so - like the
+        # simulated-satellite fills - a bright near-white coast WITH a dark halo
+        # reads cleanly over both ends. Hence the SAT coast treatment, not black.
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_pwat_stat,
     ),
 )
 

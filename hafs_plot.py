@@ -307,6 +307,11 @@ class HafsFrame:
     # so it is trimmed in lockstep. One GRIB channel from the sibling .sat file
     # (Clean IR band 13 or a Water Vapor band). None unless ``sat_parm`` is set.
     bt_c: Optional[np.ndarray] = None
+    # Total-column precipitable water (mm, == kg/m^2), (lat, lon), from the
+    # ``:PWAT:entire atmosphere:`` message of the SAME ``.atm`` file as MSLP/wind.
+    # A single-layer field like reflectivity. Only fetched when the caller asks
+    # for the PWAT product; None for any other fetch.
+    pwat: Optional[np.ndarray] = None
 
 
 def _to_180(lon: np.ndarray) -> np.ndarray:
@@ -366,6 +371,7 @@ def _read_raw_fields(
     *,
     remove_grib: bool = False,
     want_refl: bool = False,
+    want_pwat: bool = False,
     sat_parms: Sequence[int] = (),
 ) -> dict:
     """INGEST STAGE core: fetch + decode each REQUIRED GRIB file ONCE and return
@@ -374,7 +380,9 @@ def _read_raw_fields(
     This is the only place that touches the network/cfgrib. PRMSL + 10 m wind
     always come from the ``.atm`` file (two byte-range subset reads, meanSea vs
     heightAboveGround, so cfgrib doesn't reconcile two hypercubes). ``want_refl``
-    adds the ``:REFC:`` read from the SAME ``.atm``. ``sat_parms`` (GRIB2
+    adds the ``:REFC:`` read from the SAME ``.atm``; ``want_pwat`` likewise adds
+    the ``:PWAT:entire atmosphere:`` read (kg/m^2 == mm, stored straight, no unit
+    conversion). ``sat_parms`` (GRIB2
     parameterNumbers) each add a read from the SIBLING ``.sat`` file (one Herbie
     object for the file, one byte-range read per channel) - Kelvin is converted
     to degC. Decoding the union of every product's fields here, ONCE per frame,
@@ -417,6 +425,21 @@ def _read_raw_fields(
         # cfgrib names the message 'refc'; fall back to the lone data var.
         rvar = "refc" if "refc" in ds_r.data_vars else list(ds_r.data_vars)[0]
         refl = ds_r[rvar].values.astype(float)
+
+    pwat = None
+    if want_pwat:
+        # Total-column precipitable water from the SAME .atm file (one more
+        # byte-range subset read). Single-layer, like REFC; cfgrib names the
+        # message 'pwat', with a lone-var fallback. The field is kg/m^2 which
+        # equals mm of water, so NO unit conversion - stored straight as mm.
+        # idx wording is "PWAT:entire atmosphere (considered as a single layer):"
+        # so the search omits a trailing colon after "atmosphere" (it is a regex
+        # str.contains match); this is the lone PWAT message in the .atm file.
+        ds_pw = H.xarray(":PWAT:entire atmosphere", remove_grib=remove_grib)
+        if isinstance(ds_pw, list):
+            ds_pw = ds_pw[0]
+        pvar = "pwat" if "pwat" in ds_pw.data_vars else list(ds_pw.data_vars)[0]
+        pwat = ds_pw[pvar].values.astype(float)
 
     bt: dict[int, np.ndarray] = {}
     if sat_parms:
@@ -463,6 +486,8 @@ def _read_raw_fields(
         v_kt = v_kt[::-1, :]
         if refl is not None:
             refl = refl[::-1, :]
+        if pwat is not None:
+            pwat = pwat[::-1, :]
         bt = {p: a[::-1, :] for p, a in bt.items()}
     if lon[0] > lon[-1]:
         lon = lon[::-1]
@@ -472,6 +497,8 @@ def _read_raw_fields(
         v_kt = v_kt[:, ::-1]
         if refl is not None:
             refl = refl[:, ::-1]
+        if pwat is not None:
+            pwat = pwat[:, ::-1]
         bt = {p: a[:, ::-1] for p, a in bt.items()}
 
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
@@ -481,11 +508,12 @@ def _read_raw_fields(
         "model": model, "storm": storm, "product": product, "fxx": fxx,
         "init_time": init_time, "valid_time": valid_time,
         "lon": lon, "lat": lat, "mslp_hpa": mslp, "wind_kt": wind,
-        "u_kt": u_kt, "v_kt": v_kt, "refl_dbz": refl, "bt": bt,
+        "u_kt": u_kt, "v_kt": v_kt, "refl_dbz": refl, "pwat": pwat, "bt": bt,
     }
 
 
 def _pack_frame(raw: dict, *, want_refl: bool = False,
+                want_pwat: bool = False,
                 sat_parm: Optional[int] = None) -> HafsFrame:
     """RENDER-side core: trim a raw field grid (from ``_read_raw_fields`` or the
     field cache) to its finite extent and return the HafsFrame ``render_frame``
@@ -502,6 +530,7 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     mslp, wind = raw["mslp_hpa"], raw["wind_kt"]
     u_kt, v_kt = raw["u_kt"], raw["v_kt"]
     refl = raw["refl_dbz"] if want_refl else None
+    pwat = raw.get("pwat") if want_pwat else None
     bt = raw["bt"].get(int(sat_parm)) if sat_parm is not None else None
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
@@ -523,6 +552,11 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     u_kt, v_kt = u_kt[r0:r1, c0:c1], v_kt[r0:r1, c0:c1]
     if refl is not None:
         refl = refl[r0:r1, c0:c1]
+    if pwat is not None:
+        # PWAT lives on the same .atm grid as mslp/wind, so the mslp|wind finite
+        # mask already bounds it; slice to the SAME rectangle in lockstep (like
+        # refl) - it is not folded into the mask.
+        pwat = pwat[r0:r1, c0:c1]
     if bt is not None:
         bt = bt[r0:r1, c0:c1]
         # Degenerate-frame guard (mirrors the satellite render's scalar-IR guard):
@@ -541,6 +575,7 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
                 float(lat.min()), float(lat.max())),
         refl_dbz=refl,
         bt_c=bt,
+        pwat=pwat,
     )
 
 
@@ -553,6 +588,7 @@ def fetch_hafs_frame(
     save_dir: str,
     remove_grib: bool = False,
     want_refl: bool = False,
+    want_pwat: bool = False,
     sat_parm: Optional[int] = None,
 ) -> HafsFrame:
     """Fetch + decode + trim one HAFS frame for ONE product into a HafsFrame.
@@ -569,10 +605,11 @@ def fetch_hafs_frame(
     """
     raw = _read_raw_fields(
         model, storm, product, date, fxx, save_dir,
-        remove_grib=remove_grib, want_refl=want_refl,
+        remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
         sat_parms=(sat_parm,) if sat_parm is not None else (),
     )
-    return _pack_frame(raw, want_refl=want_refl, sat_parm=sat_parm)
+    return _pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
+                       sat_parm=sat_parm)
 
 
 # ---------------------------------------------------------------------------
@@ -1162,10 +1199,10 @@ def main() -> int:
                     choices=["storm.atm", "parent.atm"],
                     help="HAFS domain (Herbie product key)")
     ap.add_argument("--field", default="wind",
-                    choices=["wind", "refl", "clean_ir", "water_vapor"],
+                    choices=["wind", "refl", "clean_ir", "water_vapor", "pwat"],
                     help="which product to render: 10 m wind, composite "
-                         "reflectivity, simulated Clean IR, or simulated Water "
-                         "Vapor (all overlay MSLP)")
+                         "reflectivity, simulated Clean IR, simulated Water "
+                         "Vapor, or precipitable water (all overlay MSLP)")
     ap.add_argument("--enhancement", default=None,
                     help="override the tat_palettes enhancement for the "
                          "sim-sat fields (e.g. dvorak for clean_ir)")
@@ -1179,22 +1216,25 @@ def main() -> int:
     import hafs_registry as reg
     date = dt.datetime.strptime(args.date, "%Y-%m-%d %H:%M")
     want_refl = args.field == "refl"
-    render_product = {"wind": "mslp_wind", "refl": "refl"}.get(
-        args.field, args.field)
+    want_pwat = args.field == "pwat"
+    render_product = {"wind": "mslp_wind", "refl": "refl",
+                      "pwat": "mslp_pwat"}.get(args.field, args.field)
     sat_parm = reg.sat_parm(render_product)
 
     log.info("fetching %s %s %s %s f%03d (field=%s) …", args.model, args.storm,
              args.product, args.date, args.fxx, args.field)
     frame = fetch_hafs_frame(args.model, args.storm, args.product, date,
                              args.fxx, args.save_dir, want_refl=want_refl,
-                             sat_parm=sat_parm)
+                             want_pwat=want_pwat, sat_parm=sat_parm)
     rmax = (np.nanmax(frame.refl_dbz) if frame.refl_dbz is not None else float("nan"))
     btmin = (np.nanmin(frame.bt_c) if frame.bt_c is not None else float("nan"))
+    pwmax = (np.nanmax(frame.pwat) if frame.pwat is not None else float("nan"))
     log.info("  grid %d×%d  extent lon[%.2f,%.2f] lat[%.2f,%.2f]  "
              "wind max %.0f kt  mslp min %.1f hPa  refl max %.1f dBZ  "
-             "bt min %.1f degC",
+             "bt min %.1f degC  pwat max %.1f mm",
              frame.lat.size, frame.lon.size, *frame.extent,
-             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa), rmax, btmin)
+             np.nanmax(frame.wind_kt), np.nanmin(frame.mslp_hpa), rmax, btmin,
+             pwmax)
 
     countries = (_load_geojson("ne_10m_admin_0_countries.geojson")
                  or _load_geojson("ne_50m_admin_0_countries.geojson")
