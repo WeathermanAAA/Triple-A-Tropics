@@ -105,6 +105,14 @@ class ProductSpec:
     # --- color enhancement set (BT only; informational, not enforced) ---
     selectable_enhancements: tuple = ()
 
+    # --- overlay: thin black UNLABELED contour lines of the FILL field ---
+    # Drawn on top of the fill in the SAME style as the wind product's category
+    # contours, SEPARATE from the white MSLP isobars. Each value is a level in the
+    # fill field's units; only those inside a frame's range are drawn. Empty for
+    # every product except PWAT (moisture contours), and the render path guards on
+    # it, so the lines stay confined to the spec that sets them.
+    field_contour_levels: tuple = ()
+
     def resolve_enhancement(self, override: Optional[str]) -> Optional[str]:
         """The enhancement name to color with: the caller override or the spec
         default (None for non-BT families)."""
@@ -281,6 +289,9 @@ _SPECS = (
         # reads cleanly over both ends. Hence the SAT coast treatment, not black.
         coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
         make_stat=_pwat_stat,
+        # Thin black moisture contours every 10 mm from 50 (only those inside a
+        # frame's PWAT range draw), same style as the wind category contours.
+        field_contour_levels=(50, 60, 70, 80, 90),
     ),
 )
 
