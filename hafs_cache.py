@@ -58,7 +58,8 @@ log = logging.getLogger("hafs-cache")
 # v2: added the PWAT field (precipitable water, mm) to the cached field set.
 # v3: added the 12 pressure-level (upper-air) fields - gh/u/v at 850/700/500,
 #     relative vorticity at 850/500, and the 700-300 mb layer-mean RH.
-CACHE_VERSION = "v3"
+# v4: added the 700-300 mb layer-mean u/v (for the RH product's barbs) -> 14.
+CACHE_VERSION = "v4"
 
 # Sub-root under save_dir where the local field cache lives.
 CACHE_DIRNAME = "fieldcache"
