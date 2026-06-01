@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -37,6 +38,13 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
+
+# Single source of truth for every ACE number, the live b-deck parser, the
+# IBTrACS-vs-live storm merge, and the freshness timestamps. This generator no
+# longer decides ACE methodology on its own - it routes through ace_core so the
+# homepage strip, the climatology page, and the tracks graphic all report the
+# IDENTICAL season ACE and per-storm peaks.
+import ace_core as ac
 
 # ---------------------------------------------------------------------------
 # Basin configuration — add another entry to onboard a new basin
@@ -60,19 +68,9 @@ BASINS: dict[str, dict] = {
             "https://www.natyphoon.top/atcf/temp/bwp{nn}{year}.dat",
             "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{year}.dat",
         ],
-        # JTWC: USA_WIND (1-min) → WMO → Tokyo (both 10-min, ÷0.88)
-        "wind_preference": [
-            ("USA_WIND", 1.0),
-            ("WMO_WIND", 1.0 / 0.88),
-            ("TOKYO_WIND", 1.0 / 0.88),
-        ],
-        # JTWC methodology: ACE counts TROPICAL phase only (not subtropical).
-        "ace_natures": {"TS"},
-        # Exclude only explicitly non-tropical codes. TD is caught by the
-        # wind >= 34 kt filter. SS/SD excluded because JTWC is tropical-
-        # only. Anything else JTWC might label (TS/TY/STY/HU/TD/etc.)
-        # passes and is counted if wind >= 34.
-        "atcf_dev_exclude": {"EX", "SS", "SD"},
+        # Wind preference, ACE-eligible NATURE set, and the v^2/10000 formula
+        # all live in ace_core now (ac.WIND_PREFERENCE / ac.ACE_NATURES). WP
+        # counts tropical AND subtropical there ({TS, SS, SD}), to match CSU.
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.WP.list.v04r01.csv",
     },
     "al": {
@@ -91,17 +89,10 @@ BASINS: dict[str, dict] = {
             "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{year}.dat",
             "https://www.natyphoon.top/atcf/temp/bal{nn}{year}.dat",
         ],
-        "wind_preference": [
-            ("USA_WIND", 1.0),
-            ("WMO_WIND", 1.0 / 0.88),
-        ],
-        # NHC methodology: ACE counts tropical AND subtropical storms at
-        # 34 kt+. This matches the official published numbers (e.g. 2005
-        # Atlantic ACE = 245.47 which counts Subtropical Storm Arlene).
-        "ace_natures": {"TS", "SS"},
-        # Exclude only extratropical. SS/SD stay included; TD filtered by
-        # wind >= 34.
-        "atcf_dev_exclude": {"EX"},
+        # Methodology (wind preference, NATURE set, formula) lives in ace_core.
+        # NHC counts tropical AND subtropical at 34 kt+ (ac.ACE_NATURES["al"] =
+        # {TS, SS}), matching the official published numbers (e.g. 2005 Atlantic
+        # ACE = 245.47, which counts Subtropical Storm Arlene).
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.NA.list.v04r01.csv",
     },
     "ep": {
@@ -118,13 +109,8 @@ BASINS: dict[str, dict] = {
             "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
             "https://www.natyphoon.top/atcf/temp/bep{nn}{year}.dat",
         ],
-        "wind_preference": [
-            ("USA_WIND", 1.0),
-            ("WMO_WIND", 1.0 / 0.88),
-        ],
-        # NHC methodology — same as Atlantic
-        "ace_natures": {"TS", "SS"},
-        "atcf_dev_exclude": {"EX"},
+        # Methodology lives in ace_core (NHC, same as Atlantic:
+        # ac.ACE_NATURES["ep"] = {TS, SS}).
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.EP.list.v04r01.csv",
     },
 }
@@ -153,17 +139,6 @@ SIX_HOURLY = {0, 6, 12, 18}
 # ---------------------------------------------------------------------------
 # ACE computation (basin-parameterized)
 # ---------------------------------------------------------------------------
-
-def _best_wind(row: pd.Series, preference: list[tuple[str, float]]) -> float:
-    """Walk the basin's wind-column preference list; return the first
-    non-null value × its conversion factor (usually 1.0 for 1-min winds,
-    1/0.88 for 10-min winds)."""
-    for col, factor in preference:
-        v = row.get(col)
-        if pd.notna(v):
-            return float(v) * factor
-    return np.nan
-
 
 def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
                            log_prefix: str = "") -> pd.DataFrame:
@@ -203,18 +178,20 @@ def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
     minutes = d["ISO_TIME"].dt.minute
     d = step("6-hourly synoptic", d[hours.isin(SIX_HOURLY) & (minutes == 0)])
 
-    # Convert wind columns to numeric
-    for col, _ in basin_cfg["wind_preference"]:
+    # Convert wind columns to numeric. Wind preference (column order +
+    # 10-min->1-min factor) is single-sourced from ace_core.
+    short = basin_cfg["short"]
+    for col, _ in ac.WIND_PREFERENCE[short]:
         if col in d.columns:
             d[col] = pd.to_numeric(d[col], errors="coerce")
-    d["WIND_KT"] = d.apply(lambda r: _best_wind(r, basin_cfg["wind_preference"]), axis=1)
+    d["WIND_KT"] = d.apply(lambda r: ac.best_wind(r, short), axis=1)
 
-    # Nature filter. Basin-specific: JTWC WPac counts TS only; NHC basins
-    # (Atlantic, EPac) count both tropical and subtropical (matches the
-    # official published ACE methodology).
+    # Nature filter. The per-basin ACE-eligible NATURE set is single-sourced
+    # from ace_core (ac.ACE_NATURES): WP {TS, SS, SD}, AL/EP {TS, SS} - all
+    # count tropical AND subtropical, matching CSU.
     # IBTrACS backfills NATURE="NR" to "TS" only after post-season QC, so
     # for PROVISIONAL rows we also accept NR.
-    ace_natures = set(basin_cfg["ace_natures"])
+    ace_natures = set(ac.ACE_NATURES[short])
     is_tropical = d["NATURE"].isin(ace_natures) | (
         (d["TRACK_TYPE"] == "PROVISIONAL") & d["NATURE"].isin(ace_natures | {"NR"})
     )
@@ -338,86 +315,13 @@ def climatology(cum: pd.DataFrame, start: int, end: int,
 # Live ATCF fetch
 # ---------------------------------------------------------------------------
 
-def _parse_atcf(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
-    """Parse an ATCF b-deck file. Works identically for JTWC and NHC.
-
-    ATCF b-decks have multiple BEST lines per timestamp (one per
-    wind-radius threshold 34/50/64 kt) for observations with radii data;
-    earlier/weaker observations may have fewer columns. Dedupe with BOTH
-    RAD=='34' filter AND (storm_num, tstamp) fallback so we accept
-    shorter lines too. Exclude list matches what the tracks generator
-    effectively does — only truly non-tropical codes."""
-    rows = []
-    name_by_storm: dict[int, str] = {}
-    exclude = set(basin_cfg.get("atcf_dev_exclude", {"EX"}))
-    # First pass: extract storm name from column 27 (if any line has it)
-    for line in text.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 28:
-            continue
-        try:
-            storm_num = int(parts[1])
-            tech = parts[4]
-            name_col = parts[27]
-        except (IndexError, ValueError):
-            continue
-        if tech != "BEST":
-            continue
-        if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
-            name_by_storm[storm_num] = name_col
-
-    # Second pass: extract observations
-    seen: set[tuple[int, str]] = set()
-    for line in text.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 11:
-            continue
-        try:
-            storm_num = int(parts[1])
-            tstamp = parts[2]
-            tech = parts[4]
-            vmax_s = parts[8]
-            devlvl = parts[10]
-            rad = parts[11] if len(parts) > 11 else ""
-        except (IndexError, ValueError):
-            continue
-        if tech != "BEST":
-            continue
-        # Skip 50/64 kt radius duplicates. Accept blank RAD (lines with
-        # no radii column) — those are single-observation lines.
-        if rad not in ("", "34"):
-            continue
-        # Belt-and-suspenders dedupe: if two lines made it through the
-        # RAD filter at the same (storm, tstamp), count only the first.
-        key = (storm_num, tstamp)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
-        except ValueError:
-            continue
-        if t.hour not in SIX_HOURLY:
-            continue
-        try:
-            vmax = float(vmax_s)
-        except ValueError:
-            continue
-        if vmax < 34:
-            continue
-        if devlvl in exclude:
-            continue
-        rows.append({
-            "season": season,
-            "doy": t.timetuple().tm_yday,
-            "ace_increment": (vmax ** 2) / 10_000.0,
-            "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
-                   f"{storm_num:02d}{season}",
-            "NAME": name_by_storm.get(storm_num, ""),
-            "ISO_TIME": t,
-            "WIND_KT": vmax,
-        })
-    return pd.DataFrame(rows)
+# The ATCF b-deck parser lives in ace_core.parse_bdeck now - the SINGLE parser
+# both generators use, so a named storm has the same fix set (hence the same
+# peak wind + ACE) everywhere. fetch_live_season returns parse_bdeck's schema
+# (SID, NAME, season, time, wind_kt, nature, ace_nature, source, storm_num) -
+# the FULL fix set (every nature, every wind); the ACE eligibility filter is
+# applied later via ac.fix_ace_eligible, so the same frame also drives the
+# freshness timestamp and the live-vs-IBTrACS merge.
 
 
 def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataFrame:
@@ -450,7 +354,9 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
                         if "BEST" not in text:
                             err_key = "no_BEST_lines"
                         else:
-                            frames.append(_parse_atcf(text, season, basin_cfg))
+                            # Shared parser (ace_core) so the live fix set per
+                            # named storm matches the tracks feed exactly.
+                            frames.append(ac.parse_bdeck(text, season, basin_cfg))
                             pattern_stats[pattern]["ok"] += 1
                             hit = True
                             break
@@ -481,6 +387,140 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
 
 
 # ---------------------------------------------------------------------------
+# Current-year canonical set (single-sourced via ace_core)
+# ---------------------------------------------------------------------------
+
+# Schema of the parse_bdeck-style frames both halves of the merge share.
+_CANON_COLS = ["SID", "NAME", "season", "time", "wind_kt",
+               "nature", "ace_nature", "source", "storm_num"]
+# Schema of the by-DOY "points" frame the cumulative curve consumes.
+_POINT_COLS = ["season", "doy", "ace_increment", "SID", "NAME", "ISO_TIME", "WIND_KT"]
+
+
+def current_year_ibtracs_fixes(df: pd.DataFrame, basin_cfg: dict, year: int,
+                               log_prefix: str = "") -> pd.DataFrame:
+    """The current-year IBTrACS half of the canonical set: ALL 6-hourly fixes,
+    EVERY nature (no ACE filter), in parse_bdeck's schema so ac.merge_named_sources
+    can union it with the live frame. ``ace_nature`` is the RAW IBTrACS NATURE -
+    the same signal ace_core counts ACE on (and the same the tracks feed carries),
+    so the two feeds agree. Wind via ac.best_wind."""
+    d = df.copy()
+    basin_codes = basin_cfg["ibtracs_basin_col"]
+    if isinstance(basin_codes, str):
+        basin_codes = [basin_codes]
+    d_basin = d[d["BASIN"].isin(basin_codes)]
+    if len(d_basin) > 0:
+        d = d_basin
+    d = d[d["TRACK_TYPE"].isin(["main", "PROVISIONAL"])].copy()
+    d["ISO_TIME"] = pd.to_datetime(d["ISO_TIME"], errors="coerce")
+    d = d.dropna(subset=["ISO_TIME"])
+    d = d[d["SEASON"].astype("Int64") == year]
+    if d.empty:
+        return pd.DataFrame(columns=_CANON_COLS)
+    hours = d["ISO_TIME"].dt.hour
+    minutes = d["ISO_TIME"].dt.minute
+    d = d[hours.isin(SIX_HOURLY) & (minutes == 0)].copy()
+    short = basin_cfg["short"]
+    for col, _ in ac.WIND_PREFERENCE[short]:
+        if col in d.columns:
+            d[col] = pd.to_numeric(d[col], errors="coerce")
+    d["WIND_KT"] = d.apply(lambda r: ac.best_wind(r, short), axis=1)
+    rows = []
+    for _, row in d.iterrows():
+        raw_nature = str(row.get("NATURE") or "").strip().upper()
+        rows.append({
+            "SID": row["SID"],
+            "NAME": str(row.get("NAME") or "").strip() or "UNNAMED",
+            "season": year,
+            "time": row["ISO_TIME"].to_pydatetime(),
+            "wind_kt": row["WIND_KT"],
+            "nature": raw_nature,
+            "ace_nature": raw_nature,
+            "source": "IBTrACS",
+            "storm_num": float("nan"),
+        })
+    out = pd.DataFrame(rows, columns=_CANON_COLS)
+    print(f"{log_prefix}   current-year IBTrACS fixes (all natures): {len(out):,}")
+    return out
+
+
+def eligible_points_from_canon(canon: pd.DataFrame, basin_cfg: dict,
+                               year: int) -> pd.DataFrame:
+    """Project the merged canonical fix set down to the by-DOY ``points`` frame
+    the cumulative curve consumes, keeping ONLY ACE-eligible fixes (ac.fix_ace_eligible)
+    and using ac.fix_increment for the per-fix contribution. This is the
+    current-year slice that replaces the IBTrACS-derived one in ``points``."""
+    short = basin_cfg["short"]
+    rows = []
+    for r in canon.to_dict("records"):
+        t = r["time"]
+        w = r["wind_kt"]
+        nat = r.get("ace_nature", r.get("nature"))
+        if ac.fix_ace_eligible(t, w, nat, short):
+            rows.append({
+                "season": year,
+                "doy": t.timetuple().tm_yday,
+                "ace_increment": ac.fix_increment(w),
+                "SID": r["SID"],
+                "NAME": r.get("NAME") or "UNNAMED",
+                "ISO_TIME": t,
+                "WIND_KT": float(w),
+            })
+    return pd.DataFrame(rows, columns=_POINT_COLS)
+
+
+def current_year_storms(canon: pd.DataFrame, basin_cfg: dict,
+                        year: int) -> list[dict]:
+    """Per-storm gantt records for the current year, built from the merged
+    canonical set so the homepage, climo page, and tracks feed agree on every
+    storm. ACE via ac.storm_ace (the single rounding policy), peak wind via
+    ac.canonical_peak_wind (the single peak definition). Only storms that
+    produced ACE appear (same as extract_storms_by_year for past years)."""
+    if canon.empty:
+        return []
+    short = basin_cfg["short"]
+    out: list[dict] = []
+    for _sid, group in canon.groupby("SID", sort=False):
+        pts = group.sort_values("time").to_dict("records")
+        ace_total = ac.storm_ace(pts, short)
+        if ace_total <= 0:
+            continue
+        elig = [p for p in pts
+                if ac.fix_ace_eligible(p["time"], p["wind_kt"],
+                                       p.get("ace_nature", p.get("nature")), short)]
+        if not elig:
+            continue
+        peak_w = ac.canonical_peak_wind(pts)
+        peak_time = None
+        if not math.isnan(peak_w):
+            for p in pts:
+                w = p["wind_kt"]
+                if (ac.is_six_hourly(p["time"]) and w is not None
+                        and not (isinstance(w, float) and math.isnan(w))
+                        and float(w) == peak_w):
+                    peak_time = p["time"]
+                    break
+        name = ""
+        for p in pts:
+            n = str(p.get("NAME") or "").strip()
+            if n and n.upper() not in ("UNNAMED", "NAMELESS", "INVEST"):
+                name = n.upper()
+                break
+        if not name:
+            name = "UNNAMED"
+        out.append({
+            "name": name,
+            "formation": elig[0]["time"].isoformat(),
+            "dissipation": elig[-1]["time"].isoformat(),
+            "peak_wind_kt": None if math.isnan(peak_w) else round(peak_w, 1),
+            "peak_wind_time": peak_time.isoformat() if peak_time else None,
+            "ace_total": ace_total,
+        })
+    out.sort(key=lambda s: s["formation"] or "")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # HTML rendering (self-contained dark SVG chart + ranking table)
 # ---------------------------------------------------------------------------
 
@@ -489,10 +529,20 @@ from _ace_template import HTML_TEMPLATE  # noqa: E402
 
 def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
                   prior_year: int | None, last_obs_doy: dict[int, int],
-                  storms_by_year: dict | None = None) -> dict:
+                  storms_by_year: dict | None = None,
+                  season_ace_current: float | None = None,
+                  latest_fix_dt: dt.datetime | None = None,
+                  build_now: dt.datetime | None = None) -> dict:
     doy = cum.index.tolist()
     today = dt.date.today()
     today_doy_real = today.timetuple().tm_yday if today.year == current_year else None
+    build_now = build_now or dt.datetime.utcnow()
+    # The current-season headline ACE is the single authority value from
+    # ace_core (sum of per-storm ACE), NOT the by-DOY curve's endpoint (which can
+    # differ by a sub-0.001 round-then-sum). When provided it overrides the
+    # current-year series endpoint + ranking, so every surface shows one number.
+    canonical_current = (ac.round_ace(season_ace_current)
+                         if season_ace_current is not None else None)
 
     def series(year):
         if year is None or year not in cum.columns:
@@ -507,11 +557,20 @@ def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
         else:
             vals_out = vals
             doy_out = doy
+        out_vals = [round(float(v), 3) for v in vals_out]
+        latest = round(float(vals_out[-1]) if len(vals_out) else 0.0, 3)
+        # Snap the current-year endpoint (curve + headline) to the canonical
+        # ace_core season total so the plotted dot sits exactly on the number
+        # the rankings + tracks feed report.
+        if year == current_year and canonical_current is not None:
+            latest = canonical_current
+            if out_vals:
+                out_vals[-1] = canonical_current
         return {
             "label": str(year),
             "doy": [int(x) for x in doy_out],
-            "values": [round(float(v), 3) for v in vals_out],
-            "latest_value": round(float(vals_out[-1]) if len(vals_out) else 0.0, 3),
+            "values": out_vals,
+            "latest_value": latest,
         }
 
     doy_cutoff = today_doy_real or 366
@@ -520,10 +579,16 @@ def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
         col = cum[year].values.astype(float)
         total = float(col[-1])
         ytd = float(col[min(doy_cutoff, len(col)) - 1])
+        is_current = int(year) == current_year
+        # Current year's ranking uses the canonical ace_core season total, not
+        # the curve endpoint, so the rank reflects the same number shown above.
+        if is_current and canonical_current is not None:
+            total = canonical_current
+            ytd = canonical_current
         rank_rows.append({
             "year": int(year), "ytd": round(ytd, 2),
             "total": round(total, 2),
-            "current": int(year) == current_year,
+            "current": is_current,
         })
     rank_rows.sort(key=lambda r: (-r["ytd"], -r["total"], -r["year"]))
     for i, r in enumerate(rank_rows, start=1):
@@ -542,6 +607,7 @@ def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
         # Stringify keys for stable JSON dict keys (numeric keys → strings)
         storms_payload = {str(y): v for y, v in storms_by_year.items()}
 
+    latest_fix_z = ac.iso_z(latest_fix_dt)
     return {
         "doy": [int(x) for x in doy],
         "climo": {
@@ -556,6 +622,12 @@ def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
         "total_seasons": len(rank_rows),
         "all_years": all_years,
         "storms_by_year": storms_payload,
+        # Observability: real build time, valid-time of the newest 6-hourly fix
+        # used (any nature - a 25 kt TD still counts for freshness), and the gap
+        # between them. Mirrors the tracks feed's timestamp triplet.
+        "generated_utc": ac.now_iso_z(build_now),
+        "latest_fix_valid_utc": latest_fix_z,
+        "staleness_minutes": ac.staleness_minutes(latest_fix_dt, build_now),
     }
 
 
@@ -563,10 +635,12 @@ _BASIN_SHORT_LABELS = {"wp": "WPAC", "al": "AL", "ep": "EPAC"}
 
 
 def render_html(payload: dict, basin_cfg: dict, current_year: int,
-                climo_start: int, climo_end: int, live_used: bool) -> str:
+                climo_start: int, climo_end: int, live_used: bool,
+                build_now: dt.datetime | None = None) -> str:
     live_note = f" + live {basin_cfg['agency_name']} b-deck" if live_used else ""
     short_label = _BASIN_SHORT_LABELS.get(basin_cfg["short"],
                                           basin_cfg["short"].upper())
+    build_now = build_now or dt.datetime.utcnow()
     return HTML_TEMPLATE.format(
         payload=json.dumps(payload, separators=(",", ":")),
         basin_full_name=basin_cfg["full_name"],
@@ -574,7 +648,7 @@ def render_html(payload: dict, basin_cfg: dict, current_year: int,
         current_year=current_year,
         climo_start=climo_start,
         climo_end=climo_end,
-        updated=dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        updated=build_now.strftime("%Y-%m-%d %H:%M UTC"),
         live_note=live_note,
     )
 
@@ -624,66 +698,64 @@ def main(argv: Iterable[str] | None = None) -> int:
     current_year = dt.date.today().year
     prior_year = current_year - 1
 
+    build_now = dt.datetime.utcnow()
+
+    # --- Current-year canonical ACE set (single-sourced via ace_core) --------
+    # Build ONE current-year fix set every surface agrees on: full 6-hourly
+    # IBTrACS fixes (every nature) merged with the live b-deck via the SAME
+    # ace_core merge the tracks feed uses, then route every number (per-storm
+    # ACE, season ACE, peak wind) through ace_core. This REPLACES the
+    # IBTrACS-derived current-year slice that compute_ace_timeseries produced,
+    # so the old per-generator merge + ACE loop is gone.
+    ib_cur = current_year_ibtracs_fixes(df, basin_cfg, current_year, log)
+
     live_used = False
+    live = pd.DataFrame(columns=_CANON_COLS)
     if FETCH_LIVE and not args.no_live:
         print(f"{log} attempting live {basin_cfg['agency_name']} fetch for {current_year} ...")
         live = fetch_live_season(current_year, basin_cfg, log)
         if not live.empty:
-            print(f"{log} pulled {len(live)} live 6-hour points from {basin_cfg['agency_name']}")
-            # Merge strategy: for each named storm appearing in BOTH
-            # sources (live and current-year IBTrACS), keep whichever
-            # source has more 6-hour observations for that storm. Live
-            # is usually more complete for currently-active storms (it
-            # has real-time advisories JTWC hasn't pushed to IBTrACS
-            # yet); IBTrACS is sometimes more complete for dissipated
-            # storms (JTWC may have stubbed or removed the bNN file).
-            # One source per storm — no double-counting of ACE.
-            placeholders = {"", "UNNAMED", "INVEST", "NAMELESS"}
-
-            cur_mask = points["season"] == current_year
-            ib_cur = points[cur_mask]
-            ib_other = points[~cur_mask]
-
-            ib_names = ib_cur["NAME"].fillna("").astype(str).str.strip().str.upper()
-            live_names = live["NAME"].fillna("").astype(str).str.strip().str.upper()
-
-            ib_counts = ib_names.value_counts().to_dict()
-            live_counts = live_names.value_counts().to_dict()
-
-            contested = {n for n in live_names.unique()
-                         if n and n not in placeholders
-                         and ib_counts.get(n, 0) > 0}
-
-            drop_from_ib: list[str] = []
-            drop_from_live: list[str] = []
-            for name in contested:
-                ib_c = ib_counts.get(name, 0)
-                live_c = live_counts.get(name, 0)
-                # Prefer the source with more observations. Ties go to
-                # live (fresher, includes current JTWC/NHC advisory).
-                if ib_c > live_c:
-                    drop_from_live.append(name)
-                else:
-                    drop_from_ib.append(name)
-
-            if drop_from_ib:
-                ib_cur = ib_cur[~ib_names.isin(drop_from_ib)].copy()
-            if drop_from_live:
-                live = live[~live_names.isin(drop_from_live)].copy()
-            if contested:
-                print(f"{log}   merge: {len(contested)} storm(s) in both sources. "
-                      f"Kept live for: {sorted(drop_from_ib)}. "
-                      f"Kept IBTrACS for: {sorted(drop_from_live)}.")
-
-            points = pd.concat([ib_other, ib_cur, live], ignore_index=True)
+            print(f"{log} pulled {len(live)} live 6-hour fixes from {basin_cfg['agency_name']}")
             live_used = True
         else:
             print(f"{log} live fetch returned nothing — using IBTrACS provisional data only")
 
+    # One source per named storm (ace_core), identical to the tracks feed -> the
+    # same canonical track per storm, so Sinlaku can't read 154 here and 160 there.
+    if not live.empty:
+        ib_keep, live_keep = ac.merge_named_sources(ib_cur, live, name_col="NAME")
+    else:
+        ib_keep, live_keep = ib_cur, live
+    canon_frames = [f for f in (ib_keep, live_keep) if not f.empty]
+    canon_cur = (pd.concat(canon_frames, ignore_index=True)
+                 if canon_frames else pd.DataFrame(columns=_CANON_COLS))
+    if not canon_cur.empty:
+        canon_cur = canon_cur.drop_duplicates(subset=["SID", "time"])
+
+    # Freshness = valid-time of the newest 6-hourly fix of ANY nature (a 25 kt
+    # designated TD still counts for freshness even though it adds no ACE).
+    latest_fix_dt = None
+    if not canon_cur.empty:
+        fix_times = [t for t in canon_cur["time"] if t is not None]
+        latest_fix_dt = max(fix_times) if fix_times else None
+
+    # Per-storm + season ACE come straight from ace_core (the single authority),
+    # so the season total = sum of per-storm ACE = the tracks feed's total_ace.
+    cur_storms = current_year_storms(canon_cur, basin_cfg, current_year)
+    season_ace_current = ac.season_ace([s["ace_total"] for s in cur_storms])
+    print(f"{log} current-year canonical: {len(cur_storms)} ACE storm(s), "
+          f"season ACE {season_ace_current:.3f}")
+
+    # Swap the current-year slice of the by-DOY points for the canonical one.
+    cur_points = eligible_points_from_canon(canon_cur, basin_cfg, current_year)
+    points = points[points["season"] != current_year].copy()
+    if not cur_points.empty:
+        points = pd.concat([points, cur_points], ignore_index=True)
+
     cum = cumulative_by_doy(points)
 
-    # Ensure the current calendar year exists as a column even if IBTrACS
-    # has no activity for it yet (pre-season). Keeps the chart honest.
+    # Ensure the current calendar year exists as a column even if there is no
+    # activity for it yet (pre-season). Keeps the chart honest.
     if current_year not in cum.columns:
         cum[current_year] = 0.0
         cum = cum.reindex(columns=sorted(cum.columns))
@@ -692,10 +764,20 @@ def main(argv: Iterable[str] | None = None) -> int:
                         exclude_years={current_year})
 
     last_obs_doy = points.groupby("season")["doy"].max().to_dict()
+    # Past-year gantt from the shared filtered points; the current-year gantt is
+    # the canonical ace_core set (peak via canonical_peak_wind, ACE via storm_ace).
     storms_by_year = extract_storms_by_year(points, min_year=1970)
+    if cur_storms:
+        storms_by_year[current_year] = cur_storms
+    else:
+        storms_by_year.pop(current_year, None)
     payload = build_payload(cum, climo, current_year, prior_year, last_obs_doy,
-                            storms_by_year=storms_by_year)
-    html = render_html(payload, basin_cfg, current_year, CLIMO_START, CLIMO_END, live_used)
+                            storms_by_year=storms_by_year,
+                            season_ace_current=season_ace_current,
+                            latest_fix_dt=latest_fix_dt,
+                            build_now=build_now)
+    html = render_html(payload, basin_cfg, current_year, CLIMO_START, CLIMO_END,
+                       live_used, build_now=build_now)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     html_path = OUTPUT_DIR / f"{basin}_ace.html"
