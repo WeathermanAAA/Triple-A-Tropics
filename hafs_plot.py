@@ -101,6 +101,40 @@ WATERMARK = "@WeathermanAAA_"
 KT_PER_MS = 1.94384  # m s-1 → knots
 
 # ---------------------------------------------------------------------------
+# Pressure-level (upper-air) field set - Phase 2 shared plumbing
+# ---------------------------------------------------------------------------
+# HAFS .atm carries 45 isobaric levels; we cache ONLY the specific levels/fields
+# the planned upper-air products need (NOT all 45), per the cache-cost analysis.
+# Geopotential height + wind components ride at three levels; relative vorticity
+# (derived from ABSOLUTE vorticity, the only vorticity HAFS outputs) at two; and
+# a single 700-300 mb layer-mean relative humidity (computed from 17 RH levels,
+# none of which are themselves cached). Units, verified by spike on the 06W
+# cycle: HGT gpm, UGRD/VGRD m/s (kept in m/s, NOT converted), RH %, ABSV 1/s.
+UPPER_LEVELS = (850, 700, 500)        # geopotential height Z + u/v wind
+VORT_LEVELS = (850, 500)              # relative vorticity (ABSV - f)
+# The 17 RH levels (mb) between 700 and 300 inclusive, mass/pressure-averaged
+# into ONE layer-mean field. Read transiently at ingest, never cached raw.
+RH_LAYER_LEVELS = (700, 675, 650, 625, 600, 575, 550, 525, 500,
+                   475, 450, 425, 400, 375, 350, 325, 300)
+RH_LAYER_NAME = "rh_layer_700_300"
+EARTH_OMEGA = 7.2921e-5               # Earth angular velocity, rad/s (for f)
+
+
+def upper_field_names() -> tuple:
+    """The cached upper-air field names, in a stable order. These are the ONLY
+    pressure-level fields stored per frame (12 total): gh/u/v at each
+    ``UPPER_LEVELS``, relative vorticity at each ``VORT_LEVELS``, and the single
+    700-300 mb layer-mean RH. ABSV and the raw RH levels are transient (consumed
+    to derive vorticity / the layer mean) and never appear here."""
+    names = []
+    for lev in UPPER_LEVELS:
+        names += [f"gh_{lev}", f"u_{lev}", f"v_{lev}"]
+    for lev in VORT_LEVELS:
+        names.append(f"relvort_{lev}")
+    names.append(RH_LAYER_NAME)
+    return tuple(names)
+
+# ---------------------------------------------------------------------------
 # Wind-speed colormap - vivid, high-contrast TAT table. A LinearSegmentedColormap
 # normalized over 0 to 165 kt: deep indigo (calm), through blues and teal, to
 # green and lime at the TS threshold, yellow and orange across Cat1-2, hot red
@@ -312,6 +346,12 @@ class HafsFrame:
     # A single-layer field like reflectivity. Only fetched when the caller asks
     # for the PWAT product; None for any other fetch.
     pwat: Optional[np.ndarray] = None
+    # Pressure-level (upper-air) fields, render-ready, keyed by name
+    # (``upper_field_names()``): gh/u/v at 850/700/500 mb, relative vorticity at
+    # 850/500 mb, and the 700-300 mb layer-mean RH. Each is a (lat, lon) array on
+    # the SAME trimmed grid as mslp/wind. None unless fetched with want_upper; no
+    # product consumes these yet (Phase 2 shared plumbing).
+    upper: Optional[dict] = None
 
 
 def _to_180(lon: np.ndarray) -> np.ndarray:
@@ -361,6 +401,61 @@ def _wrap_into(x: float, lon_min: float, lon_max: float) -> float:
     return x
 
 
+def _read_upper_air(H, remove_grib: bool) -> dict:
+    """Read the pressure-level fields the planned upper-air products need from an
+    already-constructed ``.atm`` Herbie object, returning native-grid (pre-trim,
+    pre-reorder) 2-D arrays.
+
+    Each (variable, level) is one byte-range subset read with the spike-verified
+    idx selectors; RH is pulled across its 17 layer levels in ONE multi-level
+    read and collapsed to a single mass/pressure-weighted layer mean here (the
+    raw levels are never returned). The ABSV levels ARE returned (keys
+    ``absv_<lev>``) so the caller can derive relative vorticity AFTER the lat
+    reorder, using the final latitudes for the planetary term f; they are dropped
+    before caching. cfgrib usually names the messages gh/u/v/r/absv, with a lone
+    data-var fallback for any it leaves as ``unknown``.
+    """
+    out: dict[str, np.ndarray] = {}
+
+    def _read_2d(search: str, prefer: str) -> np.ndarray:
+        ds = H.xarray(search, remove_grib=remove_grib)
+        if isinstance(ds, list):
+            ds = ds[0]
+        var = prefer if prefer in ds.data_vars else list(ds.data_vars)[0]
+        return ds[var].values.astype(float)
+
+    for lev in UPPER_LEVELS:
+        out[f"gh_{lev}"] = _read_2d(f":HGT:{lev} mb:", "gh")
+        out[f"u_{lev}"] = _read_2d(f":UGRD:{lev} mb:", "u")
+        out[f"v_{lev}"] = _read_2d(f":VGRD:{lev} mb:", "v")
+    for lev in VORT_LEVELS:
+        out[f"absv_{lev}"] = _read_2d(f":ABSV:{lev} mb:", "absv")
+
+    # RH: one multi-level read of the 17 isobaric layer levels, then a
+    # mass/pressure-weighted vertical mean over [300, 700] mb (trapezoidal in
+    # pressure, so non-uniform spacing or a missing level is handled correctly).
+    ds_rh = H.xarray(":RH:[0-9]+ mb:", remove_grib=remove_grib)
+    if isinstance(ds_rh, list):
+        ds_rh = ds_rh[0]
+    rvar = "r" if "r" in ds_rh.data_vars else list(ds_rh.data_vars)[0]
+    rh = ds_rh[rvar]
+    levname = "isobaricInhPa"
+    p = rh[levname].values.astype(float)
+    vals = np.moveaxis(rh.values.astype(float), rh.dims.index(levname), 0)
+    keep = np.isin(np.round(p).astype(int), np.array(RH_LAYER_LEVELS))
+    p, vals = p[keep], vals[keep]
+    order = np.argsort(p)            # ascending pressure for the integral
+    p_s, vals_s = p[order], vals[order]
+    # Trapezoidal integral of RH over pressure (axis 0), normalized by the layer
+    # thickness -> the mass/pressure-weighted layer-mean RH. Done by hand (no
+    # np.trapz, removed in NumPy 2.x) so it is version-independent.
+    dp = np.diff(p_s)                                   # (L-1,)
+    seg = 0.5 * (vals_s[1:] + vals_s[:-1])              # (L-1, lat, lon)
+    num = np.tensordot(dp, seg, axes=(0, 0))            # (lat, lon)
+    out[RH_LAYER_NAME] = num / (p_s[-1] - p_s[0])
+    return out
+
+
 def _read_raw_fields(
     model: str,
     storm: str,
@@ -372,6 +467,7 @@ def _read_raw_fields(
     remove_grib: bool = False,
     want_refl: bool = False,
     want_pwat: bool = False,
+    want_upper: bool = False,
     sat_parms: Sequence[int] = (),
 ) -> dict:
     """INGEST STAGE core: fetch + decode each REQUIRED GRIB file ONCE and return
@@ -385,8 +481,10 @@ def _read_raw_fields(
     conversion). ``sat_parms`` (GRIB2
     parameterNumbers) each add a read from the SIBLING ``.sat`` file (one Herbie
     object for the file, one byte-range read per channel) - Kelvin is converted
-    to degC. Decoding the union of every product's fields here, ONCE per frame,
-    is what lets the cache serve all products without re-fetching the shared GRIB.
+    to degC. ``want_upper`` adds the pressure-level fields (see ``_read_upper_air``
+    + the derived relative vorticity below). Decoding the union of every product's
+    fields here, ONCE per frame, is what lets the cache serve all products without
+    re-fetching the shared GRIB.
 
     Returns a dict of full-grid (ascending lat/lon, untrimmed) arrays:
     ``lon, lat, mslp_hpa, wind_kt, u_kt, v_kt`` always; ``refl_dbz`` when
@@ -462,6 +560,13 @@ def _read_raw_fields(
             svar = list(ds_s.data_vars)[0]
             bt[int(parm)] = ds_s[svar].values.astype(float) - 273.15  # K -> degC
 
+    # Pressure-level (upper-air) fields from the SAME .atm file. Native-grid 2-D
+    # arrays incl. the transient ABSV levels; relative vorticity is derived below
+    # (after the lat reorder) and ABSV is then dropped, so it is never cached.
+    upper: dict[str, np.ndarray] = {}
+    if want_upper:
+        upper = _read_upper_air(H, remove_grib)
+
     lat = ds_p["latitude"].values
     # Monotonic longitude frame (continuous past +180 for dateline-crossing
     # West Pacific nests; plain signed -180..180 otherwise).
@@ -489,6 +594,7 @@ def _read_raw_fields(
         if pwat is not None:
             pwat = pwat[::-1, :]
         bt = {p: a[::-1, :] for p, a in bt.items()}
+        upper = {k: a[::-1, :] for k, a in upper.items()}
     if lon[0] > lon[-1]:
         lon = lon[::-1]
         mslp = mslp[:, ::-1]
@@ -500,6 +606,17 @@ def _read_raw_fields(
         if pwat is not None:
             pwat = pwat[:, ::-1]
         bt = {p: a[:, ::-1] for p, a in bt.items()}
+        upper = {k: a[:, ::-1] for k, a in upper.items()}
+
+    # Derive relative vorticity = ABSV - f now that lat is final/ascending, so
+    # the planetary term f = 2*Omega*sin(phi) lines up per-pixel with the
+    # (reordered) ABSV grid. Cyclonic flow in the NH is POSITIVE relative
+    # vorticity. ABSV is consumed here and never cached. f broadcasts over lon.
+    if want_upper:
+        f = 2.0 * EARTH_OMEGA * np.sin(np.deg2rad(lat.astype(float)))
+        for lev in VORT_LEVELS:
+            absv = upper.pop(f"absv_{lev}")
+            upper[f"relvort_{lev}"] = absv - f[:, None]
 
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
@@ -509,11 +626,12 @@ def _read_raw_fields(
         "init_time": init_time, "valid_time": valid_time,
         "lon": lon, "lat": lat, "mslp_hpa": mslp, "wind_kt": wind,
         "u_kt": u_kt, "v_kt": v_kt, "refl_dbz": refl, "pwat": pwat, "bt": bt,
+        "upper": upper,
     }
 
 
 def _pack_frame(raw: dict, *, want_refl: bool = False,
-                want_pwat: bool = False,
+                want_pwat: bool = False, want_upper: bool = False,
                 sat_parm: Optional[int] = None) -> HafsFrame:
     """RENDER-side core: trim a raw field grid (from ``_read_raw_fields`` or the
     field cache) to its finite extent and return the HafsFrame ``render_frame``
@@ -531,6 +649,7 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     u_kt, v_kt = raw["u_kt"], raw["v_kt"]
     refl = raw["refl_dbz"] if want_refl else None
     pwat = raw.get("pwat") if want_pwat else None
+    upper = raw.get("upper") if want_upper else None
     bt = raw["bt"].get(int(sat_parm)) if sat_parm is not None else None
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
@@ -557,6 +676,10 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
         # mask already bounds it; slice to the SAME rectangle in lockstep (like
         # refl) - it is not folded into the mask.
         pwat = pwat[r0:r1, c0:c1]
+    if upper is not None:
+        # Upper-air fields share the .atm grid; slice to the SAME rectangle in
+        # lockstep (the mslp|wind mask already bounds them).
+        upper = {k: a[r0:r1, c0:c1] for k, a in upper.items()}
     if bt is not None:
         bt = bt[r0:r1, c0:c1]
         # Degenerate-frame guard (mirrors the satellite render's scalar-IR guard):
@@ -576,6 +699,7 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
         refl_dbz=refl,
         bt_c=bt,
         pwat=pwat,
+        upper=upper,
     )
 
 
@@ -589,6 +713,7 @@ def fetch_hafs_frame(
     remove_grib: bool = False,
     want_refl: bool = False,
     want_pwat: bool = False,
+    want_upper: bool = False,
     sat_parm: Optional[int] = None,
 ) -> HafsFrame:
     """Fetch + decode + trim one HAFS frame for ONE product into a HafsFrame.
@@ -606,10 +731,11 @@ def fetch_hafs_frame(
     raw = _read_raw_fields(
         model, storm, product, date, fxx, save_dir,
         remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
+        want_upper=want_upper,
         sat_parms=(sat_parm,) if sat_parm is not None else (),
     )
     return _pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
-                       sat_parm=sat_parm)
+                       want_upper=want_upper, sat_parm=sat_parm)
 
 
 # ---------------------------------------------------------------------------
