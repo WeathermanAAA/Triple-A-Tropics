@@ -2,13 +2,16 @@
   "basin": "al",
   "basin_name": "North Atlantic",
   "year": 2026,
-  "updated": "2026-06-01 19:15 UTC",
+  "updated": "2026-06-01 20:10 UTC",
+  "generated_utc": "2026-06-01T20:10:13Z",
+  "latest_fix_valid_utc": null,
+  "staleness_minutes": null,
   "header": {
     "named": 0,
     "cat1plus": 0,
     "cat3plus": 0,
     "cat5": 0,
-    "total_ace": 0
+    "total_ace": 0.0
   },
   "vocab": {
     "named": "named storms",
