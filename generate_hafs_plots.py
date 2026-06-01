@@ -415,12 +415,16 @@ def _render_one(job: RenderJob) -> dict:
     """
     want_refl = job.product == "refl"
     want_pwat = job.product == "mslp_pwat"
+    # Upper-air products declare their need via requires_attr == "upper" (the
+    # registry guard), so the render reconstructs frame.upper from the cache.
+    want_upper = reg.get_spec(job.product).requires_attr == "upper"
     # Sim-sat products read their BT channel by GRIB2 parameterNumber from the
-    # product's registry spec (None for wind/refl/pwat).
+    # product's registry spec (None for wind/refl/pwat/upper).
     sat_parm = reg.sat_parm(job.product)
     try:
         frame = fc.load_frame(Path(job.cache_path), want_refl=want_refl,
-                              want_pwat=want_pwat, sat_parm=sat_parm)
+                              want_pwat=want_pwat, want_upper=want_upper,
+                              sat_parm=sat_parm)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
         hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
                         product=job.product,

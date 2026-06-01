@@ -29,6 +29,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import matplotlib.cm as mcm
+import matplotlib.colors as mcolors
 
 # Low-level render primitives stay in hafs_plot (used elsewhere there too); the
 # registry references them. hafs_plot does NOT import this module at top level
@@ -56,6 +57,26 @@ class FillColors:
     field: object
     pal: object = None
     enh: object = None
+
+
+@dataclass(frozen=True)
+class LineContourSpec:
+    """A generic labeled line-contour overlay of a cached scalar field.
+
+    NOT height-specific: ``source(frame)`` returns the 2-D field ALREADY in the
+    display units to contour (the height products scale gh gpm -> dam), and the
+    lines are drawn at multiples of ``interval`` that fall inside the frame's
+    range. Styled thin with a halo for legibility over colorful or dark fills,
+    labeled with ``label_fmt``. render_frame draws it when a spec carries one.
+    """
+    source: Callable                 # (frame) -> 2-D array in display units
+    interval: float                  # contour spacing, display units
+    color: str = "#000000"
+    linewidth: float = 0.8
+    alpha: float = 0.9
+    label_fmt: str = "%d"
+    halo: float = 1.6                # halo width added to linewidth (0 = none)
+    halo_color: str = "#ffffff"
 
 
 @dataclass(frozen=True)
@@ -92,7 +113,7 @@ class ProductSpec:
     make_colorbar: Callable              # (fig, cax, cf, colors) -> colorbar
 
     # --- overlays ---
-    draw_barbs: bool                     # wind barbs + wind-speed contour lines
+    draw_barbs: bool                     # draw wind barbs (source = wind_provider)
 
     # --- coastline styling (border color == coast color for every product) ---
     coast_color: str
@@ -112,6 +133,32 @@ class ProductSpec:
     # every product except PWAT (moisture contours), and the render path guards on
     # it, so the lines stay confined to the spec that sets them.
     field_contour_levels: tuple = ()
+
+    # --- overlay: thin black Saffir-Simpson wind-speed CATEGORY contours ---
+    # The wind product's signature isotach lines (CBAR_TICKS_KT thresholds of the
+    # wind-speed field). Decoupled from draw_barbs so a product can carry barbs
+    # WITHOUT these (the vorticity / RH products do). Default off; the wind and
+    # upper-air height-wind products set it True.
+    draw_wind_contours: bool = False
+
+    # --- overlay: white MSLP isobars + the bold L marker + pressure label ---
+    # Drawn for every product by default (surface pressure context). The upper-air
+    # height / vorticity products turn it OFF (they draw height line-contours
+    # instead); the RH product keeps it ON (it shows surface MSLP, not height).
+    draw_mslp: bool = True
+
+    # --- wind source for barbs + category contours ---
+    # Returns ``(u_kt, v_kt, speed_kt)`` for a frame. None -> the 10 m fields
+    # (frame.u_kt / v_kt / wind_kt), unchanged for the wind product. Upper-air
+    # products set a provider that reads a pressure level / layer-mean from
+    # frame.upper and converts m/s -> kt.
+    wind_provider: Optional[Callable] = None
+
+    # --- overlay: a generic labeled line-contour of a cached scalar ---
+    # A LineContourSpec (below) or None. NOT height-specific: the height products
+    # set one that reads gh in decameters, but any product could contour any
+    # field. render_frame draws it (labeled, thin) when present.
+    line_contour: Optional[object] = None
 
     def resolve_enhancement(self, override: Optional[str]) -> Optional[str]:
         """The enhancement name to color with: the caller override or the spec
@@ -153,6 +200,83 @@ def _bt_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
     cmap = enh["cmap"].with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
     norm = tp.enhancement_norm(enh_name)
     return FillColors(cmap=cmap, norm=norm, field=frame.bt_c, enh=enh)
+
+
+# ---------------------------------------------------------------------------
+# Upper-air (pressure-level) helpers + color/colorbar/stat factories. The fields
+# live in frame.upper (Phase 2 cache); the render guard (requires_attr="upper")
+# ensures it is present before any of these run.
+# ---------------------------------------------------------------------------
+def _level_wind_kt(frame, lev):
+    """(u, v, speed) in KNOTS at a pressure level, from the m/s cache fields."""
+    u = frame.upper[f"u_{lev}"] * hp.KT_PER_MS
+    v = frame.upper[f"v_{lev}"] * hp.KT_PER_MS
+    return u, v, np.hypot(u, v)
+
+
+def _layer_wind_kt(frame):
+    """(u, v, speed) in KNOTS for the 700-300 mb layer-mean wind (RH product)."""
+    u = frame.upper["ulayer_700_300"] * hp.KT_PER_MS
+    v = frame.upper["vlayer_700_300"] * hp.KT_PER_MS
+    return u, v, np.hypot(u, v)
+
+
+def _level_wind_provider(lev):
+    return lambda frame: _level_wind_kt(frame, lev)
+
+
+def _height_dam(lev):
+    """LineContourSpec source: geopotential height at ``lev`` in DECAMETERS."""
+    return lambda frame: frame.upper[f"gh_{lev}"] / 10.0
+
+
+def _hgt_wind_colors(lev):
+    """Fill = wind SPEED (kt) at ``lev`` with the EXISTING tat_wind palette."""
+    def f(spec, frame, enh_name) -> FillColors:
+        cmap, norm = hp._wind_cmap_norm()
+        _, _, spd = _level_wind_kt(frame, lev)
+        return FillColors(cmap=cmap, norm=norm, field=spd)
+    return f
+
+
+def _vort_colors(lev, vmax):
+    """Fill = cyclonic relative vorticity at ``lev`` in 1e-5 s^-1, tat_cyclonic_vort
+    over Normalize(0, vmax). Calm/anticyclonic air (< VORT_MASK_BELOW) is masked to
+    NaN so the dark map shows through."""
+    def f(spec, frame, enh_name) -> FillColors:
+        field = frame.upper[f"relvort_{lev}"] * 1e5      # 1/s -> 1e-5/s
+        field = np.where(field < tp.VORT_MASK_BELOW, np.nan, field)
+        return FillColors(cmap=tp.TAT_CYCLONIC_VORT_CMAP,
+                          norm=mcolors.Normalize(0.0, vmax), field=field)
+    return f
+
+
+def _rh_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
+    return FillColors(cmap=tp.TAT_RH_CMAP, norm=mcolors.Normalize(0.0, 100.0),
+                      field=frame.upper["rh_layer_700_300"])
+
+
+def _hgt_wind_colorbar(fig, cax, cf, colors: FillColors):
+    # Same knots palette/ticks as the 10 m wind bar, but an honest label (the
+    # fill is pressure-level wind, not 10 m). mslp_wind keeps _wind_colorbar.
+    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=hp.CBAR_TICKS_KT)
+    cb.set_label("Wind speed (kt)", color=hp.TEXT_COLOR, fontsize=10)
+    return cb
+
+
+def _vort_colorbar(fig, cax, cf, colors: FillColors):
+    vmax = float(colors.norm.vmax)
+    step = 50 if vmax >= 300 else 30          # 0..300 by 50, 0..150 by 30
+    ticks = list(range(0, int(vmax) + 1, step))
+    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=ticks)
+    cb.set_label("Cyclonic vorticity (10^-5 /s)", color=hp.TEXT_COLOR, fontsize=10)
+    return cb
+
+
+def _rh_colorbar(fig, cax, cf, colors: FillColors):
+    cb = fig.colorbar(cf, cax=cax, ticks=tp.RH_TICKS)
+    cb.set_label("Relative humidity (%)", color=hp.TEXT_COLOR, fontsize=10)
+    return cb
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +346,34 @@ def _pwat_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
     return subtitle, right_stat
 
 
+def _hgt_wind_stat(lev):
+    def f(spec: ProductSpec, frame, domain_label, vmax, pmin):
+        _, _, spd = _level_wind_kt(frame, lev)
+        smax = float(np.nanmax(spd)) if np.isfinite(spd).any() else float("nan")
+        subtitle = f"{lev} mb Height & Wind  /  {domain_label}"
+        right_stat = f"MAX WIND {smax:.0f} kt @{lev}"
+        return subtitle, right_stat
+    return f
+
+
+def _vort_stat(lev):
+    def f(spec: ProductSpec, frame, domain_label, vmax, pmin):
+        v5 = frame.upper[f"relvort_{lev}"] * 1e5     # 1e-5 /s
+        vmax_v = float(np.nanmax(v5)) if np.isfinite(v5).any() else float("nan")
+        subtitle = f"{lev} mb Cyclonic Vorticity & Wind  /  {domain_label}"
+        right_stat = f"MAX VORT {vmax_v:.0f} x10^-5/s @{lev}"
+        return subtitle, right_stat
+    return f
+
+
+def _rh_layer_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
+    rh = frame.upper["rh_layer_700_300"]
+    rmean = float(np.nanmean(rh)) if np.isfinite(rh).any() else float("nan")
+    subtitle = f"700-300 mb Relative Humidity & Wind  /  {domain_label}"
+    right_stat = f"MEAN RH {rmean:.0f}%"
+    return subtitle, right_stat
+
+
 # ---------------------------------------------------------------------------
 # The HAFS product specs, in toggle order. mslp_wind stays first so the default
 # frontend view is unchanged (Wind), and the four pre-existing products keep
@@ -239,6 +391,8 @@ _SPECS = (
         draw_barbs=True,
         coast_color=hp.COAST_COLOR, coast_lw=1.2, coast_halo=0.0,
         make_stat=_wind_stat,
+        # The wind product's signature isotach lines (now decoupled from barbs).
+        draw_wind_contours=True,
     ),
     ProductSpec(
         key="refl", slug="refl", label="Composite Reflectivity + MSLP",
@@ -292,6 +446,91 @@ _SPECS = (
         # Thin black moisture contours every 10 mm from 50 (only those inside a
         # frame's PWAT range draw), same style as the wind category contours.
         field_contour_levels=(50, 60, 70, 80, 90),
+    ),
+
+    # --- Phase 2 upper-air products (orders 5..10, appended after the existing
+    # five so defaults / existing toggle order are unchanged). All read
+    # frame.upper (requires_attr="upper"). Height/vorticity products draw height
+    # line-contours INSTEAD of MSLP isobars (draw_mslp=False); the RH product
+    # keeps MSLP isobars + L. Coasts use the SAT haloed-near-white treatment,
+    # legible over the colorful wind fill, the dark vorticity fill, and the RH
+    # fill alike. ---
+    ProductSpec(
+        key="hgt_wind_850", slug="hgt_wind_850", label="850 mb Height & Wind",
+        short="850 H/Wind", order=5,
+        grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
+        default_enhancement=None, channel=None, make_colors=_hgt_wind_colors(850),
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_hgt_wind_colorbar,
+        draw_barbs=True, draw_wind_contours=True, draw_mslp=False,
+        wind_provider=_level_wind_provider(850),
+        line_contour=LineContourSpec(source=_height_dam(850), interval=3.0),
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_hgt_wind_stat(850),
+    ),
+    ProductSpec(
+        key="hgt_wind_700", slug="hgt_wind_700", label="700 mb Height & Wind",
+        short="700 H/Wind", order=6,
+        grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
+        default_enhancement=None, channel=None, make_colors=_hgt_wind_colors(700),
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_hgt_wind_colorbar,
+        draw_barbs=True, draw_wind_contours=True, draw_mslp=False,
+        wind_provider=_level_wind_provider(700),
+        line_contour=LineContourSpec(source=_height_dam(700), interval=3.0),
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_hgt_wind_stat(700),
+    ),
+    ProductSpec(
+        key="hgt_wind_500", slug="hgt_wind_500", label="500 mb Height & Wind",
+        short="500 H/Wind", order=7,
+        grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
+        default_enhancement=None, channel=None, make_colors=_hgt_wind_colors(500),
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_hgt_wind_colorbar,
+        draw_barbs=True, draw_wind_contours=True, draw_mslp=False,
+        wind_provider=_level_wind_provider(500),
+        # 500 mb heights vary more across the parent window, so a wider 6 dam
+        # interval keeps the lines uncrowded (NWS standard); 850/700 use 3 dam.
+        line_contour=LineContourSpec(source=_height_dam(500), interval=6.0),
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_hgt_wind_stat(500),
+    ),
+    ProductSpec(
+        key="vort_wind_850", slug="vort_wind_850",
+        label="850 mb Cyclonic Vorticity & Wind", short="850 Vort", order=8,
+        grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
+        default_enhancement=None, channel=None,
+        make_colors=_vort_colors(850, 300.0),
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
+        draw_barbs=True, draw_wind_contours=False, draw_mslp=False,
+        wind_provider=_level_wind_provider(850),
+        line_contour=LineContourSpec(source=_height_dam(850), interval=3.0),
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_vort_stat(850),
+    ),
+    ProductSpec(
+        key="vort_wind_500", slug="vort_wind_500",
+        label="500 mb Cyclonic Vorticity & Wind", short="500 Vort", order=9,
+        grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
+        default_enhancement=None, channel=None,
+        make_colors=_vort_colors(500, 150.0),
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
+        draw_barbs=True, draw_wind_contours=False, draw_mslp=False,
+        wind_provider=_level_wind_provider(500),
+        line_contour=LineContourSpec(source=_height_dam(500), interval=6.0),
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_vort_stat(500),
+    ),
+    ProductSpec(
+        key="rh_layer", slug="rh_layer",
+        label="700-300 mb Relative Humidity & Wind", short="Layer RH", order=10,
+        grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
+        default_enhancement=None, channel=None, make_colors=_rh_colors,
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_rh_colorbar,
+        # MSLP isobars + L (the surface-pressure context, NOT height contours);
+        # barbs from the 700-300 mb layer-mean wind; no category contours.
+        draw_barbs=True, draw_wind_contours=False, draw_mslp=True,
+        wind_provider=_layer_wind_kt,
+        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        make_stat=_rh_layer_stat,
     ),
 )
 

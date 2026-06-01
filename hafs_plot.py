@@ -122,16 +122,17 @@ EARTH_OMEGA = 7.2921e-5               # Earth angular velocity, rad/s (for f)
 
 def upper_field_names() -> tuple:
     """The cached upper-air field names, in a stable order. These are the ONLY
-    pressure-level fields stored per frame (12 total): gh/u/v at each
-    ``UPPER_LEVELS``, relative vorticity at each ``VORT_LEVELS``, and the single
-    700-300 mb layer-mean RH. ABSV and the raw RH levels are transient (consumed
-    to derive vorticity / the layer mean) and never appear here."""
+    pressure-level fields stored per frame (14 total): gh/u/v at each
+    ``UPPER_LEVELS``, relative vorticity at each ``VORT_LEVELS``, the 700-300 mb
+    layer-mean RH, and the 700-300 mb layer-mean u/v (for the RH product's
+    barbs). ABSV and the raw RH/wind levels are transient (consumed to derive
+    vorticity / the layer means) and never appear here."""
     names = []
     for lev in UPPER_LEVELS:
         names += [f"gh_{lev}", f"u_{lev}", f"v_{lev}"]
     for lev in VORT_LEVELS:
         names.append(f"relvort_{lev}")
-    names.append(RH_LAYER_NAME)
+    names += [RH_LAYER_NAME, "ulayer_700_300", "vlayer_700_300"]
     return tuple(names)
 
 # ---------------------------------------------------------------------------
@@ -407,13 +408,15 @@ def _read_upper_air(H, remove_grib: bool) -> dict:
     pre-reorder) 2-D arrays.
 
     Each (variable, level) is one byte-range subset read with the spike-verified
-    idx selectors; RH is pulled across its 17 layer levels in ONE multi-level
-    read and collapsed to a single mass/pressure-weighted layer mean here (the
-    raw levels are never returned). The ABSV levels ARE returned (keys
-    ``absv_<lev>``) so the caller can derive relative vorticity AFTER the lat
-    reorder, using the final latitudes for the planetary term f; they are dropped
-    before caching. cfgrib usually names the messages gh/u/v/r/absv, with a lone
-    data-var fallback for any it leaves as ``unknown``.
+    idx selectors. RH, u, and v are each pulled across the 17 layer levels in ONE
+    multi-level read and collapsed to a single mass/pressure-weighted layer mean
+    here (the raw levels are never returned) - RH gives ``rh_layer_700_300`` and
+    the winds give ``ulayer_700_300`` / ``vlayer_700_300`` (m/s, for the RH
+    product's barbs). The ABSV levels ARE returned (keys ``absv_<lev>``) so the
+    caller can derive relative vorticity AFTER the lat reorder, using the final
+    latitudes for the planetary term f; they are dropped before caching. cfgrib
+    usually names the messages gh/u/v/r/absv, with a lone data-var fallback for
+    any it leaves as ``unknown``.
     """
     out: dict[str, np.ndarray] = {}
 
@@ -424,6 +427,27 @@ def _read_upper_air(H, remove_grib: bool) -> dict:
         var = prefer if prefer in ds.data_vars else list(ds.data_vars)[0]
         return ds[var].values.astype(float)
 
+    def _layer_mean(search: str, prefer: str) -> np.ndarray:
+        """ONE multi-level read over the 700-300 mb layer, collapsed to a
+        mass/pressure-weighted (trapezoidal-in-pressure) vertical mean (2-D)."""
+        ds = H.xarray(search, remove_grib=remove_grib)
+        if isinstance(ds, list):
+            ds = ds[0]
+        var = prefer if prefer in ds.data_vars else list(ds.data_vars)[0]
+        da = ds[var]
+        levname = "isobaricInhPa"
+        p = da[levname].values.astype(float)
+        vals = np.moveaxis(da.values.astype(float), da.dims.index(levname), 0)
+        keep = np.isin(np.round(p).astype(int), np.array(RH_LAYER_LEVELS))
+        p, vals = p[keep], vals[keep]
+        order = np.argsort(p)            # ascending pressure for the integral
+        p_s, vals_s = p[order], vals[order]
+        # Trapezoidal integral over pressure (axis 0), normalized by the layer
+        # thickness. By hand (np.trapz removed in NumPy 2.x) -> version-independent.
+        dp = np.diff(p_s)                              # (L-1,)
+        seg = 0.5 * (vals_s[1:] + vals_s[:-1])         # (L-1, lat, lon)
+        return np.tensordot(dp, seg, axes=(0, 0)) / (p_s[-1] - p_s[0])
+
     for lev in UPPER_LEVELS:
         out[f"gh_{lev}"] = _read_2d(f":HGT:{lev} mb:", "gh")
         out[f"u_{lev}"] = _read_2d(f":UGRD:{lev} mb:", "u")
@@ -431,28 +455,13 @@ def _read_upper_air(H, remove_grib: bool) -> dict:
     for lev in VORT_LEVELS:
         out[f"absv_{lev}"] = _read_2d(f":ABSV:{lev} mb:", "absv")
 
-    # RH: one multi-level read of the 17 isobaric layer levels, then a
-    # mass/pressure-weighted vertical mean over [300, 700] mb (trapezoidal in
-    # pressure, so non-uniform spacing or a missing level is handled correctly).
-    ds_rh = H.xarray(":RH:[0-9]+ mb:", remove_grib=remove_grib)
-    if isinstance(ds_rh, list):
-        ds_rh = ds_rh[0]
-    rvar = "r" if "r" in ds_rh.data_vars else list(ds_rh.data_vars)[0]
-    rh = ds_rh[rvar]
-    levname = "isobaricInhPa"
-    p = rh[levname].values.astype(float)
-    vals = np.moveaxis(rh.values.astype(float), rh.dims.index(levname), 0)
-    keep = np.isin(np.round(p).astype(int), np.array(RH_LAYER_LEVELS))
-    p, vals = p[keep], vals[keep]
-    order = np.argsort(p)            # ascending pressure for the integral
-    p_s, vals_s = p[order], vals[order]
-    # Trapezoidal integral of RH over pressure (axis 0), normalized by the layer
-    # thickness -> the mass/pressure-weighted layer-mean RH. Done by hand (no
-    # np.trapz, removed in NumPy 2.x) so it is version-independent.
-    dp = np.diff(p_s)                                   # (L-1,)
-    seg = 0.5 * (vals_s[1:] + vals_s[:-1])              # (L-1, lat, lon)
-    num = np.tensordot(dp, seg, axes=(0, 0))            # (lat, lon)
-    out[RH_LAYER_NAME] = num / (p_s[-1] - p_s[0])
+    # Layer means over the 17 levels (700..300 mb). RH selects on its own
+    # isobaric levels; u/v use an explicit level alternation so the multi-level
+    # read pulls ONLY those 17 (a bare :UGRD: would match all 45 isobaric levels).
+    lev_alt = "(" + "|".join(str(lev) for lev in RH_LAYER_LEVELS) + ")"
+    out[RH_LAYER_NAME] = _layer_mean(f":RH:{lev_alt} mb:", "r")
+    out["ulayer_700_300"] = _layer_mean(f":UGRD:{lev_alt} mb:", "u")
+    out["vlayer_700_300"] = _layer_mean(f":VGRD:{lev_alt} mb:", "v")
     return out
 
 
@@ -1099,19 +1108,28 @@ def render_frame(frame: HafsFrame, out_path: str,
         cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
                            shading="nearest", zorder=2)
 
-    # (2) 10 m wind barbs (wind product only - reflectivity carries no barbs),
-    # subsampled to ~BARB_TARGET across each axis. White, antialiased, kept
-    # vector (not rasterized) with a subtle dark halo so they stay sharp and
-    # legible over both the cool (dark) and warm (bright) ends of the fill
-    # palette; emptybarb=0 drops the calm-air circle. Barbs and the wind-speed
-    # contour lines are the WIND product's signature only (spec.draw_barbs) -
-    # reflectivity and the simulated-satellite products carry neither.
+    # Resolve the wind source for barbs + category contours from the spec's
+    # wind_provider, or default to the 10 m fields (frame.u_kt/v_kt/wind_kt) -
+    # byte-identical to the original wind path. Upper-air products supply a
+    # provider that reads a pressure level / layer-mean (m/s -> kt).
+    if spec.draw_barbs or spec.draw_wind_contours:
+        if spec.wind_provider is not None:
+            bu_kt, bv_kt, bspd_kt = spec.wind_provider(frame)
+        else:
+            bu_kt, bv_kt, bspd_kt = frame.u_kt, frame.v_kt, frame.wind_kt
+
+    # (2) Wind barbs, subsampled to ~BARB_TARGET across each axis. White,
+    # antialiased, kept vector (not rasterized) with a subtle dark halo so they
+    # stay sharp and legible over both the cool (dark) and warm (bright) ends of
+    # the fill palette; emptybarb=0 drops the calm-air circle. The wind / height-
+    # wind products carry barbs; the source is spec.wind_provider (10 m by
+    # default, a pressure level / layer-mean for the upper-air products).
     if spec.draw_barbs:
-        nlat, nlon = frame.wind_kt.shape
+        nlat, nlon = bspd_kt.shape
         si = max(1, int(round(nlat / BARB_TARGET)))
         sj = max(1, int(round(nlon / BARB_TARGET)))
-        u = np.ma.masked_invalid(frame.u_kt)
-        v = np.ma.masked_invalid(frame.v_kt)
+        u = np.ma.masked_invalid(bu_kt)
+        v = np.ma.masked_invalid(bv_kt)
         barbs = ax.barbs(
             Lon[::si, ::sj], Lat[::si, ::sj], u[::si, ::sj], v[::si, ::sj],
             length=6.8, linewidth=1.1, color="#ffffff", zorder=4,
@@ -1122,16 +1140,15 @@ def render_frame(frame: HafsFrame, out_path: str,
         # white (legible over the bright fill) with a thin dark edge, not as dark.
         barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
 
-        # (2b) Thin black wind-speed contour LINES over the fill (wind product
-        # only), styled like the integer-degree contours on the SST actual plot.
-        # Levels are the Saffir-Simpson category thresholds (CBAR_TICKS_KT: 34
-        # TS, 64 C1, 83 C2, 96 C3, 113 C4, 137 C5) - the SAME values the colorbar
-        # ticks, so each black line marks a category boundary. Only thresholds
-        # that fall inside the frame's wind range are drawn. Thin and slightly
-        # translucent so they add storm structure without muddying the bright
-        # fill. Unlabeled and SEPARATE from the white MSLP isobars below - these
-        # follow wind speed, not pressure.
-        wfill = np.ma.masked_invalid(frame.wind_kt)
+    # (2b) Thin black wind-speed CATEGORY contour LINES over the fill (the wind /
+    # height-wind products, spec.draw_wind_contours - decoupled from barbs so the
+    # vorticity / RH products can carry barbs WITHOUT these). Levels are the
+    # Saffir-Simpson thresholds (CBAR_TICKS_KT: 34 TS, 64 C1, 83 C2, 96 C3, 113
+    # C4, 137 C5) - the SAME values the wind colorbar ticks - so each black line
+    # marks a category boundary. Only thresholds inside the frame's wind range are
+    # drawn. Thin/translucent, UNLABELED, SEPARATE from the white MSLP isobars.
+    if spec.draw_wind_contours:
+        wfill = np.ma.masked_invalid(bspd_kt)
         if wfill.count():
             wmin, wmax = float(wfill.min()), float(wfill.max())
             wlevs = [t for t in CBAR_TICKS_KT if wmin < t < wmax]
@@ -1162,8 +1179,10 @@ def render_frame(frame: HafsFrame, out_path: str,
     # 4 mb interval stacks into an illegible thicket, so it widens to an 8 mb
     # interval and softens the lines (thinner, lower alpha, lighter halo) and
     # labels so the isobars read as gentle synoptic guidance rather than noise.
+    # Gated by spec.draw_mslp (default True): the upper-air height / vorticity
+    # products turn it OFF and draw height line-contours (section 3b) instead.
     mslp = np.ma.masked_invalid(frame.mslp_hpa)
-    if mslp.count():
+    if spec.draw_mslp and mslp.count():
         mslp_iv = 8 if is_parent else 4
         lw = 0.6 if is_parent else 0.75
         alpha = 0.65 if is_parent else 0.9
@@ -1186,6 +1205,35 @@ def render_frame(frame: HafsFrame, out_path: str,
             t.set_zorder(7)
             t.set_rasterized(False)
             t.set_path_effects([pe.withStroke(linewidth=1.6, foreground="#000000")])
+
+    # (3b) Generic labeled LINE-CONTOUR overlay of a cached scalar (spec.
+    # line_contour), used by the upper-air height products to draw geopotential
+    # height in decameters. NOT height-specific: the spec's source() returns the
+    # field already in display units and the interval/label/color come from the
+    # spec, so any product could contour any field. Levels are multiples of the
+    # interval inside the frame's range; lines are thin with a halo + labeled so
+    # they read over both the colorful wind fill and the dark vorticity fill.
+    if spec.line_contour is not None:
+        lc = spec.line_contour
+        cfield = np.ma.masked_invalid(lc.source(frame))
+        if cfield.count():
+            iv = lc.interval
+            lo = np.floor(float(cfield.min()) / iv) * iv
+            hi = np.ceil(float(cfield.max()) / iv) * iv
+            levs = np.arange(lo, hi + iv, iv)
+            hcs = ax.contour(Lon, Lat, cfield, levels=levs, colors=lc.color,
+                             linewidths=lc.linewidth, alpha=lc.alpha, zorder=5)
+            hcs.set_rasterized(False)
+            if lc.halo:
+                hcs.set_path_effects([pe.withStroke(
+                    linewidth=lc.linewidth + lc.halo, foreground=lc.halo_color)])
+            hlbls = ax.clabel(hcs, inline=True, fontsize=7, fmt=lc.label_fmt)
+            for t in hlbls:
+                t.set_color(lc.color)
+                t.set_zorder(7)
+                t.set_rasterized(False)
+                t.set_path_effects([pe.withStroke(
+                    linewidth=1.6, foreground=lc.halo_color)])
 
     # (4) Coastlines + borders on top of the filled field. Wind uses bold BLACK
     # (reads over the colorful wind fill); reflectivity uses bold NEON GREEN
@@ -1210,9 +1258,11 @@ def render_frame(frame: HafsFrame, out_path: str,
                             border_color, 0.8, 6, halo=coast_halo)
 
     # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
-    # On the parent, restrict the L to the cropped window so it marks the storm in
-    # view (coinciding with the storm-centered box center) instead of a deeper low
-    # elsewhere in the full domain. The nest searches its full grid.
+    # Part of the MSLP overlay, so gated by spec.draw_mslp (the upper-air height /
+    # vorticity products omit it; the RH product keeps it). On the parent, restrict
+    # the L to the cropped window so it marks the storm in view (coinciding with
+    # the storm-centered box center) instead of a deeper low elsewhere in the full
+    # domain. The nest searches its full grid.
     lmslp = mslp
     if is_parent and mslp.count():
         out = ((frame.lat[:, None] < lat_min) | (frame.lat[:, None] > lat_max)
@@ -1220,7 +1270,7 @@ def render_frame(frame: HafsFrame, out_path: str,
         win = np.ma.masked_where(out, mslp)
         if win.count():
             lmslp = win
-    if lmslp.count():
+    if spec.draw_mslp and lmslp.count():
         kmin = np.unravel_index(int(np.ma.argmin(lmslp)), lmslp.shape)
         l_lon, l_lat = float(frame.lon[kmin[1]]), float(frame.lat[kmin[0]])
         pmin = float(lmslp.min())

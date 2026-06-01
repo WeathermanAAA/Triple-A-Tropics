@@ -267,6 +267,75 @@ PWAT_TICKS_MM = list(range(0, 91, 10))
 
 
 # ---------------------------------------------------------------------------
+# tat_cyclonic_vort - single-sided cyclonic relative vorticity (1e-5 s^-1)
+# ---------------------------------------------------------------------------
+# For the HAFS upper-air vorticity products. Values are in units of 1e-5 s^-1.
+# The colormap SHAPE is defined over 0..300 (the 850 mb display range); a caller
+# applies it with Normalize(0, 300) for the 850 product or Normalize(0, 150) for
+# the 500 product (same cmap, different Normalize - 500 mb cyclones are weaker so
+# the palette is "used up" by 150). Calm/weak air (and the anticyclonic side) is
+# left TRANSPARENT by the caller (it masks below ~10), so the dark map shows
+# through; set_bad is transparent to honor that. Anchors are EXACT (1e-5 s^-1 ->
+# hex), dark core -> blue/purple -> magenta -> pink -> gold -> pale yellow.
+_VORT_ANCHORS = [
+    (0,   "#120a1a"),
+    (20,  "#2e1f5a"),
+    (60,  "#6a3fc0"),
+    (120, "#b83fd0"),
+    (190, "#ff7da0"),
+    (260, "#ffce4a"),
+    (300, "#fff0c0"),
+]
+VORT_VMAX = 300.0   # the value the cmap shape spans (0..1) by construction
+
+
+def _cyclonic_vort_cmap() -> LinearSegmentedColormap:
+    anchors = [(v / VORT_VMAX, hexc) for v, hexc in _VORT_ANCHORS]
+    cmap = LinearSegmentedColormap.from_list("tat_cyclonic_vort", anchors, N=512)
+    cmap.set_over(_VORT_ANCHORS[-1][1])
+    cmap.set_under(_VORT_ANCHORS[0][1])
+    cmap.set_bad(alpha=0.0)   # masked calm/anticyclonic -> transparent
+    return cmap
+
+
+TAT_CYCLONIC_VORT_CMAP = _cyclonic_vort_cmap()
+# Caller masks vorticity below this (1e-5 s^-1) to transparent.
+VORT_MASK_BELOW = 10.0
+
+
+# ---------------------------------------------------------------------------
+# tat_rh - sequential relative humidity (0-100 %)
+# ---------------------------------------------------------------------------
+# For the HAFS 700-300 mb layer-mean RH product. Dry = dark brown/tan, then green
+# (~mid), teal/blue (moist), near-white (saturated). Anchors EXACT (% -> hex);
+# positions normalized by 100. Applied with Normalize(0, 100).
+_RH_ANCHORS = [
+    (0,   "#2a1c0e"),
+    (15,  "#5a4326"),
+    (30,  "#8a6f3a"),
+    (45,  "#b59a4a"),
+    (55,  "#7fb84a"),
+    (68,  "#2fa37a"),
+    (80,  "#1f8fb0"),
+    (90,  "#3f6fd0"),
+    (100, "#e8f0ff"),
+]
+
+
+def _rh_cmap() -> LinearSegmentedColormap:
+    anchors = [(pct / 100.0, hexc) for pct, hexc in _RH_ANCHORS]
+    cmap = LinearSegmentedColormap.from_list("tat_rh", anchors, N=512)
+    cmap.set_over(_RH_ANCHORS[-1][1])
+    cmap.set_under(_RH_ANCHORS[0][1])
+    cmap.set_bad(alpha=0.0)   # NaN outside the nest -> transparent
+    return cmap
+
+
+TAT_RH_CMAP = _rh_cmap()
+RH_TICKS = list(range(0, 101, 20))   # 0..100 by 20
+
+
+# ---------------------------------------------------------------------------
 # colorbar tick sets (°C)
 # ---------------------------------------------------------------------------
 _RAINBOW_TICKS = [40, 30, 20, 10, 0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
@@ -341,6 +410,17 @@ def pwat_cmap() -> LinearSegmentedColormap:
 def pwat_norm() -> Normalize:
     """Fresh Normalize over the PWAT 0..90 mm domain (per-call, not shared)."""
     return Normalize(vmin=PWAT_VMIN_MM, vmax=PWAT_VMAX_MM)
+
+
+def cyclonic_vort_cmap() -> LinearSegmentedColormap:
+    """The tat_cyclonic_vort colormap singleton (apply with a per-product
+    Normalize(0, vmax); see ``VORT_VMAX`` / ``VORT_MASK_BELOW``)."""
+    return TAT_CYCLONIC_VORT_CMAP
+
+
+def rh_cmap() -> LinearSegmentedColormap:
+    """The tat_rh colormap singleton (apply with Normalize(0, 100))."""
+    return TAT_RH_CMAP
 
 
 def list_enhancements_for_domain(domain: str):

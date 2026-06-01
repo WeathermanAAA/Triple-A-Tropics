@@ -9,7 +9,10 @@ Run via ``python -m tat_palettes`` or the pytest in palette/tests/.
 """
 from __future__ import annotations
 
-from . import get_enhancement, enhancement_norm, TAT_PWAT_CMAP, pwat_norm
+from matplotlib.colors import Normalize
+
+from . import (get_enhancement, enhancement_norm, TAT_PWAT_CMAP, pwat_norm,
+               TAT_CYCLONIC_VORT_CMAP, TAT_RH_CMAP)
 
 # (temp_degC, (r, g, b, a)) golden tuples, captured pre-refactor.
 GOLDEN = {
@@ -96,6 +99,33 @@ GOLDEN_PWAT = [
     (-5, (0.10980392156862745, 0.0784313725490196, 0.0392156862745098, 1.0)),  # set_under (<0)
 ]
 
+# tat_cyclonic_vort golden, applied with Normalize(0, 300) (the 850 mb range).
+# Input units are 1e-5 s^-1; the caller masks below ~10 to transparent, but the
+# raw cmap mapping is pinned here (350 -> set_over, -5 -> set_under).
+GOLDEN_VORT = [
+    (0,   (0.07058823529411765, 0.0392156862745098, 0.10196078431372549, 1.0)),
+    (60,  (0.4149955872760063, 0.2466904570047197, 0.7517670081731322, 1.0)),
+    (120, (0.7203714362457312, 0.24705882352941178, 0.8154406968266759, 1.0)),
+    (190, (1.0, 0.49117290751917203, 0.6264138532125179, 1.0)),
+    (260, (1.0, 0.8081040635432255, 0.2911016461379072, 1.0)),
+    (300, (1.0, 0.9411764705882353, 0.7529411764705882, 1.0)),
+    (350, (1.0, 0.9411764705882353, 0.7529411764705882, 1.0)),   # set_over
+    (-5,  (0.07058823529411765, 0.0392156862745098, 0.10196078431372549, 1.0)),  # set_under
+]
+
+# tat_rh golden, applied with Normalize(0, 100).
+GOLDEN_RH = [
+    (0,   (0.16470588235294117, 0.10980392156862745, 0.054901960784313725, 1.0)),
+    (30,  (0.5404397375388512, 0.43461877901845675, 0.22714400828824682, 1.0)),
+    (45,  (0.7095967153984882, 0.6040366831664171, 0.2901960784313726, 1.0)),
+    (55,  (0.4982464218564141, 0.721453512912014, 0.2901960784313726, 1.0)),
+    (68,  (0.18378164051008533, 0.6385505800493714, 0.4802271593568934, 1.0)),
+    (80,  (0.12205978281723631, 0.5602931583592343, 0.6906872337976284, 1.0)),
+    (90,  (0.24835578066843134, 0.43628410268216844, 0.8160469667318981, 1.0)),
+    (100, (0.9098039215686274, 0.9411764705882353, 1.0, 1.0)),
+    (120, (0.9098039215686274, 0.9411764705882353, 1.0, 1.0)),    # set_over
+]
+
 
 def verify_no_drift() -> int:
     """Assert every golden RGBA reproduces exactly. Returns count checked."""
@@ -115,5 +145,19 @@ def verify_no_drift() -> int:
         if got != expected:
             raise AssertionError(
                 f"DRIFT tat_pwat @ {mm} mm: got {got} != {expected}")
+        checked += 1
+    vnorm = Normalize(0, 300)
+    for v, expected in GOLDEN_VORT:
+        got = tuple(float(c) for c in TAT_CYCLONIC_VORT_CMAP(vnorm(v)))
+        if got != expected:
+            raise AssertionError(
+                f"DRIFT tat_cyclonic_vort @ {v} (1e-5/s): got {got} != {expected}")
+        checked += 1
+    rnorm = Normalize(0, 100)
+    for pct, expected in GOLDEN_RH:
+        got = tuple(float(c) for c in TAT_RH_CMAP(rnorm(pct)))
+        if got != expected:
+            raise AssertionError(
+                f"DRIFT tat_rh @ {pct}%: got {got} != {expected}")
         checked += 1
     return checked
