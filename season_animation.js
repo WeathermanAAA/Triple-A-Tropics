@@ -16,13 +16,22 @@
  * Data it fetches:
  *   /historical/{basin}/years.json                 list of available years
  *   /historical/{basin}/tracks/tracks_{YYYY}.json  per-year tracks
- *   /{basin}_tracks_data.json                       current-year tracks
- *   /{basin}_ace_data.json                          ACE climo + all_years
+ *   {CDN}/feeds/{basin}_tracks_data.json            current-year tracks (R2)
+ *   {CDN}/feeds/{basin}_ace_data.json               ACE climo + all_years (R2)
  *   /ne_50m_admin_0_countries.geojson               land polygons (cached)
  *   /ne_50m_coastline.geojson                       coastlines (cached)
  */
 (function () {
   'use strict';
+
+  // Live current-year ACE + tracks feeds moved to R2
+  // (cdn.triple-a-tropics.com/feeds/) so the streaming poller can
+  // refresh them without a git commit per update. Only the LIVE
+  // current-year docs move; historical per-year tracks
+  // (/historical/{basin}/tracks/tracks_{year}.json) stay on origin.
+  // Live fetches below pass cache:'no-cache' so a poller update shows
+  // up promptly instead of a stale CDN/browser copy.
+  const LIVE_FEEDS = 'https://cdn.triple-a-tropics.com/feeds/';
 
   // --- palette (matches styles.css / GIFs) ------------------------
   const PAL = {
@@ -430,7 +439,7 @@
           // Combine current-year tracks across NA/EP/WP into one doc.
           const subBasins = ['al', 'ep', 'wp'];
           const docs = await Promise.all(subBasins.map(b =>
-            fetch(`/${b}_tracks_data.json`)
+            fetch(`${LIVE_FEEDS}${b}_tracks_data.json`, { cache: 'no-cache' })
               .then(r => r.ok ? r.json() : null)
               .catch(() => null)
           ));
@@ -467,7 +476,7 @@
         if (!this.ace) {
           const subBasins = ['al', 'ep', 'wp'];
           const aceDocs = await Promise.all(subBasins.map(b =>
-            fetch(`/${b}_ace_data.json`)
+            fetch(`${LIVE_FEEDS}${b}_ace_data.json`, { cache: 'no-cache' })
               .then(r => r.ok ? r.json() : null)
               .catch(() => null)
           ));
@@ -482,10 +491,13 @@
       if (this.tracksByYear.has(year)) {
         this.tracks = this.tracksByYear.get(year);
       } else {
-        const tracksUrl = (year === this.currentYear)
-          ? `/${this.basin}_tracks_data.json`
+        // Live current-year tracks come from R2 (cache:'no-cache');
+        // immutable historical years stay on origin with default caching.
+        const isLive = (year === this.currentYear);
+        const tracksUrl = isLive
+          ? `${LIVE_FEEDS}${this.basin}_tracks_data.json`
           : `/historical/${this.basin}/tracks/tracks_${year}.json`;
-        const res = await fetch(tracksUrl);
+        const res = await fetch(tracksUrl, isLive ? { cache: 'no-cache' } : undefined);
         if (!res.ok) throw new Error(`tracks fetch ${res.status}`);
         const doc = await res.json();
         this._prepareTracks(doc);
@@ -493,7 +505,7 @@
         this.tracks = doc;
       }
       if (!this.ace) {
-        const aceRes = await fetch(`/${this.basin}_ace_data.json`);
+        const aceRes = await fetch(`${LIVE_FEEDS}${this.basin}_ace_data.json`, { cache: 'no-cache' });
         this.ace = await aceRes.json();
       }
       // Compute timeline bounds and season ACE curve for this year.
