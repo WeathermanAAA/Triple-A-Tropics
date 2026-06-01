@@ -1179,10 +1179,11 @@ def render_frame(frame: HafsFrame, out_path: str,
     # 4 mb interval stacks into an illegible thicket, so it widens to an 8 mb
     # interval and softens the lines (thinner, lower alpha, lighter halo) and
     # labels so the isobars read as gentle synoptic guidance rather than noise.
-    # Gated by spec.draw_mslp (default True): the upper-air height / vorticity
-    # products turn it OFF and draw height line-contours (section 3b) instead.
+    # Gated by spec.draw_mslp_isobars (default True): the upper-air height /
+    # vorticity products turn the ISOBARS off and draw height line-contours
+    # (section 3b) instead, while keeping the L center marker (section 5).
     mslp = np.ma.masked_invalid(frame.mslp_hpa)
-    if spec.draw_mslp and mslp.count():
+    if spec.draw_mslp_isobars and mslp.count():
         mslp_iv = 8 if is_parent else 4
         lw = 0.6 if is_parent else 0.75
         alpha = 0.65 if is_parent else 0.9
@@ -1258,8 +1259,9 @@ def render_frame(frame: HafsFrame, out_path: str,
                             border_color, 0.8, 6, halo=coast_halo)
 
     # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
-    # Part of the MSLP overlay, so gated by spec.draw_mslp (the upper-air height /
-    # vorticity products omit it; the RH product keeps it). On the parent, restrict
+    # Part of the MSLP overlay, gated by spec.draw_mslp_markers (the upper-air
+    # height / vorticity products KEEP the L center marker even though they omit
+    # the isobars - matching the reference "MSLP Centers" plots). On the parent, restrict
     # the L to the cropped window so it marks the storm in view (coinciding with
     # the storm-centered box center) instead of a deeper low elsewhere in the full
     # domain. The nest searches its full grid.
@@ -1270,7 +1272,7 @@ def render_frame(frame: HafsFrame, out_path: str,
         win = np.ma.masked_where(out, mslp)
         if win.count():
             lmslp = win
-    if spec.draw_mslp and lmslp.count():
+    if spec.draw_mslp_markers and lmslp.count():
         kmin = np.unravel_index(int(np.ma.argmin(lmslp)), lmslp.shape)
         l_lon, l_lat = float(frame.lon[kmin[1]]), float(frame.lat[kmin[0]])
         pmin = float(lmslp.min())
