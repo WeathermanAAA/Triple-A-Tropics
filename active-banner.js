@@ -3,8 +3,11 @@
 // fetches that basin's JSON payload to render a big top-of-page banner
 // with the current intensity of any storm JTWC/NHC is warning on.
 //
-// Usage in the parent page HTML:
-//   <div class="active-banner-wrap" data-src="/wp_tracks_data.json"></div>
+// Usage in the parent page HTML (data-src now points at the R2 feed so
+// the streaming poller can refresh it without a git commit; the fetch
+// below already cache-busts with ?t= + cache:"no-store"):
+//   <div class="active-banner-wrap"
+//        data-src="https://cdn.triple-a-tropics.com/feeds/wp_tracks_data.json"></div>
 //   <script src="/active-banner.js" defer></script>
 //
 // If no storm is active, the wrap stays empty (and CSS hides it).
