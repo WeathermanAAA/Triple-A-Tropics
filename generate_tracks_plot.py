@@ -44,6 +44,14 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+# Single source of truth for ACE (formula, per-basin nature rule, wind
+# preference, rounding), the shared ATCF b-deck parser, the IBTrACS-vs-live
+# storm merge, and the observability timestamps. This generator no longer
+# computes ACE or merges storms on its own - it routes through ace_core so the
+# tracks feed reports the IDENTICAL per-storm peak wind + ACE (and season total)
+# as the ACE feed.
+import ace_core as ac
+
 # ---------------------------------------------------------------------------
 # Basin configuration (mirrors generate_ace_plot.py so they stay aligned)
 # ---------------------------------------------------------------------------
@@ -242,18 +250,9 @@ def _best_pressure(row: pd.Series, preference: list[str]) -> float:
 # up-triangles. NATURE collapses most of these into "NR" or blank,
 # which is why the pre-TC portions of a track look like circles when
 # we rely on NATURE alone.
-_STATUS_TO_NATURE = {
-    # Tropical
-    "TD": "TS", "TS": "TS", "TY": "TS", "HU": "TS",
-    "ST": "TS", "STY": "TS", "TC": "TS",
-    # Subtropical
-    "SD": "SS", "SS": "SS",
-    # Extratropical / post-tropical
-    "EX": "ET", "PT": "ET",
-    # Pre-TC / non-cyclone
-    "DB": "DS", "LO": "DS", "WV": "DS", "MD": "DS",
-    "DS": "DS", "IN": "DS",  # IN = inland remnant
-}
+# Single-sourced from ace_core (the shared ATCF dev-level -> NATURE table) so
+# the rendering nature mapping and the ACE-eligibility nature mapping never drift.
+_STATUS_TO_NATURE = ac.STATUS_TO_NATURE
 
 
 def _best_nature(row: pd.Series) -> str:
@@ -368,7 +367,12 @@ def load_ibtracs_current_year(csv_path: Path, basin_cfg: dict,
             "lon": lon,
             "wind_kt": row["WIND_KT"],
             "pressure_mb": row["PRES_MB"],
+            # `nature` drives the SVG rendering (triangles for disturbances) and
+            # uses the USA_STATUS-aware _best_nature. `ace_nature` is the RAW
+            # IBTrACS NATURE that ace_core uses for ACE eligibility - the same
+            # signal the ACE feed uses - so the two feeds agree on ACE.
             "nature": _best_nature(row),
+            "ace_nature": (row.get("NATURE") or "").strip().upper(),
             "source": "IBTrACS",
         })
     out = pd.DataFrame(rows)
@@ -380,145 +384,9 @@ def load_ibtracs_current_year(csv_path: Path, basin_cfg: dict,
 # Live ATCF b-deck fetch
 # ---------------------------------------------------------------------------
 
-def _parse_atcf_latlon(lat_raw: str, lon_raw: str) -> tuple[float, float] | None:
-    """ATCF format: '157N' -> 15.7°N, '1234W' -> -123.4°."""
-    try:
-        lat_raw = lat_raw.strip()
-        lon_raw = lon_raw.strip()
-        lat_hem = lat_raw[-1]
-        lon_hem = lon_raw[-1]
-        lat_val = float(lat_raw[:-1]) / 10.0
-        lon_val = float(lon_raw[:-1]) / 10.0
-        if lat_hem == "S":
-            lat_val = -lat_val
-        if lon_hem == "W":
-            lon_val = -lon_val
-        return lat_val, lon_val
-    except (ValueError, IndexError):
-        return None
+# NOTE: the ATCF b-deck parser (_parse_atcf_latlon + parse_atcf_bdeck) now
+# lives in ace_core.parse_bdeck - the SINGLE parser both generators use.
 
-
-def parse_atcf_bdeck(text: str, season: int, basin_cfg: dict) -> pd.DataFrame:
-    """Parse an ATCF b-deck file into the same schema as the IBTrACS frame.
-
-    ATCF b-decks contain multiple BEST lines per timestamp (one per
-    wind-radius threshold 34/50/64 kt). Filter to RAD=='34' to keep
-    exactly one line per observation — matches the standard reference
-    implementation."""
-    rows = []
-    name_by_storm: dict[int, str] = {}
-    # First pass: grab the storm name (appears in the later columns, if set)
-    for line in text.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 11:
-            continue
-        try:
-            storm_num = int(parts[1])
-            tech = parts[4]
-            name_col = parts[27] if len(parts) > 27 else ""
-        except (IndexError, ValueError):
-            continue
-        if tech != "BEST":
-            continue
-        if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
-            name_by_storm[storm_num] = name_col
-
-    seen: set[tuple[int, str]] = set()
-    for line in text.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 11:
-            continue
-        try:
-            storm_num = int(parts[1])
-            tstamp = parts[2]
-            tech = parts[4]
-            lat_raw = parts[6]
-            lon_raw = parts[7]
-            vmax = parts[8]
-            mslp = parts[9]
-            devlvl = parts[10]
-            rad = parts[11] if len(parts) > 11 else ""
-        except (IndexError, ValueError):
-            continue
-        if tech != "BEST":
-            continue
-        # Accept pre-radii observations ("" or "0" — the latter is how
-        # JTWC encodes it for sub-34-kt statuses like DB/LO/WV/TD) or
-        # the 34 kt row. Skip 50/64 kt radii (duplicates of the 34 kt
-        # row for the same obs). This filter previously dropped every
-        # pre-genesis disturbance because they all carry rad="0".
-        if rad not in ("", "0", "34"):
-            continue
-        # Belt-and-suspenders dedupe by (storm, timestamp) in case a file
-        # ever has both a short 11-col line and a 12-col RAD=34 line for
-        # the same obs.
-        key = (storm_num, tstamp)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
-        except ValueError:
-            continue
-        if t.hour not in SIX_HOURLY:
-            continue
-        try:
-            vmax_f = float(vmax) if vmax else float("nan")
-        except ValueError:
-            vmax_f = float("nan")
-        try:
-            mslp_f = float(mslp) if mslp and mslp != "0" else float("nan")
-        except ValueError:
-            mslp_f = float("nan")
-        ll = _parse_atcf_latlon(lat_raw, lon_raw)
-        if ll is None:
-            continue
-        lat, lon = ll
-        # Map ATCF dev-level (STATUS) to IBTrACS-style nature using the
-        # same table we use for IBTrACS USA_STATUS. This covers tropical
-        # (TD/TS/TY/HU/ST/STY/TC → TS), subtropical (SD/SS → SS),
-        # extratropical (EX/PT → ET), and pre-TC disturbances
-        # (DB/LO/WV/MD/IN/DS → DS). Pre-TC codes are critical for
-        # current-season storms that spend their invest phase at DB in
-        # the b-deck before being upgraded to TD.
-        devlvl_u = (devlvl or "").strip().upper()
-        nature = _STATUS_TO_NATURE.get(devlvl_u, "")
-        # Wind-based fallback for unmapped codes (e.g. "XX") — if the
-        # b-deck has a positive wind estimate, treat as tropical;
-        # otherwise leave blank so downstream classification treats it
-        # as a disturbance.
-        if not nature:
-            try:
-                if vmax and float(vmax) > 0:
-                    nature = "TS"
-                else:
-                    nature = "DS"
-            except (ValueError, TypeError):
-                nature = "DS"
-        # Fallback display name: numbered TC → "#01" / "#15"; invest →
-        # "91W" / "92L" / "93E" (JTWC/NHC single-letter basin convention).
-        if storm_num >= 90:
-            fallback_name = f"{storm_num}{basin_cfg.get('invest_letter', '')}"
-        else:
-            fallback_name = f"#{storm_num:02d}"
-        rows.append({
-            "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
-                   f"{storm_num:02d}{season}",
-            "NAME": name_by_storm.get(storm_num, fallback_name),
-            "season": season,
-            "time": t,
-            "lat": lat,
-            "lon": lon,
-            "wind_kt": vmax_f,
-            "pressure_mb": mslp_f,
-            "nature": nature,
-            "source": f"live-{basin_cfg['agency_name']}",
-            # Carry storm_num so downstream merge can detect invests
-            # (90-99 by JTWC/NHC convention). IBTrACS rows leave this
-            # blank — IBTrACS doesn't archive invests.
-            "storm_num": storm_num,
-        })
-    return pd.DataFrame(rows)
 
 
 KNACKWX_ATCF_URL = "https://api.knackwx.com/atcf/v2"
@@ -666,7 +534,10 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
                     text = r.read().decode("utf-8", errors="ignore")
                 if "BEST" not in text:
                     continue
-                frames.append(parse_atcf_bdeck(text, season, basin_cfg))
+                # Shared parser (ace_core) so the live fix set per named storm is
+                # IDENTICAL to the ACE feed's - the merge then picks the same
+                # source and both feeds get the same peak wind + ACE.
+                frames.append(ac.parse_bdeck(text, season, basin_cfg))
                 return True
             except Exception:
                 continue
@@ -710,40 +581,11 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     storms (JTWC may leave only a stub in its active directory once a
     storm dissipates). One source per storm, so no duplicate cards in
     the sidebar."""
-    placeholders = {"", "UNNAMED", "INVEST", "NAMELESS"}
 
-    def _norm(series):
-        return series.fillna("").astype(str).str.strip().str.upper()
-
-    if not live.empty and not ibtracs.empty:
-        ib_n = _norm(ibtracs["NAME"])
-        live_n = _norm(live["NAME"])
-        ib_counts = ib_n.value_counts().to_dict()
-        live_counts = live_n.value_counts().to_dict()
-
-        contested = {n for n in live_n.unique() if n not in placeholders
-                     and ib_counts.get(n, 0) > 0}
-
-        drop_from_ib: list[str] = []
-        drop_from_live: list[str] = []
-        for name in contested:
-            ib_c = ib_counts.get(name, 0)
-            live_c = live_counts.get(name, 0)
-            # Prefer the source with more observations. Ties broken
-            # toward live (fresher, includes JTWC's current advisory).
-            if ib_c > live_c:
-                drop_from_live.append(name)
-            else:
-                drop_from_ib.append(name)
-
-        if drop_from_ib:
-            ibtracs = ibtracs[~ib_n.isin(drop_from_ib)].copy()
-        if drop_from_live:
-            live = live[~live_n.isin(drop_from_live)].copy()
-        if contested:
-            print(f"   merge: {len(contested)} storm(s) in both sources. "
-                  f"Kept live for: {sorted(drop_from_ib)}. "
-                  f"Kept IBTrACS for: {sorted(drop_from_live)}.")
+    # Shared IBTrACS-vs-live merge (ace_core): keep the source with more 6-hourly
+    # obs per named storm. SAME function + same inputs as the ACE feed, so both
+    # pick the same source -> identical canonical track per storm.
+    ibtracs, live = ac.merge_named_sources(ibtracs, live, name_col="NAME")
 
     frames = [df for df in (ibtracs, live) if not df.empty]
     if not frames:
@@ -761,18 +603,19 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     if "storm_num" not in df.columns:
         df["storm_num"] = float("nan")
 
+    basin_short = basin_cfg["short"]
     storms: list[dict] = []
     for sid, group in df.groupby("SID"):
         points = group.to_dict("records")
-        # Compute per-storm stats based only on ACE-eligible points
-        # (tropical/subtropical, wind >= 34 kt)
-        eligible_natures = set(basin_cfg["ace_natures"])
-        storm_ace = 0.0
-        peak_wind = float("nan")
+        # ACE + peak wind come from ace_core (the single authority), so they are
+        # identical to the ACE feed for every storm. peak_pressure / max category
+        # / lifetime / ACE-window are local presentation stats.
+        storm_ace = ac.storm_ace(points, basin_short)
+        peak_wind = ac.canonical_peak_wind(points)
         peak_pres = float("nan")
         # Lifetime = first and last observation of ANY kind (TD included).
-        # ACE-window = first and last obs at TS+ intensity. Storms that
-        # never reach TS (e.g. NURI 2026 peaked at 29 kt) still need a
+        # ACE-window = first and last obs at ACE-eligible (TS+) intensity. Storms
+        # that never reach TS (e.g. NURI 2026 peaked at 29 kt) still need a
         # lifetime date range in the sidebar.
         life_start = None
         life_end = None
@@ -781,21 +624,17 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         max_cls = "TD"
         for p in points:
             w = p["wind_kt"]
-            nat = p["nature"] or ""
             t = p["time"]
             if life_start is None:
                 life_start = t
             life_end = t
-            # Consider NR as eligible for current-season provisional data
-            nat_ok = nat in eligible_natures or nat == "NR" or nat == ""
-            if nat_ok and pd.notna(w) and w >= 34:
-                storm_ace += (w ** 2) / 10_000.0
+            # ACE-window bounds use the SAME eligibility ace_core counts ACE on.
+            if ac.fix_ace_eligible(t, w, p.get("ace_nature", p.get("nature")),
+                                   basin_short):
                 if ace_start is None:
                     ace_start = t
                 ace_end = t
             if pd.notna(w):
-                if math.isnan(peak_wind) or w > peak_wind:
-                    peak_wind = float(w)
                 cls = sshs_class(w)
                 if _sshs_rank(cls) > _sshs_rank(max_cls):
                     max_cls = cls
@@ -807,6 +646,9 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # window if the storm did reach TS; otherwise whole track).
         start_t = ace_start or life_start
         end_t = ace_end or life_end
+        # Newest fix valid-time for this storm (observability).
+        latest_fix = max((p["time"] for p in points if p.get("time")),
+                         default=None)
 
         # Active = (1) last observation is recent, AND (2) its nature is
         # still tropical/subtropical (not extratropical, not a pre-genesis
@@ -866,7 +708,10 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             "end": end_t.isoformat() if end_t else None,
             "peak_wind_kt": None if math.isnan(peak_wind) else round(peak_wind, 1),
             "peak_pressure_mb": None if math.isnan(peak_pres) else round(peak_pres, 1),
-            "ace": round(storm_ace, 2),
+            # ACE is already rounded by ace_core's single policy (3 dp), so the
+            # season total = sum of these by construction and matches the ACE feed.
+            "ace": storm_ace,
+            "latest_fix_valid_utc": ac.iso_z(latest_fix),
             "max_category": max_cls,
             "current_category": current_cls,
             "is_active": bool(is_active),
@@ -3314,7 +3159,9 @@ def compute_header_stats(storms: list[dict]) -> dict:
     cat1plus = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 2)  # C1+
     cat3plus = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 4)  # C3+
     cat5 = sum(1 for s in storms if s["max_category"] == "C5")
-    total_ace = round(sum(s["ace"] for s in storms), 2)
+    # Season ACE via the single authority: sum of the (already rounded) per-storm
+    # ACE values, so it equals the ACE feed's season ACE exactly.
+    total_ace = ac.season_ace([s["ace"] for s in storms])
     return {
         "named": named,
         "cat1plus": cat1plus,
@@ -3322,6 +3169,17 @@ def compute_header_stats(storms: list[dict]) -> dict:
         "cat5": cat5,
         "total_ace": total_ace,
     }
+
+
+def _staleness_from_z(z: str | None, now: dt.datetime) -> int | None:
+    """Whole minutes between an ISO8601-Z fix time and ``now`` (UTC), or None."""
+    if not z:
+        return None
+    try:
+        t = dt.datetime.strptime(z, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return ac.staleness_minutes(t, now)
 
 
 # ---------------------------------------------------------------------------
@@ -3377,12 +3235,21 @@ def main(argv: Iterable[str] | None = None) -> int:
             if up > latest_updated:
                 latest_updated = up
         header = compute_header_stats(storms)
+        build_now = dt.datetime.utcnow()
+        # Freshest fix across all composed basins (the per-storm field carries
+        # through from each sub-feed).
+        fix_times = [s.get("latest_fix_valid_utc") for s in storms
+                     if s.get("latest_fix_valid_utc")]
+        latest_fix_z = max(fix_times) if fix_times else None
         payload = {
             "basin": "global",
             "basin_name": basin_cfg["full_name"],
             "year": year,
             "updated": latest_updated or
-                       dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                       build_now.strftime("%Y-%m-%d %H:%M UTC"),
+            "generated_utc": ac.now_iso_z(build_now),
+            "latest_fix_valid_utc": latest_fix_z,
+            "staleness_minutes": _staleness_from_z(latest_fix_z, build_now),
             "header": header,
             "vocab": basin_cfg["vocab"],
             "storms": storms,
@@ -3435,11 +3302,24 @@ def main(argv: Iterable[str] | None = None) -> int:
     storms = merge_and_extract_storms(ibtracs_frame, live_frame, basin_cfg)
     header = compute_header_stats(storms)
 
+    # Observability: separate the BUILD time from DATA freshness.
+    #   generated_utc        - when this feed was built (ISO8601 Z)
+    #   latest_fix_valid_utc - valid-time of the NEWEST 6-hourly fix used (the
+    #                          freshest advisory across all storms this basin)
+    #   staleness_minutes    - now - latest_fix_valid_utc, for the frontend
+    #   updated              - kept for back-compat; it is the build time
+    build_now = dt.datetime.utcnow()
+    fix_times = [s["latest_fix_valid_utc"] for s in storms
+                 if s.get("latest_fix_valid_utc")]
+    latest_fix_z = max(fix_times) if fix_times else None
     payload = {
         "basin": basin,
         "basin_name": basin_cfg["full_name"],
         "year": year,
-        "updated": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "updated": build_now.strftime("%Y-%m-%d %H:%M UTC"),
+        "generated_utc": ac.now_iso_z(build_now),
+        "latest_fix_valid_utc": latest_fix_z,
+        "staleness_minutes": _staleness_from_z(latest_fix_z, build_now),
         "header": header,
         "vocab": basin_cfg["vocab"],
         "storms": storms,
