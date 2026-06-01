@@ -531,6 +531,9 @@ _SPECS = (
         wind_provider=_layer_wind_kt,
         coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
         make_stat=_rh_layer_stat,
+        # Thin black RH contours every 10% from 50 (only those inside a frame's
+        # layer-RH range draw), same style as the PWAT / wind category contours.
+        field_contour_levels=(50, 60, 70, 80, 90),
     ),
 )
 
