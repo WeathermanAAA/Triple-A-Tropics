@@ -1015,6 +1015,22 @@ def render_frame(frame: HafsFrame, out_path: str,
                                  zorder=3.5)
                 wcs.set_rasterized(False)
 
+    # (2c) Thin black contour LINES of the FILL field over the raster, in the
+    # SAME style as the wind product's category contours above (black, lw 0.6,
+    # alpha 0.7, zorder 3.5) so the products read consistently. Used today by the
+    # PWAT product (moisture contours every 10 mm from 50). Only the levels that
+    # fall strictly inside the frame's value range are drawn; the lines are
+    # UNLABELED and SEPARATE from the white MSLP isobars below. Guarded by the
+    # spec's field_contour_levels - empty for every other product - so the lines
+    # never leak onto wind/refl/sim-sat (which leave it at its () default).
+    if spec.field_contour_levels:
+        flevs = [t for t in spec.field_contour_levels
+                 if fill.count() and float(fill.min()) < t < float(fill.max())]
+        if flevs:
+            fcs = ax.contour(Lon, Lat, fill, levels=flevs, colors="#000000",
+                             linewidths=0.6, alpha=0.7, zorder=3.5)
+            fcs.set_rasterized(False)
+
     # (3) MSLP isobars. The NEST keeps a tight 4 mb interval, thin white with a
     # dark halo, labels every other contour. The PARENT spans ~40 deg where a
     # 4 mb interval stacks into an illegible thicket, so it widens to an 8 mb
