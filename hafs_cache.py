@@ -56,7 +56,9 @@ log = logging.getLogger("hafs-cache")
 # Bump to invalidate every cache entry (e.g. if the stored field set or decode
 # changes). Old version paths are never read, so this is a bump, not a delete.
 # v2: added the PWAT field (precipitable water, mm) to the cached field set.
-CACHE_VERSION = "v2"
+# v3: added the 12 pressure-level (upper-air) fields - gh/u/v at 850/700/500,
+#     relative vorticity at 850/500, and the 700-300 mb layer-mean RH.
+CACHE_VERSION = "v3"
 
 # Sub-root under save_dir where the local field cache lives.
 CACHE_DIRNAME = "fieldcache"
@@ -88,7 +90,7 @@ def cache_path(save_dir: str, cycle: str, model: str, storm: str,
 def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
                  fxx: int, path: Path, save_dir: str, *,
                  want_refl: bool = False, want_pwat: bool = False,
-                 sat_parms: Sequence[int] = (),
+                 want_upper: bool = False, sat_parms: Sequence[int] = (),
                  remove_grib: bool = True, overwrite: bool = False) -> Path:
     """INGEST one frame: fetch + decode the UNION of fields every selected product
     needs (ONE read per GRIB file) and write them to the cache entry at ``path``.
@@ -96,7 +98,8 @@ def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
     decode); ``path`` is the cache .nc to write.
 
     ``want_refl`` adds composite reflectivity; ``want_pwat`` adds precipitable
-    water (mm); ``sat_parms`` adds each requested simulated-satellite BT channel.
+    water (mm); ``want_upper`` adds the pressure-level fields; ``sat_parms`` adds
+    each requested simulated-satellite BT channel.
     PRMSL + 10 m wind are always read (every
     product overlays MSLP isobars + the VMAX-derived pill). Idempotent: an
     existing entry is reused unless ``overwrite`` (so a re-run / backup cron skips
@@ -108,7 +111,7 @@ def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
     raw = hp._read_raw_fields(
         model, storm, domain, cycle_dt, fxx, save_dir,
         remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
-        sat_parms=sat_parms,
+        want_upper=want_upper, sat_parms=sat_parms,
     )
     _write_cache(raw, path)
     return path
@@ -132,6 +135,11 @@ def _write_cache(raw: dict, path: Path) -> None:
         data_vars["pwat"] = (("lat", "lon"), raw["pwat"])
     for parm, arr in raw.get("bt", {}).items():
         data_vars[_BT_VAR.format(parm=int(parm))] = (("lat", "lon"), arr)
+    # Pressure-level (upper-air) fields, stored under their clear names
+    # (gh_850, ..., relvort_850, relvort_500, rh_layer_700_300). Empty unless the
+    # frame was ingested with want_upper.
+    for name, arr in raw.get("upper", {}).items():
+        data_vars[name] = (("lat", "lon"), arr)
 
     ds = xr.Dataset(
         data_vars,
@@ -165,6 +173,9 @@ def _read_cache(path: Path) -> dict:
         for name in ds.data_vars:
             if name.startswith(_BT_PREFIX):
                 bt[int(name[len(_BT_PREFIX):])] = ds[name].values
+        # Reconstruct the upper-air dict from the known field names present.
+        upper = {name: ds[name].values for name in hp.upper_field_names()
+                 if name in ds.data_vars}
         return {
             "model": ds.attrs["model"], "storm": ds.attrs["storm"],
             "product": ds.attrs["product"], "fxx": int(ds.attrs["fxx"]),
@@ -176,19 +187,21 @@ def _read_cache(path: Path) -> dict:
             "refl_dbz": (ds["refl_dbz"].values if "refl_dbz" in ds.data_vars
                          else None),
             "pwat": (ds["pwat"].values if "pwat" in ds.data_vars else None),
+            "upper": (upper or None),
             "bt": bt,
         }
 
 
 def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
+               want_upper: bool = False,
                sat_parm: Optional[int] = None) -> hp.HafsFrame:
     """RENDER STAGE: read a frame's field cache entry and reconstruct the exact
     HafsFrame the given product needs - NO GRIB fetch. ``want_refl`` /
-    ``want_pwat`` / ``sat_parm`` pick the optional fields (the same flags
-    fetch_hafs_frame took), so the result is byte-identical to the pre-split
-    fetch. Raises if a requested BT channel is absent (a degenerate/never-ingested
-    channel), which the render orchestration treats as a per-product skip - never
-    fatal to the rest of the frame.
+    ``want_pwat`` / ``want_upper`` / ``sat_parm`` pick the optional fields (the
+    same flags fetch_hafs_frame took), so the result is byte-identical to the
+    pre-split fetch. Raises if a requested BT channel is absent (a degenerate/
+    never-ingested channel), which the render orchestration treats as a
+    per-product skip - never fatal to the rest of the frame.
     """
     raw = _read_cache(path)
     if sat_parm is not None and int(sat_parm) not in raw["bt"]:
@@ -196,5 +209,7 @@ def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
             f"BT channel parm={sat_parm} not in cache {path.name}")
     if want_pwat and raw.get("pwat") is None:
         raise KeyError(f"PWAT field not in cache {path.name}")
+    if want_upper and raw.get("upper") is None:
+        raise KeyError(f"upper-air fields not in cache {path.name}")
     return hp._pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
-                          sat_parm=sat_parm)
+                          want_upper=want_upper, sat_parm=sat_parm)

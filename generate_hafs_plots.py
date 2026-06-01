@@ -134,6 +134,15 @@ FXX_RE = re.compile(r"\.f(\d{3})\.grb2$")
 PRODUCTS = reg.products_dict()
 DEFAULT_PRODUCTS = reg.default_order()
 
+# Phase 2 shared plumbing: ingest the pressure-level (upper-air) fields into the
+# field cache every cycle, so the cache already carries them when the planned
+# upper-air products land (no further CACHE_VERSION bump / cold-render needed
+# then). NO product reads them yet, so this never changes a rendered frame - it
+# only adds fields to each cache entry (see hafs_cache CACHE_VERSION v3 and the
+# ~+8 MB nest / ~+40 MB parent per-frame cost noted in the spike). Flip to False
+# to stop ingesting them (e.g. to shed cache cost) without touching the plumbing.
+INGEST_UPPER_AIR = True
+
 # A frame this far in the future from "now" can't possibly exist; the complete-
 # cycle check looks for this terminal hour to know a run finished uploading.
 TERMINAL_FXX = 126
@@ -335,6 +344,7 @@ class IngestJob:
     save_dir: str        # where Herbie stages its GRIB subsets
     want_refl: bool      # cycle needs composite reflectivity
     want_pwat: bool      # cycle needs precipitable water (mm)
+    want_upper: bool     # cycle ingests the pressure-level (upper-air) fields
     sat_parms: tuple     # GRIB2 parms for the sim-sat channels the cycle needs
 
 
@@ -379,7 +389,8 @@ def _ingest_one(job: IngestJob) -> dict:
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
                 Path(job.cache_path), job.save_dir,
                 want_refl=job.want_refl, want_pwat=job.want_pwat,
-                sat_parms=job.sat_parms, remove_grib=True,
+                want_upper=job.want_upper, sat_parms=job.sat_parms,
+                remove_grib=True,
             )
             return {"ok": True, "model": job.model, "storm": job.storm,
                     "domain": job.domain, "fxx": job.fxx}
@@ -533,6 +544,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     # ingest per frame serves every product. Computed once for the whole cycle.
     cycle_want_refl = "refl" in products
     cycle_want_pwat = "mslp_pwat" in products
+    cycle_want_upper = INGEST_UPPER_AIR
     cycle_sat_parms = tuple(sorted({reg.sat_parm(p) for p in products
                                     if reg.sat_parm(p) is not None}))
 
@@ -589,7 +601,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         model=model, storm=storm, domain=domain, fxx=fxx,
                         cycle_dt=cycle_dt, cache_path=cpath, save_dir=save_dir,
                         want_refl=cycle_want_refl, want_pwat=cycle_want_pwat,
-                        sat_parms=cycle_sat_parms))
+                        want_upper=cycle_want_upper, sat_parms=cycle_sat_parms))
                     # One render per product, each reading the SAME cache entry
                     # into its own path segment (.../<dom_slug>/<product>/f###.png).
                     for product in products:
