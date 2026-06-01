@@ -115,6 +115,34 @@ jobs:
             echo "(generator did not emit global_storms.geojson — skipping upload)"
           fi
 
+      - name: Upload live ACE + tracks feeds to R2
+        # DUAL-WRITE (Data-Accuracy Fix 2, Piece 2): publish the live
+        # per-basin ACE + tracks JSON feeds to
+        # cdn.triple-a-tropics.com/feeds/ IN ADDITION TO the git commit
+        # below. The frontend reads them cross-origin from there so the
+        # upcoming streaming-intensity poller (Piece 3) can refresh them
+        # without a git commit per update — constant commits would
+        # re-bloat .git and fight Pages' rebuild lag. The git-commit path
+        # stays live during the transition (belt-and-suspenders); do NOT
+        # remove it here. Content-Type application/json (file(1) would
+        # otherwise tag these text/plain) + short max-age=30 because the
+        # poller is about to churn them far faster than every 6 h.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          for f in wp_ace_data.json al_ace_data.json ep_ace_data.json \
+                   wp_tracks_data.json al_tracks_data.json ep_tracks_data.json; do
+            if [ -f "$f" ]; then
+              echo "--- Uploading $f -> feeds/$f ---"
+              bash scripts/upload_to_r2.sh "$f" "feeds/$f" "public, max-age=30" "application/json"
+            else
+              echo "(generator did not emit $f — skipping upload)"
+            fi
+          done
+
       - name: Commit and push if anything changed
         run: |
           set -eo pipefail
