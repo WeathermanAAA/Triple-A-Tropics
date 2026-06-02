@@ -51,6 +51,14 @@ import pandas as pd
 # tracks feed reports the IDENTICAL per-storm peak wind + ACE (and season total)
 # as the ACE feed.
 import ace_core as ac
+from ace_core import (
+    SSHS_COLORS,
+    compute_header_stats,
+    merge_and_extract_storms,
+    sshs_class,
+    sshs_label,
+    _sshs_rank,
+)
 
 # ---------------------------------------------------------------------------
 # Basin configuration (mirrors generate_ace_plot.py so they stay aligned)
@@ -179,47 +187,6 @@ FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
             "Version/17.0 Safari/605.1.15")
 
 SIX_HOURLY = {0, 6, 12, 18}
-# A storm is "active" if its last observation is within this many hours of
-# "now" AND it still has tropical-storm-strength winds. 60 hours covers the
-# typical 1–2 day IBTrACS provisional lag plus some slack for weekends.
-ACTIVE_WINDOW_HOURS = 60
-
-# Saffir-Simpson Hurricane Wind Scale thresholds (1-min sustained, kt)
-SSHS_COLORS = {
-    "TD": "#3fa4ff",    # depression - blue
-    "TS": "#46c56a",    # tropical storm - green
-    "C1": "#ffe14d",    # cat 1 - yellow
-    "C2": "#ff9a2f",    # cat 2 - orange
-    "C3": "#ff4d3b",    # cat 3 - red
-    "C4": "#e33ad4",    # cat 4 - magenta/pink
-    "C5": "#b03bff",    # cat 5 - purple
-}
-
-
-def sshs_class(wind_kt: float, nature: str | None = None) -> str:
-    """Map a wind speed (kt, 1-min sustained) to SSHWS class code.
-    Non-tropical storms fall through to TD (weakest)."""
-    if wind_kt is None or (isinstance(wind_kt, float) and math.isnan(wind_kt)):
-        return "TD"
-    if wind_kt < 34:
-        return "TD"
-    if wind_kt < 64:
-        return "TS"
-    if wind_kt < 83:
-        return "C1"
-    if wind_kt < 96:
-        return "C2"
-    if wind_kt < 113:
-        return "C3"
-    if wind_kt < 137:
-        return "C4"
-    return "C5"
-
-
-def sshs_label(cls: str) -> str:
-    """Short label shown inside the active-storm icon."""
-    return {"TD": "D", "TS": "S",
-            "C1": "1", "C2": "2", "C3": "3", "C4": "4", "C5": "5"}[cls]
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +353,6 @@ def load_ibtracs_current_year(csv_path: Path, basin_cfg: dict,
 
 # NOTE: the ATCF b-deck parser (_parse_atcf_latlon + parse_atcf_bdeck) now
 # lives in ace_core.parse_bdeck - the SINGLE parser both generators use.
-
 
 
 KNACKWX_ATCF_URL = "https://api.knackwx.com/atcf/v2"
@@ -566,192 +532,6 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
     print(f"{log_prefix}   live fetch: {len(out)} points from "
           f"{out['SID'].nunique()} storm(s)")
     return out
-
-
-# ---------------------------------------------------------------------------
-# Per-storm aggregation
-# ---------------------------------------------------------------------------
-
-def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
-                             basin_cfg: dict) -> list[dict]:
-    """Merge IBTrACS + live. For each named storm in BOTH sources, we keep
-    whichever source has more observations for that storm — live tends
-    to be more complete for currently-active storms (it has real-time
-    advisories) while IBTrACS tends to be more complete for past/archived
-    storms (JTWC may leave only a stub in its active directory once a
-    storm dissipates). One source per storm, so no duplicate cards in
-    the sidebar."""
-
-    # Shared IBTrACS-vs-live merge (ace_core): keep the source with more 6-hourly
-    # obs per named storm. SAME function + same inputs as the ACE feed, so both
-    # pick the same source -> identical canonical track per storm.
-    ibtracs, live = ac.merge_named_sources(ibtracs, live, name_col="NAME")
-
-    frames = [df for df in (ibtracs, live) if not df.empty]
-    if not frames:
-        return []
-    df = pd.concat(frames, ignore_index=True)
-    df = df.drop_duplicates(subset=["SID", "time"])
-    df = df.sort_values(["SID", "time"]).reset_index(drop=True)
-
-    now = dt.datetime.utcnow()
-    active_cutoff = now - dt.timedelta(hours=ACTIVE_WINDOW_HOURS)
-
-    # storm_num is only set on live ATCF rows; IBTrACS contributes NaN.
-    # Need it on the dataframe even when live is empty so the groupby
-    # below can read it without KeyError.
-    if "storm_num" not in df.columns:
-        df["storm_num"] = float("nan")
-
-    basin_short = basin_cfg["short"]
-    storms: list[dict] = []
-    for sid, group in df.groupby("SID"):
-        points = group.to_dict("records")
-        # ACE + peak wind come from ace_core (the single authority), so they are
-        # identical to the ACE feed for every storm. peak_pressure / max category
-        # / lifetime / ACE-window are local presentation stats.
-        storm_ace = ac.storm_ace(points, basin_short)
-        peak_wind = ac.canonical_peak_wind(points)
-        peak_pres = float("nan")
-        # Lifetime = first and last observation of ANY kind (TD included).
-        # ACE-window = first and last obs at ACE-eligible (TS+) intensity. Storms
-        # that never reach TS (e.g. NURI 2026 peaked at 29 kt) still need a
-        # lifetime date range in the sidebar.
-        life_start = None
-        life_end = None
-        ace_start = None
-        ace_end = None
-        max_cls = "TD"
-        for p in points:
-            w = p["wind_kt"]
-            t = p["time"]
-            if life_start is None:
-                life_start = t
-            life_end = t
-            # ACE-window bounds use the SAME eligibility ace_core counts ACE on.
-            if ac.fix_ace_eligible(t, w, p.get("ace_nature", p.get("nature")),
-                                   basin_short):
-                if ace_start is None:
-                    ace_start = t
-                ace_end = t
-            if pd.notna(w):
-                cls = sshs_class(w)
-                if _sshs_rank(cls) > _sshs_rank(max_cls):
-                    max_cls = cls
-            pr = p["pressure_mb"]
-            if pd.notna(pr) and pr > 0:
-                if math.isnan(peak_pres) or pr < peak_pres:
-                    peak_pres = float(pr)
-        # Sidebar "Active" row shows overall lifetime (preferring ACE
-        # window if the storm did reach TS; otherwise whole track).
-        start_t = ace_start or life_start
-        end_t = ace_end or life_end
-        # Newest fix valid-time for this storm (observability).
-        latest_fix = max((p["time"] for p in points if p.get("time")),
-                         default=None)
-
-        # Active = (1) last observation is recent, AND (2) its nature is
-        # still tropical/subtropical (not extratropical, not a pre-genesis
-        # / post-dissipation disturbance), AND (3) it has a valid wind.
-        # We deliberately do NOT require >=34 kt here: a designated
-        # tropical depression is an active system too (e.g. JMA-recognised
-        # Jangmi 2026 — last fix 25 kt, TS-nature). Both renderers already
-        # carry a dedicated marker for the peak<34 kt case — the hollow
-        # blue TD circle (render_active_icons' peak<34 branch and
-        # build_global_geojson's "td_circle" marker_type). Gating on 34 kt
-        # made that marker unreachable (is_active could never be True while
-        # peak<34), so designated TDs silently dropped off both the
-        # per-basin and home-page maps. Weakening/dissipation is still
-        # caught by the nature gate: a system that decays to a remnant low
-        # or goes extratropical flips to DS/ET and falls out of "active".
-        recent_obs = (len(points) > 0
-                      and points[-1]["time"] >= active_cutoff)
-        is_active = False
-        if len(points) > 0:
-            last = points[-1]
-            has_wind = pd.notna(last["wind_kt"]) and last["wind_kt"] > 0
-            tropical = (last["nature"] or "") not in {"ET", "DS"}
-            is_active = recent_obs and has_wind and tropical
-        # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
-        # from any row in the group; IBTrACS rows have NaN and are ignored
-        # since IBTrACS doesn't archive invests.
-        nums = [p.get("storm_num") for p in points
-                if p.get("storm_num") is not None
-                and not (isinstance(p["storm_num"], float)
-                         and math.isnan(p["storm_num"]))]
-        is_invest = bool(nums) and any(int(n) >= 90 for n in nums)
-        # Recent invest = invest with a fresh observation. JTWC/NHC cycle
-        # 90-99 numbers across the season, so without this filter the
-        # card grid accumulates ~10 stale invests by mid-season (most of
-        # which never developed) that just clutter the inactive section.
-        recent_invest = is_invest and recent_obs
-        # ATCF id (e.g. "91W" / "92L" / "93E") for the invest renderer's
-        # red-X label. Only set for invests; numbered TCs surface their
-        # name via the spinning-icon label instead.
-        atcf_id = None
-        if is_invest and nums:
-            atcf_id = f"{int(nums[0])}{basin_cfg.get('invest_letter', '')}"
-        # Current intensity = SSHWS of the most recent observation
-        last_wind = points[-1]["wind_kt"] if points else float("nan")
-        current_cls = sshs_class(last_wind)
-
-        # Name selection: prefer a real name over placeholders
-        names = [p["NAME"] for p in points if p["NAME"]
-                 and p["NAME"] not in {"UNNAMED", "INVEST", "NAMELESS"}]
-        name = names[0] if names else (points[0]["NAME"] if points else "UNNAMED")
-
-        storms.append({
-            "sid": sid,
-            "name": name,
-            "season": int(points[0]["season"]),
-            "start": start_t.isoformat() if start_t else None,
-            "end": end_t.isoformat() if end_t else None,
-            "peak_wind_kt": None if math.isnan(peak_wind) else round(peak_wind, 1),
-            "peak_pressure_mb": None if math.isnan(peak_pres) else round(peak_pres, 1),
-            # ACE is already rounded by ace_core's single policy (3 dp), so the
-            # season total = sum of these by construction and matches the ACE feed.
-            "ace": storm_ace,
-            "latest_fix_valid_utc": ac.iso_z(latest_fix),
-            "max_category": max_cls,
-            "current_category": current_cls,
-            "is_active": bool(is_active),
-            "is_invest": bool(is_invest),
-            "recent_invest": bool(recent_invest),
-            "atcf_id": atcf_id,
-            "points": [{
-                "t": p["time"].isoformat(),
-                "lat": round(float(p["lat"]), 2),
-                "lon": round(float(p["lon"]), 2),
-                "wind_kt": None if pd.isna(p["wind_kt"]) else round(float(p["wind_kt"]), 1),
-                "pressure_mb": None if pd.isna(p["pressure_mb"]) or p["pressure_mb"] <= 0
-                               else round(float(p["pressure_mb"]), 1),
-                "cls": sshs_class(p["wind_kt"]),
-                # NATURE passes through from IBTrACS ("TS", "SS", "ET",
-                # "DS", "NR", "MX", "") or the ATCF dev-level mapping in
-                # parse_atcf_bdeck() ("TS", "SS", "ET", ""). The SVG
-                # renderer uses this to draw non-tropical points as
-                # triangles (see render_tracks_svg).
-                "nature": (p.get("nature") or "").strip(),
-            } for p in points],
-        })
-    # Drop stale invest cards. Numbered TCs (01-89) keep showing past
-    # cards as part of the season summary; only invests need this
-    # filter, because JTWC/NHC cycle 90-99 numbers continuously.
-    storms = [s for s in storms
-              if not s["is_invest"] or s["recent_invest"]]
-    # Sort: active TCs → recent invests → past TCs by ACE → start.
-    # Past invests are already filtered out above, so all remaining
-    # invests are guaranteed recent — the existing key still works.
-    storms.sort(key=lambda s: (not s["is_active"], not s["is_invest"],
-                               -s["ace"], s["start"] or ""))
-    return storms
-
-
-_SSHS_RANK = {"TD": 0, "TS": 1, "C1": 2, "C2": 3, "C3": 4, "C4": 5, "C5": 6}
-
-
-def _sshs_rank(cls: str) -> int:
-    return _SSHS_RANK.get(cls, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -3148,27 +2928,6 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         interactive_js="",
         body_class="",
     )
-
-
-# ---------------------------------------------------------------------------
-# Header stats (named storms / typhoons / etc.)
-# ---------------------------------------------------------------------------
-
-def compute_header_stats(storms: list[dict]) -> dict:
-    named = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 1)  # TS+
-    cat1plus = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 2)  # C1+
-    cat3plus = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 4)  # C3+
-    cat5 = sum(1 for s in storms if s["max_category"] == "C5")
-    # Season ACE via the single authority: sum of the (already rounded) per-storm
-    # ACE values, so it equals the ACE feed's season ACE exactly.
-    total_ace = ac.season_ace([s["ace"] for s in storms])
-    return {
-        "named": named,
-        "cat1plus": cat1plus,
-        "cat3plus": cat3plus,
-        "cat5": cat5,
-        "total_ace": total_ace,
-    }
 
 
 def _staleness_from_z(z: str | None, now: dt.datetime) -> int | None:
