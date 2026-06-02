@@ -34,7 +34,7 @@ import matplotlib.colors as mcolors
 # Low-level render primitives stay in hafs_plot (used elsewhere there too); the
 # registry references them. hafs_plot does NOT import this module at top level
 # (render_frame imports it lazily), so there is no import cycle.
-import hafs_plot as hp
+from hafs_render import hafs_plot as hp
 import tat_palettes as tp
 
 
