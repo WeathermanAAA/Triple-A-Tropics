@@ -335,8 +335,9 @@ def _refl_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
 def _bt_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
     btmin = (float(np.nanmin(frame.bt_c))
              if np.isfinite(frame.bt_c).any() else float("nan"))
-    subtitle = (f"Simulated Satellite - {spec.channel} & MSLP (mb)  /  "
-                f"{domain_label}")
+    # Sat carries no MSLP overlay now, so the subtitle drops "& MSLP (mb)".
+    # The right-stat keeps the MSLP {pmin} value as an informational readout.
+    subtitle = f"Simulated Satellite - {spec.channel}  /  {domain_label}"
     right_stat = f"MIN BT {btmin:.1f}°C   /   MSLP {pmin:.1f} mb"
     return subtitle, right_stat
 
@@ -416,6 +417,11 @@ _SPECS = (
         make_colors=_bt_colors,
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_bt_colorbar,
         draw_barbs=False,
+        # Simulated satellite gets NO MSLP overlay: no isobars, no L marker.
+        # Contour-line overlays and the L are a package (both or neither) and
+        # belong only to the wind / refl / PWAT / RH and height products; sat is
+        # BT fill + black coasts only.
+        draw_mslp_isobars=False, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("ir")),
@@ -429,6 +435,8 @@ _SPECS = (
         make_colors=_bt_colors,
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_bt_colorbar,
         draw_barbs=False,
+        # No MSLP overlay (see clean_ir): sat is BT fill + black coasts only.
+        draw_mslp_isobars=False, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("wv")),
@@ -508,12 +516,13 @@ _SPECS = (
         default_enhancement=None, channel=None,
         make_colors=_vort_colors(850, 300.0),
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
-        # Height contours replace MSLP isobars; no L center marker (the
-        # vorticity maximum, not the surface low, is the feature of interest).
+        # No overlays at all: no MSLP isobars, no L marker, and no height
+        # contours. Contour lines and the L are a package and the vorticity
+        # products carry neither; the vorticity maximum is the feature of
+        # interest, read straight off the fill + barbs.
         draw_barbs=True, draw_wind_contours=False,
         draw_mslp_isobars=False, draw_mslp_markers=False,
         wind_provider=_level_wind_provider(850),
-        line_contour=LineContourSpec(source=_height_dam(850), interval=3.0),
         # The vorticity fill is transparent where calm, so the dark map shows
         # through; neon-green coasts read over it exactly like the refl product.
         coast_color=hp.REFL_COAST_COLOR, coast_lw=1.3, coast_halo=0.0,
@@ -526,11 +535,10 @@ _SPECS = (
         default_enhancement=None, channel=None,
         make_colors=_vort_colors(500, 150.0),
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
-        # Height contours replace MSLP isobars; no L center marker (as at 850 mb).
+        # No overlays (as at 850 mb): no isobars, no L marker, no height contours.
         draw_barbs=True, draw_wind_contours=False,
         draw_mslp_isobars=False, draw_mslp_markers=False,
         wind_provider=_level_wind_provider(500),
-        line_contour=LineContourSpec(source=_height_dam(500), interval=6.0),
         coast_color=hp.REFL_COAST_COLOR, coast_lw=1.3, coast_halo=0.0,
         make_stat=_vort_stat(500),
     ),
