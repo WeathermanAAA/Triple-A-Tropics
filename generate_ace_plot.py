@@ -45,6 +45,14 @@ import pandas as pd
 # homepage strip, the climatology page, and the tracks graphic all report the
 # IDENTICAL season ACE and per-storm peaks.
 import ace_core as ac
+from ace_core import (
+    build_payload,
+    climatology,
+    cumulative_by_doy,
+    current_year_storms,
+    eligible_points_from_canon,
+    extract_storms_by_year,
+)
 
 # ---------------------------------------------------------------------------
 # Basin configuration — add another entry to onboard a new basin
@@ -208,109 +216,6 @@ def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
     )
 
 
-def cumulative_by_doy(points: pd.DataFrame) -> pd.DataFrame:
-    g = points.groupby(["season", "doy"], as_index=False)["ace_increment"].sum()
-    doys = np.arange(1, 367)
-    seasons = sorted(g["season"].unique())
-    out = pd.DataFrame(index=doys, columns=seasons, dtype=float).fillna(0.0)
-    for (s, doy), inc in g.set_index(["season", "doy"])["ace_increment"].items():
-        out.at[doy, s] = inc
-    cum = out.cumsum(axis=0)
-    cum.index.name = "doy"
-    return cum
-
-
-def extract_storms_by_year(points: pd.DataFrame, min_year: int = 1970) -> dict:
-    """Per-storm summaries grouped by season, derived from the same filtered
-    points used for ACE. For each (season, SID) we record: storm name,
-    formation = first 6-hourly TS+ observation, dissipation = last, peak
-    wind + the time at which it occurred, and the storm's ACE contribution.
-    Sorted by formation within each year.
-
-    Pre-`min_year` seasons are excluded because the per-storm Gantt is the
-    only consumer and IBTrACS metadata is sparse/unreliable that far back —
-    early-1900s entries often have one observation, no name, no peak wind.
-    """
-    if points.empty or "ISO_TIME" not in points.columns:
-        return {}
-    out: dict[int, list[dict]] = {}
-    grp = points.groupby(["season", "SID"], sort=False)
-    for (season, sid), rows in grp:
-        season_int = int(season)
-        if season_int < min_year:
-            continue
-        if "ISO_TIME" not in rows.columns:
-            continue
-        formation = rows["ISO_TIME"].min()
-        dissipation = rows["ISO_TIME"].max()
-        if pd.isna(formation) or pd.isna(dissipation):
-            continue
-        peak_time = None
-        peak_w = None
-        if "WIND_KT" in rows.columns and rows["WIND_KT"].notna().any():
-            peak_idx = rows["WIND_KT"].idxmax()
-            peak_w = float(rows.loc[peak_idx, "WIND_KT"])
-            pt = rows.loc[peak_idx, "ISO_TIME"]
-            if pd.notna(pt):
-                peak_time = pt
-        ace_total = float(rows["ace_increment"].sum()) \
-            if "ace_increment" in rows.columns else 0.0
-        # NAME is sometimes blank/UNNAMED; use the first non-blank value
-        # if any 6-hourly point in the storm's life had a name.
-        name = ""
-        for n in rows["NAME"].fillna("").astype(str):
-            n = n.strip()
-            if n and n.upper() not in ("UNNAMED", "NAMELESS", "INVEST"):
-                name = n.upper()
-                break
-        if not name:
-            name = "UNNAMED"
-        record = {
-            "name": name,
-            "formation": formation.isoformat() if hasattr(formation, "isoformat")
-                         else str(formation),
-            "dissipation": dissipation.isoformat() if hasattr(dissipation, "isoformat")
-                           else str(dissipation),
-            "peak_wind_kt": peak_w,
-            "peak_wind_time": peak_time.isoformat()
-                              if peak_time is not None and hasattr(peak_time, "isoformat")
-                              else None,
-            "ace_total": round(ace_total, 3),
-        }
-        out.setdefault(season_int, []).append(record)
-    for year in out:
-        out[year].sort(key=lambda s: s["formation"] or "")
-    return out
-
-
-def climatology(cum: pd.DataFrame, start: int, end: int,
-                exclude_years: set[int] | None = None) -> pd.DataFrame:
-    """Percentile bands + mean come from the climatology window (1991-2020,
-    matches NHC official normals). Min/max come from ALL past seasons so
-    the outer envelope actually bounds historical extremes like Atlantic
-    1933 or 2005.
-
-    Excludes `exclude_years` (typically the current/in-progress year) from
-    both, so a partial season's zeroes after today don't pull the min
-    envelope down to zero."""
-    exclude_years = exclude_years or set()
-    climo_cols = [s for s in cum.columns
-                  if start <= s <= end and s not in exclude_years]
-    minmax_cols = [s for s in cum.columns if s not in exclude_years]
-    climo = cum[climo_cols] if climo_cols else cum
-    all_seasons = cum[minmax_cols] if minmax_cols else cum
-    out = pd.DataFrame(index=cum.index)
-    out["p10"] = climo.quantile(0.10, axis=1)
-    out["p25"] = climo.quantile(0.25, axis=1)
-    out["p50"] = climo.quantile(0.50, axis=1)
-    out["p75"] = climo.quantile(0.75, axis=1)
-    out["p90"] = climo.quantile(0.90, axis=1)
-    out["mean"] = climo.mean(axis=1)
-    out["min"] = all_seasons.min(axis=1)
-    out["max"] = all_seasons.max(axis=1)
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Live ATCF fetch
 # ---------------------------------------------------------------------------
@@ -393,8 +298,6 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
 # Schema of the parse_bdeck-style frames both halves of the merge share.
 _CANON_COLS = ["SID", "NAME", "season", "time", "wind_kt",
                "nature", "ace_nature", "source", "storm_num"]
-# Schema of the by-DOY "points" frame the cumulative curve consumes.
-_POINT_COLS = ["season", "doy", "ace_increment", "SID", "NAME", "ISO_TIME", "WIND_KT"]
 
 
 def current_year_ibtracs_fixes(df: pd.DataFrame, basin_cfg: dict, year: int,
@@ -444,191 +347,11 @@ def current_year_ibtracs_fixes(df: pd.DataFrame, basin_cfg: dict, year: int,
     return out
 
 
-def eligible_points_from_canon(canon: pd.DataFrame, basin_cfg: dict,
-                               year: int) -> pd.DataFrame:
-    """Project the merged canonical fix set down to the by-DOY ``points`` frame
-    the cumulative curve consumes, keeping ONLY ACE-eligible fixes (ac.fix_ace_eligible)
-    and using ac.fix_increment for the per-fix contribution. This is the
-    current-year slice that replaces the IBTrACS-derived one in ``points``."""
-    short = basin_cfg["short"]
-    rows = []
-    for r in canon.to_dict("records"):
-        t = r["time"]
-        w = r["wind_kt"]
-        nat = r.get("ace_nature", r.get("nature"))
-        if ac.fix_ace_eligible(t, w, nat, short):
-            rows.append({
-                "season": year,
-                "doy": t.timetuple().tm_yday,
-                "ace_increment": ac.fix_increment(w),
-                "SID": r["SID"],
-                "NAME": r.get("NAME") or "UNNAMED",
-                "ISO_TIME": t,
-                "WIND_KT": float(w),
-            })
-    return pd.DataFrame(rows, columns=_POINT_COLS)
-
-
-def current_year_storms(canon: pd.DataFrame, basin_cfg: dict,
-                        year: int) -> list[dict]:
-    """Per-storm gantt records for the current year, built from the merged
-    canonical set so the homepage, climo page, and tracks feed agree on every
-    storm. ACE via ac.storm_ace (the single rounding policy), peak wind via
-    ac.canonical_peak_wind (the single peak definition). Only storms that
-    produced ACE appear (same as extract_storms_by_year for past years)."""
-    if canon.empty:
-        return []
-    short = basin_cfg["short"]
-    out: list[dict] = []
-    for _sid, group in canon.groupby("SID", sort=False):
-        pts = group.sort_values("time").to_dict("records")
-        ace_total = ac.storm_ace(pts, short)
-        if ace_total <= 0:
-            continue
-        elig = [p for p in pts
-                if ac.fix_ace_eligible(p["time"], p["wind_kt"],
-                                       p.get("ace_nature", p.get("nature")), short)]
-        if not elig:
-            continue
-        peak_w = ac.canonical_peak_wind(pts)
-        peak_time = None
-        if not math.isnan(peak_w):
-            for p in pts:
-                w = p["wind_kt"]
-                if (ac.is_six_hourly(p["time"]) and w is not None
-                        and not (isinstance(w, float) and math.isnan(w))
-                        and float(w) == peak_w):
-                    peak_time = p["time"]
-                    break
-        name = ""
-        for p in pts:
-            n = str(p.get("NAME") or "").strip()
-            if n and n.upper() not in ("UNNAMED", "NAMELESS", "INVEST"):
-                name = n.upper()
-                break
-        if not name:
-            name = "UNNAMED"
-        out.append({
-            "name": name,
-            "formation": elig[0]["time"].isoformat(),
-            "dissipation": elig[-1]["time"].isoformat(),
-            "peak_wind_kt": None if math.isnan(peak_w) else round(peak_w, 1),
-            "peak_wind_time": peak_time.isoformat() if peak_time else None,
-            "ace_total": ace_total,
-        })
-    out.sort(key=lambda s: s["formation"] or "")
-    return out
-
-
 # ---------------------------------------------------------------------------
 # HTML rendering (self-contained dark SVG chart + ranking table)
 # ---------------------------------------------------------------------------
 
 from _ace_template import HTML_TEMPLATE  # noqa: E402
-
-
-def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
-                  prior_year: int | None, last_obs_doy: dict[int, int],
-                  storms_by_year: dict | None = None,
-                  season_ace_current: float | None = None,
-                  latest_fix_dt: dt.datetime | None = None,
-                  build_now: dt.datetime | None = None) -> dict:
-    doy = cum.index.tolist()
-    today = dt.date.today()
-    today_doy_real = today.timetuple().tm_yday if today.year == current_year else None
-    build_now = build_now or dt.datetime.utcnow()
-    # The current-season headline ACE is the single authority value from
-    # ace_core (sum of per-storm ACE), NOT the by-DOY curve's endpoint (which can
-    # differ by a sub-0.001 round-then-sum). When provided it overrides the
-    # current-year series endpoint + ranking, so every surface shows one number.
-    canonical_current = (ac.round_ace(season_ace_current)
-                         if season_ace_current is not None else None)
-
-    def series(year):
-        if year is None or year not in cum.columns:
-            return {}
-        vals = cum[year].values.astype(float)
-        if year == current_year:
-            last_obs = last_obs_doy.get(year, 1)
-            end_doy = max(last_obs, today_doy_real or last_obs)
-            end_doy = max(1, min(366, end_doy))
-            vals_out = vals[:end_doy]
-            doy_out = doy[:end_doy]
-        else:
-            vals_out = vals
-            doy_out = doy
-        out_vals = [round(float(v), 3) for v in vals_out]
-        latest = round(float(vals_out[-1]) if len(vals_out) else 0.0, 3)
-        # Snap the current-year endpoint (curve + headline) to the canonical
-        # ace_core season total so the plotted dot sits exactly on the number
-        # the rankings + tracks feed report.
-        if year == current_year and canonical_current is not None:
-            latest = canonical_current
-            if out_vals:
-                out_vals[-1] = canonical_current
-        return {
-            "label": str(year),
-            "doy": [int(x) for x in doy_out],
-            "values": out_vals,
-            "latest_value": latest,
-        }
-
-    doy_cutoff = today_doy_real or 366
-    rank_rows = []
-    for year in sorted(cum.columns):
-        col = cum[year].values.astype(float)
-        total = float(col[-1])
-        ytd = float(col[min(doy_cutoff, len(col)) - 1])
-        is_current = int(year) == current_year
-        # Current year's ranking uses the canonical ace_core season total, not
-        # the curve endpoint, so the rank reflects the same number shown above.
-        if is_current and canonical_current is not None:
-            total = canonical_current
-            ytd = canonical_current
-        rank_rows.append({
-            "year": int(year), "ytd": round(ytd, 2),
-            "total": round(total, 2),
-            "current": is_current,
-        })
-    rank_rows.sort(key=lambda r: (-r["ytd"], -r["total"], -r["year"]))
-    for i, r in enumerate(rank_rows, start=1):
-        r["rank"] = i
-    current_rank = next((r["rank"] for r in rank_rows if r["current"]), None)
-
-    all_years = {}
-    for year in sorted(cum.columns):
-        vals = cum[year].values.astype(float)
-        if float(vals[-1]) <= 0:
-            continue
-        all_years[int(year)] = [round(float(v), 1) for v in vals]
-
-    storms_payload = {}
-    if storms_by_year:
-        # Stringify keys for stable JSON dict keys (numeric keys → strings)
-        storms_payload = {str(y): v for y, v in storms_by_year.items()}
-
-    latest_fix_z = ac.iso_z(latest_fix_dt)
-    return {
-        "doy": [int(x) for x in doy],
-        "climo": {
-            k: [round(float(v), 3) for v in climo[k].values]
-            for k in ("min", "p10", "p25", "mean", "p75", "p90", "max")
-        },
-        "current": series(current_year),
-        "prior_year": series(prior_year) if prior_year else {},
-        "today_doy": today_doy_real,
-        "rankings": rank_rows,
-        "current_rank": current_rank,
-        "total_seasons": len(rank_rows),
-        "all_years": all_years,
-        "storms_by_year": storms_payload,
-        # Observability: real build time, valid-time of the newest 6-hourly fix
-        # used (any nature - a 25 kt TD still counts for freshness), and the gap
-        # between them. Mirrors the tracks feed's timestamp triplet.
-        "generated_utc": ac.now_iso_z(build_now),
-        "latest_fix_valid_utc": latest_fix_z,
-        "staleness_minutes": ac.staleness_minutes(latest_fix_dt, build_now),
-    }
 
 
 _BASIN_SHORT_LABELS = {"wp": "WPAC", "al": "AL", "ep": "EPAC"}
