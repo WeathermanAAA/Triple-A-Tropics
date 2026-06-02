@@ -95,7 +95,9 @@ BASINS: dict[str, dict] = {
         "atcf_patterns": [
             "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bal{nn}{year}.dat",
             "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{year}.dat",
-            "https://www.natyphoon.top/atcf/temp/bal{nn}{year}.dat",
+            # NHC only (proxy -> ftp.nhc). natyphoon.top is a West-Pacific/JTWC
+            # mirror; it does NOT serve AL/EP b-decks (404s here, SSL-fails from
+            # some hosts e.g. Railway), so it is reserved for WP below.
         ],
         # Methodology (wind preference, NATURE set, formula) lives in ace_core.
         # NHC counts tropical AND subtropical at 34 kt+ (ac.ACE_NATURES["al"] =
@@ -115,7 +117,7 @@ BASINS: dict[str, dict] = {
         "atcf_patterns": [
             "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bep{nn}{year}.dat",
             "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
-            "https://www.natyphoon.top/atcf/temp/bep{nn}{year}.dat",
+            # NHC only (proxy -> ftp.nhc); natyphoon.top is WP/JTWC-only (see AL).
         ],
         # Methodology lives in ace_core (NHC, same as Atlantic:
         # ac.ACE_NATURES["ep"] = {TS, SS}).
