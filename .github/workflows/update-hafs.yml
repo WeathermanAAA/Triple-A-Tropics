@@ -49,26 +49,22 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        # Herbie does AWS-Open-Data .idx byte-range subsetting; cfgrib+eccodes
-        # decode the GRIB2 messages; matplotlib/numpy render; requests drives
-        # the S3 listing + Herbie HTTP. The eccodes wheel bundles the ecCodes
-        # binary, so no apt step. No cartopy (vendored Natural Earth GeoJSON is
-        # checked in and the script reads it from the repo root).
+        # The HAFS render stack is now the installable hafs_render package - ONE
+        # source of truth, shared verbatim with the tat-satellite-render Railway
+        # render worker (which pins it as a git dependency). It pulls the GRIB
+        # stack (herbie-data .idx byte-range subsetting; cfgrib+eccodes decode -
+        # the eccodes wheel bundles the binary, no apt; xarray+netCDF4 back the
+        # per-fxx field cache; requests drives S3) AND PINS matplotlib==3.9.3 +
+        # numpy==2.1.3 so this cron and the worker rasterize identically (the
+        # pixel-parity gate is meaningless without matching pins). No cartopy
+        # (Natural Earth GeoJSON is bundled in the package as package_data). The
+        # in-repo palette/ package provides tat_palettes (rainbow_ir/wv_tat/...).
         run: |
           python -m pip install --upgrade pip
-          # netCDF4 backs the per-cycle field cache (hafs_cache): ingest writes
-          # decoded fields to per-fxx NetCDF, render reads them back, so each GRIB
-          # is fetched once per frame instead of once per product. It is also the
-          # repo's sanctioned NetCDF stack (the SST/subsurface/armor3d generators
-          # use it); xarray needs a backend to read/write .nc.
-          pip install herbie-data cfgrib eccodes matplotlib numpy xarray netCDF4 requests
-          # Canonical shared color palettes (tat_palettes), the single source of
-          # truth shared with the satellite backend. Installed from the in-repo
-          # palette/ package so the upcoming sim-sat product can import
-          # rainbow_ir / dvorak / wv_tat without copying anchors.
-          pip install ./palette
+          pip install ./palette ./hafs_render
           python -c "import cfgrib; print('cfgrib', cfgrib.__version__)"
           python -c "import netCDF4; print('netCDF4', netCDF4.__version__)"
+          python -c "import matplotlib, numpy; print('matplotlib', matplotlib.__version__, '| numpy', numpy.__version__)"
           python -m tat_palettes
 
       - name: Ensure Natural Earth basemap files exist

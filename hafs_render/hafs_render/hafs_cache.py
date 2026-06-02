@@ -49,7 +49,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-import hafs_plot as hp
+from hafs_render import hafs_plot as hp
 
 log = logging.getLogger("hafs-cache")
 
