@@ -278,7 +278,10 @@ PWAT_TICKS_MM = list(range(0, 91, 10))
 # through; set_bad is transparent to honor that. Anchors are EXACT (1e-5 s^-1 ->
 # hex), dark core -> blue/purple -> magenta -> pink -> gold -> pale yellow.
 _VORT_ANCHORS = [
-    (0,   "#120a1a"),
+    # Value 0 == the HAFS plot interior (#333333) so the bottom of the scale
+    # blends into the map and low vorticity fades out seamlessly (was #120a1a,
+    # tuned to the old near-black background).
+    (0,   "#333333"),
     (20,  "#2e1f5a"),
     (60,  "#6a3fc0"),
     (120, "#b83fd0"),
