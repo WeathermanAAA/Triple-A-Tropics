@@ -78,7 +78,7 @@ HERE = Path(__file__).resolve().parent
 # these are the *image* colors, distinct from styles.css :root which themes the
 # HTML page).
 # ---------------------------------------------------------------------------
-DARK_BG = "#0a0d12"
+DARK_BG = "#333333"
 TEXT_COLOR = "#e8eef5"
 ACCENT_COLOR = "#79f0d6"
 MUTED_COLOR = "#9199a4"
@@ -90,10 +90,11 @@ BORDER_COLOR = "#000000"
 # the bright radar cores. Wind keeps the black coasts above.
 REFL_COAST_COLOR = "#39ff14"
 # Simulated-satellite (IR/WV) coast/border color: a bright near-white line drawn
-# WITH a dark halo (see _draw_feature_lines ``halo``). Neither black nor a single
-# hue reads cleanly across BOTH the colorful cold-cloud tops of the rainbow_ir /
-# wv_tat fills AND their grayscale warm halves; a haloed near-white line stays
-# legible over either, matching the satellite page's coastline treatment.
+# WITH a dark halo (see _draw_feature_lines ``halo``). Currently UNUSED - the
+# sim-sat / PWAT / RH products switched to plain black coasts (COAST_COLOR,
+# coast_halo=0.0); kept defined for reference / easy re-enable. The haloed
+# near-white line was meant to read across BOTH the colorful cold-cloud tops of
+# the rainbow_ir / wv_tat fills AND their grayscale warm halves.
 SAT_COAST_COLOR = "#eef3f9"
 SAT_COAST_HALO = "#0a0d12"
 WATERMARK = "@WeathermanAAA_"
