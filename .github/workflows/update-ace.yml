@@ -150,6 +150,27 @@ jobs:
             fi
           done
 
+      - name: Build + upload archive feed base to R2
+        # ADDITIVE (Data-Accuracy Fix 2, Piece 3): write the slow-moving archive
+        # base to cdn.triple-a-tropics.com/feeds/base/ so the streaming intensity
+        # poller (tat-satellite-render) can merge fresh live b-decks onto it and
+        # refresh the feeds within minutes. This does NOT change the live feeds
+        # the cron still writes above (no cutover). R2-only (gitignored, not
+        # committed); the poller reads it server-side (no CORS concern).
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          python build_feed_base.py
+          for f in feeds/base/*_base.json; do
+            [ -f "$f" ] || continue
+            key="feeds/base/$(basename "$f")"
+            echo "--- Uploading $f -> $key ---"
+            bash scripts/upload_to_r2.sh "$f" "$key" "public, max-age=300" "application/json"
+          done
+
       - name: Commit and push if anything changed
         run: |
           set -eo pipefail

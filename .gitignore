@@ -59,3 +59,6 @@ _sst_clim_build/
 # build-armor3d-climatology.yml uploads it to R2; update-armor3d.yml
 # fetches it from cdn.triple-a-tropics.com before rendering.
 armor3d/armor3d_climatology.nc
+
+# Archive feed base (Piece 3): built by build_feed_base.py, R2-only (poller reads it from the CDN)
+feeds/base/
