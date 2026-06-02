@@ -44,6 +44,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas numpy
+          # ace_core is the single source of truth for ACE numbers AND the
+          # ACE/tracks feed-assembly logic (current curve, storms, header,
+          # rank). Installing it as a package keeps the generators and the
+          # future streaming poller on one identical assembly. Both generators
+          # `import ace_core` from the installed package (the ace_core/ subdir
+          # at repo root is just the package source; the install wins).
+          pip install ./ace_core
 
       - name: Download latest IBTrACS CSVs
         run: |
