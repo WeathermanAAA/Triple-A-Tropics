@@ -1019,7 +1019,7 @@ def render_frame(frame: HafsFrame, out_path: str,
     # field/cmap/norm, fill method, barbs, coast styling, colorbar, header stat)
     # is read off it - no product-name if/elif chains. Lazy import avoids a
     # module-load cycle (hafs_registry imports primitives from this module).
-    import hafs_registry as reg
+    from hafs_render import hafs_registry as reg
     spec = reg.get_spec(product)
     if spec.requires_attr and getattr(frame, spec.requires_attr) is None:
         raise ValueError(
@@ -1410,7 +1410,7 @@ def main() -> int:
     ap.add_argument("--save-dir", default=os.environ.get("HERBIE_DATA", "/tmp/herbie_data"))
     args = ap.parse_args()
 
-    import hafs_registry as reg
+    from hafs_render import hafs_registry as reg
     date = dt.datetime.strptime(args.date, "%Y-%m-%d %H:%M")
     want_refl = args.field == "refl"
     want_pwat = args.field == "pwat"
