@@ -78,7 +78,9 @@ HERE = Path(__file__).resolve().parent
 # these are the *image* colors, distinct from styles.css :root which themes the
 # HTML page).
 # ---------------------------------------------------------------------------
-DARK_BG = "#333333"
+PLOT_BG = "#333333"   # plot interior (axes facecolor) ONLY; the figure margin /
+                      # savefig frame use BAND_BG so the border matches the
+                      # header band, not the plot interior.
 TEXT_COLOR = "#e8eef5"
 ACCENT_COLOR = "#79f0d6"
 MUTED_COLOR = "#9199a4"
@@ -1080,10 +1082,10 @@ def render_frame(frame: HafsFrame, out_path: str,
     fig_h = botpad_in + foot_in + map_h + band_in
     map_bottom = botpad_in + foot_in
 
-    fig = plt.figure(figsize=(fig_w, fig_h), facecolor=DARK_BG)
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor=BAND_BG)
     ax = fig.add_axes([left_in / fig_w, map_bottom / fig_h,
                        map_w / fig_w, map_h / fig_h])
-    ax.set_facecolor(DARK_BG)
+    ax.set_facecolor(PLOT_BG)
 
     # Resolve the fill field + its cmap/norm through the spec's color factory
     # (wind = continuous 0-165 kt TAT table; refl = discrete .pal table; BT =
@@ -1376,7 +1378,7 @@ def render_frame(frame: HafsFrame, out_path: str,
              f"{WATERMARK}  /  triple-a-tropics.com", ha="left", va="center",
              fontsize=9, color=MUTED_COLOR)
 
-    fig.savefig(out_path, dpi=155, facecolor=DARK_BG)
+    fig.savefig(out_path, dpi=155, facecolor=BAND_BG)
     plt.close(fig)
     log.info("wrote %s", out_path)
 
