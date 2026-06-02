@@ -62,3 +62,8 @@ armor3d/armor3d_climatology.nc
 
 # Archive feed base (Piece 3): built by build_feed_base.py, R2-only (poller reads it from the CDN)
 feeds/base/
+
+# Third-party reference / local scratch dirs - keep on disk, never track/push (not public)
+_reference/
+_push/
+_debug/
