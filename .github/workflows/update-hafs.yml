@@ -84,6 +84,13 @@ jobs:
           done
 
       - name: Generate HAFS plots (latest complete cycle)
+        # STAGE-3 CUTOVER ROLLBACK GATE: once the Railway render worker is the
+        # sole renderer (Stage 4), set the repo variable RENDER_HAFS_ON_CRON=false
+        # to make this cron a no-op - the worker then owns models/hafs. Unset or
+        # any other value keeps the cron rendering (the default, and the instant
+        # rollback: clear the variable / set it back to true). The render AND the
+        # R2 upload are gated together so a disabled cron never half-publishes.
+        if: vars.RENDER_HAFS_ON_CRON != 'false'
         # Resolves the newest cycle whose storm nest reached f126, enumerates
         # its storms from the public bucket, and renders all frames into
         # models/hafs/ with a manifest.json. Off-season (no storms) it writes
@@ -98,6 +105,10 @@ jobs:
           python -c "import json; m=json.load(open('models/hafs/manifest.json')); print('cycle', m['cycle'], '| storms', [s['id'] for s in m['storms']])"
 
       - name: Upload HAFS plots to R2 (cdn.triple-a-tropics.com/models/hafs/)
+        # Gated with the render step (see RENDER_HAFS_ON_CRON above): when the
+        # cron render is disabled there is nothing to upload, and skipping the
+        # sync leaves the worker's live frames untouched.
+        if: vars.RENDER_HAFS_ON_CRON != 'false'
         # Three passes with EXPLICIT content-types (image/png frames,
         # application/json manifest - the manifest is fetched cross-origin and
         # needs the right type). NO --size-only: each cycle's f###.png reuses
