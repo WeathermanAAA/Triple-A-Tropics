@@ -123,6 +123,12 @@ jobs:
           fi
 
       - name: Upload live ACE + tracks feeds to R2
+        # WRITE_LIVE_FEEDS (Piece 3 cutover gate): default ON. Set the repo
+        # variable WRITE_LIVE_FEEDS=false at cutover so the intensity poller
+        # becomes the SOLE live-feed writer; flip it back to true for INSTANT
+        # rollback (the cron resumes live writes, no data loss). The base upload
+        # above is NOT gated - the cron always writes the archive base.
+        if: ${{ vars.WRITE_LIVE_FEEDS != 'false' }}
         # DUAL-WRITE (Data-Accuracy Fix 2, Piece 2): publish the live
         # per-basin ACE + tracks JSON feeds to
         # cdn.triple-a-tropics.com/feeds/ IN ADDITION TO the git commit
@@ -172,10 +178,21 @@ jobs:
           done
 
       - name: Commit and push if anything changed
+        env:
+          WRITE_LIVE_FEEDS: ${{ vars.WRITE_LIVE_FEEDS }}
         run: |
           set -eo pipefail
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # WRITE_LIVE_FEEDS=false (Piece 3 cutover): the intensity poller owns the
+          # live JSON feeds on R2, so discard their working-tree changes and commit
+          # ONLY the HTML charts + basemaps (the base is R2-only). Flip the repo
+          # variable back to true to roll back instantly (cron resumes live writes).
+          if [ "${WRITE_LIVE_FEEDS:-true}" = "false" ]; then
+            git checkout -- wp_ace_data.json al_ace_data.json ep_ace_data.json \
+                            wp_tracks_data.json al_tracks_data.json ep_tracks_data.json 2>/dev/null || true
+            echo "WRITE_LIVE_FEEDS=false: live JSON feeds NOT committed (poller owns them on R2)."
+          fi
           # global_storms.geojson is NOT staged — it lives on R2 now.
           # The iframed *_tracks.html / *_ace.html pages remain on
           # origin (category C in R2 phase 1) so the parent-page
