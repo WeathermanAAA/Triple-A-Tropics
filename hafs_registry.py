@@ -416,7 +416,7 @@ _SPECS = (
         make_colors=_bt_colors,
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_bt_colorbar,
         draw_barbs=False,
-        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("ir")),
     ),
@@ -429,7 +429,7 @@ _SPECS = (
         make_colors=_bt_colors,
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_bt_colorbar,
         draw_barbs=False,
-        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("wv")),
     ),
@@ -441,11 +441,9 @@ _SPECS = (
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_pwat_colorbar,
         draw_barbs=False,
         # PWAT is an .atm-surface product: its MSLP isobars + bold L + pressure
-        # label are drawn exactly like mslp_wind (no wind barbs). The fill spans a
-        # dark dry-brown background and bright moist colors, so - like the
-        # simulated-satellite fills - a bright near-white coast WITH a dark halo
-        # reads cleanly over both ends. Hence the SAT coast treatment, not black.
-        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        # label are drawn exactly like mslp_wind (no wind barbs), and it shares
+        # mslp_wind's black coasts.
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_pwat_stat,
         # Thin black moisture contours every 10 mm from 50 (only those inside a
         # frame's PWAT range draw), same style as the wind category contours.
@@ -454,12 +452,12 @@ _SPECS = (
 
     # --- Phase 2 upper-air products (orders 5..10, appended after the existing
     # five so defaults / existing toggle order are unchanged). All read
-    # frame.upper (requires_attr="upper"). Height/vorticity products draw height
-    # line-contours INSTEAD of MSLP isobars (draw_mslp_isobars=False) but KEEP the
-    # L center marker (draw_mslp_markers=True); the RH product
-    # keeps MSLP isobars + L. Coasts use the SAT haloed-near-white treatment,
-    # legible over the colorful wind fill, the dark vorticity fill, and the RH
-    # fill alike. ---
+    # frame.upper (requires_attr="upper"). Height products draw height
+    # line-contours INSTEAD of MSLP isobars (draw_mslp_isobars=False) and keep the
+    # L center marker (draw_mslp_markers=True); the vorticity products also draw
+    # height contours but drop the L (the vorticity max is the feature); the RH
+    # product keeps MSLP isobars + L. Coast color is per-fill: black over the
+    # colorful height and RH fills, neon-green over the dark vorticity fill. ---
     ProductSpec(
         key="hgt_wind_850", slug="hgt_wind_850", label="850 mb Height & Wind",
         short="850 H/Wind", order=5,
@@ -510,9 +508,10 @@ _SPECS = (
         default_enhancement=None, channel=None,
         make_colors=_vort_colors(850, 300.0),
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
-        # Height contours replace MSLP isobars; the L center marker stays.
+        # Height contours replace MSLP isobars; no L center marker (the
+        # vorticity maximum, not the surface low, is the feature of interest).
         draw_barbs=True, draw_wind_contours=False,
-        draw_mslp_isobars=False, draw_mslp_markers=True,
+        draw_mslp_isobars=False, draw_mslp_markers=False,
         wind_provider=_level_wind_provider(850),
         line_contour=LineContourSpec(source=_height_dam(850), interval=3.0),
         # The vorticity fill is transparent where calm, so the dark map shows
@@ -527,8 +526,9 @@ _SPECS = (
         default_enhancement=None, channel=None,
         make_colors=_vort_colors(500, 150.0),
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
+        # Height contours replace MSLP isobars; no L center marker (as at 850 mb).
         draw_barbs=True, draw_wind_contours=False,
-        draw_mslp_isobars=False, draw_mslp_markers=True,
+        draw_mslp_isobars=False, draw_mslp_markers=False,
         wind_provider=_level_wind_provider(500),
         line_contour=LineContourSpec(source=_height_dam(500), interval=6.0),
         coast_color=hp.REFL_COAST_COLOR, coast_lw=1.3, coast_halo=0.0,
@@ -545,10 +545,9 @@ _SPECS = (
         draw_barbs=True, draw_wind_contours=False,
         draw_mslp_isobars=True, draw_mslp_markers=True,
         wind_provider=_layer_wind_kt,
-        # Moisture-field sibling of mslp_pwat (and clean_ir / water_vapor): the
-        # SAT haloed near-white coast, legible over both the dry-brown and bright
-        # moist ends of the RH fill. Already matched its sibling; unchanged here.
-        coast_color=hp.SAT_COAST_COLOR, coast_lw=1.1, coast_halo=1.6,
+        # Moisture-field sibling of mslp_pwat: black coasts, matching it and
+        # mslp_wind.
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_rh_layer_stat,
         # Thin black RH contours every 10% from 50 (only those inside a frame's
         # layer-RH range draw), same style as the PWAT / wind category contours.
