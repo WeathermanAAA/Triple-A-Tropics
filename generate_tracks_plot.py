@@ -110,7 +110,8 @@ BASINS: dict[str, dict] = {
         "atcf_patterns": [
             "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bal{nn}{year}.dat",
             "https://ftp.nhc.noaa.gov/atcf/btk/bal{nn}{year}.dat",
-            "https://www.natyphoon.top/atcf/temp/bal{nn}{year}.dat",
+            # NHC only (proxy -> ftp.nhc). natyphoon.top is a WP/JTWC mirror; it
+            # does not serve AL/EP b-decks (404/SSL), reserved for WP.
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
@@ -136,7 +137,7 @@ BASINS: dict[str, dict] = {
         "atcf_patterns": [
             "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bep{nn}{year}.dat",
             "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
-            "https://www.natyphoon.top/atcf/temp/bep{nn}{year}.dat",
+            # NHC only (proxy -> ftp.nhc); natyphoon.top is WP/JTWC-only (see AL).
         ],
         "wind_preference": [
             ("USA_WIND", 1.0),
