@@ -111,6 +111,17 @@ jobs:
         # in R2 phase 1. The iframed HTML pages stay on origin to
         # preserve same-origin iframe-resize JS; only the geojson
         # data file is fetched cross-origin (CORS allows it).
+        #
+        # Phase-3 cutover gate (mirrors WRITE_LIVE_FEEDS / RENDER_HAFS_ON_CRON):
+        # when the streaming poller is promoted to write the LIVE geojson each
+        # cycle (GLOBAL_GEOJSON_KEY=global_storms.geojson on Railway), set the
+        # repo variable WRITE_GLOBAL_GEOJSON_ON_CRON=false so the cron stops
+        # overwriting the poller's fresh map with 6h-stale storms. Default
+        # (unset) keeps the cron uploading = today's behavior. The Regenerate
+        # step above is NOT gated: it still builds the committed
+        # global_tracks.html page shell, and the geojson it writes to disk is
+        # gitignored. Instant rollback = clear the variable.
+        if: vars.WRITE_GLOBAL_GEOJSON_ON_CRON != 'false'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
