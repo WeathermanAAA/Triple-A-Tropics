@@ -2060,7 +2060,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     <div class="map-head">
       <div>
         <div class="title">__YEAR__ Global TC Tracks</div>
-        <div class="sub">As of __UPDATED__</div>
+        <!-- Baked build-time stamp = fallback; when the geojson carries the
+             poller's live freshness stamps (Phase 3), the fetch handler below
+             overwrites this at runtime with the map's TRUE data freshness. -->
+        <div class="sub" id="as-of">As of __UPDATED__</div>
       </div>
       <div class="stats">
         <b>__NAMED__</b> __NAMED_LABEL__ &middot; <b>__CAT1PLUS__</b> __CAT1PLUS_LABEL__ &middot;
@@ -2631,6 +2634,15 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     fetch("https://cdn.triple-a-tropics.com/global_storms.geojson", { cache: "no-cache" })
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        // Phase 3: the poller-written geojson carries live freshness stamps
+        // (updated / generated_utc / latest_fix_valid_utc as RFC-7946 foreign
+        // members) - surface the map's TRUE freshness instead of the page's
+        // baked build time. The cron's bare FeatureCollection has no stamps,
+        // so on rollback the baked "As of" text simply stands.
+        if (data && data.updated) {
+          var asOf = document.getElementById("as-of");
+          if (asOf) asOf.textContent = "As of " + data.updated;
+        }
         addStormLayers(data);
         addActiveMarkers(data);
       })
