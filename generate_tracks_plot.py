@@ -1078,11 +1078,11 @@ def render_active_icons(storms: list[dict], extent,
                 f'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">'
                 f'{title_el}'
                 f'<text text-anchor="middle" dominant-baseline="central" '
-                f'font-size="34" font-weight="900" fill="#ef4444" '
+                f'font-size="{ICON_L_PT}" font-weight="900" fill="#ef4444" '
                 f'paint-order="stroke" stroke="rgba(0,0,0,0.55)" '
                 f'stroke-width="2.5" stroke-linejoin="round">L</text>'
                 f'<text x="0" y="22" text-anchor="middle" '
-                f'dominant-baseline="hanging" font-size="13" '
+                f'dominant-baseline="hanging" font-size="{ICON_NAME_PT}" '
                 f'font-weight="800" fill="#ffffff" paint-order="stroke" '
                 f'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" '
                 f'stroke-linejoin="round">{atcf_id}</text>'
@@ -1105,12 +1105,12 @@ def render_active_icons(storms: list[dict], extent,
                 f'transform="translate({x:.1f},{y:.1f})" '
                 f'style="filter:drop-shadow(0 0 5px rgba(0,0,0,0.65));">'
                 f'{title_el}'
-                f'<circle cx="0" cy="0" r="14" fill="none" '
+                f'<circle cx="0" cy="0" r="{ICON_TD_R}" fill="none" '
                 f'stroke="#ffffff" stroke-width="6.5"/>'
-                f'<circle cx="0" cy="0" r="14" fill="none" '
+                f'<circle cx="0" cy="0" r="{ICON_TD_R}" fill="none" '
                 f'stroke="#5dd3ff" stroke-width="3.5"/>'
                 f'<text x="0" y="26" text-anchor="middle" '
-                f'dominant-baseline="hanging" font-size="13" '
+                f'dominant-baseline="hanging" font-size="{ICON_NAME_PT}" '
                 f'font-weight="800" fill="#ffffff" paint-order="stroke" '
                 f'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" '
                 f'stroke-linejoin="round">{label}</text>'
@@ -1130,14 +1130,14 @@ def render_active_icons(storms: list[dict], extent,
         # transform attribute. CCW spin for NH cyclones.
         sid = storm.get("sid") or ""
         parts.append(f'''<g class="active-icon" data-sid="{sid}" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">{title_el}
-  <g transform="scale(0.7)">
+  <g transform="scale({ICON_GLYPH_SCALE})">
     <g class="spin-wrap">
       <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="{color}"/>
       <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>
     </g>
   </g>
-  <text y="0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.8" stroke-linejoin="round">{label}</text>
-  <text class="name" x="28" y="5" text-anchor="start">{name}</text>
+  <text y="0" text-anchor="middle" dominant-baseline="central" font-size="{ICON_LETTER_PT}" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.8" stroke-linejoin="round">{label}</text>
+  <text class="name" x="{ICON_NAME_X}" y="{ICON_NAME_Y}" text-anchor="start">{name}</text>
 </g>''')
     parts.append('</g>')
     return "\n".join(parts)
@@ -1550,6 +1550,48 @@ TRACKS_JS = r"""
 # also) the MapLibre HTML markers on the global page.
 HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z"
 
+# ---------------------------------------------------------------------------
+# ONE canonical active-storm icon definition (site-wide visual consistency).
+# BOTH renderers derive from these - the per-basin SVG (render_active_icons /
+# render_tracks_svg f-strings + the __ICON_*__ tokens in HTML_TEMPLATE's CSS)
+# and the global MapLibre template (its CSS/JS carry the same tokens, applied
+# by _apply_icon_tokens at render time). Tweak sizes HERE ONLY. Canonical =
+# the per-basin tracks-page appearance at 1:1 viewBox scale; the global
+# markers pin their CSS box to their viewBox (1 SVG unit == 1 CSS px) so the
+# same numbers render identically at default zoom. Banners and storm cards
+# (active-banner.js, the sidebar placard) intentionally keep their own sizing.
+ICON_GLYPH_SCALE = 0.7   # x the +/-30-unit HURRICANE_PATH -> 42px glyph
+ICON_LETTER_PT = 14      # SSHS category letter inside the glyph
+ICON_NAME_PT = 16        # storm-name/designation labels (was 12/13 - bigger
+                         # proportion vs the glyph so names read clearly)
+ICON_NAME_X = 28         # name anchor right of the glyph centre
+ICON_NAME_Y = 5
+ICON_TD_R = 14           # hollow-TD ring radius
+ICON_L_PT = 34           # invest "L" glyph
+ICON_HBOX = 68           # hurricane marker viewBox == CSS box (1:1)
+ICON_TDBOX_W, ICON_TDBOX_H = 60, 50   # td/"L" marker viewBox == CSS box
+
+
+def _apply_icon_tokens(html: str) -> str:
+    """Inject the canonical icon sizes into a rendered page (both page
+    templates carry __ICON_*__ tokens), so marker geometry has exactly one
+    source of truth above."""
+    for token, value in (
+        ("__ICON_GLYPH_SCALE__", ICON_GLYPH_SCALE),
+        ("__ICON_LETTER_PT__", ICON_LETTER_PT),
+        ("__ICON_NAME_PT__", ICON_NAME_PT),
+        ("__ICON_NAME_X__", ICON_NAME_X),
+        ("__ICON_NAME_Y__", ICON_NAME_Y),
+        ("__ICON_TD_R__", ICON_TD_R),
+        ("__ICON_L_PT__", ICON_L_PT),
+        ("__ICON_HBOX__", ICON_HBOX),
+        ("__ICON_TDBOX_W__", ICON_TDBOX_W),
+        ("__ICON_TDBOX_H__", ICON_TDBOX_H),
+    ):
+        html = html.replace(token, str(value))
+    return html
+
+
 
 # build_global_geojson (+ its two pure-stdlib helpers _split_at_antimeridian
 # and _clean_mslp) moved into ace_core so the streaming intensity poller can
@@ -1603,13 +1645,13 @@ HTML_TEMPLATE = """<!doctype html>
     pointer-events: none;
     paint-order: stroke; stroke: #07101c; stroke-width: 0;
   }}
-  .active-icon .name {{ fill: #f1f7fd; font-size: 12px; font-weight: 700;
+  .active-icon .name {{ fill: #f1f7fd; font-size: __ICON_NAME_PT__px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none; }}
   body.interactive .active-icon {{ cursor: pointer; }}
   /* Invest current-position label (atcf_id like "91W"). Same typography
      as .active-icon .name but tinted red to match the X glow. */
-  .invest-label {{ fill: #ff5050; font-size: 12px; font-weight: 700;
+  .invest-label {{ fill: #ff5050; font-size: __ICON_NAME_PT__px; font-weight: 700;
     paint-order: stroke; stroke: #07101c; stroke-width: 3;
     stroke-linejoin: round; pointer-events: none;
     dominant-baseline: middle; }}
@@ -1988,7 +2030,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     width: 100%; height: 100%; }
 
   /* Hurricane spinner */
-  .active-marker.active-hurricane { width: 50px; height: 50px; }
+  .active-marker.active-hurricane { width: __ICON_HBOX__px; height: __ICON_HBOX__px; }
   .active-marker.active-hurricane svg {
     filter: drop-shadow(0 0 6px currentColor); }
   @keyframes tat-spin { from { transform: rotate(360deg); }
@@ -1996,11 +2038,11 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
   .active-marker .spinning {
     animation: tat-spin 2.6s linear infinite;
     transform-origin: 50% 50%; transform-box: fill-box; }
-  .active-marker .hurricane-label { font-size: 14px; font-weight: 900;
+  .active-marker .hurricane-label { font-size: __ICON_LETTER_PT__px; font-weight: 900;
     fill: #ffffff; paint-order: stroke;
     stroke: rgba(0,0,0,0.55); stroke-width: 1.8;
     stroke-linejoin: round; }
-  .active-marker .hurricane-name { fill: #f1f7fd; font-size: 12px;
+  .active-marker .hurricane-name { fill: #f1f7fd; font-size: __ICON_NAME_PT__px;
     font-weight: 700; paint-order: stroke;
     stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
 
@@ -2010,12 +2052,12 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
      stroke 2.5). The container is sized to match that SVG group's
      bounding box so the marker reads at the same physical size as the
      per-basin version. */
-  .active-marker.active-l { width: 60px; height: 50px;
+  .active-marker.active-l { width: __ICON_TDBOX_W__px; height: __ICON_TDBOX_H__px;
     filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
-  .active-marker .l-glyph { font-size: 34px; font-weight: 900;
+  .active-marker .l-glyph { font-size: __ICON_L_PT__px; font-weight: 900;
     fill: #ef4444; paint-order: stroke;
     stroke: rgba(0,0,0,0.55); stroke-width: 2.5; stroke-linejoin: round; }
-  .active-marker .l-label { font-size: 13px; font-weight: 800;
+  .active-marker .l-label { font-size: __ICON_NAME_PT__px; font-weight: 800;
     fill: #ffffff; paint-order: stroke;
     stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
@@ -2027,13 +2069,13 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
      y=26). The halo gives the TD the same visual weight as the TS+
      spinning icons; the hollow centre keeps it distinct from filled
      TS+ observation dots. */
-  .active-marker.active-td { width: 64px; height: 54px;
+  .active-marker.active-td { width: __ICON_TDBOX_W__px; height: __ICON_TDBOX_H__px;
     filter: drop-shadow(0 0 5px rgba(0,0,0,0.65)); }
   .active-marker .td-halo { stroke: #ffffff; stroke-width: 6.5;
     fill: none; }
   .active-marker .td-circle { stroke: #5dd3ff; stroke-width: 3.5;
     fill: none; }
-  .active-marker .td-label { font-size: 13px; font-weight: 800;
+  .active-marker .td-label { font-size: __ICON_NAME_PT__px; font-weight: 800;
     fill: #ffffff; paint-order: stroke;
     stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
@@ -2042,7 +2084,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
      width 2.4) and the .invest-label CSS rule (#ff5050 / 12px / weight
      700 / dark stroke 3). */
   .active-marker.invest-x-marker { width: 92px; height: 32px; }
-  .active-marker .invest-label { fill: #ff5050; font-size: 12px;
+  .active-marker .invest-label { fill: #ff5050; font-size: __ICON_NAME_PT__px;
     font-weight: 700; paint-order: stroke; stroke: #07101c;
     stroke-width: 3; stroke-linejoin: round;
     dominant-baseline: middle; }
@@ -2512,7 +2554,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         // below (size 13, weight 800, dark stroke 2.5).
         el.classList.add("active-l");
         el.innerHTML =
-          '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
+          '<svg viewBox="-30 -22 __ICON_TDBOX_W__ __ICON_TDBOX_H__" xmlns="http://www.w3.org/2000/svg">' +
             '<text class="l-glyph" x="0" y="0" ' +
               'text-anchor="middle" dominant-baseline="central">L</text>' +
             '<text class="l-label" x="0" y="22" ' +
@@ -2528,9 +2570,9 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         // operational TC rather than an invest.
         el.classList.add("active-td");
         el.innerHTML =
-          '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
-            '<circle class="td-halo" cx="0" cy="0" r="14"/>' +
-            '<circle class="td-circle" cx="0" cy="0" r="14"/>' +
+          '<svg viewBox="-30 -22 __ICON_TDBOX_W__ __ICON_TDBOX_H__" xmlns="http://www.w3.org/2000/svg">' +
+            '<circle class="td-halo" cx="0" cy="0" r="__ICON_TD_R__"/>' +
+            '<circle class="td-circle" cx="0" cy="0" r="__ICON_TD_R__"/>' +
             '<text class="td-label" x="0" y="26" ' +
               'text-anchor="middle" dominant-baseline="hanging">' +
               escapeHtml(designation) + '</text>' +
@@ -2543,14 +2585,16 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         var label = sshsLabel(cls);
         el.style.color = color;  // drop-shadow inherits via currentColor
         el.innerHTML =
-          '<svg viewBox="-34 -34 68 68" xmlns="http://www.w3.org/2000/svg">' +
-            '<g class="spinning">' +
-              '<path d="__HURRICANE_PATH__" fill="' + color + '" />' +
+          '<svg viewBox="-34 -34 __ICON_HBOX__ __ICON_HBOX__" xmlns="http://www.w3.org/2000/svg">' +
+            '<g transform="scale(__ICON_GLYPH_SCALE__)">' +
+              '<g class="spinning">' +
+                '<path d="__HURRICANE_PATH__" fill="' + color + '" />' +
+              '</g>' +
             '</g>' +
             '<text class="hurricane-label" x="0" y="0" ' +
               'text-anchor="middle" dominant-baseline="central">' +
               label + '</text>' +
-            '<text class="hurricane-name" x="36" y="6" ' +
+            '<text class="hurricane-name" x="__ICON_NAME_X__" y="__ICON_NAME_Y__" ' +
               'text-anchor="start">' + escapeHtml(props.name || "") + '</text>' +
           '</svg>';
       }
@@ -2909,7 +2953,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                                 encoding="utf-8")
         print(f"{log} wrote {geojson_path} "
               f"({len(geojson['features'])} features)")
-        html = render_global_maplibre_html(payload)
+        html = _apply_icon_tokens(render_global_maplibre_html(payload))
         html_path = OUTPUT_DIR / "global_tracks.html"
         html_path.write_text(html, encoding="utf-8")
         print(f"{log} wrote {html_path}")
@@ -2980,7 +3024,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             print(f"{log} WARN: no Natural Earth GeoJSON found — basemap will "
                   f"only show the grid. Workflow downloads these into the repo.")
 
-        html = render_html(payload, basin_cfg["extent"], countries, coast)
+        html = _apply_icon_tokens(render_html(payload, basin_cfg["extent"], countries, coast))
         html_path = OUTPUT_DIR / f"{basin}_tracks.html"
         html_path.write_text(html, encoding="utf-8")
         print(f"{log} wrote {html_path}")
