@@ -461,13 +461,21 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
             record(fn(job))
         return
     remaining = list(jobs_list)
-    for pool_attempt in range(1, 4):
+    width = max(1, jobs)
+    # 4 attempts; on each pool death HALVE the width (jobs -> jobs/2 -> ... -> 1).
+    # A dead pool is almost always OOM: a heavy GRIB decode that doesn't fit at
+    # this width. Retrying the unfinished frames at the SAME width just OOMs again
+    # and abandons them (the cause of the parent.atm/hafsb coverage gap on the
+    # memory-tighter render worker). Halving lets the heavy frames fit; the final
+    # attempt is fully serial, so every frame gets a minimal-memory try before
+    # being recorded as failed.
+    for pool_attempt in range(1, 5):
         if not remaining:
             break
         batch, remaining = remaining, []
         not_done = set(range(len(batch)))
         try:
-            with cf.ProcessPoolExecutor(max_workers=jobs,
+            with cf.ProcessPoolExecutor(max_workers=width,
                                         initializer=initializer) as ex:
                 fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
                 for fut in cf.as_completed(fut_to_i):
@@ -476,8 +484,10 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                     not_done.discard(i)
         except BrokenProcessPool:
             remaining = [batch[i] for i in sorted(not_done)]
+            width = max(1, width // 2)
             log.warning("worker pool died (attempt %d) - retrying %d unfinished "
-                        "task(s) in a fresh pool", pool_attempt, len(remaining))
+                        "task(s) in a fresh pool at width %d",
+                        pool_attempt, len(remaining), width)
     for job in remaining:
         record(straggler(job))
 
@@ -518,7 +528,8 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                 storms_filter: Optional[Sequence[str]] = None,
                 basins_filter: Optional[Sequence[str]] = None,
                 max_fxx: int = TERMINAL_FXX, fxx_step: int = 3,
-                jobs: int = 4, save_dir: str = "/tmp/herbie_data"
+                jobs: int = 4, ingest_width: Optional[int] = None,
+                save_dir: str = "/tmp/herbie_data"
                 ) -> tuple[dict, int, int, int]:
     """Render every frame for one cycle.
 
@@ -526,7 +537,15 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     counts to tell genuine off-season (no storms) from a total render failure
     (storms found but nothing rendered) - the latter must NOT publish an empty
     manifest, or the workflow's pruning sync would wipe the live CDN frames.
+
+    ``jobs`` sizes the RENDER pool (CPU-bound, light memory). ``ingest_width``
+    sizes the INGEST pool (a large multi-field GRIB decode per frame -> memory
+    bound); it defaults to ``jobs`` but is set LOWER on memory-tighter hosts so
+    the heavy parent.atm/hafsb decodes don't OOM the pool. Both stages still get
+    the halving-backoff recovery in ``_run_pool``.
     """
+    if ingest_width is None:
+        ingest_width = jobs
     session = requests.Session()
     cycle = f"{date}{hh}"
     cycle_dt = dt.datetime.strptime(cycle, "%Y%m%d%H")
@@ -642,7 +661,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                 "error": "BrokenProcessPool (unrecoverable after retries)"}
 
     # Ingest workers don't draw, so no geojson initializer (saves memory/time).
-    _run_pool(ingest_jobs, _ingest_one, jobs, _record_ingest, _ingest_straggler)
+    # Sized by ingest_jobs (<= jobs): the GRIB decode is memory-bound, so a lower
+    # width than the CPU-bound render avoids OOMing the pool on heavy frames.
+    _run_pool(ingest_jobs, _ingest_one, ingest_width, _record_ingest,
+              _ingest_straggler)
     log.info("ingested %d/%d frame(s) ok (%d failed) in %.0fs",
              len(ingested_ok), len(ingest_jobs), n_ingest_fail, time.time() - t0)
 
@@ -732,7 +754,12 @@ def main() -> int:
     ap.add_argument("--max-fxx", type=int, default=TERMINAL_FXX)
     ap.add_argument("--fxx-step", type=int, default=3)
     ap.add_argument("--jobs", type=int,
-                    default=min((os.cpu_count() or 2), 6))
+                    default=min((os.cpu_count() or 2), 6),
+                    help="render-pool width (CPU-bound)")
+    ap.add_argument("--ingest-jobs", type=int, default=None,
+                    help="ingest-pool width (GRIB decode, memory-bound); "
+                         "defaults to --jobs. Set LOWER on memory-tight hosts so "
+                         "heavy parent.atm/hafsb decodes don't OOM the pool")
     ap.add_argument("--out-dir", default=str(Path.cwd() / "models" / "hafs"))
     ap.add_argument("--save-dir",
                     default=os.environ.get("HERBIE_DATA", "/tmp/herbie_data"))
@@ -776,7 +803,7 @@ def main() -> int:
         storms_filter=(args.storm.split(",") if args.storm else None),
         basins_filter=(args.basins.split(",") if args.basins else None),
         max_fxx=args.max_fxx, fxx_step=args.fxx_step,
-        jobs=args.jobs, save_dir=args.save_dir,
+        jobs=args.jobs, ingest_width=args.ingest_jobs, save_dir=args.save_dir,
     )
 
     # Total failure: storms WERE found but nothing rendered. Do not write a
