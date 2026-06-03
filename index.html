@@ -321,52 +321,6 @@
       0 2px 3px rgba(0, 0, 0, 0.35);
   }
 
-  /* Bottom meta strip: EXACT same nav-blue gradient + white glow
-     hairline as .status-head so the card footer mirrors the live
-     status bar header. */
-  .home-card-meta {
-    display: flex; align-items: center; justify-content: center;
-    gap: 12px;
-    padding: 12px 20px;
-    background: linear-gradient(180deg,
-      #0a1a2e 0%,
-      #1d3a5c 22%,
-      #2b4976 50%,
-      #1d3a5c 78%,
-      #0a1a2e 100%);
-    border-top: 1px solid rgba(255, 255, 255, 0.92);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.14),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.40),
-      0 0 6px rgba(255, 255, 255, 0.45) inset,
-      0 -6px 10px -6px rgba(255, 255, 255, 0.35);
-    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
-    font-size: 12px;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    color: #ffffff;
-    font-weight: 700;
-    text-shadow:
-      0 1px 0 rgba(0, 0, 0, 0.55),
-      0 2px 3px rgba(0, 0, 0, 0.45);
-  }
-  .home-card-meta .live {
-    color: #c8f7d4;
-    padding: 3px 9px;
-    border-radius: 4px;
-    background: rgba(0, 220, 120, 0.12);
-    border: 1px solid rgba(0, 220, 120, 0.35);
-    display: inline-flex; align-items: center; gap: 6px;
-    letter-spacing: 0.7px;
-  }
-  .home-card-meta .live::before {
-    content: "";
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: #6ff0a0;
-    box-shadow: 0 0 8px rgba(111, 240, 160, 0.7);
-    animation: home-pulse 1.7s ease-in-out infinite;
-  }
   @keyframes home-pulse {
     0%, 100% { opacity: 0.7; }
     50%      { opacity: 1;   }
@@ -543,9 +497,6 @@
         <h2 class="sr-only">Tropical Cyclone Climatology</h2>
         <p>Accumulated Cyclone Energy and storm tracks for every basin, this season against the 1991–2020 normal. Interactive rankings, hover tooltips, and live positions for active systems.</p>
       </div>
-      <div class="home-card-meta">
-        <span class="live">Live</span>
-      </div>
     </a>
 
     <!-- SST card: banner image is an SST poster with baked-in title. -->
@@ -558,9 +509,6 @@
       <div class="home-card-body">
         <h2 class="sr-only">Ocean Temperature Analysis</h2>
         <p>Daily SST, anomalies, and record composites across 17 regions from NOAA OISST v2.1 and Coral Reef Watch, plus TCHP and 26 °C isotherm depth (D26) subsurface fuel from NOAA AOML and CMEMS ARMOR3D.</p>
-      </div>
-      <div class="home-card-meta">
-        <span class="live">Live</span>
       </div>
     </a>
 
@@ -578,9 +526,6 @@
         <h2 class="sr-only">Satellite Plots</h2>
         <p>High-resolution satellite imagery for active and historical tropical cyclones. Visible, infrared, and water-vapor bands.</p>
       </div>
-      <div class="home-card-meta">
-        <span class="live">Live</span>
-      </div>
     </a>
 
     <!-- Model Plots card: CDN poster thumbnail (HAFS MSLP "Model Analysis"),
@@ -594,9 +539,6 @@
       <div class="home-card-body">
         <h2 class="sr-only">HAFS Model Plots</h2>
         <p>HAFS-A and HAFS-B forecast guidance for every active storm: MSLP and 10 m wind, storm-following nest and parent domain, scrubbable out to 126 hours.</p>
-      </div>
-      <div class="home-card-meta">
-        <span class="live">Live</span>
       </div>
     </a>
 
