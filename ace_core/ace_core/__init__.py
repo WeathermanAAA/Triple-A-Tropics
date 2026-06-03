@@ -950,3 +950,189 @@ def compute_header_stats(storms: list[dict]) -> dict:
         "total_ace": total_ace,
     }
 
+
+
+# ===========================================================================
+# Global-map GeoJSON assembly - moved here from generate_tracks_plot.py
+# (Phase 3, poller-primary storm-display) so the cron generator AND the
+# streaming intensity poller emit the IDENTICAL FeatureCollection for
+# /global_tracks.html and can never drift. Same relocation pattern as the
+# feed-assembly move (commit a7719b5). Pure functions of the storms list;
+# no clock, no I/O.
+# ===========================================================================
+
+def _split_at_antimeridian(coords: list[list[float]]) -> list[list[list[float]]]:
+    """Split a [lon, lat] coordinate list into segments wherever successive
+    longitudes jump > 180° (the dateline-crossing tell). MapLibre's
+    renderWorldCopies handles infinite horizontal pan on its own, but the
+    GeoJSON spec still requires LineStrings to not cross ±180° as a single
+    feature — otherwise the renderer draws a horizontal line across the
+    whole world. Each output segment has at least 2 points so it remains a
+    valid LineString geometry."""
+    if len(coords) < 2:
+        return []
+    segments: list[list[list[float]]] = [[coords[0]]]
+    for i in range(1, len(coords)):
+        prev_lon = coords[i - 1][0]
+        curr_lon = coords[i][0]
+        if abs(curr_lon - prev_lon) > 180:
+            segments.append([coords[i]])
+        else:
+            segments[-1].append(coords[i])
+    return [s for s in segments if len(s) >= 2]
+
+
+def _clean_mslp(val) -> int | None:
+    """Minimum sea-level pressure as a positive integer mb, or None.
+
+    b-decks often omit pressure on weak/early fixes, where the upstream value
+    is NaN or 0. Returning None there keeps the field out of the popup entirely
+    (the JS omits the row) and, critically, never lets a NaN reach json.dumps -
+    which would emit a literal ``NaN`` token and break the geojson's JSON.parse
+    on the client. Purely a presentation/serialization guard; no wind/ACE path
+    touches this."""
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f <= 0:        # NaN (f != f) or non-positive -> absent
+        return None
+    return int(round(f))
+
+
+def build_global_geojson(storms: list[dict]) -> dict:
+    """Assemble the FeatureCollection consumed by MapLibre on
+    /global_tracks.html.
+
+    Three feature kinds are emitted:
+      * "track" — one LineString per storm (split at the antimeridian),
+        carries storm-level metadata for styling/hover.
+      * "observation" — one Point per 6-hour fix, carrying intensity,
+        pressure, time, and SSHWS class. The MapLibre `circle` layer
+        styles these with the TAT palette.
+      * "active_marker" — one Point per active storm/invest, carrying
+        marker_type ("hurricane" for spinning icon, "L" for red invest
+        label). Rendered as HTML markers, not GL layers, so existing
+        spin animations and label layouts work without WebGL plumbing.
+    """
+    features: list[dict] = []
+    for storm in storms:
+        sid = storm.get("sid") or ""
+        name = storm.get("name") or "UNNAMED"
+        basin = storm.get("basin") or ""
+        peak_kt = storm.get("peak_wind_kt")
+        is_active = bool(storm.get("is_active"))
+        is_invest = bool(storm.get("is_invest"))
+        designation = storm.get("atcf_id") or ""
+        max_cls = storm.get("max_category") or "TD"
+        points = storm.get("points") or []
+
+        # Track LineString(s): split into one feature per dateline segment
+        if len(points) >= 2:
+            coords = [[float(p["lon"]), float(p["lat"])] for p in points]
+            for seg in _split_at_antimeridian(coords):
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": seg},
+                    "properties": {
+                        "kind": "track",
+                        "storm_id": sid,
+                        "name": name,
+                        "basin": basin,
+                        "peak_intensity": max_cls,
+                        "peak_kt": peak_kt,
+                        "is_active": is_active,
+                        "is_invest": is_invest,
+                        "designation": designation,
+                    },
+                })
+
+        # Per-observation Points
+        for p in points:
+            wind = p.get("wind_kt")
+            cls = p.get("cls") or "TD"
+            nature = (p.get("nature") or "").upper()
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(p["lon"]), float(p["lat"])],
+                },
+                "properties": {
+                    "kind": "observation",
+                    "storm_id": sid,
+                    "storm_name": name,
+                    "basin": basin,
+                    "intensity_kt": (None if wind is None else float(wind)),
+                    # NaN-safe (b-decks omit pressure on weak fixes); None keeps
+                    # a literal NaN out of the serialized geojson.
+                    "mslp_mb": _clean_mslp(p.get("pressure_mb")),
+                    "time_iso": p.get("t"),
+                    "sshws_cat": cls,
+                    "is_subtropical": (nature == "SS"),
+                    "is_nontropical": (nature in {"ET", "DS", "DB", "LO"}),
+                },
+            })
+
+        # Current-position marker — one Point at the latest position.
+        # Four flavors, matching the per-basin SVG convention exactly:
+        #   * "invest_x": is_invest AND not is_active. Small red glowing X
+        #     with a red designation label to the right. Per-basin emits
+        #     this from render_tracks_svg's invest_current_positions
+        #     second pass.
+        #   * "L": is_active AND is_invest. Big bold red "L" + white
+        #     designation below. Per-basin emits this from
+        #     render_active_icons' is_invest branch.
+        #   * "td_circle": is_active AND peak < 34 kt AND NOT is_invest.
+        #     Hollow blue circle + white name/designation label below —
+        #     the system is operationally a numbered TD (e.g. Hagupit at
+        #     TD strength), not an invest, so the red "L" would mislabel
+        #     it. Per-basin emits this from render_active_icons'
+        #     peak < 34 branch.
+        #   * "hurricane": is_active AND peak >= 34 kt AND NOT is_invest.
+        #     Spinning hurricane glyph + name. Per-basin emits this from
+        #     render_active_icons' default branch.
+        # All live under kind="active_marker" so the JS marker iteration
+        # loop picks them up uniformly; marker_type drives the rendered
+        # shape.
+        marker_type = None
+        if is_active:
+            peak_for_test = peak_kt if peak_kt is not None else 0.0
+            if is_invest:
+                marker_type = "L"
+            elif peak_for_test < 34.0:
+                marker_type = "td_circle"
+            else:
+                marker_type = "hurricane"
+        elif is_invest:
+            marker_type = "invest_x"
+        if marker_type and points:
+            last = points[-1]
+            current_kt = last.get("wind_kt")
+            current_cls = storm.get("current_category") or "TD"
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(last["lon"]), float(last["lat"])],
+                },
+                "properties": {
+                    "kind": "active_marker",
+                    "storm_id": sid,
+                    "name": name,
+                    "designation": designation or name,
+                    "current_intensity_kt": (None if current_kt is None
+                                             else float(current_kt)),
+                    "current_category": current_cls,
+                    # Latest-fix MSLP from the SAME fix as current_intensity_kt
+                    # (the last observation). None when the b-deck lacks it, so
+                    # the popup omits the Pressure row rather than show "0 mb".
+                    "current_mslp_mb": _clean_mslp(last.get("pressure_mb")),
+                    "marker_type": marker_type,
+                    # Timestamp of the most recent observation, surfaced as
+                    # "Last fix" in the active-marker hover/click popup.
+                    "last_fix": last.get("t"),
+                },
+            })
+
+    return {"type": "FeatureCollection", "features": features}
