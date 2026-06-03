@@ -1571,6 +1571,24 @@ def _split_at_antimeridian(coords: list[list[float]]) -> list[list[list[float]]]
     return [s for s in segments if len(s) >= 2]
 
 
+def _clean_mslp(val) -> int | None:
+    """Minimum sea-level pressure as a positive integer mb, or None.
+
+    b-decks often omit pressure on weak/early fixes, where the upstream value
+    is NaN or 0. Returning None there keeps the field out of the popup entirely
+    (the JS omits the row) and, critically, never lets a NaN reach json.dumps -
+    which would emit a literal ``NaN`` token and break the geojson's JSON.parse
+    on the client. Purely a presentation/serialization guard; no wind/ACE path
+    touches this."""
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f <= 0:        # NaN (f != f) or non-positive -> absent
+        return None
+    return int(round(f))
+
+
 def build_global_geojson(storms: list[dict]) -> dict:
     """Assemble the FeatureCollection consumed by MapLibre on
     /global_tracks.html.
@@ -1635,7 +1653,9 @@ def build_global_geojson(storms: list[dict]) -> dict:
                     "storm_name": name,
                     "basin": basin,
                     "intensity_kt": (None if wind is None else float(wind)),
-                    "mslp_mb": p.get("pressure_mb"),
+                    # NaN-safe (b-decks omit pressure on weak fixes); None keeps
+                    # a literal NaN out of the serialized geojson.
+                    "mslp_mb": _clean_mslp(p.get("pressure_mb")),
                     "time_iso": p.get("t"),
                     "sshws_cat": cls,
                     "is_subtropical": (nature == "SS"),
@@ -1693,6 +1713,10 @@ def build_global_geojson(storms: list[dict]) -> dict:
                     "current_intensity_kt": (None if current_kt is None
                                              else float(current_kt)),
                     "current_category": current_cls,
+                    # Latest-fix MSLP from the SAME fix as current_intensity_kt
+                    # (the last observation). None when the b-deck lacks it, so
+                    # the popup omits the Pressure row rather than show "0 mb".
+                    "current_mslp_mb": _clean_mslp(last.get("pressure_mb")),
                     "marker_type": marker_type,
                     # Timestamp of the most recent observation, surfaced as
                     # "Last fix" in the active-marker hover/click popup.
@@ -2580,6 +2604,14 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
       ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph")
       : "-";
+    // Pressure row, directly under Wind. b-decks often lack MSLP on weak/early
+    // fixes (field is null then) -> OMIT the row entirely; never show "0 mb".
+    var pres = props.current_mslp_mb;
+    var presRow = (pres != null && pres !== "" && !isNaN(parseFloat(pres))
+                   && parseFloat(pres) > 0)
+      ? ('<div class="tt-row"><span class="tt-lbl">Pressure</span>' +
+         '<span class="tt-val">' + Math.round(parseFloat(pres)) + ' mb</span></div>')
+      : '';
     var title = props.name || props.designation || "Active system";
     var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
@@ -2587,6 +2619,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         color + '">' + escapeHtml(catLabel) + '</span></div>' +
       '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
         '<span class="tt-val">' + windTxt + '</span></div>' +
+      presRow +
       (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '');
   }
 
