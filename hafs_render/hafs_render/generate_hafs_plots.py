@@ -623,13 +623,20 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             else:
                 log.warning("no track deck for %s %s - frames render untracked",
                             model, storm)
-            # PROVISIONAL fallback (progressive rendering): when the own deck
-            # doesn't yet cover every tau, fetch the PREVIOUS cycle's deck so
-            # pick_track_fix can anchor a frame at the same VALID time (tau+6
-            # of the 6 h-older run). A new storm has no previous deck -> {} ->
-            # honest degradation, exactly as before.
+            # PROVISIONAL fallback - PROGRESSIVE MODE ONLY (only_fxx set):
+            # during build-out the own deck may not cover a tau yet, so the
+            # PREVIOUS cycle's deck anchors the same VALID time (tau+6 of the
+            # 6 h-older run). The classic full/cron path (only_fxx=None) must
+            # NOT use it: there a short deck means the tracker genuinely LOST
+            # the storm, and the v0.3.0 honest degradation (no L, NA chip,
+            # domain-wide labels) is the correct output - a prev-cycle fix
+            # would silently re-label the lost tail with a 6 h-older
+            # trajectory (review-confirmed regression). A new storm has no
+            # previous deck -> {} -> honest degradation either way.
             prev_track: dict = {}
-            if len(taus) < (min(max_fxx, TERMINAL_FXX) // max(fxx_step, 1)) + 1:
+            if (only_fxx is not None
+                    and len(taus) < (min(max_fxx, TERMINAL_FXX)
+                                     // max(fxx_step, 1)) + 1):
                 prev_track = hp.fetch_hafs_track(
                     model, storm, cycle_dt - dt.timedelta(hours=6),
                     session=session)
