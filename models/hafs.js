@@ -3,38 +3,51 @@
  * ---------------------------------------------------------------------------
  * Manifest-driven forecast-loop viewer for the HAFS model plots. Reads a
  * manifest published to Cloudflare R2 by generate_hafs_plots.py and lets the
- * user pick a storm -> model (HAFS-A/B) -> domain (storm nest / parent) ->
- * product (Wind / Reflectivity) and scrub / play the forecast hours.
+ * user pick a cycle -> storm -> model (HAFS-A/B) -> domain (storm nest /
+ * parent) -> product (Wind / Reflectivity) and scrub / play the forecast
+ * hours.
  *
- * Manifest shape (models/hafs/manifest.json on cdn.triple-a-tropics.com):
+ * PROGRESSIVE FRAMES (manifest v2). The builder now publishes cycles as they
+ * render, frame by frame. The manifest carries a `cycles[]` array (newest
+ * first, at most 2) each describing one model cycle and its in-progress state;
+ * frame PNG keys are CYCLE-SCOPED and immutable once written. The viewer:
+ *   - shows a cycle picker when >1 cycle is present;
+ *   - draws an availability-aware scrubber over the FULL expected grid
+ *     (0..fxx_end step fxx_step), lighting ticks that are already rendered and
+ *     greying the pending ones, snapping a pending pick to the nearest rendered
+ *     hour (preferring lower);
+ *   - polls the manifest (45 s while any cycle is in_progress, else 300 s) and
+ *     DIFF-MERGES: new frames relight ticks and preload in place WITHOUT
+ *     resetting the user's cycle/storm/model/domain/product/hour selection;
+ *   - never yanks the user to a newly-discovered cycle - it shows a "building -
+ *     view" badge that switches only on click.
+ *
+ * Manifest v2 shape (models/hafs/manifest.json on cdn.triple-a-tropics.com):
  *   {
- *     "generated_at": "2026-05-29T06:53:00Z",
- *     "product":  {"slug":"mslp_wind","label":"MSLP + 10 m Wind","short":"Wind"},
- *     "products": [{"slug":"mslp_wind",...,"short":"Wind"},
- *                  {"slug":"refl",...,"short":"Reflectivity"}],
- *     "models":  [{"slug":"hafsa","label":"HAFS-A"}, ...],
- *     "domains": [{"slug":"storm","label":"Storm nest (~2 km)","raw":"storm.atm"}, ...],
+ *     "generated_at": "2026-06-05T01:23:45Z",
+ *     "products": [{"slug","label","short"}, ...],
+ *     "models":   [{"slug","label"}, ...],
+ *     "domains":  [{"slug","label","raw"}, ...],
  *     "fxx_step": 3, "fxx_pad": 3,
- *     "path_template": "{model}/{storm}/{domain}/{product}/f{fxx}.png",
- *     "cycle": "2023090900",
- *     "storms": [
- *       {"id":"13l","name":"13L","basin":"al","basin_label":"North Atlantic",
- *        "cycle":"2023090900","init":"2023-09-09T00:00:00Z",
- *        "frames": {"hafsa": {"storm": {"mslp_wind":[0,3,...,126], "refl":[...]},
- *                             "parent": {...}}, "hafsb": {...}}}
- *     ]
+ *     "fxx_end": 126,
+ *     "path_template_cycles": "{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+ *     "cycles": [
+ *       {"cycle":"2026060418","in_progress":true,"frames_done":96,
+ *        "frames_expected":172,"started_utc":"...","storms":[ ... ]},
+ *       {"cycle":"2026060412","in_progress":false, ...}
+ *     ],
+ *     // legacy mirror of the newest COMPLETE cycle (deploy-skew zero-blink):
+ *     "cycle": "2026060412",
+ *     "storms": [ ... ],
+ *     "path_template": "2026060412/{model}/{storm}/{domain}/{product}/f{fxx}.png"
  *   }
  *
- * Backward-tolerant: an older manifest may omit "products" (singular "product"
- * used) and nest frames as {model:{domain:[fxx,...]}} (no product level). Such a
- * frame entry is read as the default product, and the frame URL is built from
- * the manifest's own path_template, so an older manifest still resolves until
- * the next cycle republishes the current schema.
- *
- * Frame URL: derived from path_template, e.g.
- *   {BASE}/models/hafs/{model}/{storm}/{domain}/{product}/f{FFF}.png
- * Every URL gets ?v=encodeURIComponent(generated_at) so a fresh cycle busts
- * the browser/CDN cache.
+ * Backward-tolerant (LEGACY mode): a manifest with NO `cycles[]` is treated as
+ * a single implicit cycle built from the top-level `storms` / `cycle` /
+ * `path_template`. In that mode the old behavior is preserved byte-for-byte:
+ * the scrubber spans the rendered hours only and frame URLs keep the
+ * ?v=generated_at cache-bust. New (cycles-mode) frames are immutable and
+ * cycle-scoped, so they drop the ?v=.
  */
 (function () {
   'use strict';
@@ -43,6 +56,8 @@
   var MANIFEST_URL = BASE + '/models/hafs/manifest.json';
   var SPEED_OPTIONS = [0.5, 1, 2, 4];   // playback frames-per-step multiplier
   var BASE_FPS = 4;                     // frames/sec at 1× speed
+  var POLL_IN_PROGRESS_MS = 45000;      // poll cadence while a cycle renders
+  var POLL_IDLE_MS = 300000;            // poll cadence when all cycles complete
 
   var DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -55,22 +70,43 @@
       pad(d.getUTCDate(), 2) + ' ' + pad(d.getUTCHours(), 2) + 'Z';
   }
 
+  // "2026060418" -> "2026-06-04 18Z"
+  function fmtCycle(c) {
+    if (!c || c.length < 10) return c || '';
+    return c.slice(0, 4) + '-' + c.slice(4, 6) + '-' + c.slice(6, 8) +
+      ' ' + c.slice(8, 10) + 'Z';
+  }
+
+  // "2026060418" -> "18Z" (the short tag a cycle toggle button shows).
+  function cycleHourTag(c) {
+    return (c && c.length >= 10) ? c.slice(8, 10) + 'Z' : (c || '');
+  }
+
   function el(id) { return document.getElementById(id); }
 
   function HafsViewer(root) {
     this.root = root;
     this.manifest = null;
     this.cacheBust = '';
+    this.legacyMode = true;     // no cycles[] -> single implicit cycle
+    this.cycles = [];           // normalized cycle objects (newest first)
+    this.fxxStep = 3;
+    this.fxxEnd = 0;            // expected terminal hour (grid upper bound)
     // current selection
-    this.storm = null;     // storm object
+    this.cycle = null;     // selected cycle object
+    this.storm = null;     // storm object (within the selected cycle)
     this.model = null;     // slug
     this.domain = null;    // slug
     this.product = null;   // slug (defaults to the first manifest product = Wind)
-    this.fxxList = [];     // available forecast hours for the selection
-    this.idx = 0;          // index into fxxList
+    this.fxxGrid = [];     // FULL expected grid for the selection (0..fxx_end)
+    this.fxxList = [];     // RENDERED forecast hours for the selection (subset)
+    this.idx = 0;          // index into fxxList (rendered frames only)
     this.playing = false;
     this.speed = 1;
     this.timer = null;
+    this.pollTimer = null;
+    this.pendingCycleKey = null;   // a newer cycle discovered mid-session
+    this.preAnnounce = false;      // selected fallback because newest is empty
     this.preloaded = {};   // url → HTMLImageElement (decoded cache; bounded to selection)
     this.preloadGen = 0;   // bumped each selection so stale preloads are ignored
 
@@ -80,11 +116,14 @@
       status:   el('hafs-status'),
       empty:    el('hafs-empty'),
       controls: el('hafs-controls'),
+      cycleGroup: el('hafs-cycle-group'),
+      cycles:   el('hafs-cycles'),
       stormSel: el('hafs-storm'),
       models:   el('hafs-models'),
       domains:  el('hafs-domains'),
       products: el('hafs-products'),
       scrub:    el('hafs-scrub'),
+      ticks:    el('hafs-ticks'),
       play:     el('hafs-play'),
       stepB:    el('hafs-step-back'),
       stepF:    el('hafs-step-fwd'),
@@ -92,6 +131,8 @@
       fhour:    el('hafs-fhour'),
       valid:    el('hafs-valid'),
       meta:     el('hafs-meta'),
+      badge:    el('hafs-badge'),
+      pill:     el('hafs-pill'),
       buffer:   el('hafs-buffer'),
       player:   el('hafs-player'),
       caption:  el('hafs-caption')
@@ -108,11 +149,7 @@
   HafsViewer.prototype._load = function () {
     var self = this;
     this._setStatus('Loading manifest…', true);
-    fetch(MANIFEST_URL + '?t=' + Date.now(), { cache: 'no-store' })
-      .then(function (r) {
-        if (!r.ok) throw new Error('manifest HTTP ' + r.status);
-        return r.json();
-      })
+    this._fetchManifest()
       .then(function (m) { self._onManifest(m); })
       .catch(function (e) {
         console.error('hafs: manifest load failed', e);
@@ -120,30 +157,106 @@
       });
   };
 
+  HafsViewer.prototype._fetchManifest = function () {
+    return fetch(MANIFEST_URL + '?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('manifest HTTP ' + r.status);
+        return r.json();
+      });
+  };
+
+  // ---- manifest normalization ------------------------------------------
+
+  // Build the canonical cycles[] list. v2 manifests carry it directly; a
+  // legacy manifest is wrapped into a single implicit cycle so the rest of the
+  // viewer has one code path. Each cycle is shallow-cloned with a guaranteed
+  // `storms` array.
+  HafsViewer.prototype._normalizeCycles = function (m) {
+    if (m.cycles && m.cycles.length) {
+      this.legacyMode = false;
+      return m.cycles.map(function (c) {
+        return {
+          cycle: c.cycle,
+          in_progress: !!c.in_progress,
+          frames_done: c.frames_done,
+          frames_expected: c.frames_expected,
+          started_utc: c.started_utc,
+          storms: c.storms || []
+        };
+      });
+    }
+    // Legacy: one implicit cycle from the top-level fields.
+    this.legacyMode = true;
+    return [{
+      cycle: m.cycle || '',
+      in_progress: false,
+      storms: m.storms || []
+    }];
+  };
+
+  HafsViewer.prototype._cycleByKey = function (key) {
+    for (var i = 0; i < this.cycles.length; i++) {
+      if (this.cycles[i].cycle === key) return this.cycles[i];
+    }
+    return null;
+  };
+
+  // A cycle has frames if ANY storm under it has a non-empty fxx list.
+  HafsViewer.prototype._cycleHasFrames = function (cyc) {
+    var st = cyc.storms || [];
+    for (var i = 0; i < st.length; i++) {
+      var byModel = st[i].frames || {};
+      for (var mdl in byModel) {
+        if (byModel.hasOwnProperty(mdl) && this._anyFrames(byModel[mdl])) return true;
+      }
+    }
+    return false;
+  };
+
+  // The default selection on a fresh load: newest cycle with ANY frames.
+  // Sets this.preAnnounce when the newest entry is empty (pre-announce) and we
+  // fell back to an older one.
+  HafsViewer.prototype._defaultCycleKey = function () {
+    this.preAnnounce = false;
+    if (!this.cycles.length) return null;
+    for (var i = 0; i < this.cycles.length; i++) {
+      if (this._cycleHasFrames(this.cycles[i])) {
+        // Newest-with-frames; if it isn't the literal newest entry, the newest
+        // is a pre-announce shell -> flag the badge.
+        if (i > 0) this.preAnnounce = true;
+        return this.cycles[i].cycle;
+      }
+    }
+    // No cycle has frames at all (rare) - take the newest so the empty state
+    // shows against a real cycle key.
+    return this.cycles[0].cycle;
+  };
+
   HafsViewer.prototype._onManifest = function (m) {
     this.manifest = m;
     this.cacheBust = m.generated_at ? encodeURIComponent(m.generated_at) : '';
-    var storms = (m.storms || []);
+    this.fxxStep = m.fxx_step || 3;
+    this.fxxEnd = (typeof m.fxx_end === 'number') ? m.fxx_end : 0;
+    this.cycles = this._normalizeCycles(m);
+    this.pendingCycleKey = null;
 
-    // Footer meta: cycle + generated time, always shown if present.
-    var bits = [];
-    if (m.cycle) {
-      var c = m.cycle; // YYYYMMDDHH
-      bits.push('Cycle ' + c.slice(0, 4) + '-' + c.slice(4, 6) + '-' +
-                c.slice(6, 8) + ' ' + c.slice(8, 10) + 'Z');
-    }
-    if (m.generated_at) bits.push('Rendered ' + m.generated_at.replace('T', ' '));
-    this.dom.meta.textContent = bits.join('  ·  ');
+    var defKey = this._defaultCycleKey();
+    var selCycle = this._cycleByKey(defKey);
+    var storms = selCycle ? (selCycle.storms || []) : [];
 
     if (!storms.length) {
+      // Off-season / no-data (or a lone pre-announce shell with nothing else).
       this._setStatus(null, false);
       this.dom.controls.style.display = 'none';
       this.dom.stage.style.display = 'none';
       this.dom.player.style.display = 'none';
       this.dom.caption.style.display = 'none';
       this.dom.empty.style.display = 'block';
+      this._updateFooter();
+      this._schedulePoll();
       return;
     }
+
     // Clear the "Loading manifest…" overlay now that we have storms - otherwise
     // the translucent spinner box sits over every frame for the whole session.
     this._setStatus(null, false);
@@ -153,7 +266,54 @@
     this.dom.player.style.display = '';
     this.dom.caption.style.display = '';
 
-    // Populate the storm dropdown.
+    this._selectCycle(defKey, false, false);
+    this._updateFooter();
+    this._schedulePoll();
+  };
+
+  // ---- cycle picker -----------------------------------------------------
+
+  // Show the cycle toggle group only when >1 cycle. A label reads "18Z" for a
+  // complete cycle, "18Z · building" for one still rendering.
+  HafsViewer.prototype._buildCyclePicker = function () {
+    var group = this.dom.cycleGroup, host = this.dom.cycles;
+    if (!group || !host) return;
+    if (this.cycles.length <= 1) { group.style.display = 'none'; return; }
+    group.style.display = '';
+    var defs = this.cycles.map(function (c) {
+      return {
+        slug: c.cycle,
+        label: cycleHourTag(c.cycle) + (c.in_progress ? ' · building' : '')
+      };
+    });
+    var active = this.cycle ? this.cycle.cycle : defs[0].slug;
+    this._buildToggle(host, defs, active, this._selectCycle.bind(this));
+  };
+
+  // Select a cycle (top of the sticky chain). `keepSelection` true preserves
+  // the storm/model/domain/product/hour where the new cycle still offers them
+  // (used by the badge "view" click and diff-merge); false resets down the
+  // chain to that cycle's defaults (fresh load / explicit cycle switch).
+  // `isUserSwitch` (default true) marks an explicit user choice, which clears
+  // the pre-announce hint; the initial default selection passes false so the
+  // pre-announce flag computed by _defaultCycleKey survives.
+  HafsViewer.prototype._selectCycle = function (key, keepSelection, isUserSwitch) {
+    if (isUserSwitch === undefined) isUserSwitch = true;
+    var cyc = this._cycleByKey(key);
+    if (!cyc) return;
+    var switching = !this.cycle || this.cycle.cycle !== key;
+    this.cycle = cyc;
+    // Clicking a cycle is an explicit choice: clear any pre-announce hint, and
+    // if we just switched to the pending (newer) cycle, clear that badge.
+    if (switching && isUserSwitch) {
+      if (this.pendingCycleKey === key) this.pendingCycleKey = null;
+      this.preAnnounce = false;
+    }
+    this._highlight(this.dom.cycles, key);
+
+    var prevStorm = (keepSelection && this.storm) ? this.storm.id : null;
+    var storms = cyc.storms || [];
+    // Populate the storm dropdown for this cycle.
     var sel = this.dom.stormSel;
     sel.innerHTML = '';
     for (var i = 0; i < storms.length; i++) {
@@ -163,11 +323,17 @@
       o.textContent = s.name + ' · ' + (s.basin_label || s.basin || '');
       sel.appendChild(o);
     }
-    this._selectStorm(storms[0].id);
+    var keepId = null;
+    if (prevStorm) {
+      for (var j = 0; j < storms.length; j++) if (storms[j].id === prevStorm) keepId = prevStorm;
+    }
+    this._selectStorm(keepId || (storms[0] && storms[0].id), keepSelection);
+    this._buildCyclePicker();
+    this._updateFooter();
   };
 
   HafsViewer.prototype._stormById = function (id) {
-    var st = this.manifest.storms;
+    var st = (this.cycle && this.cycle.storms) || [];
     for (var i = 0; i < st.length; i++) if (st[i].id === id) return st[i];
     return null;
   };
@@ -262,30 +428,34 @@
     return out;
   };
 
-  HafsViewer.prototype._selectStorm = function (id) {
+  HafsViewer.prototype._selectStorm = function (id, keepSelection) {
     this.storm = this._stormById(id);
     this.dom.stormSel.value = id;
     // Pick first available model, preferring to keep the current one.
     var models = this._modelsFor(this.storm);
     var keep = null;
-    for (var i = 0; i < models.length; i++) if (models[i].slug === this.model) keep = this.model;
+    if (keepSelection !== false) {
+      for (var i = 0; i < models.length; i++) if (models[i].slug === this.model) keep = this.model;
+    }
     this._buildToggle(this.dom.models, models, keep || (models[0] && models[0].slug),
                       this._selectModel.bind(this));
-    this._selectModel(keep || (models[0] && models[0].slug));
+    this._selectModel(keep || (models[0] && models[0].slug), keepSelection);
   };
 
-  HafsViewer.prototype._selectModel = function (slug) {
+  HafsViewer.prototype._selectModel = function (slug, keepSelection) {
     this.model = slug;
     this._highlight(this.dom.models, slug);
     var domains = this._domainsFor(this.storm, slug);
     var keep = null;
-    for (var i = 0; i < domains.length; i++) if (domains[i].slug === this.domain) keep = this.domain;
+    if (keepSelection !== false) {
+      for (var i = 0; i < domains.length; i++) if (domains[i].slug === this.domain) keep = this.domain;
+    }
     this._buildToggle(this.dom.domains, domains, keep || (domains[0] && domains[0].slug),
                       this._selectDomain.bind(this));
-    this._selectDomain(keep || (domains[0] && domains[0].slug));
+    this._selectDomain(keep || (domains[0] && domains[0].slug), keepSelection);
   };
 
-  HafsViewer.prototype._selectDomain = function (slug) {
+  HafsViewer.prototype._selectDomain = function (slug, keepSelection) {
     this.domain = slug;
     this._highlight(this.dom.domains, slug);
     // Pick first available product, preferring to keep the current one (so a
@@ -293,14 +463,31 @@
     // first load is the first manifest product = Wind, so the view is unchanged.
     var products = this._productsFor(this.storm, this.model, slug);
     var keep = null;
-    for (var i = 0; i < products.length; i++) if (products[i].slug === this.product) keep = this.product;
+    if (keepSelection !== false) {
+      for (var i = 0; i < products.length; i++) if (products[i].slug === this.product) keep = this.product;
+    }
     var pick = keep || (products[0] && products[0].slug);
     this._buildToggle(this.dom.products, products, pick,
                       this._selectProduct.bind(this), 'short');
-    this._selectProduct(pick);
+    this._selectProduct(pick, keepSelection);
   };
 
-  HafsViewer.prototype._selectProduct = function (slug) {
+  // Build the FULL expected forecast-hour grid for the active cycle:
+  // range(0, fxx_end+1, fxx_step). Legacy manifests carry no fxx_end, so the
+  // grid degenerates to the rendered hours (old availability-blind behavior).
+  HafsViewer.prototype._buildGrid = function (rendered) {
+    if (this.legacyMode || !this.fxxEnd) return rendered.slice();
+    var grid = [];
+    for (var h = 0; h <= this.fxxEnd; h += this.fxxStep) grid.push(h);
+    // Guard against a rendered hour past the declared end (late grid growth).
+    for (var i = 0; i < rendered.length; i++) {
+      if (grid.indexOf(rendered[i]) === -1) grid.push(rendered[i]);
+    }
+    grid.sort(function (a, b) { return a - b; });
+    return grid;
+  };
+
+  HafsViewer.prototype._selectProduct = function (slug, keepSelection) {
     this.product = slug;
     this._highlight(this.dom.products, slug);
     var fr = this._domFrames(this.storm, this.model, this.domain)[slug] || [];
@@ -309,20 +496,99 @@
     // a domain switch keeps it when present, else clamps the index).
     var prev = this.fxxList || [];
     var curF = prev.length ? prev[Math.min(this.idx, prev.length - 1)] : 0;
-    this.fxxList = fr.slice();
-    var newIdx = this.fxxList.indexOf(curF);
-    this.idx = newIdx >= 0 ? newIdx
-             : Math.min(this.idx, Math.max(0, this.fxxList.length - 1));
+    this.fxxList = fr.slice().sort(function (a, b) { return a - b; });
+    this.fxxGrid = this._buildGrid(this.fxxList);
 
-    var sc = this.dom.scrub;
-    sc.min = 0;
-    sc.max = Math.max(0, this.fxxList.length - 1);
-    sc.value = this.idx;
-    sc.disabled = this.fxxList.length <= 1;
+    // Land on the same hour if it is still rendered; else snap to nearest
+    // rendered (prefer lower), never landing on a pending tick.
+    if (keepSelection !== false && this.fxxList.indexOf(curF) >= 0) {
+      this.idx = this.fxxList.indexOf(curF);
+    } else if (keepSelection !== false) {
+      this.idx = this._renderedIndexNear(curF);
+    } else {
+      this.idx = 0;
+    }
+    this.idx = Math.max(0, Math.min(this.idx, Math.max(0, this.fxxList.length - 1)));
 
+    this._syncScrub();
+    this._buildTicks();
     this._updateCaption();
     this._show(this.idx);
     this._preloadAll();
+  };
+
+  // ---- availability-aware scrubber -------------------------------------
+
+  // The slider spans GRID index-space (one stop per expected hour). Disabled
+  // when there are fewer than 2 rendered frames.
+  HafsViewer.prototype._syncScrub = function () {
+    var sc = this.dom.scrub;
+    sc.min = 0;
+    sc.max = Math.max(0, this.fxxGrid.length - 1);
+    sc.value = this._gridIndexOf(this.fxxList[this.idx]);
+    sc.disabled = this.fxxList.length <= 1;
+  };
+
+  // Index of an fxx value within the full grid (slider position).
+  HafsViewer.prototype._gridIndexOf = function (fxx) {
+    var i = this.fxxGrid.indexOf(fxx);
+    return i >= 0 ? i : 0;
+  };
+
+  // The index into fxxList (rendered hours) nearest to a target fxx, preferring
+  // the lower (earlier) hour on a tie / when the exact hour is pending.
+  HafsViewer.prototype._renderedIndexNear = function (targetFxx) {
+    var list = this.fxxList;
+    if (!list.length) return 0;
+    // exact hit
+    var exact = list.indexOf(targetFxx);
+    if (exact >= 0) return exact;
+    // largest rendered hour <= target (prefer lower)
+    var lowIdx = -1;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] <= targetFxx) lowIdx = i; else break;
+    }
+    if (lowIdx >= 0) return lowIdx;
+    return 0;   // target is below the earliest rendered hour
+  };
+
+  // The rendered-frame index nearest a GRID slider position (prefer lower).
+  HafsViewer.prototype._renderedIndexForGridPos = function (gridPos) {
+    gridPos = Math.max(0, Math.min(gridPos, this.fxxGrid.length - 1));
+    return this._renderedIndexNear(this.fxxGrid[gridPos]);
+  };
+
+  // Render the tick strip: one segment per grid slot, lit when that hour is
+  // rendered for the current selection, pending otherwise.
+  HafsViewer.prototype._buildTicks = function () {
+    var host = this.dom.ticks;
+    if (!host) return;
+    host.innerHTML = '';
+    var grid = this.fxxGrid, n = grid.length;
+    if (n <= 1) { host.style.display = 'none'; return; }
+    host.style.display = '';
+    var renderedSet = {};
+    for (var i = 0; i < this.fxxList.length; i++) renderedSet[this.fxxList[i]] = true;
+    for (var k = 0; k < n; k++) {
+      var seg = document.createElement('span');
+      var lit = !!renderedSet[grid[k]];
+      seg.className = 'hafs-tick ' + (lit ? 'lit' : 'pending');
+      seg.style.flex = '1 1 0';
+      seg.title = 'F' + pad(grid[k], 3) + (lit ? '' : ' · pending');
+      host.appendChild(seg);
+    }
+    this._highlightTick();
+  };
+
+  // Mark the tick under the current frame as the active one.
+  HafsViewer.prototype._highlightTick = function () {
+    var host = this.dom.ticks;
+    if (!host) return;
+    var active = this._gridIndexOf(this.fxxList[this.idx]);
+    var segs = host.querySelectorAll('.hafs-tick');
+    for (var i = 0; i < segs.length; i++) {
+      segs[i].classList.toggle('current', i === active);
+    }
   };
 
   // Build a segmented button group; calls onPick(slug) on click. labelKey picks
@@ -356,34 +622,127 @@
   HafsViewer.prototype._frameUrl = function (fxx) {
     var m = this.manifest;
     var pad3 = pad(fxx, m.fxx_pad || 3);
-    // Build from the manifest's own path_template so an older template without
-    // a {product} segment still resolves (the empty substitution + slash
-    // collapse yields the legacy path).
-    var tmpl = m.path_template || '{model}/{storm}/{domain}/{product}/f{fxx}.png';
-    var rel = tmpl
+    if (this.legacyMode) {
+      // LEGACY: build from the manifest's own path_template so an older
+      // template without a {product} segment still resolves, and KEEP the
+      // ?v=generated_at cache-bust (legacy frames are republished per cycle).
+      var tmpl = m.path_template || '{model}/{storm}/{domain}/{product}/f{fxx}.png';
+      var rel = tmpl
+        .replace('{model}', this.model)
+        .replace('{storm}', this.storm.id)
+        .replace('{domain}', this.domain)
+        .replace('{product}', this.product || '')
+        .replace('{fxx}', pad3)
+        .replace(/\/{2,}/g, '/');
+      var u = BASE + '/models/hafs/' + rel;
+      return this.cacheBust ? (u + '?v=' + this.cacheBust) : u;
+    }
+    // CYCLES MODE: cycle-scoped immutable keys -> path_template_cycles with
+    // {cycle} substituted, NO ?v= (the key itself busts on a new cycle).
+    var ctmpl = m.path_template_cycles ||
+      '{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png';
+    var crel = ctmpl
+      .replace('{cycle}', this.cycle.cycle)
       .replace('{model}', this.model)
       .replace('{storm}', this.storm.id)
       .replace('{domain}', this.domain)
       .replace('{product}', this.product || '')
       .replace('{fxx}', pad3)
       .replace(/\/{2,}/g, '/');
-    var u = BASE + '/models/hafs/' + rel;
-    return this.cacheBust ? (u + '?v=' + this.cacheBust) : u;
+    return BASE + '/models/hafs/' + crel;
   };
 
-  // Show the frame at index i; update the slider + readouts.
+  // Show the frame at RENDERED index i; update the slider + readouts.
   HafsViewer.prototype._show = function (i) {
     if (!this.fxxList.length) return;
     this.idx = Math.max(0, Math.min(i, this.fxxList.length - 1));
     var fxx = this.fxxList[this.idx];
     var url = this._frameUrl(fxx);
     this.dom.img.src = url;
-    this.dom.scrub.value = this.idx;
+    this.dom.scrub.value = this._gridIndexOf(fxx);
     this.dom.fhour.textContent = 'F' + pad(fxx, 3);
+    // Valid time uses the SELECTED cycle's storm init.
     var init = new Date(this.storm.init);
     var valid = new Date(init.getTime() + fxx * 3600 * 1000);
     this.dom.valid.textContent = 'Valid ' + fmtUTC(valid) +
       '  ·  Init ' + fmtUTC(init);
+    this._highlightTick();
+    this._updatePill();
+  };
+
+  // ---- in-progress pill, pre-announce badge, footer --------------------
+
+  // The pill near the cycle text: "building · F036/F126" while the active
+  // cycle still renders (max rendered fhr of THIS selection vs fxx_end);
+  // hidden once complete.
+  HafsViewer.prototype._updatePill = function () {
+    var pill = this.dom.pill;
+    if (!pill) return;
+    if (this.cycle && this.cycle.in_progress) {
+      var maxF = this.fxxList.length ? this.fxxList[this.fxxList.length - 1] : 0;
+      var end = this.fxxEnd || maxF;
+      pill.textContent = 'building · F' + pad(maxF, 3) + '/F' + pad(end, 3);
+      pill.style.display = '';
+    } else {
+      pill.style.display = 'none';
+    }
+  };
+
+  // The pre-announce / newer-cycle badge. Two distinct states:
+  //  - pre-announce: the newest cycle is an empty shell, we picked an older one
+  //    -> informational ("18Z run started - first frames soon").
+  //  - newer-cycle button: a poll discovered a newer cycle WITH frames mid-
+  //    session -> clickable "18Z building - view" that switches on click only.
+  HafsViewer.prototype._updateBadge = function () {
+    var badge = this.dom.badge;
+    if (!badge) return;
+    badge.innerHTML = '';
+    badge.className = 'hafs-badge';
+    if (this.pendingCycleKey) {
+      var cyc = this._cycleByKey(this.pendingCycleKey);
+      var tag = cycleHourTag(this.pendingCycleKey);
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'hafs-badge-btn';
+      b.textContent = tag + (cyc && cyc.in_progress ? ' building' : '') + ' - view';
+      var self = this, key = this.pendingCycleKey;
+      b.addEventListener('click', function () {
+        self._pause();
+        self.pendingCycleKey = null;
+        self._selectCycle(key, false);
+        self._updateBadge();
+      });
+      badge.appendChild(b);
+      badge.style.display = '';
+    } else if (this.preAnnounce) {
+      // Find the empty newest cycle to name it.
+      var newestKey = this.cycles.length ? this.cycles[0].cycle : '';
+      var span = document.createElement('span');
+      span.className = 'hafs-preannounce';
+      span.textContent = cycleHourTag(newestKey) + ' run started - first frames soon';
+      badge.appendChild(span);
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  };
+
+  HafsViewer.prototype._updateFooter = function () {
+    var bits = [];
+    var key = this.cycle ? this.cycle.cycle : (this.manifest && this.manifest.cycle);
+    if (key) bits.push('Cycle ' + fmtCycle(key));
+    if (this.manifest && this.manifest.generated_at) {
+      bits.push('Rendered ' + this.manifest.generated_at.replace('T', ' '));
+    }
+    if (this.cycle && this.cycle.in_progress &&
+        typeof this.cycle.frames_done === 'number' &&
+        typeof this.cycle.frames_expected === 'number') {
+      bits.push('Building (' + this.cycle.frames_done + '/' +
+                this.cycle.frames_expected + ' frames)');
+    }
+    if (this.dom.meta) this.dom.meta.textContent = bits.join('  ·  ');
+    this._updateBadge();
+    this._updatePill();
   };
 
   // Caption describing the active product's shading. No em-dashes.
@@ -408,32 +767,46 @@
     }
   };
 
-  // Preload every frame of the current selection so scrub/play is smooth.
-  // A generation token makes a new selection supersede any in-flight preload
-  // (stale onload callbacks are ignored), and the decoded-image cache is reset
-  // each selection so a long session can't grow it without bound.
+  // Preload every RENDERED frame of the current selection so scrub/play is
+  // smooth. A generation token makes a new selection supersede any in-flight
+  // preload (stale onload callbacks are ignored), and the decoded-image cache
+  // is reset each selection so a long session can't grow it without bound.
   HafsViewer.prototype._preloadAll = function () {
     var self = this;
     var gen = ++this.preloadGen;
     this.preloaded = {};
-    var urls = this.fxxList.map(function (f) { return self._frameUrl(f); });
-    var done = 0, total = urls.length;
-    if (!total) { this.dom.buffer.style.display = 'none'; return; }
+    this._preloadUrls(this.fxxList.map(function (f) { return self._frameUrl(f); }), gen, true);
+  };
+
+  // Preload a list of frame URLs under generation token `gen`. When `reset` is
+  // true the buffer counter restarts from 0/total (fresh selection); otherwise
+  // it ADDS newly-discovered frames to the running counter (diff-merge).
+  HafsViewer.prototype._preloadUrls = function (urls, gen, reset) {
+    var self = this;
+    urls = urls.filter(function (u) { return !self.preloaded[u]; });
+    if (reset) { this._bufTotal = 0; this._bufDone = 0; }
+    this._bufTotal = (this._bufTotal || 0) + urls.length;
+    if (!this._bufTotal) { this.dom.buffer.style.display = 'none'; return; }
+    if (!urls.length) {
+      if ((this._bufDone || 0) >= this._bufTotal) this.dom.buffer.style.display = 'none';
+      return;
+    }
     this.dom.buffer.style.display = 'block';
-    this.dom.buffer.textContent = 'Buffering 0/' + total;
+    this.dom.buffer.textContent = 'Buffering ' + (this._bufDone || 0) + '/' + this._bufTotal;
     urls.forEach(function (u) {
       var im = new Image();
       im.onload = im.onerror = function () {
         if (gen !== self.preloadGen) return;   // superseded by a newer selection
         self.preloaded[u] = im;
-        done++;
-        self.dom.buffer.textContent = 'Buffering ' + done + '/' + total;
-        if (done >= total) self.dom.buffer.style.display = 'none';
+        self._bufDone = (self._bufDone || 0) + 1;
+        self.dom.buffer.textContent = 'Buffering ' + self._bufDone + '/' + self._bufTotal;
+        if (self._bufDone >= self._bufTotal) self.dom.buffer.style.display = 'none';
       };
       im.src = u;
     });
   };
 
+  // Step by `delta` RENDERED frames (wrapping over the rendered prefix only).
   HafsViewer.prototype._step = function (delta) {
     if (!this.fxxList.length) return;
     var n = this.fxxList.length;
@@ -452,7 +825,7 @@
     var interval = 1000 / (BASE_FPS * this.speed);
     clearInterval(this.timer);
     this.timer = setInterval(function () {
-      // Loop; pause briefly at the end frame for legibility.
+      // Loop over the RENDERED prefix; pause briefly at the end frame.
       var next = self.idx + 1;
       if (next >= self.fxxList.length) next = 0;
       self._show(next);
@@ -466,13 +839,148 @@
     this.timer = null;
   };
 
+  // ---- manifest poll + diff-merge --------------------------------------
+
+  HafsViewer.prototype._anyInProgress = function () {
+    for (var i = 0; i < this.cycles.length; i++) {
+      if (this.cycles[i].in_progress) return true;
+    }
+    return false;
+  };
+
+  HafsViewer.prototype._schedulePoll = function () {
+    clearTimeout(this.pollTimer);
+    var self = this;
+    var delay = this._anyInProgress() ? POLL_IN_PROGRESS_MS : POLL_IDLE_MS;
+    this.pollTimer = setTimeout(function () { self._poll(); }, delay);
+  };
+
+  HafsViewer.prototype._poll = function () {
+    var self = this;
+    this._fetchManifest()
+      .then(function (m) { self._mergeManifest(m); })
+      .catch(function (e) { console.warn('hafs: poll failed', e); })
+      .then(function () { self._schedulePoll(); });
+  };
+
+  // Diff-merge a freshly polled manifest into live state WITHOUT resetting the
+  // user's selection. Grows frame lists in place (relighting ticks, preloading
+  // the new frames), refreshes the in-progress flags / footer, and arms the
+  // "newer cycle" badge - but never yanks the active cycle/storm/.../hour.
+  HafsViewer.prototype._mergeManifest = function (m) {
+    if (!m) return;
+    var hadStorms = !!(this.cycle && this.cycle.storms && this.cycle.storms.length);
+    var prevCycleKey = this.cycle ? this.cycle.cycle : null;
+    this.manifest = m;
+    this.cacheBust = m.generated_at ? encodeURIComponent(m.generated_at) : '';
+    this.fxxStep = m.fxx_step || this.fxxStep;
+    if (typeof m.fxx_end === 'number') this.fxxEnd = m.fxx_end;
+
+    var newCycles = this._normalizeCycles(m);
+
+    // If we have no active selection yet (e.g. the page came up off-season),
+    // fall back to a full (re)init so a first storm can appear.
+    if (!prevCycleKey || !hadStorms) {
+      this._onManifest(m);
+      return;
+    }
+
+    // A cycle whose key isn't currently selected and is NEWER than the active
+    // one (newest-first ordering => lower index) and has frames -> badge it.
+    // This scan is authoritative each poll: it re-derives the single newest
+    // pending cycle, so a stale badge self-clears when its cycle ages out or
+    // becomes the active one.
+    var newPending = null;
+    for (var i = 0; i < newCycles.length; i++) {
+      var key = newCycles[i].cycle;
+      if (key === prevCycleKey) break;   // reached the active cycle; stop
+      if (this._cycleHasFramesOn(newCycles[i])) { newPending = key; break; }
+    }
+
+    this.cycles = newCycles;
+    var sameCycle = this._cycleByKey(prevCycleKey);
+    if (!sameCycle) {
+      // The active cycle aged out of the manifest (rare) - re-default cleanly.
+      this._onManifest(m);
+      return;
+    }
+
+    // Re-point the live selection at the refreshed cycle/storm objects and grow
+    // the frame list for the CURRENT selection.
+    this.cycle = sameCycle;
+    var freshStorm = null, storms = sameCycle.storms || [];
+    for (var s = 0; s < storms.length; s++) if (storms[s].id === (this.storm && this.storm.id)) freshStorm = storms[s];
+
+    if (freshStorm) {
+      this.storm = freshStorm;
+      this._regrowCurrentSelection();
+    } else {
+      // The selected storm vanished from the cycle - keep cycle, reselect its
+      // first storm (rare; e.g. invest dropped). Preserves cycle, not hour.
+      this._selectStorm(storms[0] && storms[0].id, false);
+    }
+
+    // Authoritative: a fresh poll re-derives the single newest pending cycle,
+    // so an unacknowledged badge stays, an aged-out one self-clears.
+    this.pendingCycleKey = newPending;
+    // Rebuild the cycle picker if the cycle SET changed (count or keys).
+    this._buildCyclePicker();
+    this._highlight(this.dom.cycles, this.cycle.cycle);
+    this._updateFooter();
+    // (re)scheduling of the next poll is owned by _poll()'s finally chain.
+  };
+
+  HafsViewer.prototype._cycleHasFramesOn = function (cyc) {
+    return this._cycleHasFrames(cyc);
+  };
+
+  // Grow the CURRENT selection's rendered-frame list from the refreshed storm,
+  // relight ticks, preload the new frames - keeping idx pinned to the same
+  // forecast HOUR (or its nearest rendered neighbor if it is still pending).
+  HafsViewer.prototype._regrowCurrentSelection = function () {
+    var curF = this.fxxList.length ? this.fxxList[Math.min(this.idx, this.fxxList.length - 1)] : 0;
+    var oldUrls = {};
+    var self = this;
+    this.fxxList.forEach(function (f) { oldUrls[self._frameUrl(f)] = true; });
+
+    var fr = this._domFrames(this.storm, this.model, this.domain)[this.product] || [];
+    var newList = fr.slice().sort(function (a, b) { return a - b; });
+
+    // If the option SET for the current selection disappeared (e.g. the product
+    // is no longer present), fall back to re-deriving pickers for this storm
+    // while keeping cycle/storm; preserves the rest where possible.
+    if (!newList.length) {
+      this._selectStorm(this.storm.id, true);
+      return;
+    }
+
+    this.fxxList = newList;
+    this.fxxGrid = this._buildGrid(this.fxxList);
+    var exact = this.fxxList.indexOf(curF);
+    this.idx = exact >= 0 ? exact : this._renderedIndexNear(curF);
+    this.idx = Math.max(0, Math.min(this.idx, this.fxxList.length - 1));
+
+    this._syncScrub();
+    this._buildTicks();
+    this._show(this.idx);
+
+    // Preload only the NEWLY-rendered frames (diff), under a fresh-enough gen.
+    var newUrls = this.fxxList
+      .map(function (f) { return self._frameUrl(f); })
+      .filter(function (u) { return !oldUrls[u]; });
+    if (newUrls.length) this._preloadUrls(newUrls, this.preloadGen, false);
+  };
+
   HafsViewer.prototype._wire = function () {
     var self = this;
     this.dom.stormSel.addEventListener('change', function () {
-      self._pause(); self._selectStorm(this.value);
+      self._pause(); self._selectStorm(this.value, false);
     });
+    // Scrubber is grid-index space: snap to the nearest RENDERED frame.
     this.dom.scrub.addEventListener('input', function () {
-      self._pause(); self._show(parseInt(this.value, 10));
+      self._pause();
+      var gridPos = parseInt(this.value, 10);
+      self._show(self._renderedIndexForGridPos(gridPos));
     });
     this.dom.play.addEventListener('click', function () { self._togglePlay(); });
     this.dom.stepB.addEventListener('click', function () { self._pause(); self._step(-1); });
@@ -504,8 +1012,23 @@
     });
   };
 
-  document.addEventListener('DOMContentLoaded', function () {
-    var root = el('hafs-viewer');
-    if (root) new HafsViewer(root);
-  });
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('DOMContentLoaded', function () {
+      var root = el('hafs-viewer');
+      if (root) new HafsViewer(root);
+    });
+  }
+
+  // Tiny, guarded test hook: expose the constructor + a couple of pure helpers
+  // under node so tests/hafs_viewer_harness.cjs can drive the viewer with a DOM
+  // shim. No effect in the browser.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      HafsViewer: HafsViewer,
+      pad: pad,
+      fmtUTC: fmtUTC,
+      fmtCycle: fmtCycle,
+      cycleHourTag: cycleHourTag
+    };
+  }
 })();
