@@ -67,3 +67,5 @@ feeds/base/
 _reference/
 _push/
 _debug/
+node_modules/
+package-lock.json

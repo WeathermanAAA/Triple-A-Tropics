@@ -778,6 +778,11 @@ def render_tracks_svg(storms: list[dict], extent,
     can show the storm's intensity at that observation without another
     fetch. Dots for the same storm share a data-sid so clicking one can
     open that storm's detail placard.
+
+    SYNC: mirrored line-for-line by LIVE_BASIN_JS buildTracksSvg() — the
+    live overlay must produce byte-identical markup for the same storms
+    list (tests/test_live_overlay_parity.py). Change BOTH or the live
+    page will drift from the baked cron fallback.
     """
     project, _ = build_projection(extent, map_w, map_h)
     parts = ['<g class="tracks">']
@@ -1039,7 +1044,14 @@ def render_active_icons(storms: list[dict], extent,
     intensity, before/after its TS phase) closes the gap between the
     spinning TS+ icon and the invest "L" — these systems are
     operationally numbered tropical cyclones, not invests, and a marker
-    distinct from both reflects their status correctly."""
+    distinct from both reflects their status correctly.
+
+    SYNC: mirrored line-for-line by LIVE_BASIN_JS buildActiveSvg() — the
+    live overlay must produce byte-identical markup for the same storms
+    list (tests/test_live_overlay_parity.py). The three-way fork below is
+    the same classification as ace_core.build_global_geojson's
+    marker_type ("L" / "td_circle" / "hurricane"); the JS routes through
+    its markerType() mirror of that fork. Change BOTH."""
     project, _ = build_projection(extent, map_w, map_h)
     parts = ['<g class="active-storms">']
     for storm in storms:
@@ -1829,12 +1841,12 @@ HTML_TEMPLATE = """<!doctype html>
     <div class="map-head">
       <div>
         <div class="title">{year} {basin_name} TC Tracks</div>
-        <div class="sub">As of {updated}</div>
+        <!-- id="as-of" mirrors the global MapLibre page: the live overlay
+             (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
+             the baked build-time text stands when JS/fetch fails. -->
+        <div class="sub" id="as-of">As of {updated}</div>
       </div>
-      <div class="stats">
-        <b>{named}</b> {named_label} · <b>{cat1plus}</b> {cat1plus_label} ·
-        <b>{cat5}</b> {cat5_label} · <span class="ace">{total_ace} ACE</span>
-      </div>
+      <div class="stats" id="season-stats">{stats_html}</div>
     </div>
     <div class="map-svg-wrap">
       <svg id="chart" class="map" viewBox="0 0 {map_w} {map_h}" preserveAspectRatio="xMidYMid meet">
@@ -1870,6 +1882,621 @@ HTML_TEMPLATE = """<!doctype html>
 </body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# Per-basin LIVE overlay (Phase 4: poller-primary storm display, cron backup)
+# ---------------------------------------------------------------------------
+# Injected into HTML_TEMPLATE's {interactive_js} slot. At view time it
+# refetches the SAME live tracks feed the page's parent already pulls for
+# the "Active Now" banner (feeds/{basin}_tracks_data.json on R2, written
+# by the streaming poller every cycle since WRITE_LIVE_FEEDS=false), then
+# atomically replaces every storm-derived fragment of the baked page:
+#   <g class="tracks">, <g class="active-storms">, #season-stats,
+#   #panel-title, #storms (cards), and the #as-of freshness line.
+# The basemap (the ~2 MB of Natural Earth paths) is never touched.
+#
+# FALLBACK CONTRACT: any failure — fetch error, wrong feed shape, basin or
+# season-rollover year mismatch, SVG parse error — leaves the cron-baked
+# render fully intact (console.warn only). The 6-hourly cron is therefore
+# automatically the backup writer; there is no WRITE_*_ON_CRON gate to
+# flip because the data feed is already poller-owned.
+#
+# SYNC CONTRACT: the build* functions below are line-for-line JS mirrors
+# of the Python renderers (render_tracks_svg, render_active_icons,
+# render_storm_card, render_cards_html, render_panel_title_html,
+# render_stats_html) and MUST stay byte-identical for the same input —
+# tests/test_live_overlay_parity.py enforces this. Change both sides.
+#
+# Kept as a raw string (no .format()) like TRACKS_JS; per-basin values
+# arrive via __LIVE_*__ tokens (build_live_overlay_js) and icon geometry
+# via the canonical __ICON_*__ tokens (_apply_icon_tokens on the page).
+
+FEEDS_BASE_URL = "https://cdn.triple-a-tropics.com/feeds/"
+
+LIVE_BASIN_JS = r"""
+(function () {
+  "use strict";
+
+  var CFG = {
+    basin: "__LIVE_BASIN__",
+    year: __LIVE_YEAR__,
+    extent: __LIVE_EXTENT__,          // (lon_min, lon_max, lat_min, lat_max) from BASINS
+    mapW: __LIVE_MAP_W__,
+    mapH: __LIVE_MAP_H__,
+    feedUrl: "__LIVE_FEED_URL__",
+    colors: __LIVE_SSHS_COLORS__      // ace_core.SSHS_COLORS
+  };
+
+  // Mirrors ace_core.sshs_label() — the SSHS letter inside the glyph.
+  var SSHS_LABELS = {"TD": "D", "TS": "S",
+                     "C1": "1", "C2": "2", "C3": "3", "C4": "4", "C5": "5"};
+
+  // ---- Python-formatting mirrors -----------------------------------------
+
+  function pyFixed(x, d) {
+    // Mirrors Python f"{x:.<d>f}": correctly-rounded decimal output with
+    // ties-to-even, decided on the double's EXACT decimal expansion.
+    // toFixed() alone misrounds true binary ties (it breaks them away
+    // from zero, and exact .25/.75 hundredths DO occur in projected
+    // coords — WP's lon scale is 17.5 px/deg), while any pre-scaling
+    // like x*10 collapses near-ties onto exact ties (0.05*10 === 0.5).
+    // So inspect toFixed(20) — exact per spec, and 1e-20 resolves far
+    // below the half-ulp of every magnitude this page formats.
+    var neg = x < 0 || (x === 0 && 1 / x < 0);
+    var s = Math.abs(x).toFixed(20);
+    var dot = s.indexOf(".");
+    var intPart = s.slice(0, dot);
+    var keep = s.slice(dot + 1, dot + 1 + d);
+    var rest = s.slice(dot + 1 + d);
+    var first = rest.charAt(0);
+    var roundUp;
+    if (first > "5") {
+      roundUp = true;
+    } else if (first < "5") {
+      roundUp = false;
+    } else if (/[1-9]/.test(rest.slice(1))) {
+      roundUp = true;   // strictly above the midpoint
+    } else {
+      // exact tie -> round to even
+      var lastKept = (d > 0 ? keep.charCodeAt(d - 1)
+                            : intPart.charCodeAt(intPart.length - 1)) - 48;
+      roundUp = (lastKept % 2) === 1;
+    }
+    if (roundUp) {
+      var digits = (intPart + keep).split("");
+      var i = digits.length - 1;
+      for (; i >= 0; i--) {
+        if (digits[i] === "9") {
+          digits[i] = "0";
+        } else {
+          digits[i] = String.fromCharCode(digits[i].charCodeAt(0) + 1);
+          break;
+        }
+      }
+      if (i < 0) digits.unshift("1");
+      var all = digits.join("");
+      intPart = all.slice(0, all.length - d) || "0";
+      keep = all.slice(all.length - d);
+    }
+    var out = d > 0 ? intPart + "." + keep : intPart;
+    return neg ? "-" + out : out;
+  }
+  function fmt1(x) { return pyFixed(x, 1); }
+
+  function pyNum(v) {
+    // Mirrors Python f"{v}" on the feed's numeric fields. The feeds are
+    // json.dumps'd from pandas floats, so integral values arrive in the
+    // JSON text as "25.0" — JSON.parse erases the int/float distinction,
+    // so put the ".0" back on integral values. (A feed that ever emitted
+    // int-typed numbers would diverge; the live-feed parity check in
+    // tests/test_live_overlay_parity.py guards that assumption.)
+    if (v == null) return "";
+    return Number.isInteger(v) ? v + ".0" : String(v);
+  }
+
+  function escapeXml(s) {
+    // Mirrors _xml_escape() — order matters (& first).
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function fmtLastFix(iso) {
+    // Mirrors _fmt_last_fix(): ISO fix time -> "YYYY-MM-DD HH:MM UTC",
+    // raw string when unparseable (feed fixes always carry a time part).
+    if (!iso) return "";
+    var s = String(iso);
+    var m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/.exec(s);
+    if (!m) return s;
+    return m[1] + " " + m[2] + ":" + m[3] + " UTC";
+  }
+
+  function fmtDateOnly(iso) {
+    // Mirrors _fmt_date_range()'s inner fmt(): "%b %-d", "?" on failure.
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+    if (!m) return "?";
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var mi = parseInt(m[2], 10) - 1;
+    if (mi < 0 || mi > 11) return "?";
+    return months[mi] + " " + parseInt(m[3], 10);
+  }
+
+  function fmtDateRange(start, end) {
+    // Mirrors _fmt_date_range().
+    if (!start) return "-";
+    var s = fmtDateOnly(start);
+    var e = end ? fmtDateOnly(end) : s;
+    return s !== e ? s + " – " + e : s;
+  }
+
+  // ---- Geometry ----------------------------------------------------------
+
+  function project(lon, lat) {
+    // Mirrors build_projection(): pure linear equirectangular, including
+    // the antimeridian wrap guard (inert for the three per-basin extents,
+    // whose lon_max <= 180 — kept so the math is config-driven like the
+    // Python closure).
+    if (CFG.extent[1] > 180 && lon < CFG.extent[0]) lon += 360;
+    var x = (lon - CFG.extent[0]) / (CFG.extent[1] - CFG.extent[0]) * CFG.mapW;
+    var y = (CFG.extent[3] - lat) / (CFG.extent[3] - CFG.extent[2]) * CFG.mapH;
+    return [x, y];
+  }
+
+  // ---- Marker classification ----------------------------------------------
+
+  function markerType(storm) {
+    // THE single client-side source of the four-way active/invest marker
+    // classification. Mirrors ace_core.build_global_geojson's marker_type
+    // fork (ace_core/ace_core/__init__.py, the "Four flavors" block):
+    //   active + invest        -> "L"
+    //   active + peak < 34 kt  -> "td_circle"
+    //   active + peak >= 34 kt -> "hurricane"
+    //   inactive + invest      -> "invest_x"
+    //   otherwise              -> null (no current-position marker)
+    // tests/test_marker_type_agreement.py asserts the two implementations
+    // agree on all four cases — keep them in lockstep.
+    var isInvest = !!storm.is_invest;
+    if (storm.is_active) {
+      var peak = storm.peak_wind_kt != null ? storm.peak_wind_kt : 0.0;
+      if (isInvest) return "L";
+      if (peak < 34.0) return "td_circle";
+      return "hurricane";
+    }
+    if (isInvest) return "invest_x";
+    return null;
+  }
+
+  // ---- SVG builders (line-for-line mirrors of the Python renderers) ------
+
+  function buildTracksSvg(storms) {
+    // SYNC: mirrors render_tracks_svg() byte-for-byte (parity-tested).
+    // Same two-pass structure: per-storm polyline, then invest triangles
+    // OR phase dots, then every non-active invest's red X + label drawn
+    // last so it sits on top.
+    var parts = ['<g class="tracks">'];
+    var investCurrent = [];   // mirrors invest_current_positions
+    for (var si = 0; si < storms.length; si++) {
+      var storm = storms[si];
+      var pts = storm.points || [];
+      if (pts.length < 1) continue;
+      var sid = storm.sid || "";
+      var sname = String(storm.name || "UNNAMED").replace(/"/g, "");
+      var xy = [];
+      for (var i = 0; i < pts.length; i++) {
+        var lon = pts[i].lon;
+        // Wrap longitudes into the basin extent if needed (WP goes east of 180)
+        if (CFG.extent[1] > 180 && lon < CFG.extent[0]) lon += 360;
+        if (CFG.extent[1] <= 180 && CFG.extent[0] < 0 && lon > 180) lon -= 360;
+        xy.push(project(lon, pts[i].lat));
+      }
+      if (xy.length >= 2) {
+        var JUMP_THRESHOLD = CFG.mapW * 0.5;
+        var dParts = [];
+        var prevX = null;
+        for (var j = 0; j < xy.length; j++) {
+          if (prevX === null || Math.abs(xy[j][0] - prevX) > JUMP_THRESHOLD) {
+            dParts.push("M " + fmt1(xy[j][0]) + "," + fmt1(xy[j][1]));
+          } else {
+            dParts.push("L " + fmt1(xy[j][0]) + "," + fmt1(xy[j][1]));
+          }
+          prevX = xy[j][0];
+        }
+        var d = dParts.join(" ");
+        var dashAttr = storm.is_invest ? ' stroke-dasharray="4 3"' : "";
+        parts.push('<path d="' + d + '" fill="none" stroke="#ffffff" ' +
+                   'stroke-width="1.2" stroke-opacity="0.5" ' +
+                   'stroke-linejoin="round" stroke-linecap="round"' +
+                   dashAttr + '/>');
+      }
+
+      if (storm.is_invest) {
+        var lastIdx = xy.length - 1;
+        for (var k = 0; k < xy.length; k++) {
+          var x = xy[k][0], y = xy[k][1];
+          var p = pts[k];
+          var t = p.t || "";
+          var cls = p.cls || "TD";
+          var windAttr = p.wind_kt != null ? pyNum(p.wind_kt) : "";
+          var presAttr = p.pressure_mb != null ? pyNum(p.pressure_mb) : "";
+          var commonAttrs =
+            'data-sid="' + sid + '" data-name="' + sname + '" data-t="' + t + '" ' +
+            'data-wind="' + windAttr + '" data-pres="' + presAttr + '" ' +
+            'data-cls="' + cls + '" data-phase="invest"';
+          if (k < lastIdx) {
+            var r = 3.5;
+            var half = r * 0.866;
+            var p1 = fmt1(x) + "," + fmt1(y - r);
+            var p2 = fmt1(x + half) + "," + fmt1(y + r * 0.5);
+            var p3 = fmt1(x - half) + "," + fmt1(y + r * 0.5);
+            parts.push('<polygon class="track-dot invest-past" ' +
+                       'points="' + p1 + ' ' + p2 + ' ' + p3 + '" ' +
+                       'fill="#ffffff" stroke="#ffffff" ' +
+                       'stroke-width="0.9" stroke-opacity="0.85" ' +
+                       commonAttrs + '/>');
+          } else {
+            investCurrent.push([storm, x, y, p]);
+          }
+        }
+        continue;
+      }
+
+      for (var k2 = 0; k2 < xy.length; k2++) {
+        var x2 = xy[k2][0], y2 = xy[k2][1];
+        var p2o = pts[k2];
+        var cls2 = p2o.cls || "TD";
+        var t2 = p2o.t || "";
+        var nature = String(p2o.nature || "").toUpperCase();
+        var color = CFG.colors[cls2] !== undefined ? CFG.colors[cls2] : CFG.colors.TD;
+        var r2 = cls2 === "TD" ? 3 : (cls2 === "TS" ? 4 : 5);
+        var phase;
+        if (nature === "SS") {
+          phase = "st";
+        } else if (nature === "ET" || nature === "DS" ||
+                   nature === "DB" || nature === "LO") {
+          phase = "non";
+        } else {
+          phase = "tc";
+        }
+        var windAttr2 = p2o.wind_kt != null ? pyNum(p2o.wind_kt) : "";
+        var presAttr2 = p2o.pressure_mb != null ? pyNum(p2o.pressure_mb) : "";
+        var commonAttrs2 =
+          'fill="' + color + '" stroke="#ffffff" stroke-width="0.9" ' +
+          'stroke-opacity="0.85" ' +
+          'data-sid="' + sid + '" data-name="' + sname + '" data-t="' + t2 + '" ' +
+          'data-wind="' + windAttr2 + '" data-pres="' + presAttr2 + '" ' +
+          'data-cls="' + cls2 + '" data-phase="' + phase + '"';
+        if (phase === "tc") {
+          parts.push('<circle class="track-dot" cx="' + fmt1(x2) + '" cy="' + fmt1(y2) + '" ' +
+                     'r="' + r2 + '" ' + commonAttrs2 + '/>');
+        } else if (phase === "st") {
+          parts.push('<rect class="track-dot" x="' + fmt1(x2 - r2) + '" y="' + fmt1(y2 - r2) + '" ' +
+                     'width="' + (r2 * 2) + '" height="' + (r2 * 2) + '" ' + commonAttrs2 + '/>');
+        } else {
+          var half2 = r2 * 0.866;
+          var q1 = fmt1(x2) + "," + fmt1(y2 - r2);
+          var q2 = fmt1(x2 + half2) + "," + fmt1(y2 + r2 * 0.5);
+          var q3 = fmt1(x2 - half2) + "," + fmt1(y2 + r2 * 0.5);
+          parts.push('<polygon class="track-dot" points="' + q1 + ' ' + q2 + ' ' + q3 + '" ' +
+                     commonAttrs2 + '/>');
+        }
+      }
+    }
+
+    for (var m = 0; m < investCurrent.length; m++) {
+      var st = investCurrent[m][0];
+      // Mirrors `if storm.get("is_active"): continue` — an ACTIVE invest
+      // gets the bold red "L" from buildActiveSvg instead of the X.
+      // (Deferred entries are always invests, so this is exactly the
+      // markerType() invest_x case.)
+      if (markerType(st) !== "invest_x") continue;
+      var ix = investCurrent[m][1], iy = investCurrent[m][2];
+      var ip = investCurrent[m][3];
+      var sid3 = st.sid || "";
+      var sname3 = String(st.name || "UNNAMED").replace(/"/g, "");
+      var atcfId = st.atcf_id || sname3;
+      var t3 = ip.t || "";
+      var cls3 = ip.cls || "TD";
+      var windAttr3 = ip.wind_kt != null ? pyNum(ip.wind_kt) : "";
+      var presAttr3 = ip.pressure_mb != null ? pyNum(ip.pressure_mb) : "";
+      var commonAttrs3 =
+        'data-sid="' + sid3 + '" data-name="' + sname3 + '" data-t="' + t3 + '" ' +
+        'data-wind="' + windAttr3 + '" data-pres="' + presAttr3 + '" ' +
+        'data-cls="' + cls3 + '" data-phase="invest"';
+      parts.push('<g class="invest-current" ' +
+                 'transform="translate(' + fmt1(ix) + ',' + fmt1(iy) + ')" ' +
+                 'filter="url(#invest-red-glow)">' +
+                 '<path class="track-dot" ' +
+                 'd="M -7 -7 L 7 7 M -7 7 L 7 -7" ' +
+                 'stroke="#ff2a2a" stroke-width="2.4" ' +
+                 'stroke-linecap="round" fill="none" ' +
+                 commonAttrs3 + '/>' +
+                 '</g>');
+      parts.push('<text class="invest-label" ' +
+                 'x="' + fmt1(ix + 11) + '" y="' + fmt1(iy + 4) + '" ' +
+                 'text-anchor="start">' + atcfId + '</text>');
+    }
+    parts.push('</g>');
+    return parts.join("\n");
+  }
+
+  function buildActiveSvg(storms) {
+    // SYNC: mirrors render_active_icons() byte-for-byte (parity-tested).
+    // Branches follow markerType(): "L" / "td_circle" / "hurricane";
+    // inactive storms (null / "invest_x") are skipped here.
+    var parts = ['<g class="active-storms">'];
+    for (var si = 0; si < storms.length; si++) {
+      var storm = storms[si];
+      var mt = markerType(storm);
+      if (mt === null || mt === "invest_x") continue;  // not storm.is_active
+      var pts = storm.points || [];
+      if (!pts.length) continue;
+      var last = pts[pts.length - 1];
+      var lon = last.lon;
+      // Deliberately only the +360 guard here — render_active_icons does
+      // not carry the lon-=360 branch; mirror it exactly.
+      if (CFG.extent[1] > 180 && lon < CFG.extent[0]) lon += 360;
+      var xyA = project(lon, last.lat);
+      var x = xyA[0], y = xyA[1];
+      var sid = storm.sid || "";
+      var dispName = storm.name || storm.atcf_id || "";
+      var lastFix = fmtLastFix(last.t);
+      var titleTxt = lastFix ? (dispName + " - Last fix: " + lastFix) : dispName;
+      var titleEl = titleTxt ? "<title>" + escapeXml(titleTxt) + "</title>" : "";
+
+      if (mt === "L") {
+        var atcfIdU = String(storm.atcf_id || storm.name || "")
+          .replace(/"/g, "").toUpperCase();
+        parts.push('<g class="active-icon active-invest" data-sid="' + sid + '" ' +
+                   'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
+                   'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">' +
+                   titleEl +
+                   '<text text-anchor="middle" dominant-baseline="central" ' +
+                   'font-size="__ICON_L_PT__" font-weight="900" fill="#ef4444" ' +
+                   'paint-order="stroke" stroke="rgba(0,0,0,0.55)" ' +
+                   'stroke-width="2.5" stroke-linejoin="round">L</text>' +
+                   '<text x="0" y="22" text-anchor="middle" ' +
+                   'dominant-baseline="hanging" font-size="__ICON_NAME_PT__" ' +
+                   'font-weight="800" fill="#ffffff" paint-order="stroke" ' +
+                   'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" ' +
+                   'stroke-linejoin="round">' + atcfIdU + '</text>' +
+                   '</g>');
+        continue;
+      }
+
+      if (mt === "td_circle") {
+        var labelU = String(storm.name || storm.atcf_id || "")
+          .replace(/"/g, "").toUpperCase();
+        parts.push('<g class="active-icon active-td" data-sid="' + sid + '" ' +
+                   'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
+                   'style="filter:drop-shadow(0 0 5px rgba(0,0,0,0.65));">' +
+                   titleEl +
+                   '<circle cx="0" cy="0" r="__ICON_TD_R__" fill="none" ' +
+                   'stroke="#ffffff" stroke-width="6.5"/>' +
+                   '<circle cx="0" cy="0" r="__ICON_TD_R__" fill="none" ' +
+                   'stroke="#5dd3ff" stroke-width="3.5"/>' +
+                   '<text x="0" y="26" text-anchor="middle" ' +
+                   'dominant-baseline="hanging" font-size="__ICON_NAME_PT__" ' +
+                   'font-weight="800" fill="#ffffff" paint-order="stroke" ' +
+                   'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" ' +
+                   'stroke-linejoin="round">' + labelU + '</text>' +
+                   '</g>');
+        continue;
+      }
+
+      var cls = storm.current_category || "TD";
+      var color = CFG.colors[cls] !== undefined ? CFG.colors[cls] : CFG.colors.TD;
+      var label = SSHS_LABELS[cls];
+      var name = storm.name || "";
+      parts.push('<g class="active-icon" data-sid="' + sid + '" ' +
+                 'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
+                 'style="filter:drop-shadow(0 0 6px ' + color + ');">' + titleEl + '\n' +
+                 '  <g transform="scale(__ICON_GLYPH_SCALE__)">\n' +
+                 '    <g class="spin-wrap">\n' +
+                 '      <path d="__LIVE_HURRICANE_PATH__" fill="' + color + '"/>\n' +
+                 '      <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>\n' +
+                 '    </g>\n' +
+                 '  </g>\n' +
+                 '  <text y="0" text-anchor="middle" dominant-baseline="central" font-size="__ICON_LETTER_PT__" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.8" stroke-linejoin="round">' + label + '</text>\n' +
+                 '  <text class="name" x="__ICON_NAME_X__" y="__ICON_NAME_Y__" text-anchor="start">' + name + '</text>\n' +
+                 '</g>');
+    }
+    parts.push('</g>');
+    return parts.join("\n");
+  }
+
+  // ---- HTML builders (sidebar / header mirrors) ---------------------------
+
+  function stormCountLabel(storms) {
+    // Mirrors _storm_count_label().
+    var invests = 0;
+    for (var i = 0; i < storms.length; i++) {
+      if (storms[i].is_invest) invests++;
+    }
+    var tcs = storms.length - invests;
+    if (invests === 0) return tcs + " Storms";
+    var word = invests === 1 ? "Invest" : "Invests";
+    return tcs + " Storms · " + invests + " " + word;
+  }
+
+  function buildStormCard(storm) {
+    // SYNC: mirrors render_storm_card() byte-for-byte (parity-tested).
+    var cat = storm.max_category !== undefined ? storm.max_category : "TD";
+    var color = CFG.colors[cat] !== undefined ? CFG.colors[cat] : CFG.colors.TD;
+    var label = String(cat).replace(/C/g, "Cat ");
+    var isActive = storm.is_active;
+    var isInvest = storm.is_invest;
+    var activeTag;
+    if (isActive) {
+      activeTag = '<span class="storm-active">Active</span>';
+    } else if (isInvest) {
+      activeTag = '<span class="storm-invest">Invest</span>';
+    } else {
+      activeTag = '';
+    }
+    var classes = "storm-card clickable";
+    if (isActive) classes += " active";
+    if (isInvest) classes += " invest";
+    var peakWind = storm.peak_wind_kt;
+    var peakPres = storm.peak_pressure_mb;
+    var ace = storm.ace || 0;
+    var sid = storm.sid || "";
+    var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
+    var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
+    var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
+    return "\n" +
+      '<div class="' + classes + '" id="card-' + sid + '" data-sid="' + sid + '">' + "\n" +
+      '  <div class="storm-top">' + "\n" +
+      '    <div class="storm-name">' + (storm.name || "UNNAMED") + activeTag + '</div>' + "\n" +
+      '    <div class="storm-cat" style="background:' + color + '">' + label + '</div>' + "\n" +
+      '  </div>' + "\n" +
+      '  <div class="storm-meta">' + "\n" +
+      '    <div class="row"><span class="lbl">Active</span><span class="val">' + fmtDateRange(storm.start, storm.end) + '</span></div>' + "\n" +
+      '    <div class="row"><span class="lbl">Peak wind</span><span class="val">' + (peakWind != null ? pyNum(peakWind) : "-") + ' kt</span></div>' + "\n" +
+      '    <div class="row"><span class="lbl">Peak pressure</span><span class="val">' + (peakPres != null ? pyNum(peakPres) : "-") + ' mb</span></div>' + "\n" +
+      '    <div class="row"><span class="lbl">ACE</span><span class="val">' + pyFixed(ace, 2) + '</span></div>' + "\n" +
+      '  </div>' + "\n" +
+      '  ' + clickHint + "\n" +
+      '  ' + placardSlot + "\n" +
+      '</div>' + "\n";
+  }
+
+  function buildCardsHtml(storms) {
+    // SYNC: mirrors render_cards_html().
+    var cards = [];
+    for (var i = 0; i < storms.length; i++) {
+      cards.push(buildStormCard(storms[i]));
+    }
+    return cards.join("\n") || ('<div class="storm-card"><div class="storm-meta">' +
+                                'No storms yet this year.</div></div>');
+  }
+
+  function buildPanelTitle(storms, year) {
+    // SYNC: mirrors render_panel_title_html().
+    return year + " Season &middot; " + stormCountLabel(storms);
+  }
+
+  function buildStatsHtml(header, vocab) {
+    // SYNC: mirrors render_stats_html().
+    return '<b>' + header.named + '</b> ' + vocab.named + ' · ' +
+           '<b>' + header.cat1plus + '</b> ' + vocab.cat1plus + ' · ' +
+           '<b>' + header.cat5 + '</b> ' + vocab.cat5 + ' · ' +
+           '<span class="ace">' + pyFixed(header.total_ace, 2) + ' ACE</span>';
+  }
+
+  // ---- DOM glue (browser only; node imports the builders for parity) -----
+
+  function parseSvgGroup(markup) {
+    var doc = new DOMParser().parseFromString(
+      '<svg xmlns="http://www.w3.org/2000/svg">' + markup + '</svg>',
+      "image/svg+xml");
+    if (doc.querySelector("parsererror")) return null;
+    var g = doc.documentElement.firstElementChild;
+    return g ? document.importNode(g, true) : null;
+  }
+
+  function validateFeed(data) {
+    if (!data || !Array.isArray(data.storms) || !data.header || !data.vocab) {
+      throw new Error("feed shape unexpected");
+    }
+    if (data.basin !== CFG.basin) {
+      throw new Error("feed basin '" + data.basin + "' != page basin '" + CFG.basin + "'");
+    }
+    if (data.year !== CFG.year) {
+      // Season-rollover guard: never paint next year's storms onto this
+      // page's baked "<year> Tracks" frame — wait for the cron rebuild.
+      throw new Error("feed year " + data.year + " != page year " + CFG.year);
+    }
+  }
+
+  function applyLive(data) {
+    var tracksEl = document.querySelector("#chart > g.tracks");
+    var activeEl = document.querySelector("#chart > g.active-storms");
+    var statsEl = document.getElementById("season-stats");
+    var titleEl = document.getElementById("panel-title");
+    var listEl = document.getElementById("storms");
+    if (!tracksEl || !activeEl || !statsEl || !titleEl || !listEl) {
+      throw new Error("expected page elements missing");
+    }
+    // Build + parse EVERYTHING before touching the DOM so a failure
+    // anywhere leaves the baked render fully intact (atomic swap).
+    var freshTracks = parseSvgGroup(buildTracksSvg(data.storms));
+    var freshActive = parseSvgGroup(buildActiveSvg(data.storms));
+    if (!freshTracks || !freshActive) {
+      throw new Error("SVG fragment parse failed");
+    }
+    var statsHtml = buildStatsHtml(data.header, data.vocab);
+    var titleHtml = buildPanelTitle(data.storms, data.year);
+    var cardsHtml = buildCardsHtml(data.storms);
+    tracksEl.parentNode.replaceChild(freshTracks, tracksEl);
+    activeEl.parentNode.replaceChild(freshActive, activeEl);
+    statsEl.innerHTML = statsHtml;
+    titleEl.innerHTML = titleHtml;
+    listEl.innerHTML = cardsHtml;
+    if (data.updated) {
+      // Same contract as the global MapLibre page: surface the feed's
+      // TRUE freshness; on any failure the baked build-time text stands.
+      var asOf = document.getElementById("as-of");
+      if (asOf) asOf.textContent = "As of " + data.updated;
+    }
+  }
+
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    try {
+      // Same fetch discipline as active-banner.js: cache-bust + no-store
+      // so a freshly poller-written R2 object is always picked up.
+      fetch(CFG.feedUrl + "?t=" + Date.now(), { cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          validateFeed(data);
+          applyLive(data);
+        })
+        .catch(function (e) {
+          console.warn("[live-tracks] keeping baked render:", e);
+        });
+    } catch (e) {
+      console.warn("[live-tracks] keeping baked render:", e);
+    }
+  }
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      CFG: CFG,
+      project: project,
+      markerType: markerType,
+      buildTracksSvg: buildTracksSvg,
+      buildActiveSvg: buildActiveSvg,
+      buildStormCard: buildStormCard,
+      buildCardsHtml: buildCardsHtml,
+      buildPanelTitle: buildPanelTitle,
+      buildStatsHtml: buildStatsHtml,
+      pyFixed: pyFixed,
+      pyNum: pyNum
+    };
+  }
+})();
+"""
+
+
+def build_live_overlay_js(basin: str, year: int) -> str:
+    """Render the per-basin live-overlay <script> for HTML_TEMPLATE's
+    {interactive_js} slot. The __ICON_*__ geometry tokens are left in
+    place — _apply_icon_tokens() substitutes them on the whole page at
+    write time, so icon sizing keeps its one canonical definition."""
+    cfg = BASINS[basin]
+    js = (LIVE_BASIN_JS
+          .replace("__LIVE_BASIN__", basin)
+          .replace("__LIVE_YEAR__", str(year))
+          .replace("__LIVE_EXTENT__", json.dumps(list(cfg["extent"])))
+          .replace("__LIVE_MAP_W__", str(MAP_W))
+          .replace("__LIVE_MAP_H__", str(MAP_H))
+          .replace("__LIVE_FEED_URL__", f"{FEEDS_BASE_URL}{basin}_tracks_data.json")
+          .replace("__LIVE_SSHS_COLORS__", json.dumps(SSHS_COLORS))
+          .replace("__LIVE_HURRICANE_PATH__", HURRICANE_PATH))
+    return f"<script>\n{js}\n</script>"
 
 
 # ---------------------------------------------------------------------------
@@ -2756,6 +3383,9 @@ def _fmt_date_range(start: str | None, end: str | None) -> str:
 
 
 def render_storm_card(storm: dict) -> str:
+    # SYNC: mirrored line-for-line by LIVE_BASIN_JS buildStormCard() —
+    # tests/test_live_overlay_parity.py asserts byte-identical output.
+    # Change BOTH or the live page will drift from the baked fallback.
     cat = storm.get("max_category", "TD")
     color, label = _cat_style(cat)
     is_active = storm.get("is_active")
@@ -2803,9 +3433,40 @@ def render_storm_card(storm: dict) -> str:
 """
 
 
+def render_stats_html(header: dict, vocab: dict) -> str:
+    """Season-stats line (innerHTML of #season-stats in HTML_TEMPLATE).
+    SYNC: mirrored by LIVE_BASIN_JS buildStatsHtml() — parity-tested,
+    change both."""
+    return (f'<b>{header["named"]}</b> {vocab["named"]} · '
+            f'<b>{header["cat1plus"]}</b> {vocab["cat1plus"]} · '
+            f'<b>{header["cat5"]}</b> {vocab["cat5"]} · '
+            f'<span class="ace">{header["total_ace"]:.2f} ACE</span>')
+
+
+def render_cards_html(storms: list[dict]) -> str:
+    """Storm-card list (innerHTML of #storms). SYNC: mirrored by
+    LIVE_BASIN_JS buildCardsHtml() — parity-tested, change both."""
+    return "\n".join(render_storm_card(s) for s in storms) or (
+        '<div class="storm-card"><div class="storm-meta">'
+        'No storms yet this year.</div></div>'
+    )
+
+
+def render_panel_title_html(storms: list[dict], year: int) -> str:
+    """Side-panel title (innerHTML of #panel-title). SYNC: mirrored by
+    LIVE_BASIN_JS buildPanelTitle() — parity-tested, change both."""
+    return f'{year} Season &middot; {_storm_count_label(storms)}'
+
+
 def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> str:
     """Render a per-basin static SVG tracks page. Global mode is no longer
-    routed here — see render_global_maplibre_html for the MapLibre path."""
+    routed here — see render_global_maplibre_html for the MapLibre path.
+
+    The page is still a fully-baked static SVG (the no-JS / fetch-fail
+    fallback), but it now ships LIVE_BASIN_JS in the {interactive_js}
+    slot: at view time the overlay refetches the live tracks feed from R2
+    and atomically redraws every storm-derived fragment, demoting this
+    baked render to the backup. See LIVE_BASIN_JS for the contract."""
     map_w = MAP_W
     map_h = MAP_H
     basemap_svg = render_basemap_svg(extent, countries_geojson, coastline_geojson,
@@ -2813,16 +3474,12 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
     tracks_svg = render_tracks_svg(payload["storms"], extent, map_w, map_h)
     active_svg = render_active_icons(payload["storms"], extent, map_w, map_h)
 
-    storm_cards = "\n".join(render_storm_card(s) for s in payload["storms"]) or (
-        '<div class="storm-card"><div class="storm-meta">'
-        'No storms yet this year.</div></div>'
-    )
     side_panel_html = (
         f'<div class="side">'
-        f'<div class="panel-title">{payload["year"]} Season &middot; '
-        f'{_storm_count_label(payload["storms"])}</div>'
+        f'<div class="panel-title" id="panel-title">'
+        f'{render_panel_title_html(payload["storms"], payload["year"])}</div>'
         f'<div class="storm-list" id="storms">'
-        f'{storm_cards}'
+        f'{render_cards_html(payload["storms"])}'
         f'</div>'
         f'</div>'
     )
@@ -2833,10 +3490,7 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         basin_name=payload["basin_name"],
         year=payload["year"],
         updated=payload["updated"],
-        named=header["named"], named_label=vocab["named"],
-        cat1plus=header["cat1plus"], cat1plus_label=vocab["cat1plus"],
-        cat5=header["cat5"], cat5_label=vocab["cat5"],
-        total_ace=f"{header['total_ace']:.2f}",
+        stats_html=render_stats_html(header, vocab),
         map_w=map_w, map_h=map_h,
         defs=SVG_DEFS,
         basemap_svg=basemap_svg,
@@ -2845,7 +3499,7 @@ def render_html(payload: dict, extent, countries_geojson, coastline_geojson) -> 
         wm_x=map_w - 20, wm_y=40,
         side_panel_html=side_panel_html,
         zoom_hint_html="",
-        interactive_js="",
+        interactive_js=build_live_overlay_js(payload["basin"], payload["year"]),
         body_class="",
     )
 
