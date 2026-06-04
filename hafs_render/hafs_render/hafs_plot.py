@@ -751,6 +751,66 @@ def fetch_hafs_frame(
 
 
 # ---------------------------------------------------------------------------
+# Storm track (the run's OWN forecast track - its ATCF trak.atcfunix deck).
+# This is what anchors the L marker, the parent crop, and the headline stats
+# to the run's NAMESAKE storm instead of the domain extremum (which on the
+# huge parent domain is routinely a DIFFERENT system).
+# ---------------------------------------------------------------------------
+def parse_atcf_track(text: str) -> dict:
+    """``{tau: (lat, lon)}`` from an ATCF aid deck (trak.atcfunix).
+
+    One fix per forecast hour: the deck repeats a tau once per wind-radii
+    threshold (34/50/64 kt lines) with the same position, so the FIRST line per
+    tau wins. Lat/lon are ATCF tenths-of-degree with hemisphere letters
+    (``118N`` -> 11.8, ``1294W`` -> -129.4). Unparseable lines are skipped -
+    a partial deck (tracker lost the storm) simply yields fewer taus, which the
+    renderer degrades on honestly. Never raises."""
+    track: dict = {}
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 8:
+            continue
+        try:
+            tau = int(parts[5])
+        except ValueError:
+            continue
+        if tau in track:
+            continue          # wind-radii line for a tau already parsed
+        lat_s, lon_s = parts[6], parts[7]
+        try:
+            lat = int(lat_s[:-1]) / 10.0 * (1.0 if lat_s[-1].upper() == "N" else -1.0)
+            lon = int(lon_s[:-1]) / 10.0 * (1.0 if lon_s[-1].upper() == "E" else -1.0)
+        except (ValueError, IndexError):
+            continue
+        track[tau] = (lat, lon)
+    return track
+
+
+def fetch_hafs_track(model: str, storm: str, cycle: dt.datetime,
+                     session=None, timeout: float = 30.0) -> dict:
+    """The namesake storm's forecast track for one (model, storm, cycle):
+    ``{fxx: (lat, lon)}`` parsed from the run's own ``trak.atcfunix`` on the
+    public bucket. Returns ``{}`` on ANY failure (missing deck, network) - the
+    renderer then degrades honestly (no L on the parent, stats labeled
+    domain-wide) rather than tagging a different system with the storm's id."""
+    flavor = {"hafsa": "a", "hafsb": "b"}.get(model)
+    if flavor is None:
+        return {}
+    url = (f"https://noaa-nws-hafs-pds.s3.amazonaws.com/hfs{flavor}/"
+           f"{cycle:%Y%m%d}/{cycle:%H}/{storm.lower()}.{cycle:%Y%m%d%H}"
+           f".hfs{flavor}.trak.atcfunix")
+    try:
+        import requests
+        r = (session or requests).get(url, timeout=timeout)
+        r.raise_for_status()
+        return parse_atcf_track(r.text)
+    except Exception as e:  # noqa: BLE001 - track is an enhancement, never fatal
+        log.warning("storm track deck unavailable (%s) - rendering untracked: %s",
+                    url, e)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Basemap (Natural Earth GeoJSON) - adapted from generate_sst_plots.py
 # ---------------------------------------------------------------------------
 def _load_geojson(name: str) -> Optional[dict]:
@@ -896,6 +956,20 @@ PARENT_HALF_DEG = 20.0
 # large TC circulation, tight enough to exclude a separate synoptic low.
 PARENT_WIND_SEARCH_DEG = 8.0
 
+# Storm-anchored HEADLINE STATS: when the run's own track deck gives the
+# namesake storm's position at a forecast hour, the header VMAX / MSLP min /
+# MIN BT / peak dBZ etc. are reduced over the cells within this great-circle-ish
+# radius (degrees; lon scaled by cos lat) of that fix, NOT over the whole
+# domain. 3 deg ~ 330 km covers the inner core + primary bands of any TC while
+# excluding the separate systems a 100-deg-wide parent domain always contains
+# (the f123 "968 mb low near Mexico labeled 01E" failure: namesake ~48 deg away).
+STAT_RADIUS_DEG = 3.0
+
+# The bold "L" center marker snaps to the MSLP minimum within this radius of
+# the track fix - the fix is the tracker's vortex center to 0.1 deg, the snap
+# just lets the L sit on the rendered field's actual local minimum.
+L_SNAP_RADIUS_DEG = 2.0
+
 # Header title-bar background, a touch lighter than the map bg so the band reads
 # like the site nav bar.
 BAND_BG = "#11161f"
@@ -924,7 +998,78 @@ def _sshws_chip(vmax_kt: float) -> tuple[str, str, str]:
     return _CAT_CHIP[-1][1:]
 
 
-def _category_pill(frame: HafsFrame) -> tuple[float, tuple[str, str, str]]:
+# ---------------------------------------------------------------------------
+# Stat scope - WHICH cells the headline stats (VMAX / MSLP min / MIN BT / peak
+# dBZ / vort max / RH mean) reduce over. Tracked = a disc of STAT_RADIUS_DEG
+# around the namesake's track fix, so the header always describes the run's own
+# storm. Untracked NEST = the whole grid (the nest is storm-following, so its
+# domain IS the storm - unchanged legacy behavior). Untracked PARENT = the whole
+# domain but explicitly LABELED, because a domain extremum there is routinely a
+# different system and must not be passed off as the namesake.
+# ---------------------------------------------------------------------------
+@dataclass
+class StatScope:
+    mask: Optional[np.ndarray] = None   # True INSIDE the stat radius; None = whole domain
+    tracked: bool = False               # anchored to the namesake's track fix
+    label: str = ""                     # honesty suffix for the header right-stat
+
+
+def _scoped(arr, scope: Optional["StatScope"]) -> np.ndarray:
+    """The array with cells outside the scope set to NaN (no-op for domain
+    scope). Accepts None scope for back-compat callers."""
+    a = np.asarray(arr, dtype=float)
+    if scope is not None and scope.mask is not None:
+        a = np.where(scope.mask, a, np.nan)
+    return a
+
+
+def scope_max(arr, scope: Optional["StatScope"]) -> float:
+    a = _scoped(arr, scope)
+    return float(np.nanmax(a)) if np.isfinite(a).any() else float("nan")
+
+
+def scope_min(arr, scope: Optional["StatScope"]) -> float:
+    a = _scoped(arr, scope)
+    return float(np.nanmin(a)) if np.isfinite(a).any() else float("nan")
+
+
+def scope_mean(arr, scope: Optional["StatScope"]) -> float:
+    a = _scoped(arr, scope)
+    return float(np.nanmean(a)) if np.isfinite(a).any() else float("nan")
+
+
+def _radius_mask(frame, clat: float, clon: float,
+                 radius_deg: float) -> np.ndarray:
+    """(lat, lon)-shaped bool mask: True within ``radius_deg`` (great-circle-ish:
+    lon scaled by cos lat) of (clat, clon). ``clon`` may be in any wrap; it is
+    shifted into the frame's longitude system first."""
+    flon = _wrap_into(clon, float(frame.lon.min()), float(frame.lon.max()))
+    LON, LAT = np.meshgrid(frame.lon, frame.lat)
+    d = np.hypot(LAT - clat,
+                 (LON - flon) * np.cos(np.deg2rad(np.clip(clat, -80.0, 80.0))))
+    return d <= radius_deg
+
+
+def _snap_fix(frame, cen_lat: Optional[float],
+              cen_lon: Optional[float]) -> Optional[tuple]:
+    """The track fix snapped to the nearest grid cell, in ``frame.lon``
+    coordinates - or None when no fix / fix is off the grid by > 1 cell-ish
+    margin (a parent fix is always on-grid; a nest fix should be too since the
+    nest follows the storm, but guard anyway)."""
+    if cen_lat is None or cen_lon is None:
+        return None
+    lon, lat = frame.lon, frame.lat
+    flon = _wrap_into(cen_lon, float(lon.min()), float(lon.max()))
+    if not (float(lat.min()) - 1.0 <= cen_lat <= float(lat.max()) + 1.0
+            and float(lon.min()) - 1.0 <= flon <= float(lon.max()) + 1.0):
+        return None
+    jc = int(np.argmin(np.abs(lat - cen_lat)))
+    ic = int(np.argmin(np.abs(lon - flon)))
+    return float(lat[jc]), float(lon[ic])
+
+
+def _category_pill(frame: HafsFrame,
+                   scope: Optional[StatScope] = None) -> tuple[float, tuple[str, str, str]]:
     """SSHWS category pill from the storm's 10 m wind VMAX - the SINGLE source
     for the header chip on EVERY product.
 
@@ -932,9 +1077,10 @@ def _category_pill(frame: HafsFrame) -> tuple[float, tuple[str, str, str]]:
     from ``frame.wind_kt`` (the same field the wind product fetches, never the
     plotted reflectivity), so the reflectivity frame shows the identical category
     and color as the wind frame for the same storm/model/domain/forecast-hour.
+    With a tracked ``scope`` the VMAX is the NAMESAKE's (cells within
+    STAT_RADIUS_DEG of its track fix), not the domain's.
     """
-    vmax = (float(np.nanmax(frame.wind_kt))
-            if np.isfinite(frame.wind_kt).any() else float("nan"))
+    vmax = scope_max(frame.wind_kt, scope)
     return vmax, _sshws_chip(vmax)
 
 
@@ -953,21 +1099,24 @@ def _clamp_window(a: float, b: float, lo: float, hi: float) -> tuple:
     return a, b
 
 
-def _parent_storm_center(frame, cen_lat=None, cen_lon=None) -> tuple:
+def _parent_storm_center(frame, cen_lat=None, cen_lon=None,
+                         anchor_lat=None, anchor_lon=None) -> tuple:
     """(lat, lon) the parent 40x40 box centers on, in ``frame.lon`` coordinates.
 
     Order of preference: the storm track fix (``cen_lat`` / ``cen_lon``, snapped
     to the nearest parent grid cell so it lands in the frame longitude system),
+    then the LAST KNOWN fix (``anchor_lat`` / ``anchor_lon`` - when the tracker
+    has lost the storm at long leads, framing the last tracked position keeps
+    the view on the namesake's region instead of jumping to another system),
     then the pressure minimum within ``PARENT_WIND_SEARCH_DEG`` of the strongest
     winds (the TC eyewall is the windiest feature, so this locks onto the cyclone
     rather than a deeper but far-off midlatitude low), then the whole-domain
     pressure minimum, then the data-extent center."""
     lon, lat = frame.lon, frame.lat
-    if cen_lat is not None and cen_lon is not None:
-        jc = int(np.argmin(np.abs(lat - cen_lat)))
-        flon = _wrap_into(cen_lon, float(lon.min()), float(lon.max()))
-        ic = int(np.argmin(np.abs(lon - flon)))
-        return float(lat[jc]), float(lon[ic])
+    for plat, plon in ((cen_lat, cen_lon), (anchor_lat, anchor_lon)):
+        snapped = _snap_fix(frame, plat, plon)
+        if snapped is not None:
+            return snapped
     mslp = np.ma.masked_invalid(frame.mslp_hpa)
     wind = np.ma.masked_invalid(frame.wind_kt)
     if mslp.count() and wind.count():
@@ -990,6 +1139,8 @@ def render_frame(frame: HafsFrame, out_path: str,
                  product: str = "mslp_wind",
                  cen_lat: Optional[float] = None,
                  cen_lon: Optional[float] = None,
+                 anchor_lat: Optional[float] = None,
+                 anchor_lon: Optional[float] = None,
                  enhancement: Optional[str] = None) -> None:
     """Render one TAT-styled HAFS frame.
 
@@ -1010,9 +1161,20 @@ def render_frame(frame: HafsFrame, out_path: str,
     above): the STORM NEST keeps its per-side ``BBOX_TRIM_DEG`` trim, while the
     PARENT is cropped to a fixed 40 x 40 deg window centered on the storm (see
     ``PARENT_HALF_DEG``) with a calmer (wider-interval, softer) isobar field. The
-    parent center is ``cen_lat`` / ``cen_lon`` (the storm track fix, the same
-    vortex the storm-following nest is built on); without it the strongest-wind-
-    anchored pressure minimum is used so the crop still locks onto the cyclone.
+    parent center is ``cen_lat`` / ``cen_lon`` (the namesake's track fix at THIS
+    forecast hour, from the run's own trak.atcfunix); ``anchor_lat`` /
+    ``anchor_lon`` is the LAST KNOWN fix used for framing only when the tracker
+    has lost the storm; without either the strongest-wind-anchored pressure
+    minimum is used so the crop still locks onto a cyclone.
+
+    STORM ANCHORING (the namesake-vs-domain-extremum fix): with a track fix, the
+    L marker snaps to the MSLP minimum within ``L_SNAP_RADIUS_DEG`` of the fix
+    and ALL headline stats (VMAX + SSHWS chip, MSLP min, MIN BT, peak dBZ, ...)
+    reduce over cells within ``STAT_RADIUS_DEG`` of it - so the header always
+    describes the run's own storm. WITHOUT a fix the renderer degrades honestly:
+    the nest keeps domain stats (its domain IS the storm), but the parent gets
+    NO L marker, an NA category chip, and stats explicitly labeled domain-wide -
+    a different system's extremum is never passed off under the namesake's id.
     Both domains draw the same 10 m Natural Earth basemap.
     """
     # Look up the product's spec once; every per-product difference below (fill
@@ -1027,6 +1189,21 @@ def render_frame(frame: HafsFrame, out_path: str,
             "fetch with the matching want_refl / sat_parm option")
     enh_name = spec.resolve_enhancement(enhancement)
     is_parent = frame.product == "parent.atm"
+    # The namesake's track fix snapped into frame coordinates (None when the
+    # tracker has no fix at this hour). This single value anchors the stat
+    # scope, the L marker, and (on the parent) the crop window.
+    fix = _snap_fix(frame, cen_lat, cen_lon)
+    if fix is not None:
+        scope = StatScope(mask=_radius_mask(frame, fix[0], fix[1],
+                                            STAT_RADIUS_DEG), tracked=True)
+    elif is_parent:
+        # Untracked parent: domain stats would describe SOME system, just not
+        # necessarily the namesake - keep them but say so.
+        scope = StatScope(mask=None, tracked=False, label="  (domain-wide)")
+    else:
+        # Untracked nest: the storm-following nest's domain IS the storm, so
+        # domain stats remain honest (and byte-identical to the legacy output).
+        scope = StatScope()
     lon_min, lon_max, lat_min, lat_max = frame.extent
     d_lon_min, d_lon_max, d_lat_min, d_lat_max = frame.extent
     if is_parent:
@@ -1034,11 +1211,13 @@ def render_frame(frame: HafsFrame, out_path: str,
         # parent-domain-wide pressure minimum (which snaps to a deeper midlatitude
         # low and shoves the TC to the edge). The center is the storm track fix
         # (``cen_lat`` / ``cen_lon``, the same vortex the storm-following nest is
-        # built on), with a wind-anchored pressure-minimum fallback. It comes back
+        # built on), then the last-known fix (``anchor_lat`` / ``anchor_lon``),
+        # then a wind-anchored pressure-minimum fallback. It comes back
         # in ``frame.lon`` monotonic coordinates (continuous past +180 for a West
         # Pacific dateline crosser) so the basemap wrap / labels keep handling the
         # antimeridian.
-        clat, clon = _parent_storm_center(frame, cen_lat, cen_lon)
+        clat, clon = _parent_storm_center(frame, cen_lat, cen_lon,
+                                          anchor_lat, anchor_lon)
         lon_min, lon_max = clon - PARENT_HALF_DEG, clon + PARENT_HALF_DEG
         lat_min, lat_max = clat - PARENT_HALF_DEG, clat + PARENT_HALF_DEG
         # Keep the window inside the valid lat range and the parent data
@@ -1261,21 +1440,26 @@ def render_frame(frame: HafsFrame, out_path: str,
         _draw_feature_lines(ax, countries.get("features", []), feat_extent,
                             border_color, 0.8, 6, halo=coast_halo)
 
-    # (5) Bold "L" at the MSLP minimum, with the minimum value just below it.
+    # (5) Bold "L" at the NAMESAKE's MSLP minimum, with the value just below it.
     # Part of the MSLP overlay, gated by spec.draw_mslp_markers (the upper-air
     # height / vorticity products KEEP the L center marker even though they omit
-    # the isobars - matching the reference "MSLP Centers" plots). On the parent, restrict
-    # the L to the cropped window so it marks the storm in view (coinciding with
-    # the storm-centered box center) instead of a deeper low elsewhere in the full
-    # domain. The nest searches its full grid.
+    # the isobars - matching the reference "MSLP Centers" plots). With a track
+    # fix the L snaps to the pressure minimum within L_SNAP_RADIUS_DEG of the
+    # fix on BOTH domains, so it can never label a different system with the
+    # namesake's depth. Untracked: the nest keeps its full-grid search (its
+    # domain IS the storm); the parent draws NO L at all - the honest
+    # degradation - because any window/domain minimum there may be another
+    # system entirely (the f123 "968 mb near Mexico" failure).
     lmslp = mslp
-    if is_parent and mslp.count():
-        out = ((frame.lat[:, None] < lat_min) | (frame.lat[:, None] > lat_max)
-               | (frame.lon[None, :] < lon_min) | (frame.lon[None, :] > lon_max))
-        win = np.ma.masked_where(out, mslp)
+    l_allowed = True
+    if fix is not None and mslp.count():
+        snap = _radius_mask(frame, fix[0], fix[1], L_SNAP_RADIUS_DEG)
+        win = np.ma.masked_where(~snap, mslp)
         if win.count():
             lmslp = win
-    if spec.draw_mslp_markers and lmslp.count():
+    elif is_parent:
+        l_allowed = False
+    if spec.draw_mslp_markers and l_allowed and lmslp.count():
         kmin = np.unravel_index(int(np.ma.argmin(lmslp)), lmslp.shape)
         l_lon, l_lat = float(frame.lon[kmin[1]]), float(frame.lat[kmin[0]])
         pmin = float(lmslp.min())
@@ -1320,8 +1504,12 @@ def render_frame(frame: HafsFrame, out_path: str,
     # via the shared _category_pill helper, on EVERY product - so the reflectivity
     # frame shows the identical category + color as the wind frame for the same
     # storm/model/domain/forecast-hour. It is never derived from the refl field.
-    vmax, (cat_label, chip_fill, chip_txt) = _category_pill(frame)
-    pmin_hdr = float(np.nanmin(frame.mslp_hpa)) if np.isfinite(frame.mslp_hpa).any() else float("nan")
+    vmax, (cat_label, chip_fill, chip_txt) = _category_pill(frame, scope)
+    if is_parent and not scope.tracked:
+        # No track fix on the parent: the domain VMAX may belong to another
+        # system, so a category chip would mislabel the namesake. NA, honestly.
+        cat_label, chip_fill, chip_txt = _sshws_chip(float("nan"))
+    pmin_hdr = scope_min(frame.mslp_hpa, scope)
     model_label = MODEL_LABEL.get(frame.model, frame.model.upper())
     storm_disp = frame.storm.upper()
     domain_label = PRODUCT_LABEL.get(frame.product, frame.product)
@@ -1329,8 +1517,10 @@ def render_frame(frame: HafsFrame, out_path: str,
     # Per-product subtitle (lower-left) and right-side stat (upper-right) from the
     # spec: wind keeps VMAX, refl shows peak dBZ, BT shows the coldest cloud top;
     # all keep the shared MSLP minimum and the VMAX-derived SSHWS pill above.
+    # Each reduces over the storm-anchored ``scope`` (and carries its honesty
+    # label when the stats had to fall back to domain-wide).
     subtitle, right_stat = spec.make_stat(spec, frame, domain_label, vmax,
-                                          pmin_hdr)
+                                          pmin_hdr, scope)
 
     band = fig.add_axes([0.0, (map_bottom + map_h) / fig_h, 1.0, band_in / fig_h])
     band.set_facecolor(BAND_BG)
@@ -1442,7 +1632,18 @@ def main() -> int:
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
 
+    # The namesake's track fix (this fhr) + last-known anchor, same as the
+    # full-cycle builder wires in - so the standalone smoke shows production
+    # framing/stats. Best-effort: {} degrades honestly inside render_frame.
+    track = fetch_hafs_track(args.model, args.storm, date)
+    cen = track.get(args.fxx)
+    prior = [t for t in sorted(track) if t <= args.fxx]
+    anchor = track[prior[-1]] if prior else None
     render_frame(frame, args.out, countries, coast, product=render_product,
+                 cen_lat=cen[0] if cen else None,
+                 cen_lon=cen[1] if cen else None,
+                 anchor_lat=anchor[0] if anchor else None,
+                 anchor_lon=anchor[1] if anchor else None,
                  enhancement=args.enhancement)
     return 0
 

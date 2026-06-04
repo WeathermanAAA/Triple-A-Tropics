@@ -121,7 +121,7 @@ class ProductSpec:
     coast_halo: float
 
     # --- header right-stat / subtitle ---
-    make_stat: Callable                  # (spec, frame, domain_label, vmax, pmin) -> (subtitle, right_stat)
+    make_stat: Callable                  # (spec, frame, domain_label, vmax, pmin, scope) -> (subtitle, right_stat)
 
     # --- color enhancement set (BT only; informational, not enforced) ---
     selectable_enhancements: tuple = ()
@@ -316,66 +316,70 @@ def _pwat_colorbar(fig, cax, cf, colors: FillColors):
 
 # ---------------------------------------------------------------------------
 # Header right-stat + subtitle builders. The SSHWS VMAX pill and the MSLP
-# minimum are shared (computed once in render_frame and passed in).
+# minimum are shared (computed once in render_frame and passed in). Every
+# per-product extremum reduces over the STORM-ANCHORED ``scope`` (cells within
+# hp.STAT_RADIUS_DEG of the namesake's track fix; the whole domain only as the
+# documented fallback), and appends ``scope.label`` - the "  (domain-wide)"
+# honesty suffix an untracked parent carries - so a domain extremum is never
+# silently passed off as the namesake's.
 # ---------------------------------------------------------------------------
-def _wind_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
+def _wind_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
     subtitle = f"10m Wind (kt) & MSLP (mb)  /  {domain_label}"
-    right_stat = f"VMAX {vmax:.1f} kt   /   MSLP {pmin:.1f} mb"
+    right_stat = f"VMAX {vmax:.1f} kt   /   MSLP {pmin:.1f} mb{scope.label}"
     return subtitle, right_stat
 
 
-def _refl_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
-    rmax = (float(np.nanmax(frame.refl_dbz))
-            if np.isfinite(frame.refl_dbz).any() else float("nan"))
+def _refl_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
+    rmax = hp.scope_max(frame.refl_dbz, scope)
     subtitle = f"Composite Reflectivity (dBZ) & MSLP (mb)  /  {domain_label}"
-    right_stat = f"MAX {rmax:.0f} dBZ   /   MSLP {pmin:.1f} mb"
+    right_stat = f"MAX {rmax:.0f} dBZ   /   MSLP {pmin:.1f} mb{scope.label}"
     return subtitle, right_stat
 
 
-def _bt_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
-    btmin = (float(np.nanmin(frame.bt_c))
-             if np.isfinite(frame.bt_c).any() else float("nan"))
+def _bt_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
+    # The STORM's coldest cloud top (scope-reduced), not the domain's - on the
+    # parent the domain minimum is routinely unrelated land convection.
+    btmin = hp.scope_min(frame.bt_c, scope)
     # Sat carries no MSLP overlay now, so the subtitle drops "& MSLP (mb)".
     # The right-stat keeps the MSLP {pmin} value as an informational readout.
     subtitle = f"Simulated Satellite - {spec.channel}  /  {domain_label}"
-    right_stat = f"MIN BT {btmin:.1f}°C   /   MSLP {pmin:.1f} mb"
+    right_stat = f"MIN BT {btmin:.1f}°C   /   MSLP {pmin:.1f} mb{scope.label}"
     return subtitle, right_stat
 
 
-def _pwat_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
-    # Right stat is the frame's moisture peak (MAX PWAT in mm); MSLP stays.
-    pwmax = (float(np.nanmax(frame.pwat))
-             if np.isfinite(frame.pwat).any() else float("nan"))
+def _pwat_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
+    # Right stat is the storm's moisture peak (MAX PWAT in mm); MSLP stays.
+    pwmax = hp.scope_max(frame.pwat, scope)
     subtitle = f"Precipitable Water (mm) & MSLP (mb)  /  {domain_label}"
-    right_stat = f"MAX PWAT {pwmax:.0f} mm   /   MSLP {pmin:.1f} mb"
+    right_stat = f"MAX PWAT {pwmax:.0f} mm   /   MSLP {pmin:.1f} mb{scope.label}"
     return subtitle, right_stat
 
 
 def _hgt_wind_stat(lev):
-    def f(spec: ProductSpec, frame, domain_label, vmax, pmin):
+    def f(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
         _, _, spd = _level_wind_kt(frame, lev)
-        smax = float(np.nanmax(spd)) if np.isfinite(spd).any() else float("nan")
+        smax = hp.scope_max(spd, scope)
         subtitle = f"{lev} mb Height & Wind  /  {domain_label}"
-        right_stat = f"MAX WIND {smax:.0f} kt @{lev}"
+        right_stat = f"MAX WIND {smax:.0f} kt @{lev}{scope.label}"
         return subtitle, right_stat
     return f
 
 
 def _vort_stat(lev):
-    def f(spec: ProductSpec, frame, domain_label, vmax, pmin):
+    def f(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
         v5 = frame.upper[f"relvort_{lev}"] * 1e5     # 1e-5 /s
-        vmax_v = float(np.nanmax(v5)) if np.isfinite(v5).any() else float("nan")
+        vmax_v = hp.scope_max(v5, scope)
         subtitle = f"{lev} mb Cyclonic Vorticity & Wind  /  {domain_label}"
-        right_stat = f"MAX VORT {vmax_v:.0f} x10^-5/s @{lev}"
+        right_stat = f"MAX VORT {vmax_v:.0f} x10^-5/s @{lev}{scope.label}"
         return subtitle, right_stat
     return f
 
 
-def _rh_layer_stat(spec: ProductSpec, frame, domain_label, vmax, pmin):
+def _rh_layer_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
     rh = frame.upper["rh_layer_700_300"]
-    rmean = float(np.nanmean(rh)) if np.isfinite(rh).any() else float("nan")
+    rmean = hp.scope_mean(rh, scope)
     subtitle = f"700-300 mb Relative Humidity & Wind  /  {domain_label}"
-    right_stat = f"MEAN RH {rmean:.0f}%"
+    right_stat = f"MEAN RH {rmean:.0f}%{scope.label}"
     return subtitle, right_stat
 
 
