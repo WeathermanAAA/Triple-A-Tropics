@@ -1457,6 +1457,13 @@ def render_frame(frame: HafsFrame, out_path: str,
         win = np.ma.masked_where(~snap, mslp)
         if win.count():
             lmslp = win
+        elif is_parent:
+            # Defense-in-depth: an all-masked snap disc is unreachable on real
+            # PRMSL grids (continuous field, padding trimmed), but if it ever
+            # happened the fall-through would re-draw the L at the WHOLE-domain
+            # minimum - the exact wrong-system mislabel this anchoring removes.
+            # No L beats a wrong L.
+            l_allowed = False
     elif is_parent:
         l_allowed = False
     if spec.draw_mslp_markers and l_allowed and lmslp.count():
