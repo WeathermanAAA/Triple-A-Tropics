@@ -538,6 +538,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                 basins_filter: Optional[Sequence[str]] = None,
                 max_fxx: int = TERMINAL_FXX, fxx_step: int = 3,
                 jobs: int = 4, ingest_width: Optional[int] = None,
+                only_fxx: Optional[set] = None,
                 save_dir: str = "/tmp/herbie_data"
                 ) -> tuple[dict, int, int, int]:
     """Render every frame for one cycle.
@@ -552,6 +553,12 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     bound); it defaults to ``jobs`` but is set LOWER on memory-tighter hosts so
     the heavy parent.atm/hafsb decodes don't OOM the pool. Both stages still get
     the halving-backoff recovery in ``_run_pool``.
+
+    ``only_fxx`` (the PROGRESSIVE-rendering hook): render ONLY these forecast
+    hours (intersected with what's actually posted) and BYPASS the per-pair
+    terminal gate - the caller (the render worker's frame ledger) decides what
+    is renderable, so a pair's early hours render without waiting for its
+    f126. None keeps the classic complete-pair behavior exactly.
     """
     if ingest_width is None:
         ingest_width = jobs
@@ -616,9 +623,27 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             else:
                 log.warning("no track deck for %s %s - frames render untracked",
                             model, storm)
+            # PROVISIONAL fallback (progressive rendering): when the own deck
+            # doesn't yet cover every tau, fetch the PREVIOUS cycle's deck so
+            # pick_track_fix can anchor a frame at the same VALID time (tau+6
+            # of the 6 h-older run). A new storm has no previous deck -> {} ->
+            # honest degradation, exactly as before.
+            prev_track: dict = {}
+            if len(taus) < (min(max_fxx, TERMINAL_FXX) // max(fxx_step, 1)) + 1:
+                prev_track = hp.fetch_hafs_track(
+                    model, storm, cycle_dt - dt.timedelta(hours=6),
+                    session=session)
+                if prev_track:
+                    log.info("provisional track (previous cycle) %s %s: "
+                             "%d fixes available", model, storm, len(prev_track))
             for domain in domains:
                 avail = list_fxx(model, date, hh, storm, domain, session=session)
                 avail = [f for f in avail if f <= max_fxx and f % fxx_step == 0]
+                if only_fxx is not None:
+                    # Progressive subset: the caller names the exact hours.
+                    # Intersecting with the posted list keeps this safe when
+                    # upstream and the caller's view disagree momentarily.
+                    avail = [f for f in avail if f in only_fxx]
                 if not avail:
                     # No frames at all for this (model, domain) in this cycle.
                     # The standing case is HAFS-B: it stopped publishing to the
@@ -632,7 +657,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     log.info("skip %s %s %s, no frames published this cycle",
                              model, storm, domain)
                     continue
-                if max(avail) < terminal:
+                if only_fxx is None and max(avail) < terminal:
+                    # Classic complete-pair gate. BYPASSED for an explicit
+                    # --only-fxx subset: progressive rendering exists precisely
+                    # to render early hours before the terminal frame posts.
                     log.info("skip %s %s %s, incomplete (max f%03d < f%03d)",
                              model, storm, domain, max(avail), terminal)
                     continue
@@ -646,12 +674,11 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         cycle_dt=cycle_dt, cache_path=cpath, save_dir=save_dir,
                         want_refl=cycle_want_refl, want_pwat=cycle_want_pwat,
                         want_upper=cycle_want_upper, sat_parms=cycle_sat_parms))
-                    # The namesake's fix at THIS hour (None when the tracker
-                    # lost it) + the last known fix at-or-before it (framing
-                    # anchor; no extrapolation - honestly "last tracked here").
-                    cen = track.get(fxx)
-                    prior = [t for t in taus if t <= fxx]
-                    anchor = track[prior[-1]] if prior else None
+                    # The namesake's fix at THIS hour: own deck first, then the
+                    # previous cycle's fix at the same valid time (provisional;
+                    # progressive rendering), then last-known framing anchor,
+                    # then honest degradation - all via pick_track_fix.
+                    cen, anchor = hp.pick_track_fix(track, prev_track, fxx)
                     # One render per product, each reading the SAME cache entry
                     # into its own path segment (.../<dom_slug>/<product>/f###.png).
                     for product in products:
@@ -784,6 +811,11 @@ def main() -> int:
     ap.add_argument("--basins", help="restrict to basin slugs (al,ep,wp,…; comma list)")
     ap.add_argument("--max-fxx", type=int, default=TERMINAL_FXX)
     ap.add_argument("--fxx-step", type=int, default=3)
+    ap.add_argument("--only-fxx", default=None,
+                    help="render ONLY these forecast hours (comma list, e.g. "
+                         "0,3,6) and bypass the per-pair terminal gate - the "
+                         "progressive-rendering hook; hours not yet posted "
+                         "upstream are skipped gracefully")
     ap.add_argument("--jobs", type=int,
                     default=min((os.cpu_count() or 2), 6),
                     help="render-pool width (CPU-bound)")
@@ -829,12 +861,22 @@ def main() -> int:
             return 0
         date, hh = resolved
 
+    only_fxx = None
+    if args.only_fxx:
+        try:
+            only_fxx = {int(x) for x in args.only_fxx.split(",") if x.strip()}
+        except ValueError:
+            ap.error("--only-fxx must be a comma list of integers")
+        if not only_fxx:
+            ap.error("--only-fxx must list at least one forecast hour")
+
     manifest, n_storms, n_ok, n_fail = build_cycle(
         date, hh, out_dir, models=models, domains=domains, products=products,
         storms_filter=(args.storm.split(",") if args.storm else None),
         basins_filter=(args.basins.split(",") if args.basins else None),
         max_fxx=args.max_fxx, fxx_step=args.fxx_step,
-        jobs=args.jobs, ingest_width=args.ingest_jobs, save_dir=args.save_dir,
+        jobs=args.jobs, ingest_width=args.ingest_jobs, only_fxx=only_fxx,
+        save_dir=args.save_dir,
     )
 
     # Total failure: storms WERE found but nothing rendered. Do not write a
