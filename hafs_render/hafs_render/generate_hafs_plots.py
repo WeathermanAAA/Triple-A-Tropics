@@ -351,7 +351,13 @@ class IngestJob:
 @dataclass
 class RenderJob:
     """One RENDER task: read a frame's cached fields and render ONE product from
-    them - no GRIB fetch. One per (product, frame)."""
+    them - no GRIB fetch. One per (product, frame).
+
+    ``cen_lat`` / ``cen_lon`` is the NAMESAKE storm's track fix at this fxx
+    (from the run's own trak.atcfunix deck) - it anchors the L marker, the
+    parent crop, and the headline stats to the run's own storm. ``anchor_lat``
+    / ``anchor_lon`` is the LAST KNOWN fix (framing only) for hours past the
+    tracker's coverage. All None -> render_frame degrades honestly."""
     model: str
     storm: str
     domain: str          # raw, e.g. "storm.atm"
@@ -361,6 +367,8 @@ class RenderJob:
     out_path: str
     cen_lat: Optional[float] = None
     cen_lon: Optional[float] = None
+    anchor_lat: Optional[float] = None
+    anchor_lon: Optional[float] = None
 
 
 def _frame_key(model: str, storm: str, domain: str, fxx: int) -> tuple:
@@ -428,7 +436,8 @@ def _render_one(job: RenderJob) -> dict:
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
         hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
                         product=job.product,
-                        cen_lat=job.cen_lat, cen_lon=job.cen_lon)
+                        cen_lat=job.cen_lat, cen_lon=job.cen_lon,
+                        anchor_lat=job.anchor_lat, anchor_lon=job.anchor_lon)
         return {
             "ok": True, "model": job.model, "storm": job.storm,
             "domain": job.domain, "product": job.product, "fxx": job.fxx,
@@ -595,6 +604,18 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
         # the next (or backup) run rather than published half-written.
         terminal = min(max_fxx, TERMINAL_FXX)
         for model in models:
+            # The run's OWN forecast track (trak.atcfunix): one tiny fetch per
+            # (model, storm) that anchors every frame's L marker, parent crop,
+            # and headline stats to the NAMESAKE storm instead of the domain
+            # extremum. {} on failure -> render_frame degrades honestly.
+            track = hp.fetch_hafs_track(model, storm, cycle_dt, session=session)
+            taus = sorted(track)
+            if track:
+                log.info("track deck %s %s: %d fixes (f%03d..f%03d)",
+                         model, storm, len(track), taus[0], taus[-1])
+            else:
+                log.warning("no track deck for %s %s - frames render untracked",
+                            model, storm)
             for domain in domains:
                 avail = list_fxx(model, date, hh, storm, domain, session=session)
                 avail = [f for f in avail if f <= max_fxx and f % fxx_step == 0]
@@ -625,6 +646,12 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         cycle_dt=cycle_dt, cache_path=cpath, save_dir=save_dir,
                         want_refl=cycle_want_refl, want_pwat=cycle_want_pwat,
                         want_upper=cycle_want_upper, sat_parms=cycle_sat_parms))
+                    # The namesake's fix at THIS hour (None when the tracker
+                    # lost it) + the last known fix at-or-before it (framing
+                    # anchor; no extrapolation - honestly "last tracked here").
+                    cen = track.get(fxx)
+                    prior = [t for t in taus if t <= fxx]
+                    anchor = track[prior[-1]] if prior else None
                     # One render per product, each reading the SAME cache entry
                     # into its own path segment (.../<dom_slug>/<product>/f###.png).
                     for product in products:
@@ -633,7 +660,11 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         render_jobs.append(RenderJob(
                             model=model, storm=storm, domain=domain,
                             product=product, fxx=fxx, cache_path=cpath,
-                            out_path=out_path))
+                            out_path=out_path,
+                            cen_lat=cen[0] if cen else None,
+                            cen_lon=cen[1] if cen else None,
+                            anchor_lat=anchor[0] if anchor else None,
+                            anchor_lon=anchor[1] if anchor else None))
 
     log.info("planned %d ingest frame(s) + %d render task(s) across %d storm(s) "
              "- %d worker(s)", len(ingest_jobs), len(render_jobs), len(storms),
