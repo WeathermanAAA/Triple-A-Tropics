@@ -34,11 +34,11 @@ jobs:
 
     steps:
       - name: Check out repo
-        # actions/checkout@v4 leaves a clean working tree (every tracked
+        # actions/checkout@v6 leaves a clean working tree (every tracked
         # file restored). Even though main currently shows ~1200 media
         # files as deleted in the dev's working tree, the blobs are still
         # in git, so a fresh CI checkout materializes them.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Sync sst/ to R2
         # Same pattern as update-sst.yml. Whole-directory sync uploads
