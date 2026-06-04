@@ -173,6 +173,63 @@ class TestOnlyFxxPlanning(unittest.TestCase):
         cap, _ = self._run({6, 12}, posted=[0, 3, 6])
         self.assertEqual([j.fxx for j in cap["ingest"]], [6])
 
+    def test_prev_deck_only_in_progressive_mode(self):
+        """REVIEW FINDING (confirmed): the prev-cycle provisional anchor must
+        NOT leak into the classic full/cron path - a short deck there means
+        the tracker LOST the storm and v0.3.0's honest degradation applies."""
+        from hafs_render import generate_hafs_plots as gen
+        calls = []
+        own = {0: (10.0, -130.0)}                     # tracker lost after f000
+        prev = {t: (9.0, -129.0) for t in range(0, 133, 3)}
+
+        def fake_fetch(model, storm, cycle_dt, session=None, **k):
+            calls.append(cycle_dt)
+            return own if cycle_dt.hour == 18 else prev
+
+        import tempfile
+        from pathlib import Path
+        saved = (gen._run_pool, gen.list_storms, gen.list_fxx,
+                 gen.hp.fetch_hafs_track)
+        cen_seen = {}
+
+        def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None):
+            for j in jobs_list:
+                if isinstance(j, gen.RenderJob):
+                    cen_seen[j.fxx] = (j.cen_lat, j.cen_lon)
+                res = {"ok": True, "model": j.model, "storm": j.storm,
+                       "domain": j.domain, "fxx": j.fxx}
+                if isinstance(j, gen.RenderJob):
+                    res["product"] = j.product
+                record(res)
+
+        gen._run_pool = fake_pool
+        gen.list_storms = lambda model, date, hh, session=None: ["01e"]
+        gen.list_fxx = (lambda model, date, hh, storm, domain, session=None:
+                        list(range(0, 127, 3)))
+        gen.hp.fetch_hafs_track = fake_fetch
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                # CLASSIC path (only_fxx=None): NO prev fetch, lost tail
+                # degrades honestly (cen None beyond the own deck)
+                calls.clear(); cen_seen.clear()
+                gen.build_cycle("20260604", "18", Path(td), models=["hafsa"],
+                                domains=["storm.atm"], products=["mslp_wind"],
+                                jobs=1, save_dir=td)
+                self.assertEqual(len(calls), 1)        # own deck only
+                self.assertEqual(cen_seen[0], (10.0, -130.0))
+                self.assertEqual(cen_seen[6], (None, None))
+                self.assertEqual(cen_seen[126], (None, None))
+                # PROGRESSIVE path (only_fxx set): prev deck anchors
+                calls.clear(); cen_seen.clear()
+                gen.build_cycle("20260604", "18", Path(td), models=["hafsa"],
+                                domains=["storm.atm"], products=["mslp_wind"],
+                                only_fxx={6}, jobs=1, save_dir=td)
+                self.assertEqual(len(calls), 2)        # own + prev
+                self.assertEqual(cen_seen[6], (9.0, -129.0))
+        finally:
+            (gen._run_pool, gen.list_storms, gen.list_fxx,
+             gen.hp.fetch_hafs_track) = saved
+
     def test_classic_gate_still_skips_incomplete_pair(self):
         # only_fxx=None keeps the complete-pair behavior: incomplete -> skip.
         cap, man = self._run(None, posted=[0, 3, 6, 9])
