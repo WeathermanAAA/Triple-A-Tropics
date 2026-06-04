@@ -1,0 +1,328 @@
+"""Offline behavioral tests for the HAFS progressive-frames viewer
+(models/hafs.js), driven through tests/hafs_viewer_harness.cjs under node with a
+minimal DOM shim. No network, no browser.
+
+Covers the manifest-v2 contract (/tmp/manifest_v2_contract.md):
+  1. legacy manifest (no cycles[]) -> old behavior: fxxList = rendered list,
+     URL via path_template + ?v= bust, scrubber spans rendered hours only.
+  2. v2 manifest -> cycle-picker data; default = newest-with-frames;
+     pre-announce entry skipped for the default but flagged.
+  3. expected-grid construction (0..fxx_end step fxx_step) + snap-to-nearest-
+     rendered (prefer lower) on a pending scrub.
+  4. diff-merge: a second manifest with MORE fxx for the current selection grows
+     the lit ticks WITHOUT resetting cycle/storm/model/domain/product/hour.
+  5. URL building in cycles-mode: {cycle} substituted, NO ?v= cache-bust.
+  6. a NEW cycle appearing mid-session -> badge state set, selection NOT
+     switched; clicking the badge switches.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+HAFS_JS = REPO / "models" / "hafs.js"
+HARNESS = Path(__file__).resolve().parent / "hafs_viewer_harness.cjs"
+NODE = shutil.which("node")
+
+BASE = "https://cdn.triple-a-tropics.com/models/hafs/"
+
+
+def run_plan(manifests, actions=None):
+    """Drive the viewer through `manifests` (first = initial load, rest fed to
+    successive _poll() actions) and `actions`; return the list of state
+    snapshots (steps[0] = after first load)."""
+    plan = {"manifests": manifests, "actions": actions or []}
+    with tempfile.TemporaryDirectory() as td:
+        plan_path = Path(td) / "plan.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        proc = subprocess.run(
+            [NODE, str(HARNESS), str(HAFS_JS), str(plan_path)],
+            capture_output=True, text=True, timeout=60,
+        )
+    if proc.returncode != 0:
+        raise RuntimeError(f"node harness failed:\n{proc.stdout}\n{proc.stderr}")
+    return json.loads(proc.stdout)["steps"]
+
+
+# ---- manifest fixtures -----------------------------------------------------
+
+PRODUCTS = [
+    {"slug": "mslp_wind", "label": "MSLP + 10 m Wind", "short": "Wind"},
+    {"slug": "refl", "label": "Composite Reflectivity", "short": "Reflectivity"},
+]
+MODELS = [{"slug": "hafsa", "label": "HAFS-A"}, {"slug": "hafsb", "label": "HAFS-B"}]
+DOMAINS = [
+    {"slug": "storm", "label": "Storm nest (~2 km)", "raw": "storm.atm"},
+    {"slug": "parent", "label": "Parent (~6 km)", "raw": "parent.atm"},
+]
+
+
+def storm(sid="13l", name="13L", basin="al", cycle="2026060418",
+          init="2026-06-04T18:00:00Z", hours=None):
+    """A storm carrying both products on the storm nest of HAFS-A."""
+    hrs = list(range(0, 127, 3)) if hours is None else hours
+    return {
+        "id": sid, "name": name, "basin": basin, "basin_label": "North Atlantic",
+        "cycle": cycle, "init": init,
+        "frames": {"hafsa": {"storm": {"mslp_wind": hrs, "refl": hrs}}},
+    }
+
+
+def legacy_manifest(hours=None):
+    """v1 (no cycles[]): the pre-progressive shape this frontend must still
+    drive byte-for-byte under deploy skew."""
+    hrs = list(range(0, 127, 3)) if hours is None else hours
+    return {
+        "generated_at": "2026-06-04T19:00:00Z",
+        "products": PRODUCTS, "models": MODELS, "domains": DOMAINS,
+        "fxx_step": 3, "fxx_pad": 3,
+        "path_template": "2026060418/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+        "cycle": "2026060418",
+        "storms": [storm(hours=hrs)],
+    }
+
+
+def v2_manifest(cycles, generated="2026-06-04T19:30:00Z"):
+    return {
+        "generated_at": generated,
+        "products": PRODUCTS, "models": MODELS, "domains": DOMAINS,
+        "fxx_step": 3, "fxx_pad": 3, "fxx_end": 126,
+        "path_template_cycles":
+            "{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+        "path_template":
+            cycles[-1]["cycle"] + "/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+        "cycle": cycles[-1]["cycle"],
+        "storms": cycles[-1]["storms"],
+        "cycles": cycles,
+    }
+
+
+def cycle_entry(key, hours, in_progress=True, storms=None, init=None,
+                frames_done=None, frames_expected=172):
+    if storms is None:
+        init = init or (key[:4] + "-" + key[4:6] + "-" + key[6:8] +
+                        "T" + key[8:10] + ":00:00Z")
+        storms = [storm(cycle=key, init=init, hours=hours)]
+    return {
+        "cycle": key, "in_progress": in_progress,
+        "frames_done": frames_done if frames_done is not None else len(hours) * 2,
+        "frames_expected": frames_expected,
+        "started_utc": "2026-06-04T21:12:00Z",
+        "storms": storms,
+    }
+
+
+@unittest.skipIf(NODE is None, "node not on PATH")
+class TestHafsViewer(unittest.TestCase):
+
+    # 1 ---------------------------------------------------------------------
+    def test_legacy_manifest_old_behavior(self):
+        hrs = [0, 3, 6, 9, 12]
+        steps = run_plan([legacy_manifest(hours=hrs)])
+        s = steps[0]
+        self.assertTrue(s["legacyMode"])
+        self.assertFalse(s["cyclePickerShown"])
+        # fxxList == the rendered list; grid degenerates to it (no fxx_end).
+        self.assertEqual(s["fxxList"], hrs)
+        self.assertEqual(s["fxxGrid"], hrs)
+        # scrubber spans rendered hours only (max = len-1).
+        self.assertEqual(int(s["scrubMax"]), len(hrs) - 1)
+        # default selection: HAFS-A / storm / mslp_wind, F000.
+        self.assertEqual(s["model"], "hafsa")
+        self.assertEqual(s["domain"], "storm")
+        self.assertEqual(s["product"], "mslp_wind")
+        self.assertEqual(s["fxx"], 0)
+        # LEGACY url: path_template (cycle baked in literally) + ?v= bust.
+        self.assertEqual(
+            s["imgSrc"],
+            BASE + "2026060418/hafsa/13l/storm/mslp_wind/f000.png"
+            "?v=2026-06-04T19%3A00%3A00Z",
+        )
+
+    # 2 ---------------------------------------------------------------------
+    def test_v2_default_is_newest_with_frames_preannounce_flagged(self):
+        # newest cycle (18Z) is an empty pre-announce shell; 12Z has frames.
+        empty = cycle_entry("2026060418", [], in_progress=True,
+                            storms=[], frames_done=0)
+        # storms=[] path: build an explicit empty-storms cycle.
+        empty["storms"] = []
+        full = cycle_entry("2026060412", [0, 3, 6, 9, 12, 15],
+                           in_progress=False)
+        steps = run_plan([v2_manifest([empty, full])])
+        s = steps[0]
+        self.assertFalse(s["legacyMode"])
+        # cycle picker present with BOTH cycles, newest first.
+        self.assertTrue(s["cyclePickerShown"])
+        self.assertEqual(s["cycleKeys"], ["2026060418", "2026060412"])
+        # default selection skips the empty newest -> 12Z, but flags pre-announce.
+        self.assertEqual(s["selectedCycle"], "2026060412")
+        self.assertTrue(s["preAnnounce"])
+        self.assertTrue(s["badgeShown"])
+        self.assertIn("18Z", s["badgeText"])
+        # the active 12Z cycle is complete -> no pill.
+        self.assertFalse(s["pillShown"])
+
+    def test_v2_default_newest_when_it_has_frames(self):
+        newest = cycle_entry("2026060418", [0, 3, 6], in_progress=True)
+        older = cycle_entry("2026060412", list(range(0, 127, 3)),
+                            in_progress=False)
+        steps = run_plan([v2_manifest([newest, older])])
+        s = steps[0]
+        self.assertEqual(s["selectedCycle"], "2026060418")
+        self.assertFalse(s["preAnnounce"])
+        # in-progress pill shows max rendered / fxx_end.
+        self.assertTrue(s["pillShown"])
+        self.assertIn("F006/F126", s["pillText"])
+
+    # 3 ---------------------------------------------------------------------
+    def test_expected_grid_and_snap_to_nearest_rendered(self):
+        # rendered through F018 only; grid runs the full 0..126 step 3.
+        rendered = [0, 3, 6, 9, 12, 15, 18]
+        c = cycle_entry("2026060418", rendered, in_progress=True)
+        full_grid = list(range(0, 127, 3))
+        m = v2_manifest([c, cycle_entry("2026060412", full_grid,
+                                        in_progress=False)])
+        steps = run_plan([m])
+        s = steps[0]
+        self.assertEqual(s["fxxGrid"], full_grid)
+        self.assertEqual(s["fxxList"], rendered)
+        # scrubber spans the full grid.
+        self.assertEqual(int(s["scrubMax"]), len(full_grid) - 1)
+        # ticks: first 7 lit, rest pending.
+        lit = [i for i, t in enumerate(s["ticks"]) if t["lit"]]
+        pending = [i for i, t in enumerate(s["ticks"]) if t["pending"]]
+        self.assertEqual(lit, list(range(7)))
+        self.assertEqual(pending, list(range(7, len(full_grid))))
+
+        # Scrub to grid pos 10 (F030, pending) -> snap to nearest rendered
+        # preferring lower => F018 (rendered idx 6).
+        steps2 = run_plan([m], actions=[{"op": "scrub", "gridPos": 10}])
+        snapped = steps2[1]
+        self.assertEqual(snapped["fxx"], 18)
+        self.assertEqual(snapped["idx"], 6)
+        # the slider re-pins to the rendered hour's grid index (F018 = grid 6).
+        self.assertEqual(snapped["scrubValue"], 6)
+
+    # 4 ---------------------------------------------------------------------
+    def test_diff_merge_grows_grid_without_resetting_selection(self):
+        rendered1 = [0, 3, 6, 9]
+        rendered2 = [0, 3, 6, 9, 12, 15, 18, 21]
+        full_grid = list(range(0, 127, 3))
+        m1 = v2_manifest([cycle_entry("2026060418", rendered1, in_progress=True),
+                          cycle_entry("2026060412", full_grid, in_progress=False)])
+        m2 = v2_manifest(
+            [cycle_entry("2026060418", rendered2, in_progress=True),
+             cycle_entry("2026060412", full_grid, in_progress=False)],
+            generated="2026-06-04T19:45:00Z")
+        # Switch to HAFS-A reflectivity, scrub to F009, THEN poll the grown
+        # manifest: selection (model/domain/product/hour) must survive.
+        actions = [
+            {"op": "selectProduct", "slug": "refl"},
+            {"op": "scrub", "gridPos": 3},   # F009 (rendered) -> idx 3
+            {"op": "poll"},
+        ]
+        steps = run_plan([m1, m2], actions=actions)
+        before = steps[3 - 1]   # after the scrub, before the poll
+        after = steps[3]        # after the poll/diff-merge
+        # selection preserved across the poll.
+        self.assertEqual(after["selectedCycle"], "2026060418")
+        self.assertEqual(after["storm"], before["storm"])
+        self.assertEqual(after["model"], "hafsa")
+        self.assertEqual(after["domain"], "storm")
+        self.assertEqual(after["product"], "refl")
+        self.assertEqual(after["fxx"], 9)        # same forecast hour
+        # the lit ticks grew from 4 -> 8.
+        lit_before = sum(1 for t in before["ticks"] if t["lit"])
+        lit_after = sum(1 for t in after["ticks"] if t["lit"])
+        self.assertEqual(lit_before, 4)
+        self.assertEqual(lit_after, 8)
+        # grid unchanged (already full).
+        self.assertEqual(after["fxxGrid"], full_grid)
+        self.assertEqual(after["fxxList"], rendered2)
+
+    # 5 ---------------------------------------------------------------------
+    def test_cycles_mode_url_has_cycle_no_version_bust(self):
+        c = cycle_entry("2026060418", [0, 3, 6], in_progress=True)
+        m = v2_manifest([c, cycle_entry("2026060412", [0, 3], in_progress=False)])
+        steps = run_plan([m])
+        s = steps[0]
+        # {cycle} substituted, no ?v= (immutable cycle-scoped key).
+        self.assertEqual(
+            s["imgSrc"],
+            BASE + "2026060418/hafsa/13l/storm/mslp_wind/f000.png",
+        )
+        self.assertNotIn("?v=", s["imgSrc"])
+
+    # 6 ---------------------------------------------------------------------
+    def test_new_cycle_appears_badges_without_switching(self):
+        # Session starts on 12Z (newest is 12Z, complete). A poll then reveals a
+        # newer 18Z WITH frames -> badge set, selection NOT switched.
+        full_grid = list(range(0, 127, 3))
+        m1 = v2_manifest([cycle_entry("2026060412", full_grid, in_progress=False)])
+        m2 = v2_manifest(
+            [cycle_entry("2026060418", [0, 3, 6], in_progress=True),
+             cycle_entry("2026060412", full_grid, in_progress=False)],
+            generated="2026-06-04T19:45:00Z")
+        steps = run_plan([m1, m2], actions=[{"op": "poll"}, {"op": "clickBadge"}])
+        load = steps[0]
+        self.assertEqual(load["selectedCycle"], "2026060412")
+        self.assertFalse(load["cyclePickerShown"])  # only 1 cycle at load
+
+        after_poll = steps[1]
+        # selection NOT yanked.
+        self.assertEqual(after_poll["selectedCycle"], "2026060412")
+        self.assertEqual(after_poll["pendingCycleKey"], "2026060418")
+        self.assertTrue(after_poll["badgeShown"])
+        self.assertIn("18Z", after_poll["badgeText"])
+        self.assertIn("view", after_poll["badgeText"])
+        # picker now shows both cycles (set changed).
+        self.assertTrue(after_poll["cyclePickerShown"])
+        self.assertEqual(after_poll["cycleKeys"], ["2026060418", "2026060412"])
+
+        # clicking the badge switches to the newer cycle and clears the badge.
+        after_click = steps[2]
+        self.assertEqual(after_click["selectedCycle"], "2026060418")
+        self.assertIsNone(after_click["pendingCycleKey"])
+        self.assertFalse(after_click["badgeShown"])
+
+    # extra coverage ---------------------------------------------------------
+    def test_off_season_empty_state(self):
+        # v2 manifest with a single empty cycle (no storms) -> empty state.
+        empty = cycle_entry("2026060418", [], in_progress=False, storms=[])
+        steps = run_plan([v2_manifest([empty])])
+        s = steps[0]
+        self.assertTrue(s["emptyShown"])
+        self.assertIsNone(s["storm"])
+
+    def test_legacy_product_toggle_holds_hour(self):
+        # The pre-progressive sticky-selection path: switch product, the
+        # forecast HOUR is preserved (Wind/Reflectivity share an fxx list).
+        steps = run_plan(
+            [legacy_manifest(hours=[0, 3, 6, 9, 12])],
+            actions=[{"op": "scrub", "gridPos": 3},          # F009
+                     {"op": "selectProduct", "slug": "refl"}],
+        )
+        self.assertEqual(steps[1]["fxx"], 9)
+        self.assertEqual(steps[2]["product"], "refl")
+        self.assertEqual(steps[2]["fxx"], 9)   # hour held across the toggle
+        # legacy refl url keeps the ?v= bust.
+        self.assertIn("/refl/f009.png?v=", steps[2]["imgSrc"])
+
+    def test_poll_cadence_helper_via_in_progress_flag(self):
+        # Sanity: a cycle marked in_progress should keep the pill alive after a
+        # no-op poll (state stable, no reset).
+        c = cycle_entry("2026060418", [0, 3, 6], in_progress=True)
+        m = v2_manifest([c])
+        steps = run_plan([m], actions=[{"op": "poll"}])
+        self.assertTrue(steps[1]["pillShown"])
+        self.assertEqual(steps[1]["selectedCycle"], "2026060418")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
