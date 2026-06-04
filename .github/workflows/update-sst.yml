@@ -219,7 +219,7 @@ jobs:
       # is unified. ffmpeg is therefore NOT installed in this job.
 
       - name: Restore animation frame cache
-        # Split restore/save form (vs the combined actions/cache@v4) so
+        # Split restore/save form (vs the combined actions/cache@v5) so
         # the save step can run with `if: always()` even if the render
         # step is cancelled.
         #
@@ -234,7 +234,7 @@ jobs:
         # strategy: gsp.fetch_day_versioned now prefers prelim and
         # never auto-promotes, so once a date is cached it sticks.
         # See SST animator gotchas in CLAUDE.md.
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: _frame_cache
           key: sst-mp4-frames-v3-${{ github.run_id }}-oisst
@@ -261,7 +261,7 @@ jobs:
       # enough that the OISST shard alone should never approach it.
       - name: Save animation frame cache (after OISST shard)
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: _frame_cache
           key: sst-mp4-frames-v3-${{ github.run_id }}-oisst
@@ -311,7 +311,7 @@ jobs:
         # run, so we inherit the freshly rendered OISST frames. Second
         # key falls through to any prior v3 cache as a backstop (e.g.
         # if Job 1 itself ran cold and somehow lost its save).
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: _frame_cache
           key: sst-mp4-frames-v3-${{ github.run_id }}-full
@@ -331,7 +331,7 @@ jobs:
 
       - name: Save animation frame cache (full set)
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: _frame_cache
           key: sst-mp4-frames-v3-${{ github.run_id }}-full
