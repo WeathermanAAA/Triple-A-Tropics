@@ -77,7 +77,7 @@ jobs:
 
       - name: Restore partial cache from Actions cache (campaign resume)
         id: state-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: _sst_clim_build
           # Unique per run so save always writes a fresh entry.
@@ -130,7 +130,7 @@ jobs:
         # always() so a clipped run still persists progress for the next
         # invocation to resume from.
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: _sst_clim_build
           key: sst-clim-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}

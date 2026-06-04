@@ -69,7 +69,7 @@ jobs:
 
       - name: Restore per-year climo state from cache
         id: state-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .armor3d_climo_state
           # Unique per run so save always writes a fresh entry.
@@ -113,7 +113,7 @@ jobs:
         # whatever years were already processed, letting the next
         # invocation pick up from where we left off.
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .armor3d_climo_state
           key: armor3d-climo-state-v1-${{ github.run_id }}-${{ github.run_attempt }}

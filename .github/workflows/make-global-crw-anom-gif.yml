@@ -124,7 +124,7 @@ jobs:
           echo "GIF_PATH=$OUT" >> "$GITHUB_ENV"
 
       - name: Upload GIF as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: global-crw-anom-gif
           path: ${{ env.GIF_PATH }}

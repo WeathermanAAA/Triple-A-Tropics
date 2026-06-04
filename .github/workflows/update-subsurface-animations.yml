@@ -86,7 +86,7 @@ jobs:
         # lives in this same path and is restored alongside the PNGs;
         # the per-day source NetCDFs cost more to re-download than
         # to re-render, so caching them too is the right trade.
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             _frame_cache
@@ -135,7 +135,7 @@ jobs:
       # below succeeds — the rendered frames are the expensive part.
       - name: Save animation frame cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             _frame_cache
