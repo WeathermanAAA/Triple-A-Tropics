@@ -786,6 +786,33 @@ def parse_atcf_track(text: str) -> dict:
     return track
 
 
+def pick_track_fix(track: dict, prev_track: dict, fxx: int) -> tuple:
+    """``(cen, anchor)`` for one forecast hour, from the run's OWN deck with a
+    PREVIOUS-CYCLE fallback (progressive rendering: a frame can render before
+    its tau is in the own deck).
+
+    ``cen`` (full anchoring - L marker, crop, stat disc): the own-deck fix at
+    ``fxx``; else the PROVISIONAL fix - the 6 h-older run's position at the
+    SAME VALID TIME (``prev_track[fxx + 6]``). Cycle-over-cycle drift at a
+    fixed valid time is far below the 3-deg stat disc, so the provisional
+    anchor is visually exact; a brand-new storm has no previous deck and
+    degrades honestly (cen=None).
+
+    ``anchor`` (framing-only fallback when cen is None): the last known own
+    fix at-or-before ``fxx``, else the last previous-cycle fix at-or-before
+    the same valid time. No extrapolation - honestly "last tracked here"."""
+    cen = track.get(fxx)
+    if cen is None:
+        cen = prev_track.get(fxx + 6)
+    prior = [t for t in sorted(track) if t <= fxx]
+    if prior:
+        anchor = track[prior[-1]]
+    else:
+        pprior = [t for t in sorted(prev_track) if t <= fxx + 6]
+        anchor = prev_track[pprior[-1]] if pprior else None
+    return cen, anchor
+
+
 def fetch_hafs_track(model: str, storm: str, cycle: dt.datetime,
                      session=None, timeout: float = 30.0) -> dict:
     """The namesake storm's forecast track for one (model, storm, cycle):
