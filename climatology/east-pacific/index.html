@@ -79,7 +79,10 @@
     try {
       const doc = frame.contentDocument || frame.contentWindow.document;
       if (!doc || !doc.body) return;
-      const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+      // body.scrollHeight only: documentElement.scrollHeight is floored
+      // at the iframe's own height (scrolling="no"), so Math.max with it
+      // self-latched - the frame could only ever grow (dead band below).
+      const h = doc.body.scrollHeight;
       if (h > 200) frame.style.height = (h + 16) + 'px';
     } catch (e) {}
   }
