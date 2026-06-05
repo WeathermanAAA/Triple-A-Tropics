@@ -588,9 +588,11 @@
 
   // --- Live basin status rows -----------------------------------------
   // For each basin (ATL / EPAC / WPAC) we hydrate two cells:
-  //   1. "count":  "N active" (pulsing green, designated TCs only),
-  //                "N invest(s)" (pulsing green, when invests are the
-  //                only live systems), or "N named YTD"
+  //   1. "count":  two independent segments - "N active" (designated
+  //                TCs only) and "M invest(s)" (every invest the feed
+  //                lists) - joined "N active · M invests" when a basin
+  //                has both, either alone otherwise (pulsing green for
+  //                any live system), or "N named YTD" when neither
   //   2. "season": countdown to season start, live ACE + %-of-normal
   //                 during season, or final rank after season ends.
   //                 WPAC has no official start/end so it always shows
@@ -642,23 +644,32 @@
       ]).then(function (res) {
         var t = res[0], a = res[1];
 
-        // Count cell: "active" beats "named" for surfacing live storms.
-        // ACTIVE counts designated TCs only - invests never add to it. A
-        // basin whose only live system is an invest still lights green,
-        // labeled "N INVEST(S)" instead (the per-basin map keeps its red
-        // "L" marker; this is just the strip's vocabulary). Matches the
-        // per-basin sidebar's "X Storms · Y Invests" separation.
+        // Count cell: live systems beat "named YTD". Two INDEPENDENT
+        // segments so an invest never vanishes behind an active TC:
+        //   "N active"               - designated TCs only (is_active and
+        //                              not invest; invests never add to N)
+        //   "M invest(s)"            - every invest the feed lists (the
+        //                              feed assembly already drops stale
+        //                              ones, so presence == current)
+        // joined "N active · M invests" when a basin has both; either
+        // alone otherwise; "named YTD" fallback when neither. The dot
+        // lights green for ANY live system. ACE/named counts elsewhere
+        // stay TC-only (the ace_core invest guard is untouched).
         var named = (t && t.header && typeof t.header.named === 'number') ? t.header.named : 0;
         var storms = (t && Array.isArray(t.storms)) ? t.storms : [];
         var activeTCs = storms.filter(function (s) { return s && s.is_active && !s.is_invest; });
-        var activeInvests = storms.filter(function (s) { return s && s.is_active && s.is_invest; });
+        var invests = storms.filter(function (s) { return s && s.is_invest; });
+        var segs = [];
         if (activeTCs.length > 0) {
+          segs.push('<b>' + activeTCs.length + '</b> active');
+        }
+        if (invests.length > 0) {
+          segs.push('<b>' + invests.length + '</b> invest' +
+                    (invests.length === 1 ? '' : 's'));
+        }
+        if (segs.length > 0) {
           row.classList.add('active');
-          if (countEl) countEl.innerHTML = '<b>' + activeTCs.length + '</b> active';
-        } else if (activeInvests.length > 0) {
-          row.classList.add('active');
-          if (countEl) countEl.innerHTML = '<b>' + activeInvests.length + '</b> invest' +
-                                           (activeInvests.length === 1 ? '' : 's');
+          if (countEl) countEl.innerHTML = segs.join(' <span class="sep">·</span> ');
         } else {
           row.classList.remove('active');
           if (countEl) countEl.innerHTML = '<b>' + named + '</b> named YTD';
