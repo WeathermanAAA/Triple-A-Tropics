@@ -19,7 +19,8 @@
 //   {"op":"selectModel","slug":"..."}   -> _selectModel(slug, true)
 //   {"op":"selectDomain","slug":"..."}  -> _selectDomain(slug, true)
 //   {"op":"selectProduct","slug":"..."} -> _selectProduct(slug, true)
-//   {"op":"scrub","gridPos":N}          -> snap-to-rendered for a grid position
+//   {"op":"clickHour","fxx":N}          -> click the F{N} hour-grid button
+//                                          (inert when pending/disabled)
 //   {"op":"clickBadge"}                 -> click the pending-cycle "view" button
 //   {"op":"snapshot"}                   -> just record state
 //
@@ -117,7 +118,7 @@ function getEl(id) {
 [
   "hafs-stage", "hafs-img", "hafs-status", "hafs-empty", "hafs-controls",
   "hafs-cycle-group", "hafs-cycles", "hafs-storm", "hafs-models", "hafs-domains",
-  "hafs-products", "hafs-scrub", "hafs-ticks", "hafs-play", "hafs-step-back",
+  "hafs-products", "hafs-hours", "hafs-play", "hafs-step-back",
   "hafs-step-fwd", "hafs-speed", "hafs-fhour", "hafs-valid", "hafs-meta",
   "hafs-badge", "hafs-pill", "hafs-buffer", "hafs-player", "hafs-caption",
   "hafs-viewer",
@@ -215,15 +216,16 @@ function snapshot(v) {
     fxxGrid: v.fxxGrid.slice(),
     idx: v.idx,
     fxx: v.fxxList.length ? v.fxxList[v.idx] : null,
-    scrubValue: parseInt(getEl("hafs-scrub").value, 10) || 0,
-    scrubMax: getEl("hafs-scrub").max,
     imgSrc: getEl("hafs-img").src,
     fhour: getEl("hafs-fhour").textContent,
     valid: getEl("hafs-valid").textContent,
-    ticks: getEl("hafs-ticks").children.map((seg) => ({
-      lit: seg.classList.contains("lit"),
-      pending: seg.classList.contains("pending"),
-      current: seg.classList.contains("current"),
+    hours: getEl("hafs-hours").children.map((b) => ({
+      fxx: parseInt(b.getAttribute("data-fxx"), 10),
+      label: b.textContent,
+      lit: b.classList.contains("lit"),
+      pending: b.classList.contains("pending"),
+      current: b.classList.contains("current"),
+      disabled: !!b.disabled,
     })),
     cyclePickerShown: getEl("hafs-cycle-group").style.display !== "none",
     cycleButtons: getEl("hafs-cycles").children.map((b) => ({
@@ -276,10 +278,12 @@ function snapshot(v) {
         viewer._selectProduct(a.slug, true);
         await flush();
         break;
-      case "scrub": {
-        const sc = getEl("hafs-scrub");
-        sc.value = a.gridPos;
-        sc._fire("input", {});
+      case "clickHour": {
+        const host = getEl("hafs-hours");
+        const btn = host.children.find(
+          (b) => b.getAttribute("data-fxx") === String(a.fxx));
+        // Mirror the browser: a disabled (pending) button never fires click.
+        if (btn && !btn.disabled) btn._fire("click", {});
         await flush();
         break;
       }

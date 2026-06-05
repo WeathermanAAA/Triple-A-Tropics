@@ -99,26 +99,38 @@
   }
   .hafs-btn:hover { border-color: var(--accent-2); color: var(--accent-2); }
   .hafs-play { min-width: 92px; }
-  /* Scrubber + availability tick strip. The strip sits directly under the
-     range input and shares its track width; lit segments = rendered frames,
-     pending = not yet rendered (progressive load). */
-  .hafs-scrub-wrap { flex: 1 1 220px; min-width: 160px; display: flex; flex-direction: column; gap: 4px; }
-  #hafs-scrub {
-    width: 100%; accent-color: var(--accent-2); cursor: pointer; margin: 0;
+  /* Forecast-hour grid (Pivotal-style): one numbered button per expected
+     3-hourly hour. Lit = rendered + clickable; pending = greyed but visible
+     so the run can be watched filling in (progressive load); current =
+     highlighted. Buttons relight in place as the 45 s poll merges frames. */
+  .hafs-hours {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+    gap: 4px;
+    padding: 0 18px 14px;
+    background: var(--panel);
   }
-  #hafs-scrub:disabled { opacity: 0.4; cursor: default; }
-  .hafs-ticks {
-    display: flex; gap: 1px; height: 5px; width: 100%;
-    border-radius: 3px; overflow: hidden;
+  .hafs-hr {
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 0; font-size: 12px; font-weight: 600;
+    font-variant-numeric: tabular-nums; text-align: center;
+    cursor: pointer; transition: background 0.2s, color 0.2s, opacity 0.2s;
   }
-  .hafs-tick { display: block; height: 100%; background: var(--border); transition: background 0.2s; }
-  .hafs-tick.lit { background: var(--accent-2); }
-  .hafs-tick.pending { background: var(--border); }
-  .hafs-tick.current { box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent); }
-  .hafs-tick.lit.current { background: var(--accent); }
+  .hafs-hr.lit:hover { border-color: var(--accent-2); color: var(--accent-2); }
+  .hafs-hr.pending {
+    /* Single-dimmed (muted color + modest opacity): greyed but still
+       readable, so the run can be watched filling in. */
+    color: var(--muted); background: transparent; opacity: 0.6;
+    cursor: default;
+  }
+  .hafs-hr.current {
+    background: var(--accent-2); color: #06222e;
+    border-color: var(--accent-2); font-weight: 700;
+  }
   .hafs-readout {
     display: flex; flex-direction: column; gap: 2px;
-    min-width: 230px; font-variant-numeric: tabular-nums;
+    min-width: 230px; flex: 1 1 auto; font-variant-numeric: tabular-nums;
   }
   #hafs-fhour { color: var(--accent); font-size: 16px; font-weight: 700; }
   #hafs-valid { color: var(--muted); font-size: 12px; }
@@ -169,6 +181,10 @@
     .hafs-controls { gap: 12px; }
     .hafs-group select { min-width: 150px; }
     .hafs-readout { min-width: 100%; order: -1; }
+    .hafs-hours {
+      grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+      gap: 3px; padding: 0 12px 12px;
+    }
   }
 </style>
 </head>
@@ -193,7 +209,7 @@
 
 <header class="page-head">
   <h1>HAFS Model Plots</h1>
-  <p>Hurricane Analysis and Forecast System guidance for every active storm: mean sea-level pressure (isobars) over either 10 m wind speed (knots) or composite radar reflectivity (dBZ). Pick a storm, switch between <b>HAFS-A</b> and <b>HAFS-B</b>, the storm-following nest (~2 km) or parent domain (~6 km), and the <b>Wind</b> or <b>Reflectivity</b> product, then scrub or play the forecast out to 126 hours.</p>
+  <p>Hurricane Analysis and Forecast System guidance for every active storm: mean sea-level pressure (isobars) over either 10 m wind speed (knots) or composite radar reflectivity (dBZ). Pick a storm, switch between <b>HAFS-A</b> and <b>HAFS-B</b>, the storm-following nest (~2 km) or parent domain (~6 km), and the <b>Wind</b> or <b>Reflectivity</b> product, then play the loop or jump straight to any forecast hour out to 126 hours.</p>
 </header>
 
 <section class="chart-section">
@@ -238,13 +254,6 @@
         <button id="hafs-step-back" class="hafs-btn" type="button" title="Previous hour (←)">◄</button>
         <button id="hafs-play" class="hafs-btn hafs-play" type="button" title="Play / pause (space)">► Play</button>
         <button id="hafs-step-fwd" class="hafs-btn" type="button" title="Next hour (→)">►</button>
-        <div class="hafs-scrub-wrap">
-          <!-- Availability strip: one segment per expected forecast hour, lit
-               once that frame is rendered, greyed while pending. -->
-          <div id="hafs-ticks" class="hafs-ticks" aria-hidden="true"></div>
-          <input id="hafs-scrub" type="range" min="0" max="0" value="0" step="1"
-                 aria-label="Forecast hour">
-        </div>
         <div class="hafs-readout">
           <span id="hafs-fhour">F000</span>
           <span id="hafs-valid"></span>
@@ -253,6 +262,11 @@
           <span>Speed</span><select id="hafs-speed"></select>
         </div>
       </div>
+
+      <!-- Forecast-hour grid: one numbered button per expected hour, lit once
+           that frame is rendered, greyed while pending. -->
+      <div id="hafs-hours" class="hafs-hours" role="group"
+           aria-label="Forecast hour"></div>
 
       <p id="hafs-caption" class="hafs-caption">
         Filled shading: 10 m wind speed (kt), Saffir-Simpson-flavored palette
