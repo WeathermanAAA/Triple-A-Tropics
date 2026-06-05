@@ -574,7 +574,9 @@
     this._highlightHour();
   };
 
-  // Mark the button under the current frame as the active one.
+  // Mark the button under the current frame as the active one. aria-pressed
+  // goes only on the lit (interactive) buttons; pending ones are disabled and
+  // carry no toggle semantics.
   HafsViewer.prototype._highlightHour = function () {
     var host = this.dom.hours;
     if (!host || !this.fxxList.length) return;
@@ -583,7 +585,9 @@
     for (var i = 0; i < btns.length; i++) {
       var on = btns[i].getAttribute('data-fxx') === cur;
       btns[i].classList.toggle('current', on);
-      btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (!btns[i].disabled) {
+        btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
     }
   };
 
@@ -991,11 +995,16 @@
     });
 
     // Keyboard: ←/→ step, space play/pause. Skip when focus is on a form
-    // control (the storm <select> or a button, including the hour grid) so
-    // their native arrow/space behavior still works.
+    // control (the storm <select> or a transport button) so its native
+    // arrow/space behavior wins — EXCEPT the hour-grid buttons: a click
+    // leaves them focused (Chrome/Firefox/Edge), buttons have no native
+    // arrow behavior, and space would just re-click the same hour, so the
+    // "pick an hour, then arrow through frames" path must keep working.
     this.root.addEventListener('keydown', function (e) {
-      var tag = e.target && e.target.tagName;
-      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'BUTTON') return;
+      var t = e.target, tag = t && t.tagName;
+      var hourBtn = tag === 'BUTTON' && t.classList &&
+                    t.classList.contains('hafs-hr');
+      if ((tag === 'SELECT' || tag === 'INPUT' || tag === 'BUTTON') && !hourBtn) return;
       if (e.key === 'ArrowLeft')  { self._pause(); self._step(-1); e.preventDefault(); }
       else if (e.key === 'ArrowRight') { self._pause(); self._step(1); e.preventDefault(); }
       else if (e.key === ' ' || e.key === 'Spacebar') { self._togglePlay(); e.preventDefault(); }

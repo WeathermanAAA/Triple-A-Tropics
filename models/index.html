@@ -119,7 +119,9 @@
   }
   .hafs-hr.lit:hover { border-color: var(--accent-2); color: var(--accent-2); }
   .hafs-hr.pending {
-    color: var(--muted); background: transparent; opacity: 0.45;
+    /* Single-dimmed (muted color + modest opacity): greyed but still
+       readable, so the run can be watched filling in. */
+    color: var(--muted); background: transparent; opacity: 0.6;
     cursor: default;
   }
   .hafs-hr.current {
