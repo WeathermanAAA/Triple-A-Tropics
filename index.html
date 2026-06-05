@@ -588,7 +588,9 @@
 
   // --- Live basin status rows -----------------------------------------
   // For each basin (ATL / EPAC / WPAC) we hydrate two cells:
-  //   1. "count":  either "N active" (pulsing green) or "N named YTD"
+  //   1. "count":  "N active" (pulsing green, designated TCs only),
+  //                "N invest(s)" (pulsing green, when invests are the
+  //                only live systems), or "N named YTD"
   //   2. "season": countdown to season start, live ACE + %-of-normal
   //                 during season, or final rank after season ends.
   //                 WPAC has no official start/end so it always shows
@@ -641,13 +643,22 @@
         var t = res[0], a = res[1];
 
         // Count cell: "active" beats "named" for surfacing live storms.
+        // ACTIVE counts designated TCs only - invests never add to it. A
+        // basin whose only live system is an invest still lights green,
+        // labeled "N INVEST(S)" instead (the per-basin map keeps its red
+        // "L" marker; this is just the strip's vocabulary). Matches the
+        // per-basin sidebar's "X Storms · Y Invests" separation.
         var named = (t && t.header && typeof t.header.named === 'number') ? t.header.named : 0;
-        var activeStorms = (t && Array.isArray(t.storms))
-          ? t.storms.filter(function (s) { return s && s.is_active; })
-          : [];
-        if (activeStorms.length > 0) {
+        var storms = (t && Array.isArray(t.storms)) ? t.storms : [];
+        var activeTCs = storms.filter(function (s) { return s && s.is_active && !s.is_invest; });
+        var activeInvests = storms.filter(function (s) { return s && s.is_active && s.is_invest; });
+        if (activeTCs.length > 0) {
           row.classList.add('active');
-          if (countEl) countEl.innerHTML = '<b>' + activeStorms.length + '</b> active';
+          if (countEl) countEl.innerHTML = '<b>' + activeTCs.length + '</b> active';
+        } else if (activeInvests.length > 0) {
+          row.classList.add('active');
+          if (countEl) countEl.innerHTML = '<b>' + activeInvests.length + '</b> invest' +
+                                           (activeInvests.length === 1 ? '' : 's');
         } else {
           row.classList.remove('active');
           if (countEl) countEl.innerHTML = '<b>' + named + '</b> named YTD';
