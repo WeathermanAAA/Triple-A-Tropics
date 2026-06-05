@@ -203,16 +203,17 @@ class TestFeedAndHeaderGuard(unittest.TestCase):
         self.assertEqual(header["cat5"], 0)
         self.assertEqual(header["total_ace"], 0.0)
 
-    def test_invest_keeps_red_l_marker_on_map(self):
-        # Map presence is untouched: an ACTIVE invest still emits the red
-        # "L" active_marker (the deliberate, test-pinned marker rule) plus
-        # its track + observation features.
+    def test_invest_keeps_red_x_marker_on_map(self):
+        # Map presence is untouched: an ACTIVE invest still emits its
+        # active_marker - the unified red invest X (see
+        # test_marker_type_agreement for the full rule) - plus its track
+        # + observation features. The ACE guard must never HIDE an invest.
         fc = build_global_geojson(self.storms)
         markers = {f["properties"]["storm_id"]: f["properties"]["marker_type"]
                    for f in fc["features"]
                    if f["properties"]["kind"] == "active_marker"}
         inv_sid = self._invest()["sid"]
-        self.assertEqual(markers.get(inv_sid), "L")
+        self.assertEqual(markers.get(inv_sid), "invest_x")
         kinds = {f["properties"]["kind"] for f in fc["features"]
                  if f["properties"].get("storm_id") == inv_sid}
         self.assertIn("track", kinds)

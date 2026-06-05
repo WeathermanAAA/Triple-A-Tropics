@@ -963,13 +963,12 @@ def render_tracks_svg(storms: list[dict], extent,
 
     # Second pass: every invest's red glowing X + atcf_id label, drawn
     # last so it sits on top of any neighboring storm's past markers
-    # (triangles, dots, polygons) regardless of source order.
-    # Active invests are SKIPPED here — render_active_icons paints a
-    # bold red "L" + designation marker over their current position,
-    # which would otherwise stack on top of the X.
+    # (triangles, dots, polygons) regardless of source order. ALL invests
+    # get the X — active or not (NHC convention for invest areas; the
+    # old active-invest "L" from render_active_icons is retired, so one
+    # invest can no longer wear two different icons depending on how
+    # fresh its latest fix is).
     for storm, x, y, p in invest_current_positions:
-        if storm.get("is_active"):
-            continue
         sid = storm.get("sid") or ""
         sname = (storm.get("name") or "UNNAMED").replace('"', '')
         atcf_id = storm.get("atcf_id") or sname
@@ -1026,32 +1025,33 @@ def _fmt_last_fix(iso: str | None) -> str:
 
 def render_active_icons(storms: list[dict], extent,
                         map_w: int = MAP_W, map_h: int = MAP_H) -> str:
-    """For each active storm, place a marker at its most recent position:
-      - TS+ (peak ≥ 34 kt and not flagged as an invest): the spinning,
-        glowing TAT hurricane icon with category label inside.
-      - Active invest (90-99 designation): a bold red "L" + designation
-        ("92W", "AL90") rendered last, overlaying any other markers.
-      - Active designated TD (numbered TC, peak < 34 kt, not an invest):
-        a hollow blue circle + designation/name label below.
+    """For each active NON-INVEST storm, place a marker at its most recent
+    position:
+      - TS+ (peak ≥ 34 kt): the spinning, glowing TAT hurricane icon with
+        category label inside.
+      - Active designated TD (numbered TC, peak < 34 kt): a hollow blue
+        circle + designation/name label below.
 
-    Active invests historically rendered only as a red X via
-    render_tracks_svg's invest path, but that X reads as a track-history
-    marker, not a "warning is in effect right now" marker. The "L"
-    matches NHC's surface-analysis convention for low-pressure systems
-    and tells the reader at a glance that the system is being warned on.
+    Invests are NOT painted here regardless of active state — every
+    invest (90-99) carries the red X + designation from
+    render_tracks_svg's invest_current_positions second pass, the NHC
+    convention for invest areas. (Historically an ACTIVE invest got a
+    bold red "L" from this function instead, which meant two invests
+    could wear two different icons purely on fix freshness/dev-level;
+    the "L" path is retired — nothing non-invest ever used it.)
 
     The blue hollow circle for designated TDs (e.g. Hagupit at TD
     intensity, before/after its TS phase) closes the gap between the
-    spinning TS+ icon and the invest "L" — these systems are
-    operationally numbered tropical cyclones, not invests, and a marker
-    distinct from both reflects their status correctly.
+    spinning TS+ icon and the invest X — these systems are operationally
+    numbered tropical cyclones, not invests, and a marker distinct from
+    both reflects their status correctly.
 
     SYNC: mirrored line-for-line by LIVE_BASIN_JS buildActiveSvg() — the
     live overlay must produce byte-identical markup for the same storms
-    list (tests/test_live_overlay_parity.py). The three-way fork below is
-    the same classification as ace_core.build_global_geojson's
-    marker_type ("L" / "td_circle" / "hurricane"); the JS routes through
-    its markerType() mirror of that fork. Change BOTH."""
+    list (tests/test_live_overlay_parity.py). The fork below is the same
+    classification as ace_core.build_global_geojson's marker_type
+    ("td_circle" / "hurricane"; invests are "invest_x" and skipped here);
+    the JS routes through its markerType() mirror. Change BOTH."""
     project, _ = build_projection(extent, map_w, map_h)
     parts = ['<g class="active-storms">']
     for storm in storms:
@@ -1077,29 +1077,11 @@ def render_active_icons(storms: list[dict], extent,
         title_txt = (f"{disp_name} - Last fix: {last_fix}"
                      if last_fix else disp_name)
         title_el = f'<title>{_xml_escape(title_txt)}</title>' if title_txt else ''
-        # Three-way fork on the marker style:
-        #   * is_invest  → red "L"          (operational invest 90-99)
+        # Two-way fork on the marker style (invests never reach here —
+        # they carry the red X from render_tracks_svg's second pass):
         #   * peak < 34  → blue hollow ○    (designated TD, not yet TS)
         #   * else       → spinning glyph   (TS+ named system)
         if is_invest:
-            atcf_id = storm.get("atcf_id") or storm.get("name") or ""
-            atcf_id = str(atcf_id).replace('"', '').upper()
-            parts.append(
-                f'<g class="active-icon active-invest" data-sid="{sid}" '
-                f'transform="translate({x:.1f},{y:.1f})" '
-                f'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">'
-                f'{title_el}'
-                f'<text text-anchor="middle" dominant-baseline="central" '
-                f'font-size="{ICON_L_PT}" font-weight="900" fill="#ef4444" '
-                f'paint-order="stroke" stroke="rgba(0,0,0,0.55)" '
-                f'stroke-width="2.5" stroke-linejoin="round">L</text>'
-                f'<text x="0" y="22" text-anchor="middle" '
-                f'dominant-baseline="hanging" font-size="{ICON_NAME_PT}" '
-                f'font-weight="800" fill="#ffffff" paint-order="stroke" '
-                f'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" '
-                f'stroke-linejoin="round">{atcf_id}</text>'
-                f'</g>'
-            )
             continue
 
         if peak_kt < 34.0:
@@ -1579,9 +1561,8 @@ ICON_NAME_PT = 16        # storm-name/designation labels (was 12/13 - bigger
 ICON_NAME_X = 28         # name anchor right of the glyph centre
 ICON_NAME_Y = 5
 ICON_TD_R = 14           # hollow-TD ring radius
-ICON_L_PT = 34           # invest "L" glyph
 ICON_HBOX = 68           # hurricane marker viewBox == CSS box (1:1)
-ICON_TDBOX_W, ICON_TDBOX_H = 60, 50   # td/"L" marker viewBox == CSS box
+ICON_TDBOX_W, ICON_TDBOX_H = 60, 50   # td marker viewBox == CSS box
 
 
 def _apply_icon_tokens(html: str) -> str:
@@ -1595,7 +1576,6 @@ def _apply_icon_tokens(html: str) -> str:
         ("__ICON_NAME_X__", ICON_NAME_X),
         ("__ICON_NAME_Y__", ICON_NAME_Y),
         ("__ICON_TD_R__", ICON_TD_R),
-        ("__ICON_L_PT__", ICON_L_PT),
         ("__ICON_HBOX__", ICON_HBOX),
         ("__ICON_TDBOX_W__", ICON_TDBOX_W),
         ("__ICON_TDBOX_H__", ICON_TDBOX_H),
@@ -1724,6 +1704,15 @@ HTML_TEMPLATE = """<!doctype html>
     background-image: linear-gradient(to right, #ffffff 4px,
       transparent 4px, transparent 7px); background-size: 7px 100%;
     background-repeat: repeat-x; opacity: 0.7; }}
+  /* Red-X glyph for the invest-position legend row. Mirrors the
+     current-position X every invest carries on the map (#ff2a2a,
+     round caps) — two crossed bars built from pseudo-elements. */
+  .legend .investx {{ width: 10px; height: 10px; position: relative; }}
+  .legend .investx::before, .legend .investx::after {{ content: "";
+    position: absolute; left: -1px; right: -1px; top: 4px; height: 2.4px;
+    border-radius: 2px; background: #ff2a2a; }}
+  .legend .investx::before {{ transform: rotate(45deg); }}
+  .legend .investx::after {{ transform: rotate(-45deg); }}
   .legend .sep {{ height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }}
 
@@ -1868,6 +1857,7 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
+        <div class="item"><span class="investx"></span>Invest position</div>
       </div>
       {zoom_hint_html}
     </div>
@@ -2046,24 +2036,22 @@ LIVE_BASIN_JS = r"""
   // ---- Marker classification ----------------------------------------------
 
   function markerType(storm) {
-    // THE single client-side source of the four-way active/invest marker
-    // classification. Mirrors ace_core.build_global_geojson's marker_type
-    // fork (ace_core/ace_core/__init__.py, the "Four flavors" block):
-    //   active + invest        -> "L"
+    // THE single client-side source of the marker classification.
+    // Mirrors ace_core.build_global_geojson's marker_type fork
+    // (ace_core/ace_core/__init__.py, the "Three flavors" block):
+    //   invest (active or not) -> "invest_x"   (NHC invest-area X)
     //   active + peak < 34 kt  -> "td_circle"
     //   active + peak >= 34 kt -> "hurricane"
-    //   inactive + invest      -> "invest_x"
     //   otherwise              -> null (no current-position marker)
+    // (The old active-invest "L" is retired - every invest wears the X.)
     // tests/test_marker_type_agreement.py asserts the two implementations
-    // agree on all four cases — keep them in lockstep.
-    var isInvest = !!storm.is_invest;
+    // agree on every case - keep them in lockstep.
+    if (storm.is_invest) return "invest_x";
     if (storm.is_active) {
       var peak = storm.peak_wind_kt != null ? storm.peak_wind_kt : 0.0;
-      if (isInvest) return "L";
       if (peak < 34.0) return "td_circle";
       return "hurricane";
     }
-    if (isInvest) return "invest_x";
     return null;
   }
 
@@ -2072,8 +2060,8 @@ LIVE_BASIN_JS = r"""
   function buildTracksSvg(storms) {
     // SYNC: mirrors render_tracks_svg() byte-for-byte (parity-tested).
     // Same two-pass structure: per-storm polyline, then invest triangles
-    // OR phase dots, then every non-active invest's red X + label drawn
-    // last so it sits on top.
+    // OR phase dots, then EVERY invest's red X + label (active or not)
+    // drawn last so it sits on top.
     var parts = ['<g class="tracks">'];
     var investCurrent = [];   // mirrors invest_current_positions
     for (var si = 0; si < storms.length; si++) {
@@ -2185,10 +2173,9 @@ LIVE_BASIN_JS = r"""
 
     for (var m = 0; m < investCurrent.length; m++) {
       var st = investCurrent[m][0];
-      // Mirrors `if storm.get("is_active"): continue` — an ACTIVE invest
-      // gets the bold red "L" from buildActiveSvg instead of the X.
-      // (Deferred entries are always invests, so this is exactly the
-      // markerType() invest_x case.)
+      // Every deferred entry is an invest and every invest is
+      // markerType() "invest_x" (active or not) — the gate is purely
+      // defensive and mirrors the Python pass drawing ALL invests.
       if (markerType(st) !== "invest_x") continue;
       var ix = investCurrent[m][1], iy = investCurrent[m][2];
       var ip = investCurrent[m][3];
@@ -2222,8 +2209,9 @@ LIVE_BASIN_JS = r"""
 
   function buildActiveSvg(storms) {
     // SYNC: mirrors render_active_icons() byte-for-byte (parity-tested).
-    // Branches follow markerType(): "L" / "td_circle" / "hurricane";
-    // inactive storms (null / "invest_x") are skipped here.
+    // Branches follow markerType(): "td_circle" / "hurricane"; null and
+    // "invest_x" (every invest, active or not) are skipped here — the
+    // X comes from buildTracksSvg's second pass.
     var parts = ['<g class="active-storms">'];
     for (var si = 0; si < storms.length; si++) {
       var storm = storms[si];
@@ -2243,26 +2231,6 @@ LIVE_BASIN_JS = r"""
       var lastFix = fmtLastFix(last.t);
       var titleTxt = lastFix ? (dispName + " - Last fix: " + lastFix) : dispName;
       var titleEl = titleTxt ? "<title>" + escapeXml(titleTxt) + "</title>" : "";
-
-      if (mt === "L") {
-        var atcfIdU = String(storm.atcf_id || storm.name || "")
-          .replace(/"/g, "").toUpperCase();
-        parts.push('<g class="active-icon active-invest" data-sid="' + sid + '" ' +
-                   'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
-                   'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">' +
-                   titleEl +
-                   '<text text-anchor="middle" dominant-baseline="central" ' +
-                   'font-size="__ICON_L_PT__" font-weight="900" fill="#ef4444" ' +
-                   'paint-order="stroke" stroke="rgba(0,0,0,0.55)" ' +
-                   'stroke-width="2.5" stroke-linejoin="round">L</text>' +
-                   '<text x="0" y="22" text-anchor="middle" ' +
-                   'dominant-baseline="hanging" font-size="__ICON_NAME_PT__" ' +
-                   'font-weight="800" fill="#ffffff" paint-order="stroke" ' +
-                   'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" ' +
-                   'stroke-linejoin="round">' + atcfIdU + '</text>' +
-                   '</g>');
-        continue;
-      }
 
       if (mt === "td_circle") {
         var labelU = String(storm.name || storm.atcf_id || "")
@@ -2580,6 +2548,14 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     background-image: linear-gradient(to right, #ffffff 4px,
       transparent 4px, transparent 7px); background-size: 7px 100%;
     background-repeat: repeat-x; opacity: 0.7; }
+  /* Red-X glyph for the invest-position legend row — mirrors the
+     current-position X every invest carries (#ff2a2a, round caps). */
+  .legend .investx { width: 10px; height: 10px; position: relative; }
+  .legend .investx::before, .legend .investx::after { content: "";
+    position: absolute; left: -1px; right: -1px; top: 4px; height: 2.4px;
+    border-radius: 2px; background: #ff2a2a; }
+  .legend .investx::before { transform: rotate(45deg); }
+  .legend .investx::after { transform: rotate(-45deg); }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -2634,13 +2610,13 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
      and red marker appearance survive without a WebGL rebuild.
-     Four flavours match the per-basin SVG renderer:
-       * .invest-x-marker   — recent inactive invest (small red glowing X
-                              with red side-label). Per-basin reference:
-                              render_tracks_svg invest_current_positions.
-       * .active-l          — active invest (big red L + white
-                              designation below). Per-basin reference:
-                              render_active_icons is_invest branch.
+     Three flavours match the per-basin SVG renderer:
+       * .invest-x-marker   — EVERY recent invest, active or not (small
+                              red glowing X with red side-label, the NHC
+                              invest-area convention). Per-basin
+                              reference: render_tracks_svg
+                              invest_current_positions. (The old
+                              active-invest big-L marker is retired.)
        * .active-td         — active designated TD that's not an invest
                               (hollow blue circle + white designation
                               below). Per-basin reference:
@@ -2672,21 +2648,6 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
   .active-marker .hurricane-name { fill: #f1f7fd; font-size: __ICON_NAME_PT__px;
     font-weight: 700; paint-order: stroke;
     stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
-
-  /* Active invest "L" — text styling lifted verbatim from
-     render_active_icons (font-size 34, weight 900, fill #ef4444, dark
-     stroke 2.5) and label (font-size 13, weight 800, fill #ffffff,
-     stroke 2.5). The container is sized to match that SVG group's
-     bounding box so the marker reads at the same physical size as the
-     per-basin version. */
-  .active-marker.active-l { width: __ICON_TDBOX_W__px; height: __ICON_TDBOX_H__px;
-    filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
-  .active-marker .l-glyph { font-size: __ICON_L_PT__px; font-weight: 900;
-    fill: #ef4444; paint-order: stroke;
-    stroke: rgba(0,0,0,0.55); stroke-width: 2.5; stroke-linejoin: round; }
-  .active-marker .l-label { font-size: __ICON_NAME_PT__px; font-weight: 800;
-    fill: #ffffff; paint-order: stroke;
-    stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
   /* Active designated-TD circle — a chunky bright-cyan ring (TAT
      accent-2 #5dd3ff) wrapped in a white outer halo, hollow centre, with
@@ -2753,6 +2714,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
+        <div class="item"><span class="investx"></span>Invest position</div>
       </div>
       <div class="zoom-hint">Drag to pan &middot; Scroll to zoom &middot; Double-click to reset</div>
       <div class="brand-wm">@WeathermanAAA_</div>
@@ -3141,12 +3103,15 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       el.className = "active-marker";
       var designation = String(props.designation || props.name || "").toUpperCase();
 
-      if (props.marker_type === "invest_x") {
-        // Recent invest, NOT operationally active. Per-basin's
-        // render_tracks_svg invest_current_positions emits a small red
-        // glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at stroke
-        // #ff2a2a / 2.4 width, with a red invest-label to the right
-        // (offset +11 +4 from the X centre). Replicate verbatim.
+      if (props.marker_type === "invest_x" || props.marker_type === "L") {
+        // EVERY recent invest, active or not (the NHC invest-area X).
+        // Per-basin's render_tracks_svg invest_current_positions emits a
+        // small red glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at
+        // stroke #ff2a2a / 2.4 width, with a red invest-label to the
+        // right (offset +11 +4 from the X centre). Replicate verbatim.
+        // LEGACY: "L" was the old active-invest type; a geojson written
+        // by a pre-0.4.0 ace_core (poller repin gap, cached object)
+        // still carries it — render it as the unified X.
         el.classList.add("invest-x-marker");
         var fid = "invest-red-glow-" + (++investGlowSeq);
         // Anchor of the marker is the X center; the SVG's viewBox is
@@ -3174,26 +3139,12 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
             '<text class="invest-label" x="11" y="4" ' +
               'text-anchor="start">' + escapeHtml(designation) + '</text>' +
           '</svg>';
-      } else if (props.marker_type === "L") {
-        // Active invest (90-99 designation). Per-basin's
-        // render_active_icons emits a bold red "L" (font-size 34, weight
-        // 900, fill #ef4444, dark stroke 2.5) with a white designation
-        // below (size 13, weight 800, dark stroke 2.5).
-        el.classList.add("active-l");
-        el.innerHTML =
-          '<svg viewBox="-30 -22 __ICON_TDBOX_W__ __ICON_TDBOX_H__" xmlns="http://www.w3.org/2000/svg">' +
-            '<text class="l-glyph" x="0" y="0" ' +
-              'text-anchor="middle" dominant-baseline="central">L</text>' +
-            '<text class="l-label" x="0" y="22" ' +
-              'text-anchor="middle" dominant-baseline="hanging">' +
-              escapeHtml(designation) + '</text>' +
-          '</svg>';
       } else if (props.marker_type === "td_circle") {
         // Active designated TD that's not an invest (e.g. Hagupit at
         // TD strength). Per-basin's render_active_icons emits a hollow
         // blue circle (r=12, stroke 2.5, no fill) + white name/
-        // designation label below — a third tier between the spinning
-        // TS+ icon and the invest "L" so a numbered TD reads as an
+        // designation label below — a tier between the spinning TS+
+        // icon and the invest X so a numbered TD reads as an
         // operational TC rather than an invest.
         el.classList.add("active-td");
         el.innerHTML =
