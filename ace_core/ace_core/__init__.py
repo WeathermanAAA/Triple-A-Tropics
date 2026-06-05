@@ -1054,9 +1054,10 @@ def build_global_geojson(storms: list[dict]) -> dict:
         pressure, time, and SSHWS class. The MapLibre `circle` layer
         styles these with the TAT palette.
       * "active_marker" — one Point per active storm/invest, carrying
-        marker_type ("hurricane" for spinning icon, "L" for red invest
-        label). Rendered as HTML markers, not GL layers, so existing
-        spin animations and label layouts work without WebGL plumbing.
+        marker_type ("hurricane" for the spinning icon, "td_circle" for
+        a designated TD, "invest_x" for EVERY invest's red X). Rendered
+        as HTML markers, not GL layers, so existing spin animations and
+        label layouts work without WebGL plumbing.
     """
     features: list[dict] = []
     for storm in storms:
@@ -1118,20 +1119,21 @@ def build_global_geojson(storms: list[dict]) -> dict:
             })
 
         # Current-position marker — one Point at the latest position.
-        # Four flavors, matching the per-basin SVG convention exactly:
-        #   * "invest_x": is_invest AND not is_active. Small red glowing X
-        #     with a red designation label to the right. Per-basin emits
-        #     this from render_tracks_svg's invest_current_positions
-        #     second pass.
-        #   * "L": is_active AND is_invest. Big bold red "L" + white
-        #     designation below. Per-basin emits this from
-        #     render_active_icons' is_invest branch.
+        # Three flavors, matching the per-basin SVG convention exactly:
+        #   * "invest_x": is_invest, ACTIVE OR NOT. Small red glowing X
+        #     with a red designation label to the right — the NHC
+        #     convention for invest areas. One invest = one marker,
+        #     regardless of how its latest fix happens to be coded (the
+        #     old fork split active invests off to a big red "L", so two
+        #     invests could wear two different icons purely on fix
+        #     freshness/dev-level; the "L" path is retired — nothing
+        #     non-invest ever used it). Per-basin emits this from
+        #     render_tracks_svg's invest_current_positions second pass.
         #   * "td_circle": is_active AND peak < 34 kt AND NOT is_invest.
         #     Hollow blue circle + white name/designation label below —
         #     the system is operationally a numbered TD (e.g. Hagupit at
-        #     TD strength), not an invest, so the red "L" would mislabel
-        #     it. Per-basin emits this from render_active_icons'
-        #     peak < 34 branch.
+        #     TD strength), not an invest. Per-basin emits this from
+        #     render_active_icons' peak < 34 branch.
         #   * "hurricane": is_active AND peak >= 34 kt AND NOT is_invest.
         #     Spinning hurricane glyph + name. Per-basin emits this from
         #     render_active_icons' default branch.
@@ -1139,16 +1141,14 @@ def build_global_geojson(storms: list[dict]) -> dict:
         # loop picks them up uniformly; marker_type drives the rendered
         # shape.
         marker_type = None
-        if is_active:
+        if is_invest:
+            marker_type = "invest_x"
+        elif is_active:
             peak_for_test = peak_kt if peak_kt is not None else 0.0
-            if is_invest:
-                marker_type = "L"
-            elif peak_for_test < 34.0:
+            if peak_for_test < 34.0:
                 marker_type = "td_circle"
             else:
                 marker_type = "hurricane"
-        elif is_invest:
-            marker_type = "invest_x"
         if marker_type and points:
             last = points[-1]
             current_kt = last.get("wind_kt")
