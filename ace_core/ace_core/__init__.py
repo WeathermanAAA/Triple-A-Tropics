@@ -32,6 +32,7 @@ import it. Neither recomputes ACE on its own:
 Public surface used by the generators:
     ACE_NATURES, WIND_PREFERENCE, STATUS_TO_NATURE, SIX_HOURLY, ACE_DECIMALS
     best_wind(row, basin)
+    storm_is_invest(points)                          # ATCF 90-99 invest gate
     storm_ace(points, basin, provisional=True)      # rounded per-storm ACE
     season_ace(storm_aces)                           # sum of rounded per-storm
     canonical_peak_wind(points)                      # one peak-wind definition
@@ -170,11 +171,38 @@ def fix_ace_eligible(time, wind_kt, nature, basin: str,
     return nature_eligible(nature, basin, provisional)
 
 
+def storm_is_invest(points: Iterable[dict]) -> bool:
+    """True if any fix carries an ATCF invest storm number (90-99 by the
+    JTWC/NHC convention; ``parse_bdeck`` sets ``storm_num`` on live rows,
+    IBTrACS rows have none/NaN). The ONE invest definition, shared by the
+    ACE invest guard below and the tracks-feed assembly
+    (``merge_and_extract_storms``)."""
+    for p in points:
+        n = p.get("storm_num")
+        if n is None or _is_nan(n):
+            continue
+        if int(n) >= 90:
+            return True
+    return False
+
+
 def storm_ace(points: Iterable[dict], basin: str,
               provisional: bool = True) -> float:
     """The ACE of ONE storm: sum of eligible 6-hourly fix increments, rounded by
     the single policy. ``points`` is an iterable of fix dicts carrying ``time``,
-    ``wind_kt`` and an ACE nature (``ace_nature`` or ``nature``)."""
+    ``wind_kt`` and an ACE nature (``ace_nature`` or ``nature``).
+
+    INVEST GUARD (by construction, not circumstance): an ATCF invest (storm
+    number 90-99) NEVER accrues ACE, regardless of wind or mapped nature.
+    Operationally an invest is a pre-genesis AREA, not a designated TC; no
+    agency counts one toward ACE or the named tally even when a b-deck fix
+    reaches 34 kt with a tropical dev-level (a TD-coded 91W maps to nature
+    "TS" and would otherwise pass the nature gate). Typical DB/LO-coded
+    invests were already blocked by the nature gate - this makes the rule
+    explicit for tropical-coded ones too."""
+    points = list(points)
+    if storm_is_invest(points):
+        return round_ace(0.0)
     total = 0.0
     for p in points:
         t, w, nat = _unpack(p)
@@ -585,6 +613,10 @@ def eligible_points_from_canon(canon: pd.DataFrame, basin_cfg: dict,
     short = basin_cfg["short"]
     rows = []
     for r in canon.to_dict("records"):
+        # Invest fixes (ATCF 90-99) never enter the ACE curve - same rule
+        # as storm_ace's invest guard, applied at the by-DOY row level.
+        if storm_is_invest((r,)):
+            continue
         t = r["time"]
         w = r["wind_kt"]
         nat = r.get("ace_nature", r.get("nature"))
@@ -614,6 +646,11 @@ def current_year_storms(canon: pd.DataFrame, basin_cfg: dict,
     out: list[dict] = []
     for _sid, group in canon.groupby("SID", sort=False):
         pts = group.sort_values("time").to_dict("records")
+        # Invests never appear in the season's ACE storm list. storm_ace
+        # would return 0.0 for them anyway (invest guard) - the explicit
+        # skip keeps the rule visible rather than riding the <=0 drop.
+        if storm_is_invest(pts):
+            continue
         ace_total = storm_ace(pts, short)
         if ace_total <= 0:
             continue
@@ -866,7 +903,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 if p.get("storm_num") is not None
                 and not (isinstance(p["storm_num"], float)
                          and math.isnan(p["storm_num"]))]
-        is_invest = bool(nums) and any(int(n) >= 90 for n in nums)
+        is_invest = storm_is_invest(points)
         # Recent invest = invest with a fresh observation. JTWC/NHC cycle
         # 90-99 numbers across the season, so without this filter the
         # card grid accumulates ~10 stale invests by mid-season (most of
@@ -935,13 +972,19 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
 
 
 def compute_header_stats(storms: list[dict]) -> dict:
-    named = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 1)  # TS+
-    cat1plus = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 2)  # C1+
-    cat3plus = sum(1 for s in storms if _sshs_rank(s["max_category"]) >= 4)  # C3+
-    cat5 = sum(1 for s in storms if s["max_category"] == "C5")
+    # Designated TCs only - invests (ATCF 90-99, is_invest) never count
+    # toward the named/category tallies or the season ACE, even if a fix
+    # reached TS strength while still invest-numbered. Their per-storm ace
+    # is already 0.0 by construction (storm_ace's invest guard); filtering
+    # here makes the COUNT rule just as explicit.
+    tcs = [s for s in storms if not s.get("is_invest")]
+    named = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 1)  # TS+
+    cat1plus = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 2)  # C1+
+    cat3plus = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 4)  # C3+
+    cat5 = sum(1 for s in tcs if s["max_category"] == "C5")
     # Season ACE via the single authority: sum of the (already rounded) per-storm
     # ACE values, so it equals the ACE feed's season ACE exactly.
-    total_ace = season_ace([s["ace"] for s in storms])
+    total_ace = season_ace([s["ace"] for s in tcs])
     return {
         "named": named,
         "cat1plus": cat1plus,
