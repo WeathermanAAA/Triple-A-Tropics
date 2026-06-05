@@ -72,8 +72,9 @@ def make_fixture_storms(extent) -> list[dict]:
                 _pt("2026-06-02T00:00:00", A(0.38), L(0.52), 50.0, 995.0, "TS", "TS"),
             ],
         },
-        # 2: ACTIVE invest -> dashed line, white past triangles, deferred
-        #    current SKIPPED in the second pass, bold red "L" icon.
+        # 2: ACTIVE invest -> dashed line, white past triangles, current
+        #    position drawn as the red X in the second pass (active or
+        #    not - the unified invest marker), NOTHING in active icons.
         {
             "sid": "TEST_902", "name": "90X", "atcf_id": "90x",
             "is_active": True, "is_invest": True,

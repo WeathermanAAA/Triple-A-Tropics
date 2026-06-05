@@ -1,14 +1,21 @@
-"""The 4-way active/invest marker classification exists twice on purpose:
+"""The marker classification exists twice on purpose:
 
   * server: ace_core.build_global_geojson's marker_type fork (drives the
     global MapLibre map's active markers), and
   * client: LIVE_BASIN_JS markerType() (drives the per-basin live
     overlay's active icons + invest X routing).
 
-This test asserts they agree on all four marker cases (plus the
-no-marker case and the None-peak edge) so the two implementations cannot
-drift silently. If this fails, ace_core's fork and the JS mirror were
-edited out of lockstep — fix BOTH.
+This test asserts they agree on every marker case (plus the no-marker
+case and the None-peak edge) so the two implementations cannot drift
+silently. If this fails, ace_core's fork and the JS mirror were edited
+out of lockstep — fix BOTH.
+
+THE INVEST RULE (unified 2026-06-05): an invest (ATCF 90-99) is
+"invest_x" — the red NHC invest-area X — REGARDLESS of active state.
+The old fork gave an ACTIVE invest a big red "L" instead, so two invests
+could wear two different icons purely on fix freshness/dev-level (the
+91W-L vs 91E-X inconsistency). TestEveryInvestGetsTheX pins the rule
+through the REAL feed pipeline for the whole invest number range.
 """
 from __future__ import annotations
 
@@ -43,11 +50,13 @@ def _storm(sid, *, is_active, is_invest, peak_wind_kt):
     }
 
 
-# (storm, expected marker_type) — expectations follow the "Four flavors"
-# block in ace_core/ace_core/__init__.py.
+# (storm, expected marker_type) — expectations follow the "Three flavors"
+# block in ace_core/ace_core/__init__.py: invests are invest_x ALWAYS.
 CASES = [
     (_storm("ACTIVE_INVEST", is_active=True, is_invest=True,
-            peak_wind_kt=25.0), "L"),
+            peak_wind_kt=25.0), "invest_x"),
+    (_storm("ACTIVE_STRONG_INVEST", is_active=True, is_invest=True,
+            peak_wind_kt=40.0), "invest_x"),
     (_storm("ACTIVE_TD", is_active=True, is_invest=False,
             peak_wind_kt=30.0), "td_circle"),
     (_storm("ACTIVE_TS", is_active=True, is_invest=False,
@@ -67,6 +76,52 @@ def ace_core_marker_type(storm: dict):
     markers = [f for f in fc["features"]
                if f["properties"]["kind"] == "active_marker"]
     return markers[0]["properties"]["marker_type"] if markers else None
+
+
+class TestEveryInvestGetsTheX(unittest.TestCase):
+    """The user-facing rule, pinned through the REAL pipeline: build live
+    rows for EVERY invest storm number (90-99), once with a fresh
+    tropical-coded fix (is_active True - the old "L" case) and once with
+    a stale fix (is_active False), run merge_and_extract_storms ->
+    build_global_geojson, and assert the marker is invest_x every time.
+    A regression that re-splits invests by active state fails 10/20 of
+    these immediately."""
+
+    def _rows(self, num, *, active):
+        """Two fresh 6-hourly fixes. active=True -> tropical-coded with
+        wind (the 91W shape, old "L" case); active=False -> DB/LO-coded
+        disturbance nature (the 91E shape: recent_invest, NOT is_active,
+        always the X case)."""
+        import datetime as dt
+        now = dt.datetime.utcnow()
+        anchor = now.replace(hour=(now.hour // 6) * 6, minute=0,
+                             second=0, microsecond=0)
+        nature = "TS" if active else "DS"
+        return [{
+            "SID": f"JTWC_WP{num}2026", "NAME": "INVEST", "season": 2026,
+            "time": anchor - dt.timedelta(hours=6 * (1 - i)),
+            "lat": 15.0 + i, "lon": 130.0 + i,
+            "wind_kt": 25.0, "pressure_mb": 1004.0,
+            "nature": nature, "ace_nature": nature,
+            "source": "live-JTWC", "storm_num": num,
+        } for i in range(2)]
+
+    def test_invest_range_always_invest_x(self):
+        import pandas as pd
+        from ace_core import merge_and_extract_storms
+        cfg = {"short": "wp", "agency_name": "JTWC", "invest_letter": "W"}
+        for num in range(90, 100):
+            for active in (True, False):
+                with self.subTest(storm_num=num, active=active):
+                    storms = merge_and_extract_storms(
+                        pd.DataFrame(),
+                        pd.DataFrame(self._rows(num, active=active)), cfg)
+                    self.assertTrue(storms, f"{num} missing from feed")
+                    self.assertTrue(storms[0]["is_invest"])
+                    self.assertEqual(storms[0]["is_active"], active)
+                    self.assertEqual(ace_core_marker_type(storms[0]),
+                                     "invest_x",
+                                     f"{num}W (active={active}) must wear the X")
 
 
 @unittest.skipIf(NODE is None, "node not on PATH")
