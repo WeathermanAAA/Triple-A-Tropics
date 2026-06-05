@@ -2,12 +2,15 @@
 script in index.html), driven through tests/home_status_harness.cjs under
 node with a minimal DOM/fetch shim. First coverage for this script.
 
-Pins the invest-aware count-cell vocabulary:
-  * >=1 active designated TC      -> "N active" + green dot (invests never
-                                     add to N, even when also present)
-  * 0 active TCs, >=1 active invest -> "N invest(s)" + green dot
-  * nothing active                -> "N named YTD", dot off
-  * feed missing                  -> fail-soft "0 named YTD", dot off
+Pins the invest-aware count-cell vocabulary - two INDEPENDENT segments:
+  * "N active"                  designated TCs only (invests never add to N)
+  * "M invest(s)"               every invest the feed lists (the assembly
+                                already drops stale ones, so feed presence
+                                == current; active state is irrelevant)
+  * "N active · M invests"      when a basin has both
+  * "N named YTD" + dot off     when neither
+  * feed missing                fail-soft "0 named YTD", dot off
+The dot lights green for ANY live system.
 """
 from __future__ import annotations
 
@@ -69,9 +72,22 @@ class TestHomeStatusStrip(unittest.TestCase):
         self.assertTrue(out["wp"]["active"])
         self.assertEqual(out["wp"]["count"], "<b>2</b> invests")
 
-    def test_active_tc_wins_and_invests_dont_add(self):
-        # The EPAC-with-Amanda case (+ a hypothetical invest): the count is
-        # designated TCs only, invests never inflate it.
+    def test_both_segments_shown_independently(self):
+        # The EPAC-with-Amanda-and-91E case: an invest never vanishes
+        # behind an active TC - both segments render, invests never
+        # inflate the ACTIVE count.
+        out = run_strip({
+            "ep_tracks_data.json": tracks(1, [
+                storm(active=True, invest=False),
+                storm(active=False, invest=True),
+            ]),
+        })
+        self.assertTrue(out["ep"]["active"])
+        self.assertEqual(out["ep"]["count"],
+                         '<b>1</b> active <span class="sep">·</span> <b>1</b> invest')
+
+    def test_active_invest_also_composes(self):
+        # Same composition when the invest happens to be active itself.
         out = run_strip({
             "ep_tracks_data.json": tracks(1, [
                 storm(active=True, invest=False),
@@ -79,18 +95,20 @@ class TestHomeStatusStrip(unittest.TestCase):
             ]),
         })
         self.assertTrue(out["ep"]["active"])
-        self.assertEqual(out["ep"]["count"], "<b>1</b> active")
+        self.assertEqual(out["ep"]["count"],
+                         '<b>1</b> active <span class="sep">·</span> <b>1</b> invest')
 
-    def test_inactive_invest_does_not_light(self):
-        # A stale invest_x (recent_invest card, not active) keeps the named
-        # fallback + dot off.
+    def test_inactive_invest_lights_alone(self):
+        # A feed-listed invest counts even when not is_active (the feed
+        # already drops stale invests, so presence == current) - the
+        # basin lights and labels it instead of falling back to named.
         out = run_strip({
             "al_tracks_data.json": tracks(3, [
                 storm(active=False, invest=True),
             ]),
         })
-        self.assertFalse(out["al"]["active"])
-        self.assertEqual(out["al"]["count"], "<b>3</b> named YTD")
+        self.assertTrue(out["al"]["active"])
+        self.assertEqual(out["al"]["count"], "<b>1</b> invest")
 
     def test_quiet_basin_named_ytd(self):
         out = run_strip({
