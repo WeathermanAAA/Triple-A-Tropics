@@ -218,6 +218,36 @@ class TestHafsViewer(unittest.TestCase):
         current = [h["fxx"] for h in picked["hours"] if h["current"]]
         self.assertEqual(current, [18])
 
+    def test_domain_switch_snaps_pending_hour_to_nearest_lower(self):
+        # Pins the snap-to-nearest-rendered (prefer LOWER) contract of
+        # _renderedIndexNear, which still runs whenever a selection switch
+        # finds the held hour pending in the new fxx list. The nest has F009
+        # rendered; the parent only [0, 6, 12]. Keeping the hour across the
+        # domain switch finds F009 pending -> snaps DOWN to F006. A
+        # prefer-higher regression would land on F012 instead.
+        nest_hours = [0, 3, 6, 9, 12, 15, 18]
+        parent_hours = [0, 6, 12]
+        st = storm(hours=nest_hours)
+        st["frames"]["hafsa"]["parent"] = {"mslp_wind": parent_hours,
+                                           "refl": parent_hours}
+        m = v2_manifest([cycle_entry("2026060418", nest_hours,
+                                     in_progress=True, storms=[st])])
+        steps = run_plan([m], actions=[
+            {"op": "clickHour", "fxx": 9},
+            {"op": "selectDomain", "slug": "parent"},
+        ])
+        self.assertEqual(steps[1]["fxx"], 9)
+        snapped = steps[2]
+        self.assertEqual(snapped["domain"], "parent")
+        self.assertEqual(snapped["fxx"], 6)      # prefer-lower, NOT 12
+        self.assertEqual(snapped["idx"], 1)
+        self.assertEqual([h["fxx"] for h in snapped["hours"] if h["current"]],
+                         [6])
+        # the parent grid still spans the full expected hours; only the
+        # parent's rendered set is lit.
+        self.assertEqual([h["fxx"] for h in snapped["hours"] if h["lit"]],
+                         parent_hours)
+
     # 4 ---------------------------------------------------------------------
     def test_diff_merge_grows_grid_without_resetting_selection(self):
         rendered1 = [0, 3, 6, 9]
