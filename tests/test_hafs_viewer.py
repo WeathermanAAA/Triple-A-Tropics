@@ -4,13 +4,14 @@ minimal DOM shim. No network, no browser.
 
 Covers the manifest-v2 contract (/tmp/manifest_v2_contract.md):
   1. legacy manifest (no cycles[]) -> old behavior: fxxList = rendered list,
-     URL via path_template + ?v= bust, scrubber spans rendered hours only.
+     URL via path_template + ?v= bust, hour grid spans rendered hours only.
   2. v2 manifest -> cycle-picker data; default = newest-with-frames;
      pre-announce entry skipped for the default but flagged.
-  3. expected-grid construction (0..fxx_end step fxx_step) + snap-to-nearest-
-     rendered (prefer lower) on a pending scrub.
-  4. diff-merge: a second manifest with MORE fxx for the current selection grows
-     the lit ticks WITHOUT resetting cycle/storm/model/domain/product/hour.
+  3. expected-grid construction (0..fxx_end step fxx_step): rendered hours are
+     lit + clickable buttons, pending hours greyed + disabled (inert clicks).
+  4. diff-merge: a second manifest with MORE fxx for the current selection
+     relights the hour buttons WITHOUT resetting
+     cycle/storm/model/domain/product/hour.
   5. URL building in cycles-mode: {cycle} substituted, NO ?v= cache-bust.
   6. a NEW cycle appearing mid-session -> badge state set, selection NOT
      switched; clicking the badge switches.
@@ -131,8 +132,11 @@ class TestHafsViewer(unittest.TestCase):
         # fxxList == the rendered list; grid degenerates to it (no fxx_end).
         self.assertEqual(s["fxxList"], hrs)
         self.assertEqual(s["fxxGrid"], hrs)
-        # scrubber spans rendered hours only (max = len-1).
-        self.assertEqual(int(s["scrubMax"]), len(hrs) - 1)
+        # hour grid spans rendered hours only - every button lit + enabled,
+        # zero-padded labels.
+        self.assertEqual([h["fxx"] for h in s["hours"]], hrs)
+        self.assertTrue(all(h["lit"] and not h["disabled"] for h in s["hours"]))
+        self.assertEqual(s["hours"][0]["label"], "000")
         # default selection: HAFS-A / storm / mslp_wind, F000.
         self.assertEqual(s["model"], "hafsa")
         self.assertEqual(s["domain"], "storm")
@@ -181,7 +185,7 @@ class TestHafsViewer(unittest.TestCase):
         self.assertIn("F006/F126", s["pillText"])
 
     # 3 ---------------------------------------------------------------------
-    def test_expected_grid_and_snap_to_nearest_rendered(self):
+    def test_expected_grid_lit_clickable_pending_disabled(self):
         # rendered through F018 only; grid runs the full 0..126 step 3.
         rendered = [0, 3, 6, 9, 12, 15, 18]
         c = cycle_entry("2026060418", rendered, in_progress=True)
@@ -192,22 +196,57 @@ class TestHafsViewer(unittest.TestCase):
         s = steps[0]
         self.assertEqual(s["fxxGrid"], full_grid)
         self.assertEqual(s["fxxList"], rendered)
-        # scrubber spans the full grid.
-        self.assertEqual(int(s["scrubMax"]), len(full_grid) - 1)
-        # ticks: first 7 lit, rest pending.
-        lit = [i for i, t in enumerate(s["ticks"]) if t["lit"]]
-        pending = [i for i, t in enumerate(s["ticks"]) if t["pending"]]
+        # hour buttons span the full grid, one per expected hour.
+        self.assertEqual([h["fxx"] for h in s["hours"]], full_grid)
+        # first 7 lit + clickable, rest pending + disabled (visible but inert).
+        lit = [i for i, h in enumerate(s["hours"]) if h["lit"]]
+        pending = [i for i, h in enumerate(s["hours"]) if h["pending"]]
         self.assertEqual(lit, list(range(7)))
         self.assertEqual(pending, list(range(7, len(full_grid))))
+        self.assertTrue(all(not s["hours"][i]["disabled"] for i in lit))
+        self.assertTrue(all(s["hours"][i]["disabled"] for i in pending))
 
-        # Scrub to grid pos 10 (F030, pending) -> snap to nearest rendered
-        # preferring lower => F018 (rendered idx 6).
-        steps2 = run_plan([m], actions=[{"op": "scrub", "gridPos": 10}])
-        snapped = steps2[1]
-        self.assertEqual(snapped["fxx"], 18)
-        self.assertEqual(snapped["idx"], 6)
-        # the slider re-pins to the rendered hour's grid index (F018 = grid 6).
-        self.assertEqual(snapped["scrubValue"], 6)
+        # Clicking a pending hour (F030) is inert; clicking lit F018 selects it
+        # and moves the highlight there.
+        steps2 = run_plan([m], actions=[{"op": "clickHour", "fxx": 30},
+                                        {"op": "clickHour", "fxx": 18}])
+        inert = steps2[1]
+        self.assertEqual(inert["fxx"], 0)        # unchanged by the dead click
+        picked = steps2[2]
+        self.assertEqual(picked["fxx"], 18)
+        self.assertEqual(picked["idx"], 6)
+        current = [h["fxx"] for h in picked["hours"] if h["current"]]
+        self.assertEqual(current, [18])
+
+    def test_domain_switch_snaps_pending_hour_to_nearest_lower(self):
+        # Pins the snap-to-nearest-rendered (prefer LOWER) contract of
+        # _renderedIndexNear, which still runs whenever a selection switch
+        # finds the held hour pending in the new fxx list. The nest has F009
+        # rendered; the parent only [0, 6, 12]. Keeping the hour across the
+        # domain switch finds F009 pending -> snaps DOWN to F006. A
+        # prefer-higher regression would land on F012 instead.
+        nest_hours = [0, 3, 6, 9, 12, 15, 18]
+        parent_hours = [0, 6, 12]
+        st = storm(hours=nest_hours)
+        st["frames"]["hafsa"]["parent"] = {"mslp_wind": parent_hours,
+                                           "refl": parent_hours}
+        m = v2_manifest([cycle_entry("2026060418", nest_hours,
+                                     in_progress=True, storms=[st])])
+        steps = run_plan([m], actions=[
+            {"op": "clickHour", "fxx": 9},
+            {"op": "selectDomain", "slug": "parent"},
+        ])
+        self.assertEqual(steps[1]["fxx"], 9)
+        snapped = steps[2]
+        self.assertEqual(snapped["domain"], "parent")
+        self.assertEqual(snapped["fxx"], 6)      # prefer-lower, NOT 12
+        self.assertEqual(snapped["idx"], 1)
+        self.assertEqual([h["fxx"] for h in snapped["hours"] if h["current"]],
+                         [6])
+        # the parent grid still spans the full expected hours; only the
+        # parent's rendered set is lit.
+        self.assertEqual([h["fxx"] for h in snapped["hours"] if h["lit"]],
+                         parent_hours)
 
     # 4 ---------------------------------------------------------------------
     def test_diff_merge_grows_grid_without_resetting_selection(self):
@@ -220,15 +259,15 @@ class TestHafsViewer(unittest.TestCase):
             [cycle_entry("2026060418", rendered2, in_progress=True),
              cycle_entry("2026060412", full_grid, in_progress=False)],
             generated="2026-06-04T19:45:00Z")
-        # Switch to HAFS-A reflectivity, scrub to F009, THEN poll the grown
+        # Switch to HAFS-A reflectivity, jump to F009, THEN poll the grown
         # manifest: selection (model/domain/product/hour) must survive.
         actions = [
             {"op": "selectProduct", "slug": "refl"},
-            {"op": "scrub", "gridPos": 3},   # F009 (rendered) -> idx 3
+            {"op": "clickHour", "fxx": 9},   # F009 (rendered) -> idx 3
             {"op": "poll"},
         ]
         steps = run_plan([m1, m2], actions=actions)
-        before = steps[3 - 1]   # after the scrub, before the poll
+        before = steps[3 - 1]   # after the hour click, before the poll
         after = steps[3]        # after the poll/diff-merge
         # selection preserved across the poll.
         self.assertEqual(after["selectedCycle"], "2026060418")
@@ -237,11 +276,13 @@ class TestHafsViewer(unittest.TestCase):
         self.assertEqual(after["domain"], "storm")
         self.assertEqual(after["product"], "refl")
         self.assertEqual(after["fxx"], 9)        # same forecast hour
-        # the lit ticks grew from 4 -> 8.
-        lit_before = sum(1 for t in before["ticks"] if t["lit"])
-        lit_after = sum(1 for t in after["ticks"] if t["lit"])
+        # the lit hour buttons relit from 4 -> 8; F009 still highlighted.
+        lit_before = sum(1 for h in before["hours"] if h["lit"])
+        lit_after = sum(1 for h in after["hours"] if h["lit"])
         self.assertEqual(lit_before, 4)
         self.assertEqual(lit_after, 8)
+        self.assertEqual([h["fxx"] for h in after["hours"] if h["current"]],
+                         [9])
         # grid unchanged (already full).
         self.assertEqual(after["fxxGrid"], full_grid)
         self.assertEqual(after["fxxList"], rendered2)
@@ -305,7 +346,7 @@ class TestHafsViewer(unittest.TestCase):
         # forecast HOUR is preserved (Wind/Reflectivity share an fxx list).
         steps = run_plan(
             [legacy_manifest(hours=[0, 3, 6, 9, 12])],
-            actions=[{"op": "scrub", "gridPos": 3},          # F009
+            actions=[{"op": "clickHour", "fxx": 9},
                      {"op": "selectProduct", "slug": "refl"}],
         )
         self.assertEqual(steps[1]["fxx"], 9)

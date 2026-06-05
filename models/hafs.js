@@ -4,20 +4,20 @@
  * Manifest-driven forecast-loop viewer for the HAFS model plots. Reads a
  * manifest published to Cloudflare R2 by generate_hafs_plots.py and lets the
  * user pick a cycle -> storm -> model (HAFS-A/B) -> domain (storm nest /
- * parent) -> product (Wind / Reflectivity) and scrub / play the forecast
- * hours.
+ * parent) -> product (Wind / Reflectivity) and step, play, or jump straight
+ * to any forecast hour.
  *
  * PROGRESSIVE FRAMES (manifest v2). The builder now publishes cycles as they
  * render, frame by frame. The manifest carries a `cycles[]` array (newest
  * first, at most 2) each describing one model cycle and its in-progress state;
  * frame PNG keys are CYCLE-SCOPED and immutable once written. The viewer:
  *   - shows a cycle picker when >1 cycle is present;
- *   - draws an availability-aware scrubber over the FULL expected grid
- *     (0..fxx_end step fxx_step), lighting ticks that are already rendered and
- *     greying the pending ones, snapping a pending pick to the nearest rendered
- *     hour (preferring lower);
+ *   - draws a NUMBERED forecast-hour button grid over the FULL expected grid
+ *     (0..fxx_end step fxx_step): rendered hours are lit + clickable, pending
+ *     hours are greyed but visible (watch the run fill in), and the current
+ *     hour is highlighted;
  *   - polls the manifest (45 s while any cycle is in_progress, else 300 s) and
- *     DIFF-MERGES: new frames relight ticks and preload in place WITHOUT
+ *     DIFF-MERGES: new frames relight hour buttons and preload in place WITHOUT
  *     resetting the user's cycle/storm/model/domain/product/hour selection;
  *   - never yanks the user to a newly-discovered cycle - it shows a "building -
  *     view" badge that switches only on click.
@@ -45,8 +45,8 @@
  * Backward-tolerant (LEGACY mode): a manifest with NO `cycles[]` is treated as
  * a single implicit cycle built from the top-level `storms` / `cycle` /
  * `path_template`. In that mode the old behavior is preserved byte-for-byte:
- * the scrubber spans the rendered hours only and frame URLs keep the
- * ?v=generated_at cache-bust. New (cycles-mode) frames are immutable and
+ * the hour grid spans the rendered hours only (all lit) and frame URLs keep
+ * the ?v=generated_at cache-bust. New (cycles-mode) frames are immutable and
  * cycle-scoped, so they drop the ?v=.
  */
 (function () {
@@ -122,8 +122,7 @@
       models:   el('hafs-models'),
       domains:  el('hafs-domains'),
       products: el('hafs-products'),
-      scrub:    el('hafs-scrub'),
-      ticks:    el('hafs-ticks'),
+      hours:    el('hafs-hours'),
       play:     el('hafs-play'),
       stepB:    el('hafs-step-back'),
       stepF:    el('hafs-step-fwd'),
@@ -250,6 +249,7 @@
       this.dom.controls.style.display = 'none';
       this.dom.stage.style.display = 'none';
       this.dom.player.style.display = 'none';
+      this.dom.hours.style.display = 'none';
       this.dom.caption.style.display = 'none';
       this.dom.empty.style.display = 'block';
       this._updateFooter();
@@ -510,30 +510,13 @@
     }
     this.idx = Math.max(0, Math.min(this.idx, Math.max(0, this.fxxList.length - 1)));
 
-    this._syncScrub();
-    this._buildTicks();
+    this._buildHourGrid();
     this._updateCaption();
     this._show(this.idx);
     this._preloadAll();
   };
 
-  // ---- availability-aware scrubber -------------------------------------
-
-  // The slider spans GRID index-space (one stop per expected hour). Disabled
-  // when there are fewer than 2 rendered frames.
-  HafsViewer.prototype._syncScrub = function () {
-    var sc = this.dom.scrub;
-    sc.min = 0;
-    sc.max = Math.max(0, this.fxxGrid.length - 1);
-    sc.value = this._gridIndexOf(this.fxxList[this.idx]);
-    sc.disabled = this.fxxList.length <= 1;
-  };
-
-  // Index of an fxx value within the full grid (slider position).
-  HafsViewer.prototype._gridIndexOf = function (fxx) {
-    var i = this.fxxGrid.indexOf(fxx);
-    return i >= 0 ? i : 0;
-  };
+  // ---- availability-aware forecast-hour grid ----------------------------
 
   // The index into fxxList (rendered hours) nearest to a target fxx, preferring
   // the lower (earlier) hour on a tie / when the exact hour is pending.
@@ -552,16 +535,13 @@
     return 0;   // target is below the earliest rendered hour
   };
 
-  // The rendered-frame index nearest a GRID slider position (prefer lower).
-  HafsViewer.prototype._renderedIndexForGridPos = function (gridPos) {
-    gridPos = Math.max(0, Math.min(gridPos, this.fxxGrid.length - 1));
-    return this._renderedIndexNear(this.fxxGrid[gridPos]);
-  };
-
-  // Render the tick strip: one segment per grid slot, lit when that hour is
-  // rendered for the current selection, pending otherwise.
-  HafsViewer.prototype._buildTicks = function () {
-    var host = this.dom.ticks;
+  // Render the forecast-hour grid: one numbered button per grid slot, lit and
+  // clickable when that hour is rendered for the current selection, greyed and
+  // disabled while pending. Rebuilt whole on selection change and poll
+  // diff-merge (cheap: <=43 buttons) - the merge path re-pins the current hour
+  // first, so a rebuild never moves the user's frame.
+  HafsViewer.prototype._buildHourGrid = function () {
+    var host = this.dom.hours;
     if (!host) return;
     host.innerHTML = '';
     var grid = this.fxxGrid, n = grid.length;
@@ -569,25 +549,45 @@
     host.style.display = '';
     var renderedSet = {};
     for (var i = 0; i < this.fxxList.length; i++) renderedSet[this.fxxList[i]] = true;
+    var self = this;
     for (var k = 0; k < n; k++) {
-      var seg = document.createElement('span');
-      var lit = !!renderedSet[grid[k]];
-      seg.className = 'hafs-tick ' + (lit ? 'lit' : 'pending');
-      seg.style.flex = '1 1 0';
-      seg.title = 'F' + pad(grid[k], 3) + (lit ? '' : ' · pending');
-      host.appendChild(seg);
+      (function (fxx) {
+        var lit = !!renderedSet[fxx];
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'hafs-hr ' + (lit ? 'lit' : 'pending');
+        b.textContent = pad(fxx, 3);
+        b.setAttribute('data-fxx', String(fxx));
+        b.title = 'F' + pad(fxx, 3) + (lit ? '' : ' · pending');
+        b.disabled = !lit;
+        if (lit) {
+          b.addEventListener('click', function () {
+            self._pause();
+            // indexOf at CLICK time: the rendered list may have grown since
+            // this button was built.
+            self._show(self.fxxList.indexOf(fxx));
+          });
+        }
+        host.appendChild(b);
+      })(grid[k]);
     }
-    this._highlightTick();
+    this._highlightHour();
   };
 
-  // Mark the tick under the current frame as the active one.
-  HafsViewer.prototype._highlightTick = function () {
-    var host = this.dom.ticks;
-    if (!host) return;
-    var active = this._gridIndexOf(this.fxxList[this.idx]);
-    var segs = host.querySelectorAll('.hafs-tick');
-    for (var i = 0; i < segs.length; i++) {
-      segs[i].classList.toggle('current', i === active);
+  // Mark the button under the current frame as the active one. aria-pressed
+  // goes only on the lit (interactive) buttons; pending ones are disabled and
+  // carry no toggle semantics.
+  HafsViewer.prototype._highlightHour = function () {
+    var host = this.dom.hours;
+    if (!host || !this.fxxList.length) return;
+    var cur = String(this.fxxList[this.idx]);
+    var btns = host.querySelectorAll('.hafs-hr');
+    for (var i = 0; i < btns.length; i++) {
+      var on = btns[i].getAttribute('data-fxx') === cur;
+      btns[i].classList.toggle('current', on);
+      if (!btns[i].disabled) {
+        btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
     }
   };
 
@@ -652,21 +652,20 @@
     return BASE + '/models/hafs/' + crel;
   };
 
-  // Show the frame at RENDERED index i; update the slider + readouts.
+  // Show the frame at RENDERED index i; update the hour grid + readouts.
   HafsViewer.prototype._show = function (i) {
     if (!this.fxxList.length) return;
     this.idx = Math.max(0, Math.min(i, this.fxxList.length - 1));
     var fxx = this.fxxList[this.idx];
     var url = this._frameUrl(fxx);
     this.dom.img.src = url;
-    this.dom.scrub.value = this._gridIndexOf(fxx);
     this.dom.fhour.textContent = 'F' + pad(fxx, 3);
     // Valid time uses the SELECTED cycle's storm init.
     var init = new Date(this.storm.init);
     var valid = new Date(init.getTime() + fxx * 3600 * 1000);
     this.dom.valid.textContent = 'Valid ' + fmtUTC(valid) +
       '  ·  Init ' + fmtUTC(init);
-    this._highlightTick();
+    this._highlightHour();
     this._updatePill();
   };
 
@@ -767,8 +766,8 @@
     }
   };
 
-  // Preload every RENDERED frame of the current selection so scrub/play is
-  // smooth. A generation token makes a new selection supersede any in-flight
+  // Preload every RENDERED frame of the current selection so stepping and
+  // playback are smooth. A generation token makes a new selection supersede any in-flight
   // preload (stale onload callbacks are ignored), and the decoded-image cache
   // is reset each selection so a long session can't grow it without bound.
   HafsViewer.prototype._preloadAll = function () {
@@ -864,9 +863,10 @@
   };
 
   // Diff-merge a freshly polled manifest into live state WITHOUT resetting the
-  // user's selection. Grows frame lists in place (relighting ticks, preloading
-  // the new frames), refreshes the in-progress flags / footer, and arms the
-  // "newer cycle" badge - but never yanks the active cycle/storm/.../hour.
+  // user's selection. Grows frame lists in place (relighting hour buttons,
+  // preloading the new frames), refreshes the in-progress flags / footer, and
+  // arms the "newer cycle" badge - but never yanks the active
+  // cycle/storm/.../hour.
   HafsViewer.prototype._mergeManifest = function (m) {
     if (!m) return;
     var hadStorms = !!(this.cycle && this.cycle.storms && this.cycle.storms.length);
@@ -935,8 +935,9 @@
   };
 
   // Grow the CURRENT selection's rendered-frame list from the refreshed storm,
-  // relight ticks, preload the new frames - keeping idx pinned to the same
-  // forecast HOUR (or its nearest rendered neighbor if it is still pending).
+  // relight hour buttons, preload the new frames - keeping idx pinned to the
+  // same forecast HOUR (or its nearest rendered neighbor if it is still
+  // pending).
   HafsViewer.prototype._regrowCurrentSelection = function () {
     var curF = this.fxxList.length ? this.fxxList[Math.min(this.idx, this.fxxList.length - 1)] : 0;
     var oldUrls = {};
@@ -960,8 +961,7 @@
     this.idx = exact >= 0 ? exact : this._renderedIndexNear(curF);
     this.idx = Math.max(0, Math.min(this.idx, this.fxxList.length - 1));
 
-    this._syncScrub();
-    this._buildTicks();
+    this._buildHourGrid();
     this._show(this.idx);
 
     // Preload only the NEWLY-rendered frames (diff), under a fresh-enough gen.
@@ -975,12 +975,6 @@
     var self = this;
     this.dom.stormSel.addEventListener('change', function () {
       self._pause(); self._selectStorm(this.value, false);
-    });
-    // Scrubber is grid-index space: snap to the nearest RENDERED frame.
-    this.dom.scrub.addEventListener('input', function () {
-      self._pause();
-      var gridPos = parseInt(this.value, 10);
-      self._show(self._renderedIndexForGridPos(gridPos));
     });
     this.dom.play.addEventListener('click', function () { self._togglePlay(); });
     this.dom.stepB.addEventListener('click', function () { self._pause(); self._step(-1); });
@@ -1001,11 +995,16 @@
     });
 
     // Keyboard: ←/→ step, space play/pause. Skip when focus is on a form
-    // control (the storm <select>, the scrub slider, or a button) so their
-    // native arrow/space behavior still works.
+    // control (the storm <select> or a transport button) so its native
+    // arrow/space behavior wins — EXCEPT the hour-grid buttons: a click
+    // leaves them focused (Chrome/Firefox/Edge), buttons have no native
+    // arrow behavior, and space would just re-click the same hour, so the
+    // "pick an hour, then arrow through frames" path must keep working.
     this.root.addEventListener('keydown', function (e) {
-      var tag = e.target && e.target.tagName;
-      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'BUTTON') return;
+      var t = e.target, tag = t && t.tagName;
+      var hourBtn = tag === 'BUTTON' && t.classList &&
+                    t.classList.contains('hafs-hr');
+      if ((tag === 'SELECT' || tag === 'INPUT' || tag === 'BUTTON') && !hourBtn) return;
       if (e.key === 'ArrowLeft')  { self._pause(); self._step(-1); e.preventDefault(); }
       else if (e.key === 'ArrowRight') { self._pause(); self._step(1); e.preventDefault(); }
       else if (e.key === ' ' || e.key === 'Spacebar') { self._togglePlay(); e.preventDefault(); }
