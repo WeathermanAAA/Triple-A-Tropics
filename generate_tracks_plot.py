@@ -1782,6 +1782,13 @@ HTML_TEMPLATE = """<!doctype html>
     opacity: 0.6; }}
   .storm-card.clickable.active .click-hint {{ color: var(--c1); opacity: 0.75; }}
   .storm-card.clickable.open .click-hint {{ opacity: 0.25; }}
+  /* Phone legibility: the 10px uppercase micro-labels drop under the
+     readable floor on small screens - bump them (CSS-only; the card
+     MARKUP is byte-parity-mirrored in LIVE_BASIN_JS, this is not). */
+  @media (max-width: 560px) {{
+    .click-hint {{ font-size: 12px; }}
+    .storm-active, .storm-invest {{ font-size: 12px; }}
+  }}
 
   /* Inline detail placard (appears when a storm card is clicked).
      No 1px border or overflow:hidden — both were clipping the
@@ -2716,7 +2723,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
         <div class="item"><span class="investx"></span>Invest position</div>
       </div>
-      <div class="zoom-hint">Drag to pan &middot; Scroll to zoom &middot; Double-click to reset</div>
+      <div class="zoom-hint">Drag to pan &middot; Ctrl+scroll to zoom &middot; Double-click to reset</div>
       <div class="brand-wm">@WeathermanAAA_</div>
     </div>
   </div>
@@ -2829,7 +2836,12 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     minZoom: 1,
     maxZoom: 14,
     renderWorldCopies: true,
-    attributionControl: false
+    attributionControl: false,
+    // MOBILE: one-finger swipes scroll the PAGE (this map is embedded
+    // in the tall homepage via iframe); two-finger pan / pinch works
+    // the map, with MapLibre's built-in "use two fingers" hint. On
+    // desktop, ctrl/cmd+scroll zooms - plain wheel scrolls the page.
+    cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl({
     visualizePitch: false, showCompass: false

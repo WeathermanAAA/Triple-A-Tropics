@@ -52,7 +52,11 @@ HTML_TEMPLATE = """<!doctype html>
   .panel-title .panel-sub {{ font-size: 13px; font-weight: 500;
     color: var(--muted); padding-left: 8px; }}
   .chartbox-stack svg {{ width: 100%; height: auto; display: block;
-    touch-action: none; }}
+    /* pan-y, not none: a HORIZONTAL drag drives the crosshair (the
+       touchmove hover handler) while a vertical swipe still scrolls
+       the page - five stacked touch-action:none SVGs made the whole
+       chart column a page-scroll trap on phones. */
+    touch-action: pan-y; }}
   .panel-gantt-scroll {{ max-height: 80vh; overflow-y: auto;
     scrollbar-color: #2f343c transparent; }}
   .panel-gantt-scroll::-webkit-scrollbar {{ width: 8px; }}
