@@ -489,7 +489,15 @@
          the heading without duplication. -->
     <a class="home-card" href="/climatology/">
       <div class="home-card-banner">
-        <img src="https://cdn.triple-a-tropics.com/Climatology-page.jpg"
+        <!-- Responsive variants live in-repo (assets/home, q82); the CDN
+             original stays as the largest srcset entry. A DPR3 phone
+             picks the 1044w (~83 KB) instead of the 2.9 MB original. -->
+        <img src="/assets/home/climatology-card-1044.jpg"
+             srcset="/assets/home/climatology-card-700.jpg 700w,
+                     /assets/home/climatology-card-1044.jpg 1044w,
+                     /assets/home/climatology-card-1400.jpg 1400w,
+                     https://cdn.triple-a-tropics.com/Climatology-page.jpg 2050w"
+             sizes="(max-width: 560px) 92vw, (max-width: 1180px) 48vw, 380px"
              alt="Tropical Cyclone Climatology: storm tracks across the Atlantic basin"
              loading="lazy" decoding="async">
       </div>
@@ -502,7 +510,12 @@
     <!-- SST card: banner image is an SST poster with baked-in title. -->
     <a class="home-card" href="/sst/">
       <div class="home-card-banner">
-        <img src="https://cdn.triple-a-tropics.com/sst-page.jpg"
+        <img src="/assets/home/sst-card-1044.jpg"
+             srcset="/assets/home/sst-card-700.jpg 700w,
+                     /assets/home/sst-card-1044.jpg 1044w,
+                     /assets/home/sst-card-1400.jpg 1400w,
+                     https://cdn.triple-a-tropics.com/sst-page.jpg 1876w"
+             sizes="(max-width: 560px) 92vw, (max-width: 1180px) 48vw, 380px"
              alt="Ocean Temperature Analysis: sea-surface temperature and subsurface heat"
              loading="lazy" decoding="async">
       </div>
@@ -518,7 +531,12 @@
          lands. -->
     <a class="home-card" href="/satellite/">
       <div class="home-card-banner">
-        <img src="https://cdn.triple-a-tropics.com/Satoshiplot.jpg"
+        <img src="/assets/home/satellite-card-1044.jpg"
+             srcset="/assets/home/satellite-card-700.jpg 700w,
+                     /assets/home/satellite-card-1044.jpg 1044w,
+                     /assets/home/satellite-card-1400.jpg 1400w,
+                     https://cdn.triple-a-tropics.com/Satoshiplot.jpg 2026w"
+             sizes="(max-width: 560px) 92vw, (max-width: 1180px) 48vw, 380px"
              alt="Satellite Plots: high-resolution satellite imagery for tropical cyclones across visible, infrared, and water-vapor bands"
              loading="lazy" decoding="async">
       </div>
@@ -574,7 +592,10 @@
       try {
         var doc = frame.contentDocument || frame.contentWindow.document;
         if (!doc || !doc.body) return;
-        var h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+        // body.scrollHeight only: documentElement.scrollHeight is floored
+        // at the iframe's own height (scrolling="no"), so Math.max with it
+        // self-latched - the frame could only ever grow (dead band below).
+        var h = doc.body.scrollHeight;
         if (h > 200) frame.style.height = (h + 16) + 'px';
       } catch (e) { /* cross-origin or not-yet-loaded — ignore */ }
     }

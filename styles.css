@@ -154,16 +154,27 @@ a:hover { text-decoration: underline; }
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 
-/* Right-side nav links, all-caps and embossed to match */
+/* Right-side nav links, all-caps and embossed to match.
+   MOBILE UNLOCK (flex-wrap): without it this row's ~448px min-content
+   width (plus the brand offset) pinned the LAYOUT VIEWPORT to ~510px on
+   phones, shrink-to-fitting the ENTIRE site to ~0.765x - every font on
+   every page rendered a quarter smaller than authored (nav ~9px). The
+   wrap lets the links flow to a second right-aligned line instead, so
+   the layout viewport holds the true device width. No-op on desktop
+   (one line fits). Do not remove. */
 .nav-links {
-  display: flex; gap: 26px;
+  display: flex; gap: 6px 26px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
   font-size: 16px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 1.2px;
 }
 .nav-links a {
   color: #c8d4e7;
-  padding: 4px 2px;
+  /* 8px vertical padding keeps each link's touch target ~32px+ inside
+     the 48px nav strip without changing the visual line height. */
+  padding: 8px 2px;
   text-shadow:
     0 1px 0 rgba(0, 0, 0, 0.55),
     0 2px 3px rgba(0, 0, 0, 0.45);
@@ -174,10 +185,18 @@ a:hover { text-decoration: underline; }
   border-bottom: 2px solid var(--accent);
 }
 
+/* Tablet band: at 16px the link row + brand only fits on one line from
+   ~980px up, so without this the 761-979px band (iPad portrait, split
+   windows) wraps the nav to a tall second row. A small font step keeps
+   it to ONE line through the band. */
+@media (min-width: 761px) and (max-width: 979px) {
+  .brand { font-size: 22px; }
+  .nav-links { font-size: 13px; gap: 4px 18px; letter-spacing: 1px; }
+}
 @media (max-width: 760px) {
   .brand { font-size: 20px; gap: 8px; }
   .brand .logo { width: 32px; height: 32px; }
-  .nav-links { font-size: 12px; gap: 14px; letter-spacing: 0.8px; }
+  .nav-links { font-size: 12px; gap: 4px 14px; letter-spacing: 0.8px; }
   .nav-inner { padding: 6px 14px; min-height: 48px; }
 }
 /* On true phones the brand wordmark eats too much horizontal room
@@ -527,6 +546,12 @@ footer {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 6px 10px 6px 14px;
+  /* Never wider than the container: the <select> sizes itself to its
+     LONGEST option (some region names run ~340px), which pushed the
+     layout viewport to 396px on phones. Let it shrink and ellipsize
+     the displayed value instead. */
+  max-width: 100%;
+  min-width: 0;
 }
 .sst-select-label {
   color: var(--muted);
@@ -538,6 +563,9 @@ footer {
   color: var(--fg);
   border: 0;
   outline: 0;
+  max-width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
   font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
   font-size: 14px; font-weight: 600;
   padding: 4px 26px 4px 4px;
@@ -1018,6 +1046,20 @@ footer {
   border: 0;
   border-radius: 50%;
   cursor: pointer;
+}
+/* Touch ergonomics: on coarse pointers the 32px play button and 14px
+   scrub thumb sit under the ~44px comfortable-tap floor. Grow the HIT
+   AREAS (button box, input height, thumb) without changing the desktop
+   look - media (pointer:coarse) leaves mouse users untouched. */
+@media (pointer: coarse) {
+  .pa-play { width: 44px; height: 44px; font-size: 15px; }
+  .pa-scrub { height: 40px; }
+  .pa-scrub::-webkit-slider-thumb {
+    width: 22px; height: 22px; margin-top: -8px;
+  }
+  .pa-scrub::-moz-range-thumb { width: 22px; height: 22px; }
+  .anim-speed-btn { padding: 12px 12px; font-size: 12px; }
+  .anim-scrub { height: 40px; }
 }
 .pa-scrub:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px rgba(79, 163, 255, 0.35);

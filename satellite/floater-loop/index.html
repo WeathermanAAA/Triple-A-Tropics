@@ -36,6 +36,14 @@
   .fl-sel { background:var(--bg); color:var(--fg); border:1px solid var(--border);
     border-radius:6px; padding:6px 10px; font-size:13px; font-weight:600; }
   .fl-scrub { flex:1 1 220px; min-width:160px; accent-color:var(--accent-2); }
+  /* Touch ergonomics: the native range renders ~16px tall - give the
+     INPUT a ~40px hit box and a >=22px thumb on coarse pointers so
+     scrubbing a loop one-handed is reliable. Desktop look unchanged. */
+  @media (pointer: coarse) {
+    .fl-scrub { height: 40px; }
+    .fl-scrub::-webkit-slider-thumb { width: 22px; height: 22px; }
+    .fl-scrub::-moz-range-thumb { width: 22px; height: 22px; }
+  }
   .fl-grp { display:flex; align-items:center; gap:6px; }
   .fl-grp label { color:var(--muted); font-size:12px; font-weight:700; }
   .fl-note { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
