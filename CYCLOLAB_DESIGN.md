@@ -1,6 +1,14 @@
 # CycloLab — per-storm broadcast-grade web app (DESIGN)
 
-**Status: DESIGN — awaiting review. Nothing built, nothing live touched.**
+**Status: GREENLIT 2026-06-06 — building per §12 stages.** All §13
+decisions confirmed: (1) CF route → R2, Worker vendored in-repo; (2) ramp
+hues proceed, finalized only on rendered swatch recordings; (3) WP radii
+pinned `jtwc-wpac-mean-2015`; (4) V1 = designated storms only; (5) doc
+convention = SATELLITE.md / README-HAFS-WORKER.md. **Binding fix folded
+into §3.3** (explicit basin-letter map — the AL trap). V1 additionally
+includes the per-storm ACE ticker (§7.1/§11-b). HARD STOPS: Stage-2 gate
+(art direction on ramps/banner-morph/odometer recordings) and Stage-4
+gate (cone reveal + methodology copy) — user sign-off before proceeding.
 Research basis: live-dissected NHC KMZ for AMANDA (EP01, adv #13), a
 downloaded-and-verified JTWC WPAC error table (citations inline), the
 Phase-A mobile audit (`/tmp/mobile-audit/REPORT.md`), and a code-level
@@ -102,10 +110,25 @@ join is derivational (no lookup table):
 ```
 tracks sid     NHC_EP012026 / JTWC_WP062026   (agency_BASINnnYYYY)
 → atcf longid  ep012026                        (basin.lower + nn + yyyy)
-→ hafs id      01e                             (nn + basin letter, lower)
+→ hafs id      01e                             (nn + SUFFIX LETTER, lower)
 → NHC products EP012026 (CurrentStorms.json binNumber/id fields)
 ```
 Parser: `sid.split("_")[1]` → `(basin, nn, yyyy)`; emit all three forms.
+
+**BINDING (review fix): the HAFS/floater suffix letter is an EXPLICIT
+map, never a slice of the basin code:**
+
+```python
+BASIN_SUFFIX = {"AL": "l", "EP": "e", "CP": "c", "WP": "w"}
+```
+`AL → "l"` is the trap (a first-letter slice yields "a"; the ATCF
+single-letter convention is L=Atlantic) and `CP → "c"` must hold. The
+mandatory test case — **no Atlantic storm has run the models pipeline
+this season, so this path is otherwise unexercised**:
+`AL052026 → atcf al052026 → hafs 05l → NHC AL052026`. One Python module
+(poller) + one mirrored JS constant (shell), node-harness parity-tested
+(the ICON_* rule).
+
 Edge: invests renumber on designation (`transitioned_from` handoff) — V1
 scopes CycloLab to **designated storms only** (invests get no page).
 
@@ -214,8 +237,10 @@ in `/tmp/cyclolab/motion/` at review time.
 ### 7.1 Overview
 Zoomed track map (reuse the per-basin SVG projection/renderers,
 storm-filtered, auto-bbox from the storm's points + forecast cone),
-current-stats banner (position, motion, VMAX, MSLP, last fix — odometer
-targets), and a **hand-rolled SVG wind+pressure timeline** (no chart
+current-stats banner (position, motion, VMAX, MSLP, last fix, and the
+**live per-storm ACE ticker** — V1 per greenlight; `ace` is already in
+the feed, odometer-rolled on each new fix), and a **hand-rolled SVG
+wind+pressure timeline** (no chart
 libs): dual-axis polyline from `points[].wind_kt/pressure_mb/t`, SSHWS
 band shading behind the wind trace, `--cat-accent` line, draw-in on first
 open. Hover/touch crosshair reuses the ACE-chart pattern
@@ -414,12 +439,16 @@ feeds):
 
 ## 11. Research track (report only — not built)
 
+Greenlight dispositions: **(b) is IN V1** (Overview stats banner, §7.1).
+**(a) and (d) are KEEP-WARM** — recorded here as the committed roadmap
+((a) = the V1.5 flagship follow-up), explicitly NOT built in V1.
+
 | Candidate | Feasibility | Effort | Notes |
 |---|---|---|---|
-| (a) **Forecast-vs-reality scrubber** — HAFS frame + floater frame at the SAME valid time on one slider | **High** — both assets exist today with valid-time metadata (HAFS init+tau; floater frame timestamps). The join is pure time math; UI = one slider, two panes (or A/B wipe). Gaps: floater history depth (frames age out — need retention or accept "last N hours"), HAFS 6 h cycles vs floater ~10-min cadence (snap rule needed) | **M** | The never-done-before differentiator; recommend V1.5 flagship follow-up |
-| (b) **Live per-storm ACE ticker** | Trivial — per-storm `ace` already in the feed; odometer on new fix | **S** | Belongs in Overview stats banner at V1 |
+| (a) **Forecast-vs-reality scrubber** — HAFS frame + floater frame at the SAME valid time on one slider | **High** — both assets exist today with valid-time metadata (HAFS init+tau; floater frame timestamps). The join is pure time math; UI = one slider, two panes (or A/B wipe). Gaps: floater history depth (frames age out — need retention or accept "last N hours"), HAFS 6 h cycles vs floater ~10-min cadence (snap rule needed) | **M** | **KEEP WARM — V1.5 flagship** |
+| (b) **Live per-storm ACE ticker** | Trivial — per-storm `ace` already in the feed; odometer on new fix | **S** | **IN V1** (Overview stats banner) |
 | (c) **Auto plain-language storm history** | Medium — template-generated narrative from the points series (genesis, peaks, landfalls?) ; landfall detection needs coastline test (Natural Earth polygons already in repo) | **M** | Deterministic templates only (no LLM in the page path); V2 |
-| (d) *Candidate:* **Cone-verification overlay** — past advisories' cones replayed against the actual track ("how did the forecast do") | High — advisories poller already caches per-advisory JSON; keep N advisories instead of latest-only | **S–M** | Pairs with (a) as the honesty theme |
+| (d) *Candidate:* **Cone-verification overlay** — past advisories' cones replayed against the actual track ("how did the forecast do") | High — advisories poller already caches per-advisory JSON; keep N advisories instead of latest-only | **S–M** | **KEEP WARM** — pairs with (a) as the honesty theme |
 | (e) *Candidate:* **Side-by-side model strip** — when the registry grows past HAFS, synced multi-model loop on the storm-centered crop spec | Blocked on registry growth | L | Spec'd by §7.3's crop contract |
 
 ---
