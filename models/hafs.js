@@ -84,8 +84,17 @@
 
   function el(id) { return document.getElementById(id); }
 
-  function HafsViewer(root) {
+  function HafsViewer(root, opts) {
+    // Mount config (one impl, two mounts - CYCLOLAB_DESIGN §7.3): the
+    // /models/ page passes no opts and gets today's exact behavior; the
+    // CycloLab per-storm page injects its own manifest URL, element table
+    // and a storm lock (single-storm mount, picker hidden). Everything
+    // below the constructor is mount-agnostic.
+    opts = opts || {};
     this.root = root;
+    this.manifestUrl = opts.manifestUrl || MANIFEST_URL;
+    this.assetBase = opts.assetBase || (BASE + '/models/hafs/');
+    this.stormLock = opts.stormLock || null;
     this.manifest = null;
     this.cacheBust = '';
     this.legacyMode = true;     // no cycles[] -> single implicit cycle
@@ -110,7 +119,7 @@
     this.preloaded = {};   // url → HTMLImageElement (decoded cache; bounded to selection)
     this.preloadGen = 0;   // bumped each selection so stale preloads are ignored
 
-    this.dom = {
+    this.dom = opts.els || {
       stage:    el('hafs-stage'),
       img:      el('hafs-img'),
       status:   el('hafs-status'),
@@ -136,6 +145,8 @@
       player:   el('hafs-player'),
       caption:  el('hafs-caption')
     };
+    // Single-storm mount: the picker is meaningless - one locked option.
+    if (this.stormLock) this.dom.stormSel.style.display = 'none';
     this._wire();
     this._load();
   }
@@ -157,7 +168,7 @@
   };
 
   HafsViewer.prototype._fetchManifest = function () {
-    return fetch(MANIFEST_URL + '?t=' + Date.now(), { cache: 'no-store' })
+    return fetch(this.manifestUrl + '?t=' + Date.now(), { cache: 'no-store' })
       .then(function (r) {
         if (!r.ok) throw new Error('manifest HTTP ' + r.status);
         return r.json();
@@ -171,6 +182,21 @@
   // viewer has one code path. Each cycle is shallow-cloned with a guaranteed
   // `storms` array.
   HafsViewer.prototype._normalizeCycles = function (m) {
+    var lockId = this.stormLock;
+    // stormLock: filter every cycle's storm list to the locked id HERE so
+    // every downstream path (default-cycle pick, frames test, empty state,
+    // picker population, diff-merge) sees only the locked storm - the
+    // newest cycle WITH FRAMES is then "newest with frames for THIS storm",
+    // and a cycle that skipped the storm shows the normal empty state.
+    function lock(storms) {
+      storms = storms || [];
+      if (!lockId) return storms;
+      var out = [];
+      for (var i = 0; i < storms.length; i++) {
+        if (storms[i].id === lockId) out.push(storms[i]);
+      }
+      return out;
+    }
     if (m.cycles && m.cycles.length) {
       this.legacyMode = false;
       return m.cycles.map(function (c) {
@@ -180,7 +206,7 @@
           frames_done: c.frames_done,
           frames_expected: c.frames_expected,
           started_utc: c.started_utc,
-          storms: c.storms || []
+          storms: lock(c.storms)
         };
       });
     }
@@ -189,7 +215,7 @@
     return [{
       cycle: m.cycle || '',
       in_progress: false,
-      storms: m.storms || []
+      storms: lock(m.storms)
     }];
   };
 
@@ -634,7 +660,7 @@
         .replace('{product}', this.product || '')
         .replace('{fxx}', pad3)
         .replace(/\/{2,}/g, '/');
-      var u = BASE + '/models/hafs/' + rel;
+      var u = this.assetBase + rel;
       return this.cacheBust ? (u + '?v=' + this.cacheBust) : u;
     }
     // CYCLES MODE: cycle-scoped immutable keys -> path_template_cycles with
@@ -649,7 +675,7 @@
       .replace('{product}', this.product || '')
       .replace('{fxx}', pad3)
       .replace(/\/{2,}/g, '/');
-    return BASE + '/models/hafs/' + crel;
+    return this.assetBase + crel;
   };
 
   // Show the frame at RENDERED index i; update the hour grid + readouts.
@@ -1016,6 +1042,12 @@
       var root = el('hafs-viewer');
       if (root) new HafsViewer(root);
     });
+  }
+
+  // Second-mount export (CycloLab constructs the viewer manually with its
+  // own config). The /models/ auto-boot above stays the only automatic path.
+  if (typeof window !== 'undefined') {
+    window.HafsViewer = HafsViewer;
   }
 
   // Tiny, guarded test hook: expose the constructor + a couple of pure helpers
