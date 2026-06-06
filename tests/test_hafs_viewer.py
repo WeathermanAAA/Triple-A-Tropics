@@ -34,11 +34,14 @@ NODE = shutil.which("node")
 BASE = "https://cdn.triple-a-tropics.com/models/hafs/"
 
 
-def run_plan(manifests, actions=None):
+def run_plan(manifests, actions=None, viewer_opts=None):
     """Drive the viewer through `manifests` (first = initial load, rest fed to
     successive _poll() actions) and `actions`; return the list of state
-    snapshots (steps[0] = after first load)."""
+    snapshots (steps[0] = after first load). viewer_opts = the second-mount
+    constructor config (manifestUrl/stormLock/els_injected)."""
     plan = {"manifests": manifests, "actions": actions or []}
+    if viewer_opts:
+        plan["viewer_opts"] = viewer_opts
     with tempfile.TemporaryDirectory() as td:
         plan_path = Path(td) / "plan.json"
         plan_path.write_text(json.dumps(plan), encoding="utf-8")
@@ -363,6 +366,76 @@ class TestHafsViewer(unittest.TestCase):
         steps = run_plan([m], actions=[{"op": "poll"}])
         self.assertTrue(steps[1]["pillShown"])
         self.assertEqual(steps[1]["selectedCycle"], "2026060418")
+
+
+
+class TestMountConfig(unittest.TestCase):
+    """The CycloLab second mount (CYCLOLAB_DESIGN §7.3): HafsViewer(root,
+    {manifestUrl, els, stormLock}) - one impl, two mounts, no fork. The
+    /models/ mount passes no opts; these prove the injected config works
+    AND that the default path is untouched (the rest of this suite runs
+    optless and stayed green through the componentization)."""
+
+    def test_storm_lock_filters_and_hides_picker(self):
+        two = cycle_entry("2026060500", list(range(0, 13, 3)), in_progress=False,
+                          storms=[storm(sid="13l", name="13L", cycle="2026060500"),
+                                  storm(sid="01e", name="AMANDA", cycle="2026060500")])
+        steps = run_plan([v2_manifest([two])],
+                         viewer_opts={"stormLock": "01e"})
+        st = steps[0]
+        self.assertEqual(st["storm"], "01e")
+        self.assertEqual(st["stormOptions"], ["01e"])
+        self.assertTrue(st["stormSelHidden"],
+                        "locked mount must hide the storm picker")
+        self.assertTrue(st["fxxList"], "locked storm's frames load")
+
+    def test_storm_lock_picks_newest_cycle_with_frames_for_that_storm(self):
+        # newest cycle carries ONLY the other storm -> the locked mount must
+        # fall back to the older cycle that has the locked storm's frames.
+        old = cycle_entry("2026060418", list(range(0, 25, 3)), in_progress=False,
+                          storms=[storm(sid="01e", name="AMANDA",
+                                        cycle="2026060418")])
+        new = cycle_entry("2026060500", list(range(0, 13, 3)), in_progress=True,
+                          storms=[storm(sid="13l", name="13L",
+                                        cycle="2026060500")])
+        steps = run_plan([v2_manifest([new, old])],
+                         viewer_opts={"stormLock": "01e"})
+        st = steps[0]
+        self.assertEqual(st["selectedCycle"], "2026060418")
+        self.assertEqual(st["storm"], "01e")
+        self.assertFalse(st["emptyShown"])
+
+    def test_storm_lock_absent_storm_shows_empty_state(self):
+        only_other = cycle_entry("2026060500", list(range(0, 13, 3)),
+                                 in_progress=False,
+                                 storms=[storm(sid="13l", cycle="2026060500")])
+        steps = run_plan([v2_manifest([only_other])],
+                         viewer_opts={"stormLock": "01e"})
+        self.assertTrue(steps[0]["emptyShown"])
+        self.assertIsNone(steps[0]["storm"])
+
+    def test_injected_manifest_url_is_fetched(self):
+        url = "https://example.test/cyclolab/hafs-manifest.json"
+        steps = run_plan([legacy_manifest()],
+                         viewer_opts={"manifestUrl": url})
+        self.assertTrue(steps[0]["fetchedUrls"][0].startswith(url + "?"),
+                        steps[0]["fetchedUrls"])
+
+    def test_default_mount_fetches_models_manifest_and_shows_picker(self):
+        steps = run_plan([legacy_manifest()])
+        self.assertIn("/models/hafs/manifest.json", steps[0]["fetchedUrls"][0])
+        self.assertFalse(steps[0]["stormSelHidden"])
+
+    def test_injected_els_table_no_global_lookups(self):
+        # els_injected poisons document.getElementById for hafs-* ids - any
+        # residual global lookup crashes the harness. The viewer must drive
+        # the injected table end-to-end.
+        steps = run_plan([legacy_manifest()],
+                         viewer_opts={"els_injected": True})
+        st = steps[0]
+        self.assertEqual(st["storm"], "13l")
+        self.assertTrue(st["fxxList"])
+        self.assertTrue(st["imgSrc"], "frame rendered via injected els")
 
 
 if __name__ == "__main__":
