@@ -169,9 +169,12 @@ const PLAN = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 const MANIFESTS = PLAN.manifests || [];
 let manifestCursor = 0;
 
-global.fetch = function () {
+const FETCHED_URLS = [];
+
+global.fetch = function (url) {
   // Hand out manifests in sequence; the first _load() takes index 0, each
   // subsequent _poll() advances. Clamp at the last so extra polls re-deliver it.
+  FETCHED_URLS.push(String(url));
   const idx = Math.min(manifestCursor, MANIFESTS.length - 1);
   const body = MANIFESTS[idx];
   manifestCursor = Math.min(manifestCursor + 1, MANIFESTS.length);
@@ -242,11 +245,45 @@ function snapshot(v) {
     meta: getEl("hafs-meta").textContent,
     emptyShown: getEl("hafs-empty").style.display === "block",
     stormOptions: getEl("hafs-storm").children.map((o) => o.value),
+    // mount-config probes (CycloLab second mount)
+    stormSelHidden: getEl("hafs-storm").style.display === "none",
+    fetchedUrls: FETCHED_URLS.slice(),
   };
 }
 
 (async () => {
-  const viewer = new HafsViewer(getEl("hafs-viewer"));
+  // viewer_opts (plan.viewer_opts): mount-config pass-through. els_injected
+  // builds an EXPLICIT element table from the hafs-* stubs and passes it as
+  // opts.els - and then poisons document.getElementById for hafs-* ids, so
+  // any residual global lookup in the viewer crashes the harness loudly.
+  const vOpts = PLAN.viewer_opts ? Object.assign({}, PLAN.viewer_opts) : null;
+  if (vOpts && vOpts.els_injected) {
+    delete vOpts.els_injected;
+    const table = {
+      stage: getEl("hafs-stage"), img: getEl("hafs-img"),
+      status: getEl("hafs-status"), empty: getEl("hafs-empty"),
+      controls: getEl("hafs-controls"), cycleGroup: getEl("hafs-cycle-group"),
+      cycles: getEl("hafs-cycles"), stormSel: getEl("hafs-storm"),
+      models: getEl("hafs-models"), domains: getEl("hafs-domains"),
+      products: getEl("hafs-products"), hours: getEl("hafs-hours"),
+      play: getEl("hafs-play"), stepB: getEl("hafs-step-back"),
+      stepF: getEl("hafs-step-fwd"), speed: getEl("hafs-speed"),
+      fhour: getEl("hafs-fhour"), valid: getEl("hafs-valid"),
+      meta: getEl("hafs-meta"), badge: getEl("hafs-badge"),
+      pill: getEl("hafs-pill"), buffer: getEl("hafs-buffer"),
+      player: getEl("hafs-player"), caption: getEl("hafs-caption"),
+    };
+    vOpts.els = table;
+    const realGetEl = global.document.getElementById;
+    global.document.getElementById = function (id) {
+      if (/^hafs-/.test(id)) {
+        throw new Error("global el('" + id + "') lookup despite injected els");
+      }
+      return realGetEl(id);
+    };
+  }
+  const viewer = vOpts ? new HafsViewer(getEl("hafs-viewer"), vOpts)
+                       : new HafsViewer(getEl("hafs-viewer"));
   await flush();
 
   const steps = [snapshot(viewer)];
