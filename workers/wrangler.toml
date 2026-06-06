@@ -1,0 +1,11 @@
+name = "cyclolab-router"
+main = "cyclolab-router.js"
+compatibility_date = "2026-06-01"
+
+routes = [
+  { pattern = "triple-a-tropics.com/cyclolab/*", zone_name = "triple-a-tropics.com" }
+]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "triple-a-tropics-media"
