@@ -64,6 +64,14 @@
     background-image: linear-gradient(to right, #ffffff 4px,
       transparent 4px, transparent 7px); background-size: 7px 100%;
     background-repeat: repeat-x; opacity: 0.7; }
+  /* Red-X glyph for the invest-position legend row — mirrors the
+     current-position X every invest carries (#ff2a2a, round caps). */
+  .legend .investx { width: 10px; height: 10px; position: relative; }
+  .legend .investx::before, .legend .investx::after { content: "";
+    position: absolute; left: -1px; right: -1px; top: 4px; height: 2.4px;
+    border-radius: 2px; background: #ff2a2a; }
+  .legend .investx::before { transform: rotate(45deg); }
+  .legend .investx::after { transform: rotate(-45deg); }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -118,13 +126,13 @@
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
      and red marker appearance survive without a WebGL rebuild.
-     Four flavours match the per-basin SVG renderer:
-       * .invest-x-marker   — recent inactive invest (small red glowing X
-                              with red side-label). Per-basin reference:
-                              render_tracks_svg invest_current_positions.
-       * .active-l          — active invest (big red L + white
-                              designation below). Per-basin reference:
-                              render_active_icons is_invest branch.
+     Three flavours match the per-basin SVG renderer:
+       * .invest-x-marker   — EVERY recent invest, active or not (small
+                              red glowing X with red side-label, the NHC
+                              invest-area convention). Per-basin
+                              reference: render_tracks_svg
+                              invest_current_positions. (The old
+                              active-invest big-L marker is retired.)
        * .active-td         — active designated TD that's not an invest
                               (hollow blue circle + white designation
                               below). Per-basin reference:
@@ -156,21 +164,6 @@
   .active-marker .hurricane-name { fill: #f1f7fd; font-size: 16px;
     font-weight: 700; paint-order: stroke;
     stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
-
-  /* Active invest "L" — text styling lifted verbatim from
-     render_active_icons (font-size 34, weight 900, fill #ef4444, dark
-     stroke 2.5) and label (font-size 13, weight 800, fill #ffffff,
-     stroke 2.5). The container is sized to match that SVG group's
-     bounding box so the marker reads at the same physical size as the
-     per-basin version. */
-  .active-marker.active-l { width: 60px; height: 50px;
-    filter: drop-shadow(0 0 4px rgba(0,0,0,0.7)); }
-  .active-marker .l-glyph { font-size: 34px; font-weight: 900;
-    fill: #ef4444; paint-order: stroke;
-    stroke: rgba(0,0,0,0.55); stroke-width: 2.5; stroke-linejoin: round; }
-  .active-marker .l-label { font-size: 16px; font-weight: 800;
-    fill: #ffffff; paint-order: stroke;
-    stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
 
   /* Active designated-TD circle — a chunky bright-cyan ring (TAT
      accent-2 #5dd3ff) wrapped in a white outer halo, hollow centre, with
@@ -216,7 +209,7 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-06-05 21:13 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-06 00:55 UTC</div>
       </div>
       <div class="stats">
         <b>6</b> named storms &middot; <b>2</b> category 1+ storms &middot;
@@ -237,8 +230,9 @@
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
+        <div class="item"><span class="investx"></span>Invest position</div>
       </div>
-      <div class="zoom-hint">Drag to pan &middot; Scroll to zoom &middot; Double-click to reset</div>
+      <div class="zoom-hint">Drag to pan &middot; Ctrl+scroll to zoom &middot; Double-click to reset</div>
       <div class="brand-wm">@WeathermanAAA_</div>
     </div>
   </div>
@@ -351,7 +345,12 @@
     minZoom: 1,
     maxZoom: 14,
     renderWorldCopies: true,
-    attributionControl: false
+    attributionControl: false,
+    // MOBILE: one-finger swipes scroll the PAGE (this map is embedded
+    // in the tall homepage via iframe); two-finger pan / pinch works
+    // the map, with MapLibre's built-in "use two fingers" hint. On
+    // desktop, ctrl/cmd+scroll zooms - plain wheel scrolls the page.
+    cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl({
     visualizePitch: false, showCompass: false
@@ -625,12 +624,15 @@
       el.className = "active-marker";
       var designation = String(props.designation || props.name || "").toUpperCase();
 
-      if (props.marker_type === "invest_x") {
-        // Recent invest, NOT operationally active. Per-basin's
-        // render_tracks_svg invest_current_positions emits a small red
-        // glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at stroke
-        // #ff2a2a / 2.4 width, with a red invest-label to the right
-        // (offset +11 +4 from the X centre). Replicate verbatim.
+      if (props.marker_type === "invest_x" || props.marker_type === "L") {
+        // EVERY recent invest, active or not (the NHC invest-area X).
+        // Per-basin's render_tracks_svg invest_current_positions emits a
+        // small red glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at
+        // stroke #ff2a2a / 2.4 width, with a red invest-label to the
+        // right (offset +11 +4 from the X centre). Replicate verbatim.
+        // LEGACY: "L" was the old active-invest type; a geojson written
+        // by a pre-0.4.0 ace_core (poller repin gap, cached object)
+        // still carries it — render it as the unified X.
         el.classList.add("invest-x-marker");
         var fid = "invest-red-glow-" + (++investGlowSeq);
         // Anchor of the marker is the X center; the SVG's viewBox is
@@ -658,26 +660,12 @@
             '<text class="invest-label" x="11" y="4" ' +
               'text-anchor="start">' + escapeHtml(designation) + '</text>' +
           '</svg>';
-      } else if (props.marker_type === "L") {
-        // Active invest (90-99 designation). Per-basin's
-        // render_active_icons emits a bold red "L" (font-size 34, weight
-        // 900, fill #ef4444, dark stroke 2.5) with a white designation
-        // below (size 13, weight 800, dark stroke 2.5).
-        el.classList.add("active-l");
-        el.innerHTML =
-          '<svg viewBox="-30 -22 60 50" xmlns="http://www.w3.org/2000/svg">' +
-            '<text class="l-glyph" x="0" y="0" ' +
-              'text-anchor="middle" dominant-baseline="central">L</text>' +
-            '<text class="l-label" x="0" y="22" ' +
-              'text-anchor="middle" dominant-baseline="hanging">' +
-              escapeHtml(designation) + '</text>' +
-          '</svg>';
       } else if (props.marker_type === "td_circle") {
         // Active designated TD that's not an invest (e.g. Hagupit at
         // TD strength). Per-basin's render_active_icons emits a hollow
         // blue circle (r=12, stroke 2.5, no fill) + white name/
-        // designation label below — a third tier between the spinning
-        // TS+ icon and the invest "L" so a numbered TD reads as an
+        // designation label below — a tier between the spinning TS+
+        // icon and the invest X so a numbered TD reads as an
         // operational TC rather than an invest.
         el.classList.add("active-td");
         el.innerHTML =
