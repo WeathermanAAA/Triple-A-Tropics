@@ -386,6 +386,64 @@ honest "average miss" band.
   bound, and the storm can travel outside it. 12 h and 36 h radii are
   interpolated between published values. Method jtwc-wpac-mean-2015."*
 
+### 8.6 THE INTENSITY CONE (ordered 2026-06-06; build GATED behind the
+### Stage-2 visual sign-off)
+
+The intensity sibling: forecast-VMAX center line over lead time with a
+published-error envelope; y-axis = kt with Saffir-Simpson bands from
+the CANONICAL palette (ace_core.SSHS_COLORS — same single source as the
+ramps); spinning category-colored cyclone icons at each forecast point
+(the track-cone icon component, identical rotation + reduced-motion
+gate). Envelope styled brand-toned/translucent — category color lives
+in icons + bands, never the fill (cone = uncertainty, icons =
+intensity). Lives ONLY in CycloLab, active storms, two placements:
+in-app hand-rolled SVG + a server-rendered TAT-branded PNG used as the
+page's intensity OG/share card.
+
+**Center line:** the advisories poller's already-parsed forecast points
+(`points[].intensity_kt` — required ints since the Stage-1 review fix).
+No new forecast fetch. Read-only; zero ACE/track/climo edits.
+
+**Per-basin error-table REGISTRY** (sourced 2026-06-06, every number
+text-verified against the downloaded document by an independent
+adversarial pass; PDFs + md5s under `/tmp/cyclolab/intensity/`, to be
+checked into the repo as versioned JSON blobs at build time):
+
+| Basin | Source (citable) | MAE kt by tau (12/24/36/48/60/72/96/120 h) | Bias decomposition |
+|---|---|---|---|
+| AL | NHC "Official NHC 5-Year Average Forecast Errors (2020–2024)", `OFCL_5-yr_averages.pdf` (md5 b48e4759…), ATL intensity row; cross-validated byte-identical vs Verification_2025.pdf Table 3 | 5.1 / 7.3 / 8.6 / 10.0 / 10.5 / 10.9 / 12.4 / 13.6 | YES — Table 3 "2020-24 OFCL bias (kt)": +0.5/+0.5/+0.3/+0.3/+0.3/+0.5/+0.1/−1.6 → asymmetric envelope supported |
+| EP | same PDF, EPAC intensity row; cross-validated vs Verification_2025.pdf Table 7 | 5.7 / 8.9 / 10.8 / 12.9 / 14.4 / 15.5 / 17.0 / 18.6 | YES — "2020-24 OFCL bias (kt)": +0.6/+0.6/+0.4/0.0/−0.2/−0.3/−1.8/−5.6 (long-range under-forecast; −5.6 kt at 120 h) |
+| CP | CPHC's own 5-yr verification PDF — newest window **2015–2019** (stale vs AL/EP), NO 60 h column, NO bias row; NHC annual reports contain zero CP intensity verification (grep-confirmed) | CPHC 2015–2019 values (no 60 h) | NO → symmetric only, **staleness disclosed inline** ("CPHC's most recent published window") — the honesty guard's labeled-fallback case, never silently borrowed from EP |
+| WP | JTWC ATCR 2020, **Table 6-4** (numeric kt table, PDF p.104 — native 12 h AND 36 h columns, no interpolation needed), "5Yr Avg" 2016–2020 row | 7.7 / 10.7 / **12.9** / 15.0 / — / 17.7 / 18.9 / 20.3 (no 60 h; 36 h value verified at 400 dpi after the sourcing agent transposed it as 13.9 — the adversarial pass caught it) | NO — JTWC publishes no basin-wide intensity bias (Ch. 7 has per-storm bias only) → symmetric only |
+
+**WP year-pin note (explicit trade):** the track cone pins
+`jtwc-wpac-mean-2015` (Typhoon Committee). The 2015 report does carry a
+JTWC intensity MAE table (Table 6) but in **m/s converted to 2-min
+winds** (not comparable to JTWC's native 1-min kt) and without 12/36 h.
+The intensity cone therefore pins `jtwc-wpac-atcr2020-5yr` (native kt,
+native 12/36 h) and the disclosure panel states the two cones use
+different verification vintages, rather than forcing a false
+consistency through a unit-and-averaging conversion.
+
+**Envelope construction:** symmetric ±MAE by default; AL/EP MAY render
+the asymmetric variant (center shifted by the signed bias) — if built,
+the disclosure documents it. Clamp ≥ 0 kt and ≤ 200 kt. Missing taus
+interpolate linearly, disclosed. **Honesty guard (testable):** a basin
+with no registry entry renders a labeled "no published intensity-error
+statistics for this basin" panel instead of a cone — never a borrowed
+or invented envelope.
+
+**Disclosure (mandatory):** inline caption *"Derived intensity range —
+not an official forecast product"* + tappable derivation panel (source,
+report year, error type = MAE, method version, the do-not-use-for-
+decision-making line). NHC issues NO intensity cone — the non-official
+labeling is loud, matching the WP track-cone treatment.
+
+**Tests:** envelope math pinned per basin against the registry literals
+(the never-invent contract, incl. the corrected 12.9), SVG snapshot,
+disclosure renders, registry lookup per basin, honesty-guard
+missing-basin case.
+
 ---
 
 ## 9. New data source: the advisories+cone poller
