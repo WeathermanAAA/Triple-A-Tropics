@@ -107,6 +107,15 @@
     background-image: linear-gradient(to right, #ffffff 4px,
       transparent 4px, transparent 7px); background-size: 7px 100%;
     background-repeat: repeat-x; opacity: 0.7; }
+  /* Red-X glyph for the invest-position legend row. Mirrors the
+     current-position X every invest carries on the map (#ff2a2a,
+     round caps) — two crossed bars built from pseudo-elements. */
+  .legend .investx { width: 10px; height: 10px; position: relative; }
+  .legend .investx::before, .legend .investx::after { content: "";
+    position: absolute; left: -1px; right: -1px; top: 4px; height: 2.4px;
+    border-radius: 2px; background: #ff2a2a; }
+  .legend .investx::before { transform: rotate(45deg); }
+  .legend .investx::after { transform: rotate(-45deg); }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -176,6 +185,13 @@
     opacity: 0.6; }
   .storm-card.clickable.active .click-hint { color: var(--c1); opacity: 0.75; }
   .storm-card.clickable.open .click-hint { opacity: 0.25; }
+  /* Phone legibility: the 10px uppercase micro-labels drop under the
+     readable floor on small screens - bump them (CSS-only; the card
+     MARKUP is byte-parity-mirrored in LIVE_BASIN_JS, this is not). */
+  @media (max-width: 560px) {
+    .click-hint { font-size: 12px; }
+    .storm-active, .storm-invest { font-size: 12px; }
+  }
 
   /* Inline detail placard (appears when a storm card is clicked).
      No 1px border or overflow:hidden — both were clipping the
@@ -227,7 +243,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-05 21:13 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-06 00:55 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>1</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">1.38 ACE</span></div>
     </div>
@@ -2297,8 +2313,8 @@
 <circle class="track-dot" cx="665.0" cy="600.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP012026" data-name="AMANDA" data-t="2026-06-05T06:00:00" data-wind="40.0" data-pres="1004.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="652.4" cy="600.8" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP012026" data-name="AMANDA" data-t="2026-06-05T12:00:00" data-wind="40.0" data-pres="1004.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="646.8" cy="603.0" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP012026" data-name="AMANDA" data-t="2026-06-05T18:00:00" data-wind="35.0" data-pres="1006.0" data-cls="TS" data-phase="tc"/>
-<g class="invest-current" transform="translate(1057.0,585.0)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_EP912026" data-name="91E" data-t="2026-06-05T18:00:00" data-wind="20.0" data-pres="1009.0" data-cls="TD" data-phase="invest"/></g>
-<text class="invest-label" x="1068.0" y="589.0" text-anchor="start">91E</text>
+<g class="invest-current" transform="translate(1061.2,585.0)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_EP912026" data-name="91E" data-t="2026-06-06T00:00:00" data-wind="20.0" data-pres="1009.0" data-cls="TD" data-phase="invest"/></g>
+<text class="invest-label" x="1072.2" y="589.0" text-anchor="start">91E</text>
 </g>
         <g class="active-storms">
 <g class="active-icon" data-sid="NHC_EP012026" transform="translate(646.8,603.0)" style="filter:drop-shadow(0 0 6px #46c56a);"><title>AMANDA - Last fix: 2026-06-05 18:00 UTC</title>
@@ -2326,6 +2342,7 @@
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
+        <div class="item"><span class="investx"></span>Invest position</div>
       </div>
       
     </div>
@@ -2354,7 +2371,7 @@
     <div class="storm-cat" style="background:#3fa4ff">TD</div>
   </div>
   <div class="storm-meta">
-    <div class="row"><span class="lbl">Active</span><span class="val">Jun 5</span></div>
+    <div class="row"><span class="lbl">Active</span><span class="val">Jun 6</span></div>
     <div class="row"><span class="lbl">Peak wind</span><span class="val">20.0 kt</span></div>
     <div class="row"><span class="lbl">Peak pressure</span><span class="val">1009.0 mb</span></div>
     <div class="row"><span class="lbl">ACE</span><span class="val">0.00</span></div>
@@ -2500,24 +2517,22 @@
   // ---- Marker classification ----------------------------------------------
 
   function markerType(storm) {
-    // THE single client-side source of the four-way active/invest marker
-    // classification. Mirrors ace_core.build_global_geojson's marker_type
-    // fork (ace_core/ace_core/__init__.py, the "Four flavors" block):
-    //   active + invest        -> "L"
+    // THE single client-side source of the marker classification.
+    // Mirrors ace_core.build_global_geojson's marker_type fork
+    // (ace_core/ace_core/__init__.py, the "Three flavors" block):
+    //   invest (active or not) -> "invest_x"   (NHC invest-area X)
     //   active + peak < 34 kt  -> "td_circle"
     //   active + peak >= 34 kt -> "hurricane"
-    //   inactive + invest      -> "invest_x"
     //   otherwise              -> null (no current-position marker)
+    // (The old active-invest "L" is retired - every invest wears the X.)
     // tests/test_marker_type_agreement.py asserts the two implementations
-    // agree on all four cases — keep them in lockstep.
-    var isInvest = !!storm.is_invest;
+    // agree on every case - keep them in lockstep.
+    if (storm.is_invest) return "invest_x";
     if (storm.is_active) {
       var peak = storm.peak_wind_kt != null ? storm.peak_wind_kt : 0.0;
-      if (isInvest) return "L";
       if (peak < 34.0) return "td_circle";
       return "hurricane";
     }
-    if (isInvest) return "invest_x";
     return null;
   }
 
@@ -2526,8 +2541,8 @@
   function buildTracksSvg(storms) {
     // SYNC: mirrors render_tracks_svg() byte-for-byte (parity-tested).
     // Same two-pass structure: per-storm polyline, then invest triangles
-    // OR phase dots, then every non-active invest's red X + label drawn
-    // last so it sits on top.
+    // OR phase dots, then EVERY invest's red X + label (active or not)
+    // drawn last so it sits on top.
     var parts = ['<g class="tracks">'];
     var investCurrent = [];   // mirrors invest_current_positions
     for (var si = 0; si < storms.length; si++) {
@@ -2639,10 +2654,9 @@
 
     for (var m = 0; m < investCurrent.length; m++) {
       var st = investCurrent[m][0];
-      // Mirrors `if storm.get("is_active"): continue` — an ACTIVE invest
-      // gets the bold red "L" from buildActiveSvg instead of the X.
-      // (Deferred entries are always invests, so this is exactly the
-      // markerType() invest_x case.)
+      // Every deferred entry is an invest and every invest is
+      // markerType() "invest_x" (active or not) — the gate is purely
+      // defensive and mirrors the Python pass drawing ALL invests.
       if (markerType(st) !== "invest_x") continue;
       var ix = investCurrent[m][1], iy = investCurrent[m][2];
       var ip = investCurrent[m][3];
@@ -2676,8 +2690,9 @@
 
   function buildActiveSvg(storms) {
     // SYNC: mirrors render_active_icons() byte-for-byte (parity-tested).
-    // Branches follow markerType(): "L" / "td_circle" / "hurricane";
-    // inactive storms (null / "invest_x") are skipped here.
+    // Branches follow markerType(): "td_circle" / "hurricane"; null and
+    // "invest_x" (every invest, active or not) are skipped here — the
+    // X comes from buildTracksSvg's second pass.
     var parts = ['<g class="active-storms">'];
     for (var si = 0; si < storms.length; si++) {
       var storm = storms[si];
@@ -2697,26 +2712,6 @@
       var lastFix = fmtLastFix(last.t);
       var titleTxt = lastFix ? (dispName + " - Last fix: " + lastFix) : dispName;
       var titleEl = titleTxt ? "<title>" + escapeXml(titleTxt) + "</title>" : "";
-
-      if (mt === "L") {
-        var atcfIdU = String(storm.atcf_id || storm.name || "")
-          .replace(/"/g, "").toUpperCase();
-        parts.push('<g class="active-icon active-invest" data-sid="' + sid + '" ' +
-                   'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
-                   'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">' +
-                   titleEl +
-                   '<text text-anchor="middle" dominant-baseline="central" ' +
-                   'font-size="34" font-weight="900" fill="#ef4444" ' +
-                   'paint-order="stroke" stroke="rgba(0,0,0,0.55)" ' +
-                   'stroke-width="2.5" stroke-linejoin="round">L</text>' +
-                   '<text x="0" y="22" text-anchor="middle" ' +
-                   'dominant-baseline="hanging" font-size="16" ' +
-                   'font-weight="800" fill="#ffffff" paint-order="stroke" ' +
-                   'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" ' +
-                   'stroke-linejoin="round">' + atcfIdU + '</text>' +
-                   '</g>');
-        continue;
-      }
 
       if (mt === "td_circle") {
         var labelU = String(storm.name || storm.atcf_id || "")
