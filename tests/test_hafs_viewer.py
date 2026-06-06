@@ -414,6 +414,54 @@ class TestMountConfig(unittest.TestCase):
         self.assertTrue(steps[0]["emptyShown"])
         self.assertIsNone(steps[0]["storm"])
 
+    def test_storm_lock_cycle_without_storm_is_safe_and_recoverable(self):
+        # THE adversarial-review crash: under lock, the cycle picker still
+        # lists cycles that lack the locked storm; clicking one used to
+        # TypeError (_selectStorm(undefined)) and kill the tab. Now it is
+        # a per-cycle empty state and switching back recovers.
+        old = cycle_entry("2026060418", list(range(0, 25, 3)),
+                          in_progress=False,
+                          storms=[storm(sid="01e", name="AMANDA",
+                                        cycle="2026060418")])
+        new = cycle_entry("2026060500", list(range(0, 13, 3)),
+                          in_progress=True,
+                          storms=[storm(sid="13l", name="13L",
+                                        cycle="2026060500")])
+        steps = run_plan([v2_manifest([new, old])],
+                         actions=[
+                             {"op": "selectCycle", "key": "2026060500"},
+                             {"op": "selectCycle", "key": "2026060418"},
+                         ],
+                         viewer_opts={"stormLock": "01e"})
+        self.assertEqual(steps[0]["selectedCycle"], "2026060418")
+        empty = steps[1]
+        self.assertTrue(empty["emptyShown"],
+                        "cycle without the locked storm must show the "
+                        "empty state, not crash")
+        self.assertIsNone(empty["storm"])
+        self.assertEqual(empty["cycleKeys"],
+                         ["2026060500", "2026060418"],
+                         "cycle picker must survive the empty selection")
+        back = steps[2]
+        self.assertFalse(back["emptyShown"])
+        self.assertEqual(back["storm"], "01e")
+        self.assertTrue(back["fxxList"], "recovery restores frames")
+
+    def test_unlocked_empty_preannounce_cycle_click_is_safe(self):
+        # The same latent crash existed UNLOCKED on /models/: hand-selecting
+        # an empty pre-announce shell. Crash -> graceful empty state is the
+        # only sanctioned behavior change for the optless mount.
+        shell = cycle_entry("2026060500", [], in_progress=True, storms=[],
+                            frames_done=0)
+        old = cycle_entry("2026060418", list(range(0, 25, 3)),
+                          in_progress=False)
+        steps = run_plan([v2_manifest([shell, old])],
+                         actions=[{"op": "selectCycle", "key": "2026060500"},
+                                  {"op": "selectCycle", "key": "2026060418"}])
+        self.assertTrue(steps[1]["emptyShown"])
+        self.assertFalse(steps[2]["emptyShown"])
+        self.assertEqual(steps[2]["storm"], "13l")
+
     def test_injected_manifest_url_is_fetched(self):
         url = "https://example.test/cyclolab/hafs-manifest.json"
         steps = run_plan([legacy_manifest()],

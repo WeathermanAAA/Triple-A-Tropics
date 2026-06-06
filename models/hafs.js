@@ -339,6 +339,38 @@
 
     var prevStorm = (keepSelection && this.storm) ? this.storm.id : null;
     var storms = cyc.storms || [];
+
+    if (!storms.length) {
+      // This cycle has nothing to show for this mount - a storm-locked
+      // mount whose storm hasn't rendered in this cycle yet, or an empty
+      // pre-announce shell selected by hand. PER-CYCLE empty state, never
+      // a crash: stage/player/grid hide, the cycle picker stays usable so
+      // the user can switch back. (_selectStorm(undefined) used to
+      // TypeError here and kill the viewer.)
+      this._pause();
+      this.storm = null; this.model = null; this.domain = null;
+      this.dom.stormSel.innerHTML = '';
+      this.dom.models.innerHTML = '';
+      this.dom.domains.innerHTML = '';
+      this.dom.products.innerHTML = '';
+      this.dom.hours.innerHTML = '';
+      this.dom.stage.style.display = 'none';
+      this.dom.player.style.display = 'none';
+      this.dom.hours.style.display = 'none';
+      this.dom.caption.style.display = 'none';
+      this.dom.empty.style.display = 'block';
+      this._buildCyclePicker();
+      this._updateFooter();
+      return;
+    }
+    // Recover from a previously-empty selection: the apply-level path
+    // owns first-load visibility; this mirrors it for cycle switches.
+    this.dom.empty.style.display = 'none';
+    this.dom.stage.style.display = '';
+    this.dom.player.style.display = '';
+    this.dom.hours.style.display = '';
+    this.dom.caption.style.display = '';
+
     // Populate the storm dropdown for this cycle.
     var sel = this.dom.stormSel;
     sel.innerHTML = '';
