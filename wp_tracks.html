@@ -107,6 +107,15 @@
     background-image: linear-gradient(to right, #ffffff 4px,
       transparent 4px, transparent 7px); background-size: 7px 100%;
     background-repeat: repeat-x; opacity: 0.7; }
+  /* Red-X glyph for the invest-position legend row. Mirrors the
+     current-position X every invest carries on the map (#ff2a2a,
+     round caps) — two crossed bars built from pseudo-elements. */
+  .legend .investx { width: 10px; height: 10px; position: relative; }
+  .legend .investx::before, .legend .investx::after { content: "";
+    position: absolute; left: -1px; right: -1px; top: 4px; height: 2.4px;
+    border-radius: 2px; background: #ff2a2a; }
+  .legend .investx::before { transform: rotate(45deg); }
+  .legend .investx::after { transform: rotate(-45deg); }
   .legend .sep { height: 1px; background: var(--border);
     margin: 6px 0 4px; opacity: 0.6; }
 
@@ -176,6 +185,13 @@
     opacity: 0.6; }
   .storm-card.clickable.active .click-hint { color: var(--c1); opacity: 0.75; }
   .storm-card.clickable.open .click-hint { opacity: 0.25; }
+  /* Phone legibility: the 10px uppercase micro-labels drop under the
+     readable floor on small screens - bump them (CSS-only; the card
+     MARKUP is byte-parity-mirrored in LIVE_BASIN_JS, this is not). */
+  @media (max-width: 560px) {
+    .click-hint { font-size: 12px; }
+    .storm-active, .storm-invest { font-size: 12px; }
+  }
 
   /* Inline detail placard (appears when a storm card is clicked).
      No 1px border or overflow:hidden — both were clipping the
@@ -227,7 +243,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-05 21:13 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-06 00:55 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>5</b> named storms · <b>2</b> typhoons · <b>1</b> super typhoons · <span class="ace">52.78 ACE</span></div>
     </div>
@@ -2825,9 +2841,10 @@
 <polygon class="track-dot" points="666.7,758.5 669.3,763.0 664.2,763.0" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP032026" data-name="NURI" data-t="2026-03-12T00:00:00" data-wind="20.0" data-pres="1003.0" data-cls="TD" data-phase="non"/>
 <polygon class="track-dot" points="666.7,761.3 669.3,765.8 664.2,765.8" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP032026" data-name="NURI" data-t="2026-03-12T06:00:00" data-wind="20.0" data-pres="1001.0" data-cls="TD" data-phase="non"/>
 <polygon class="track-dot" points="670.3,766.8 672.8,771.3 667.7,771.3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="JTWC_WP032026" data-name="NURI" data-t="2026-03-12T12:00:00" data-wind="15.0" data-pres="1002.0" data-cls="TD" data-phase="non"/>
+<g class="invest-current" transform="translate(393.8,574.6)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="JTWC_WP912026" data-name="91W" data-t="2026-06-05T18:00:00" data-wind="25.0" data-pres="1002.0" data-cls="TD" data-phase="invest"/></g>
+<text class="invest-label" x="404.8" y="578.6" text-anchor="start">91W</text>
 </g>
         <g class="active-storms">
-<g class="active-icon active-invest" data-sid="JTWC_WP912026" transform="translate(393.8,574.6)" style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));"><title>91W - Last fix: 2026-06-05 18:00 UTC</title><text text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="900" fill="#ef4444" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="2.5" stroke-linejoin="round">L</text><text x="0" y="22" text-anchor="middle" dominant-baseline="hanging" font-size="16" font-weight="800" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="2.5" stroke-linejoin="round">91W</text></g>
 </g>
         <text class="wm" x="1380" y="40" text-anchor="end">@WeathermanAAA_</text>
       </svg>
@@ -2843,6 +2860,7 @@
         <div class="item"><span class="sq"></span>Subtropical</div>
         <div class="item"><span class="tri"></span>Non-tropical (pre/post)</div>
         <div class="item"><span class="dashline"></span>Invest (90-99)</div>
+        <div class="item"><span class="investx"></span>Invest position</div>
       </div>
       
     </div>
@@ -3097,24 +3115,22 @@
   // ---- Marker classification ----------------------------------------------
 
   function markerType(storm) {
-    // THE single client-side source of the four-way active/invest marker
-    // classification. Mirrors ace_core.build_global_geojson's marker_type
-    // fork (ace_core/ace_core/__init__.py, the "Four flavors" block):
-    //   active + invest        -> "L"
+    // THE single client-side source of the marker classification.
+    // Mirrors ace_core.build_global_geojson's marker_type fork
+    // (ace_core/ace_core/__init__.py, the "Three flavors" block):
+    //   invest (active or not) -> "invest_x"   (NHC invest-area X)
     //   active + peak < 34 kt  -> "td_circle"
     //   active + peak >= 34 kt -> "hurricane"
-    //   inactive + invest      -> "invest_x"
     //   otherwise              -> null (no current-position marker)
+    // (The old active-invest "L" is retired - every invest wears the X.)
     // tests/test_marker_type_agreement.py asserts the two implementations
-    // agree on all four cases — keep them in lockstep.
-    var isInvest = !!storm.is_invest;
+    // agree on every case - keep them in lockstep.
+    if (storm.is_invest) return "invest_x";
     if (storm.is_active) {
       var peak = storm.peak_wind_kt != null ? storm.peak_wind_kt : 0.0;
-      if (isInvest) return "L";
       if (peak < 34.0) return "td_circle";
       return "hurricane";
     }
-    if (isInvest) return "invest_x";
     return null;
   }
 
@@ -3123,8 +3139,8 @@
   function buildTracksSvg(storms) {
     // SYNC: mirrors render_tracks_svg() byte-for-byte (parity-tested).
     // Same two-pass structure: per-storm polyline, then invest triangles
-    // OR phase dots, then every non-active invest's red X + label drawn
-    // last so it sits on top.
+    // OR phase dots, then EVERY invest's red X + label (active or not)
+    // drawn last so it sits on top.
     var parts = ['<g class="tracks">'];
     var investCurrent = [];   // mirrors invest_current_positions
     for (var si = 0; si < storms.length; si++) {
@@ -3236,10 +3252,9 @@
 
     for (var m = 0; m < investCurrent.length; m++) {
       var st = investCurrent[m][0];
-      // Mirrors `if storm.get("is_active"): continue` — an ACTIVE invest
-      // gets the bold red "L" from buildActiveSvg instead of the X.
-      // (Deferred entries are always invests, so this is exactly the
-      // markerType() invest_x case.)
+      // Every deferred entry is an invest and every invest is
+      // markerType() "invest_x" (active or not) — the gate is purely
+      // defensive and mirrors the Python pass drawing ALL invests.
       if (markerType(st) !== "invest_x") continue;
       var ix = investCurrent[m][1], iy = investCurrent[m][2];
       var ip = investCurrent[m][3];
@@ -3273,8 +3288,9 @@
 
   function buildActiveSvg(storms) {
     // SYNC: mirrors render_active_icons() byte-for-byte (parity-tested).
-    // Branches follow markerType(): "L" / "td_circle" / "hurricane";
-    // inactive storms (null / "invest_x") are skipped here.
+    // Branches follow markerType(): "td_circle" / "hurricane"; null and
+    // "invest_x" (every invest, active or not) are skipped here — the
+    // X comes from buildTracksSvg's second pass.
     var parts = ['<g class="active-storms">'];
     for (var si = 0; si < storms.length; si++) {
       var storm = storms[si];
@@ -3294,26 +3310,6 @@
       var lastFix = fmtLastFix(last.t);
       var titleTxt = lastFix ? (dispName + " - Last fix: " + lastFix) : dispName;
       var titleEl = titleTxt ? "<title>" + escapeXml(titleTxt) + "</title>" : "";
-
-      if (mt === "L") {
-        var atcfIdU = String(storm.atcf_id || storm.name || "")
-          .replace(/"/g, "").toUpperCase();
-        parts.push('<g class="active-icon active-invest" data-sid="' + sid + '" ' +
-                   'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
-                   'style="filter:drop-shadow(0 0 4px rgba(0,0,0,0.7));">' +
-                   titleEl +
-                   '<text text-anchor="middle" dominant-baseline="central" ' +
-                   'font-size="34" font-weight="900" fill="#ef4444" ' +
-                   'paint-order="stroke" stroke="rgba(0,0,0,0.55)" ' +
-                   'stroke-width="2.5" stroke-linejoin="round">L</text>' +
-                   '<text x="0" y="22" text-anchor="middle" ' +
-                   'dominant-baseline="hanging" font-size="16" ' +
-                   'font-weight="800" fill="#ffffff" paint-order="stroke" ' +
-                   'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" ' +
-                   'stroke-linejoin="round">' + atcfIdU + '</text>' +
-                   '</g>');
-        continue;
-      }
 
       if (mt === "td_circle") {
         var labelU = String(storm.name || storm.atcf_id || "")
