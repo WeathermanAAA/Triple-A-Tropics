@@ -96,9 +96,14 @@ class TestPerBasinInvestXAnchor(unittest.TestCase):
         # 1. The group lands on the projected fix pixel.
         self.assertAlmostEqual(gx, x, places=1)
         self.assertAlmostEqual(gy, y, places=1)
-        # 2. The X path inside is centred on the group origin (0,0).
-        self.assertIn(f'd="{X_PATH_D}"', g_body)
-        self.assertEqual(_path_centroid(X_PATH_D), (0.0, 0.0))
+        # 2. The X path inside is centred on the group origin (0,0) —
+        #    centroid computed from the RENDERED path data, so a marker
+        #    whose crosshair drifts off its anchor fails here.
+        dm = re.search(r'<path class="track-dot" d="([^"]+)"', g_body)
+        self.assertIsNotNone(dm, "X path missing from invest group")
+        self.assertEqual(_path_centroid(dm.group(1)), (0.0, 0.0),
+                         "rendered X path is not centred on the anchor")
+        self.assertEqual(dm.group(1), X_PATH_D)
         # 3. The label is an OFFSET SIBLING outside the group, at
         #    fix + (11, 4) — it shares no geometry with the X.
         self.assertNotIn("invest-label", g_body)
@@ -243,9 +248,13 @@ class TestGlobalMarkerRender(unittest.TestCase):
             # viewBox symmetric about (0,0) -> element centre == (0,0).
             self.assertEqual((min_x + w / 2, min_y + h / 2), (0.0, 0.0),
                              f"{name}: viewBox not centred on the X")
-            # The X path is centred on (0,0) == the anchored fix.
-            self.assertIn(f'd="{X_PATH_D}"', m["html"], name)
-            self.assertEqual(_path_centroid(X_PATH_D), (0.0, 0.0))
+            # The X path is centred on (0,0) == the anchored fix —
+            # centroid computed from the RENDERED path data.
+            dm = re.search(r'<path d="([^"]+)" stroke="#ff2a2a"', m["html"])
+            self.assertIsNotNone(dm, f"{name}: X path missing")
+            self.assertEqual(_path_centroid(dm.group(1)), (0.0, 0.0),
+                             f"{name}: rendered X not centred on the anchor")
+            self.assertEqual(dm.group(1), X_PATH_D, name)
             # Label: an offset <text> sibling, start-anchored at +11.
             lbl = re.search(
                 r'<text class="invest-label" x="([-\d.]+)" y="([-\d.]+)" '

@@ -15,6 +15,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+# Repo-source-first: resolve `import ace_core` to ace_core/ace_core in
+# THIS repo, not whatever copy happens to be pip-installed — the suite
+# must test the source under review (an installed copy can lag the diff
+# and silently green-light a broken ace_core edit).
+sys.path.insert(0, str(REPO / "ace_core"))
 
 import generate_tracks_plot as gtp  # noqa: E402
 
