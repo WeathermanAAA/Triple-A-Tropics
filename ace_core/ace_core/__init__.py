@@ -107,6 +107,17 @@ def _is_nan(v) -> bool:
     return isinstance(v, float) and math.isnan(v)
 
 
+def _nature_str(v) -> str:
+    """NATURE as a clean string. A missing NATURE cell reaches us from
+    pandas as float NaN, which is TRUTHY — the old ``(v or "")`` idiom
+    let it through to ``.strip()`` and crashed the whole generator run
+    (first seen 2026-06-07: a live WP b-deck fix with a blank NATURE
+    column). None/NaN map to "" — the long-standing blank-NATURE
+    semantics (ACE-eligible only on provisional data, see
+    nature_eligible)."""
+    return "" if v is None or _is_nan(v) else str(v).strip()
+
+
 def round_ace(x: float) -> float:
     """The single ACE rounding policy."""
     return round(float(x), ACE_DECIMALS)
@@ -142,7 +153,7 @@ def nature_eligible(nature: Optional[str], basin: str,
     current-season data we also accept "NR" and blank (IBTrACS backfills NATURE
     only after post-season QC), so a 34 kt+ provisional fix is not silently
     dropped. The per-basin eligible set is ``ACE_NATURES``."""
-    n = (nature or "").strip().upper()
+    n = _nature_str(nature).upper()
     natset = ACE_NATURES[basin]
     if n in natset:
         return True
@@ -954,7 +965,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 # parse_atcf_bdeck() ("TS", "SS", "ET", ""). The SVG
                 # renderer uses this to draw non-tropical points as
                 # triangles (see render_tracks_svg).
-                "nature": (p.get("nature") or "").strip(),
+                "nature": _nature_str(p.get("nature")),
             } for p in points],
         })
     # Drop stale invest cards. Numbered TCs (01-89) keep showing past
