@@ -253,16 +253,76 @@ def _parse_atcf_latlon(lat_raw: str, lon_raw: str) -> Optional[tuple]:
     return lat, lon
 
 
+# ATCF wind-radii thresholds (kt) and the per-threshold quadrant column suffixes,
+# in the NEQ quadrant order RAD1..RAD4 = NE, SE, SW, NW. The 12 radii columns
+# parse_bdeck emits are the cross product: r{thr}_{quad}.
+RADII_THRESHOLDS = (34, 50, 64)
+RADII_QUADS = ("ne", "se", "sw", "nw")
+RADII_COLS = [f"r{thr}_{q}" for thr in RADII_THRESHOLDS for q in RADII_QUADS]
+
+
+def _radii_int(raw: str) -> int:
+    """A single ATCF quadrant-radius cell -> non-negative int nautical miles.
+    Blank / non-numeric / negative cells mean "no extent in that quadrant" -> 0
+    (per the spec: a present threshold row with a blank quadrant is a real 0,
+    not missing data)."""
+    try:
+        v = int(float((raw or "").strip()))
+    except (TypeError, ValueError):
+        return 0
+    return v if v > 0 else 0
+
+
+def _parse_radii_row(parts: list[str]) -> Optional[tuple[int, list[int]]]:
+    """Extract (threshold, [ne, se, sw, nw]) from one ATCF b-deck row, or None if
+    the row carries no recognised wind-radius threshold.
+
+    Column layout (0-indexed after a `,`-split + strip):
+        parts[11] = RAD       (34 | 50 | 64)
+        parts[12] = WINDCODE  (NEQ = quadrants NE/SE/SW/NW starting NE;
+                               AAA = symmetric full circle)
+        parts[13..16] = RAD1..RAD4 (nautical miles)
+
+    WINDCODE handling:
+      * NEQ -> RAD1..4 map straight to NE, SE, SW, NW.
+      * AAA -> the single symmetric radius (RAD1) is replicated to all four
+        quadrants.
+      * anything else / blank with a real threshold -> treat RAD1..4 positionally
+        (defensive; real decks only emit NEQ/AAA)."""
+    try:
+        thr = int(parts[11])
+    except (IndexError, ValueError):
+        return None
+    if thr not in RADII_THRESHOLDS:
+        return None
+    windcode = (parts[12] if len(parts) > 12 else "").strip().upper()
+    r1 = _radii_int(parts[13]) if len(parts) > 13 else 0
+    if windcode == "AAA":
+        return thr, [r1, r1, r1, r1]
+    r2 = _radii_int(parts[14]) if len(parts) > 14 else 0
+    r3 = _radii_int(parts[15]) if len(parts) > 15 else 0
+    r4 = _radii_int(parts[16]) if len(parts) > 16 else 0
+    return thr, [r1, r2, r3, r4]
+
+
 def parse_bdeck(text: str, season: int, basin_cfg: dict):
     """Parse an ATCF b-deck file into a DataFrame of 6-hourly fixes - the SINGLE
     parser both generators use, so a named storm has the same fix set (hence the
     same peak wind + ACE) everywhere.
 
     Columns: SID, NAME, season, time, lat, lon, wind_kt, pressure_mb, nature,
-    ace_nature, source, storm_num. ``nature``/``ace_nature`` come from the ATCF
+    ace_nature, source, storm_num, and the 12 wind-radii columns in
+    ``RADII_COLS`` (r34_ne..r64_nw). ``nature``/``ace_nature`` come from the ATCF
     dev-level via ``STATUS_TO_NATURE`` (wind-based fallback for unmapped codes).
-    Multiple wind-radius rows per obs (34/50/64 kt) are deduped to one fix per
-    (storm, timestamp); 50/64 kt radius lines are skipped.
+
+    Each observation repeats up to 3x in a b-deck, once per wind-radius
+    threshold (34/50/64 kt). We build ONE fix per (storm, timestamp) from the
+    FIRST row (the blank/0/34 kt row, exactly as before - identical SID, time,
+    wind, pressure, nature, ACE math, dedup), then ACCUMULATE quadrant radii
+    from EVERY threshold row of that same fix (34/50/64). A threshold with no
+    row for the fix keeps its four columns at None (absent); a threshold whose
+    row has blank quadrants records 0 (real "no extent"). See ``_parse_radii_row``
+    for the WINDCODE (NEQ/AAA) handling.
     """
     import pandas as pd
 
@@ -283,7 +343,10 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
         if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
             name_by_storm[storm_num] = name_col
 
-    seen: set[tuple[int, str]] = set()
+    # (storm_num, tstamp) -> index of that fix's record in ``rows``, so the
+    # 50/64 kt (and a duplicate 34 kt) rows of the SAME observation merge their
+    # radii into the one fix the first row created.
+    fix_index: dict[tuple[int, str], int] = {}
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 11:
@@ -302,14 +365,23 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             continue
         if tech != "BEST":
             continue
-        # Accept pre-radii lines ("" / "0") and the 34 kt row; skip 50/64 kt
-        # radius duplicates of the same observation.
+        key = (storm_num, tstamp)
+        radii = _parse_radii_row(parts)
+        if key in fix_index:
+            # The fix already exists (built from its first row). Later rows
+            # contribute ONLY radii - every other field stays from row 1.
+            if radii is not None:
+                thr, quads = radii
+                rec = rows[fix_index[key]]
+                for q, val in zip(RADII_QUADS, quads):
+                    rec[f"r{thr}_{q}"] = val
+            continue
+        # A fix is CREATED only from its first blank/0/34 kt row, exactly as
+        # before - a stray 50/64 row whose 34 row was filtered out (bad
+        # lat/lon, off-synoptic hour) does NOT manufacture a fix. This keeps
+        # every non-radii field byte-identical to the pre-radii parser.
         if rad not in ("", "0", "34"):
             continue
-        key = (storm_num, tstamp)
-        if key in seen:
-            continue
-        seen.add(key)
         try:
             t = dt.datetime.strptime(tstamp, "%Y%m%d%H")
         except ValueError:
@@ -336,7 +408,7 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             fallback_name = f"{storm_num}{basin_cfg.get('invest_letter', '')}"
         else:
             fallback_name = f"#{storm_num:02d}"
-        rows.append({
+        rec = {
             "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
                    f"{storm_num:02d}{season}",
             "NAME": name_by_storm.get(storm_num, fallback_name),
@@ -351,7 +423,17 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             "ace_nature": nature,
             "source": f"live-{basin_cfg['agency_name']}",
             "storm_num": storm_num,
-        })
+        }
+        # Radii columns default to None (threshold absent for this fix); the
+        # first row's own threshold (if any) is recorded immediately.
+        for col in RADII_COLS:
+            rec[col] = None
+        if radii is not None:
+            thr, quads = radii
+            for q, val in zip(RADII_QUADS, quads):
+                rec[f"r{thr}_{q}"] = val
+        fix_index[key] = len(rows)
+        rows.append(rec)
     return pd.DataFrame(rows)
 
 
@@ -796,6 +878,66 @@ def build_payload(cum: pd.DataFrame, climo: pd.DataFrame, current_year: int,
 
 # --- Tracks feed assembly ---
 
+def _radii_quad_ints(p: dict, thr: int):
+    """The four quadrant radii [ne, se, sw, nw] for one threshold of one fix as
+    ints, or None when this threshold has NO row for the fix.
+
+    A present threshold has at least one non-absent quadrant; absent quadrants
+    are stored as None (parse_bdeck never wrote them) or surface as NaN after
+    pandas coerces a mixed None/int column - both mean "no row" and collapse the
+    whole threshold to None. A present-but-zero quadrant (real "no extent") is
+    kept as 0."""
+    vals = []
+    present = False
+    for q in RADII_QUADS:
+        v = p.get(f"r{thr}_{q}")
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            vals.append(0)
+        else:
+            present = True
+            vals.append(int(v))
+    return vals if present else None
+
+
+def _fix_radii(p: dict):
+    """Compact per-fix wind-radii dict for the feed:
+    ``{"34": [ne,se,sw,nw], "50": [...], "64": [...]}`` with int nm values.
+    A threshold key is omitted when that threshold has no data for the fix; the
+    whole dict is None (-> the caller omits the "radii" key) when no threshold
+    has data. Size discipline: the feed is polled every 30s."""
+    out = {}
+    for thr in RADII_THRESHOLDS:
+        quads = _radii_quad_ints(p, thr)
+        if quads is not None:
+            out[str(thr)] = quads
+    return out or None
+
+
+def _serialize_point(p: dict) -> dict:
+    """One per-fix dict for the tracks feed. Existing fields (t/lat/lon/wind_kt/
+    pressure_mb/cls/nature) are byte-identical to the pre-radii feed; ``radii``
+    is ADDITIVE and only present when the fix carries wind-radii data."""
+    pt = {
+        "t": p["time"].isoformat(),
+        "lat": round(float(p["lat"]), 2),
+        "lon": round(float(p["lon"]), 2),
+        "wind_kt": None if pd.isna(p["wind_kt"]) else round(float(p["wind_kt"]), 1),
+        "pressure_mb": None if pd.isna(p["pressure_mb"]) or p["pressure_mb"] <= 0
+                       else round(float(p["pressure_mb"]), 1),
+        "cls": sshs_class(p["wind_kt"]),
+        # NATURE passes through from IBTrACS ("TS", "SS", "ET",
+        # "DS", "NR", "MX", "") or the ATCF dev-level mapping in
+        # parse_atcf_bdeck() ("TS", "SS", "ET", ""). The SVG
+        # renderer uses this to draw non-tropical points as
+        # triangles (see render_tracks_svg).
+        "nature": (p.get("nature") or "").strip(),
+    }
+    radii = _fix_radii(p)
+    if radii is not None:
+        pt["radii"] = radii
+    return pt
+
+
 def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                              basin_cfg: dict) -> list[dict]:
     """Merge IBTrACS + live. For each named storm in BOTH sources, we keep
@@ -942,21 +1084,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             "is_invest": bool(is_invest),
             "recent_invest": bool(recent_invest),
             "atcf_id": atcf_id,
-            "points": [{
-                "t": p["time"].isoformat(),
-                "lat": round(float(p["lat"]), 2),
-                "lon": round(float(p["lon"]), 2),
-                "wind_kt": None if pd.isna(p["wind_kt"]) else round(float(p["wind_kt"]), 1),
-                "pressure_mb": None if pd.isna(p["pressure_mb"]) or p["pressure_mb"] <= 0
-                               else round(float(p["pressure_mb"]), 1),
-                "cls": sshs_class(p["wind_kt"]),
-                # NATURE passes through from IBTrACS ("TS", "SS", "ET",
-                # "DS", "NR", "MX", "") or the ATCF dev-level mapping in
-                # parse_atcf_bdeck() ("TS", "SS", "ET", ""). The SVG
-                # renderer uses this to draw non-tropical points as
-                # triangles (see render_tracks_svg).
-                "nature": (p.get("nature") or "").strip(),
-            } for p in points],
+            "points": [_serialize_point(p) for p in points],
         })
     # Drop stale invest cards. Numbered TCs (01-89) keep showing past
     # cards as part of the season summary; only invests need this
