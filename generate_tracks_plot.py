@@ -1324,6 +1324,130 @@ TRACKS_JS = r"""
     });
   });
 
+  // ---- CycloLab pre-launch dialog (FG-R3 #3) --------------------------------
+  // "Open in CycloLab ▸" (storm cards + map popup) opens a house dialog
+  // the FIRST time: storm name, a category-accent Launch button, and an
+  // optional wind-units choice. The choice is persisted in localStorage
+  // (SAME-ORIGIN, so the CycloLab shell reads it) and handed off via
+  // ?units= too; after the first launch the click goes straight in. A
+  // modified click (new tab) or no-JS keeps the plain <a href>.
+  (function () {
+    var LKEY = "cyclolab:launched", SKEY = "cyclolab:settings";
+    var UNITS = [["kt", "kt"], ["mph", "mph"], ["kmh", "km/h"]];
+    function ls(get, key, val) {
+      try { return get ? localStorage.getItem(key)
+                       : localStorage.setItem(key, val); }
+      catch (e) { return null; }
+    }
+    function storedUnit() {
+      try { var s = JSON.parse(ls(1, SKEY) || "{}");
+        return s && s.windUnits || "kt"; } catch (e) { return "kt"; }
+    }
+    function go(href, unit) {
+      ls(0, LKEY, "1");
+      ls(0, SKEY, JSON.stringify({ windUnits: unit }));
+      var u = href + (href.indexOf("?") < 0 ? "?" : "&") + "units=" + unit;
+      window.location.href = u;
+    }
+    var dlg = null, pickUnit = "kt";
+    function ensureDialog() {
+      if (dlg) return dlg;
+      var css = document.createElement("style");
+      css.textContent =
+        ".cl-launch-back{position:fixed;inset:0;z-index:9999;display:flex;" +
+        "align-items:center;justify-content:center;background:rgba(4,8,14,.6);" +
+        "padding:20px}.cl-launch-back[hidden]{display:none}" +
+        ".cl-launch{width:min(380px,100%);background:#121a26;border:1px solid " +
+        "#26354a;border-radius:16px;padding:22px 22px 20px;color:#e8eef5;" +
+        "font-family:Metropolis,system-ui,sans-serif;box-shadow:0 20px 60px " +
+        "rgba(0,0,0,.55)}.cl-launch h2{margin:0 0 2px;font-size:19px;" +
+        "font-weight:800;letter-spacing:.2px}.cl-launch .cl-eyebrow{font-size:" +
+        "11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;" +
+        "color:#8ba0bd;margin-bottom:10px}.cl-launch .cl-go{display:block;" +
+        "width:100%;margin:16px 0 4px;padding:12px;border:0;border-radius:10px;" +
+        "font:inherit;font-size:15px;font-weight:800;color:#06101c;cursor:" +
+        "pointer}.cl-launch .cl-customize{background:none;border:0;color:" +
+        "#8ba0bd;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;" +
+        "padding:6px 0;text-decoration:underline}.cl-launch .cl-units{display:" +
+        "none;margin:10px 0 2px}.cl-launch .cl-units.open{display:block}" +
+        ".cl-launch .cl-units-lbl{font-size:11px;font-weight:700;letter-" +
+        "spacing:1px;text-transform:uppercase;color:#8ba0bd;margin-bottom:7px}" +
+        ".cl-seg{display:flex}.cl-seg button{flex:1;background:#0d141f;color:" +
+        "#8ba0bd;border:1px solid #26354a;padding:9px 0;font:inherit;font-" +
+        "size:13px;font-weight:700;cursor:pointer}.cl-seg button:first-child{" +
+        "border-radius:8px 0 0 8px}.cl-seg button:last-child{border-radius:0 " +
+        "8px 8px 0;border-left:0}.cl-seg button:not(:first-child):not(:last-" +
+        "child){border-left:0}.cl-seg button.on{color:#06101c}.cl-note{margin:" +
+        "12px 0 0;font-size:11px;line-height:1.5;color:#7e90a9}";
+      document.head.appendChild(css);
+      var back = document.createElement("div");
+      back.className = "cl-launch-back"; back.hidden = true;
+      back.innerHTML =
+        '<div class="cl-launch" role="dialog" aria-modal="true" ' +
+        'aria-label="Launch CycloLab"><div class="cl-eyebrow">CycloLab</div>' +
+        '<h2 class="cl-storm"></h2>' +
+        '<button class="cl-go" type="button">Launch CycloLab</button>' +
+        '<button class="cl-customize" type="button">Customize settings</button>' +
+        '<div class="cl-units"><div class="cl-units-lbl">Wind units</div>' +
+        '<div class="cl-seg"></div>' +
+        '<p class="cl-note">Display only. Agency forecasts are issued in ' +
+        'knots; other units are converted in CycloLab.</p></div></div>';
+      document.body.appendChild(back);
+      var seg = back.querySelector(".cl-seg");
+      UNITS.forEach(function (u) {
+        var b = document.createElement("button");
+        b.type = "button"; b.textContent = u[1];
+        b.setAttribute("data-u", u[0]);
+        b.addEventListener("click", function () {
+          pickUnit = u[0]; paintSeg(); });
+        seg.appendChild(b);
+      });
+      function paintSeg() {
+        seg.querySelectorAll("button").forEach(function (b) {
+          var on = b.getAttribute("data-u") === pickUnit;
+          b.classList.toggle("on", on);
+          b.style.background = on ? back._accent : "";
+          b.style.borderColor = on ? back._accent : "";
+        });
+      }
+      back._paintSeg = paintSeg;
+      back.querySelector(".cl-customize").addEventListener("click",
+        function () { back.querySelector(".cl-units").classList.toggle("open"); });
+      back.addEventListener("click", function (e) {
+        if (e.target === back) back.hidden = true; });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") back.hidden = true; });
+      dlg = back;
+      return back;
+    }
+    function openDialog(href, name, accent) {
+      var d = ensureDialog();
+      pickUnit = storedUnit();
+      d._accent = accent || "#3b82f6";
+      d.querySelector(".cl-storm").textContent = name || "This storm";
+      var go1 = d.querySelector(".cl-go");
+      go1.style.background = d._accent;
+      d.querySelector(".cl-units").classList.remove("open");
+      d._paintSeg();
+      go1.onclick = function () { d.hidden = true; go(href, pickUnit); };
+      d.hidden = false;
+      go1.focus();
+    }
+    document.addEventListener("click", function (e) {
+      var a = e.target.closest && e.target.closest("a.cyclolab-link");
+      if (!a) return;
+      // modified click / non-left button: let the browser do its thing
+      // (new tab etc.); no-JS already navigates the href.
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey ||
+          e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      var href = a.getAttribute("href");
+      if (ls(1, LKEY)) { go(href, storedUnit()); return; }  // straight in
+      openDialog(href, a.getAttribute("data-name"),
+                 a.getAttribute("data-accent"));
+    });
+  })();
+
   // ---- Placard rendering ----
   // Hurricane glyph path — same one used for the spinning map icons,
   // reused here as a small corner accent on each placard.
@@ -2329,9 +2453,11 @@ LIVE_BASIN_JS = r"""
     var sid = storm.sid || "";
     var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
     var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
-    // SYNC: CycloLab entry link - active designated storms only.
+    // SYNC: CycloLab entry link - active designated storms only. The
+    // data-name/data-accent feed the pre-launch settings dialog (FG-R3
+    // #3); the href is the no-JS / modified-click fallback.
     var cyclolabBtn = (isActive && !isInvest && sid)
-      ? '<a class="cyclolab-link" href="/cyclolab/' + sid + '/">Open in CycloLab ▸</a>'
+      ? '<a class="cyclolab-link" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
       : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
     return "\n" +
@@ -3116,7 +3242,9 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     // carry marker_type "invest_x" and have no per-storm page in V1).
     var labLink = (props.storm_id && props.marker_type !== "invest_x")
       ? ('<div class="tt-row"><a class="cyclolab-link" href="/cyclolab/' +
-         encodeURIComponent(props.storm_id) + '/">Open in CycloLab ▸</a></div>')
+         encodeURIComponent(props.storm_id) + '/" data-name="' +
+         escapeHtml(title) + '" data-accent="' + color +
+         '">Open in CycloLab ▸</a></div>')
       : '';
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
       '<div class="tt-row"><span class="tt-cat" style="background:' +
@@ -3410,8 +3538,9 @@ def render_storm_card(storm: dict) -> str:
     # have no per-storm page in V1). A REAL link - it works even where
     # card click handlers are absent, and the card handler skips <a>
     # clicks so the placard toggle never swallows navigation.
-    cyclolab_btn = (f'<a class="cyclolab-link" href="/cyclolab/{sid}/">'
-                    f'Open in CycloLab ▸</a>'
+    cyclolab_btn = (f'<a class="cyclolab-link" href="/cyclolab/{sid}/" '
+                    f'data-name="{storm.get("name") or "UNNAMED"}" '
+                    f'data-accent="{color}">Open in CycloLab ▸</a>'
                     if (is_active and not is_invest and sid) else '')
     placard_slot = f'<div class="storm-placard" id="placard-{sid}" hidden></div>'
     return f"""
