@@ -16,6 +16,15 @@ The old fork gave an ACTIVE invest a big red "L" instead, so two invests
 could wear two different icons purely on fix freshness/dev-level (the
 91W-L vs 91E-X inconsistency). TestEveryInvestGetsTheX pins the rule
 through the REAL feed pipeline for the whole invest number range.
+
+THE STAGE RULE (unified 2026-06-07): EVERY active designated (non-invest)
+storm is "hurricane" — the spinning glyph whose letter/color come from
+current_category, so the marker is current-stage-driven where it shows.
+The old fork keyed a "td_circle" hollow ring on PEAK wind < 34 kt, so a
+weakened storm (peaked TS, currently TD) and a freshly-designated TD at
+the same current stage wore different markers (the AMANDA-glyph vs
+TWO-E-ring inconsistency). TestSameStageSameMarker pins the rule,
+including the brand-new-storm minimal-fields case.
 """
 from __future__ import annotations
 
@@ -50,24 +59,27 @@ def _storm(sid, *, is_active, is_invest, peak_wind_kt):
     }
 
 
-# (storm, expected marker_type) — expectations follow the "Three flavors"
-# block in ace_core/ace_core/__init__.py: invests are invest_x ALWAYS.
+# (storm, expected marker_type) — expectations follow the "Two flavors"
+# block in ace_core/ace_core/__init__.py: invests are invest_x ALWAYS;
+# every other ACTIVE storm is "hurricane" regardless of peak intensity
+# (current_category drives the rendered letter, not the classification).
 CASES = [
     (_storm("ACTIVE_INVEST", is_active=True, is_invest=True,
             peak_wind_kt=25.0), "invest_x"),
     (_storm("ACTIVE_STRONG_INVEST", is_active=True, is_invest=True,
             peak_wind_kt=40.0), "invest_x"),
     (_storm("ACTIVE_TD", is_active=True, is_invest=False,
-            peak_wind_kt=30.0), "td_circle"),
+            peak_wind_kt=30.0), "hurricane"),
     (_storm("ACTIVE_TS", is_active=True, is_invest=False,
             peak_wind_kt=50.0), "hurricane"),
     (_storm("INACTIVE_INVEST", is_active=False, is_invest=True,
             peak_wind_kt=20.0), "invest_x"),
     (_storm("FINISHED_TC", is_active=False, is_invest=False,
             peak_wind_kt=80.0), None),
-    # peak None: ace_core substitutes 0.0 -> td_circle; JS must too.
+    # peak None (brand-new storm, no wind yet): still the glyph; peak
+    # plays no part in classification anymore. JS must agree.
     (_storm("ACTIVE_NO_PEAK", is_active=True, is_invest=False,
-            peak_wind_kt=None), "td_circle"),
+            peak_wind_kt=None), "hurricane"),
 ]
 
 
@@ -122,6 +134,106 @@ class TestEveryInvestGetsTheX(unittest.TestCase):
                     self.assertEqual(ace_core_marker_type(storms[0]),
                                      "invest_x",
                                      f"{num}W (active={active}) must wear the X")
+
+
+class TestSameStageSameMarker(unittest.TestCase):
+    """THE STAGE RULE: designated storms at the same CURRENT stage wear
+    the same marker. The old fork keyed on peak_wind_kt, so AMANDA
+    (peaked 40 kt, weakened to a 30 kt TD) wore the glyph while TWO-E
+    (fresh TD, peak 30 kt) wore the hollow ring — different markers for
+    the same current stage. Classification must ignore peak entirely;
+    current_category only picks the letter/color INSIDE the glyph."""
+
+    @staticmethod
+    def _weakened_ex_ts():
+        # AMANDA-shaped: peaked as a TS, currently a TD.
+        s = _storm("WEAKENED_EX_TS", is_active=True, is_invest=False,
+                   peak_wind_kt=40.0)
+        s["max_category"] = "TS"
+        return s
+
+    @staticmethod
+    def _fresh_td():
+        # TWO-E-shaped: freshly designated, never exceeded TD strength.
+        return _storm("FRESH_TD", is_active=True, is_invest=False,
+                      peak_wind_kt=30.0)
+
+    def test_same_stage_same_marker_type(self):
+        self.assertEqual(ace_core_marker_type(self._weakened_ex_ts()),
+                         ace_core_marker_type(self._fresh_td()))
+        self.assertEqual(ace_core_marker_type(self._fresh_td()),
+                         "hurricane")
+
+    def test_brand_new_storm_minimal_fields(self):
+        # A storm dict carrying ONLY what a just-designated system is
+        # guaranteed to have (no peak, no current_category, no atcf_id,
+        # no max_category) classifies exactly like an established storm.
+        minimal = {
+            "sid": "BRAND_NEW", "name": "TWO-E", "is_active": True,
+            "points": [{"t": "2026-06-07T12:00:00", "lat": 15.4,
+                        "lon": -100.0, "wind_kt": 30.0, "cls": "TD",
+                        "nature": "TS"}],
+        }
+        self.assertEqual(ace_core_marker_type(minimal), "hurricane")
+        self.assertEqual(ace_core_marker_type(minimal),
+                         ace_core_marker_type(self._weakened_ex_ts()))
+
+    def test_brand_new_storm_through_real_pipeline(self):
+        # Strongest form: a single-advisory non-invest TD built through
+        # merge_and_extract_storms (the REAL feed path) must classify
+        # identically to the established weakened storm.
+        import datetime as dt
+        import pandas as pd
+        from ace_core import merge_and_extract_storms
+        now = dt.datetime.utcnow()
+        anchor = now.replace(hour=(now.hour // 6) * 6, minute=0,
+                             second=0, microsecond=0)
+        rows = [{
+            "SID": "NHC_EP022026", "NAME": "TWO-E", "season": 2026,
+            "time": anchor - dt.timedelta(hours=6 * (1 - i)),
+            "lat": 15.0 + i, "lon": -100.0 - i,
+            "wind_kt": 30.0, "pressure_mb": 1005.0,
+            "nature": "TS", "ace_nature": "TS",
+            "source": "live-NHC", "storm_num": 2,
+        } for i in range(2)]
+        cfg = {"short": "ep", "agency_name": "NHC", "invest_letter": "E"}
+        storms = merge_and_extract_storms(
+            pd.DataFrame(), pd.DataFrame(rows), cfg)
+        self.assertTrue(storms, "fresh TD missing from feed")
+        self.assertFalse(storms[0]["is_invest"])
+        self.assertTrue(storms[0]["is_active"])
+        self.assertEqual(ace_core_marker_type(storms[0]), "hurricane",
+                         "a freshly-designated TD must wear the glyph")
+
+    @unittest.skipIf(NODE is None, "node not on PATH")
+    def test_rendered_glyphs_identical_for_same_stage(self):
+        # Beyond the type: the RENDERED markup for two same-stage storms
+        # must be identical once name/sid/position are equalized — peak
+        # intensity must leave no trace in the marker. Asserted on the
+        # Python renderer and the JS mirror.
+        a = self._weakened_ex_ts()
+        b = self._fresh_td()
+        for s in (a, b):
+            s["name"] = "SAME"
+            s["sid"] = "SAME_SID"
+        a, b = (json.loads(json.dumps(s)) for s in (a, b))
+        py_a = gtp.render_active_icons([a], gtp.BASINS["ep"]["extent"])
+        py_b = gtp.render_active_icons([b], gtp.BASINS["ep"]["extent"])
+        self.assertEqual(py_a, py_b,
+                         "peak intensity leaked into the rendered marker")
+        self.assertIn('class="active-icon"', py_a)
+        self.assertNotIn("active-td", py_a)
+        payload = {
+            "year": 2026,
+            "header": {"named": 0, "cat1plus": 0, "cat3plus": 0, "cat5": 0,
+                       "total_ace": 0.0},
+            "vocab": gtp.BASINS["ep"]["vocab"],
+        }
+        js_a = run_harness("ep", dict(payload, storms=[a]))["active"]
+        js_b = run_harness("ep", dict(payload, storms=[b]))["active"]
+        self.assertEqual(js_a, js_b,
+                         "peak intensity leaked into the JS-rendered marker")
+        self.assertEqual(js_a, py_a, "JS/Python marker parity broke")
 
 
 @unittest.skipIf(NODE is None, "node not on PATH")

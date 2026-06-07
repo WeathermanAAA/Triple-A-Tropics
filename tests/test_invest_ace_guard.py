@@ -18,11 +18,17 @@ invest number alone.
 from __future__ import annotations
 
 import datetime as dt
+import sys
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
-from ace_core import (
+# Repo-source-first (see overlay_test_util): test the ace_core under
+# review, not a possibly-lagging pip-installed copy.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ace_core"))
+
+from ace_core import (  # noqa: E402
     build_global_geojson,
     compute_header_stats,
     current_year_storms,
