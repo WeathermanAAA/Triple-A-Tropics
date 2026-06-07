@@ -1308,7 +1308,12 @@ TRACKS_JS = r"""
     }
   }
   document.querySelectorAll(".storm-card.clickable").forEach(function(card) {
-    card.addEventListener("click", function() { toggleInline(card.dataset.sid); });
+    card.addEventListener("click", function(ev) {
+      // a real link inside the card (the CycloLab entry) navigates;
+      // the placard toggle must not swallow it.
+      if (ev.target.closest("a")) return;
+      toggleInline(card.dataset.sid);
+    });
   });
   // Spinning map icon → reveal that active storm's wind-history chart
   // in the sidebar card.
@@ -1782,6 +1787,12 @@ HTML_TEMPLATE = """<!doctype html>
     opacity: 0.6; }}
   .storm-card.clickable.active .click-hint {{ color: var(--c1); opacity: 0.75; }}
   .storm-card.clickable.open .click-hint {{ opacity: 0.25; }}
+  .cyclolab-link {{ display: inline-block; margin-top: 7px; padding: 3px 11px;
+    border: 1px solid rgba(159,198,245,0.45); border-radius: 999px;
+    color: #9fc6f5; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.5px; text-decoration: none; }}
+  .cyclolab-link:hover {{ border-color: #9fc6f5; color: #cfe4ff;
+    background: rgba(159,198,245,0.08); }}
   /* Phone legibility: the 10px uppercase micro-labels drop under the
      readable floor on small screens - bump them (CSS-only; the card
      MARKUP is byte-parity-mirrored in LIVE_BASIN_JS, this is not). */
@@ -2318,6 +2329,10 @@ LIVE_BASIN_JS = r"""
     var sid = storm.sid || "";
     var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
     var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
+    // SYNC: CycloLab entry link - active designated storms only.
+    var cyclolabBtn = (isActive && !isInvest && sid)
+      ? '<a class="cyclolab-link" href="/cyclolab/' + sid + '/">Open in CycloLab ▸</a>'
+      : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
     return "\n" +
       '<div class="' + classes + '" id="card-' + sid + '" data-sid="' + sid + '">' + "\n" +
@@ -2332,6 +2347,7 @@ LIVE_BASIN_JS = r"""
       '    <div class="row"><span class="lbl">ACE</span><span class="val">' + pyFixed(ace, 2) + '</span></div>' + "\n" +
       '  </div>' + "\n" +
       '  ' + clickHint + "\n" +
+      '  ' + cyclolabBtn + "\n" +
       '  ' + placardSlot + "\n" +
       '</div>' + "\n";
   }
@@ -2596,6 +2612,12 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
      the TAT palette with same border radius, blur, and font scale as
      the legend. */
   .maplibregl-popup-tip { display: none !important; }
+  .cyclolab-link { display: inline-block; margin-top: 6px; padding: 3px 11px;
+    border: 1px solid rgba(159,198,245,0.45); border-radius: 999px;
+    color: #9fc6f5; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.5px; text-decoration: none; }
+  .cyclolab-link:hover { border-color: #9fc6f5; color: #cfe4ff;
+    background: rgba(159,198,245,0.08); }
   .maplibregl-popup-content { background: rgba(10,18,34,0.96) !important;
     color: var(--fg) !important;
     border: 1px solid #2a3e5c; border-radius: 8px;
@@ -3090,13 +3112,20 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       : '';
     var title = props.name || props.designation || "Active system";
     var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
+    // CycloLab entry (Stage 5): designated storms only (invest markers
+    // carry marker_type "invest_x" and have no per-storm page in V1).
+    var labLink = (props.storm_id && props.marker_type !== "invest_x")
+      ? ('<div class="tt-row"><a class="cyclolab-link" href="/cyclolab/' +
+         encodeURIComponent(props.storm_id) + '/">Open in CycloLab ▸</a></div>')
+      : '';
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
       '<div class="tt-row"><span class="tt-cat" style="background:' +
         color + '">' + escapeHtml(catLabel) + '</span></div>' +
       '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
         '<span class="tt-val">' + windTxt + '</span></div>' +
       presRow +
-      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '');
+      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '') +
+      labLink;
   }
 
   // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
@@ -3377,6 +3406,13 @@ def render_storm_card(storm: dict) -> str:
     sid = storm.get("sid") or ""
     hint_text = "Click for wind history" if is_active else "Click for peak intensity"
     click_hint = f'<div class="click-hint">▸ {hint_text}</div>'
+    # CycloLab entry (Stage 5): ACTIVE, DESIGNATED storms only (invests
+    # have no per-storm page in V1). A REAL link - it works even where
+    # card click handlers are absent, and the card handler skips <a>
+    # clicks so the placard toggle never swallows navigation.
+    cyclolab_btn = (f'<a class="cyclolab-link" href="/cyclolab/{sid}/">'
+                    f'Open in CycloLab ▸</a>'
+                    if (is_active and not is_invest and sid) else '')
     placard_slot = f'<div class="storm-placard" id="placard-{sid}" hidden></div>'
     return f"""
 <div class="{classes}" id="card-{sid}" data-sid="{sid}">
@@ -3391,6 +3427,7 @@ def render_storm_card(storm: dict) -> str:
     <div class="row"><span class="lbl">ACE</span><span class="val">{ace:.2f}</span></div>
   </div>
   {click_hint}
+  {cyclolab_btn}
   {placard_slot}
 </div>
 """
