@@ -1025,12 +1025,11 @@ def _fmt_last_fix(iso: str | None) -> str:
 
 def render_active_icons(storms: list[dict], extent,
                         map_w: int = MAP_W, map_h: int = MAP_H) -> str:
-    """For each active NON-INVEST storm, place a marker at its most recent
-    position:
-      - TS+ (peak ≥ 34 kt): the spinning, glowing TAT hurricane icon with
-        category label inside.
-      - Active designated TD (numbered TC, peak < 34 kt): a hollow blue
-        circle + designation/name label below.
+    """For each active NON-INVEST storm, place the spinning, glowing TAT
+    hurricane icon at its most recent position. The category letter and
+    color inside come from current_category, so the marker is
+    stage-driven: a current TD wears a blue glyph with "D", a TS a green
+    glyph with "S", etc.
 
     Invests are NOT painted here regardless of active state — every
     invest (90-99) carries the red X + designation from
@@ -1040,18 +1039,20 @@ def render_active_icons(storms: list[dict], extent,
     could wear two different icons purely on fix freshness/dev-level;
     the "L" path is retired — nothing non-invest ever used it.)
 
-    The blue hollow circle for designated TDs (e.g. Hagupit at TD
-    intensity, before/after its TS phase) closes the gap between the
-    spinning TS+ icon and the invest X — these systems are operationally
-    numbered tropical cyclones, not invests, and a marker distinct from
-    both reflects their status correctly.
+    The old hollow-ring marker for peak < 34 kt storms is RETIRED: it
+    keyed on PEAK wind, not current stage, so a weakened storm (peaked
+    TS, currently TD) and a freshly-designated TD at the same current
+    stage wore different markers (the AMANDA-glyph vs TWO-E-ring
+    inconsistency of 2026-06-07). Designated storms at the same current
+    stage now always wear the same marker.
 
     SYNC: mirrored line-for-line by LIVE_BASIN_JS buildActiveSvg() — the
     live overlay must produce byte-identical markup for the same storms
     list (tests/test_live_overlay_parity.py). The fork below is the same
     classification as ace_core.build_global_geojson's marker_type
-    ("td_circle" / "hurricane"; invests are "invest_x" and skipped here);
-    the JS routes through its markerType() mirror. Change BOTH."""
+    ("hurricane" for EVERY active designated storm; invests are
+    "invest_x" and skipped here); the JS routes through its markerType()
+    mirror. Change BOTH."""
     project, _ = build_projection(extent, map_w, map_h)
     parts = ['<g class="active-storms">']
     for storm in storms:
@@ -1066,7 +1067,6 @@ def render_active_icons(storms: list[dict], extent,
             lon += 360
         x, y = project(lon, last["lat"])
         sid = storm.get("sid") or ""
-        peak_kt = storm.get("peak_wind_kt") or 0.0
         is_invest = bool(storm.get("is_invest"))
         # Native-tooltip <title> (no JS) showing the storm name + the
         # timestamp of its most recent fix. Inserted as the first child of
@@ -1077,39 +1077,10 @@ def render_active_icons(storms: list[dict], extent,
         title_txt = (f"{disp_name} - Last fix: {last_fix}"
                      if last_fix else disp_name)
         title_el = f'<title>{_xml_escape(title_txt)}</title>' if title_txt else ''
-        # Two-way fork on the marker style (invests never reach here —
-        # they carry the red X from render_tracks_svg's second pass):
-        #   * peak < 34  → blue hollow ○    (designated TD, not yet TS)
-        #   * else       → spinning glyph   (TS+ named system)
+        # Invests never reach the glyph below — they carry the red X from
+        # render_tracks_svg's second pass. Everything else active wears
+        # the spinning glyph; current_category picks its letter + color.
         if is_invest:
-            continue
-
-        if peak_kt < 34.0:
-            label = storm.get("name") or storm.get("atcf_id") or ""
-            label = str(label).replace('"', '').upper()
-            # Hollow TD marker: a chunky bright-cyan ring (TAT accent-2
-            # #5dd3ff) wrapped in a white outer halo, so a designated TD
-            # carries the same visual weight as the TS+ spinning icons.
-            # The white circle is drawn first (wider stroke) and the cyan
-            # ring sits centred on top (narrower stroke), leaving white
-            # peeking on both edges = a haloed ring. Centre stays hollow —
-            # that's the TD signal, distinct from the filled TS+ dots.
-            parts.append(
-                f'<g class="active-icon active-td" data-sid="{sid}" '
-                f'transform="translate({x:.1f},{y:.1f})" '
-                f'style="filter:drop-shadow(0 0 5px rgba(0,0,0,0.65));">'
-                f'{title_el}'
-                f'<circle cx="0" cy="0" r="{ICON_TD_R}" fill="none" '
-                f'stroke="#ffffff" stroke-width="6.5"/>'
-                f'<circle cx="0" cy="0" r="{ICON_TD_R}" fill="none" '
-                f'stroke="#5dd3ff" stroke-width="3.5"/>'
-                f'<text x="0" y="26" text-anchor="middle" '
-                f'dominant-baseline="hanging" font-size="{ICON_NAME_PT}" '
-                f'font-weight="800" fill="#ffffff" paint-order="stroke" '
-                f'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" '
-                f'stroke-linejoin="round">{label}</text>'
-                f'</g>'
-            )
             continue
 
         cls = storm.get("current_category") or "TD"
@@ -1560,9 +1531,9 @@ ICON_NAME_PT = 16        # storm-name/designation labels (was 12/13 - bigger
                          # proportion vs the glyph so names read clearly)
 ICON_NAME_X = 28         # name anchor right of the glyph centre
 ICON_NAME_Y = 5
-ICON_TD_R = 14           # hollow-TD ring radius
 ICON_HBOX = 68           # hurricane marker viewBox == CSS box (1:1)
-ICON_TDBOX_W, ICON_TDBOX_H = 60, 50   # td marker viewBox == CSS box
+# (ICON_TD_R / ICON_TDBOX_* are gone with the retired hollow-TD ring —
+# designated TDs wear the standard glyph with a blue "D" now.)
 
 
 def _apply_icon_tokens(html: str) -> str:
@@ -1575,10 +1546,7 @@ def _apply_icon_tokens(html: str) -> str:
         ("__ICON_NAME_PT__", ICON_NAME_PT),
         ("__ICON_NAME_X__", ICON_NAME_X),
         ("__ICON_NAME_Y__", ICON_NAME_Y),
-        ("__ICON_TD_R__", ICON_TD_R),
         ("__ICON_HBOX__", ICON_HBOX),
-        ("__ICON_TDBOX_W__", ICON_TDBOX_W),
-        ("__ICON_TDBOX_H__", ICON_TDBOX_H),
     ):
         html = html.replace(token, str(value))
     return html
@@ -2045,20 +2013,19 @@ LIVE_BASIN_JS = r"""
   function markerType(storm) {
     // THE single client-side source of the marker classification.
     // Mirrors ace_core.build_global_geojson's marker_type fork
-    // (ace_core/ace_core/__init__.py, the "Three flavors" block):
+    // (ace_core/ace_core/__init__.py, the "Two flavors" block):
     //   invest (active or not) -> "invest_x"   (NHC invest-area X)
-    //   active + peak < 34 kt  -> "td_circle"
-    //   active + peak >= 34 kt -> "hurricane"
+    //   active (designated)    -> "hurricane"  (glyph; current_category
+    //                                           picks the letter/color)
     //   otherwise              -> null (no current-position marker)
-    // (The old active-invest "L" is retired - every invest wears the X.)
+    // (The old active-invest "L" is retired - every invest wears the X.
+    // The old "td_circle" peak<34 ring is retired too: keying on PEAK
+    // wind gave a weakened storm and a fresh TD at the SAME current
+    // stage different markers. Stage now only picks the glyph letter.)
     // tests/test_marker_type_agreement.py asserts the two implementations
     // agree on every case - keep them in lockstep.
     if (storm.is_invest) return "invest_x";
-    if (storm.is_active) {
-      var peak = storm.peak_wind_kt != null ? storm.peak_wind_kt : 0.0;
-      if (peak < 34.0) return "td_circle";
-      return "hurricane";
-    }
+    if (storm.is_active) return "hurricane";
     return null;
   }
 
@@ -2216,7 +2183,8 @@ LIVE_BASIN_JS = r"""
 
   function buildActiveSvg(storms) {
     // SYNC: mirrors render_active_icons() byte-for-byte (parity-tested).
-    // Branches follow markerType(): "td_circle" / "hurricane"; null and
+    // Every "hurricane" (= every active designated storm) gets the
+    // spinning glyph — current_category picks its letter/color; null and
     // "invest_x" (every invest, active or not) are skipped here — the
     // X comes from buildTracksSvg's second pass.
     var parts = ['<g class="active-storms">'];
@@ -2238,26 +2206,6 @@ LIVE_BASIN_JS = r"""
       var lastFix = fmtLastFix(last.t);
       var titleTxt = lastFix ? (dispName + " - Last fix: " + lastFix) : dispName;
       var titleEl = titleTxt ? "<title>" + escapeXml(titleTxt) + "</title>" : "";
-
-      if (mt === "td_circle") {
-        var labelU = String(storm.name || storm.atcf_id || "")
-          .replace(/"/g, "").toUpperCase();
-        parts.push('<g class="active-icon active-td" data-sid="' + sid + '" ' +
-                   'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
-                   'style="filter:drop-shadow(0 0 5px rgba(0,0,0,0.65));">' +
-                   titleEl +
-                   '<circle cx="0" cy="0" r="__ICON_TD_R__" fill="none" ' +
-                   'stroke="#ffffff" stroke-width="6.5"/>' +
-                   '<circle cx="0" cy="0" r="__ICON_TD_R__" fill="none" ' +
-                   'stroke="#5dd3ff" stroke-width="3.5"/>' +
-                   '<text x="0" y="26" text-anchor="middle" ' +
-                   'dominant-baseline="hanging" font-size="__ICON_NAME_PT__" ' +
-                   'font-weight="800" fill="#ffffff" paint-order="stroke" ' +
-                   'stroke="rgba(0,0,0,0.7)" stroke-width="2.5" ' +
-                   'stroke-linejoin="round">' + labelU + '</text>' +
-                   '</g>');
-        continue;
-      }
 
       var cls = storm.current_category || "TD";
       var color = CFG.colors[cls] !== undefined ? CFG.colors[cls] : CFG.colors.TD;
@@ -2617,23 +2565,30 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 
   /* Active-storm markers (HTML, not GL) so the existing spin animation
      and red marker appearance survive without a WebGL rebuild.
-     Three flavours match the per-basin SVG renderer:
+     Two flavours match the per-basin SVG renderer:
        * .invest-x-marker   — EVERY recent invest, active or not (small
                               red glowing X with red side-label, the NHC
                               invest-area convention). Per-basin
                               reference: render_tracks_svg
                               invest_current_positions. (The old
                               active-invest big-L marker is retired.)
-       * .active-td         — active designated TD that's not an invest
-                              (hollow blue circle + white designation
-                              below). Per-basin reference:
-                              render_active_icons peak<34 branch.
-       * .active-hurricane  — active TS+ storm (spinning hurricane glyph
-                              with category letter inside + name beside).
-                              Per-basin reference: render_active_icons.
+       * .active-hurricane  — EVERY active designated storm (spinning
+                              hurricane glyph with current-stage letter
+                              inside + name beside — a current TD wears a
+                              blue "D" glyph). Per-basin reference:
+                              render_active_icons. (The old .active-td
+                              hollow ring is retired — it keyed on PEAK
+                              wind, so same-stage storms could wear
+                              different markers.)
      Sizing here is in *unzoomed* CSS pixels — MapLibre keeps marker
      elements at constant pixel size while the map zooms, exactly like
-     the per-basin SVG when its viewBox stays put. */
+     the per-basin SVG when its viewBox stays put.
+     ANCHORING INVARIANT: every marker element is anchored at its CENTER
+     (maplibregl.Marker anchor:"center"), so each flavour's SVG viewBox
+     must be SYMMETRIC about (0,0) with the glyph centered there — side
+     labels hang outside the box via overflow:visible and must never be
+     given room inside the viewBox (that's what mis-anchored the invest
+     X 24px west of its fix). tests/test_invest_x_anchor.py pins this. */
   .active-marker { position: absolute; transform: translate(-50%, -50%);
     pointer-events: none; }
   .active-marker svg { display: block; overflow: visible;
@@ -2656,29 +2611,15 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     font-weight: 700; paint-order: stroke;
     stroke: #07101c; stroke-width: 3; stroke-linejoin: round; }
 
-  /* Active designated-TD circle — a chunky bright-cyan ring (TAT
-     accent-2 #5dd3ff) wrapped in a white outer halo, hollow centre, with
-     the white name/designation label below. Mirrors render_active_icons'
-     peak<34 branch (r=14; white halo stroke 6.5 drawn first, cyan ring
-     stroke 3.5 centred on top, leaving white peeking both edges; label at
-     y=26). The halo gives the TD the same visual weight as the TS+
-     spinning icons; the hollow centre keeps it distinct from filled
-     TS+ observation dots. */
-  .active-marker.active-td { width: __ICON_TDBOX_W__px; height: __ICON_TDBOX_H__px;
-    filter: drop-shadow(0 0 5px rgba(0,0,0,0.65)); }
-  .active-marker .td-halo { stroke: #ffffff; stroke-width: 6.5;
-    fill: none; }
-  .active-marker .td-circle { stroke: #5dd3ff; stroke-width: 3.5;
-    fill: none; }
-  .active-marker .td-label { font-size: __ICON_NAME_PT__px; font-weight: 800;
-    fill: #ffffff; paint-order: stroke;
-    stroke: rgba(0,0,0,0.7); stroke-width: 2.5; stroke-linejoin: round; }
-
-  /* Inactive recent invest "X" — text/path styling lifted verbatim from
-     render_tracks_svg invest_current_positions (path stroke #ff2a2a /
-     width 2.4) and the .invest-label CSS rule (#ff5050 / 12px / weight
-     700 / dark stroke 3). */
-  .active-marker.invest-x-marker { width: 92px; height: 32px; }
+  /* Recent invest "X" (active or not) — text/path styling lifted
+     verbatim from render_tracks_svg invest_current_positions (path
+     stroke #ff2a2a / width 2.4) and the .invest-label CSS rule
+     (#ff5050 / 12px / weight 700 / dark stroke 3). The box is the X
+     glyph ONLY (32×32, symmetric about the crosshair centre = the
+     anchored fix); the designation label starts at x=11 and overflows
+     the box to the right, exactly like .hurricane-name does — so label
+     width can never shift the X off the fix. */
+  .active-marker.invest-x-marker { width: 32px; height: 32px; }
   .active-marker .invest-label { fill: #ff5050; font-size: __ICON_NAME_PT__px;
     font-weight: 700; paint-order: stroke; stroke: #07101c;
     stroke-width: 3; stroke-linejoin: round;
@@ -3126,11 +3067,14 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         // still carries it — render it as the unified X.
         el.classList.add("invest-x-marker");
         var fid = "invest-red-glow-" + (++investGlowSeq);
-        // Anchor of the marker is the X center; the SVG's viewBox is
-        // centred on (0,0) and sized large enough to contain both the
-        // glowing X and the side label without clipping.
+        // ANCHOR: the viewBox is symmetric about (0,0) — the X crosshair
+        // centre — so anchor:"center" puts the crosshair EXACTLY on the
+        // fix. The label is an offset sibling (<text x="11">) that
+        // overflows the box via overflow:visible; giving it room inside
+        // the viewBox (the old "-22 -16 92 32") shifted the X 24px west
+        // of the fix by exactly half the label allowance.
         el.innerHTML =
-          '<svg viewBox="-22 -16 92 32" xmlns="http://www.w3.org/2000/svg">' +
+          '<svg viewBox="-16 -16 32 32" xmlns="http://www.w3.org/2000/svg">' +
             '<defs><filter id="' + fid + '" ' +
               'x="-200%" y="-200%" width="500%" height="500%">' +
               '<feGaussianBlur in="SourceAlpha" stdDeviation="3.2" ' +
@@ -3151,24 +3095,15 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
             '<text class="invest-label" x="11" y="4" ' +
               'text-anchor="start">' + escapeHtml(designation) + '</text>' +
           '</svg>';
-      } else if (props.marker_type === "td_circle") {
-        // Active designated TD that's not an invest (e.g. Hagupit at
-        // TD strength). Per-basin's render_active_icons emits a hollow
-        // blue circle (r=12, stroke 2.5, no fill) + white name/
-        // designation label below — a tier between the spinning TS+
-        // icon and the invest X so a numbered TD reads as an
-        // operational TC rather than an invest.
-        el.classList.add("active-td");
-        el.innerHTML =
-          '<svg viewBox="-30 -22 __ICON_TDBOX_W__ __ICON_TDBOX_H__" xmlns="http://www.w3.org/2000/svg">' +
-            '<circle class="td-halo" cx="0" cy="0" r="__ICON_TD_R__"/>' +
-            '<circle class="td-circle" cx="0" cy="0" r="__ICON_TD_R__"/>' +
-            '<text class="td-label" x="0" y="26" ' +
-              'text-anchor="middle" dominant-baseline="hanging">' +
-              escapeHtml(designation) + '</text>' +
-          '</svg>';
       } else {
-        // Active TS+ — spinning hurricane glyph.
+        // EVERY active designated storm — spinning hurricane glyph;
+        // current_category picks the letter/color (a current TD wears a
+        // blue "D" glyph, same as a weakened ex-TS at TD strength).
+        // LEGACY: "td_circle" was the old peak<34 hollow-ring type; a
+        // geojson written by a pre-0.5.0 ace_core (poller repin gap,
+        // cached object) still carries it — render it as the unified
+        // glyph, which the same feature's current_category fully
+        // describes.
         el.classList.add("active-hurricane");
         var cls = props.current_category || "TD";
         var color = SSHS_COLORS[cls] || "#888";

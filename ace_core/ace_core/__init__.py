@@ -879,15 +879,14 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # / post-dissipation disturbance), AND (3) it has a valid wind.
         # We deliberately do NOT require >=34 kt here: a designated
         # tropical depression is an active system too (e.g. JMA-recognised
-        # Jangmi 2026 — last fix 25 kt, TS-nature). Both renderers already
-        # carry a dedicated marker for the peak<34 kt case — the hollow
-        # blue TD circle (render_active_icons' peak<34 branch and
-        # build_global_geojson's "td_circle" marker_type). Gating on 34 kt
-        # made that marker unreachable (is_active could never be True while
-        # peak<34), so designated TDs silently dropped off both the
-        # per-basin and home-page maps. Weakening/dissipation is still
-        # caught by the nature gate: a system that decays to a remnant low
-        # or goes extratropical flips to DS/ET and falls out of "active".
+        # Jangmi 2026 — last fix 25 kt, TS-nature). Both renderers draw
+        # every active designated storm with the spinning glyph whose
+        # letter/color come from current_category (a current TD wears the
+        # blue "D" glyph). Gating on 34 kt would make designated TDs
+        # silently drop off both the per-basin and home-page maps.
+        # Weakening/dissipation is still caught by the nature gate: a
+        # system that decays to a remnant low or goes extratropical flips
+        # to DS/ET and falls out of "active".
         recent_obs = (len(points) > 0
                       and points[-1]["time"] >= active_cutoff)
         is_active = False
@@ -1054,10 +1053,11 @@ def build_global_geojson(storms: list[dict]) -> dict:
         pressure, time, and SSHWS class. The MapLibre `circle` layer
         styles these with the TAT palette.
       * "active_marker" — one Point per active storm/invest, carrying
-        marker_type ("hurricane" for the spinning icon, "td_circle" for
-        a designated TD, "invest_x" for EVERY invest's red X). Rendered
-        as HTML markers, not GL layers, so existing spin animations and
-        label layouts work without WebGL plumbing.
+        marker_type ("hurricane" for EVERY active designated storm's
+        spinning glyph — current_category drives the letter/color, so a
+        current TD wears a blue "D" glyph; "invest_x" for EVERY invest's
+        red X). Rendered as HTML markers, not GL layers, so existing
+        spin animations and label layouts work without WebGL plumbing.
     """
     features: list[dict] = []
     for storm in storms:
@@ -1119,7 +1119,7 @@ def build_global_geojson(storms: list[dict]) -> dict:
             })
 
         # Current-position marker — one Point at the latest position.
-        # Three flavors, matching the per-basin SVG convention exactly:
+        # Two flavors, matching the per-basin SVG convention exactly:
         #   * "invest_x": is_invest, ACTIVE OR NOT. Small red glowing X
         #     with a red designation label to the right — the NHC
         #     convention for invest areas. One invest = one marker,
@@ -1129,14 +1129,17 @@ def build_global_geojson(storms: list[dict]) -> dict:
         #     freshness/dev-level; the "L" path is retired — nothing
         #     non-invest ever used it). Per-basin emits this from
         #     render_tracks_svg's invest_current_positions second pass.
-        #   * "td_circle": is_active AND peak < 34 kt AND NOT is_invest.
-        #     Hollow blue circle + white name/designation label below —
-        #     the system is operationally a numbered TD (e.g. Hagupit at
-        #     TD strength), not an invest. Per-basin emits this from
-        #     render_active_icons' peak < 34 branch.
-        #   * "hurricane": is_active AND peak >= 34 kt AND NOT is_invest.
-        #     Spinning hurricane glyph + name. Per-basin emits this from
-        #     render_active_icons' default branch.
+        #   * "hurricane": is_active AND NOT is_invest — EVERY designated
+        #     storm, regardless of peak intensity. Spinning glyph + name;
+        #     the letter/color inside come from current_category, so the
+        #     marker is stage-driven where it matters (a current TD wears
+        #     a blue glyph with "D"). The old "td_circle" tier (hollow
+        #     ring for peak < 34 kt) is RETIRED: it keyed on PEAK wind,
+        #     so a weakened storm (peaked TS, now TD) and a fresh TD at
+        #     the same current stage wore different markers (the
+        #     AMANDA-glyph vs TWO-E-ring inconsistency). Renderers keep a
+        #     legacy fold (td_circle -> glyph) for geojson written by a
+        #     pre-0.5.0 ace_core during the poller repin gap.
         # All live under kind="active_marker" so the JS marker iteration
         # loop picks them up uniformly; marker_type drives the rendered
         # shape.
@@ -1144,11 +1147,7 @@ def build_global_geojson(storms: list[dict]) -> dict:
         if is_invest:
             marker_type = "invest_x"
         elif is_active:
-            peak_for_test = peak_kt if peak_kt is not None else 0.0
-            if peak_for_test < 34.0:
-                marker_type = "td_circle"
-            else:
-                marker_type = "hurricane"
+            marker_type = "hurricane"
         if marker_type and points:
             last = points[-1]
             current_kt = last.get("wind_kt")
