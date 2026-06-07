@@ -101,7 +101,9 @@ def make_fixture_storms(extent) -> list[dict]:
                 _pt("2026-05-28T06:00:00", A(0.16), L(0.71), 20.0, 1010.0, "TD", "DS"),
             ],
         },
-        # 4: active numbered TD (not an invest) -> hollow cyan ring.
+        # 4: active numbered TD (not an invest) -> spinning glyph with a
+        #    blue "D" (the peak-keyed hollow ring is retired; current
+        #    stage picks the letter - see test_marker_type_agreement).
         {
             "sid": "TEST_024", "name": "TWO", "atcf_id": "02X",
             "is_active": True, "is_invest": False,
