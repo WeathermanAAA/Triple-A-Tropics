@@ -63,6 +63,14 @@ armor3d/armor3d_climatology.nc
 # Archive feed base (Piece 3): built by build_feed_base.py, R2-only (poller reads it from the CDN)
 feeds/base/
 
+# CRW day-of-year SST bakes (CycloLab per-storm page). Both are R2-only
+# build outputs, never committed:
+#   build_crw_doy_climatology.py → sst/climo/   (366 DOY 1991-2020 mean grids)
+#   bake_crw_doy_records.py      → sst/records/ (per-pixel daily record-max)
+# The local state dirs hold per-DOY .nc checkpoints + memmap accumulators.
+_crw_doy_climo_state/
+_crw_doy_record_state/
+
 # Third-party reference / local scratch dirs - keep on disk, never track/push (not public)
 _reference/
 _push/
