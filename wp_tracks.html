@@ -249,7 +249,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-08 06:27 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-08 06:32 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>5</b> named storms · <b>2</b> typhoons · <b>1</b> super typhoons · <span class="ace">52.78 ACE</span></div>
     </div>
@@ -3328,7 +3328,8 @@
       var color = CFG.colors[cls] !== undefined ? CFG.colors[cls] : CFG.colors.TD;
       var label = SSHS_LABELS[cls];
       var name = storm.name || "";
-      parts.push('<g class="active-icon" data-sid="' + sid + '" ' +
+      parts.push('<a href="/cyclolab/' + sid + '/" target="_blank" rel="noopener">' +
+                 '<g class="active-icon" data-sid="' + sid + '" ' +
                  'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
                  'style="filter:drop-shadow(0 0 6px ' + color + ');">' + titleEl + '\n' +
                  '  <g transform="scale(0.7)">\n' +
@@ -3339,7 +3340,7 @@
                  '  </g>\n' +
                  '  <text y="0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.8" stroke-linejoin="round">' + label + '</text>\n' +
                  '  <text class="name" x="28" y="5" text-anchor="start">' + name + '</text>\n' +
-                 '</g>');
+                 '</g></a>');
     }
     parts.push('</g>');
     return parts.join("\n");
