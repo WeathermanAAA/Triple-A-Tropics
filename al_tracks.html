@@ -185,6 +185,12 @@
     opacity: 0.6; }
   .storm-card.clickable.active .click-hint { color: var(--c1); opacity: 0.75; }
   .storm-card.clickable.open .click-hint { opacity: 0.25; }
+  .cyclolab-link { display: inline-block; margin-top: 7px; padding: 3px 11px;
+    border: 1px solid rgba(159,198,245,0.45); border-radius: 999px;
+    color: #9fc6f5; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.5px; text-decoration: none; }
+  .cyclolab-link:hover { border-color: #9fc6f5; color: #cfe4ff;
+    background: rgba(159,198,245,0.08); }
   /* Phone legibility: the 10px uppercase micro-labels drop under the
      readable floor on small screens - bump them (CSS-only; the card
      MARKUP is byte-parity-mirrored in LIVE_BASIN_JS, this is not). */
@@ -243,7 +249,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-07 20:56 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-08 03:27 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>0</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">0.00 ACE</span></div>
     </div>
@@ -3662,6 +3668,12 @@
     var sid = storm.sid || "";
     var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
     var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
+    // SYNC: CycloLab entry link - active designated storms only. The
+    // data-name/data-accent feed the pre-launch settings dialog (FG-R3
+    // #3); the href is the no-JS / modified-click fallback.
+    var cyclolabBtn = (isActive && !isInvest && sid)
+      ? '<a class="cyclolab-link" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
+      : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
     return "\n" +
       '<div class="' + classes + '" id="card-' + sid + '" data-sid="' + sid + '">' + "\n" +
@@ -3676,6 +3688,7 @@
       '    <div class="row"><span class="lbl">ACE</span><span class="val">' + pyFixed(ace, 2) + '</span></div>' + "\n" +
       '  </div>' + "\n" +
       '  ' + clickHint + "\n" +
+      '  ' + cyclolabBtn + "\n" +
       '  ' + placardSlot + "\n" +
       '</div>' + "\n";
   }
