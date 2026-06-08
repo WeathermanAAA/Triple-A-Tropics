@@ -20,6 +20,8 @@ ACTIVE = {
     "current_category": "TD", "is_active": True, "is_invest": False,
     "peak_wind_kt": 30, "peak_pressure_mb": 1003, "ace": 0.0,
     "start": "2026-06-07", "end": None,
+    "points": [{"lat": 15.3, "lon": -99.5, "wind_kt": 30,
+                "t": "2026-06-08T00:00:00Z", "nature": "TS"}],
 }
 INVEST = {**ACTIVE, "sid": "NHC_EP902026", "name": "90E",
           "is_active": False, "is_invest": True}
@@ -39,15 +41,38 @@ class TestLaunchNewTab(unittest.TestCase):
         self.assertNotIn("cyclolab-link", card)
         self.assertNotIn("/cyclolab/", card)
 
-    def test_opener_uses_new_tab_never_same_tab(self):
-        # source-level guard on the dialog opener + the popup/card links.
-        src = Path(gt.__file__).read_text(encoding="utf-8")
-        self.assertIn('window.open(u, "_blank", "noopener")', src)
-        self.assertNotIn("window.location.href = u", src)
-        # every rendered cyclolab-link in the source carries the new-tab attrs
-        for snippet in ('class="cyclolab-link" target="_blank" rel="noopener"',
-                        'class="cyclolab-link" target="_blank" ',):
-            self.assertIn(snippet, src)
+    def _render_basin_page(self, storms):
+        vocab = {"named": "named", "cat1plus": "≥C1", "cat3plus": "≥C3",
+                 "cat5": "C5", "ace": "ACE"}
+        payload = {"basin": "ep", "basin_name": "East Pacific", "year": 2026,
+                   "storms": storms, "title": "EP 2026", "as_of": "x",
+                   "updated": "x", "vocab": vocab,
+                   "header": {"named": 1, "cat1plus": 0, "cat3plus": 0,
+                              "cat5": 0, "total_ace": 0.0}}
+        return gt.render_html(payload, gt.BASINS["ep"]["extent"], None, None)
+
+    def test_per_basin_marker_is_a_newtab_anchor_to_the_storm(self):
+        # the storm glyph itself is wrapped in a native new-tab anchor - no
+        # dialog, no JS handler (survives the live redraw because it is rebuilt
+        # as an anchor each time).
+        html = self._render_basin_page([ACTIVE])
+        self.assertIn(
+            '<a href="/cyclolab/NHC_EP022026/" target="_blank" '
+            'rel="noopener"><g class="active-icon"', html)
+        # the live page has NO pre-launch dialog and NO same-tab navigation.
+        self.assertNotIn("cl-launch", html)
+        self.assertNotIn("openDialog", html)
+        self.assertNotIn("window.location.href = u", html)
+
+    def test_global_map_popup_info_only_and_marker_anchor(self):
+        src = gt.GLOBAL_MAPLIBRE_HTML
+        # info-only hover popup: no interactive cyclolab link inside it.
+        self.assertNotIn("cyclolab-link", src)
+        # the active-hurricane glyph is wrapped in a new-tab anchor; no
+        # click->pin handler remains (click is the native anchor).
+        self.assertIn("encodeURIComponent(props.storm_id)", src)
+        self.assertIn('target="_blank" rel="noopener"', src)
+        self.assertNotIn("pinned = true", src)
 
 
 if __name__ == "__main__":
