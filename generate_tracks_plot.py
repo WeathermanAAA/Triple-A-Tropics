@@ -1318,7 +1318,9 @@ TRACKS_JS = r"""
       ls(0, LKEY, "1");
       ls(0, SKEY, JSON.stringify({ windUnits: unit }));
       var u = href + (href.indexOf("?") < 0 ? "?" : "&") + "units=" + unit;
-      window.location.href = u;
+      // CycloLab is a web app and lives in its OWN tab: open a NEW tab so
+      // the map stays behind in the original tab. Nothing loads same-tab.
+      window.open(u, "_blank", "noopener");
     }
     var dlg = null, pickUnit = "kt";
     function ensureDialog() {
@@ -2405,7 +2407,7 @@ LIVE_BASIN_JS = r"""
     // data-name/data-accent feed the pre-launch settings dialog (FG-R3
     // #3); the href is the no-JS / modified-click fallback.
     var cyclolabBtn = (isActive && !isInvest && sid)
-      ? '<a class="cyclolab-link" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
+      ? '<a class="cyclolab-link" target="_blank" rel="noopener" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
       : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
     return "\n" +
@@ -3182,7 +3184,8 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     // CycloLab entry (Stage 5): designated storms only (invest markers
     // carry marker_type "invest_x" and have no per-storm page in V1).
     var labLink = (props.storm_id && props.marker_type !== "invest_x")
-      ? ('<div class="tt-row"><a class="cyclolab-link" href="/cyclolab/' +
+      ? ('<div class="tt-row"><a class="cyclolab-link" target="_blank" ' +
+         'rel="noopener" href="/cyclolab/' +
          encodeURIComponent(props.storm_id) + '/" data-name="' +
          escapeHtml(title) + '" data-accent="' + color +
          '">Open in CycloLab ▸</a></div>')
@@ -3473,7 +3476,8 @@ def render_storm_card(storm: dict) -> str:
     # have no per-storm page in V1). A REAL link - it works even where
     # card click handlers are absent, and the card handler skips <a>
     # clicks so the placard toggle never swallows navigation.
-    cyclolab_btn = (f'<a class="cyclolab-link" href="/cyclolab/{sid}/" '
+    cyclolab_btn = (f'<a class="cyclolab-link" target="_blank" rel="noopener" '
+                    f'href="/cyclolab/{sid}/" '
                     f'data-name="{storm.get("name") or "UNNAMED"}" '
                     f'data-accent="{color}">Open in CycloLab ▸</a>'
                     if (is_active and not is_invest and sid) else '')
