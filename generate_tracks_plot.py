@@ -1094,7 +1094,7 @@ def render_active_icons(storms: list[dict], extent,
         # group because <animateTransform> replaces its own element's
         # transform attribute. CCW spin for NH cyclones.
         sid = storm.get("sid") or ""
-        parts.append(f'''<g class="active-icon" data-sid="{sid}" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">{title_el}
+        parts.append(f'''<a href="/cyclolab/{sid}/" target="_blank" rel="noopener"><g class="active-icon" data-sid="{sid}" transform="translate({x:.1f},{y:.1f})" style="filter:drop-shadow(0 0 6px {color});">{title_el}
   <g transform="scale({ICON_GLYPH_SCALE})">
     <g class="spin-wrap">
       <path d="M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z" fill="{color}"/>
@@ -1103,7 +1103,7 @@ def render_active_icons(storms: list[dict], extent,
   </g>
   <text y="0" text-anchor="middle" dominant-baseline="central" font-size="{ICON_LETTER_PT}" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.8" stroke-linejoin="round">{label}</text>
   <text class="name" x="{ICON_NAME_X}" y="{ICON_NAME_Y}" text-anchor="start">{name}</text>
-</g>''')
+</g></a>''')
     parts.append('</g>')
     return "\n".join(parts)
 
@@ -2348,7 +2348,8 @@ LIVE_BASIN_JS = r"""
       var color = CFG.colors[cls] !== undefined ? CFG.colors[cls] : CFG.colors.TD;
       var label = SSHS_LABELS[cls];
       var name = storm.name || "";
-      parts.push('<g class="active-icon" data-sid="' + sid + '" ' +
+      parts.push('<a href="/cyclolab/' + sid + '/" target="_blank" rel="noopener">' +
+                 '<g class="active-icon" data-sid="' + sid + '" ' +
                  'transform="translate(' + fmt1(x) + ',' + fmt1(y) + ')" ' +
                  'style="filter:drop-shadow(0 0 6px ' + color + ');">' + titleEl + '\n' +
                  '  <g transform="scale(__ICON_GLYPH_SCALE__)">\n' +
@@ -2359,7 +2360,7 @@ LIVE_BASIN_JS = r"""
                  '  </g>\n' +
                  '  <text y="0" text-anchor="middle" dominant-baseline="central" font-size="__ICON_LETTER_PT__" font-weight="900" fill="#ffffff" paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="1.8" stroke-linejoin="round">' + label + '</text>\n' +
                  '  <text class="name" x="__ICON_NAME_X__" y="__ICON_NAME_Y__" text-anchor="start">' + name + '</text>\n' +
-                 '</g>');
+                 '</g></a>');
     }
     parts.push('</g>');
     return parts.join("\n");
@@ -2688,12 +2689,6 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
      the TAT palette with same border radius, blur, and font scale as
      the legend. */
   .maplibregl-popup-tip { display: none !important; }
-  .cyclolab-link { display: inline-block; margin-top: 6px; padding: 3px 11px;
-    border: 1px solid rgba(159,198,245,0.45); border-radius: 999px;
-    color: #9fc6f5; font-size: 10.5px; font-weight: 700;
-    letter-spacing: 0.5px; text-decoration: none; }
-  .cyclolab-link:hover { border-color: #9fc6f5; color: #cfe4ff;
-    background: rgba(159,198,245,0.08); }
   .maplibregl-popup-content { background: rgba(10,18,34,0.96) !important;
     color: var(--fg) !important;
     border: 1px solid #2a3e5c; border-radius: 8px;
@@ -2741,6 +2736,11 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
      X 24px west of its fix). tests/test_invest_x_anchor.py pins this. */
   .active-marker { position: absolute; transform: translate(-50%, -50%);
     pointer-events: none; }
+  /* entry-flow: the active-hurricane glyph is wrapped in an <a target=_blank>
+     to /cyclolab/{sid}/ - the anchor must fill the marker so the whole glyph
+     is the click target (native new-tab, no JS). */
+  .active-marker a { display: block; width: 100%; height: 100%;
+    cursor: pointer; }
   .active-marker svg { display: block; overflow: visible;
     width: 100%; height: 100%; }
 
@@ -3181,23 +3181,17 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       : '';
     var title = props.name || props.designation || "Active system";
     var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
-    // CycloLab entry (Stage 5): designated storms only (invest markers
-    // carry marker_type "invest_x" and have no per-storm page in V1).
-    var labLink = (props.storm_id && props.marker_type !== "invest_x")
-      ? ('<div class="tt-row"><a class="cyclolab-link" target="_blank" ' +
-         'rel="noopener" href="/cyclolab/' +
-         encodeURIComponent(props.storm_id) + '/" data-name="' +
-         escapeHtml(title) + '" data-accent="' + color +
-         '">Open in CycloLab ▸</a></div>')
-      : '';
+    // INFO-ONLY popup (entry-flow rewrite): the CycloLab entry is the marker
+    // glyph itself (a native <a target="_blank">), so the hover popup carries
+    // NO interactive elements - just name / category / wind / pressure / last
+    // fix. This kills the hover-race glitch structurally.
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
       '<div class="tt-row"><span class="tt-cat" style="background:' +
         color + '">' + escapeHtml(catLabel) + '</span></div>' +
       '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
         '<span class="tt-val">' + windTxt + '</span></div>' +
       presRow +
-      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '') +
-      labLink;
+      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '');
   }
 
   // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
@@ -3270,6 +3264,8 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         var label = sshsLabel(cls);
         el.style.color = color;  // drop-shadow inherits via currentColor
         el.innerHTML =
+          '<a href="/cyclolab/' + encodeURIComponent(props.storm_id) +
+            '/" target="_blank" rel="noopener">' +
           '<svg viewBox="-34 -34 __ICON_HBOX__ __ICON_HBOX__" xmlns="http://www.w3.org/2000/svg">' +
             '<g transform="scale(__ICON_GLYPH_SCALE__)">' +
               '<g class="spinning">' +
@@ -3281,7 +3277,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
               label + '</text>' +
             '<text class="hurricane-name" x="__ICON_NAME_X__" y="__ICON_NAME_Y__" ' +
               'text-anchor="start">' + escapeHtml(props.name || "") + '</text>' +
-          '</svg>';
+          '</svg></a>';
       }
       var marker = new maplibregl.Marker({ element: el, anchor: "center" })
         .setLngLat(lngLat).addTo(map);
@@ -3315,11 +3311,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         map.getCanvas().style.cursor = "";
         if (!pinned && mPopup) { mPopup.remove(); mPopup = null; }
       });
-      el.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        pinned = true;
-        openActivePopup(true);
-      });
+      // Click is the native <a target="_blank"> wrapping the glyph (opens
+      // CycloLab in a new tab, no JS) - so NO click handler here. Hover shows
+      // the INFO-ONLY popup; nothing interactive lives in it (no hover-race).
+      // Invests carry no anchor, so a click on an invest X does nothing.
     });
   }
 
