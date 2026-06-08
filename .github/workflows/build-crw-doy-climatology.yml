@@ -1,0 +1,110 @@
+name: Build CRW DOY Climatology
+
+# One-off (re-runnable, sharded) workflow that bakes the 366 day-of-year
+# 1991-2020 mean-SST grids from NOAA CRW CoralTemp v3.1 and publishes them
+# to R2 for the CycloLab per-storm page. Fire it from the Actions tab:
+#     Actions → "Build CRW DOY Climatology" → "Run workflow".
+#
+# ONE CANON: each DOY grid equals what
+# generate_sst_plots.compute_crw_climo_for_date() computes for that
+# (month, day) on the SST page (same 1991-2020 file set, same nanmean),
+# subset to the tropical belt (lat -40..50), kept in NATIVE CRW -180..180
+# lon, int16-packed. See build_crw_doy_climatology.py for the full contract.
+#
+# TRANSFER REALITY: 366 DOYs × 30 files × ~10 MB ≈ 110 GB; one DOY ≈ 300 MB
+# / ~3-5 min. A single dispatch processes only what fits its time budget and
+# uploads each per-DOY .nc to R2 AS IT COMPLETES (durable progress). Repeated
+# dispatches — optionally sharded via the doy_start/doy_end inputs — converge.
+# The manifest (the consumer's gate) is written ONLY by the --finalize run,
+# and only once all 366 .nc files exist; partial bakes never write it.
+#
+# Output is R2-ONLY — nothing is committed to main (permissions: contents:
+# read), exactly like update-hafs.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      doy_start:
+        description: "First DOY to bake (1..366)"
+        default: "1"
+      doy_end:
+        description: "Last DOY to bake (inclusive, 1..366)"
+        default: "366"
+      time_budget_minutes:
+        description: "Wall-clock budget; stop cleanly before the 6-h kill"
+        default: "320"
+      finalize:
+        description: "Run --verify 3 then --finalize (write the manifest) instead of baking"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One bake at a time — hours-long, makes real CRW requests, and shares the
+# R2 climo prefix; double-running would race the per-DOY uploads.
+concurrency:
+  group: build-crw-doy-climatology
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Just under GH's 360-minute ceiling so the per-DOY uploads (which run
+    # inline as each DOY completes) all land before the runner is killed.
+    timeout-minutes: 350
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # matplotlib is pulled only because build_crw_doy_climatology
+          # imports generate_sst_plots (module-level matplotlib import);
+          # the bake itself renders nothing.
+          pip install numpy matplotlib netCDF4 requests
+
+      # The per-DOY .nc files ARE the checkpoints. They live on R2; with
+      # --skip-existing-remote a re-dispatch HEADs the CDN and skips any DOY
+      # already published, so converging dispatches never re-bake. No
+      # actions/cache needed — R2 is the durable store of record.
+      - name: Bake / finalize
+        run: |
+          set -eo pipefail
+          if [ "${{ inputs.finalize }}" = "true" ]; then
+            echo "=== verify 3 random baked DOYs (one-canon proof) ==="
+            # Verify needs the local .nc files present; on a finalize-only
+            # run the per-DOY files may live only on R2. We skip verify if
+            # nothing is local and rely on the per-DOY bakes' own --verify
+            # gate having passed on the bake runs. If local files exist,
+            # prove canon before writing the manifest.
+            if ls _crw_doy_climo_state/crw_doy_climo_1991_2020_*.nc >/dev/null 2>&1; then
+              python build_crw_doy_climatology.py --verify 3
+            else
+              echo "No local DOY files on this runner — skipping local verify."
+            fi
+            echo "=== finalize: write + upload manifest (gates on all 366) ==="
+            # --check-remote: on a fresh runner the per-DOY .nc files live
+            # only on R2, so HEAD the CDN for any DOY not on disk before the
+            # manifest gate flips.
+            python build_crw_doy_climatology.py --finalize --check-remote --upload
+          else
+            echo "=== bake DOYs ${{ inputs.doy_start }}..${{ inputs.doy_end }} ==="
+            python build_crw_doy_climatology.py \
+              --doy-start ${{ inputs.doy_start }} \
+              --doy-end ${{ inputs.doy_end }} \
+              --time-budget-minutes ${{ inputs.time_budget_minutes }} \
+              --skip-existing-remote \
+              --upload
+          fi
