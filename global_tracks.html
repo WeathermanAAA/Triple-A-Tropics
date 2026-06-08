@@ -208,7 +208,7 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-06-08 05:01 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-08 05:08 UTC</div>
       </div>
       <div class="stats">
         <b>6</b> named storms &middot; <b>2</b> category 1+ storms &middot;
@@ -601,7 +601,8 @@
     // CycloLab entry (Stage 5): designated storms only (invest markers
     // carry marker_type "invest_x" and have no per-storm page in V1).
     var labLink = (props.storm_id && props.marker_type !== "invest_x")
-      ? ('<div class="tt-row"><a class="cyclolab-link" href="/cyclolab/' +
+      ? ('<div class="tt-row"><a class="cyclolab-link" target="_blank" ' +
+         'rel="noopener" href="/cyclolab/' +
          encodeURIComponent(props.storm_id) + '/" data-name="' +
          escapeHtml(title) + '" data-accent="' + color +
          '">Open in CycloLab ▸</a></div>')
