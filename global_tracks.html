@@ -105,6 +105,12 @@
      the TAT palette with same border radius, blur, and font scale as
      the legend. */
   .maplibregl-popup-tip { display: none !important; }
+  .cyclolab-link { display: inline-block; margin-top: 6px; padding: 3px 11px;
+    border: 1px solid rgba(159,198,245,0.45); border-radius: 999px;
+    color: #9fc6f5; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.5px; text-decoration: none; }
+  .cyclolab-link:hover { border-color: #9fc6f5; color: #cfe4ff;
+    background: rgba(159,198,245,0.08); }
   .maplibregl-popup-content { background: rgba(10,18,34,0.96) !important;
     color: var(--fg) !important;
     border: 1px solid #2a3e5c; border-radius: 8px;
@@ -202,7 +208,7 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-06-07 20:56 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-08 03:27 UTC</div>
       </div>
       <div class="stats">
         <b>6</b> named storms &middot; <b>2</b> category 1+ storms &middot;
@@ -592,13 +598,22 @@
       : '';
     var title = props.name || props.designation || "Active system";
     var lastFixTxt = props.last_fix ? fmtUTC(props.last_fix) : "";
+    // CycloLab entry (Stage 5): designated storms only (invest markers
+    // carry marker_type "invest_x" and have no per-storm page in V1).
+    var labLink = (props.storm_id && props.marker_type !== "invest_x")
+      ? ('<div class="tt-row"><a class="cyclolab-link" href="/cyclolab/' +
+         encodeURIComponent(props.storm_id) + '/" data-name="' +
+         escapeHtml(title) + '" data-accent="' + color +
+         '">Open in CycloLab ▸</a></div>')
+      : '';
     return '<div class="tt-name">' + escapeHtml(title) + '</div>' +
       '<div class="tt-row"><span class="tt-cat" style="background:' +
         color + '">' + escapeHtml(catLabel) + '</span></div>' +
       '<div class="tt-row"><span class="tt-lbl">Wind</span>' +
         '<span class="tt-val">' + windTxt + '</span></div>' +
       presRow +
-      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '');
+      (lastFixTxt ? '<div class="tt-foot">Last fix: ' + lastFixTxt + '</div>' : '') +
+      labLink;
   }
 
   // Per-marker uniqueness for SVG <filter> ids — multiple markers on one
