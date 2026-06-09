@@ -356,7 +356,7 @@
     border-radius: 12px;
     padding: 16px;
     color: var(--fg);
-    display: flex; flex-direction: column; gap: 12px; min-width: 0;
+    display: flex; flex-direction: column; gap: 9px; min-width: 0;
   }
   .vw-card-title {                 /* PROMINENT, first thing read, top of panel */
     font-size: 18px;
@@ -484,8 +484,12 @@
   .sat-inactive { margin: 8px 0 0; font-size: 11.5px; font-weight: 600;
     letter-spacing: 0.3px; color: #d2a93f; }
   .sat-inactive[hidden] { display: none; }
-  .sat-scrub { flex: 2 1 160px; accent-color: var(--cat-accent);
-    min-width: 120px; }
+  .sat-scrub { width: 100%; accent-color: var(--cat-accent);
+    min-width: 0; margin: 2px 0; }
+  /* In the stacked .vw-card (flex column) the scrubber must keep its natural
+     thin height, NOT a 160px vertical flex-basis (that was the gutter leftover
+     that ballooned the dead space around the scrubber). */
+  .vw-card > .sat-scrub { flex: 0 0 auto; }
   @media (max-width: 700px) {
     .hafs-stage { min-height: 200px; }
   }
