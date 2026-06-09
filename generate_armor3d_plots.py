@@ -260,6 +260,48 @@ def _have_credentials() -> bool:
     )
 
 
+# Transient-vs-fatal classification for CMEMS fetch errors. copernicusmarine
+# raises typed exceptions (credentials_utils), but importing them is fragile
+# across versions, so match class names + message text along the cause chain.
+_CMEMS_FATAL_TYPES = {"invalidusernameorpassword", "credentialscannotbenone"}
+_CMEMS_TRANSIENT_TYPES = {"couldnotconnecttoauthenticationsystem"}
+_CMEMS_TRANSIENT_MARKERS = (
+    "connection", "timeout", "timed out", "temporarily unavailable",
+    "service unavailable", "bad gateway", "gateway time", "reset by peer",
+    "network", "name resolution", "eof occurred", "502", "503", "504",
+)
+# Copernicus's auth service flaps for tens of minutes at a time (observed
+# 2026-06-08/09), and one stalled copernicusmarine.subset() call can hang
+# ~20 min on its own (the auth POST has no request timeout), so transient
+# errors get long exponential waits. Everything else keeps a quick retry.
+_CMEMS_RETRY_WAITS = {
+    "transient": (30, 60, 120, 240, 300),  # 6 attempts, ≤12.5 min of waiting
+    "other": (8, 16),                      # 3 attempts (historic behavior)
+}
+
+
+def _classify_cmems_error(exc: BaseException) -> str:
+    """'fatal' = credentials genuinely rejected (retrying cannot help),
+    'transient' = connectivity / auth-service outage (retry with long
+    waits), 'other' = anything else (quick retry)."""
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        name = type(e).__name__.lower()
+        if name in _CMEMS_FATAL_TYPES:
+            return "fatal"
+        if (name in _CMEMS_TRANSIENT_TYPES
+                or isinstance(e, (ConnectionError, TimeoutError))
+                or "connectionerror" in name or "timeout" in name):
+            return "transient"
+        msg = str(e).lower()
+        if any(m in msg for m in _CMEMS_TRANSIENT_MARKERS):
+            return "transient"
+        e = e.__cause__ or e.__context__
+    return "other"
+
+
 def _cmems_subset(
     dataset_id: str,
     start: dt.datetime,
@@ -278,8 +320,9 @@ def _cmems_subset(
     """Download a subset of an ARMOR3D dataset to a local NetCDF.
 
     Thin wrapper around copernicusmarine.subset() so the rest of the
-    script doesn't have to know the exact kwarg conventions. Retries
-    twice on transient errors."""
+    script doesn't have to know the exact kwarg conventions. Transient
+    failures (auth-service outages, connection errors) are retried with
+    long exponential backoff; invalid credentials fail immediately."""
     import copernicusmarine  # imported lazily — avoid import cost when unused
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,8 +330,9 @@ def _cmems_subset(
         out_path.unlink()
 
     vars_arg = variables if variables is not None else VARIABLES
-    last_err: Exception | None = None
-    for attempt in range(3):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             copernicusmarine.subset(
                 dataset_id=dataset_id,
@@ -310,11 +354,21 @@ def _cmems_subset(
                 return out_path
             raise RuntimeError(f"{dataset_id}: no output file produced")
         except Exception as exc:
-            last_err = exc
-            print(f"{log}   WARN attempt {attempt+1}/3 failed: {exc}")
-            time.sleep(8 * (attempt + 1))
-    assert last_err is not None
-    raise last_err
+            kind = _classify_cmems_error(exc)
+            if kind == "fatal":
+                print(f"{log}   FATAL {type(exc).__name__}: {exc} — "
+                      "credentials rejected, not retrying.")
+                raise
+            waits = _CMEMS_RETRY_WAITS[kind]
+            if attempt > len(waits):
+                print(f"{log}   ERROR giving up after {attempt} attempts "
+                      f"({type(exc).__name__}: {exc})")
+                raise
+            wait = waits[attempt - 1]
+            print(f"{log}   WARN attempt {attempt}/{len(waits) + 1} "
+                  f"[{kind}] failed ({type(exc).__name__}: {exc}); "
+                  f"retrying in {wait}s")
+            time.sleep(wait)
 
 
 def fetch_latest_slice(log: str = "[armor3d]") -> tuple[dt.datetime, Path]:
