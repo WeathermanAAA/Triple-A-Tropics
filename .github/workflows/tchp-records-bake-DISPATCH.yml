@@ -89,12 +89,18 @@ jobs:
             echo "Bake NOT done (marker $(cat $MARK 2>/dev/null || echo none), end $END) - will continue."
           fi
 
-      - name: Continue (re-dispatch self) if not complete
+      - name: Continue (re-dispatch the next chunk) if not complete
+        # SELF-PERPETUATING CHAIN — runs ENTIRELY on GitHub, no codespace.
+        # The next chunk is fired with WORKFLOW_DISPATCH_PAT, a token that lives
+        # as a REPO SECRET, so the chain never depends on the codespace's PAT
+        # session. (Falls back to the Actions GITHUB_TOKEN only if that secret
+        # is somehow unset; workflow_dispatch is the documented exception to the
+        # GITHUB_TOKEN recursion guard, so even the fallback would trigger.)
         if: steps.done.outputs.complete == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT || github.token }}
         run: |
-          echo "Re-dispatching to continue the resumable pass (cache holds progress)."
+          echo "Re-dispatching the next chunk (cache holds progress; GitHub-native)."
           gh workflow run tchp-records-bake-DISPATCH.yml --ref main
 
       - name: Finalize envelope + upload to R2 + render REVIEW crops
