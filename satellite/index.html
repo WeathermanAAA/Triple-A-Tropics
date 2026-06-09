@@ -448,6 +448,17 @@
     border-radius: 8px; overflow: hidden; }
   .hafs-stage img, .hafs-stage canvas { display: block; max-width: 100%;
     max-height: var(--panel-max-h); width: auto; height: auto; }
+  /* Stacked, pre-decoded frame layers. Playback flips OPACITY (a compositor
+     operation — GPU-cheap at any devicePixelRatio, incl. Retina DPR 2), never
+     drawImage. No per-frame rasterization in the hot path. A <canvas> is built
+     on-demand ONLY for GIF export. The single .sat-still holds the last frame so
+     a memory-released (off-screen) panel isn't blank. */
+  .sat-layers { position: absolute; inset: 0; }
+  .sat-layers img { position: absolute; inset: 0; width: 100%; height: 100%;
+    max-height: none; object-fit: contain; opacity: 0; }
+  .sat-still { position: absolute; inset: 0; width: 100%; height: 100%;
+    max-height: none; object-fit: contain; }
+  .sat-still[hidden] { display: none; }
   .hafs-statusbox { position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center; gap: 10px;
     color: var(--muted); background: rgba(10,13,18,0.6); font-size: 13.5px; }
@@ -645,9 +656,9 @@
           <select id="sat-bands" aria-label="Satellite band"></select></div>
       </div>
       <div class="hafs-stage" id="sat-stage">
-        <img id="sat-img" alt="Storm floater satellite frame">
-        <canvas id="sat-canvas" style="display:none" role="img"
-                aria-label="Storm floater satellite frame"></canvas>
+        <div class="sat-layers" id="sat-layers" role="img"
+             aria-label="Storm floater satellite frame"></div>
+        <img class="sat-still" id="sat-still" alt="" aria-hidden="true" hidden>
         <div id="sat-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
@@ -683,9 +694,9 @@
           <select id="meso-bands" aria-label="Satellite band"></select></div>
       </div>
       <div class="hafs-stage" id="meso-stage">
-        <img id="meso-img" alt="GOES mesoscale sector frame">
-        <canvas id="meso-canvas" style="display:none" role="img"
-                aria-label="GOES mesoscale sector frame"></canvas>
+        <div class="sat-layers" id="meso-layers" role="img"
+             aria-label="GOES mesoscale sector frame"></div>
+        <img class="sat-still" id="meso-still" alt="" aria-hidden="true" hidden>
         <div id="meso-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
@@ -1320,7 +1331,7 @@ function makeSatViewer(idPrefix, opts) {
               loadTimer: null, encoding: false, speed: 1, presented: [],
               pollTimer: null, inactive: false, mode: null,
               visible: true, intersecting: true, ratio: 1, released: false,
-              wasPlayingHidden: false };
+              wasPlayingHidden: false, shownEl: null };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
   var SAT_STALE_MIN = 40;
@@ -1345,30 +1356,46 @@ function makeSatViewer(idPrefix, opts) {
     box.style.display = show ? "flex" : "none";
     if (msg != null) box.querySelector("span").textContent = msg;
   }
-  function satCanvasOk() {
-    if (sat.mode !== null) return sat.mode === "canvas";
-    var ok = false;
-    try {
-      var cv = satEl("canvas");
-      ok = !!(cv && cv.getContext && cv.getContext("2d"));
-    } catch (e) { ok = false; }
-    sat.mode = ok ? "canvas" : "img";
-    return ok;
-  }
-  // Size the display canvas to a decoded frame's natural pixels; CSS scales it
-  // responsively. (Frames within a band share dimensions; pick the first ready.)
-  function sizeCanvas() {
-    var cv = satEl("canvas");
-    if (!cv) return;
-    var f = null;
-    for (var i = 0; i < sat.frames.length; i++) {
-      if (sat.frames[i].img && sat.frames[i].img.naturalWidth) {
-        f = sat.frames[i]; break;
+  // ---- layer stack management (opacity-toggle playback) -------------------
+  function satLayersClear() {
+    var host = satEl("layers");
+    if (host) {
+      while (host.firstChild) {
+        try { host.firstChild.onload = host.firstChild.onerror = null;
+              host.firstChild.src = ""; } catch (e) {}
+        host.removeChild(host.firstChild);
       }
     }
-    if (!f) return;
-    if (cv.width !== f.img.naturalWidth) cv.width = f.img.naturalWidth;
-    if (cv.height !== f.img.naturalHeight) cv.height = f.img.naturalHeight;
+    sat.shownEl = null;
+  }
+  function satStillHide() {
+    var st = satEl("still");
+    if (st && !st.hidden) st.hidden = true;
+  }
+  function satStillShow(src) {            // freeze the last frame on a released panel
+    var st = satEl("still");
+    if (!st || !src) return;
+    st.crossOrigin = "anonymous";        // share the layers' CORS cache entry (instant, untainted)
+    st.src = src + (src.indexOf("?") >= 0 ? "&" : "?") + "cors=1";
+    st.hidden = false;
+  }
+  // After a poll re-cap drops some frames, remove their now-orphaned layer
+  // <img>s; surviving frames keep the layer they were appended with.
+  function satLayersSync() {
+    var host = satEl("layers");
+    if (!host) return;
+    var keep = [];
+    for (var i = 0; i < sat.frames.length; i++) {
+      if (sat.frames[i].img) keep.push(sat.frames[i].img);
+    }
+    var kids = host.children, drop = [];
+    for (var k = 0; k < kids.length; k++) {
+      if (keep.indexOf(kids[k]) < 0) drop.push(kids[k]);
+    }
+    for (var r = 0; r < drop.length; r++) {
+      try { drop[r].src = ""; } catch (e) {}
+      host.removeChild(drop[r]);
+    }
   }
   function satReadout(i) {
     var f = sat.frames[i];
@@ -1383,17 +1410,15 @@ function makeSatViewer(idPrefix, opts) {
     if (i >= n) i = n - 1;
     sat.idx = i;
     var f = sat.frames[i];
-    if (satCanvasOk()) {
-      satEl("img").style.display = "none";
-      var cv = satEl("canvas");
-      cv.style.display = "";
-      // f.img is preloaded + decoded ahead of time, so this draw is instant.
-      if (f.img && f.img.complete && f.img.naturalWidth) {
-        cv.getContext("2d").drawImage(f.img, 0, 0, cv.width, cv.height);
-      }
-    } else {
-      satEl("img").style.display = "";
-      satEl("img").src = f.src || (CDN + "/" + f.key);
+    // OPACITY FLIP: reveal this pre-decoded layer, hide the previously-shown one.
+    // No drawImage, no per-frame rasterization — the compositor just changes
+    // which already-painted layer is visible (GPU-cheap at any devicePixelRatio,
+    // including Retina DPR 2, which is what made the canvas drawImage path judder).
+    if (f.img) {
+      if (sat.shownEl && sat.shownEl !== f.img) sat.shownEl.style.opacity = "0";
+      f.img.style.opacity = "1";
+      sat.shownEl = f.img;
+      satStillHide();
     }
     satReadout(i);
   }
@@ -1414,23 +1439,27 @@ function makeSatViewer(idPrefix, opts) {
     // satReacquireFrames() re-runs this once the card scrolls back into view.
     if (!sat.visible) { sat.released = true; satStatus(false); return; }
     sat.released = false;
+    satLayersClear();                    // fresh stack for this window
     satStatus(true, "Loading frames… 0/" + N);
     function start() {
       if (started || token !== sat.buildToken) return;
       started = true; sat.ready = true;
       satStatus(false);
-      sizeCanvas();
       satShow(sat.idx < N ? sat.idx : N - 1);
       satEl("play").disabled = sat.frames.length < 2;
       if (autoplay && sat.frames.length >= 2) satPlay();
     }
+    var layersHost = satEl("layers");
     sat.frames.forEach(function (f) {
       var im = new Image();
-      // CORS-clean load so the GIF encoder can read canvas pixels later (a
+      // CORS-clean load so the GIF export canvas can read pixels later (a
       // cross-origin CDN image would taint the canvas and stall gif.js at 0%).
       im.crossOrigin = "anonymous";
       im.decoding = "async";
+      im.className = "sat-layer";
+      im.style.opacity = "0";            // hidden layer until satShow flips it
       f.img = im;
+      if (layersHost) layersHost.appendChild(im);   // stack it in the DOM
       function done(ok) {
         if (token !== sat.buildToken) return;
         f.ok = !!ok; loaded++;
@@ -1484,9 +1513,7 @@ function makeSatViewer(idPrefix, opts) {
     var host = satEl("bands");
     if (host && host.value !== slug) host.value = slug;   // sync the <select>
     if (!sat.frames.length) {
-      satEl("img").removeAttribute("src");
-      var cv0 = satEl("canvas");
-      if (cv0) cv0.style.display = "none";
+      satLayersClear(); satStillHide();
       satEl("time").textContent = "—";
       satEl("play").disabled = true;
       sat.ready = false;
@@ -1783,6 +1810,7 @@ function makeSatViewer(idPrefix, opts) {
         return a.t < b.t ? -1 : a.t > b.t ? 1 : 0;
       });
       sat.frames = satSubsample(all, SAT_FRAME_CAP);
+      satLayersSync();                 // remove layer <img>s for frames the re-cap dropped
       var ni = -1;
       if (curT) {
         for (var qi = 0; qi < sat.frames.length; qi++) {
@@ -1804,7 +1832,9 @@ function makeSatViewer(idPrefix, opts) {
       newFrames.push(f);
       var im = new Image();
       im.crossOrigin = "anonymous"; im.decoding = "async";
+      im.className = "sat-layer"; im.style.opacity = "0";
       f.img = im;
+      var lh = satEl("layers"); if (lh) lh.appendChild(im);   // stack the new layer
       function fin(ok) { f.ok = !!ok; if (--pending <= 0) merge(); }
       im.onload = function () {
         if (im.decode) {
@@ -1852,13 +1882,12 @@ function makeSatViewer(idPrefix, opts) {
     satPause();
     sat.buildToken++;                 // supersede any in-flight preload
     if (sat.loadTimer) { clearTimeout(sat.loadTimer); sat.loadTimer = null; }
-    for (var i = 0; i < sat.frames.length; i++) {
-      var f = sat.frames[i];
-      if (f.img) {                    // abort + drop the ref -> browser GCs the bitmap
-        try { f.img.onload = f.img.onerror = null; f.img.src = ""; } catch (e) {}
-      }
-      f.img = null; f.ok = false;
-    }
+    // freeze the current frame as a single still so the panel isn't blank while
+    // it peeks on-screen, THEN drop all the decoded layer <img>s (GC the bitmaps).
+    var cur = sat.frames[sat.idx];
+    satStillShow(cur && cur.src);
+    satLayersClear();
+    for (var i = 0; i < sat.frames.length; i++) { sat.frames[i].img = null; sat.frames[i].ok = false; }
     sat.ready = false;
     sat.released = true;
     satEl("play").disabled = true;    // re-enabled once re-decoded on return
@@ -1951,6 +1980,7 @@ function makeSatViewer(idPrefix, opts) {
     sat.released = false; sat.wasPlayingHidden = false;   // visible/intersecting persist
     if (sat.loadTimer) { clearTimeout(sat.loadTimer); sat.loadTimer = null; }
     sat.inactive = false; sat.presented = [];
+    satLayersClear(); satStillHide();
     var inactiveNote = satEl("inactive");
     if (inactiveNote) { inactiveNote.hidden = true; inactiveNote.textContent = ""; }
     var bandsHost = satEl("bands"); if (bandsHost) bandsHost.innerHTML = "";
@@ -1959,8 +1989,7 @@ function makeSatViewer(idPrefix, opts) {
       if (!bands) {
         satStatus(false);
         satEl("empty").style.display = "block";
-        satEl("img").removeAttribute("src");
-        var cv = satEl("canvas"); if (cv) cv.style.display = "none";
+        satLayersClear(); satStillHide();
         satEl("time").textContent = "—";
         satEl("band-label").textContent = "";
         // keep polling: a storm/sector can come online later.
@@ -2009,7 +2038,7 @@ function makeSatViewer(idPrefix, opts) {
     el: satEl,
     state: function () {
       return { band: sat.band, idx: sat.idx, frames: sat.frames.length,
-               playing: sat.playing, mode: sat.mode, speed: sat.speed,
+               playing: sat.playing, speed: sat.speed,
                ready: sat.ready, decoded: sat.frames.filter(
                  function (f) { return f.ok; }).length,
                released: sat.released, visible: sat.visible,
