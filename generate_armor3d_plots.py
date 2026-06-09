@@ -539,6 +539,46 @@ def climatology_slice_for(
     return climo.sel(week=woy).values.astype(np.float32)
 
 
+# --- Records envelope (per-WOY MAX/MIN, baked by bake_armor3d_tchp_records.py) ---
+RECORDS_PATH = OUTPUT_DIR / "sst" / "records" / "armor3d_tchp_record_1993_present.nc"
+
+
+def load_tchp_records() -> "xr.Dataset | None":
+    """Return the per-WOY TCHP record envelope (tchp_week_max/min, max/min_year)
+    or None if the records bake hasn't been published yet. Same missing-file
+    skip as load_tchp_climatology: no records file -> the anomaly map renders
+    exactly as today, with no hatch (the overlay is purely additive)."""
+    if not RECORDS_PATH.exists():
+        return None
+    try:
+        ds = xr.open_dataset(RECORDS_PATH)
+        if "tchp_week_max" not in ds.variables:
+            return None
+        return ds
+    except Exception as exc:
+        print(f"[armor3d]   WARN: could not open records envelope: {exc}")
+        return None
+
+
+def compute_record_masks(
+    tchp_now: np.ndarray, valid_date: dt.date, records: "xr.Dataset",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Inclusive record masks for the current NRT week vs the baked per-WOY
+    extremes (same week-of-year rounding as climatology_slice_for):
+        record-HIGH where NRT TCHP >= the WOY record-max  ("meets or exceeds")
+        record-LOW  where NRT TCHP <= the WOY record-min
+    HONESTY GUARD: cells with no reanalysis envelope (NaN max/min) or no live
+    value are NOT flagged. `tchp_now` must be on the records grid (0.125deg,
+    0-360 — the same grid the bake and the live generator use)."""
+    woy = max(1, min(52, (valid_date.timetuple().tm_yday - 1) // 7 + 1))
+    wmax = records["tchp_week_max"].sel(week=woy).values.astype(np.float32)
+    wmin = records["tchp_week_min"].sel(week=woy).values.astype(np.float32)
+    valid = np.isfinite(tchp_now) & np.isfinite(wmax) & np.isfinite(wmin)
+    high = valid & (tchp_now >= wmax)
+    low = valid & (tchp_now <= wmin)
+    return high, low
+
+
 # --- Cross-section rendering -------------------------------------------
 
 
@@ -927,8 +967,17 @@ def plot_tchp_anom(
     title: str, subtitle: str,
     countries, coast,
     out_path: Path,
+    records_high: np.ndarray | None = None,
+    records_low: np.ndarray | None = None,
 ) -> bool:
     """TCHP-anomaly map (kJ/cm² relative to 1993–2020 climatology).
+
+    `records_high` / `records_low` are OPTIONAL boolean masks (same grid as
+    `anom_field`). When BOTH are None this renders byte-for-byte the same plot
+    it always has — the records overlay is purely additive (see the design-lock
+    pixel-identity test). When given, records_overlay.draw_records_overlay()
+    stipples the record cells ON TOP of the untouched anomaly canvas: forward
+    "///" record-high, back "\\\\" record-low, lw 0.55, each region outlined.
 
     Reuses generate_subsurface_plots.py's _plot_field plumbing by
     hand-rolling a diverging-colormap call — _plot_field is hard-wired
@@ -951,6 +1000,17 @@ def plot_tchp_anom(
         )
     except Exception:
         pass
+    # Records overlay — the ONLY addition to this plot (design-lock). Drawn at
+    # zorder 1.8 (above the anomaly fill, below the basemap/coast) so the hatch
+    # sits ON the existing canvas. No-op when both masks are None, so the base
+    # anomaly plot is unchanged. One canon: records_overlay.draw_records_overlay.
+    if records_high is not None or records_low is not None:
+        import records_overlay
+        rh = (gss._subset_to_extent(records_high, lat, lon, extent)[0]
+              if records_high is not None else None)
+        rl = (gss._subset_to_extent(records_low, lat, lon, extent)[0]
+              if records_low is not None else None)
+        records_overlay.draw_records_overlay(ax, LON2, LAT2, rh, rl)
     # Overlay LAND_COLOR-filled country polygons so continents match the
     # unified SST look. The anomaly field can be 0.0 (or finite near-zero)
     # over land in regions where the climatology and the live field both
