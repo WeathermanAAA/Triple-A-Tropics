@@ -1138,6 +1138,18 @@ def main(argv: list[str] | None = None) -> int:
     date_label = valid_date.strftime("%B %-d, %Y")
     rendered: list[str] = []
 
+    # Records envelope (per-WOY TCHP extremes from bake_armor3d_tchp_records.py,
+    # published to R2 sst/records/). GRACEFUL ABSENCE: load_tchp_records() is
+    # None until the bake publishes it -> the anomaly maps render plain, exactly
+    # as today. KILL SWITCH: TCHP_RECORDS=off forces plain too. NRT note: the
+    # live field is the preliminary NRT product compared against the MY-reanalysis
+    # envelope; the disclosure panel flags that.
+    records_ds = (None if os.environ.get("TCHP_RECORDS", "on").lower() == "off"
+                  else load_tchp_records())
+    if records_ds is not None:
+        print(f"{log} TCHP records envelope loaded ({RECORDS_PATH.name}); "
+              "anomaly maps will hatch record cells.")
+
     # 6) Map products — TCHP, D26, (TCHP anomaly if climo present).
     if not args.cross_section_only:
         regions_to_render = (
@@ -1209,6 +1221,30 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     anom_raw = tchp_crop - tchp_climo_slice
                     anom = np.where(_nosig, np.nan, anom_raw).astype(np.float32)
+                    # Records overlay masks — ADDITIVE only; plain anomaly on
+                    # any absence / grid-mismatch / error (graceful fallback).
+                    # Inclusive tie: NRT >= week-max = record-high, <= week-min
+                    # = record-low. tchp_crop is the live NRT field on anom_lat.
+                    rec_hi = rec_lo = None
+                    if records_ds is not None:
+                        try:
+                            _woy = max(1, min(
+                                52, (valid_date.timetuple().tm_yday - 1)//7 + 1))
+                            _wmax = records_ds["tchp_week_max"].sel(
+                                week=_woy).values.astype(np.float32)
+                            _wmin = records_ds["tchp_week_min"].sel(
+                                week=_woy).values.astype(np.float32)
+                            if _wmax.shape == anom.shape:
+                                _v = (np.isfinite(tchp_crop) & np.isfinite(_wmax)
+                                      & np.isfinite(_wmin))
+                                rec_hi = _v & (tchp_crop >= _wmax)
+                                rec_lo = _v & (tchp_crop <= _wmin)
+                            else:
+                                print(f"{log}   WARN: records grid {_wmax.shape} "
+                                      f"!= anom {anom.shape}; plain anomaly.")
+                        except Exception as _exc:
+                            print(f"{log}   WARN: records overlay failed "
+                                  f"({_exc}); plain anomaly.")
                     out = ARMOR_DIR / f"{rkey}_tchp_anom.png"
                     if plot_tchp_anom(
                         anom, anom_lat, lon, extent, figsize,
@@ -1219,6 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                         countries=countries, coast=coast,
                         out_path=out,
+                        records_high=rec_hi, records_low=rec_lo,
                     ):
                         print(f"{log}   ✓ {out.name}")
                         rendered.append(out.name)
