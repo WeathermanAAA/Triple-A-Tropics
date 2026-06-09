@@ -342,6 +342,8 @@
     grid-template-columns: 1fr 1fr;
     gap: 22px;
     align-items: start;
+    max-width: 1480px;          /* cap so the full-width square image stays sane */
+    margin: 0 auto;
   }
   @media (max-width: 980px) {
     .sat-split { grid-template-columns: 1fr; }
@@ -352,17 +354,34 @@
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 18px;
+    padding: 16px;
     color: var(--fg);
+    display: flex; flex-direction: column; gap: 12px; min-width: 0;
   }
-  .vw-card-title {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--muted);
-    font-weight: 700;
-    margin: 0 0 12px;
+  .vw-card-title {                 /* PROMINENT, first thing read, top of panel */
+    font-size: 18px;
+    letter-spacing: 0.2px;
+    color: var(--fg);
+    font-weight: 800;
+    margin: 0;
   }
+  /* Stacked panel: title -> two selector dropdowns -> BIG fixed-square image ->
+     scrub -> transport. The image is square at the panel's full width and the
+     two .sat-split columns are 1fr/1fr, so BOTH panels + BOTH images are exactly
+     the same size regardless of how many selectors sit above the image. */
+  .sat-selectors { display: flex; gap: 12px; min-width: 0; }
+  .sat-selectors .hafs-group { flex: 1 1 0; min-width: 0; }
+  .sat-selectors .hafs-group select { width: 100%; }
+  .vw-card .hafs-stage {
+    width: 100%; aspect-ratio: 1 / 1; min-height: 0;
+    border-radius: 10px; overflow: hidden; background: #0a0d12;
+  }
+  .vw-card .hafs-stage img,
+  .vw-card .hafs-stage canvas {
+    width: 100%; height: 100%; max-height: none; object-fit: contain; display: block;
+  }
+  .sat-transport { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sat-transport .hafs-readout { margin-left: auto; min-width: 0; }
 
   /* ---- Gutter layout: square frame in the main column, controls in a side
      gutter, scrubber full-width beneath. Byte-faithful to cyclolab_shell. */
@@ -593,8 +612,14 @@
   <div class="sat-split">
 
     <!-- INSTANCE 1: storm floater -->
-    <div class="vw-card vw-grid" id="sat-card" tabindex="0">
-      <div class="vw-card-title" style="grid-column:1/-1">Live Storm Floater · auto-tracking active systems</div>
+    <div class="vw-card" id="sat-card" tabindex="0">
+      <div class="vw-card-title">Live Storm Floater</div>
+      <div class="sat-selectors">
+        <div class="hafs-group" id="sat-storm-group"><label>Storm</label>
+          <select id="sat-storm" aria-label="Active storm"></select></div>
+        <div class="hafs-group"><label>Band</label>
+          <select id="sat-bands" aria-label="Satellite band"></select></div>
+      </div>
       <div class="hafs-stage" id="sat-stage">
         <img id="sat-img" alt="Storm floater satellite frame">
         <canvas id="sat-canvas" style="display:none" role="img"
@@ -602,53 +627,40 @@
         <div id="sat-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
-      <div class="vw-aside">
-        <div class="hafs-controls">
-          <div class="hafs-group" id="sat-storm-group" style="display:none">
-            <label>Storm</label>
-            <select id="sat-storm" aria-label="Active storm"></select></div>
-          <div class="hafs-group"><label>Band</label>
-            <div id="sat-bands" class="hafs-seg-group" role="group"
-                 aria-label="Satellite band"></div></div>
-        </div>
-        <div class="hafs-player">
-          <button id="sat-step-back" class="hafs-btn" type="button"
-                  title="Previous frame (&#8592;)">&#9664;</button>
-          <button id="sat-play" class="hafs-btn hafs-play" type="button"
-                  title="Play / pause (space)">&#9654; Play</button>
-          <button id="sat-step-fwd" class="hafs-btn" type="button"
-                  title="Next frame (&#8594;)">&#9654;</button>
-          <div class="hafs-readout"><span id="sat-time">&#8212;</span>
-            <span id="sat-band-label"></span></div>
-        </div>
-        <div class="hafs-controls sat-tools">
-          <div class="hafs-group"><label>Speed</label>
-            <div id="sat-speed" class="hafs-seg-group" role="group"
-                 aria-label="Playback speed"></div></div>
-          <button id="sat-gif" class="hafs-btn sat-gif" type="button"
-                  title="Export the loaded frames as a GIF">
-            &#8681; GIF</button>
-          <div id="sat-gif-prog" class="sat-gif-prog" hidden
-               role="status" aria-live="polite">
-            <div class="sat-gif-bar"><i></i></div>
-            <span class="sat-gif-pct">0%</span></div>
-        </div>
+      <input id="sat-scrub" class="sat-scrub" type="range" min="0" max="0"
+             value="0" step="1" aria-label="Frame time">
+      <div class="sat-transport">
+        <button id="sat-step-back" class="hafs-btn" type="button"
+                title="Previous frame (&#8592;)">&#9664;</button>
+        <button id="sat-play" class="hafs-btn hafs-play" type="button"
+                title="Play / pause (space)">&#9654; Play</button>
+        <button id="sat-step-fwd" class="hafs-btn" type="button"
+                title="Next frame (&#8594;)">&#9654;</button>
+        <div id="sat-speed" class="hafs-seg-group" role="group"
+             aria-label="Playback speed"></div>
+        <button id="sat-gif" class="hafs-btn sat-gif" type="button"
+                title="Export the loaded frames as a GIF">&#8681; GIF</button>
+        <div id="sat-gif-prog" class="sat-gif-prog" hidden role="status"
+             aria-live="polite"><div class="sat-gif-bar"><i></i></div>
+          <span class="sat-gif-pct">0%</span></div>
+        <div class="hafs-readout"><span id="sat-time">&#8212;</span>
+          <span id="sat-band-label"></span></div>
       </div>
-      <div class="vw-below">
-        <input id="sat-scrub" class="sat-scrub" type="range" min="0" max="0"
-               value="0" step="1" aria-label="Frame time"></div>
       <div id="sat-empty" class="stub" style="display:none">No active storm
         floaters right now.</div>
       <div id="sat-inactive" class="sat-inactive" hidden
            role="status" aria-live="polite"></div>
-      <p class="hafs-caption">GOES floater imagery centered on the storm,
-        newest frame last. Frames land every few minutes while the floater is
-        active.</p>
     </div>
 
     <!-- INSTANCE 2: meso sector -->
-    <div class="vw-card vw-grid" id="meso-card" tabindex="0">
-      <div class="vw-card-title" style="grid-column:1/-1">GOES Mesoscale Sectors · rapid-scan</div>
+    <div class="vw-card" id="meso-card" tabindex="0">
+      <div class="vw-card-title">GOES Mesoscale Sectors</div>
+      <div class="sat-selectors">
+        <div class="hafs-group" id="meso-sector-group"><label>Sector</label>
+          <select id="meso-sector" aria-label="Mesoscale sector"></select></div>
+        <div class="hafs-group"><label>Band</label>
+          <select id="meso-bands" aria-label="Satellite band"></select></div>
+      </div>
       <div class="hafs-stage" id="meso-stage">
         <img id="meso-img" alt="GOES mesoscale sector frame">
         <canvas id="meso-canvas" style="display:none" role="img"
@@ -656,47 +668,29 @@
         <div id="meso-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
-      <div class="vw-aside">
-        <div class="hafs-controls">
-          <div class="hafs-group" id="meso-sector-group">
-            <label>Sector</label>
-            <select id="meso-sector" aria-label="Mesoscale sector"></select></div>
-          <div class="hafs-group"><label>Band</label>
-            <div id="meso-bands" class="hafs-seg-group" role="group"
-                 aria-label="Satellite band"></div></div>
-        </div>
-        <div class="hafs-player">
-          <button id="meso-step-back" class="hafs-btn" type="button"
-                  title="Previous frame (&#8592;)">&#9664;</button>
-          <button id="meso-play" class="hafs-btn hafs-play" type="button"
-                  title="Play / pause (space)">&#9654; Play</button>
-          <button id="meso-step-fwd" class="hafs-btn" type="button"
-                  title="Next frame (&#8594;)">&#9654;</button>
-          <div class="hafs-readout"><span id="meso-time">&#8212;</span>
-            <span id="meso-band-label"></span></div>
-        </div>
-        <div class="hafs-controls sat-tools">
-          <div class="hafs-group"><label>Speed</label>
-            <div id="meso-speed" class="hafs-seg-group" role="group"
-                 aria-label="Playback speed"></div></div>
-          <button id="meso-gif" class="hafs-btn sat-gif" type="button"
-                  title="Export the loaded frames as a GIF">
-            &#8681; GIF</button>
-          <div id="meso-gif-prog" class="sat-gif-prog" hidden
-               role="status" aria-live="polite">
-            <div class="sat-gif-bar"><i></i></div>
-            <span class="sat-gif-pct">0%</span></div>
-        </div>
+      <input id="meso-scrub" class="sat-scrub" type="range" min="0" max="0"
+             value="0" step="1" aria-label="Frame time">
+      <div class="sat-transport">
+        <button id="meso-step-back" class="hafs-btn" type="button"
+                title="Previous frame (&#8592;)">&#9664;</button>
+        <button id="meso-play" class="hafs-btn hafs-play" type="button"
+                title="Play / pause (space)">&#9654; Play</button>
+        <button id="meso-step-fwd" class="hafs-btn" type="button"
+                title="Next frame (&#8594;)">&#9654;</button>
+        <div id="meso-speed" class="hafs-seg-group" role="group"
+             aria-label="Playback speed"></div>
+        <button id="meso-gif" class="hafs-btn sat-gif" type="button"
+                title="Export the loaded frames as a GIF">&#8681; GIF</button>
+        <div id="meso-gif-prog" class="sat-gif-prog" hidden role="status"
+             aria-live="polite"><div class="sat-gif-bar"><i></i></div>
+          <span class="sat-gif-pct">0%</span></div>
+        <div class="hafs-readout"><span id="meso-time">&#8212;</span>
+          <span id="meso-band-label"></span></div>
       </div>
-      <div class="vw-below">
-        <input id="meso-scrub" class="sat-scrub" type="range" min="0" max="0"
-               value="0" step="1" aria-label="Frame time"></div>
       <div id="meso-empty" class="stub" style="display:none">Meso sectors
         coming online.</div>
       <div id="meso-inactive" class="sat-inactive" hidden
            role="status" aria-live="polite"></div>
-      <p class="hafs-caption">GOES mesoscale-sector imagery, newest frame last.
-        Meso sectors rapid-scan a fixed region every ~minute.</p>
     </div>
 
   </div>
@@ -1399,10 +1393,7 @@ function makeSatViewer(idPrefix, opts) {
       satEl("time").textContent = "—";
     }
     var host = satEl("bands");
-    for (var i = 0; i < host.children.length; i++) {
-      var btn = host.children[i];
-      btn.classList.toggle("active", btn.getAttribute("data-slug") === slug);
-    }
+    if (host && host.value !== slug) host.value = slug;   // sync the <select>
     satShow(prevT != null ? satNearest(prevT) : sat.frames.length - 1);
     if (satCanvasOk()) satAhead(sat.idx); else satPreload();
   }
@@ -1707,16 +1698,13 @@ function makeSatViewer(idPrefix, opts) {
     }
     return out;
   }
-  function satAddBandButton(slug) {
-    var b = document.createElement("button");
-    b.type = "button";
-    b.className = "hafs-seg";
-    b.setAttribute("data-slug", slug);
-    b.textContent = (sat.man.bands[slug] && sat.man.bands[slug].label) || slug;
-    b.addEventListener("click", function () {
-      satPause(); satSelectBand(this.getAttribute("data-slug"), true);
-    });
-    satEl("bands").appendChild(b);
+  function satAddBandButton(slug) {        // band rail is a <select>: add an <option>
+    var host = satEl("bands");
+    if (!host || host.querySelector('option[value="' + slug + '"]')) return;
+    var o = document.createElement("option");
+    o.value = slug;
+    o.textContent = (sat.man.bands[slug] && sat.man.bands[slug].label) || slug;
+    host.appendChild(o);
   }
   function satFmtTime(t) {
     return String(t).slice(0, 16).replace("T", " ") + "Z";
@@ -1818,6 +1806,9 @@ function makeSatViewer(idPrefix, opts) {
     satEl("gif").addEventListener("click", satExportGif);
     satEl("scrub").addEventListener("input", function () {
       satPause(); satShow(Number(this.value));
+    });
+    satEl("bands").addEventListener("change", function () {   // band <select>
+      satPause(); satSelectBand(this.value, true);
     });
     satEl("card").addEventListener("keydown", function (e) {
       if (/^(select|textarea)$/i.test(e.target.tagName)) return;
@@ -1934,7 +1925,7 @@ function makeSatViewer(idPrefix, opts) {
       pickedSlug = (want && has(want)) ? want
                  : (storms[0] ? storms[0].slug : null);
     }
-    stormGroup.style.display = storms.length > 1 ? "" : "none";
+    stormGroup.style.display = storms.length >= 1 ? "" : "none";
     // rebuild options only when the storm set changed.
     var sig = storms.map(function (s) { return s.slug; }).join(",");
     if (stormSel.getAttribute("data-sig") !== sig) {
