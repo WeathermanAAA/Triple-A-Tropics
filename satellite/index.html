@@ -323,6 +323,176 @@
     z-index: 9999;
   }
   .sat-toast.visible { display: block; }
+
+  /* ========================================================================
+     COMPONENTIZED SATELLITE VIEWER — ported from the CycloLab Satellite tab
+     (tsr/cyclolab_shell.py ~390-565 + #sat-card markup + the var-sat JS). Two
+     side-by-side instances live here: the storm FLOATER (idPrefix "sat") and a
+     MESO sector (idPrefix "meso"). The viewer chrome is color-agnostic — it
+     reads --cat-accent / --cat-ink / --card / --panel-max-h, which we map onto
+     the /satellite/ page palette (accent = --accent-2 cyan) on .sat-split so
+     the rest of the page is untouched.
+     ===================================================================== */
+  .sat-split {
+    --cat-accent: var(--accent-2);  /* cyclolab "category" accent -> page cyan */
+    --cat-ink: #0b0e13;             /* ink that sits ON the accent */
+    --card: var(--panel);           /* cyclolab card surface -> page panel */
+    --panel-max-h: 70vh;            /* stage height cap (cyclolab default 62vh) */
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+    align-items: start;
+    max-width: 1480px;          /* cap so the full-width square image stays sane */
+    margin: 0 auto;
+  }
+  @media (max-width: 980px) {
+    .sat-split { grid-template-columns: 1fr; }
+  }
+  /* Viewer card: a flat container (NOT the homepage .card, which lifts +
+     border-glows on hover). Same chrome as the page's .chart-card. */
+  .vw-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    color: var(--fg);
+    display: flex; flex-direction: column; gap: 9px; min-width: 0;
+  }
+  .vw-card-title {                 /* PROMINENT, first thing read, top of panel */
+    font-size: 18px;
+    letter-spacing: 0.2px;
+    color: var(--fg);
+    font-weight: 800;
+    margin: 0;
+  }
+  /* Stacked panel: title -> two selector dropdowns -> BIG fixed-square image ->
+     scrub -> transport. The image is square at the panel's full width and the
+     two .sat-split columns are 1fr/1fr, so BOTH panels + BOTH images are exactly
+     the same size regardless of how many selectors sit above the image. */
+  .sat-selectors { display: flex; gap: 12px; min-width: 0; }
+  .sat-selectors .hafs-group { flex: 1 1 0; min-width: 0; }
+  .sat-selectors .hafs-group select { width: 100%; }
+  .vw-card .hafs-stage {
+    width: 100%; aspect-ratio: 1 / 1; min-height: 0;
+    border-radius: 10px; overflow: hidden; background: #0a0d12;
+  }
+  .vw-card .hafs-stage img,
+  .vw-card .hafs-stage canvas {
+    width: 100%; height: 100%; max-height: none; object-fit: contain; display: block;
+  }
+  .sat-transport { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sat-transport .hafs-readout { margin-left: auto; min-width: 0; }
+
+  /* ---- Gutter layout: square frame in the main column, controls in a side
+     gutter, scrubber full-width beneath. Byte-faithful to cyclolab_shell. */
+  .vw-grid { display: grid;
+    grid-template-columns: minmax(0, max-content) clamp(214px, 28%, 326px);
+    justify-content: start; align-items: start; gap: 16px 22px; }
+  .vw-grid > .hafs-stage { grid-column: 1; grid-row: 1; min-width: 0; }
+  .vw-grid > .vw-aside { grid-column: 2; grid-row: 1;
+    display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .vw-grid > .vw-below,
+  .vw-grid > .hafs-caption,
+  .vw-grid > .stub { grid-column: 1 / -1; min-width: 0; }
+  .vw-aside .hafs-controls { flex-direction: column; align-items: stretch;
+    gap: 14px; padding: 0; background: none; border: none; }
+  .vw-aside .hafs-controls.sat-tools { align-items: stretch; }
+  .vw-aside .sat-gif { align-self: stretch; }
+  .vw-aside .hafs-seg-group { flex-wrap: wrap; gap: 6px; }
+  .vw-aside .hafs-seg-group .hafs-seg { border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 11px; font-size: 11.5px; }
+  .vw-aside .hafs-seg-group .hafs-seg.active { border-color: var(--cat-accent); }
+  .vw-aside .hafs-player { flex-direction: row; flex-wrap: wrap;
+    align-items: center; gap: 8px; padding: 0; background: none; border: none; }
+  .vw-aside .hafs-player .hafs-play { flex: 1 1 auto; }
+  .vw-aside .hafs-player .hafs-readout,
+  .vw-aside .hafs-player .hafs-group { flex: 1 1 100%; }
+  .vw-aside .hafs-group select { width: 100%; min-width: 0; }
+  .vw-below .sat-scrub { width: 100%; }
+  @media (max-width: 760px) {
+    .vw-grid { display: block; }
+    .vw-aside { flex-direction: row; flex-wrap: wrap; align-items: flex-end;
+      gap: 10px 14px; margin-top: 12px; }
+    .vw-aside .hafs-controls,
+    .vw-aside .hafs-player { flex-direction: row; flex-wrap: wrap;
+      align-items: flex-end; }
+    .vw-aside .hafs-group select { width: auto; }
+    .vw-below { margin-top: 10px; }
+  }
+  .hafs-group { display: flex; flex-direction: column; gap: 4px; }
+  .hafs-group > label { font-size: 10px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted); }
+  .hafs-controls { display: flex; flex-wrap: wrap; gap: 12px 18px;
+    padding: 0 0 12px; align-items: flex-end; }
+  .hafs-controls select { background: var(--bg); color: #e8eef5;
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+    font: inherit; font-size: 13px; }
+  .hafs-seg-group { display: flex; flex-wrap: wrap; gap: 0; }
+  .hafs-seg { background: var(--bg); color: var(--muted);
+    border: 1px solid var(--border); border-right: none;
+    padding: 7px 12px; font: inherit; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; }
+  .hafs-seg:first-child { border-radius: 6px 0 0 6px; }
+  .hafs-seg:last-child { border-radius: 0 6px 6px 0;
+    border-right: 1px solid var(--border); }
+  .hafs-seg:hover { color: #ffffff; }
+  .hafs-seg.active { background: var(--cat-accent); color: var(--cat-ink);
+    border-color: var(--cat-accent); }
+  .hafs-stage { position: relative; background: #0a0d12; min-height: 280px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; overflow: hidden; }
+  .hafs-stage img, .hafs-stage canvas { display: block; max-width: 100%;
+    max-height: var(--panel-max-h); width: auto; height: auto; }
+  .hafs-statusbox { position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center; gap: 10px;
+    color: var(--muted); background: rgba(10,13,18,0.6); font-size: 13.5px; }
+  .hafs-spinner { width: 20px; height: 20px; border-radius: 50%;
+    border: 3px solid var(--border); border-top-color: var(--cat-accent);
+    animation: lab-hafs-spin 0.9s linear infinite; }
+  @keyframes lab-hafs-spin { to { transform: rotate(360deg); } }
+  .hafs-player { display: flex; align-items: center; gap: 12px;
+    padding: 12px 2px; flex-wrap: wrap; }
+  .hafs-btn { background: var(--bg); color: #e8eef5;
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px;
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    white-space: nowrap; }
+  .hafs-btn:hover { border-color: var(--cat-accent); color: var(--cat-accent); }
+  .hafs-play { min-width: 86px; }
+  .hafs-readout { display: flex; flex-direction: column; gap: 2px;
+    min-width: 150px; flex: 1 1 auto;
+    font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
+  .hafs-readout span:first-child { font-size: 14px; font-weight: 700; }
+  .hafs-readout span:last-child { font-size: 11.5px; color: var(--muted); }
+  .hafs-caption { color: var(--muted); font-size: 12px; line-height: 1.5;
+    margin: 8px 0 0; }
+  .stub { color: var(--muted); font-size: 13px; }
+  /* satellite speed + GIF export tools */
+  .sat-tools { align-items: flex-end; padding-top: 2px; }
+  .sat-gif { align-self: flex-end; }
+  .sat-gif[disabled] { opacity: 0.5; cursor: progress; }
+  .sat-gif-prog { display: flex; align-items: center; gap: 8px;
+    flex: 1 1 160px; font-size: 11.5px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .sat-gif-prog[hidden] { display: none; }
+  .sat-gif-bar { flex: 1 1 auto; height: 6px; border-radius: 3px;
+    background: var(--bg); border: 1px solid var(--border);
+    overflow: hidden; }
+  .sat-gif-bar i { display: block; height: 100%; width: 0;
+    background: var(--cat-accent); transition: width 0.15s linear; }
+  /* floater-inactive note: shown instead of implying a live feed once the
+     floater stops producing frames. */
+  .sat-inactive { margin: 8px 0 0; font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.3px; color: #d2a93f; }
+  .sat-inactive[hidden] { display: none; }
+  .sat-scrub { width: 100%; accent-color: var(--cat-accent);
+    min-width: 0; margin: 2px 0; }
+  /* In the stacked .vw-card (flex column) the scrubber must keep its natural
+     thin height, NOT a 160px vertical flex-basis (that was the gutter leftover
+     that ballooned the dead space around the scrubber). */
+  .vw-card > .sat-scrub { flex: 0 0 auto; }
+  @media (max-width: 700px) {
+    .hafs-stage { min-height: 200px; }
+  }
 </style>
 </head>
 <body>
@@ -358,7 +528,7 @@
           <div class="sat-spinner"></div>
           <span>Loading basemap…</span>
         </div>
-        <div id="sat-status" class="sat-status">
+        <div id="sat-render-status" class="sat-status">
           <div class="sat-spinner"></div>
           <span id="sat-status-text">Rendering…</span>
         </div>
@@ -375,8 +545,8 @@
         </div>
 
         <div class="sat-field">
-          <label for="sat-time">Time (UTC)</label>
-          <input type="datetime-local" id="sat-time" disabled step="60">
+          <label for="sat-render-time">Time (UTC)</label>
+          <input type="datetime-local" id="sat-render-time" disabled step="60">
         </div>
 
         <div class="sat-field">
@@ -434,28 +604,99 @@
   </div>
 </section>
 
-<!-- Live storm-following floaters. Populated from the floater poller's R2
-     manifest (cdn.triple-a-tropics.com/floaters/manifest.json). Self-hides
-     when no storm is active; shows a storm dropdown only when >1 are. -->
-<section class="chart-section" id="floater-section" style="display:none">
-  <div class="chart-card">
-    <div class="sat-result-head">
-      <div>
-        <div class="gibs-head-title">Live Storm Floaters · auto-tracking active systems</div>
-        <div class="sat-result-meta" id="floater-meta">Loading active storms…</div>
+<!-- Componentized satellite viewer, TWO side-by-side instances:
+       instance 1 (idPrefix "sat")  = the live storm FLOATER (auto-tracks active
+                                       systems; shows a storm <select> when >1).
+       instance 2 (idPrefix "meso") = a GOES MESO sector (sector <select>).
+     Each is its own makeSatViewer() with band rail / play / scrub / speed / GIF
+     and a 60 s manifest re-poll (append new frames, preserve scrub/pause,
+     follow-live when parked on newest, pause when the tab is hidden). The night
+     handling lives in the PNG. Manifests come from cdn.triple-a-tropics.com. -->
+<section class="chart-section" id="sat-viewers-section">
+  <div class="sat-split">
+
+    <!-- INSTANCE 1: storm floater -->
+    <div class="vw-card" id="sat-card" tabindex="0">
+      <div class="vw-card-title">Live Storm Floater</div>
+      <div class="sat-selectors">
+        <div class="hafs-group" id="sat-storm-group"><label>Storm</label>
+          <select id="sat-storm" aria-label="Active storm"></select></div>
+        <div class="hafs-group"><label>Band</label>
+          <select id="sat-bands" aria-label="Satellite band"></select></div>
       </div>
-      <div class="sat-result-actions">
-        <label for="floater-storm" class="sr-only" style="position:absolute;left:-9999px;">Active storm</label>
-        <select id="floater-storm" class="gibs-region-select" aria-label="Active storm" style="display:none"></select>
-        <label for="floater-band" class="sr-only" style="position:absolute;left:-9999px;">Band</label>
-        <select id="floater-band" class="gibs-region-select" aria-label="Band"></select>
-        <a id="floater-loop" class="sat-action-btn" href="#">Loop &#9654;</a>
-        <a id="floater-download" class="sat-action-btn" download href="#">Download</a>
+      <div class="hafs-stage" id="sat-stage">
+        <img id="sat-img" alt="Storm floater satellite frame">
+        <canvas id="sat-canvas" style="display:none" role="img"
+                aria-label="Storm floater satellite frame"></canvas>
+        <div id="sat-status" class="hafs-statusbox">
+          <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
+      <input id="sat-scrub" class="sat-scrub" type="range" min="0" max="0"
+             value="0" step="1" aria-label="Frame time">
+      <div class="sat-transport">
+        <button id="sat-step-back" class="hafs-btn" type="button"
+                title="Previous frame (&#8592;)">&#9664;</button>
+        <button id="sat-play" class="hafs-btn hafs-play" type="button"
+                title="Play / pause (space)">&#9654; Play</button>
+        <button id="sat-step-fwd" class="hafs-btn" type="button"
+                title="Next frame (&#8594;)">&#9654;</button>
+        <div id="sat-speed" class="hafs-seg-group" role="group"
+             aria-label="Playback speed"></div>
+        <button id="sat-gif" class="hafs-btn sat-gif" type="button"
+                title="Export the loaded frames as a GIF">&#8681; GIF</button>
+        <div id="sat-gif-prog" class="sat-gif-prog" hidden role="status"
+             aria-live="polite"><div class="sat-gif-bar"><i></i></div>
+          <span class="sat-gif-pct">0%</span></div>
+        <div class="hafs-readout"><span id="sat-time">&#8212;</span>
+          <span id="sat-band-label"></span></div>
+      </div>
+      <div id="sat-empty" class="stub" style="display:none">No active storm
+        floaters right now.</div>
+      <div id="sat-inactive" class="sat-inactive" hidden
+           role="status" aria-live="polite"></div>
     </div>
-    <div class="sat-result-img-wrap">
-      <img id="floater-img" alt="Live storm-centered satellite floater">
+
+    <!-- INSTANCE 2: meso sector -->
+    <div class="vw-card" id="meso-card" tabindex="0">
+      <div class="vw-card-title">GOES Mesoscale Sectors</div>
+      <div class="sat-selectors">
+        <div class="hafs-group" id="meso-sector-group"><label>Sector</label>
+          <select id="meso-sector" aria-label="Mesoscale sector"></select></div>
+        <div class="hafs-group"><label>Band</label>
+          <select id="meso-bands" aria-label="Satellite band"></select></div>
+      </div>
+      <div class="hafs-stage" id="meso-stage">
+        <img id="meso-img" alt="GOES mesoscale sector frame">
+        <canvas id="meso-canvas" style="display:none" role="img"
+                aria-label="GOES mesoscale sector frame"></canvas>
+        <div id="meso-status" class="hafs-statusbox">
+          <div class="hafs-spinner"></div><span>Loading…</span></div>
+      </div>
+      <input id="meso-scrub" class="sat-scrub" type="range" min="0" max="0"
+             value="0" step="1" aria-label="Frame time">
+      <div class="sat-transport">
+        <button id="meso-step-back" class="hafs-btn" type="button"
+                title="Previous frame (&#8592;)">&#9664;</button>
+        <button id="meso-play" class="hafs-btn hafs-play" type="button"
+                title="Play / pause (space)">&#9654; Play</button>
+        <button id="meso-step-fwd" class="hafs-btn" type="button"
+                title="Next frame (&#8594;)">&#9654;</button>
+        <div id="meso-speed" class="hafs-seg-group" role="group"
+             aria-label="Playback speed"></div>
+        <button id="meso-gif" class="hafs-btn sat-gif" type="button"
+                title="Export the loaded frames as a GIF">&#8681; GIF</button>
+        <div id="meso-gif-prog" class="sat-gif-prog" hidden role="status"
+             aria-live="polite"><div class="sat-gif-bar"><i></i></div>
+          <span class="sat-gif-pct">0%</span></div>
+        <div class="hafs-readout"><span id="meso-time">&#8212;</span>
+          <span id="meso-band-label"></span></div>
+      </div>
+      <div id="meso-empty" class="stub" style="display:none">Meso sectors
+        coming online.</div>
+      <div id="meso-inactive" class="sat-inactive" hidden
+           role="status" aria-live="polite"></div>
     </div>
+
   </div>
 </section>
 
@@ -487,7 +728,7 @@
   <p>Any bbox size works: the backend picks the smallest GOES product family that covers your box (a Mesoscale sector if it fits in a ~12°×12° window, then CONUS, then Full Disk) so the source resolution is as fine as possible, and auto-downsamples oversized requests to stay within a 16M-pixel render budget. When that kicks in you'll see an "auto-downsampled" note on the result. Identical re-requests come back from cache instantly. Rate limit: 10 renders / minute / IP.</p>
 
   <h2>Coverage</h2>
-  <p>Three satellite families today: <b>GOES-East</b> (currently GOES-19, with the GOES-16 archive back to 2017) covers ~135°W to 5°W, the Atlantic basin, eastern Pacific, and the Americas. <b>GOES-West</b> (currently GOES-18, with the GOES-17 archive back to 2019-02-12) covers ~160°E to ~-65°W via the antimeridian, Hawaii, Alaska, central + eastern Pacific. <b>Himawari-Pacific</b> (Himawari-9 since 2022-12-13, with the Himawari-8 archive back to 2017) covers ~60°E to 220°E, Western Pacific, East Asia, Oceania. The picker auto-routes by bbox center, so any zoom in any basin works without picking a satellite by hand. METEOSAT (Atlantic east / Africa / Europe) is next on the roadmap, along with full-disk presets, named-region floaters, and live storm-centered floaters.</p>
+  <p>Three satellite families today: <b>GOES-East</b> (currently GOES-19, with the GOES-16 archive back to 2017) covers ~135°W to 5°W, the Atlantic basin, eastern Pacific, and the Americas. <b>GOES-West</b> (currently GOES-18, with the GOES-17 archive back to 2019-02-12) covers ~160°E to ~-65°W via the antimeridian, Hawaii, Alaska, central + eastern Pacific. <b>Himawari-Pacific</b> (Himawari-9 since 2022-12-13, with the Himawari-8 archive back to 2017) covers ~60°E to 220°E, Western Pacific, East Asia, Oceania. The picker auto-routes by bbox center, so any zoom in any basin works without picking a satellite by hand. The <b>Live Storm Floater</b> and <b>Mesoscale Sectors</b> viewers below auto-track active systems and rapid-scan fixed sectors with built-in playback, scrubbing, and one-click GIF export. METEOSAT (Atlantic east / Africa / Europe) is next on the roadmap, along with full-disk presets and named-region floaters.</p>
 </section>
 
 <footer>
@@ -695,7 +936,7 @@
 
   // ---- "Latest" toggle ----
   const latestCheckbox = document.getElementById('sat-latest');
-  const timeInput = document.getElementById('sat-time');
+  const timeInput = document.getElementById('sat-render-time');
   function syncTimeInput() {
     timeInput.disabled = latestCheckbox.checked;
     if (latestCheckbox.checked) {
@@ -762,7 +1003,7 @@
   }
 
   // ---- Status / spinner ----
-  const status = document.getElementById('sat-status');
+  const status = document.getElementById('sat-render-status');
   const statusText = document.getElementById('sat-status-text');
   const loadingMessages = [
     'Picking the right GOES product…',
@@ -965,130 +1206,848 @@
 </script>
 
 <script>
-// ---- Live storm floaters --------------------------------------------------
-// Reads cdn.triple-a-tropics.com/floaters/manifest.json (written by the
-// floater poller — a second Railway service alongside /render). Shows the
-// latest storm-centered crop per band, refreshing ~30 s; the Loop button opens
-// the dedicated animated loop page. Self-hides when no storm is active (same
-// pattern as the GIBS section below).
-(function() {
-  const CDN_ROOT = 'https://cdn.triple-a-tropics.com';
-  const TOP_MANIFEST = CDN_ROOT + '/floaters/manifest.json';
-  const BAND_ORDER = ['ir', 'irbd', 'wv_up', 'wv_low', 'truecolor', 'swir'];
-  const LIVE_REFRESH_MS = 30000;   // live image
-  const TOP_REFRESH_MS = 300000;   // storm-set churn (storms update every 6 h)
+// ---- Componentized satellite viewer (factory) -----------------------------
+// Ported from the CycloLab Satellite tab (tsr/cyclolab_shell.py): the band
+// rail / play / step / scrub / speed / GIF transport + the 60 s auto-refresh
+// state machine, refactored from a singleton into makeSatViewer(idPrefix, opts)
+// so the page can mount TWO independent instances side by side:
+//   makeSatViewer('sat',  {sources:[floater src]})      -> storm floater
+//   makeSatViewer('meso', {sources:[meso src], sectorSelect:'#meso-sector'})
+// opts:
+//   sources       : [{ id, top, resolve(top)->subManifestURL|null }]
+//   sectorSelect   : optional CSS selector of a <select> whose change re-inits
+//                    the instance for a new sector (meso) — re-resolved each poll
+// All behavior is preserved: per-band frame lists, chronological+deduped order,
+// canvas-decode playback with an img.src fallback, speed presets, client-side
+// GIF89a export, and the manifest re-poll (append new frames, preserve scrub/
+// pause, follow-live when parked on newest, pause when the document is hidden,
+// back off once the floater goes inactive). Night handling lives in the PNG.
+const CDN = 'https://cdn.triple-a-tropics.com';
 
-  const section = document.getElementById('floater-section');
-  const stormSel = document.getElementById('floater-storm');
-  const bandSel  = document.getElementById('floater-band');
-  const img  = document.getElementById('floater-img');
-  const meta = document.getElementById('floater-meta');
-  const loop = document.getElementById('floater-loop');
-  const dl   = document.getElementById('floater-download');
-  if (!section) return;
+function makeSatViewer(idPrefix, opts) {
+  opts = opts || {};
+  const SAT_SOURCES = opts.sources || [];
+  const ENDED = false;   // /satellite/ is never a frozen archive page
 
-  let storms = [];
-  let current = null;        // selected storm (top-manifest entry)
-  let stormManifest = null;  // per-storm manifest
-  let liveTimer = null;
+  // ---- per-instance state (was the singleton `var sat`) -------------------
+  var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
+              timer: null, gen: 0, preloaded: {},
+              mode: null, bmp: {}, bmpKeys: [], raf: null, lastT: 0,
+              holdT0: 0, presented: [], speed: 1,
+              pollTimer: null, inactive: false };
+  var SAT_POLL_MS = 60000;
+  var SAT_POLL_BACKOFF_MS = 300000;
+  var SAT_STALE_MIN = 40;
+  var SAT_FRAME_MS = 200, SAT_AHEAD = 12, SAT_BMP_MAX = 28;
+  var SAT_SPEEDS = [0.5, 1, 2, 4];
 
-  function url(key) { return CDN_ROOT + '/' + key; }
-
-  function setLiveImg() {
-    if (!current || !stormManifest) return;
-    const bandKey = bandSel.value;
-    const b = (stormManifest.bands || {})[bandKey];
-    if (!b || !b.latest) { meta.textContent = current.name + ' · no frames yet for this band.'; return; }
-    const bust = '?v=' + encodeURIComponent(stormManifest.generated_utc || '');
-    img.src = url(b.latest) + bust;
-    img.alt = current.name + ': ' + (b.label || bandKey);
-    dl.href = url(b.latest) + bust;
-    dl.download = current.slug + '_' + bandKey + '.png';
-    loop.href = '/satellite/floater-loop/?storm=' + encodeURIComponent(current.slug) +
-                '&band=' + encodeURIComponent(bandKey);
-    const n = (b.frames || []).length;
-    meta.textContent = current.name + ' · ' + current.basin + ' · ' + (current.category || 'TD') +
-      (current.intensity_kt != null ? ' · ' + Math.round(current.intensity_kt) + ' kt' : '') +
-      ' · ' + n + ' frame' + (n === 1 ? '' : 's');
-    const p = new URLSearchParams(location.search);
-    p.set('floater', current.slug); p.set('band', bandKey);
-    history.replaceState({}, '', location.pathname + '?' + p.toString());
+  function fetchJson(url) {
+    if (typeof fetch !== "function") return Promise.resolve(null);
+    return fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "t=" + Date.now(),
+                 { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
   }
 
-  function populateBands() {
-    const bands = (stormManifest && stormManifest.bands) || {};
-    const keys = BAND_ORDER.filter(k => bands[k] && bands[k].latest);
-    bandSel.innerHTML = '';
-    keys.forEach(k => {
-      const o = document.createElement('option');
-      o.value = k; o.textContent = bands[k].label || k;
-      bandSel.appendChild(o);
+  function satFrameMs() { return SAT_FRAME_MS / sat.speed; }
+  function satEl(id) { return document.getElementById(idPrefix + "-" + id); }
+  function satStatus(show, msg) {
+    var box = satEl("status");
+    box.style.display = show ? "flex" : "none";
+    if (msg != null) box.querySelector("span").textContent = msg;
+  }
+  function satCanvasOk() {
+    if (sat.mode !== null) return sat.mode === "canvas";
+    var ok = false;
+    try {
+      var cv = satEl("canvas");
+      ok = !!(window.createImageBitmap && cv && cv.getContext &&
+              cv.getContext("2d"));
+    } catch (e) { ok = false; }
+    sat.mode = ok ? "canvas" : "img";
+    return ok;
+  }
+  function satBitmapFor(i) {
+    var f = sat.frames[i];
+    if (!f) return null;
+    var u = CDN + "/" + f.key;
+    var e = sat.bmp[u];
+    if (e) {
+      var ki = sat.bmpKeys.indexOf(u);
+      if (ki >= 0 && ki !== sat.bmpKeys.length - 1) {
+        sat.bmpKeys.splice(ki, 1);
+        sat.bmpKeys.push(u);
+      }
+      return e.bm;
+    }
+    e = sat.bmp[u] = { bm: null };
+    sat.bmpKeys.push(u);
+    fetch(u).then(function (r) { return r.ok ? r.blob() : null; })
+      .then(function (bl) { return bl ? createImageBitmap(bl) : null; })
+      .then(function (bm) { e.bm = bm; })
+      .catch(function () {});
+    while (sat.bmpKeys.length > SAT_BMP_MAX) {
+      var old = sat.bmpKeys.shift();
+      var oe = sat.bmp[old];
+      delete sat.bmp[old];
+      if (oe && oe.bm && oe.bm.close) {
+        try { oe.bm.close(); } catch (e2) {}
+      }
+    }
+    return null;
+  }
+  function satAhead(i) {
+    var n = sat.frames.length;
+    if (!n) return;
+    for (var k = 1; k <= Math.min(SAT_AHEAD, n - 1); k++) {
+      satBitmapFor((i + k) % n);
+    }
+  }
+  function satBlit(bm) {
+    var cv = satEl("canvas");
+    if (cv.width !== bm.width || cv.height !== bm.height) {
+      cv.width = bm.width; cv.height = bm.height;
+    }
+    cv.getContext("2d").drawImage(bm, 0, 0);
+  }
+  function satReadout(i) {
+    var f = sat.frames[i];
+    satEl("scrub").value = String(i);
+    satEl("time").textContent =
+      f.t.slice(0, 16).replace("T", " ") + "Z";
+  }
+  function satShow(i) {
+    var n = sat.frames.length;
+    if (!n) return;
+    if (i < 0) i = 0;
+    if (i >= n) i = n - 1;
+    sat.idx = i;
+    var f = sat.frames[i];
+    if (satCanvasOk()) {
+      satEl("img").style.display = "none";
+      satEl("canvas").style.display = "";
+      var bm = satBitmapFor(i);
+      if (bm) {
+        satBlit(bm);
+      } else {
+        var gen = sat.gen, want = i, tries = 0;
+        (function waitBlit() {
+          if (gen !== sat.gen || sat.idx !== want || tries++ > 60) return;
+          var b2 = satBitmapFor(want);
+          if (b2) { satBlit(b2); return; }
+          setTimeout(waitBlit, 40);
+        })();
+      }
+      satAhead(i);
+    } else {
+      satEl("img").src = CDN + "/" + f.key;
+    }
+    satReadout(i);
+  }
+  function satPreload() {
+    var gen = ++sat.gen;
+    var want = [];
+    for (var k = sat.frames.length - 1; k >= 0; k--) want.push(sat.frames[k]);
+    var inflight = 0, qi = 0;
+    function next() {
+      if (gen !== sat.gen) return;
+      while (inflight < 3 && qi < want.length) {
+        var f = want[qi++];
+        var u = CDN + "/" + f.key;
+        if (sat.preloaded[u]) continue;
+        inflight++;
+        var im = new Image();
+        sat.preloaded[u] = im;
+        im.onload = im.onerror = function () { inflight--; next(); };
+        im.src = u;
+      }
+    }
+    next();
+  }
+  function satNearest(t) {
+    var best = sat.frames.length - 1, dBest = Infinity;
+    var want = new Date(t).getTime();
+    for (var i = 0; i < sat.frames.length; i++) {
+      var d = Math.abs(new Date(sat.frames[i].t).getTime() - want);
+      if (d < dBest) { dBest = d; best = i; }
+    }
+    return best;
+  }
+  function satSelectBand(slug, keepTime) {
+    var prevT = (keepTime && sat.frames.length) ? sat.frames[sat.idx].t : null;
+    sat.band = slug;
+    sat.gen++;
+    var b = (sat.man && sat.man.bands && sat.man.bands[slug]) || null;
+    var raw = ((b && b.frames) || []).slice();
+    raw.sort(function (a, b2) { return a.t < b2.t ? -1 : a.t > b2.t ? 1 : 0; });
+    sat.frames = [];
+    for (var fi = 0; fi < raw.length; fi++) {
+      if (!sat.frames.length ||
+          raw[fi].t !== sat.frames[sat.frames.length - 1].t) {
+        sat.frames.push(raw[fi]);
+      }
+    }
+    satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
+    satEl("band-label").textContent = b ? (b.label || slug) : "";
+    satEl("empty").style.display = sat.frames.length ? "none" : "block";
+    if (!sat.frames.length) {
+      satEl("img").removeAttribute("src");
+      var cv0 = satEl("canvas");
+      if (cv0) cv0.style.display = "none";
+      satEl("time").textContent = "—";
+    }
+    var host = satEl("bands");
+    if (host && host.value !== slug) host.value = slug;   // sync the <select>
+    satShow(prevT != null ? satNearest(prevT) : sat.frames.length - 1);
+    if (satCanvasOk()) satAhead(sat.idx); else satPreload();
+  }
+  function satStep(d) { satPause(); satShow(sat.idx + d); }
+  function satPause() {
+    sat.playing = false;
+    if (sat.timer) { clearInterval(sat.timer); sat.timer = null; }
+    if (sat.raf) { cancelAnimationFrame(sat.raf); sat.raf = null; }
+    satEl("play").innerHTML = "&#9654; Play";
+  }
+  function satRafTick(ts) {
+    if (!sat.playing) { sat.raf = null; return; }
+    sat.raf = requestAnimationFrame(satRafTick);
+    var fm = satFrameMs();
+    if (ts - sat.lastT < fm - 1) return;
+    var j = sat.idx >= sat.frames.length - 1 ? 0 : sat.idx + 1;
+    var bm = satBitmapFor(j);
+    if (!bm) {
+      if (!sat.holdT0) sat.holdT0 = ts;
+      if (ts - sat.holdT0 > 2000) {
+        sat.holdT0 = 0;
+        sat.idx = j; satReadout(j); satAhead(j);
+        sat.lastT = ts;
+      }
+      return;
+    }
+    sat.holdT0 = 0;
+    sat.idx = j;
+    satBlit(bm);
+    satReadout(j);
+    satAhead(j);
+    sat.lastT = (ts - sat.lastT > 2 * fm) ? ts : sat.lastT + fm;
+    sat.presented.push(ts);
+    if (sat.presented.length > 600) sat.presented.shift();
+  }
+  function satTogglePlay() {
+    if (sat.playing) { satPause(); return; }
+    if (!sat.frames.length) return;
+    sat.playing = true;
+    satEl("play").innerHTML = "&#10074;&#10074; Pause";
+    if (satCanvasOk()) {
+      sat.lastT = 0;
+      sat.holdT0 = 0;
+      satAhead(sat.idx);
+      sat.raf = requestAnimationFrame(satRafTick);
+      return;
+    }
+    sat.holds = 0;
+    satArmFallbackTimer();
+  }
+  function satArmFallbackTimer() {
+    if (sat.timer) clearInterval(sat.timer);
+    sat.timer = setInterval(function () {
+      var j = sat.idx >= sat.frames.length - 1 ? 0 : sat.idx + 1;
+      var im = sat.preloaded[CDN + "/" + sat.frames[j].key];
+      var ready = im && im.complete && im.naturalWidth > 0;
+      if (!ready && sat.holds < 10) { sat.holds++; return; }
+      sat.holds = 0;
+      satShow(j);
+    }, satFrameMs());
+  }
+  // ---- speed presets ------------------------------------------------------
+  function satSetSpeed(mult) {
+    sat.speed = mult;
+    var host = satEl("speed");
+    if (host) {
+      for (var i = 0; i < host.children.length; i++) {
+        var b = host.children[i];
+        b.classList.toggle("active",
+          parseFloat(b.getAttribute("data-speed")) === mult);
+      }
+    }
+    if (sat.playing && sat.timer) satArmFallbackTimer();
+  }
+  function satBuildSpeed() {
+    var host = satEl("speed");
+    if (!host) return;
+    host.innerHTML = "";
+    SAT_SPEEDS.forEach(function (mult) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "hafs-seg";
+      b.setAttribute("data-speed", String(mult));
+      b.textContent = (mult === 1 ? "1" :
+        (mult < 1 ? "0.5" : String(mult))) + "×";
+      b.addEventListener("click", function () {
+        satSetSpeed(parseFloat(this.getAttribute("data-speed")));
+      });
+      host.appendChild(b);
     });
-    const wantBand = qs('band');
-    bandSel.value = (wantBand && keys.includes(wantBand)) ? wantBand : (keys[0] || '');
+    satSetSpeed(1);
   }
+  function satNudgeSpeed(dir) {
+    var i = SAT_SPEEDS.indexOf(sat.speed);
+    if (i < 0) i = 1;
+    satSetSpeed(SAT_SPEEDS[Math.max(0,
+      Math.min(SAT_SPEEDS.length - 1, i + dir))]);
+  }
+
+  // ---- client-side GIF export ---------------------------------------------
+  var SAT_GIF_MAX_FRAMES = 48;
+  var SAT_GIF_MAX_PX = 480;
+  function gifColorIndex(r, g, b) {
+    return ((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6);
+  }
+  function gifGlobalPalette() {
+    var pal = new Uint8Array(256 * 3);
+    for (var i = 0; i < 256; i++) {
+      var r3 = (i >> 5) & 7, g3 = (i >> 2) & 7, b2 = i & 3;
+      pal[i * 3] = Math.round(r3 * 255 / 7);
+      pal[i * 3 + 1] = Math.round(g3 * 255 / 7);
+      pal[i * 3 + 2] = Math.round(b2 * 255 / 3);
+    }
+    return pal;
+  }
+  function gifLzw(indices, minCode, out) {
+    var clear = 1 << minCode, eoi = clear + 1;
+    var next = eoi + 1, width = minCode + 1;
+    var dict = new Map();
+    var cur = 0, shift = 0;
+    var block = [];
+    function flushBits() {
+      while (shift >= 8) {
+        block.push(cur & 255); cur >>= 8; shift -= 8;
+        if (block.length === 255) {
+          out.push(255);
+          for (var k = 0; k < 255; k++) out.push(block[k]);
+          block = [];
+        }
+      }
+    }
+    function emit(code) { cur |= code << shift; shift += width; flushBits(); }
+    emit(clear);
+    var ib = indices[0];
+    for (var i = 1; i < indices.length; i++) {
+      var k = indices[i];
+      var key = (ib << 8) | k;
+      var code = dict.get(key);
+      if (code !== undefined) { ib = code; continue; }
+      emit(ib);
+      if (next === 4096) {
+        emit(clear);
+        dict.clear(); next = eoi + 1; width = minCode + 1;
+      } else {
+        if (next >= (1 << width)) width++;
+        dict.set(key, next++);
+      }
+      ib = k;
+    }
+    emit(ib);
+    emit(eoi);
+    if (shift > 0) { block.push(cur & 255); }
+    if (block.length) {
+      out.push(block.length);
+      for (var k2 = 0; k2 < block.length; k2++) out.push(block[k2]);
+    }
+    out.push(0);
+  }
+  function gifEncode(frames, w, h, delayCs) {
+    var pal = gifGlobalPalette();
+    var b = [];
+    function str(s) { for (var i = 0; i < s.length; i++) b.push(s.charCodeAt(i)); }
+    function u16(v) { b.push(v & 255, (v >> 8) & 255); }
+    str("GIF89a");
+    u16(w); u16(h);
+    b.push(0xF7, 0, 0);
+    for (var i = 0; i < pal.length; i++) b.push(pal[i]);
+    b.push(0x21, 0xFF, 0x0B);
+    str("NETSCAPE2.0");
+    b.push(0x03, 0x01, 0, 0, 0x00);
+    frames.forEach(function (rgba) {
+      b.push(0x21, 0xF9, 0x04, 0x00);
+      u16(delayCs);
+      b.push(0x00, 0x00);
+      b.push(0x2C); u16(0); u16(0); u16(w); u16(h); b.push(0x00);
+      var n = w * h, idx = new Uint8Array(n);
+      for (var p = 0; p < n; p++) {
+        idx[p] = gifColorIndex(rgba[p * 4], rgba[p * 4 + 1],
+                               rgba[p * 4 + 2]);
+      }
+      b.push(8);
+      gifLzw(idx, 8, b);
+    });
+    b.push(0x3B);
+    return new Blob([new Uint8Array(b)], { type: "image/gif" });
+  }
+  var satGifBusy = false;
+  function satGifProgress(frac) {
+    var box = satEl("gif-prog");
+    if (!box) return;
+    box.hidden = frac == null;
+    if (frac == null) return;
+    box.querySelector(".sat-gif-bar i").style.width =
+      Math.round(frac * 100) + "%";
+    box.querySelector(".sat-gif-pct").textContent =
+      Math.round(frac * 100) + "%";
+  }
+  function satFrameToCanvas(i, cw, ch) {
+    var cnv = document.createElement("canvas");
+    cnv.width = cw; cnv.height = ch;
+    var ctx = cnv.getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cw, ch);
+    var src = sat.bmp[CDN + "/" + sat.frames[i].key];
+    src = src && src.bm;
+    if (!src) src = sat.preloaded[CDN + "/" + sat.frames[i].key];
+    if (src && (src.width || src.naturalWidth)) {
+      try { ctx.drawImage(src, 0, 0, cw, ch); } catch (e) { return null; }
+      return ctx.getImageData(0, 0, cw, ch).data;
+    }
+    return null;
+  }
+  function satExportGif() {
+    if (satGifBusy || !sat.frames.length) return;
+    var btn = satEl("gif");
+    var first = sat.bmp[CDN + "/" + sat.frames[0].key];
+    first = (first && first.bm) ||
+            sat.preloaded[CDN + "/" + sat.frames[0].key];
+    var sw = (first && (first.width || first.naturalWidth)) || 480;
+    var sh = (first && (first.height || first.naturalHeight)) || 480;
+    var scale = Math.min(1, SAT_GIF_MAX_PX / Math.max(sw, sh));
+    var cw = Math.max(2, Math.round(sw * scale));
+    var ch = Math.max(2, Math.round(sh * scale));
+    var n = sat.frames.length;
+    var order = [];
+    for (var i = 0; i < n; i++) order.push(i);
+    if (n > SAT_GIF_MAX_FRAMES) {
+      var pick = [];
+      for (var k = 0; k < SAT_GIF_MAX_FRAMES; k++) {
+        pick.push(order[Math.round(k * (n - 1) /
+          (SAT_GIF_MAX_FRAMES - 1))]);
+      }
+      order = pick;
+    }
+    var wasPlaying = sat.playing;
+    satPause();
+    satGifBusy = true;
+    btn.disabled = true;
+    satGifProgress(0);
+    var rgbaFrames = [];
+    var idx = 0;
+    var delayCs = Math.max(2, Math.round(satFrameMs() / 10));
+    function step() {
+      if (idx >= order.length) { finish(); return; }
+      var data = satFrameToCanvas(order[idx], cw, ch);
+      if (data) rgbaFrames.push(data);
+      idx++;
+      satGifProgress(idx / order.length * 0.85);
+      (window.requestAnimationFrame || setTimeout)(step);
+    }
+    function finish() {
+      try {
+        var blob = gifEncode(rgbaFrames, cw, ch, delayCs);
+        satGifProgress(1);
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        var stamp = (sat.frames[sat.idx] &&
+          sat.frames[sat.idx].t || "").replace(/[^0-9]/g, "").slice(0, 12);
+        a.href = url;
+        var subSlug = (SAT_SOURCES[0] && SAT_SOURCES[0].subSlug) || "sat";
+        a.download = idPrefix + "_" + subSlug + "_" +
+          (sat.band || "sat") + "_" + (stamp || "loop") + ".gif";
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      } catch (e) {
+        try { console.warn("[sat] GIF export failed:", e); }
+        catch (e2) {}
+      }
+      satGifBusy = false;
+      btn.disabled = false;
+      setTimeout(function () { satGifProgress(null); }, 1200);
+      if (wasPlaying) satTogglePlay();
+    }
+    step();
+  }
+
+  // ---- auto-refresh: re-poll the manifest while watching ------------------
+  function satFetchBands() {
+    return Promise.all(SAT_SOURCES.map(function (src) {
+      return fetchJson(src.top).then(function (top) {
+        var mu = top && src.resolve(top);
+        return mu ? fetchJson(mu) : null;
+      }).catch(function () { return null; });
+    })).then(function (mans) {
+      var bands = {}, got = false;
+      mans.forEach(function (man) {
+        if (!man || !man.bands) return;
+        for (var bs in man.bands) {
+          if (!man.bands.hasOwnProperty(bs) || bands[bs]) continue;
+          bands[bs] = man.bands[bs]; got = true;
+        }
+      });
+      return got ? bands : null;
+    });
+  }
+  function satSortDedupe(frames) {
+    var raw = (frames || []).slice();
+    raw.sort(function (a, b) { return a.t < b.t ? -1 : a.t > b.t ? 1 : 0; });
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      if (!out.length || raw[i].t !== out[out.length - 1].t) out.push(raw[i]);
+    }
+    return out;
+  }
+  function satAddBandButton(slug) {        // band rail is a <select>: add an <option>
+    var host = satEl("bands");
+    if (!host || host.querySelector('option[value="' + slug + '"]')) return;
+    var o = document.createElement("option");
+    o.value = slug;
+    o.textContent = (sat.man.bands[slug] && sat.man.bands[slug].label) || slug;
+    host.appendChild(o);
+  }
+  function satFmtTime(t) {
+    return String(t).slice(0, 16).replace("T", " ") + "Z";
+  }
+  function satUpdateInactive(droppedFromIndex) {
+    var note = satEl("inactive");
+    if (!sat.frames.length) {
+      sat.inactive = !!droppedFromIndex;
+      if (note) { note.hidden = true; }
+      return;
+    }
+    var newestT = sat.frames[sat.frames.length - 1].t;
+    var ageMin = (Date.now() - new Date(newestT).getTime()) / 60000;
+    sat.inactive = !!droppedFromIndex || !(ageMin <= SAT_STALE_MIN);
+    if (note) {
+      if (sat.inactive) {
+        note.textContent = "Inactive — last frame " +
+          satFmtTime(newestT);
+        note.hidden = false;
+      } else { note.hidden = true; note.textContent = ""; }
+    }
+  }
+  function satRepollApply(bands) {
+    if (!bands) { satUpdateInactive(true); return; }
+    if (!sat.man) sat.man = { bands: {} };
+    for (var bs in bands) {
+      if (!bands.hasOwnProperty(bs)) continue;
+      var isNew = !sat.man.bands[bs];
+      sat.man.bands[bs] = bands[bs];
+      if (isNew) satAddBandButton(bs);
+    }
+    var nb = sat.man.bands[sat.band];
+    var fresh = satSortDedupe(nb && nb.frames);
+    if (!sat.frames.length) {
+      if (fresh.length) satSelectBand(sat.band, false);
+      satUpdateInactive();
+      return;
+    }
+    var lastT = sat.frames[sat.frames.length - 1].t;
+    var wasNewest = sat.idx >= sat.frames.length - 1;
+    var added = [];
+    fresh.forEach(function (f) {
+      if (f.t > lastT) { sat.frames.push(f); added.push(sat.frames.length - 1); }
+    });
+    if (added.length) {
+      satEl("scrub").max = String(sat.frames.length - 1);
+      if (satCanvasOk()) {
+        added.forEach(function (i) { satBitmapFor(i); });
+      } else {
+        added.forEach(function (i) {
+          var u = CDN + "/" + sat.frames[i].key;
+          if (!sat.preloaded[u]) {
+            var im = new Image(); sat.preloaded[u] = im; im.src = u;
+          }
+        });
+      }
+      if (wasNewest && !sat.playing) satShow(sat.frames.length - 1);
+    }
+    satUpdateInactive();
+  }
+  function satPollActive() {
+    var hidden = (typeof document !== "undefined") && document.hidden;
+    return !ENDED && !hidden && !!satEl("card");
+  }
+  function satStopPoll() {
+    if (sat.pollTimer) { clearTimeout(sat.pollTimer); sat.pollTimer = null; }
+  }
+  function satSchedulePoll(delay) {
+    satStopPoll();
+    if (ENDED) return;
+    sat.pollTimer = setTimeout(function () {
+      sat.pollTimer = null;
+      if (!satPollActive()) { satStartPoll(); return; }
+      satFetchBands().then(function (bands) {
+        satRepollApply(bands);
+        satSchedulePoll(sat.inactive ? SAT_POLL_BACKOFF_MS : SAT_POLL_MS);
+      }).catch(function () { satSchedulePoll(SAT_POLL_MS); });
+    }, delay);
+  }
+  function satStartPoll() {
+    if (ENDED || sat.pollTimer) return;
+    satSchedulePoll(sat.inactive ? SAT_POLL_BACKOFF_MS : SAT_POLL_MS);
+  }
+  // re-poll resumes the moment the tab becomes visible again.
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) satStartPoll();
+    });
+  }
+
+  var wired = false;   // one-time transport wiring (survives sector re-inits)
+  function wireTransport() {
+    if (wired) return;
+    wired = true;
+    satBuildSpeed();
+    satEl("step-back").addEventListener("click", function () { satStep(-1); });
+    satEl("step-fwd").addEventListener("click", function () { satStep(1); });
+    satEl("play").addEventListener("click", satTogglePlay);
+    satEl("gif").addEventListener("click", satExportGif);
+    satEl("scrub").addEventListener("input", function () {
+      satPause(); satShow(Number(this.value));
+    });
+    satEl("bands").addEventListener("change", function () {   // band <select>
+      satPause(); satSelectBand(this.value, true);
+    });
+    satEl("card").addEventListener("keydown", function (e) {
+      if (/^(select|textarea)$/i.test(e.target.tagName)) return;
+      if (e.target.tagName === "BUTTON" &&
+          (e.key === " " || e.key === "Spacebar")) return;
+      if (e.key === "ArrowLeft") { satStep(-1); e.preventDefault(); }
+      else if (e.key === "ArrowRight") { satStep(1); e.preventDefault(); }
+      else if (e.key === " " || e.key === "Spacebar") {
+        satTogglePlay(); e.preventDefault();
+      } else if (e.key === "+" || e.key === "=") {
+        satNudgeSpeed(1); e.preventDefault();
+      } else if (e.key === "-" || e.key === "_") {
+        satNudgeSpeed(-1); e.preventDefault();
+      }
+    });
+  }
+
+  // ---- (re)load the instance for the current source/sector selection ------
+  // Resets the band/frame state (so a sector switch doesn't append to the old
+  // sector's timeline) but keeps the one-time transport wiring + the poll loop.
+  function initSatellite() {
+    satStopPoll();
+    satPause();
+    // hard reset of the per-instance frame state on a (re)load.
+    sat.man = null; sat.band = null; sat.frames = []; sat.idx = 0;
+    sat.gen++; sat.preloaded = {}; sat.bmp = {}; sat.bmpKeys = [];
+    sat.inactive = false; sat.presented = [];
+    var inactiveNote = satEl("inactive");
+    if (inactiveNote) { inactiveNote.hidden = true; inactiveNote.textContent = ""; }
+    var bandsHost = satEl("bands"); if (bandsHost) bandsHost.innerHTML = "";
+    satStatus(true, "Loading…");
+    satFetchBands().then(function (bands) {
+      if (!bands) {
+        satStatus(false);
+        satEl("empty").style.display = "block";
+        satEl("img").removeAttribute("src");
+        var cv = satEl("canvas"); if (cv) cv.style.display = "none";
+        satEl("time").textContent = "—";
+        satEl("band-label").textContent = "";
+        // keep polling: a storm/sector can come online later.
+        satStartPoll();
+        return;
+      }
+      satEl("empty").style.display = "none";
+      sat.man = { bands: bands };
+      satStatus(false);
+      satEl("bands").innerHTML = "";
+      var slugs = [];
+      for (var slug in bands) {
+        if (!bands.hasOwnProperty(slug)) continue;
+        slugs.push(slug);
+        satAddBandButton(slug);
+      }
+      if (!slugs.length) {
+        satEl("empty").style.display = "block";
+        satStartPoll();
+        return;
+      }
+      satSelectBand(slugs.indexOf("ir") >= 0 ? "ir" : slugs[0], false);
+      wireTransport();
+      satUpdateInactive();
+      satStartPoll();
+    }).catch(function () {
+      satStatus(false);
+      satEl("empty").style.display = "block";
+      satStartPoll();
+    });
+  }
+
+  // ---- sector / storm <select> (meso uses opts.sectorSelect; the floater
+  // builds a #<prefix>-storm select inside resolve when >1 storm is active) ---
+  if (opts.sectorSelect) {
+    var selEl = document.querySelector(opts.sectorSelect);
+    if (selEl) selEl.addEventListener("change", function () { initSatellite(); });
+  }
+
+  initSatellite();
+
+  // public hooks (tests + the floater's storm-select rebuild)
+  return {
+    reinit: initSatellite,
+    el: satEl,
+    state: function () {
+      return { band: sat.band, idx: sat.idx, frames: sat.frames.length,
+               playing: sat.playing, mode: sat.mode, speed: sat.speed,
+               inactive: sat.inactive, polling: !!sat.pollTimer };
+    },
+    pollNow: function () { return satFetchBands().then(satRepollApply); }
+  };
+}
+
+// ---- INSTANCE 1: storm floater --------------------------------------------
+// No baked FLOATER_ID on /satellite/ — resolve picks the ACTIVE storm(s).
+// When >1 storm is active, a #sat-storm <select> appears in the gutter and
+// resolve maps the selected (or URL ?floater=, else first) slug to its
+// sub-manifest. Empty storms -> resolve returns null -> honest empty state.
+(function () {
+  var stormSel = document.getElementById("sat-storm");
+  var stormGroup = document.getElementById("sat-storm-group");
+  var pickedSlug = null;            // user/URL pick, sticky across polls
 
   function qs(k) { return new URLSearchParams(location.search).get(k); }
 
-  function loadStorm(slug, isUserPick) {
-    current = storms.find(s => s.slug === slug) || storms[0];
-    if (!current) return;
-    fetch(url(current.manifest), { cache: 'no-cache' })
-      .then(r => { if (!r.ok) throw new Error('manifest ' + r.status); return r.json(); })
-      .then(m => {
-        stormManifest = m;
-        populateBands();
-        setLiveImg();
-        if (liveTimer) clearInterval(liveTimer);
-        liveTimer = setInterval(refreshLive, LIVE_REFRESH_MS);
-      })
-      .catch(e => { meta.textContent = 'Floater data unavailable.'; console.error(e); });
-  }
-
-  function refreshLive() {
-    if (!current) return;
-    fetch(url(current.manifest), { cache: 'no-cache' })
-      .then(r => r.ok ? r.json() : null)
-      .then(m => { if (m) { stormManifest = m; setLiveImg(); } })
-      .catch(() => {});
-  }
-
-  function applyTop(m) {
-    storms = (m && m.storms) || [];
-    if (!storms.length) { section.style.display = 'none'; if (liveTimer) clearInterval(liveTimer); return; }
-    section.style.display = '';
-    // Storm dropdown only when more than one is active.
-    stormSel.style.display = storms.length > 1 ? '' : 'none';
-    stormSel.innerHTML = '';
-    storms.forEach(s => {
-      const o = document.createElement('option');
-      o.value = s.slug; o.textContent = s.name + ' (' + s.basin + ')';
-      stormSel.appendChild(o);
-    });
-    const want = qs('floater');
-    const has = (x) => storms.some(s => s.slug === x);
-    const pick = (current && has(current.slug)) ? current.slug
-               : (want && has(want)) ? want : storms[0].slug;
-    stormSel.value = pick;
-    loadStorm(pick);
-  }
-
-  function refreshTop() {
-    fetch(TOP_MANIFEST, { cache: 'no-cache' })
-      .then(r => { if (!r.ok) throw new Error('top manifest ' + r.status); return r.json(); })
-      .then(applyTop)
-      .catch(e => {
-        // Hidden until the poller has run once (R2 manifest absent) — better
-        // than a broken-image box, same as the GIBS section.
-        console.error('floater manifest load failed:', e);
-        section.style.display = 'none';
+  function syncStormSelect(storms) {
+    if (!stormSel || !stormGroup) return;
+    var has = function (x) { return storms.some(function (s) { return s.slug === x; }); };
+    // the <select>'s live value wins (set on a user change before reinit's
+    // resolve runs); else the user's sticky pick if still active; else URL
+    // ?floater=; else first.
+    var live = stormSel.value;
+    if (live && has(live)) { pickedSlug = live; }
+    if (!(pickedSlug && has(pickedSlug))) {
+      var want = qs("floater");
+      pickedSlug = (want && has(want)) ? want
+                 : (storms[0] ? storms[0].slug : null);
+    }
+    stormGroup.style.display = storms.length >= 1 ? "" : "none";
+    // rebuild options only when the storm set changed.
+    var sig = storms.map(function (s) { return s.slug; }).join(",");
+    if (stormSel.getAttribute("data-sig") !== sig) {
+      stormSel.setAttribute("data-sig", sig);
+      stormSel.innerHTML = "";
+      storms.forEach(function (s) {
+        var o = document.createElement("option");
+        o.value = s.slug;
+        o.textContent = s.name + " (" + s.basin + ")";
+        stormSel.appendChild(o);
       });
+    }
+    if (pickedSlug) stormSel.value = pickedSlug;
   }
 
-  stormSel.addEventListener('change', () => loadStorm(stormSel.value, true));
-  bandSel.addEventListener('change', setLiveImg);
-  refreshTop();
-  setInterval(refreshTop, TOP_REFRESH_MS);
+  var floaterSource = {
+    id: "floater",
+    top: CDN + "/floaters/manifest.json",
+    resolve: function (top) {
+      var storms = (top && top.storms) || [];
+      syncStormSelect(storms);
+      if (!storms.length) return null;
+      var pick = storms.filter(function (s) { return s.slug === pickedSlug; })[0]
+               || storms[0];
+      if (!pick || !pick.manifest) return null;
+      floaterSource.subSlug = pick.slug;   // for the GIF filename
+      return CDN + "/" + pick.manifest;
+    }
+  };
+
+  var viewer = makeSatViewer("sat", { sources: [floaterSource] });
+
+  // a storm pick re-inits the instance for the new storm's manifest.
+  if (stormSel) {
+    stormSel.addEventListener("change", function () {
+      pickedSlug = stormSel.value;
+      var p = new URLSearchParams(location.search);
+      p.set("floater", pickedSlug);
+      history.replaceState({}, "", location.pathname + "?" + p.toString());
+      viewer.reinit();
+    });
+  }
+})();
+
+// ---- INSTANCE 2: meso sector ----------------------------------------------
+// meso/manifest.json {sectors:[{slug,satellite,sector,label,...,manifest}]}.
+// Populate #meso-sector from top.sectors; resolve maps the selected sector ->
+// sec.manifest. Empty/absent meso manifest -> clean "coming online" state.
+(function () {
+  var sectorSel = document.getElementById("meso-sector");
+  var sectorGroup = document.getElementById("meso-sector-group");
+  var pickedSector = null;
+
+  function qs(k) { return new URLSearchParams(location.search).get(k); }
+
+  function sectorLabel(sec) {
+    if (sec.label) return sec.label;
+    var sat = sec.satellite ? String(sec.satellite).toUpperCase() : "GOES";
+    return sat + (sec.sector ? " · " + sec.sector : "");
+  }
+
+  function syncSectorSelect(sectors) {
+    if (!sectorSel || !sectorGroup) return;
+    var has = function (x) { return sectors.some(function (s) { return s.slug === x; }); };
+    // The <select>'s live value wins (it's set synchronously on a user change,
+    // before makeSatViewer's re-init resolve runs); else our sticky pick; else
+    // URL ?meso=; else the first sector.
+    var live = sectorSel.value;
+    if (live && has(live)) { pickedSector = live; }
+    if (!(pickedSector && has(pickedSector))) {
+      var want = qs("meso");
+      pickedSector = (want && has(want)) ? want
+                   : (sectors[0] ? sectors[0].slug : null);
+    }
+    sectorGroup.style.display = sectors.length ? "" : "none";
+    var sig = sectors.map(function (s) { return s.slug; }).join(",");
+    if (sectorSel.getAttribute("data-sig") !== sig) {
+      sectorSel.setAttribute("data-sig", sig);
+      sectorSel.innerHTML = "";
+      sectors.forEach(function (s) {
+        var o = document.createElement("option");
+        o.value = s.slug;
+        o.textContent = sectorLabel(s);
+        sectorSel.appendChild(o);
+      });
+    }
+    if (pickedSector) sectorSel.value = pickedSector;
+  }
+
+  var mesoSource = {
+    id: "meso",
+    top: CDN + "/meso/manifest.json",
+    resolve: function (top) {
+      var sectors = (top && top.sectors) || [];
+      syncSectorSelect(sectors);
+      if (!sectors.length) return null;
+      var pick = sectors.filter(function (s) { return s.slug === pickedSector; })[0]
+               || sectors[0];
+      if (!pick || !pick.manifest) return null;
+      mesoSource.subSlug = pick.slug;
+      return CDN + "/" + pick.manifest;
+    }
+  };
+
+  var viewer = makeSatViewer("meso", { sources: [mesoSource],
+                                       sectorSelect: "#meso-sector" });
+
+  // the sector <select>'s change is wired by makeSatViewer (opts.sectorSelect);
+  // record the new pick + URL here so resolve sees it on the re-init.
+  if (sectorSel) {
+    sectorSel.addEventListener("change", function () {
+      pickedSector = sectorSel.value;
+      var p = new URLSearchParams(location.search);
+      p.set("meso", pickedSector);
+      history.replaceState({}, "", location.pathname + "?" + p.toString());
+      // makeSatViewer's own listener re-inits; nothing else needed here.
+    });
+  }
 })();
 
 // ---- GIBS "latest pass" stills -------------------------------------------
