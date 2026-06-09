@@ -137,11 +137,17 @@ def _raw_week_path(year: int, week: int) -> Path:
     return STATE_DIR / f"_raw_{year}_w{week:02d}.nc"
 
 
-def _fetch_year(year: int, deadline: float | None) -> list[Path]:
+def _fetch_year(year: int, deadline: float | None) -> tuple[list[Path], int]:
     """Download 52 day-4 weekly ARMOR3D MY samples for `year` (resumable;
     per-week raw cached). Mirrors build_armor3d_climatology._fetch_year but
-    uses this bake's STATE_DIR. Honors a wall-clock deadline."""
+    uses this bake's STATE_DIR. Honors a wall-clock deadline.
+
+    Returns (paths, n_failed). n_failed counts weeks whose fetch failed even
+    after _cmems_subset's retries — the caller must NOT finalize the year in
+    that case, or the missing weeks become permanent NaN holes in the record
+    envelope (the year marker would skip them forever)."""
     paths: list[Path] = []
+    n_failed = 0
     for week in range(1, 53):
         out = _raw_week_path(year, week)
         if out.exists() and out.stat().st_size > 0:
@@ -149,7 +155,7 @@ def _fetch_year(year: int, deadline: float | None) -> list[Path]:
             continue
         if deadline is not None and time.monotonic() >= deadline:
             print(f"{LOG}   TIME BUDGET reached at {year} w{week:02d} — stopping clean.")
-            return paths
+            return paths, n_failed
         doy = (week - 1) * 7 + 4
         sample = dt.date(year, 1, 1) + dt.timedelta(days=doy - 1)
         start = dt.datetime.combine(sample, dt.time.min)
@@ -164,13 +170,15 @@ def _fetch_year(year: int, deadline: float | None) -> list[Path]:
             )
             paths.append(out)
         except Exception as exc:
-            print(f"{LOG}   WARN {year} w{week:02d} failed: {exc}")
+            n_failed += 1
+            print(f"{LOG}   WARN {year} w{week:02d} failed after retries "
+                  f"({type(exc).__name__}): {exc}")
             if out.exists() and out.stat().st_size == 0:
                 try:
                     out.unlink()
                 except OSError:
                     pass
-    return paths
+    return paths, n_failed
 
 
 def _process_year(year: int, raw_paths: list[Path]):
@@ -233,21 +241,53 @@ def run_pass(start_year, end_year, deadline):
     if lo > hi:
         print(f"{LOG} nothing to do: {lo} > {hi} (archive head).")
         return 0
+    # Sweep raw weeklies of years already completed (a crash between marker
+    # write and the per-year cleanup, or restored pre-cleanup state) so they
+    # can't ride along in the state cache forever.
+    for p in STATE_DIR.glob("_raw_*"):
+        try:
+            raw_year = int(p.name.split("_")[2])
+        except (IndexError, ValueError):
+            continue
+        if raw_year < lo:
+            try:
+                p.unlink()
+            except OSError:
+                pass
     print(f"{LOG} single pass {lo}..{hi}")
     done = 0
     for year in range(lo, hi + 1):
         if deadline is not None and time.monotonic() >= deadline:
             print(f"{LOG} TIME BUDGET reached before year {year} — stopping clean.")
             break
-        raws = _fetch_year(year, deadline)
+        raws, n_failed = _fetch_year(year, deadline)
         if deadline is not None and time.monotonic() >= deadline:
             print(f"{LOG} budget reached mid-fetch {year}; not finalizing the year.")
             break
+        # A fetch failure must STOP the chunk loudly (exit non-zero, no marker,
+        # no self-re-dispatch) instead of finalizing a year with NaN holes or
+        # skipping the year past the resume marker. The state cache still saves
+        # (if: always()), so a manual re-dispatch resumes at this year and only
+        # re-fetches the missing weeks.
+        if n_failed:
+            raise RuntimeError(
+                f"year {year}: {n_failed} week fetch(es) failed even after "
+                "retries — stopping without finalizing the year; re-dispatch "
+                "to resume here.")
         if not raws:
-            print(f"{LOG} year {year}: no raw weeks; skipping.")
-            continue
+            raise RuntimeError(f"year {year}: zero raw weeks fetched — aborting.")
         _process_year(year, raws)
         _write_marker(year)
+        # recyear_*.nc is now the durable state for this year — drop its raw
+        # weekly files (incl. crash-orphaned netCDF tmp files). Keeping them
+        # fills the runner disk in ~10 years (ENOSPC + segfault + failed
+        # cache save killed the 2026-06-09 run at year 2003) and would blow
+        # the actions/cache budget.
+        for p in STATE_DIR.glob(f"_raw_{year}_w*.nc*"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
         done += 1
         print(f"{LOG} year {year} done.")
     return done
