@@ -18,6 +18,53 @@
     font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
   }
 
+  /* ---- Gutter layout (CycloLab polish #3): the rendered frame is ~square, so
+     a full-width vertical stack left a big dead band beside it. Reclaim it: the
+     image holds the main column, the controls stack in a side gutter (the former
+     dead space), and the frame strip / scrubber span full width beneath. SHARED
+     across BOTH /models/ and the CycloLab Satellite/Models tabs - this rule set
+     is MIRRORED in cyclolab_shell.py's <style> (the "hafs.js vocabulary" chrome);
+     keep the two copies identical (one canon, no drift). */
+  .vw-grid { display: grid;
+    grid-template-columns: minmax(0, max-content) clamp(214px, 28%, 326px);
+    justify-content: start; align-items: start; gap: 16px 22px; }
+  .vw-grid > .hafs-stage { grid-column: 1; grid-row: 1; min-width: 0; }
+  .vw-grid > .vw-aside { grid-column: 2; grid-row: 1;
+    display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .vw-grid > .vw-below,
+  .vw-grid > .hafs-caption,
+  .vw-grid > .hafs-footer,
+  .vw-grid > .hafs-empty { grid-column: 1 / -1; min-width: 0; }
+  /* gutter chrome: the full-width bars become a tidy control column - each
+     option group is a set of wrapping CHIPS (not a broken segmented bar), the
+     transport is ONE compact row, and the readout sits on its own line. */
+  .vw-aside .hafs-controls { flex-direction: column; align-items: stretch;
+    gap: 14px; padding: 0; background: none; border: none; }
+  .vw-aside .hafs-seg-group { flex-wrap: wrap; gap: 6px; }
+  .vw-aside .hafs-seg-group .hafs-seg { border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 11px; font-size: 11.5px; }
+  .vw-aside .hafs-seg-group .hafs-seg.active { border-color: var(--accent-2); }
+  .vw-aside .hafs-player { flex-direction: row; flex-wrap: wrap;
+    align-items: center; gap: 8px; padding: 0; background: none; border: none; }
+  .vw-aside .hafs-player .hafs-play { flex: 1 1 auto; }
+  .vw-aside .hafs-player .hafs-readout,
+  .vw-aside .hafs-player .hafs-speed-wrap { flex: 1 1 100%; }
+  .vw-aside .hafs-group select,
+  .vw-aside .hafs-speed-wrap select { width: 100%; min-width: 0; }
+  .vw-below .hafs-hours { padding-left: 0; padding-right: 0; }
+  @media (max-width: 760px) {
+    /* no gutter room: stack; the controls become a compact horizontal bar */
+    .vw-grid { display: block; }
+    .vw-aside { flex-direction: row; flex-wrap: wrap; align-items: flex-end;
+      gap: 10px 14px; margin-top: 12px; }
+    .vw-aside .hafs-controls,
+    .vw-aside .hafs-player { flex-direction: row; flex-wrap: wrap;
+      align-items: flex-end; }
+    .vw-aside .hafs-group select,
+    .vw-aside .hafs-speed-wrap select { width: auto; }
+    .vw-below { margin-top: 10px; }
+  }
+
   /* Control bar sits flush at the top of the .chart-card chrome. */
   .hafs-controls {
     display: flex;
@@ -214,33 +261,9 @@
 
 <section class="chart-section">
   <div class="chart-card">
-    <div id="hafs-viewer" tabindex="0">
+    <div id="hafs-viewer" class="vw-grid" tabindex="0">
 
-      <!-- Selection controls -->
-      <div id="hafs-controls" class="hafs-controls">
-        <div id="hafs-cycle-group" class="hafs-group" style="display:none">
-          <label>Cycle</label>
-          <div id="hafs-cycles" class="hafs-seg-group"></div>
-        </div>
-        <div class="hafs-group">
-          <label for="hafs-storm">Storm</label>
-          <select id="hafs-storm"></select>
-        </div>
-        <div class="hafs-group">
-          <label>Model</label>
-          <div id="hafs-models" class="hafs-seg-group"></div>
-        </div>
-        <div class="hafs-group">
-          <label>Domain</label>
-          <div id="hafs-domains" class="hafs-seg-group"></div>
-        </div>
-        <div class="hafs-group">
-          <label>Product</label>
-          <div id="hafs-products" class="hafs-seg-group"></div>
-        </div>
-      </div>
-
-      <!-- Image stage -->
+      <!-- Image stage (main column) -->
       <div id="hafs-stage" class="hafs-stage">
         <img id="hafs-img" alt="HAFS forecast frame: MSLP with 10 m wind or composite reflectivity">
         <div id="hafs-status" class="hafs-statusbox">
@@ -249,24 +272,54 @@
         <div id="hafs-buffer"></div>
       </div>
 
-      <!-- Playback strip -->
-      <div id="hafs-player" class="hafs-player">
-        <button id="hafs-step-back" class="hafs-btn" type="button" title="Previous hour (←)">◄</button>
-        <button id="hafs-play" class="hafs-btn hafs-play" type="button" title="Play / pause (space)">► Play</button>
-        <button id="hafs-step-fwd" class="hafs-btn" type="button" title="Next hour (→)">►</button>
-        <div class="hafs-readout">
-          <span id="hafs-fhour">F000</span>
-          <span id="hafs-valid"></span>
+      <!-- Control column (gutter): selection + playback, stacked -->
+      <div class="vw-aside">
+        <!-- Selection controls -->
+        <div id="hafs-controls" class="hafs-controls">
+          <div id="hafs-cycle-group" class="hafs-group" style="display:none">
+            <label>Cycle</label>
+            <div id="hafs-cycles" class="hafs-seg-group"></div>
+          </div>
+          <div class="hafs-group">
+            <label for="hafs-storm">Storm</label>
+            <select id="hafs-storm"></select>
+          </div>
+          <div class="hafs-group">
+            <label>Model</label>
+            <div id="hafs-models" class="hafs-seg-group"></div>
+          </div>
+          <div class="hafs-group">
+            <label>Domain</label>
+            <div id="hafs-domains" class="hafs-seg-group"></div>
+          </div>
+          <div class="hafs-group">
+            <label>Product</label>
+            <div id="hafs-products" class="hafs-seg-group"></div>
+          </div>
         </div>
-        <div class="hafs-speed-wrap">
-          <span>Speed</span><select id="hafs-speed"></select>
+
+        <!-- Playback controls -->
+        <div id="hafs-player" class="hafs-player">
+          <button id="hafs-step-back" class="hafs-btn" type="button" title="Previous hour (←)">◄</button>
+          <button id="hafs-play" class="hafs-btn hafs-play" type="button" title="Play / pause (space)">► Play</button>
+          <button id="hafs-step-fwd" class="hafs-btn" type="button" title="Next hour (→)">►</button>
+          <div class="hafs-readout">
+            <span id="hafs-fhour">F000</span>
+            <span id="hafs-valid"></span>
+          </div>
+          <div class="hafs-speed-wrap">
+            <span>Speed</span><select id="hafs-speed"></select>
+          </div>
         </div>
       </div>
 
-      <!-- Forecast-hour grid: one numbered button per expected hour, lit once
-           that frame is rendered, greyed while pending. -->
-      <div id="hafs-hours" class="hafs-hours" role="group"
-           aria-label="Forecast hour"></div>
+      <!-- Frame strip (full width beneath) -->
+      <div class="vw-below">
+        <!-- Forecast-hour grid: one numbered button per expected hour, lit once
+             that frame is rendered, greyed while pending. -->
+        <div id="hafs-hours" class="hafs-hours" role="group"
+             aria-label="Forecast hour"></div>
+      </div>
 
       <p id="hafs-caption" class="hafs-caption">
         Filled shading: 10 m wind speed (kt), Saffir-Simpson-flavored palette
