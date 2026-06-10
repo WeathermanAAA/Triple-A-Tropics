@@ -87,9 +87,19 @@ LOG = "[armor3d-tchp-record]"
 
 YEAR_START = 1993
 NO_YEAR = np.int16(-32768)
-# reanalysis latency: the MY product trails real time; the last fully-available
-# year is conservatively "this year - 1" unless --end-year says otherwise.
+# Optimistic archive head: the MY product trails real time, so try up to
+# "this year - 1" and let the DATASET say where it really ends — run_pass
+# treats a year whose 52 weeks ALL come back beyond the dataset's time bounds
+# as the normal end of available data (recorded in beyond_bounds_year.txt and
+# folded into pass_is_complete()), so this constant never needs bumping when
+# the true latency is longer (it's ~2 years as of 2026: the archive ends
+# 2024-12-31) and the bake auto-extends when the reanalysis does.
 REANALYSIS_LATENCY_YEARS = 1
+# First probed year whose weeks were ALL beyond the dataset's time bounds —
+# i.e. the archive ends at (that year - 1). Written/refreshed by run_pass,
+# cleared again if a later run completes a year at/past it (archive extended).
+# It informs pass_is_complete() ONLY; run_pass keeps probing optimistically.
+BEYOND_MARKER_PATH = STATE_DIR / "beyond_bounds_year.txt"
 
 
 # --- Pure accumulator (unit-tested in tests/test_armor3d_records_bake.py) ----
@@ -131,23 +141,68 @@ def _year_state_path(year: int) -> Path:
     return STATE_DIR / f"recyear_{year}.nc"
 
 
+def _read_beyond_year() -> int | None:
+    if not BEYOND_MARKER_PATH.exists():
+        return None
+    t = BEYOND_MARKER_PATH.read_text().strip()
+    return int(t) if t else None
+
+
+def _write_beyond_year(year: int) -> None:
+    tmp = BEYOND_MARKER_PATH.with_suffix(".tmp")
+    tmp.write_text(str(year))
+    tmp.replace(BEYOND_MARKER_PATH)
+
+
+def archive_target_year(today: dt.date | None = None) -> int:
+    """Last year the pass is expected to bake: the optimistic head
+    (today - latency), capped by a detected dataset edge if run_pass has
+    ever probed a year that was entirely beyond the dataset's time bounds."""
+    t = today or dt.date.today()
+    head = t.year - REANALYSIS_LATENCY_YEARS
+    beyond = _read_beyond_year()
+    if beyond is not None:
+        head = min(head, beyond - 1)
+    return head
+
+
+def pass_is_complete(today: dt.date | None = None) -> tuple[bool, str]:
+    """(complete?, reason). Complete = every year through the end of the
+    AVAILABLE archive is baked. The workflow's finalize gate calls this via
+    --check-complete instead of assuming the archive reaches today-1."""
+    marker = _read_marker()
+    target = archive_target_year(today)
+    beyond = _read_beyond_year()
+    note = (f" (dataset edge detected: archive ends {beyond - 1})"
+            if beyond is not None else "")
+    if marker is None:
+        return False, f"no completed years yet; target {target}{note}"
+    if marker >= target:
+        return True, f"last completed year {marker} >= target {target}{note}"
+    return False, f"last completed year {marker} < target {target}{note}"
+
+
 # --- per-year fetch + derive (reuses a3d CMEMS + compute_tchp) ---------------
 
 def _raw_week_path(year: int, week: int) -> Path:
     return STATE_DIR / f"_raw_{year}_w{week:02d}.nc"
 
 
-def _fetch_year(year: int, deadline: float | None) -> tuple[list[Path], int]:
+def _fetch_year(year: int, deadline: float | None) -> tuple[list[Path], int, int]:
     """Download 52 day-4 weekly ARMOR3D MY samples for `year` (resumable;
     per-week raw cached). Mirrors build_armor3d_climatology._fetch_year but
     uses this bake's STATE_DIR. Honors a wall-clock deadline.
 
-    Returns (paths, n_failed). n_failed counts weeks whose fetch failed even
-    after _cmems_subset's retries — the caller must NOT finalize the year in
-    that case, or the missing weeks become permanent NaN holes in the record
-    envelope (the year marker would skip them forever)."""
+    Returns (paths, n_failed, n_beyond). n_failed counts weeks whose fetch
+    failed even after _cmems_subset's retries — the caller must NOT finalize
+    the year in that case, or the missing weeks become permanent NaN holes in
+    the record envelope (the year marker would skip them forever). n_beyond
+    counts weeks rejected as outside the dataset's time bounds (terminal,
+    never retried) — when ALL 52 weeks of a year are beyond-bounds the caller
+    treats it as the end of the available archive, not a failure."""
     paths: list[Path] = []
     n_failed = 0
+    n_beyond = 0
     for week in range(1, 53):
         out = _raw_week_path(year, week)
         if out.exists() and out.stat().st_size > 0:
@@ -155,7 +210,7 @@ def _fetch_year(year: int, deadline: float | None) -> tuple[list[Path], int]:
             continue
         if deadline is not None and time.monotonic() >= deadline:
             print(f"{LOG}   TIME BUDGET reached at {year} w{week:02d} — stopping clean.")
-            return paths, n_failed
+            return paths, n_failed, n_beyond
         doy = (week - 1) * 7 + 4
         sample = dt.date(year, 1, 1) + dt.timedelta(days=doy - 1)
         start = dt.datetime.combine(sample, dt.time.min)
@@ -170,15 +225,20 @@ def _fetch_year(year: int, deadline: float | None) -> tuple[list[Path], int]:
             )
             paths.append(out)
         except Exception as exc:
-            n_failed += 1
-            print(f"{LOG}   WARN {year} w{week:02d} failed after retries "
-                  f"({type(exc).__name__}): {exc}")
+            if a3d._classify_cmems_error(exc) == "beyond_dataset":
+                n_beyond += 1
+                print(f"{LOG}   {year} w{week:02d} beyond the dataset's time "
+                      f"bounds ({type(exc).__name__}).")
+            else:
+                n_failed += 1
+                print(f"{LOG}   WARN {year} w{week:02d} failed after retries "
+                      f"({type(exc).__name__}): {exc}")
             if out.exists() and out.stat().st_size == 0:
                 try:
                     out.unlink()
                 except OSError:
                     pass
-    return paths, n_failed
+    return paths, n_failed, n_beyond
 
 
 def _process_year(year: int, raw_paths: list[Path]):
@@ -260,24 +320,51 @@ def run_pass(start_year, end_year, deadline):
         if deadline is not None and time.monotonic() >= deadline:
             print(f"{LOG} TIME BUDGET reached before year {year} — stopping clean.")
             break
-        raws, n_failed = _fetch_year(year, deadline)
+        raws, n_failed, n_beyond = _fetch_year(year, deadline)
         if deadline is not None and time.monotonic() >= deadline:
             print(f"{LOG} budget reached mid-fetch {year}; not finalizing the year.")
+            break
+        # ALL 52 weeks beyond the dataset's time bounds = the reanalysis
+        # archive simply ends before this year (the MY product trails real
+        # time). That is the normal end of available data, NOT a failure:
+        # record the detected edge for pass_is_complete() and stop clean so
+        # the workflow's finalize gate sees the pass as COMPLETE at the last
+        # finished year. (2025 did exactly this on 2026-06-09 — the archive
+        # ends 2024-12-31 — and burned the whole chunk on retries + a halt.)
+        if n_beyond == 52 and not raws and not n_failed:
+            _write_beyond_year(year)
+            print(f"{LOG} year {year}: all 52 weeks beyond the dataset's time "
+                  f"bounds — archive ends at {year - 1}; pass complete at the "
+                  "last finished year.")
             break
         # A fetch failure must STOP the chunk loudly (exit non-zero, no marker,
         # no self-re-dispatch) instead of finalizing a year with NaN holes or
         # skipping the year past the resume marker. The state cache still saves
         # (if: always()), so a manual re-dispatch resumes at this year and only
-        # re-fetches the missing weeks.
-        if n_failed:
+        # re-fetches the missing weeks. A year only PARTLY beyond-bounds (some
+        # weeks fetched or transient-failed) also halts here — a mid-year
+        # dataset edge needs human review (--end-year), never silent holes.
+        if n_failed or n_beyond:
+            detail = f"{n_failed} week fetch(es) failed even after retries"
+            if n_beyond:
+                detail += (f" and {n_beyond} week(s) were beyond the dataset's "
+                           f"time bounds (with {len(raws)} week(s) fetched)")
             raise RuntimeError(
-                f"year {year}: {n_failed} week fetch(es) failed even after "
-                "retries — stopping without finalizing the year; re-dispatch "
-                "to resume here.")
+                f"year {year}: {detail} — stopping without finalizing the "
+                "year; re-dispatch to resume here.")
         if not raws:
             raise RuntimeError(f"year {year}: zero raw weeks fetched — aborting.")
         _process_year(year, raws)
         _write_marker(year)
+        # A year at/past a previously-detected bounds edge baked fine — the
+        # archive has extended; drop the stale edge so completeness re-arms
+        # for the years that just became available.
+        beyond = _read_beyond_year()
+        if beyond is not None and year >= beyond:
+            try:
+                BEYOND_MARKER_PATH.unlink()
+            except OSError:
+                pass
         # recyear_*.nc is now the durable state for this year — drop its raw
         # weekly files (incl. crash-orphaned netCDF tmp files). Keeping them
         # fills the runner disk in ~10 years (ENOSPC + segfault + failed
@@ -358,6 +445,9 @@ def main():
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--finalize", action="store_true")
     ap.add_argument("--upload", action="store_true")
+    ap.add_argument("--check-complete", action="store_true",
+                    help="exit 0 if the pass has reached the end of the "
+                         "available archive, 1 otherwise (workflow gate)")
     ap.add_argument("--start-year", type=int, default=None)
     ap.add_argument("--end-year", type=int, default=None)
     ap.add_argument("--time-budget-minutes", type=float, default=None)
@@ -375,7 +465,12 @@ def main():
         upload_to_r2(OUT_NC, f"{R2_PREFIX}/{OUT_NC.name}")
         upload_to_r2(MANIFEST, f"{R2_PREFIX}/{MANIFEST.name}")
         print(f"{LOG} uploaded to R2 {R2_PREFIX}/.")
-    if not (a.run or a.finalize or a.upload):
+    if a.check_complete:
+        ok, why = pass_is_complete()
+        print(f"{LOG} pass {'COMPLETE' if ok else 'NOT complete'}: {why}")
+        if not ok:
+            raise SystemExit(1)
+    if not (a.run or a.finalize or a.upload or a.check_complete):
         ap.print_help()
 
 

@@ -264,6 +264,12 @@ def _have_credentials() -> bool:
 # raises typed exceptions (credentials_utils), but importing them is fragile
 # across versions, so match class names + message text along the cause chain.
 _CMEMS_FATAL_TYPES = {"invalidusernameorpassword", "credentialscannotbenone"}
+# Requested window outside the dataset's coordinate bounds (e.g. asking the MY
+# reanalysis for a year past its time extent). Permanent for a given request —
+# retrying cannot help — but unlike "fatal" the caller may treat it as a
+# normal end-of-available-data signal rather than an error.
+_CMEMS_BEYOND_TYPES = {"coordinatesoutofdatasetbounds"}
+_CMEMS_BEYOND_MARKERS = ("exceed the dataset coordinates",)
 _CMEMS_TRANSIENT_TYPES = {"couldnotconnecttoauthenticationsystem"}
 _CMEMS_TRANSIENT_MARKERS = (
     "connection", "timeout", "timed out", "temporarily unavailable",
@@ -282,8 +288,10 @@ _CMEMS_RETRY_WAITS = {
 
 def _classify_cmems_error(exc: BaseException) -> str:
     """'fatal' = credentials genuinely rejected (retrying cannot help),
-    'transient' = connectivity / auth-service outage (retry with long
-    waits), 'other' = anything else (quick retry)."""
+    'beyond_dataset' = requested window outside the dataset's coordinate
+    bounds (terminal, never retried), 'transient' = connectivity /
+    auth-service outage (retry with long waits), 'other' = anything else
+    (quick retry)."""
     seen: set[int] = set()
     e: BaseException | None = exc
     while e is not None and id(e) not in seen:
@@ -291,11 +299,17 @@ def _classify_cmems_error(exc: BaseException) -> str:
         name = type(e).__name__.lower()
         if name in _CMEMS_FATAL_TYPES:
             return "fatal"
+        msg = str(e).lower()
+        # beyond-bounds checked before the transient text markers: a bounds
+        # message embeds the requested coordinates, which could in principle
+        # collide with a substring marker like "504".
+        if name in _CMEMS_BEYOND_TYPES or any(
+                m in msg for m in _CMEMS_BEYOND_MARKERS):
+            return "beyond_dataset"
         if (name in _CMEMS_TRANSIENT_TYPES
                 or isinstance(e, (ConnectionError, TimeoutError))
                 or "connectionerror" in name or "timeout" in name):
             return "transient"
-        msg = str(e).lower()
         if any(m in msg for m in _CMEMS_TRANSIENT_MARKERS):
             return "transient"
         e = e.__cause__ or e.__context__
@@ -322,7 +336,8 @@ def _cmems_subset(
     Thin wrapper around copernicusmarine.subset() so the rest of the
     script doesn't have to know the exact kwarg conventions. Transient
     failures (auth-service outages, connection errors) are retried with
-    long exponential backoff; invalid credentials fail immediately."""
+    long exponential backoff; invalid credentials and windows beyond the
+    dataset's coordinate bounds fail immediately (retrying cannot help)."""
     import copernicusmarine  # imported lazily — avoid import cost when unused
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -358,6 +373,11 @@ def _cmems_subset(
             if kind == "fatal":
                 print(f"{log}   FATAL {type(exc).__name__}: {exc} — "
                       "credentials rejected, not retrying.")
+                raise
+            if kind == "beyond_dataset":
+                print(f"{log}   BEYOND-BOUNDS {type(exc).__name__}: {exc} — "
+                      "requested window outside the dataset's coordinate "
+                      "bounds (permanent), not retrying.")
                 raise
             waits = _CMEMS_RETRY_WAITS[kind]
             if attempt > len(waits):
