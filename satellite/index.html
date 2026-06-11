@@ -1291,7 +1291,12 @@
 // GIF export (a canvas is built ONLY at export time from the preloaded
 // Images — never for playback). A frame that 404s or fails to decode is
 // dropped from the loop, so gaps never stall playback (meso/floater have real
-// gaps). Night handling lives in the PNG.
+// gaps). Loading is PROGRESSIVE: the newest frame is requested first and
+// paints on its own decode, and the loop plays whatever has decoded so far,
+// growing as the rest stream in. The visible <img> is pinned to ONE fixed,
+// centered box per loop (satLockFrameBox), so per-frame pixel-size changes
+// (e.g. a meso sector re-aim) can never re-letterbox the imagery mid-loop.
+// Night handling lives in the PNG.
 const CDN = 'https://cdn.triple-a-tropics.com';
 
 function makeSatViewer(idPrefix, opts) {
@@ -1305,7 +1310,8 @@ function makeSatViewer(idPrefix, opts) {
   var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
               raf: null, lastTick: 0, shown: false, followNew: false,
               buildToken: 0, encoding: false, speed: 1,
-              pollTimer: null, inactive: false };
+              pollTimer: null, inactive: false,
+              boxRefW: 0, boxRefH: 0, bandLabelBase: "" };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
   var SAT_STALE_MIN = 40;
@@ -1367,6 +1373,33 @@ function makeSatViewer(idPrefix, opts) {
     satEl("scrub").value = String(i);
     satEl("time").textContent = f.t.slice(0, 16).replace("T", " ") + "Z";
   }
+  // ---- locked frame box ------------------------------------------------------
+  // Pin the visible <img> to ONE fixed, centered box per loop, sized from the
+  // reference (first-painted) frame's contain-fit in the stage. Every frame
+  // then renders into the SAME rect (object-fit:fill), so per-frame pixel-size
+  // quirks (e.g. a GOES meso sector re-aim changing the PNG height mid-window)
+  // can never re-letterbox or re-center the imagery between frames. A frame
+  // whose dims differ from the reference stretches a few % instead of making
+  // the whole framing jump. Re-applied on resize; re-locked per band/sector.
+  function satApplyFrameBox() {
+    var stage = satEl("stage"), img = satEl("frame");
+    if (!stage || !img || !sat.boxRefW || !sat.boxRefH) return;
+    var sw = stage.clientWidth, sh = stage.clientHeight;
+    if (!sw || !sh) return;
+    var s = Math.min(sw / sat.boxRefW, sh / sat.boxRefH);
+    img.style.width = Math.round(sat.boxRefW * s) + "px";
+    img.style.height = Math.round(sat.boxRefH * s) + "px";
+    img.style.left = "50%"; img.style.top = "50%";
+    img.style.right = "auto"; img.style.bottom = "auto";
+    img.style.transform = "translate(-50%, -50%)";
+    img.style.objectFit = "fill";
+  }
+  function satLockFrameBox(im) {
+    if (!im || !im.naturalWidth) return;
+    sat.boxRefW = im.naturalWidth;
+    sat.boxRefH = im.naturalHeight;
+    satApplyFrameBox();
+  }
   // Show frame i, snapping to the nearest loaded frame when i hasn't decoded
   // (or failed). THE playback primitive: one src swap on the one visible <img>.
   function satShow(i) {
@@ -1377,6 +1410,7 @@ function makeSatViewer(idPrefix, opts) {
     if (!sat.frames[i].ok) { i = satNearestOk(i); if (i < 0) return; }
     sat.idx = i;
     var img = satEl("frame");
+    if (!sat.boxRefW) satLockFrameBox(sat.frames[i].img);   // lock before first paint
     img.src = sat.frames[i].src;
     img.hidden = false;
     sat.shown = true;
@@ -1393,14 +1427,27 @@ function makeSatViewer(idPrefix, opts) {
   // Kick off every frame at once (the browser parallelizes + queues). No decode
   // gate: the stage paints the moment the TARGET frame (newest, or the
   // scrub-preserved time on a band switch) has decoded, Play unlocks as soon as
-  // two frames exist, and the rest keep loading in the background.
+  // two frames exist, and the loop plays PROGRESSIVELY — it loops whatever has
+  // decoded so far (satAdvance skips !ok frames) and grows as the rest land.
+  // Request order: NEWEST first (it's the first paint, so it must not queue
+  // behind 89 older frames), then oldest->newest so the playable prefix grows
+  // contiguously from the start of the loop.
   function satLoadFrames() {
     var token = sat.buildToken;
-    sat.frames.forEach(function (f) {
-      if (f.img) return;               // already loading/loaded (re-poll append)
+    var newest = sat.frames.length - 1;
+    var order = [];
+    for (var i = 0; i < sat.frames.length; i++) {
+      if (!sat.frames[i].img) order.push(i);
+    }
+    if (order.length > 1 && order[order.length - 1] === newest) {
+      order.pop(); order.unshift(newest);
+    }
+    order.forEach(function (oi) {
+      var f = sat.frames[oi];
       var im = new Image();
       im.crossOrigin = "anonymous";    // CORS-clean so GIF export can read pixels
       im.decoding = "async";
+      if (oi === newest) im.fetchPriority = "high";   // the first-paint frame
       f.img = im;
       function done(ok) {
         if (token !== sat.buildToken) return;   // superseded by a band/sector switch
@@ -1416,8 +1463,24 @@ function makeSatViewer(idPrefix, opts) {
       im.src = f.src;
     });
   }
+  function satAllSettled() {
+    for (var i = 0; i < sat.frames.length; i++) {
+      if (!sat.frames[i].done) return false;
+    }
+    return true;
+  }
   function satFrameSettled(f) {
     satEl("play").disabled = satDecoded() < 2;
+    // Quiet progress note in the band label while the window streams in, so a
+    // growing loop reads as "loading" rather than "short".
+    var lbl = satEl("band-label");
+    if (lbl) {
+      var done = 0;
+      for (var i = 0; i < sat.frames.length; i++) if (sat.frames[i].done) done++;
+      lbl.textContent = done < sat.frames.length
+        ? sat.bandLabelBase + " · loading " + done + "/" + sat.frames.length
+        : sat.bandLabelBase;
+    }
     if (!sat.shown) {
       // First paint: the target frame the instant IT decodes; if the target
       // turned out to be a gap, satShow snaps to the nearest loaded frame.
@@ -1444,7 +1507,14 @@ function makeSatViewer(idPrefix, opts) {
   // ---- playback --------------------------------------------------------------
   function satStepMs() {
     var ms = SAT_BASE_MS / (sat.speed || 1);
-    return sat.idx === satLastOk() ? ms * SAT_LAST_FRAME_DWELL : ms;
+    if (sat.idx !== satLastOk()) return ms;
+    // Dwell only on the loop's TRUE newest frame. While frames are still
+    // streaming in, the frontier of loaded frames is not "newest" — dwelling
+    // there would make the growing loop feel like it stalls on every pass.
+    if (sat.idx === sat.frames.length - 1 || satAllSettled()) {
+      return ms * SAT_LAST_FRAME_DWELL;
+    }
+    return ms;
   }
   function satAdvance() {
     var n = sat.frames.length;
@@ -1808,11 +1878,13 @@ function makeSatViewer(idPrefix, opts) {
     sat.buildToken++;                  // supersede in-flight loads from the old band
     sat.shown = false;
     sat.followNew = false;
+    sat.boxRefW = 0; sat.boxRefH = 0;  // re-lock the frame box on the new band
     var b = (sat.man && sat.man.bands && sat.man.bands[slug]) || null;
     var raw = satSubsample(satSortDedupe(b && b.frames), SAT_FRAME_CAP);
     sat.frames = raw.map(mkFrame);
     satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
-    satEl("band-label").textContent = b ? (b.label || slug) : "";
+    sat.bandLabelBase = b ? (b.label || slug) : "";
+    satEl("band-label").textContent = sat.bandLabelBase;
     satEl("empty").style.display = sat.frames.length ? "none" : "block";
     var host = satEl("bands");
     if (host && host.value !== slug) host.value = slug;   // sync the <select>
@@ -1837,6 +1909,7 @@ function makeSatViewer(idPrefix, opts) {
     wired = true;
     var fr = satEl("frame");
     if (fr) fr.crossOrigin = "anonymous";   // share the preloads' CORS cache entries
+    window.addEventListener("resize", satApplyFrameBox);   // keep the locked box fitted
     satBuildSpeed();
     satEl("step-back").addEventListener("click", function () { satStep(-1); });
     satEl("step-fwd").addEventListener("click", function () { satStep(1); });
@@ -1878,6 +1951,7 @@ function makeSatViewer(idPrefix, opts) {
     sat.man = null; sat.band = null; sat.frames = []; sat.idx = 0;
     sat.buildToken++; sat.encoding = false;
     sat.shown = false; sat.followNew = false; sat.inactive = false;
+    sat.boxRefW = 0; sat.boxRefH = 0; sat.bandLabelBase = "";
     satFrameClear();
     var inactiveNote = satEl("inactive");
     if (inactiveNote) { inactiveNote.hidden = true; inactiveNote.textContent = ""; }
