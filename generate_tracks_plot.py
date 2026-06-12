@@ -55,6 +55,7 @@ from ace_core import (
     SSHS_COLORS,
     build_global_geojson,
     compute_header_stats,
+    fetch_nhc_active_sids as ace_fetch_nhc_active_sids,
     merge_and_extract_storms,
     sshs_class,
     sshs_label,
@@ -3691,11 +3692,17 @@ def main(argv: Iterable[str] | None = None) -> int:
     ibtracs_frame = load_ibtracs_current_year(csv_path, basin_cfg, year, log_prefix=log)
 
     live_frame = pd.DataFrame()
+    nhc_active_sids = None
     if FETCH_LIVE and not args.no_live:
         print(f"{log} attempting live {basin_cfg['agency_name']} fetch for {year} ...")
         live_frame = fetch_live_season(year, basin_cfg, log)
+        # CurrentStorms = NHC's authoritative active list, enabling the prompt
+        # final-advisory retirement of is_active (status only; tracks + ACE
+        # identical). None on fetch failure -> no retirement this build.
+        nhc_active_sids = ace_fetch_nhc_active_sids()
 
-    storms = merge_and_extract_storms(ibtracs_frame, live_frame, basin_cfg)
+    storms = merge_and_extract_storms(ibtracs_frame, live_frame, basin_cfg,
+                                      nhc_active_sids=nhc_active_sids)
     header = compute_header_stats(storms)
 
     # Observability: separate the BUILD time from DATA freshness.

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import re
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
@@ -541,8 +542,65 @@ def staleness_minutes(latest_fix: Optional[dt.datetime],
 _POINT_COLS = ["season", "doy", "ace_increment", "SID", "NAME", "ISO_TIME", "WIND_KT"]
 
 # A storm is "active" if its last observation is within this many hours of
-# "now" AND it still has tropical-storm-strength winds.
-ACTIVE_WINDOW_HOURS = 60
+# "now" AND it still has tropical-strength winds + a tropical nature.
+# 24 h (was 60): an active storm gets b-deck fixes every ~6 h, so 24 h is
+# four missed cycles. The 60 h window kept dissipated storms "ACTIVE" on
+# every surface for ~2.5 days, because NHC writes no terminal EX/DS row
+# for a TD that simply stops (CRISTINA's final fix: TD 30 kt, nature=TS)
+# — the nature gate never fires and staleness was doing all the work.
+ACTIVE_WINDOW_HOURS = 24
+
+# FINAL-ADVISORY RETIREMENT (the prompt path, complementing the window):
+# NHC removes a storm from CurrentStorms.json the moment advisories end
+# (dissipated / post-tropical / remnant low) — the authoritative signal.
+# A named AL/EP/CP storm absent from a cleanly-fetched CurrentStorms list
+# whose latest fix is older than this grace window is retired — STATUS
+# ONLY: the storm keeps its full track in the feeds/maps and its season
+# ACE / named-storm contribution; it just stops being "active" (drops
+# from active counts, loses the live marker/label). The grace keeps a
+# storm with fresh fixes afloat through a transient listing hiccup.
+NHC_RETIRE_GRACE_H = 12
+
+# Live ATCF-style sid inside feed SIDs ("NHC_EP032026" / "EP032026").
+# Group 1 = the bare ATCF id, group 2 = basin, group 3 = storm number
+# (90-99 = invests, which CurrentStorms never lists — exempt).
+_NHC_SID_RE = re.compile(r"^(?:[A-Z]+_)?((AL|EP|CP)(\d{2})\d{4})$")
+
+CURRENT_STORMS_URL = "https://www.nhc.noaa.gov/CurrentStorms.json"
+
+
+def fetch_nhc_active_sids(timeout: float = 20.0,
+                          retries: int = 2) -> "set[str] | None":
+    """ATCF ids (e.g. {"EP032026"}) of currently-NHC-active named storms per
+    CurrentStorms.json, or None when the fetch fails — callers MUST treat
+    None as "no information" (never retire anything on a failed fetch).
+    requests is imported lazily so ace_core itself stays pandas/numpy-only
+    for consumers that never call this."""
+    import time as _time
+
+    import requests  # lazy on purpose
+
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(
+                CURRENT_STORMS_URL, timeout=timeout,
+                headers={"User-Agent": "triple-a-tropics feed builder"})
+            r.raise_for_status()
+            data = r.json()
+            out: set[str] = set()
+            for s in (data.get("activeStorms") or []):
+                sid = str(s.get("id") or "").strip().upper()
+                if re.fullmatch(r"(?:AL|EP|CP)\d{6}", sid):
+                    out.add(sid)
+            return out
+        except Exception as exc:  # noqa: BLE001 - any failure -> None
+            last_exc = exc
+            if attempt < retries:
+                _time.sleep(2 ** attempt)
+    print(f"[ace_core] WARN: CurrentStorms fetch failed ({last_exc}); "
+          "active-status retirement skipped this cycle.")
+    return None
 
 
 # --- Saffir-Simpson Hurricane Wind Scale vocabulary (shared) ---
@@ -953,14 +1011,22 @@ def _serialize_point(p: dict) -> dict:
 
 
 def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
-                             basin_cfg: dict) -> list[dict]:
+                             basin_cfg: dict,
+                             nhc_active_sids: "set[str] | None" = None,
+                             ) -> list[dict]:
     """Merge IBTrACS + live. For each named storm in BOTH sources, we keep
     whichever source has more observations for that storm — live tends
     to be more complete for currently-active storms (it has real-time
     advisories) while IBTrACS tends to be more complete for past/archived
     storms (JTWC may leave only a stub in its active directory once a
     storm dissipates). One source per storm, so no duplicate cards in
-    the sidebar."""
+    the sidebar.
+
+    ``nhc_active_sids`` (from fetch_nhc_active_sids) enables the prompt
+    final-advisory retirement of is_active — see NHC_RETIRE_GRACE_H. It is
+    STATUS ONLY: tracks, points, ACE, and every season total are computed
+    identically either way. None (fetch failed / caller offline) applies
+    no retirement; passing it never changes which storms exist."""
 
     # Shared IBTrACS-vs-live merge (ace_core): keep the source with more 6-hourly
     # obs per named storm. SAME function + same inputs as the ACE feed, so both
@@ -1051,6 +1117,22 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             has_wind = pd.notna(last["wind_kt"]) and last["wind_kt"] > 0
             tropical = (last["nature"] or "") not in {"ET", "DS"}
             is_active = recent_obs and has_wind and tropical
+        # FINAL-ADVISORY RETIREMENT (status only). The nature gate above
+        # cannot see a storm whose b-deck simply STOPS (no terminal EX/DS
+        # row), so without this a dissipated TD stays "active" until the
+        # staleness window expires. A named AL/EP/CP storm (invests 90-99
+        # exempt — CurrentStorms never lists them; WP/JTWC + IBTrACS-form
+        # sids exempt — no CurrentStorms coverage) that is absent from a
+        # CLEANLY-FETCHED CurrentStorms list and whose latest fix is older
+        # than the grace window is no longer active. Track + ACE are
+        # untouched: only this flag flips.
+        if is_active and nhc_active_sids is not None:
+            m = _NHC_SID_RE.match(str(sid).strip().upper())
+            if (m and int(m.group(3)) < 90
+                    and m.group(1) not in nhc_active_sids
+                    and points[-1]["time"] <
+                    now - dt.timedelta(hours=NHC_RETIRE_GRACE_H)):
+                is_active = False
         # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
         # from any row in the group; IBTrACS rows have NaN and are ignored
         # since IBTrACS doesn't archive invests.
