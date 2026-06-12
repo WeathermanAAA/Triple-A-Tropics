@@ -1,0 +1,353 @@
+name: TCHP Records Review Render (TEMP - delete after sign-off)
+
+# TEMPORARY, DELETABLE dispatch — renders the REAL record-hatched TCHP anomaly
+# review crops for Andrew's sign-off. Deleted (along with the bake dispatch
+# workflow) when the tchp-records branch merges.
+#
+# What it does, in order:
+#   1. REPAIRS the record envelope on R2: the 2026-06-10 finalize packed
+#      tchp_week_max as int16 scale 0.004 / offset 100 (ceiling 231.07
+#      kJ/cm^2); numpy's int16 cast WRAPS silently, so every warm-pool
+#      record-max above the ceiling (~0.4% of cell-weeks — exactly the
+#      record-prone cells) landed at (true - 262.144), i.e. garbage
+#      negatives that would spuriously hatch as record-high. The wrap is
+#      modular, hence EXACTLY reversible; wrapped cells are detectable as
+#      wmin > wmax (impossible for honest extremes). Repaired file is
+#      re-packed wrap-safe (scale 0.008 / offset 150 -> -112..412) and
+#      re-uploaded to R2 sst/records/. Idempotent: a pass on an
+#      already-repaired envelope verifies + passes it through.
+#   2. Renders ALL regions TWICE with the live NRT week: once with
+#      TCHP_RECORDS=off (BASE - doubles as the kill-switch proof on the
+#      real path) and once with records on.
+#   3. Pixel-diffs base vs records for the 4 /sst review regions (the
+#      design-lock byte-diff, now on the REAL field), builds 3-up diff
+#      boards, collects per-region hatched-cell counts from the render
+#      log, and posts crops + boards + summary.json to the REVIEW path
+#      R2 sst/records/review/ - NEVER live armor3d/.
+#
+# HOLD: nothing merges to main and the live /sst widget is untouched.
+#
+# DISPATCH ON THE BRANCH: gh workflow run tchp-records-review-render-DISPATCH.yml
+#   --ref tchp-records   (workflow_dispatch runs the YAML from the given ref)
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tchp-records-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out the tchp-records BRANCH (not main)
+        uses: actions/checkout@v6
+        with:
+          ref: tchp-records
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (ARMOR3D render set + Pillow for the pixel diff)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy matplotlib netCDF4 xarray requests Pillow \
+                      "copernicusmarine>=2.1,<3.0"
+
+      - name: Download the record envelope from R2
+        run: |
+          set -euo pipefail
+          mkdir -p sst/records
+          curl -fsSL https://cdn.triple-a-tropics.com/sst/records/armor3d_tchp_record_1993_present.nc \
+            -o sst/records/_envelope_source.nc
+          curl -fsSL https://cdn.triple-a-tropics.com/sst/records/manifest.json \
+            -o sst/records/_manifest_source.json
+
+      - name: Repair the int16 wrap + re-pack wrap-safe
+        run: |
+          set -euo pipefail
+          python - <<'PYEOF'
+          import datetime as dt, json, shutil
+          import numpy as np
+          import xarray as xr
+
+          SRC = "sst/records/_envelope_source.nc"
+          DST = "sst/records/armor3d_tchp_record_1993_present.nc"
+          MAN_IN = "sst/records/_manifest_source.json"
+          MAN_OUT = "sst/records/manifest.json"
+          STATS = "repair_stats.json"
+          NO_YEAR = np.int16(-32768)
+
+          # cache=False + closing src before the write keeps peak RSS lean -
+          # decoded float64 copies would otherwise sit cached inside src
+          # through to_netcdf (locally validated structure, 44 s end-to-end).
+          src = xr.open_dataset(SRC, cache=False)
+          enc = src["tchp_week_max"].encoding
+          src_scale = float(enc["scale_factor"])
+          if abs(src_scale - 0.008) < 1e-9:
+              # Already repaired+repacked (idempotent re-dispatch): verify clean.
+              wmax = src["tchp_week_max"].values.astype(np.float32)
+              wmin = src["tchp_week_min"].values.astype(np.float32)
+              both = np.isfinite(wmax) & np.isfinite(wmin)
+              n = int((wmin[both] > wmax[both]).sum())
+              assert n == 0, f"repaired-scale envelope still has {n} inversions"
+              src.close()
+              shutil.copy(SRC, DST)
+              shutil.copy(MAN_IN, MAN_OUT)
+              json.dump({"already_repaired": True, "wrapped_cells": 0},
+                        open(STATS, "w"))
+              print("envelope already repaired - verified clean, passing through")
+              raise SystemExit(0)
+          assert abs(src_scale - 0.004) < 1e-9, f"unexpected source scale {src_scale}"
+          WRAP = np.float32(65536 * src_scale)  # 262.144 - one int16 modulus
+
+          wmax = src["tchp_week_max"].values.astype(np.float32)
+          wmin = src["tchp_week_min"].values.astype(np.float32)
+          ymax = src["max_year"].fillna(NO_YEAR).values.astype(np.int16)
+          ymin = src["min_year"].fillna(NO_YEAR).values.astype(np.int16)
+          week_v = src["week"].values
+          lat_v = src["latitude"].values
+          lon_v = src["longitude"].values
+          vmax_attrs = dict(src["tchp_week_max"].attrs)
+          vmin_attrs = dict(src["tchp_week_min"].attrs)
+          g_attrs = dict(src.attrs)
+          src.close()
+          del src
+          fin_max_before = int(np.isfinite(wmax).sum())
+          fin_min_before = int(np.isfinite(wmin).sum())
+
+          # The min field must be wrap-free or the wmin>wmax detector is unusable.
+          neg_min = np.isfinite(wmin) & (wmin < -2.0)
+          assert not neg_min.any(), \
+              f"tchp_week_min has {int(neg_min.sum())} cells < -2 - min wrapped too"
+
+          both = np.isfinite(wmax) & np.isfinite(wmin)
+          viol = both & (wmin > wmax)
+          n_viol = int(viol.sum())
+          print(f"wrapped cells detected (wmin > wmax): {n_viol} "
+                f"({100.0 * n_viol / both.sum():.4f}% of valid cell-weeks)")
+          assert n_viol > 0, "scale is 0.004 but no wraps found - investigate"
+          wmax[viol] += WRAP
+
+          # post-repair invariants (loud)
+          both = np.isfinite(wmax) & np.isfinite(wmin)
+          assert int((wmin[both] > wmax[both]).sum()) == 0, "still inverted"
+          assert int(np.isfinite(wmax).sum()) == fin_max_before, "finite drift"
+          assert int(np.isfinite(wmin).sum()) == fin_min_before, "finite drift"
+          gmax = float(np.nanmax(wmax)); gmin = float(np.nanmin(wmax))
+          print(f"post-repair tchp_week_max range: {gmin:.2f} .. {gmax:.2f}")
+          # 380: observed archive max is 373.7 (Solomon Sea warm pool, week 4,
+          # set 2023 - smooth contiguous patch, verified real structure).
+          # Higher would imply a double wrap (true > 493, physically absurd).
+          assert gmax < 380.0, f"implausible repaired max {gmax}"
+          assert gmin > -35.0, f"garbage negatives survive: {gmin}"
+          rv = wmax[viol]
+          print(f"repaired values: {rv.min():.2f} .. {rv.max():.2f} (~231..374)")
+          assert rv.min() > 225.0, "a repaired value below the old ceiling"
+
+          # re-pack wrap-safe (mirrors the fixed bake finalize())
+          PACK_SCALE, PACK_OFFSET = np.float32(0.008), np.float32(150.0)
+          pack_lo = float(PACK_OFFSET) + float(PACK_SCALE) * (-32767)
+          pack_hi = float(PACK_OFFSET) + float(PACK_SCALE) * 32767
+          for name, arr in (("tchp_week_max", wmax), ("tchp_week_min", wmin)):
+              f = arr[np.isfinite(arr)]
+              assert pack_lo < f.min() and f.max() < pack_hi, \
+                  f"{name} {f.min():.2f}..{f.max():.2f} outside packing"
+          pack = {"zlib": True, "complevel": 4, "dtype": "int16",
+                  "scale_factor": PACK_SCALE, "add_offset": PACK_OFFSET,
+                  "_FillValue": np.int16(-32768)}
+          ypack = {"zlib": True, "complevel": 4, "_FillValue": np.int16(-32768)}
+
+          attrs = g_attrs
+          attrs["repair_note"] = (
+              "2026-06-11: unwrapped int16 overflow in tchp_week_max (orig "
+              "packing scale 0.004/offset 100 ceiling 231.068 kJ/cm^2 silently "
+              f"wrapped {n_viol} warm-pool cell-weeks; exact modular repair "
+              "+262.144) and re-packed at scale 0.008/offset 150.")
+          attrs["repacked_utc"] = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          out = xr.Dataset(
+              {"tchp_week_max": (["week", "latitude", "longitude"], wmax,
+                                 vmax_attrs),
+               "tchp_week_min": (["week", "latitude", "longitude"], wmin,
+                                 vmin_attrs),
+               "max_year": (["week", "latitude", "longitude"], ymax),
+               "min_year": (["week", "latitude", "longitude"], ymin)},
+              coords={"week": week_v, "latitude": lat_v, "longitude": lon_v},
+              attrs=attrs)
+          out.to_netcdf(DST, encoding={"tchp_week_max": pack,
+                                       "tchp_week_min": pack,
+                                       "max_year": ypack, "min_year": ypack})
+          del out, ymax, ymin
+
+          # verify the WRITTEN file round-trips clean
+          chk = xr.open_dataset(DST, cache=False)
+          cmax = chk["tchp_week_max"].values.astype(np.float32)
+          cmin = chk["tchp_week_min"].values.astype(np.float32)
+          cboth = np.isfinite(cmax) & np.isfinite(cmin)
+          assert int((cmin[cboth] > cmax[cboth]).sum()) == 0, "written inverted"
+          assert int(np.isfinite(cmax).sum()) == fin_max_before, "written drift"
+          err = float(np.nanmax(np.abs(cmax - wmax)))
+          assert err <= 0.009, f"round-trip quantization error {err}"
+          print(f"written {DST}: round-trip max quant error {err:.4f}, "
+                f"range {float(np.nanmin(cmax)):.2f}..{float(np.nanmax(cmax)):.2f}")
+          chk.close()
+
+          m = json.loads(open(MAN_IN).read())
+          m["repacked_utc"] = attrs["repacked_utc"]
+          m["packing"] = "int16 scale 0.008 offset 150 (wrap-safe to 412 kJ/cm^2)"
+          m["repair_note"] = attrs["repair_note"]
+          open(MAN_OUT, "w").write(json.dumps(m, indent=2))
+          json.dump({"already_repaired": False, "wrapped_cells": n_viol,
+                     "post_max": gmax, "post_min": gmin}, open(STATS, "w"))
+          print("REPAIR OK")
+          PYEOF
+
+      - name: Upload the repaired envelope to R2 sst/records/ (staging, not live)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          bash scripts/upload_to_r2.sh \
+            sst/records/armor3d_tchp_record_1993_present.nc \
+            sst/records/armor3d_tchp_record_1993_present.nc
+          bash scripts/upload_to_r2.sh \
+            sst/records/manifest.json sst/records/manifest.json \
+            "public, max-age=300" "application/json"
+
+      - name: Fetch ARMOR3D climatology from R2 (anomaly build input)
+        run: |
+          set -euo pipefail
+          mkdir -p armor3d
+          curl -fsSL https://cdn.triple-a-tropics.com/armor3d/armor3d_climatology.nc \
+            -o armor3d/armor3d_climatology.nc
+
+      - name: Render BASE maps (TCHP_RECORDS=off - real-path kill-switch proof)
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+          TCHP_RECORDS: "off"
+        run: |
+          set -eo pipefail
+          python generate_armor3d_plots.py --maps-only 2>&1 | tee render_base.log
+          if grep -q "records envelope loaded" render_base.log; then
+            echo "::error::kill switch FAILED - base render loaded the envelope"
+            exit 1
+          fi
+          mkdir -p review_base
+          cp armor3d/*_tchp_anom*.png review_base/
+          echo "base anomaly maps: $(ls review_base | wc -l)"
+
+      - name: Render RECORDS maps (envelope on, live NRT week)
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: |
+          set -eo pipefail
+          python generate_armor3d_plots.py --maps-only 2>&1 | tee render_records.log
+          # The diff below is vacuous if the envelope silently failed to load
+          # (graceful absence would render base twice) - demand the load line.
+          grep -q "records envelope loaded" render_records.log || {
+            echo "::error::records render did NOT load the envelope"; exit 1; }
+
+      - name: Pixel-diff base vs records + boards + summary
+        run: |
+          set -euo pipefail
+          python - <<'PYEOF'
+          import json, re, shutil, os
+          import numpy as np
+          from PIL import Image
+
+          REGIONS = ["east-pacific", "north-atlantic", "western-atlantic",
+                     "global-tropics"]
+          os.makedirs("review_out", exist_ok=True)
+
+          # per-region hatched-cell counts from the records render log
+          counts = {}
+          pat = re.compile(r"records hatch (\S+?)_tchp_anom\.png: "
+                           r"(\d+) high / (\d+) low cells")
+          for line in open("render_records.log"):
+              m = pat.search(line)
+              if m:
+                  counts[m.group(1)] = {"high_cells": int(m.group(2)),
+                                        "low_cells": int(m.group(3))}
+          vd = ""
+          for line in open("render_records.log"):
+              m = re.search(r"latest valid date: (\S+)", line)
+              if m: vd = m.group(1)
+
+          summary = {"valid_date": vd, "regions": {}, "all_region_counts": counts}
+          summary["repair"] = json.load(open("repair_stats.json"))
+          ok = True
+          for reg in REGIONS:
+              b_path = f"review_base/{reg}_tchp_anom.png"
+              r_path = f"armor3d/{reg}_tchp_anom.png"
+              assert os.path.exists(b_path), f"missing base {b_path}"
+              assert os.path.exists(r_path), f"missing records {r_path}"
+              b = np.asarray(Image.open(b_path).convert("RGB"), dtype=np.int16)
+              r = np.asarray(Image.open(r_path).convert("RGB"), dtype=np.int16)
+              assert b.shape == r.shape, f"{reg} shape {b.shape} vs {r.shape}"
+              changed = np.abs(b - r).sum(axis=2) > 0
+              n_ch = int(changed.sum()); pct = 100.0 * n_ch / changed.size
+              outside_identical = bool((b[~changed] == r[~changed]).all())
+              c = counts.get(reg, {"high_cells": 0, "low_cells": 0})
+              hatched = c["high_cells"] + c["low_cells"] > 0
+              clean = outside_identical and (hatched == (n_ch > 0)) and pct < 50.0
+              ok = ok and clean
+              summary["regions"][reg] = {
+                  **c, "changed_px": n_ch, "changed_pct": round(pct, 3),
+                  "outside_identical": outside_identical, "diff_clean": clean}
+              print(f"{reg}: {c['high_cells']} high / {c['low_cells']} low cells, "
+                    f"{pct:.3f}% px changed, clean={clean}")
+              # diff visual: dimmed base, pink where changed
+              vis = (b * 0.30).astype(np.uint8); vis[changed] = [255, 80, 200]
+              Image.fromarray(vis).save(f"review_out/{reg}_diff.png")
+              # 3-up board: base | records | diff
+              imgs = [Image.open(p).convert("RGB") for p in
+                      (b_path, r_path, f"review_out/{reg}_diff.png")]
+              w = max(i.width for i in imgs); h = max(i.height for i in imgs)
+              board = Image.new("RGB", (w * 3 + 32, h + 16), (9, 13, 19))
+              for i, im in enumerate(imgs):
+                  board.paste(im, (8 + i * (w + 8), 8))
+              board.save(f"review_out/{reg}_diff_board.png")
+              os.remove(f"review_out/{reg}_diff.png")
+              shutil.copy(r_path, f"review_out/{reg}_tchp_anom.png")
+              lbl = f"armor3d/{reg}_tchp_anom_labels.png"
+              if os.path.exists(lbl):
+                  shutil.copy(lbl, f"review_out/{reg}_tchp_anom_labels.png")
+          summary["all_clean"] = ok
+          json.dump(summary, open("review_out/summary.json", "w"), indent=2)
+          print(json.dumps(summary, indent=2))
+          if not ok:
+              print("::warning::diff NOT clean - boards uploaded for inspection")
+          PYEOF
+
+      - name: Upload review crops + boards + summary to R2 sst/records/review/
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          # Per-file `aws s3 cp` (via the single-file path of upload_to_r2.sh)
+          # rather than a dir sync: sync's --size-only would silently skip a
+          # fresh crop whose byte size happens to match the previous review
+          # round's object.
+          echo "review crops:"
+          for f in review_out/*; do
+            base="$(basename "$f")"
+            case "$base" in
+              *.json) ct="application/json" ;;
+              *)      ct="image/png" ;;
+            esac
+            bash scripts/upload_to_r2.sh "$f" "sst/records/review/$base" \
+              "no-cache" "$ct"
+            echo "  https://cdn.triple-a-tropics.com/sst/records/review/$base"
+          done

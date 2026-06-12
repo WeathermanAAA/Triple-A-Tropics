@@ -71,6 +71,12 @@ feeds/base/
 _crw_doy_climo_state/
 _crw_doy_record_state/
 
+# ARMOR3D TCHP per-WOY record envelope (~118 MiB) + bake state: R2-only —
+# baked by bake_armor3d_tchp_records.py, fetched from R2 by update-armor3d.yml
+# as a build input (like armor3d_climatology.nc). Never committed.
+sst/records/
+.armor3d_records_state/
+
 # Third-party reference / local scratch dirs - keep on disk, never track/push (not public)
 _reference/
 _push/

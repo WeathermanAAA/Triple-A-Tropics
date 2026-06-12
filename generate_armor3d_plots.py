@@ -634,22 +634,37 @@ def load_tchp_records() -> "xr.Dataset | None":
         return None
 
 
+# Same 1 kJ/cm² floor the anomaly plot uses to NaN-out "no signal" cells
+# (_near0 in main()). Outside the warm belt TCHP is structurally ZERO every
+# year, so the envelope degenerates to [0, 0] and the inclusive tie would
+# flag the entire extratropical ocean as record-high AND record-low at once
+# (proven on the first real render). Each direction must therefore show real
+# signal on its decisive side: record-high needs a live value above the
+# floor; record-low needs a standing record-min above the floor (a live
+# collapse TO zero from a real record-min still flags — that's signal).
+RECORDS_NO_SIGNAL_TCHP = 1.0
+
+
 def compute_record_masks(
     tchp_now: np.ndarray, valid_date: dt.date, records: "xr.Dataset",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Inclusive record masks for the current NRT week vs the baked per-WOY
     extremes (same week-of-year rounding as climatology_slice_for):
         record-HIGH where NRT TCHP >= the WOY record-max  ("meets or exceeds")
+                    and the live value is real signal (>= 1 kJ/cm²)
         record-LOW  where NRT TCHP <= the WOY record-min
-    HONESTY GUARD: cells with no reanalysis envelope (NaN max/min) or no live
-    value are NOT flagged. `tchp_now` must be on the records grid (0.125deg,
-    0-360 — the same grid the bake and the live generator use)."""
+                    and the record-min is real signal (>= 1 kJ/cm²)
+    HONESTY GUARDS: cells with no reanalysis envelope (NaN max/min) or no live
+    value are NOT flagged, and the no-signal floor above keeps the degenerate
+    zero-on-zero envelope (extratropics) from hatching wall-to-wall.
+    `tchp_now` must be on the records grid (0.125deg, 0-360 — the same grid
+    the bake and the live generator use)."""
     woy = max(1, min(52, (valid_date.timetuple().tm_yday - 1) // 7 + 1))
     wmax = records["tchp_week_max"].sel(week=woy).values.astype(np.float32)
     wmin = records["tchp_week_min"].sel(week=woy).values.astype(np.float32)
     valid = np.isfinite(tchp_now) & np.isfinite(wmax) & np.isfinite(wmin)
-    high = valid & (tchp_now >= wmax)
-    low = valid & (tchp_now <= wmin)
+    high = valid & (tchp_now >= wmax) & (tchp_now >= RECORDS_NO_SIGNAL_TCHP)
+    low = valid & (tchp_now <= wmin) & (wmin >= RECORDS_NO_SIGNAL_TCHP)
     return high, low
 
 
@@ -1084,6 +1099,10 @@ def plot_tchp_anom(
               if records_high is not None else None)
         rl = (gss._subset_to_extent(records_low, lat, lon, extent)[0]
               if records_low is not None else None)
+        n_hi = int(np.asarray(rh, dtype=bool).sum()) if rh is not None else 0
+        n_lo = int(np.asarray(rl, dtype=bool).sum()) if rl is not None else 0
+        print(f"[armor3d]   records hatch {out_path.name}: "
+              f"{n_hi} high / {n_lo} low cells in extent")
         records_overlay.draw_records_overlay(ax, LON2, LAT2, rh, rl)
     # Overlay LAND_COLOR-filled country polygons so continents match the
     # unified SST look. The anomaly field can be 0.0 (or finite near-zero)
@@ -1302,19 +1321,12 @@ def main(argv: list[str] | None = None) -> int:
                     rec_hi = rec_lo = None
                     if records_ds is not None:
                         try:
-                            _woy = max(1, min(
-                                52, (valid_date.timetuple().tm_yday - 1)//7 + 1))
-                            _wmax = records_ds["tchp_week_max"].sel(
-                                week=_woy).values.astype(np.float32)
-                            _wmin = records_ds["tchp_week_min"].sel(
-                                week=_woy).values.astype(np.float32)
-                            if _wmax.shape == anom.shape:
-                                _v = (np.isfinite(tchp_crop) & np.isfinite(_wmax)
-                                      & np.isfinite(_wmin))
-                                rec_hi = _v & (tchp_crop >= _wmax)
-                                rec_lo = _v & (tchp_crop <= _wmin)
+                            _rec_shape = records_ds["tchp_week_max"].shape[-2:]
+                            if _rec_shape == anom.shape:
+                                rec_hi, rec_lo = compute_record_masks(
+                                    tchp_crop, valid_date, records_ds)
                             else:
-                                print(f"{log}   WARN: records grid {_wmax.shape} "
+                                print(f"{log}   WARN: records grid {_rec_shape} "
                                       f"!= anom {anom.shape}; plain anomaly.")
                         except Exception as _exc:
                             print(f"{log}   WARN: records overlay failed "

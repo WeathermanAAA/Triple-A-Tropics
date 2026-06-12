@@ -40,7 +40,7 @@ int16 NetCDF + manifest. Peak RAM = one year in flight (~52 × grid).
 OUTPUT (after --finalize)
 -------------------------
     sst/records/armor3d_tchp_record_1993_present.nc
-        tchp_week_max int16  (scale 0.004, offset 100.0, fill -32768)  [week,lat,lon]
+        tchp_week_max int16  (scale 0.008, offset 150.0, fill -32768)  [week,lat,lon]
         tchp_week_min int16  (same packing)
         max_year      int16  (fill -32768)
         min_year      int16  (fill -32768)
@@ -405,8 +405,32 @@ def finalize():
     never = ~np.isfinite(rmax)
     rmax[never] = np.nan
     rmin[~np.isfinite(rmin)] = np.nan
+    # int16 packing MUST cover the data range — numpy's int16 cast WRAPS
+    # out-of-range values silently (no clip, no error). The original
+    # scale 0.004 / offset 100 topped out at 231.07 kJ/cm² while real
+    # warm-pool record maxima reach ~290, so every cell above the ceiling
+    # wrapped to garbage negatives (~0.4% of cell-weeks, all in the deep
+    # tropics — exactly the record-prone cells). scale 0.008 / offset 150
+    # covers -112.1..412.1 at 0.008 kJ/cm² resolution; the asserts below
+    # turn any future overflow into a loud failure instead of silent wrap.
+    PACK_SCALE, PACK_OFFSET = np.float32(0.008), np.float32(150.0)
+    pack_lo = float(PACK_OFFSET) + float(PACK_SCALE) * (-32767)
+    pack_hi = float(PACK_OFFSET) + float(PACK_SCALE) * 32767
+    both = np.isfinite(rmax) & np.isfinite(rmin)
+    n_inverted = int((rmin[both] > rmax[both]).sum())
+    if n_inverted:
+        raise RuntimeError(
+            f"{LOG} {n_inverted} cells have week-min > week-max — "
+            "accumulator corruption; refusing to write the envelope.")
+    for name, arr in (("tchp_week_max", rmax), ("tchp_week_min", rmin)):
+        fin = arr[np.isfinite(arr)]
+        if fin.size and (fin.min() < pack_lo or fin.max() > pack_hi):
+            raise RuntimeError(
+                f"{LOG} {name} range {fin.min():.2f}..{fin.max():.2f} exceeds "
+                f"the int16 packing range {pack_lo:.2f}..{pack_hi:.2f} — "
+                "widen the packing; refusing to write a wrapped envelope.")
     pack = {"zlib": True, "complevel": 9, "dtype": "int16",
-            "scale_factor": np.float32(0.004), "add_offset": np.float32(100.0),
+            "scale_factor": PACK_SCALE, "add_offset": PACK_OFFSET,
             "_FillValue": np.int16(-32768)}
     ypack = {"zlib": True, "complevel": 9, "_FillValue": np.int16(-32768)}
     xr.Dataset(
