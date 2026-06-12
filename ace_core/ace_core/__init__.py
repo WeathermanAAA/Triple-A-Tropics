@@ -574,20 +574,23 @@ def fetch_nhc_active_sids(timeout: float = 20.0,
     """ATCF ids (e.g. {"EP032026"}) of currently-NHC-active named storms per
     CurrentStorms.json, or None when the fetch fails — callers MUST treat
     None as "no information" (never retire anything on a failed fetch).
-    requests is imported lazily so ace_core itself stays pandas/numpy-only
-    for consumers that never call this."""
+    stdlib urllib on purpose: ace_core stays pandas/numpy-only, and the cron
+    generators' minimal installs ship no requests (0.7.0's lazy `import
+    requests` crashed the update-ace tracks regen at call time)."""
+    import json as _json
     import time as _time
-
-    import requests  # lazy on purpose
+    import urllib.request as _url
 
     last_exc = None
     for attempt in range(retries + 1):
         try:
-            r = requests.get(
-                CURRENT_STORMS_URL, timeout=timeout,
+            req = _url.Request(
+                CURRENT_STORMS_URL,
                 headers={"User-Agent": "triple-a-tropics feed builder"})
-            r.raise_for_status()
-            data = r.json()
+            with _url.urlopen(req, timeout=timeout) as resp:
+                if resp.status != 200:
+                    raise OSError(f"HTTP {resp.status}")
+                data = _json.loads(resp.read().decode("utf-8"))
             out: set[str] = set()
             for s in (data.get("activeStorms") or []):
                 sid = str(s.get("id") or "").strip().upper()
