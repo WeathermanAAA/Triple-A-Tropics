@@ -520,6 +520,50 @@
   @media (max-width: 700px) {
     .hafs-stage { min-height: 200px; }
   }
+  /* ---- Canonical dark <select> chrome -- the site-wide treatment from
+     /models/ (.hafs-group select) + /sst/ (.sst-select select, styles.css):
+     appearance:none kills the native white UA widget, dark bg + site border,
+     the shared dropdown-arrow SVG, accent focus ring, dimmed disabled.
+     Covers the Live Storm Floater + Mesoscale panels (storm/sector/band),
+     the GIBS region picker, and the custom-zoom form selects. The OPEN
+     option list stays OS-controlled and is only partially stylable
+     (option/optgroup colors below) -- same constraint as the rest of the
+     site; the closed-select chrome is what this fixes. */
+  .sat-selectors .hafs-group select,
+  .gibs-region-select,
+  .sat-field select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 30px 8px 10px; /* right padding clears the arrow */
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='%238ea2bd'><path d='M6 8 0 0h12z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px;
+  }
+  .sat-selectors .hafs-group select:hover,
+  .gibs-region-select:hover,
+  .sat-field select:hover { border-color: var(--accent-2); }
+  .sat-selectors .hafs-group select:focus,
+  .gibs-region-select:focus,
+  .sat-field select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
+  .sat-selectors .hafs-group select:disabled,
+  .gibs-region-select:disabled,
+  .sat-field select:disabled { opacity: 0.45; cursor: not-allowed; }
+  .sat-selectors .hafs-group select option,
+  .gibs-region-select option,
+  .sat-field select option { background: var(--panel); color: var(--fg); }
+  .sat-selectors .hafs-group select optgroup,
+  .gibs-region-select optgroup,
+  .sat-field select optgroup { background: var(--panel); color: var(--muted); font-style: normal; }
 </style>
 </head>
 <body>
