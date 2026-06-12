@@ -27,10 +27,16 @@ name: TCHP Records Review Render (TEMP - delete after sign-off)
 #
 # HOLD: nothing merges to main and the live /sst widget is untouched.
 #
-# DISPATCH ON THE BRANCH: gh workflow run tchp-records-review-render-DISPATCH.yml
-#   --ref tchp-records   (workflow_dispatch runs the YAML from the given ref)
+# DISPATCH ON THE BRANCH: GitHub only registers workflow_dispatch workflows
+# that exist on the DEFAULT branch, and this one stays off main until
+# sign-off — so the runnable trigger is the branch-push path filter below:
+# touch .github/tchp-review-trigger on tchp-records and push, and the render
+# runs from THIS branch. (workflow_dispatch kept for when/if it registers.)
 on:
   workflow_dispatch: {}
+  push:
+    branches: [tchp-records]
+    paths: [".github/tchp-review-trigger"]
 
 permissions:
   contents: read
