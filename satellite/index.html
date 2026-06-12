@@ -1343,6 +1343,26 @@
 // Night handling lives in the PNG.
 const CDN = 'https://cdn.triple-a-tropics.com';
 
+// ---- single-loop coordinator (the shared play token) ------------------------
+// TWO viewers mount on this page (floater + meso), each with its own rAF loop
+// when playing. Two concurrent loops each painting a large frame compete for
+// the same per-vsync paint budget and BOTH go sloppy -- the floater was
+// perfect back when it was the page's only loop, and cyclonicwx is smooth
+// because it never animates two loops at once (separate pages). The token
+// serializes them: exactly ONE viewer may animate at any moment. Claiming it
+// (hover / pointer / Play / the floater's load autoplay) makes the other
+// viewer yield -- it pauses and parks STATIC on its newest frame, kept
+// current by the existing 60 s poll's follow-live (an src swap per poll, no
+// rAF). The player below is untouched; this only decides WHICH instance may
+// run its loop.
+var SAT_LOOP_TOKEN = { holder: null, yields: {} };
+function satClaimLoop(id) {
+  if (SAT_LOOP_TOKEN.holder === id) return;
+  var prev = SAT_LOOP_TOKEN.holder;
+  SAT_LOOP_TOKEN.holder = id;
+  if (prev && SAT_LOOP_TOKEN.yields[prev]) SAT_LOOP_TOKEN.yields[prev]();
+}
+
 function makeSatViewer(idPrefix, opts) {
   opts = opts || {};
   const SAT_SOURCES = opts.sources || [];
@@ -1353,7 +1373,7 @@ function makeSatViewer(idPrefix, opts) {
   // settled either way; `ok` only when it decoded — the loop skips !ok frames.
   var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
               raf: null, lastTick: 0, shown: false, followNew: false,
-              buildToken: 0, encoding: false, speed: 1,
+              pendingPlay: false, buildToken: 0, encoding: false, speed: 1,
               pollTimer: null, inactive: false,
               boxRefW: 0, boxRefH: 0, bandLabelBase: "" };
   var SAT_POLL_MS = 60000;
@@ -1515,6 +1535,23 @@ function makeSatViewer(idPrefix, opts) {
   }
   function satFrameSettled(f) {
     satEl("play").disabled = satDecoded() < 2;
+    // Load autoplay (floater only): start the page's ONE loop the moment this
+    // panel becomes playable -- but never steal the token once ANY panel
+    // holds it (the holder only ever changes on engagement, so a user who
+    // hovered/played meso before the floater finished loading keeps meso).
+    if (opts.autoplay && !sat.playing && !SAT_LOOP_TOKEN.holder &&
+        satDecoded() >= 2) {
+      satPlay();
+    }
+    // Deferred hover-play: the user engaged this panel before it was playable
+    // (satPlay refused at < 2 decoded). Honor that intent now, but only while
+    // this panel still holds the token -- engagement elsewhere supersedes it,
+    // and satPause (any explicit pause) clears it.
+    if (sat.pendingPlay && !sat.playing &&
+        SAT_LOOP_TOKEN.holder === idPrefix && satDecoded() >= 2) {
+      sat.pendingPlay = false;
+      satPlay();
+    }
     // Quiet progress note in the band label while the window streams in, so a
     // growing loop reads as "loading" rather than "short".
     var lbl = satEl("band-label");
@@ -1577,6 +1614,7 @@ function makeSatViewer(idPrefix, opts) {
   }
   function satPlay() {
     if (sat.playing || satDecoded() < 2) return;
+    satClaimLoop(idPrefix);   // the other viewer yields BEFORE our loop starts
     sat.playing = true;
     sat.followNew = false;
     satEl("play").innerHTML = "&#10074;&#10074; Pause";
@@ -1586,9 +1624,19 @@ function makeSatViewer(idPrefix, opts) {
   function satPause() {
     sat.playing = false;
     sat.followNew = false;
+    sat.pendingPlay = false;   // any pause cancels a deferred hover-play intent
     if (sat.raf) { cancelAnimationFrame(sat.raf); sat.raf = null; }
     satEl("play").innerHTML = "&#9654; Play";
   }
+  // Losing the play token: stop looping and park STATIC on the newest frame;
+  // followNew keeps that static frame current as polls append (no rAF).
+  function satYieldLoop() {
+    if (sat.playing) satPause();
+    var last = satLastOk();
+    if (last >= 0 && sat.idx !== last) satShow(last);
+    sat.followNew = true;
+  }
+  SAT_LOOP_TOKEN.yields[idPrefix] = satYieldLoop;
   function satTogglePlay() { if (sat.playing) satPause(); else satPlay(); }
   function satStep(d) {
     satPause();
@@ -1970,6 +2018,22 @@ function makeSatViewer(idPrefix, opts) {
     satEl("bands").addEventListener("change", function () {   // band <select>
       satPause(); satSelectBand(this.value, true);
     });
+    // Engagement hands this panel the play token (and resumes its loop): the
+    // hovered / touched panel animates, the other parks. pointerenter covers
+    // mouse hover; pointerdown (capture) covers touch taps on any control --
+    // either way the OTHER panel's rAF is cancelled before ours matters.
+    satEl("card").addEventListener("pointerenter", function () {
+      satClaimLoop(idPrefix);
+      satPlay();
+      // Not yet playable (< 2 frames decoded): remember the intent and start
+      // the moment satFrameSettled makes us playable -- IF we still hold the
+      // token by then. Without this, hovering a still-loading panel parks the
+      // other one and then nothing on the page animates.
+      if (!sat.playing) sat.pendingPlay = true;
+    });
+    satEl("card").addEventListener("pointerdown", function () {
+      satClaimLoop(idPrefix);
+    }, true);
     satEl("card").addEventListener("keydown", function (e) {
       if (/^(select|textarea)$/i.test(e.target.tagName)) return;
       if (e.target.tagName === "BUTTON" &&
@@ -2122,7 +2186,9 @@ function makeSatViewer(idPrefix, opts) {
     }
   };
 
-  var viewer = makeSatViewer("sat", { sources: [floaterSource] });
+  // autoplay: on load the floater runs the page's single loop; the meso panel
+  // parks on its newest frame until hovered/played (single-loop coordinator).
+  var viewer = makeSatViewer("sat", { sources: [floaterSource], autoplay: true });
   (window.__satViewers || (window.__satViewers = {})).sat = viewer;   // debug/test handle
 
   // a storm pick re-inits the instance for the new storm's manifest.
