@@ -448,17 +448,13 @@
     border-radius: 8px; overflow: hidden; }
   .hafs-stage img, .hafs-stage canvas { display: block; max-width: 100%;
     max-height: var(--panel-max-h); width: auto; height: auto; }
-  /* Stacked, pre-decoded frame layers. Playback flips OPACITY (a compositor
-     operation — GPU-cheap at any devicePixelRatio, incl. Retina DPR 2), never
-     drawImage. No per-frame rasterization in the hot path. A <canvas> is built
-     on-demand ONLY for GIF export. The single .sat-still holds the last frame so
-     a memory-released (off-screen) panel isn't blank. */
-  .sat-layers { position: absolute; inset: 0; }
-  .sat-layers img { position: absolute; inset: 0; width: 100%; height: 100%;
-    max-height: none; object-fit: contain; opacity: 0; }
-  .sat-still { position: absolute; inset: 0; width: 100%; height: 100%;
+  /* ONE visible <img> per viewer (.sat-frame). Playback swaps its src between
+     frames whose Images were preloaded + decoded up front, so the swap is
+     instant — no layer stacks, no canvas. A <canvas> is built on-demand ONLY
+     for GIF export. */
+  .sat-frame { position: absolute; inset: 0; width: 100%; height: 100%;
     max-height: none; object-fit: contain; }
-  .sat-still[hidden] { display: none; }
+  .sat-frame[hidden] { display: none; }
   .hafs-statusbox { position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center; gap: 10px;
     color: var(--muted); background: rgba(10,13,18,0.6); font-size: 13.5px; }
@@ -639,10 +635,12 @@
        instance 1 (idPrefix "sat")  = the live storm FLOATER (auto-tracks active
                                        systems; shows a storm <select> when >1).
        instance 2 (idPrefix "meso") = a GOES MESO sector (sector <select>).
-     Each is its own makeSatViewer() with band rail / play / scrub / speed / GIF
-     and a 60 s manifest re-poll (append new frames, preserve scrub/pause,
-     follow-live when parked on newest, pause when the tab is hidden). The night
-     handling lives in the PNG. Manifests come from cdn.triple-a-tropics.com. -->
+     Each is its own makeSatViewer() — a deliberately DUMB loop player: one
+     visible <img>, frames preloaded as decoded Images, src-swap on a bare rAF
+     tick — with band rail / play / scrub / speed / GIF and a 60 s manifest
+     re-poll (append new frames, preserve scrub/pause, follow-live when parked
+     on newest). The night handling lives in the PNG. Manifests come from
+     cdn.triple-a-tropics.com. -->
 <section class="chart-section" id="sat-viewers-section">
   <div class="sat-split">
 
@@ -656,9 +654,8 @@
           <select id="sat-bands" aria-label="Satellite band"></select></div>
       </div>
       <div class="hafs-stage" id="sat-stage">
-        <div class="sat-layers" id="sat-layers" role="img"
-             aria-label="Storm floater satellite frame"></div>
-        <img class="sat-still" id="sat-still" alt="" aria-hidden="true" hidden>
+        <img class="sat-frame" id="sat-frame"
+             alt="Storm floater satellite frame" hidden>
         <div id="sat-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
@@ -694,9 +691,8 @@
           <select id="meso-bands" aria-label="Satellite band"></select></div>
       </div>
       <div class="hafs-stage" id="meso-stage">
-        <div class="sat-layers" id="meso-layers" role="img"
-             aria-label="GOES mesoscale sector frame"></div>
-        <img class="sat-still" id="meso-still" alt="" aria-hidden="true" hidden>
+        <img class="sat-frame" id="meso-frame"
+             alt="GOES mesoscale sector frame" hidden>
         <div id="meso-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
@@ -1268,297 +1264,299 @@
 
 <script>
 // ---- Componentized satellite viewer (factory) -----------------------------
-// Ported from the CycloLab Satellite tab (tsr/cyclolab_shell.py): the band
-// rail / play / step / scrub / speed / GIF transport + the 60 s auto-refresh
-// state machine, refactored from a singleton into makeSatViewer(idPrefix, opts)
-// so the page can mount TWO independent instances side by side:
+// THE DUMB PLAYER (the a-reference-site / the-reference-archive approach). One visible <img> per
+// viewer. Every frame is preloaded as its own decoded Image held in a JS
+// array; advancing a frame = setting the visible <img>'s src to the next
+// frame's already-cached URL — no network, no decode work on the tick. Pacing
+// is the bare rAF tick in satTick. That is the entire player.
+//
+// Deliberately ABSENT — each of these shipped here once and each introduced
+// its own hitches (the cleverness was the bug): canvas playback,
+// createImageBitmap, IntersectionObserver / visibility gating,
+// release/reacquire of decoded frames, fixed-timestep accumulators, decode
+// buffers / ready gates beyond "the first frame decoded". Do not reintroduce
+// them. Background tabs need nothing special: browsers throttle rAF there.
+//
+// makeSatViewer(idPrefix, opts) mounts one instance:
 //   makeSatViewer('sat',  {sources:[floater src]})      -> storm floater
 //   makeSatViewer('meso', {sources:[meso src], sectorSelect:'#meso-sector'})
 // opts:
-//   sources       : [{ id, top, resolve(top)->subManifestURL|null }]
-//   sectorSelect   : optional CSS selector of a <select> whose change re-inits
-//                    the instance for a new sector (meso) — re-resolved each poll
-// All behavior is preserved: per-band frame lists, chronological+deduped order,
-// canvas-decode playback with an img.src fallback, speed presets, client-side
-// GIF89a export, and the manifest re-poll (append new frames, preserve scrub/
-// pause, follow-live when parked on newest, pause when the document is hidden,
-// back off once the floater goes inactive). Night handling lives in the PNG.
+//   sources      : [{ id, top, resolve(top)->subManifestURL|null }]
+//   sectorSelect : optional CSS selector of a <select> whose change re-inits
+//                  the instance for a new sector (meso) — re-resolved each poll
+// Kept features, all wired to the simple player: play/pause/step/keyboard,
+// speed presets, scrub, dwell on the newest frame before the loop wraps, the
+// 60 s manifest re-poll (append new frames, preserve scrub/pause, follow-live
+// when parked on newest, back off once inactive), band/sector selects, and
+// GIF export (a canvas is built ONLY at export time from the preloaded
+// Images — never for playback). A frame that 404s or fails to decode is
+// dropped from the loop, so gaps never stall playback (meso/floater have real
+// gaps). Loading is PROGRESSIVE: the newest frame is requested first and
+// paints on its own decode, and the loop plays whatever has decoded so far,
+// growing as the rest stream in. The visible <img> is pinned to ONE fixed,
+// centered box per loop (satLockFrameBox), so per-frame pixel-size changes
+// (e.g. a meso sector re-aim) can never re-letterbox the imagery mid-loop.
+// Night handling lives in the PNG.
 const CDN = 'https://cdn.triple-a-tropics.com';
-
-// ---- cross-instance visibility coordinator (memory bound) -------------------
-// Each viewer registers {ratio, wants, apply}. On any scroll/resize/tab change:
-//   - STACKED layout (<=760px, the .sat-split mobile breakpoint): at most ONE
-//     panel decodes — the single most-visible one; the others release their
-//     decoded frames (keeping their last drawn frame on the canvas). So two
-//     panels never hold 90 decoded ~1320px frames at once on a phone.
-//   - SIDE-BY-SIDE desktop: each panel decodes iff it is itself on-screen (both
-//     visible together -> both decoded; desktop has the headroom).
-//   - Tab hidden: everything releases.
-var SAT_PANELS = [];
-function satCoordinate() {
-  var tabHidden = (typeof document !== "undefined") && document.hidden;
-  var stacked = ((typeof window !== "undefined" && window.innerWidth) || 9999) <= 760;
-  if (tabHidden) { SAT_PANELS.forEach(function (p) { p.apply(false); }); return; }
-  if (stacked) {
-    var best = null, bestR = 0.15;        // need >15% in view to decode anything
-    SAT_PANELS.forEach(function (p) { var r = p.ratio(); if (r > bestR) { bestR = r; best = p; } });
-    SAT_PANELS.forEach(function (p) { p.apply(p === best); });
-  } else {
-    SAT_PANELS.forEach(function (p) { p.apply(p.wants()); });
-  }
-}
-if (typeof window !== "undefined") {
-  window.addEventListener("resize", satCoordinate);
-  if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", satCoordinate);
-  }
-}
 
 function makeSatViewer(idPrefix, opts) {
   opts = opts || {};
   const SAT_SOURCES = opts.sources || [];
-  const ENDED = false;   // /satellite/ is never a frozen archive page
 
-  // ---- per-instance state (was the singleton `var sat`) -------------------
-  // PROVEN floater-loop playback model: every frame carries its OWN decoded
-  // <img> (sat.frames[i].img). The whole capped window is preloaded AND
-  // img.decode()'d to a ready bitmap BEFORE playback starts; the tick then just
-  // draws the already-decoded image. The ported viewer regressed this into a
-  // lazy fetch-and-decode-on-the-tick path (createImageBitmap LRU), which is
-  // the classic cause of the stutter the user saw — restored here verbatim.
+  // ---- per-instance state --------------------------------------------------
+  // frames[i] = { t, key, src, img, done, ok }: `img` is the preloaded Image
+  // (retained so its decoded bitmap isn't GC'd); `done` flips when the load
+  // settled either way; `ok` only when it decoded — the loop skips !ok frames.
   var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
-              raf: null, lastTick: 0, ready: false, buildToken: 0,
-              loadTimer: null, encoding: false, speed: 1, presented: [],
-              pollTimer: null, inactive: false, mode: null,
-              visible: true, intersecting: true, ratio: 1, released: false,
-              wasPlayingHidden: false, shownEl: null };
+              raf: null, lastTick: 0, shown: false, followNew: false,
+              buildToken: 0, encoding: false, speed: 1,
+              pollTimer: null, inactive: false,
+              boxRefW: 0, boxRefH: 0, bandLabelBase: "" };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
   var SAT_STALE_MIN = 40;
   var SAT_BASE_MS = 200;            // per-frame at 1x
-  var SAT_FRAME_CAP = 90;           // max frames decoded/animated (memory bound)
+  var SAT_FRAME_CAP = 90;           // max frames preloaded per loop (memory bound)
   var SAT_LAST_FRAME_DWELL = 6;     // hold the newest frame Nx longer before wrap
-  var SAT_PRELOAD_TIMEOUT_MS = 9000;
+  var SAT_FETCH_TIMEOUT_MS = 15000; // a stalled manifest fetch must not brick the panel
   var SAT_SPEEDS = [0.5, 1, 2, 4];
 
   function fetchJson(url) {
     if (typeof fetch !== "function") return Promise.resolve(null);
-    return fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "t=" + Date.now(),
-                 { cache: "no-store" })
+    var o = { cache: "no-store" };
+    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+      o.signal = AbortSignal.timeout(SAT_FETCH_TIMEOUT_MS);
+    }
+    return fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "t=" + Date.now(), o)
       .then(function (r) { return r.ok ? r.json() : null; })
       .catch(function () { return null; });
   }
 
-  function satStepMs() { return SAT_BASE_MS / (sat.speed || 1); }
   function satEl(id) { return document.getElementById(idPrefix + "-" + id); }
   function satStatus(show, msg) {
     var box = satEl("status");
     box.style.display = show ? "flex" : "none";
     if (msg != null) box.querySelector("span").textContent = msg;
   }
-  // ---- layer stack management (opacity-toggle playback) -------------------
-  function satLayersClear() {
-    var host = satEl("layers");
-    if (host) {
-      while (host.firstChild) {
-        try { host.firstChild.onload = host.firstChild.onerror = null;
-              host.firstChild.src = ""; } catch (e) {}
-        host.removeChild(host.firstChild);
-      }
-    }
-    sat.shownEl = null;
+
+  // ---- frame bookkeeping ---------------------------------------------------
+  function mkFrame(f) {
+    // ?cors=1 forces a distinct cache entry fetched WITH CORS so the GIF
+    // export canvas can read pixels later; the visible <img> carries
+    // crossOrigin=anonymous and the SAME URL, so it shares that cache entry.
+    var src = CDN + "/" + f.key;
+    return { t: f.t, key: f.key,
+             src: src + (src.indexOf("?") >= 0 ? "&" : "?") + "cors=1",
+             img: null, done: false, ok: false };
   }
-  function satStillHide() {
-    var st = satEl("still");
-    if (st && !st.hidden) st.hidden = true;
+  function satDecoded() {
+    var n = 0;
+    for (var i = 0; i < sat.frames.length; i++) if (sat.frames[i].ok) n++;
+    return n;
   }
-  function satStillShow(src) {            // freeze the last frame on a released panel
-    var st = satEl("still");
-    if (!st || !src) return;
-    st.crossOrigin = "anonymous";        // share the layers' CORS cache entry (instant, untainted)
-    st.src = src + (src.indexOf("?") >= 0 ? "&" : "?") + "cors=1";
-    st.hidden = false;
+  function satLastOk() {
+    for (var i = sat.frames.length - 1; i >= 0; i--) {
+      if (sat.frames[i].ok) return i;
+    }
+    return -1;
   }
-  // After a poll re-cap drops some frames, remove their now-orphaned layer
-  // <img>s; surviving frames keep the layer they were appended with.
-  function satLayersSync() {
-    var host = satEl("layers");
-    if (!host) return;
-    var keep = [];
-    for (var i = 0; i < sat.frames.length; i++) {
-      if (sat.frames[i].img) keep.push(sat.frames[i].img);
+  function satNearestOk(i) {
+    var n = sat.frames.length;
+    for (var d = 0; d < n; d++) {
+      if (i - d >= 0 && sat.frames[i - d].ok) return i - d;
+      if (i + d < n && sat.frames[i + d].ok) return i + d;
     }
-    var kids = host.children, drop = [];
-    for (var k = 0; k < kids.length; k++) {
-      if (keep.indexOf(kids[k]) < 0) drop.push(kids[k]);
-    }
-    for (var r = 0; r < drop.length; r++) {
-      try { drop[r].src = ""; } catch (e) {}
-      host.removeChild(drop[r]);
-    }
+    return -1;
   }
   function satReadout(i) {
     var f = sat.frames[i];
     satEl("scrub").value = String(i);
-    satEl("time").textContent =
-      f.t.slice(0, 16).replace("T", " ") + "Z";
+    satEl("time").textContent = f.t.slice(0, 16).replace("T", " ") + "Z";
   }
+  // ---- locked frame box ------------------------------------------------------
+  // Pin the visible <img> to ONE fixed, centered box per loop, sized from the
+  // reference (first-painted) frame's contain-fit in the stage. Every frame
+  // then renders into the SAME rect (object-fit:fill), so per-frame pixel-size
+  // quirks (e.g. a GOES meso sector re-aim changing the PNG height mid-window)
+  // can never re-letterbox or re-center the imagery between frames. A frame
+  // whose dims differ from the reference stretches a few % instead of making
+  // the whole framing jump. Re-applied on resize; re-locked per band/sector.
+  function satApplyFrameBox() {
+    var stage = satEl("stage"), img = satEl("frame");
+    if (!stage || !img || !sat.boxRefW || !sat.boxRefH) return;
+    var sw = stage.clientWidth, sh = stage.clientHeight;
+    if (!sw || !sh) return;
+    var s = Math.min(sw / sat.boxRefW, sh / sat.boxRefH);
+    img.style.width = Math.round(sat.boxRefW * s) + "px";
+    img.style.height = Math.round(sat.boxRefH * s) + "px";
+    img.style.left = "50%"; img.style.top = "50%";
+    img.style.right = "auto"; img.style.bottom = "auto";
+    img.style.transform = "translate(-50%, -50%)";
+    img.style.objectFit = "fill";
+  }
+  function satLockFrameBox(im) {
+    if (!im || !im.naturalWidth) return;
+    sat.boxRefW = im.naturalWidth;
+    sat.boxRefH = im.naturalHeight;
+    satApplyFrameBox();
+  }
+  // Show frame i, snapping to the nearest loaded frame when i hasn't decoded
+  // (or failed). THE playback primitive: one src swap on the one visible <img>.
   function satShow(i) {
     var n = sat.frames.length;
     if (!n) return;
     if (i < 0) i = 0;
     if (i >= n) i = n - 1;
+    if (!sat.frames[i].ok) { i = satNearestOk(i); if (i < 0) return; }
     sat.idx = i;
-    var f = sat.frames[i];
-    // OPACITY FLIP: reveal this pre-decoded layer, hide the previously-shown one.
-    // No drawImage, no per-frame rasterization — the compositor just changes
-    // which already-painted layer is visible (GPU-cheap at any devicePixelRatio,
-    // including Retina DPR 2, which is what made the canvas drawImage path judder).
-    if (f.img) {
-      if (sat.shownEl && sat.shownEl !== f.img) sat.shownEl.style.opacity = "0";
-      f.img.style.opacity = "1";
-      sat.shownEl = f.img;
-      satStillHide();
-    }
+    var img = satEl("frame");
+    if (!sat.boxRefW) satLockFrameBox(sat.frames[i].img);   // lock before first paint
+    img.src = sat.frames[i].src;
+    img.hidden = false;
+    sat.shown = true;
+    satStatus(false);
     satReadout(i);
   }
-  // Preload + DECODE every frame in the window (the decoded <img> is retained
-  // on the frame object so it isn't GC'd), THEN enable/start playback. Starts
-  // early once all are ready, or after a safety timeout with whatever loaded —
-  // never hangs on one slow frame. Drawing a pre-decoded image is instant, which
-  // is what makes the loop smooth; the ported lazy path decoded on the tick and
-  // stuttered. `buildToken` supersedes a stale rebuild (band/sector/poll swap).
-  function satPreloadAndStart(autoplay) {
-    var token = ++sat.buildToken;
-    sat.ready = false;
-    var loaded = 0, N = sat.frames.length, started = false;
-    satEl("play").disabled = true;
-    if (!N) { satStatus(false); return; }
-    // Off-screen: don't decode the window at all — mark it released so it stays
-    // light (mobile: the stacked, hidden panel never holds 90 decoded frames).
-    // satReacquireFrames() re-runs this once the card scrolls back into view.
-    if (!sat.visible) { sat.released = true; satStatus(false); return; }
-    sat.released = false;
-    satLayersClear();                    // fresh stack for this window
-    satStatus(true, "Loading frames… 0/" + N);
-    function start() {
-      if (started || token !== sat.buildToken) return;
-      started = true; sat.ready = true;
-      satStatus(false);
-      satShow(sat.idx < N ? sat.idx : N - 1);
-      satEl("play").disabled = sat.frames.length < 2;
-      if (autoplay && sat.frames.length >= 2) satPlay();
+  function satFrameClear() {
+    var img = satEl("frame");
+    if (img) { img.removeAttribute("src"); img.hidden = true; }
+    sat.shown = false;
+  }
+
+  // ---- loading ---------------------------------------------------------------
+  // Kick off every frame at once (the browser parallelizes + queues). No decode
+  // gate: the stage paints the moment the TARGET frame (newest, or the
+  // scrub-preserved time on a band switch) has decoded, Play unlocks as soon as
+  // two frames exist, and the loop plays PROGRESSIVELY — it loops whatever has
+  // decoded so far (satAdvance skips !ok frames) and grows as the rest land.
+  // Request order: NEWEST first (it's the first paint, so it must not queue
+  // behind 89 older frames), then oldest->newest so the playable prefix grows
+  // contiguously from the start of the loop.
+  function satLoadFrames() {
+    var token = sat.buildToken;
+    var newest = sat.frames.length - 1;
+    var order = [];
+    for (var i = 0; i < sat.frames.length; i++) {
+      if (!sat.frames[i].img) order.push(i);
     }
-    var layersHost = satEl("layers");
-    sat.frames.forEach(function (f) {
+    if (order.length > 1 && order[order.length - 1] === newest) {
+      order.pop(); order.unshift(newest);
+    }
+    order.forEach(function (oi) {
+      var f = sat.frames[oi];
       var im = new Image();
-      // CORS-clean load so the GIF export canvas can read pixels later (a
-      // cross-origin CDN image would taint the canvas and stall gif.js at 0%).
-      im.crossOrigin = "anonymous";
+      im.crossOrigin = "anonymous";    // CORS-clean so GIF export can read pixels
       im.decoding = "async";
-      im.className = "sat-layer";
-      im.style.opacity = "0";            // hidden layer until satShow flips it
+      if (oi === newest) im.fetchPriority = "high";   // the first-paint frame
       f.img = im;
-      if (layersHost) layersHost.appendChild(im);   // stack it in the DOM
       function done(ok) {
-        if (token !== sat.buildToken) return;
-        f.ok = !!ok; loaded++;
-        if (!started) satStatus(true, "Loading frames… " + loaded + "/" + N);
-        if (loaded >= N) start();
+        if (token !== sat.buildToken) return;   // superseded by a band/sector switch
+        f.done = true; f.ok = !!ok;
+        satFrameSettled(f);
       }
       im.onload = function () {
-        if (im.decode) {
-          im.decode().then(function () { done(true); })
-                     .catch(function () { done(true); });
-        } else { done(true); }
+        if (im.decode) { im.decode().then(function () { done(true); },
+                                          function () { done(true); }); }
+        else { done(true); }
       };
       im.onerror = function () { done(false); };
-      // ?cors=1 forces a distinct cache entry fetched WITH CORS, so a copy
-      // cached earlier without CORS can't taint this one.
-      im.src = f.src + (f.src.indexOf("?") >= 0 ? "&" : "?") + "cors=1";
+      im.src = f.src;
     });
-    if (sat.loadTimer) clearTimeout(sat.loadTimer);
-    sat.loadTimer = setTimeout(start, SAT_PRELOAD_TIMEOUT_MS);
   }
-  function satNearest(t) {
-    var best = sat.frames.length - 1, dBest = Infinity;
-    var want = new Date(t).getTime();
+  function satAllSettled() {
     for (var i = 0; i < sat.frames.length; i++) {
-      var d = Math.abs(new Date(sat.frames[i].t).getTime() - want);
-      if (d < dBest) { dBest = d; best = i; }
+      if (!sat.frames[i].done) return false;
     }
-    return best;
+    return true;
   }
-  // Uniform subsample of `arr` down to at most `cap`, keeping first + last
-  // (proven floater-loop helper). Bounds how many frames we decode + retain.
-  function satSubsample(arr, cap) {
-    if (arr.length <= cap) return arr.slice();
-    var out = [];
-    for (var i = 0; i < cap; i++) {
-      out.push(arr[Math.round(i * (arr.length - 1) / (cap - 1))]);
+  function satFrameSettled(f) {
+    satEl("play").disabled = satDecoded() < 2;
+    // Quiet progress note in the band label while the window streams in, so a
+    // growing loop reads as "loading" rather than "short".
+    var lbl = satEl("band-label");
+    if (lbl) {
+      var done = 0;
+      for (var i = 0; i < sat.frames.length; i++) if (sat.frames[i].done) done++;
+      lbl.textContent = done < sat.frames.length
+        ? sat.bandLabelBase + " · loading " + done + "/" + sat.frames.length
+        : sat.bandLabelBase;
     }
-    return out;
-  }
-  function satSelectBand(slug, keepTime) {
-    var prevT = (keepTime && sat.frames.length) ? sat.frames[sat.idx].t : null;
-    sat.band = slug;
-    var b = (sat.man && sat.man.bands && sat.man.bands[slug]) || null;
-    var raw = satSubsample(satSortDedupe(b && b.frames), SAT_FRAME_CAP);
-    sat.frames = raw.map(function (f) {
-      return { t: f.t, key: f.key, src: CDN + "/" + f.key, img: null, ok: false };
-    });
-    satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
-    satEl("band-label").textContent = b ? (b.label || slug) : "";
-    satEl("empty").style.display = sat.frames.length ? "none" : "block";
-    var host = satEl("bands");
-    if (host && host.value !== slug) host.value = slug;   // sync the <select>
-    if (!sat.frames.length) {
-      satLayersClear(); satStillHide();
-      satEl("time").textContent = "—";
-      satEl("play").disabled = true;
-      sat.ready = false;
-      return;
+    if (!sat.shown) {
+      // First paint: the target frame the instant IT decodes; if the target
+      // turned out to be a gap, satShow snaps to the nearest loaded frame.
+      var tgt = sat.frames[sat.idx];
+      if (tgt && tgt.done) satShow(sat.idx);
+      if (!sat.shown && satDecoded() === 0 &&
+          sat.frames.every(function (x) { return x.done; })) {
+        // Every frame failed (stale manifest vs pruned R2): drop the loading
+        // veil and say so instead of spinning forever. A later poll appending
+        // a frame that decodes heals this via the satShow snap above.
+        satStatus(false);
+        sat.inactive = true;
+        var note = satEl("inactive");
+        if (note) { note.textContent = "No frames could be loaded."; note.hidden = false; }
+      }
+    } else if (sat.followNew && !sat.playing && f.ok) {
+      // Parked on newest when the poll appended frames: hop forward as each
+      // newer frame comes in (follow-live). Any scrub/step/play clears this.
+      var last = satLastOk();
+      if (last > sat.idx) satShow(last);
     }
-    sat.idx = prevT != null ? satNearest(prevT) : sat.frames.length - 1;
-    // Decode-gate the new window; don't auto-start (two side-by-side viewers —
-    // the user presses Play, and by then the frames are decoded → smooth).
-    satPreloadAndStart(false);
   }
-  function satStep(d) { satPause(); satShow(sat.idx + d); }
-  function satPause() {
-    sat.playing = false;
-    if (sat.raf) { cancelAnimationFrame(sat.raf); sat.raf = null; }
-    satEl("play").innerHTML = "&#9654; Play";
+
+  // ---- playback --------------------------------------------------------------
+  function satStepMs() {
+    var ms = SAT_BASE_MS / (sat.speed || 1);
+    if (sat.idx !== satLastOk()) return ms;
+    // Dwell only on the loop's TRUE newest frame. While frames are still
+    // streaming in, the frontier of loaded frames is not "newest" — dwelling
+    // there would make the growing loop feel like it stalls on every pass.
+    if (sat.idx === sat.frames.length - 1 || satAllSettled()) {
+      return ms * SAT_LAST_FRAME_DWELL;
+    }
+    return ms;
   }
-  // rAF loop with a timestamp accumulator (even cadence, no setInterval drift),
-  // dwelling on the newest frame before wrapping. Every frame is pre-decoded so
-  // satShow's draw is instant — this is the proven smooth path (the ported lazy
-  // path decoded on the tick and stuttered).
+  function satAdvance() {
+    var n = sat.frames.length;
+    if (!n) return;
+    var j = sat.idx;
+    for (var s = 0; s < n; s++) {
+      j = (j + 1) % n;
+      if (sat.frames[j].ok) { satShow(j); return; }
+    }
+  }
+  // The whole pacing engine (the the-reference-archive pattern). Don't "improve" it.
   function satTick(ts) {
-    if (!sat.playing) { sat.raf = null; return; }
+    if (!sat.playing) return;
+    if (ts - sat.lastTick >= satStepMs()) { sat.lastTick = ts; satAdvance(); }
     sat.raf = requestAnimationFrame(satTick);
-    var atLast = sat.idx >= sat.frames.length - 1;
-    var interval = satStepMs() * (atLast ? SAT_LAST_FRAME_DWELL : 1);
-    if (ts - sat.lastTick < interval) return;
-    sat.lastTick = ts;
-    var j = sat.idx >= sat.frames.length - 1 ? 0 : sat.idx + 1;
-    satShow(j);
-    sat.presented.push(ts);                  // inter-frame timing telemetry
-    if (sat.presented.length > 600) sat.presented.shift();
   }
   function satPlay() {
-    if (!sat.ready || sat.frames.length < 2) return;
+    if (sat.playing || satDecoded() < 2) return;
     sat.playing = true;
+    sat.followNew = false;
     satEl("play").innerHTML = "&#10074;&#10074; Pause";
-    if (sat.raf) cancelAnimationFrame(sat.raf);
     sat.lastTick = 0;
     sat.raf = requestAnimationFrame(satTick);
   }
-  function satTogglePlay() {
-    if (sat.playing) { satPause(); return; }
-    satPlay();
+  function satPause() {
+    sat.playing = false;
+    sat.followNew = false;
+    if (sat.raf) { cancelAnimationFrame(sat.raf); sat.raf = null; }
+    satEl("play").innerHTML = "&#9654; Play";
   }
-  // ---- speed presets ------------------------------------------------------
+  function satTogglePlay() { if (sat.playing) satPause(); else satPlay(); }
+  function satStep(d) {
+    satPause();
+    var n = sat.frames.length, j = sat.idx;
+    for (var s = 0; s < n; s++) {
+      j += d;
+      if (j < 0 || j >= n) return;       // no wrap on manual stepping
+      if (sat.frames[j].ok) { satShow(j); return; }
+    }
+  }
+
+  // ---- speed presets ---------------------------------------------------------
   function satSetSpeed(mult) {
     sat.speed = mult;
     var host = satEl("speed");
@@ -1596,13 +1594,13 @@ function makeSatViewer(idPrefix, opts) {
       Math.min(SAT_SPEEDS.length - 1, i + dir))]);
   }
 
-  // ---- client-side GIF export (gif.js) ------------------------------------
-  // RESTORED from the standalone floater-loop widget. The loop keeps every frame
-  // DECODED (sat.frames[i].img), so we feed those straight into gif.js with the
-  // user's chosen frame count / FPS / skip from the GIF Maker dialog — no screen
-  // capture. The worker is fetched as a blob URL to dodge CORS, with a CDN
-  // fallback. gif.js quality 10 (NeuQuant) keeps satellite gradients clean,
-  // unlike the ported fixed 3-3-2 palette. Replaces the no-options encoder.
+  // ---- client-side GIF export (gif.js) ---------------------------------------
+  // The loop keeps every frame as a decoded Image (sat.frames[i].img), so we
+  // feed those straight into gif.js with the user's chosen frame count / FPS /
+  // skip from the GIF Maker dialog — no screen capture, and the export canvas
+  // exists only inside this function. The worker is fetched as a blob URL to
+  // dodge CORS, with a CDN fallback. gif.js quality 10 (NeuQuant) keeps
+  // satellite gradients clean.
   var SAT_GIF_MAX_W = 900;      // downscale long side for shareable file sizes
   var satGifWorkerUrl = null;
   function satEnsureGifWorker(cb) {
@@ -1644,7 +1642,7 @@ function makeSatViewer(idPrefix, opts) {
 
     var sel = sat.frames.slice(total - n);              // last N (most recent)
     if (skip > 0) sel = sel.filter(function (_, i) { return i % (skip + 1) === 0; });
-    sel = sel.filter(function (f) { return f.img && f.img.naturalWidth; });
+    sel = sel.filter(function (f) { return f.ok && f.img && f.img.naturalWidth; });
     if (sel.length < 2) {
       alert("Not enough loaded frames for a GIF; let it preload, or lower \"Skip every\".");
       return;
@@ -1664,8 +1662,7 @@ function makeSatViewer(idPrefix, opts) {
     // Guarantee the encoding lock is ALWAYS released. gif.js can error or hang
     // (worker fetch failure, decode race) and then its "finished" event never
     // fires — without this, sat.encoding would stay true and silently freeze the
-    // 60 s auto-refresh forever. The old self-contained encoder had try/finally
-    // cleanup; this restores that guarantee for the gif.js path.
+    // 60 s auto-refresh forever.
     var settled = false, safety = null;
     function satGifEnd() { if (settled) return; settled = true;
       if (safety) { clearTimeout(safety); safety = null; } }
@@ -1699,8 +1696,8 @@ function makeSatViewer(idPrefix, opts) {
         status.textContent = "Done!"; mk.disabled = false;
         setTimeout(satCloseGifDialog, 700);
       });
-      // Hold the newest frame longer before the GIF loops, mirroring the player's
-      // SAT_LAST_FRAME_DWELL (the dc4bc05 "hold last frame" enhancement).
+      // Hold the newest frame longer before the GIF loops, mirroring the
+      // player's SAT_LAST_FRAME_DWELL.
       var lastIdx = sel.length - 1, added = 0;
       sel.forEach(function (f, i) {
         octx.clearRect(0, 0, W, H);
@@ -1711,15 +1708,18 @@ function makeSatViewer(idPrefix, opts) {
         added++;
       });
       if (added < 2) { satGifFail("Could not read enough frames for a GIF."); return; }
-      gif.render();
-      // belt-and-suspenders: release the lock if neither finished nor error fires.
+      // belt-and-suspenders: release the lock if neither finished nor error
+      // fires. Armed BEFORE render(), which can throw synchronously when the
+      // worker fell back to the cross-origin CDN URL (new Worker SecurityError).
       safety = setTimeout(function () {
         satGifFail("GIF encoding timed out — try again.");
       }, 60000);
+      try { gif.render(); }
+      catch (e) { satGifFail("GIF encoder failed to start."); }
     });
   }
 
-  // ---- auto-refresh: re-poll the manifest while watching ------------------
+  // ---- 60 s auto-refresh: re-poll the manifest while watching ----------------
   function satFetchBands() {
     return Promise.all(SAT_SOURCES.map(function (src) {
       return fetchJson(src.top).then(function (top) {
@@ -1746,6 +1746,25 @@ function makeSatViewer(idPrefix, opts) {
       if (!out.length || raw[i].t !== out[out.length - 1].t) out.push(raw[i]);
     }
     return out;
+  }
+  // Uniform subsample of `arr` down to at most `cap`, keeping first + last.
+  // Bounds how many frames we preload + retain.
+  function satSubsample(arr, cap) {
+    if (arr.length <= cap) return arr.slice();
+    var out = [];
+    for (var i = 0; i < cap; i++) {
+      out.push(arr[Math.round(i * (arr.length - 1) / (cap - 1))]);
+    }
+    return out;
+  }
+  function satNearest(t) {
+    var best = sat.frames.length - 1, dBest = Infinity;
+    var want = new Date(t).getTime();
+    for (var i = 0; i < sat.frames.length; i++) {
+      var d = Math.abs(new Date(sat.frames[i].t).getTime() - want);
+      if (d < dBest) { dBest = d; best = i; }
+    }
+    return best;
   }
   function satAddBandButton(slug) {        // band rail is a <select>: add an <option>
     var host = satEl("bands");
@@ -1778,7 +1797,6 @@ function makeSatViewer(idPrefix, opts) {
   }
   function satRepollApply(bands) {
     if (sat.encoding) return;          // don't churn frames mid-GIF-encode
-    if (sat.released) return;          // off-screen — don't decode-append while hidden
     if (!bands) { satUpdateInactive(true); return; }
     if (!sat.man) sat.man = { bands: {} };
     for (var bs in bands) {
@@ -1787,6 +1805,20 @@ function makeSatViewer(idPrefix, opts) {
       sat.man.bands[bs] = bands[bs];
       if (isNew) satAddBandButton(bs);
     }
+    // Recovery from an empty first init: no band is selected yet, but the
+    // poll just found some — run the init-time default pick. Without this a
+    // panel that started off-season could never come online by itself.
+    if (!sat.band) {
+      var slugs = [];
+      for (var s2 in sat.man.bands) {
+        if (sat.man.bands.hasOwnProperty(s2)) slugs.push(s2);
+      }
+      if (!slugs.length) { satUpdateInactive(true); return; }
+      satEl("empty").style.display = "none";
+      satSelectBand(slugs.indexOf("ir") >= 0 ? "ir" : slugs[0], false);
+      satUpdateInactive();
+      return;
+    }
     var nb = sat.man.bands[sat.band];
     var fresh = satSortDedupe(nb && nb.frames);
     if (!sat.frames.length) {
@@ -1794,148 +1826,90 @@ function makeSatViewer(idPrefix, opts) {
       satUpdateInactive();
       return;
     }
-    // Splice genuinely-new frames into the RUNNING loop: preload + DECODE each
-    // (so the tick never draws an undecoded frame), then merge sorted, re-cap to
-    // SAT_FRAME_CAP, and keep the playhead on the same timestamp. Mirrors the
-    // proven floater-loop refreshLoop; the newest-only filter means we never
-    // re-decode a frame already in the window.
     var lastT = sat.frames[sat.frames.length - 1].t;
-    var wasNewest = sat.idx >= sat.frames.length - 1;
-    var curT = sat.frames[sat.idx] ? sat.frames[sat.idx].t : null;
     var toAdd = fresh.filter(function (f) { return f.t > lastT; });
     if (!toAdd.length) { satUpdateInactive(); return; }
-    var pending = toAdd.length, newFrames = [];
-    function merge() {
-      var all = sat.frames.concat(newFrames).sort(function (a, b) {
-        return a.t < b.t ? -1 : a.t > b.t ? 1 : 0;
-      });
-      sat.frames = satSubsample(all, SAT_FRAME_CAP);
-      satLayersSync();                 // remove layer <img>s for frames the re-cap dropped
-      var ni = -1;
-      if (curT) {
-        for (var qi = 0; qi < sat.frames.length; qi++) {
-          if (sat.frames[qi].t === curT) { ni = qi; break; }
-        }
+    // Append the genuinely-new frames and let them load in the background; a
+    // running loop picks each one up as soon as it decodes (an unloaded frame
+    // is simply skipped). Keep the playhead on the same timestamp across the
+    // re-cap; when parked on newest, follow-live as the new frames decode.
+    var wasNewest = !sat.playing && sat.idx >= satLastOk();
+    var curT = sat.frames[sat.idx] ? sat.frames[sat.idx].t : null;
+    sat.frames = satSubsample(sat.frames.concat(toAdd.map(mkFrame)),
+                              SAT_FRAME_CAP);
+    satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
+    var ni = -1;
+    if (curT) {
+      for (var qi = 0; qi < sat.frames.length; qi++) {
+        if (sat.frames[qi].t === curT) { ni = qi; break; }
       }
-      // keep the playhead on the same frame; if the re-cap dropped it, snap to
-      // the nearest surviving time (not a jarring jump to newest) unless we were
-      // already parked on newest (follow-live).
-      sat.idx = wasNewest ? sat.frames.length - 1
-              : (ni >= 0 ? ni : satNearest(curT));
-      satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
-      if (wasNewest && !sat.playing) satShow(sat.frames.length - 1);
-      else satReadout(sat.idx);
-      satUpdateInactive();
     }
-    toAdd.forEach(function (d) {
-      var f = { t: d.t, key: d.key, src: CDN + "/" + d.key, img: null, ok: false };
-      newFrames.push(f);
-      var im = new Image();
-      im.crossOrigin = "anonymous"; im.decoding = "async";
-      im.className = "sat-layer"; im.style.opacity = "0";
-      f.img = im;
-      var lh = satEl("layers"); if (lh) lh.appendChild(im);   // stack the new layer
-      function fin(ok) { f.ok = !!ok; if (--pending <= 0) merge(); }
-      im.onload = function () {
-        if (im.decode) {
-          im.decode().then(function () { fin(true); })
-                     .catch(function () { fin(true); });
-        } else { fin(true); }
-      };
-      im.onerror = function () { fin(false); };
-      im.src = f.src + (f.src.indexOf("?") >= 0 ? "&" : "?") + "cors=1";
-    });
-  }
-  function satPollActive() {
-    var hidden = (typeof document !== "undefined") && document.hidden;
-    return !ENDED && !hidden && !!satEl("card");
+    sat.idx = ni >= 0 ? ni : (curT ? satNearest(curT) : sat.frames.length - 1);
+    if (sat.shown) satReadout(sat.idx);
+    if (wasNewest) sat.followNew = true;
+    satLoadFrames();
+    satUpdateInactive();
   }
   function satStopPoll() {
     if (sat.pollTimer) { clearTimeout(sat.pollTimer); sat.pollTimer = null; }
   }
   function satSchedulePoll(delay) {
     satStopPoll();
-    if (ENDED) return;
     sat.pollTimer = setTimeout(function () {
       sat.pollTimer = null;
-      if (!satPollActive()) { satStartPoll(); return; }
+      // A sector/storm re-init mid-fetch bumps buildToken; a stale response
+      // must not splice the previous sector's frames into the new loop.
+      var token = sat.buildToken;
       satFetchBands().then(function (bands) {
-        satRepollApply(bands);
+        if (token === sat.buildToken) satRepollApply(bands);
         satSchedulePoll(sat.inactive ? SAT_POLL_BACKOFF_MS : SAT_POLL_MS);
       }).catch(function () { satSchedulePoll(SAT_POLL_MS); });
     }, delay);
   }
   function satStartPoll() {
-    if (ENDED || sat.pollTimer) return;
+    if (sat.pollTimer) return;
     satSchedulePoll(sat.inactive ? SAT_POLL_BACKOFF_MS : SAT_POLL_MS);
   }
-  // ---- memory: release the decoded frame window while OFF-SCREEN ------------
-  // Two side-by-side instances each retain up to SAT_FRAME_CAP decoded ~1320px
-  // frames. On mobile the cards STACK (one visible at a time), so a hidden
-  // instance frees its <img> bitmaps and re-decodes (from the HTTP cache) on
-  // return — the on-screen canvas keeps showing its last frame meanwhile, and
-  // the decode-gate makes the reveal smooth. Desktop shows both, so neither
-  // releases. The cap stays 90; this just bounds the SIMULTANEOUS decoded set.
-  function satReleaseFrames() {
-    if (sat.released || !sat.frames.length) return;
-    sat.wasPlayingHidden = sat.playing;
-    satPause();
-    sat.buildToken++;                 // supersede any in-flight preload
-    if (sat.loadTimer) { clearTimeout(sat.loadTimer); sat.loadTimer = null; }
-    // freeze the current frame as a single still so the panel isn't blank while
-    // it peeks on-screen, THEN drop all the decoded layer <img>s (GC the bitmaps).
-    var cur = sat.frames[sat.idx];
-    satStillShow(cur && cur.src);
-    satLayersClear();
-    for (var i = 0; i < sat.frames.length; i++) { sat.frames[i].img = null; sat.frames[i].ok = false; }
-    sat.ready = false;
-    sat.released = true;
-    satEl("play").disabled = true;    // re-enabled once re-decoded on return
-  }
-  function satReacquireFrames() {
-    if (!sat.released) return;
-    sat.released = false;
-    if (!sat.frames.length) return;   // nothing yet; the init/poll path will fill
-    satPreloadAndStart(sat.wasPlayingHidden);   // re-decode (cache-fast); resume if it was playing
-    sat.wasPlayingHidden = false;
-  }
-  function satSetVisible(vis) {
-    if (vis === sat.visible) return;
-    sat.visible = vis;
-    if (vis) { satReacquireFrames(); satStartPoll(); }
-    else { satReleaseFrames(); satStopPoll(); }
-  }
-  // hysteresis on this panel's OWN visible fraction (used by the desktop branch
-  // of the coordinator): acquire at >=40% shown, release below 20% -> no flicker.
-  function satWantsVisible() {
-    sat.intersecting = sat.intersecting ? (sat.ratio >= 0.2) : (sat.ratio >= 0.4);
-    return sat.intersecting;
-  }
-  function satSetupVisibility() {
-    var card = satEl("card");
-    if (card && typeof IntersectionObserver === "function") {
-      // Default HIDDEN (ratio 0) until the observer reports the real ratio, so
-      // nothing cold-decodes before we know it's on-screen.
-      sat.ratio = 0; sat.intersecting = false;
-      SAT_PANELS.push({ ratio: function () { return sat.ratio; },
-                        wants: satWantsVisible, apply: satSetVisible });
-      var io = new IntersectionObserver(function (entries) {
-        var e = entries[entries.length - 1];          // latest entry
-        sat.ratio = e.isIntersecting ? e.intersectionRatio : 0;
-        satCoordinate();                              // re-decide across all panels
-      }, { root: null, threshold: [0, 0.15, 0.3, 0.45, 0.6, 0.8, 1] });
-      io.observe(card);
-      satCoordinate();
-    } else {
-      sat.ratio = 1; sat.intersecting = true;         // no IO -> always decode (no release)
-      satSetVisible(true);
+
+  // ---- band selection --------------------------------------------------------
+  function satSelectBand(slug, keepTime) {
+    var prevT = (keepTime && sat.frames.length) ? sat.frames[sat.idx].t : null;
+    sat.band = slug;
+    sat.buildToken++;                  // supersede in-flight loads from the old band
+    sat.shown = false;
+    sat.followNew = false;
+    sat.boxRefW = 0; sat.boxRefH = 0;  // re-lock the frame box on the new band
+    var b = (sat.man && sat.man.bands && sat.man.bands[slug]) || null;
+    var raw = satSubsample(satSortDedupe(b && b.frames), SAT_FRAME_CAP);
+    sat.frames = raw.map(mkFrame);
+    satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
+    sat.bandLabelBase = b ? (b.label || slug) : "";
+    satEl("band-label").textContent = sat.bandLabelBase;
+    satEl("empty").style.display = sat.frames.length ? "none" : "block";
+    var host = satEl("bands");
+    if (host && host.value !== slug) host.value = slug;   // sync the <select>
+    satEl("play").disabled = true;
+    if (!sat.frames.length) {
+      satFrameClear();
+      satStatus(false);
+      satEl("time").textContent = "—";
+      return;
     }
+    sat.idx = prevT != null ? satNearest(prevT) : sat.frames.length - 1;
+    // The previous band's frame stays visible under the translucent veil until
+    // the new band's target frame decodes — no blank flash on a band switch.
+    satStatus(true, "Loading…");
+    satLoadFrames();
   }
 
-  var wired = false;   // one-time transport wiring (survives sector re-inits)
+  // ---- transport wiring (once per mount) -------------------------------------
+  var wired = false;
   function wireTransport() {
     if (wired) return;
     wired = true;
+    var fr = satEl("frame");
+    if (fr) fr.crossOrigin = "anonymous";   // share the preloads' CORS cache entries
+    window.addEventListener("resize", satApplyFrameBox);   // keep the locked box fitted
     satBuildSpeed();
     satEl("step-back").addEventListener("click", function () { satStep(-1); });
     satEl("step-fwd").addEventListener("click", function () { satStep(1); });
@@ -1968,28 +1942,26 @@ function makeSatViewer(idPrefix, opts) {
     });
   }
 
-  // ---- (re)load the instance for the current source/sector selection ------
+  // ---- (re)load the instance for the current source/sector selection --------
   // Resets the band/frame state (so a sector switch doesn't append to the old
   // sector's timeline) but keeps the one-time transport wiring + the poll loop.
   function initSatellite() {
     satStopPoll();
     satPause();
-    // hard reset of the per-instance frame state on a (re)load.
     sat.man = null; sat.band = null; sat.frames = []; sat.idx = 0;
-    sat.buildToken++; sat.ready = false; sat.encoding = false;
-    sat.released = false; sat.wasPlayingHidden = false;   // visible/intersecting persist
-    if (sat.loadTimer) { clearTimeout(sat.loadTimer); sat.loadTimer = null; }
-    sat.inactive = false; sat.presented = [];
-    satLayersClear(); satStillHide();
+    sat.buildToken++; sat.encoding = false;
+    sat.shown = false; sat.followNew = false; sat.inactive = false;
+    sat.boxRefW = 0; sat.boxRefH = 0; sat.bandLabelBase = "";
+    satFrameClear();
     var inactiveNote = satEl("inactive");
     if (inactiveNote) { inactiveNote.hidden = true; inactiveNote.textContent = ""; }
     var bandsHost = satEl("bands"); if (bandsHost) bandsHost.innerHTML = "";
+    satEl("play").disabled = true;
     satStatus(true, "Loading…");
     satFetchBands().then(function (bands) {
       if (!bands) {
         satStatus(false);
         satEl("empty").style.display = "block";
-        satLayersClear(); satStillHide();
         satEl("time").textContent = "—";
         satEl("band-label").textContent = "";
         // keep polling: a storm/sector can come online later.
@@ -1998,7 +1970,6 @@ function makeSatViewer(idPrefix, opts) {
       }
       satEl("empty").style.display = "none";
       sat.man = { bands: bands };
-      satStatus(false);
       satEl("bands").innerHTML = "";
       var slugs = [];
       for (var slug in bands) {
@@ -2007,12 +1978,12 @@ function makeSatViewer(idPrefix, opts) {
         satAddBandButton(slug);
       }
       if (!slugs.length) {
+        satStatus(false);
         satEl("empty").style.display = "block";
         satStartPoll();
         return;
       }
       satSelectBand(slugs.indexOf("ir") >= 0 ? "ir" : slugs[0], false);
-      wireTransport();
       satUpdateInactive();
       satStartPoll();
     }).catch(function () {
@@ -2029,7 +2000,7 @@ function makeSatViewer(idPrefix, opts) {
     if (selEl) selEl.addEventListener("change", function () { initSatellite(); });
   }
 
-  satSetupVisibility();   // must precede init so an off-screen panel skips the cold decode
+  wireTransport();   // at mount, so a failed first init can still recover via the poll
   initSatellite();
 
   // public hooks (tests + the floater's storm-select rebuild)
@@ -2039,13 +2010,15 @@ function makeSatViewer(idPrefix, opts) {
     state: function () {
       return { band: sat.band, idx: sat.idx, frames: sat.frames.length,
                playing: sat.playing, speed: sat.speed,
-               ready: sat.ready, decoded: sat.frames.filter(
-                 function (f) { return f.ok; }).length,
-               released: sat.released, visible: sat.visible,
-               inactive: sat.inactive, polling: !!sat.pollTimer,
-               presented: sat.presented.slice() };
+               decoded: satDecoded(), shown: sat.shown,
+               inactive: sat.inactive, polling: !!sat.pollTimer };
     },
-    pollNow: function () { return satFetchBands().then(satRepollApply); }
+    pollNow: function () {
+      var token = sat.buildToken;
+      return satFetchBands().then(function (bands) {
+        if (token === sat.buildToken) satRepollApply(bands);
+      });
+    }
   };
 }
 
