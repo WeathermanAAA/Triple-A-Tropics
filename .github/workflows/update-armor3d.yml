@@ -83,6 +83,26 @@ jobs:
                    rm -f armor3d/armor3d_climatology.nc; }
           fi
 
+      - name: Fetch TCHP record envelope from R2 (record-hatch build input)
+        # armor3d_tchp_record_1993_present.nc (~118 MiB) is a build INPUT
+        # like the climatology above: per-pixel per-week-of-year TCHP
+        # extremes baked by bake_armor3d_tchp_records.py and uploaded to
+        # R2 sst/records/. It lives on R2 only (gitignored). Non-fatal:
+        # if R2 is unreachable, load_tchp_records() finds no file and the
+        # anomaly maps render plain with no record hatch (graceful
+        # absence — same degradation as a missing climatology).
+        run: |
+          set -uo pipefail
+          mkdir -p sst/records
+          if [ -f sst/records/armor3d_tchp_record_1993_present.nc ]; then
+            echo "record envelope already present in workspace; skipping R2 fetch."
+          else
+            curl -fsSL https://cdn.triple-a-tropics.com/sst/records/armor3d_tchp_record_1993_present.nc \
+              -o sst/records/armor3d_tchp_record_1993_present.nc \
+              || { echo "record envelope unavailable from R2; anomaly maps render without record hatching."; \
+                   rm -f sst/records/armor3d_tchp_record_1993_present.nc; }
+          fi
+
       - name: Generate ARMOR3D weekly plots
         # Fetches one weekly slice of ARMOR3D (T at 0-500 m, global,
         # ~8 MB) via the Copernicus Marine subsetter, derives D26 + TCHP,
