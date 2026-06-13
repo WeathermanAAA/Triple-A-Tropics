@@ -80,7 +80,8 @@
   function EnsCentersViewer(root) {
     this.root = root;
     this.dom = {
-      stage: el('enscenters-stage'),
+      mapframe: el('enscenters-mapframe'),
+      left: root.querySelector('.ens-left'),
       canvas: el('enscenters-canvas'),
       status: el('enscenters-status'),
       models: el('enscenters-models'),
@@ -138,14 +139,13 @@
 
   EnsCentersViewer.prototype._showEmpty = function (on) {
     if (this.dom.empty) this.dom.empty.style.display = on ? 'block' : 'none';
-    // Hide the whole viewer chrome (stage + gutter + scrubber + captions), not
-    // just the stage, so the empty state does not sit beside dead controls
-    // (HAFS hides its controls the same way).
-    var hide = [this.dom.stage, this.root.querySelector('.vw-aside'),
-                this.root.querySelector('.vw-below')];
-    var caps = this.root.querySelectorAll('.hafs-caption');
-    for (var c = 0; c < caps.length; c++) hide.push(caps[c]);
-    for (var i = 0; i < hide.length; i++) if (hide[i]) hide[i].style.display = on ? 'none' : '';
+    // Hide the whole viewer (map row + controls + scrubber + caption) so the
+    // empty state does not sit beside dead controls.
+    var sels = ['.ens-row', '.ens-controlbar', '.ens-scrub', '.ens-caption'];
+    for (var i = 0; i < sels.length; i++) {
+      var el2 = this.root.querySelector(sels[i]);
+      if (el2) el2.style.display = on ? 'none' : '';
+    }
   };
 
   // ---- boot: load basemap + manifest in parallel ----
@@ -287,16 +287,16 @@
 
   // ---- canvas sizing + basemap (shared TATRegions projection/basemap) ----
   EnsCentersViewer.prototype._resize = function () {
-    var stage = this.dom.stage;
-    var cssW = stage.clientWidth || 900;
+    var availW = (this.dom.mapframe && this.dom.mapframe.clientWidth) || 800;
+    this._lastAvailW = availW;
     var e = this.extent;
     var aspect = (e[1] - e[0]) / (e[3] - e[2]);   // per-region aspect
-    var cssH = cssW / aspect;
+    var cssW = availW, cssH = cssW / aspect;
     // cap height for tall/portrait regions so the canvas stays in the viewport;
-    // shrink width to preserve aspect.
-    var maxH = Math.min(660, (window.innerHeight || 800) * 0.72);
-    if (cssH > maxH) { cssH = maxH; cssW = Math.round(cssH * aspect); }
-    cssW = Math.round(cssW); cssH = Math.round(cssH);
+    // shrink width to preserve aspect (it then centers in the frame).
+    var maxH = Math.min(640, (window.innerHeight || 800) * 0.7);
+    if (cssH > maxH) { cssH = maxH; cssW = cssH * aspect; }
+    cssW = Math.min(Math.round(cssW), availW); cssH = Math.round(cssH);
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.W = Math.round(cssW * dpr);
     this.H = Math.round(cssH * dpr);
@@ -306,6 +306,13 @@
     this.dpr = dpr;
     this.ringR = 2.6 * dpr;     // ring radius (device px)
     this.ringLW = 1.7 * dpr;    // ring stroke ~1.5-2 css px
+    // On desktop (side-by-side) pin the peak column to the map column's height
+    // so it scrolls internally instead of stretching the row. On mobile (stacked)
+    // clear it so the CSS max-height applies.
+    if (this.dom.left && this.dom.peaks) {
+      this.dom.peaks.style.height =
+        (window.innerWidth > 820) ? (this.dom.left.clientHeight + 'px') : '';
+    }
     this._drawBasemap();
     if (this.frames.length) this._show(this.idx);
   };
@@ -517,7 +524,7 @@
 
     if (window.ResizeObserver) {
       this._ro = new ResizeObserver(function () { self._resizeDebounced(); });
-      this._ro.observe(this.dom.stage);
+      if (this.dom.mapframe) this._ro.observe(this.dom.mapframe);
     } else {
       window.addEventListener('resize', function () { self._resizeDebounced(); });
     }
@@ -526,7 +533,14 @@
   EnsCentersViewer.prototype._resizeDebounced = function () {
     var self = this;
     clearTimeout(this._rt);
-    this._rt = setTimeout(function () { if (self.frames.length) self._resize(); }, 120);
+    this._rt = setTimeout(function () {
+      if (!self.frames.length) return;
+      // only re-render on a WIDTH change - resizing the canvas changes the
+      // frame's height, which would otherwise re-trigger the observer forever.
+      var w = (self.dom.mapframe && self.dom.mapframe.clientWidth) || 0;
+      if (w === self._lastAvailW) return;
+      self._resize();
+    }, 120);
   };
 
   EnsCentersViewer.prototype._hover = function (ev) {

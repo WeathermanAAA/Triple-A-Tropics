@@ -234,49 +234,76 @@
     }
   }
 
-  /* ---- Ensemble Cyclone Centers viewer (models/enscenters.js). Isolated from
-     the HAFS viewer: it only reuses the shared chrome classes (.vw-grid,
-     .hafs-stage, .vw-aside, .vw-below, .hafs-*) for layout; these enscenters-*
-     rules style its own canvas, scrubber, legend, peak table and tooltip. */
-  #enscenters-stage {
-    width: clamp(320px, 58vw, 900px);
-    min-height: auto; padding: 0; background: #07101c;
-  }
-  #enscenters-canvas { display: block; width: 100%; height: auto; cursor: crosshair; }
+  /* ---- Ensemble Cyclone Centers viewer (models/enscenters.js). Purpose-built
+     layout (NOT the HAFS .vw-grid gutter, which overlapped the map): a title
+     top-left, the map dominant + contained with the legend bottom-left INSIDE
+     the frame, the per-member peak table as a fixed-width right column with its
+     own scroll, and the controls in a bar beneath. Matches Andrew's reference
+     figure. Only the transport BUTTON styling (.hafs-btn) is reused. */
+  .ens-viewer { display: block; padding: 4px; }
+  .ens-row { display: flex; gap: 14px; align-items: flex-start; }
+  .ens-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .ens-titlebox { padding: 2px 2px 0; }
+  .ens-title { margin: 0; font-size: 19px; font-weight: 800; color: var(--fg);
+    letter-spacing: 0.2px; }
+  .ens-subtitle { margin: 3px 0 0; font-size: 12.5px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .ens-mapframe { position: relative; background: #07101c; border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; min-width: 0; width: 100%;
+    display: flex; align-items: center; justify-content: center; }
+  /* max-width:100% keeps the canvas's intrinsic attribute width (900) from
+     inflating the frame before _resize measures it (mobile would overflow). */
+  #enscenters-canvas { display: block; cursor: crosshair; max-width: 100%; }
+  .ens-legend { position: absolute; left: 10px; bottom: 10px; z-index: 3;
+    display: flex; flex-direction: column; gap: 4px;
+    background: rgba(7,16,28,0.74); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 11px; }
+  .ens-leg { display: inline-flex; align-items: center; gap: 7px;
+    font-size: 11px; color: var(--fg); }
+  .ens-sw { display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+    border: 1.8px solid #fff; background: transparent; box-sizing: border-box;
+    flex: 0 0 auto; }
+  .ens-status { position: absolute; inset: 0; display: none; z-index: 4;
+    align-items: center; justify-content: center; gap: 10px;
+    background: rgba(7,16,28,0.62); color: var(--muted); font-size: 14px; }
   #enscenters-tooltip {
     position: absolute; display: none; pointer-events: none; z-index: 5;
-    background: rgba(10,13,18,0.92); border: 1px solid var(--border);
+    background: rgba(7,16,28,0.94); border: 1px solid var(--border);
     border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--fg);
-    line-height: 1.35; font-variant-numeric: tabular-nums; white-space: nowrap;
-  }
-  .ens-scrub { width: 100%; accent-color: var(--accent-2); cursor: pointer; }
-  #enscenters-legend { display: flex; flex-wrap: wrap; gap: 7px 12px; }
-  .ens-leg { display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11.5px; color: var(--muted); }
-  .ens-sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-    border: 1.7px solid #fff; background: transparent; box-sizing: border-box;
-    vertical-align: middle; }
-  #enscenters-peaks {
-    border: 1px solid var(--border); border-radius: 8px; overflow: auto;
-    max-height: 340px; font-variant-numeric: tabular-nums;
-  }
+    line-height: 1.35; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ens-peaks { flex: 0 0 230px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    font-variant-numeric: tabular-nums; }
+  .ens-peaks-title { padding: 9px 11px 5px; font-size: 12px; font-weight: 700;
+    color: var(--fg); position: sticky; top: 0; background: var(--panel); }
   .ens-peaks-head, .ens-peak-row {
     display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
-    padding: 3px 10px; font-size: 11.5px;
-  }
-  .ens-peaks-head {
-    position: sticky; top: 0; background: var(--panel); color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.4px; font-size: 10px;
-    font-weight: 700; border-bottom: 1px solid var(--border);
-  }
-  .ens-peak-row span:first-child { display: flex; align-items: center; gap: 6px; }
+    padding: 3px 11px; font-size: 11.5px; }
+  .ens-peaks-head { position: sticky; top: 30px; background: var(--panel);
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 10px; font-weight: 700; border-bottom: 1px solid var(--border); }
+  .ens-peak-row span:first-child { display: flex; align-items: center; gap: 7px; }
   .ens-peak-row.ctl { color: var(--accent); font-weight: 700; }
-  .ens-peaks-title { padding: 7px 10px 4px; font-size: 11px; font-weight: 700;
-    color: var(--fg); letter-spacing: 0.3px; }
-  .ens-peaks-empty { padding: 12px 10px; font-size: 12px; color: var(--muted);
+  .ens-peaks-empty { padding: 14px 11px; font-size: 12px; color: var(--muted);
     text-align: center; }
-  #enscenters-subtitle { color: var(--fg); font-size: 13px; font-weight: 700;
-    padding-bottom: 2px; }
+  .ens-controlbar { display: flex; flex-wrap: wrap; align-items: center;
+    gap: 10px 14px; margin-top: 14px; }
+  .ens-controlbar > .tatreg-btn { width: auto; min-width: 150px; }
+  .ens-transport { display: flex; gap: 6px; }
+  .ens-play { min-width: 92px; }
+  .ens-readout { display: flex; flex-direction: column; min-width: 190px;
+    font-variant-numeric: tabular-nums; }
+  #enscenters-fhour { color: var(--accent); font-size: 15px; font-weight: 700; }
+  #enscenters-valid { color: var(--muted); font-size: 12px; }
+  .ens-speed { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .ens-speed select { background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 13px; }
+  .ens-scrub { width: 100%; margin-top: 12px; accent-color: var(--accent-2); cursor: pointer; }
+  .ens-caption { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-top: 12px; }
+  @media (max-width: 820px) {
+    .ens-row { flex-direction: column; align-items: stretch; }
+    .ens-peaks { flex: 1 1 auto; max-height: 320px; }
+  }
 </style>
 </head>
 <body>
@@ -391,73 +418,56 @@
   </div>
 </section>
 
-<header class="page-head">
-  <h1>Ensemble Cyclone Centers</h1>
-  <p>Every member of the ECMWF ensemble, every forecast step: each dot is one
-  member's detected cyclone center (a closed mean-sea-level-pressure low),
-  colored by central pressure. Play the loop to watch where the 51-member
-  ensemble takes each system out to 10 days, and read each member's peak storm
-  off the table.</p>
-</header>
-
 <section class="chart-section">
   <div class="chart-card">
-    <div id="enscenters-viewer" class="vw-grid" tabindex="0">
+    <div id="enscenters-viewer" class="ens-viewer" tabindex="0">
 
-      <!-- Canvas scatter (main column) -->
-      <div id="enscenters-stage" class="hafs-stage">
-        <canvas id="enscenters-canvas" width="900" height="450"
-                aria-label="Ensemble cyclone centers over a world map"></canvas>
-        <div id="enscenters-status" class="hafs-statusbox">
-          <div class="hafs-spinner"></div><span>Loading…</span>
-        </div>
-        <div id="enscenters-tooltip"></div>
-      </div>
-
-      <!-- Control column (gutter) -->
-      <div class="vw-aside">
-        <div id="enscenters-controls" class="hafs-controls">
-          <div class="hafs-group">
-            <label>Region</label>
-            <button id="enscenters-region-btn" class="tatreg-btn" type="button" aria-haspopup="dialog">
-              <span id="enscenters-region-label">Atlantic</span>
-              <span class="tatreg-caret">&#9662;</span>
-            </button>
+      <div class="ens-row">
+        <div class="ens-left">
+          <div class="ens-titlebox">
+            <h2 class="ens-title">Ensemble Cyclone Centers</h2>
+            <p id="enscenters-subtitle" class="ens-subtitle">Loading the latest ECMWF ensemble.</p>
           </div>
-          <div class="hafs-group">
-            <label>Model</label>
-            <div id="enscenters-models" class="hafs-seg-group"></div>
+          <div id="enscenters-mapframe" class="ens-mapframe">
+            <canvas id="enscenters-canvas" width="900" height="520"
+                    aria-label="Ensemble cyclone centers over a regional map"></canvas>
+            <div id="enscenters-legend" class="ens-legend"></div>
+            <div id="enscenters-tooltip"></div>
+            <div id="enscenters-status" class="ens-status">
+              <div class="hafs-spinner"></div><span>Loading…</span>
+            </div>
           </div>
         </div>
-        <div id="enscenters-player" class="hafs-player">
-          <button id="enscenters-step-back" class="hafs-btn" type="button" title="Previous step (←)">◄</button>
-          <button id="enscenters-play" class="hafs-btn hafs-play" type="button" title="Play / pause (space)">► Play</button>
-          <button id="enscenters-step-fwd" class="hafs-btn" type="button" title="Next step (→)">►</button>
-          <div class="hafs-readout">
-            <span id="enscenters-fhour">F000</span>
-            <span id="enscenters-valid"></span>
-          </div>
-          <div class="hafs-speed-wrap">
-            <span>Speed</span><select id="enscenters-speed"></select>
-          </div>
+        <div id="enscenters-peaks" class="ens-peaks"></div>
+      </div>
+
+      <div class="ens-controlbar">
+        <button id="enscenters-region-btn" class="tatreg-btn" type="button" aria-haspopup="dialog">
+          <span id="enscenters-region-label">Atlantic</span>
+          <span class="tatreg-caret">&#9662;</span>
+        </button>
+        <div class="ens-modelgroup"><div id="enscenters-models" class="hafs-seg-group"></div></div>
+        <div class="ens-transport">
+          <button id="enscenters-step-back" class="hafs-btn" type="button" title="Previous step (left arrow)">◄</button>
+          <button id="enscenters-play" class="hafs-btn ens-play" type="button" title="Play / pause (space)">► Play</button>
+          <button id="enscenters-step-fwd" class="hafs-btn" type="button" title="Next step (right arrow)">►</button>
         </div>
-        <div id="enscenters-legend"></div>
-        <div id="enscenters-peaks"></div>
+        <div class="ens-readout">
+          <span id="enscenters-fhour">F000</span>
+          <span id="enscenters-valid"></span>
+        </div>
+        <div class="ens-speed"><span>Speed</span><select id="enscenters-speed"></select></div>
       </div>
 
-      <!-- Scrubber (full width beneath) -->
-      <div class="vw-below">
-        <input id="enscenters-scrub" class="ens-scrub" type="range"
-               min="0" max="0" step="1" value="0" aria-label="Forecast step">
-      </div>
+      <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0"
+             step="1" value="0" aria-label="Forecast step">
 
-      <p id="enscenters-subtitle" class="hafs-caption"></p>
-      <p class="hafs-caption">
+      <p class="ens-caption">
         Centers are mean-sea-level-pressure minima that sit inside a closed
         circulation (the pressure rises in every direction around them), the same
-        filter that separates real lows from open troughs. Peak winds in the
-        table are the Atkinson-Holliday estimate from central pressure. Data:
-        ECMWF open data (CC BY 4.0).
+        filter that separates real lows from open troughs. Peak winds in the table
+        are the Atkinson-Holliday estimate from central pressure. Data: ECMWF open
+        data (CC BY 4.0).
       </p>
 
       <div id="enscenters-empty" class="hafs-empty" style="display:none">
