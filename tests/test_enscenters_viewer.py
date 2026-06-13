@@ -64,7 +64,7 @@ def _fixture():
         "schema_version": 1, "generated_at": "2026-06-13T08:41:00Z",
         "default_model": "ecens",
         "models": [{"slug": "ecens", "label": "ECMWF ENS",
-                    "cycles": ["2026061300"], "latest": "2026061300"}],
+                    "cycles": ["2026061300", "2026061218"], "latest": "2026061300"}],
     }
     return manifest, cycle
 
@@ -111,6 +111,13 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["wpacExtent"], [100, 180, 0, 45])
         self.assertTrue(s["allVisibleInWpac"])            # scatter filtered to region
         self.assertEqual(s["lastRegionSaved"], "wpac")    # localStorage persistence
+
+        # Run (cycle) selector: built from the manifest cycle list, newest first,
+        # latest labelled and selected.
+        self.assertEqual(s["runOptionCount"], 2)
+        self.assertEqual(s["runValue"], "2026061300")
+        self.assertEqual(s["runFirstLabel"], "Jun 13 00Z (latest)")
+        self.assertEqual(s["runSecondLabel"], "Jun 12 18Z")
 
 
 if __name__ == "__main__":
