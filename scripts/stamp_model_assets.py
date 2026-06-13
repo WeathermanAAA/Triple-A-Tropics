@@ -26,9 +26,12 @@ import re
 import sys
 from typing import Dict, Tuple
 
-# <script ... src="/models/<file>.js[?v=...]" ...>  -> capture prefix/src/suffix
+# <script ... src="/models/<file>.js[?query]" ...>  -> capture prefix/src/query/suffix.
+# The query group requires a leading "?" (so `/models/x.json"` does NOT mis-match
+# as `/models/x.js` + `on`) and accepts ANY existing query (not just ?v=...), so a
+# src carrying a different/extra param is rewritten, never silently skipped.
 SCRIPT_RE = re.compile(
-    r'(<script\b[^>]*\bsrc=")(/models/[A-Za-z0-9_./-]+\.js)(\?v=[0-9a-f]+)?(")'
+    r'(<script\b[^>]*\bsrc=")(/models/[A-Za-z0-9_./-]+\.js)(\?[^"]*)?(")'
 )
 
 

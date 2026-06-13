@@ -104,6 +104,12 @@ class EnsModelSpec:
     type_of_level: str = "meanSea"  # informational: msl's GRIB typeOfLevel
     steps_long: List[int] = field(default_factory=lambda: list(STEPS_LONG))
     steps_short: List[int] = field(default_factory=lambda: list(STEPS_SHORT))
+    # Control (HRES, oper/fc) publishes a SHORTER horizon than the perturbed
+    # members: 240h at 00/12Z, 90h at 06/18Z. The completeness gate HEADs the
+    # control's OWN terminal step (not the perturbed 360/144) so a cycle is only
+    # "complete" once BOTH streams have fully disseminated.
+    control_step_long: int = 240
+    control_step_short: int = 90
     # --- detect config ---
     detect: DetectParams = field(default_factory=DetectParams)
     # --- provenance ---
@@ -111,6 +117,14 @@ class EnsModelSpec:
 
     def steps_for_cycle_hour(self, hour: int) -> List[int]:
         return list(self.steps_long) if hour in (0, 12) else list(self.steps_short)
+
+    def pf_terminal_step(self, hour: int) -> int:
+        """Perturbed-member terminal forecast hour for this cycle hour (360/144)."""
+        return self.steps_long[-1] if hour in (0, 12) else self.steps_short[-1]
+
+    def control_terminal_step(self, hour: int) -> int:
+        """Control (oper/fc) terminal forecast hour for this cycle hour (240/90)."""
+        return self.control_step_long if hour in (0, 12) else self.control_step_short
 
     def member_ids(self) -> List[str]:
         ids = ["CTL"] if self.control_stream else []

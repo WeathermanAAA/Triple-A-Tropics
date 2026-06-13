@@ -64,6 +64,73 @@ def resolve_latest_complete(client, spec: EnsModelSpec):
     return max(cands) if cands else None
 
 
+# ---------------------------------------------------------------------------
+# Completeness GATE (the per-model hook the shared currency core calls). A cycle
+# is "complete" iff the TERMINAL forecast-step file is present (HEAD -> 200) for
+# EVERY stream/type we ingest - here the perturbed members (enfo/pf, 360h/144h)
+# AND the control (oper/fc, 240h/90h). File presence only, never wall-clock: a
+# late or still-disseminating cycle 404s on its terminal file and is excluded,
+# so we never publish a half-written cycle. The actual network HEAD lives in
+# ``files_present`` so the gate logic (``cycle_complete`` / ``list_complete_cycles``)
+# is pure and unit-testable with an injected ``present_fn``.
+# ---------------------------------------------------------------------------
+def cycle_requests(spec: EnsModelSpec, cycle) -> List[dict]:
+    """The terminal-file requests that must ALL be present for ``cycle`` to be
+    complete: the perturbed terminal step, plus the control terminal step when
+    the model ingests a control member."""
+    reqs = [dict(stream=spec.ens_stream, type=spec.pf_type, param=spec.param,
+                 step=spec.pf_terminal_step(cycle.hour))]
+    if spec.control_stream:
+        reqs.append(dict(stream=spec.control_stream, type=spec.control_type,
+                         param=spec.param, step=spec.control_terminal_step(cycle.hour)))
+    return reqs
+
+
+def cycle_complete(spec: EnsModelSpec, cycle, present_fn) -> bool:
+    """True iff every terminal file for ``cycle`` is present. ``present_fn(cycle,
+    req)`` -> bool decides one terminal file (the real one HEADs the source;
+    tests inject a stub)."""
+    return all(present_fn(cycle, req) for req in cycle_requests(spec, cycle))
+
+
+def list_complete_cycles(spec: EnsModelSpec, candidates, present_fn) -> List:
+    """Filter ``candidates`` (cycle datetimes) to those COMPLETE on the source,
+    sorted ascending. Pure: all network is behind ``present_fn``."""
+    return sorted(c for c in candidates if cycle_complete(spec, c, present_fn))
+
+
+def files_present(client, cycle, req, *, timeout: float = 20.0, retries: int = 2) -> bool:
+    """Real ``present_fn``: HEAD the actual open-data file(s) for one terminal
+    request. 200 -> present; 404 -> definitively absent (skip the cycle); any
+    other status or a network error is treated as transient and, after retries,
+    as NOT present (conservative - the cycle simply retries next run rather than
+    risk publishing it half-written). Uses ``_get_urls`` so ECMWF's stream
+    patching (e.g. enfo/pf -> the enfo-ef file, post-50r1 scda->oper) is honored.
+    """
+    result = client._get_urls(request=None, use_index=False,
+                              date=cycle, time=cycle.hour, **req)
+    urls = result.urls
+    if not urls:
+        return False
+    for url in urls:
+        ok = False
+        for attempt in range(retries + 1):
+            try:
+                code = client.session.head(url, verify=client.verify, timeout=timeout).status_code
+            except Exception:  # noqa: BLE001 - transient network
+                code = None
+            if code == 200:
+                ok = True
+                break
+            if code == 404:
+                return False  # definitively absent
+            if attempt < retries:
+                time.sleep(1.0 * (attempt + 1))  # transient (5xx/429/timeout): retry
+        if not ok:
+            return False
+    return True
+
+
 def _retrieve(client, target: str, **request) -> None:
     """client.retrieve with bounded retry/backoff (open-data 5xx / portal cap)."""
     last = None

@@ -71,7 +71,7 @@ def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
     return member_id, peak, centers
 
 
-def build_cycle(
+def build_one_cycle(
     spec: EnsModelSpec,
     cycle: dt.datetime,
     out_dir: str,
@@ -79,23 +79,20 @@ def build_cycle(
     members: Optional[List[str]] = None,
     steps: Optional[List[int]] = None,
     jobs: int = 1,
-    retain: int = DEFAULT_RETAIN,
     min_members_frac: float = DEFAULT_MIN_MEMBERS_FRAC,
     source: str = "ecmwf",
-    prior_manifest: Optional[dict] = None,
     progress=print,
 ) -> dict:
-    """Run one cycle end to end. Writes the per-cycle JSON + merged manifest +
-    prune list into ``out_dir``. Returns a summary dict."""
+    """Ingest + detect every member for ONE cycle, assemble the model-agnostic
+    per-cycle JSON, and write it to ``out_dir/{slug}/{YYYYMMDDHH}.json`` (a
+    deterministic, idempotent path - a re-run overwrites cleanly). Does NOT touch
+    the manifest; that is the shared currency core's job (it folds in every cycle
+    it built this run at once). This is the per-model ``ingest_cycle`` hook.
+
+    Raises on a member QUORUM failure (a sparse/partial ingest), so a caller can
+    skip this cycle without publishing degraded data."""
     members = members or spec.member_ids()
     steps = steps if steps is not None else spec.steps_for_cycle_hour(cycle.hour)
-
-    # Read the prior manifest FIRST, before any ingest. If the CDN read hard-fails
-    # (network/5xx, not a clean 404) we abort here - publishing a single-cycle
-    # manifest would collapse the viewer's history and orphan the prior cycles.
-    # A clean 404 (first run) returns None and we start fresh.
-    if prior_manifest is None:
-        prior_manifest = fetch_prior_manifest()
 
     progress(f"[ecens] cycle {cycle:%Y-%m-%d %HZ}: {len(members)} members x {len(steps)} steps, jobs={jobs}")
 
@@ -131,11 +128,10 @@ def build_cycle(
                     progress(f"[ecens]   {k}/{len(members)} members done")
 
     # Member QUORUM: refuse to publish a sparse cycle. Without this, a partial
-    # ingest failure (transient open-data 5xx, a half-published cycle) would
-    # write a near-empty cycle, mark it `latest`, AND prune the prior COMPLETE
-    # cycle out of the window - replacing good live data with degraded data and
-    # deleting the fallback in one run. Raising maps to exit 1 in the CLI, so the
-    # workflow aborts before the R2 prune and the prior cycle stays live.
+    # ingest failure (transient open-data 5xx, a half-published cycle) would write
+    # a near-empty cycle. The currency core catches this and skips the cycle (it
+    # stays "missing" and retries next run); if EVERY planned cycle fails, the CLI
+    # exits 1 so the workflow aborts before the R2 prune and the prior data stays.
     min_needed = max(2, math.ceil(min_members_frac * len(members)))
     if len(results) < min_needed:
         raise RuntimeError(
@@ -177,7 +173,7 @@ def build_cycle(
         "members": member_objs,
     }
 
-    # --- write per-cycle JSON ---
+    # --- write per-cycle JSON (deterministic R2-keyed path) ---
     model_dir = os.path.join(out_dir, spec.slug)
     os.makedirs(model_dir, exist_ok=True)
     cyc_str = f"{cycle:%Y%m%d%H}"
@@ -185,19 +181,9 @@ def build_cycle(
     with open(cycle_path, "w") as f:
         json.dump(data, f, separators=(",", ":"))
 
-    # --- merge manifest + compute prune list (prior_manifest resolved early) ---
-    manifest, prune_keys = merge_manifest(prior_manifest, spec, cyc_str, retain)
-    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
-        json.dump(manifest, f, separators=(",", ":"))
-    # Trailing newline matters: the workflow's `while read` loop would otherwise
-    # drop the final (in steady state, only) prune key and never delete anything.
-    with open(os.path.join(out_dir, "prune_keys.txt"), "w") as f:
-        f.write("".join(k + "\n" for k in prune_keys))
-
     bytes_json = os.path.getsize(cycle_path)
     progress(f"[ecens] wrote {cycle_path} ({bytes_json/1e6:.2f} MB), "
-             f"{len(member_objs)} members, {total_centers} centers, "
-             f"{len(failures)} failed; prune {len(prune_keys)} old cycle(s)")
+             f"{len(member_objs)} members, {total_centers} centers, {len(failures)} failed")
     return {
         "cycle": cyc_str,
         "members": len(member_objs),
@@ -205,9 +191,36 @@ def build_cycle(
         "n_centers": total_centers,
         "bytes_json": bytes_json,
         "cycle_path": cycle_path,
-        "prune_keys": prune_keys,
-        "manifest": manifest,
     }
+
+
+def build_cycle(
+    spec: EnsModelSpec,
+    cycle: dt.datetime,
+    out_dir: str,
+    *,
+    members: Optional[List[str]] = None,
+    steps: Optional[List[int]] = None,
+    jobs: int = 1,
+    retain: int = DEFAULT_RETAIN,
+    min_members_frac: float = DEFAULT_MIN_MEMBERS_FRAC,
+    source: str = "ecmwf",
+    prior_manifest: Optional[dict] = None,
+    progress=print,
+) -> dict:
+    """Single-cycle convenience: build ONE cycle and fold it into the manifest +
+    prune list (the historical entry point; the never-miss path uses
+    ``currency.run_currency`` instead). Reads the prior manifest first so a hard
+    CDN read failure aborts before any ingest rather than overwriting live data."""
+    if prior_manifest is None:
+        prior_manifest = fetch_prior_manifest()
+    res = build_one_cycle(spec, cycle, out_dir, members=members, steps=steps,
+                          jobs=jobs, min_members_frac=min_members_frac,
+                          source=source, progress=progress)
+    manifest, prune_keys = merge_manifest_multi(prior_manifest, spec, [res["cycle"]], retain)
+    write_outputs(out_dir, manifest, prune_keys)
+    progress(f"[ecens] manifest updated; prune {len(prune_keys)} old cycle(s)")
+    return {**res, "prune_keys": prune_keys, "manifest": manifest}
 
 
 def fetch_prior_manifest(url: str = MANIFEST_URL, timeout: float = 15.0,
@@ -238,10 +251,25 @@ def fetch_prior_manifest(url: str = MANIFEST_URL, timeout: float = 15.0,
     raise RuntimeError(f"could not read prior manifest from {url}: {last}")
 
 
-def merge_manifest(prior: Optional[dict], spec: EnsModelSpec, cyc_str: str, retain: int):
-    """Upsert this cycle into the manifest, trim to ``retain`` newest per model,
-    and return (manifest, prune_keys). Models with no cycles are omitted so the
-    viewer's model selector only shows models that actually have data.
+def published_cycles(manifest: Optional[dict], slug: str):
+    """The set of cycle strings already published for ``slug`` in ``manifest``
+    (the watermark). Tolerant of a malformed/empty manifest."""
+    raw = (manifest or {}).get("models")
+    raw = raw if isinstance(raw, list) else []
+    for m in raw:
+        if isinstance(m, dict) and m.get("slug") == slug:
+            cyc = m.get("cycles")
+            return set(c for c in cyc if isinstance(c, str)) if isinstance(cyc, list) else set()
+    return set()
+
+
+def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, retain: int):
+    """Upsert ``new_cycles`` (a list of YYYYMMDDHH strings) into the manifest,
+    trim to ``retain`` newest per model, and return (manifest, prune_keys). Models
+    with no cycles are omitted so the viewer's selector only shows models that
+    have data. ``latest`` is always the newest retained cycle. Folding several
+    backfilled cycles in one call (and computing prune ONCE from the final kept
+    set) means an old backfilled gap is never spuriously listed as a prune.
 
     Tolerant of a malformed prior manifest fetched from the public CDN: a
     non-list `models`, entries missing `slug`, or a non-list `cycles` are
@@ -256,8 +284,9 @@ def merge_manifest(prior: Optional[dict], spec: EnsModelSpec, cyc_str: str, reta
             by_slug[d["slug"]] = d
     entry = by_slug.get(spec.slug, {"slug": spec.slug, "label": spec.label, "cycles": []})
     entry["label"] = spec.label
-    cycles = [c for c in entry.get("cycles", []) if c != cyc_str]
-    cycles.append(cyc_str)
+    new_set = set(new_cycles)
+    cycles = [c for c in entry.get("cycles", []) if c not in new_set]
+    cycles.extend(new_set)
     cycles = sorted(set(cycles), reverse=True)
     kept, pruned = cycles[:retain], cycles[retain:]
     entry["cycles"] = kept
@@ -282,3 +311,22 @@ def merge_manifest(prior: Optional[dict], spec: EnsModelSpec, cyc_str: str, reta
     }
     prune_keys = [f"{spec.slug}/{c}.json" for c in pruned]
     return manifest, prune_keys
+
+
+def merge_manifest(prior: Optional[dict], spec: EnsModelSpec, cyc_str: str, retain: int):
+    """Single-cycle convenience wrapper around :func:`merge_manifest_multi`."""
+    return merge_manifest_multi(prior, spec, [cyc_str], retain)
+
+
+def write_outputs(out_dir: str, manifest: dict, prune_keys) -> None:
+    """Write manifest.json + prune_keys.txt into ``out_dir`` (consumed by the
+    workflow's R2 sync + prune steps). The manifest's existence is the workflow's
+    signal that something was published, so write it ONLY when there is a cycle
+    to publish."""
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, separators=(",", ":"))
+    # Trailing newline matters: the workflow's `while read` loop would otherwise
+    # drop the final (in steady state, only) prune key and never delete anything.
+    with open(os.path.join(out_dir, "prune_keys.txt"), "w") as f:
+        f.write("".join(k + "\n" for k in prune_keys))
