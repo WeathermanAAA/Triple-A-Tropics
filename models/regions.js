@@ -14,40 +14,51 @@
  * Exposes window.TATRegions:
  *   GROUPS, list(), get(key), inRegion(lon,lat,r), extentOf(r),
  *   project(lon,lat,extent,W,H), drawBasemap(ctx,extent,geo,W,H,opts),
- *   RegionPicker (a-reference-site-style grouped thumbnail modal)
+ *   RegionPicker (TAT grouped thumbnail modal: bright-blue accent, basin
+ *     grouping, and true-aspect letterboxed thumbnails)
  */
 (function () {
   'use strict';
 
+  // SINGLE SOURCE OF TRUTH for the bright-blue accent shared across every
+  // non-storm-nest model product (the picker chrome here + the ENS figure's
+  // own chrome via TATRegions.ACCENT). Deliberately NOT the site-global amber
+  // --accent; self-scoped so satellite/HAFS keep their amber.
+  var ACCENT = '#2b9cff';
+
   // Bounding boxes: lon -180..180, S/N deg. w > e => crosses the dateline.
+  // Grouped by BASIN, the way a TC forecaster reads it (Atlantic -> Pacific ->
+  // Indian -> Continents -> Global), NOT a-reference-site's tropics/US/land/hemi split.
   var GROUPS = [
-    { key: 'tropics', label: 'Tropics', regions: [
+    { key: 'atlantic', label: 'Atlantic', regions: [
       { key: 'atlantic', label: 'Atlantic',          w: -100, e: -5,   s: 0,   n: 55 },
       { key: 'watl',     label: 'West Atlantic',      w: -100, e: -55,  s: 7,   n: 45 },
       { key: 'eatl',     label: 'East Atlantic',      w: -65,  e: 0,    s: 0,   n: 35 },
-      { key: 'nafrica',  label: 'North Africa',       w: -25,  e: 60,   s: 0,   n: 42 },
+      { key: 'nafrica',  label: 'North Africa',       w: -25,  e: 60,   s: 0,   n: 42 }
+    ]},
+    { key: 'pacific', label: 'Pacific', regions: [
       { key: 'epac',     label: 'East Pacific',       w: -140, e: -80,  s: 5,   n: 35 },
       { key: 'nepac',    label: 'Northeast Pacific',  w: -180, e: -110, s: 15,  n: 60 },
       { key: 'npac',     label: 'North Pacific',      w: 120,  e: -110, s: 10,  n: 60 },
       { key: 'wpac',     label: 'West Pacific',       w: 100,  e: 180,  s: 0,   n: 45 },
       { key: 'twpac',    label: 'Tropical WPAC',      w: 100,  e: 180,  s: 0,   n: 35 },
-      { key: 'io',       label: 'Indian Ocean',       w: 30,   e: 110,  s: -35, n: 30 },
       { key: 'tpac',     label: 'Tropical Pacific',   w: 120,  e: -80,  s: -25, n: 25 },
       { key: 'swpac',    label: 'SW Pacific',         w: 140,  e: -160, s: -35, n: 5 }
     ]},
-    { key: 'us', label: 'United States', regions: [
-      { key: 'us',  label: 'United States', w: -125, e: -66,  s: 24, n: 50 },
-      { key: 'wus', label: 'Western US',    w: -125, e: -100, s: 30, n: 50 },
-      { key: 'eus', label: 'Eastern US',    w: -100, e: -66,  s: 24, n: 50 }
+    { key: 'indian', label: 'Indian Ocean', regions: [
+      { key: 'io',       label: 'Indian Ocean',       w: 30,   e: 110,  s: -35, n: 30 }
     ]},
-    { key: 'land', label: 'Land', regions: [
-      { key: 'namer',  label: 'North America', w: -170, e: -50, s: 10,  n: 75 },
-      { key: 'aus',    label: 'Australia',     w: 110,  e: 155, s: -45, n: -8 },
-      { key: 'asia',   label: 'Asia',          w: 40,   e: 150, s: 5,   n: 75 },
-      { key: 'europe', label: 'Europe',        w: -25,  e: 45,  s: 34,  n: 72 },
-      { key: 'samer',  label: 'South America', w: -85,  e: -34, s: -56, n: 13 }
+    { key: 'continents', label: 'Continents', regions: [
+      { key: 'us',     label: 'United States', w: -125, e: -66,  s: 24,  n: 50 },
+      { key: 'wus',    label: 'Western US',    w: -125, e: -100, s: 30,  n: 50 },
+      { key: 'eus',    label: 'Eastern US',    w: -100, e: -66,  s: 24,  n: 50 },
+      { key: 'namer',  label: 'North America', w: -170, e: -50,  s: 10,  n: 75 },
+      { key: 'samer',  label: 'South America', w: -85,  e: -34,  s: -56, n: 13 },
+      { key: 'europe', label: 'Europe',        w: -25,  e: 45,   s: 34,  n: 72 },
+      { key: 'asia',   label: 'Asia',          w: 40,   e: 150,  s: 5,   n: 75 },
+      { key: 'aus',    label: 'Australia',     w: 110,  e: 155,  s: -45, n: -8 }
     ]},
-    { key: 'hemi', label: 'Hemispheres', regions: [
+    { key: 'global', label: 'Global', regions: [
       { key: 'nhem',   label: 'North Hemisphere', w: -180, e: 180, s: 0,   n: 88 },
       { key: 'shem',   label: 'South Hemisphere', w: -180, e: 180, s: -88, n: 0 },
       { key: 'global', label: 'Global',           w: -180, e: 180, s: -88, n: 88 }
@@ -181,43 +192,51 @@
   }
 
   // ---- one-time picker CSS (self-contained shared component) ----
-  // Triple-A-Tropics' OWN styling (NOT a-reference-site): amber accent identity,
-  // accent-bar group headers, the region label overlaid on the thumbnail with a
-  // gradient, and an amber selected state with a corner check.
+  // Triple-A-Tropics' OWN styling: a bright-blue accent (--tatreg-acc, scoped to
+  // the picker so the site's amber --accent never leaks in), accent-bar group
+  // headers, the region label overlaid on the thumbnail with a gradient, and a
+  // bright-blue selected state with a corner check.
   function _injectCss() {
     if (document.getElementById('tatreg-css')) return;
     var s = document.createElement('style');
     s.id = 'tatreg-css';
     s.textContent = [
+      // Picker-owned accent. Site-wide --accent is amber; we DON'T inherit it -
+      // the picker is its own bright-blue component, set on both roots (the
+      // trigger button lives outside the overlay). Value = the shared ACCENT.
+      '.tatreg-btn,.tatreg-overlay{--tatreg-acc:' + ACCENT + '}',
       '.tatreg-btn{background:var(--bg,#131519);color:var(--fg,#e8ebef);border:1px solid var(--border,#2a2e36);',
-      'border-radius:6px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;justify-content:space-between}',
-      '.tatreg-btn:hover{border-color:var(--accent,#ffb83a)}',
-      '.tatreg-btn .tatreg-caret{color:var(--accent,#ffb83a);font-size:11px}',
+      'border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;justify-content:space-between;transition:border-color .12s}',
+      '.tatreg-btn:hover{border-color:var(--tatreg-acc)}',
+      '.tatreg-btn .tatreg-caret{color:var(--tatreg-acc);font-size:11px}',
       '.tatreg-overlay{position:fixed;inset:0;z-index:2000;background:rgba(4,8,14,0.78);backdrop-filter:blur(3px);',
       'display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}',
-      '.tatreg-modal{background:var(--panel,#1b1e24);border:1px solid var(--border,#2a2e36);border-top:3px solid var(--accent,#ffb83a);',
-      'border-radius:4px 4px 12px 12px;max-width:940px;width:100%;box-shadow:0 22px 70px rgba(0,0,0,0.6)}',
+      '.tatreg-modal{background:var(--panel,#1b1e24);border:1px solid var(--border,#2a2e36);border-top:3px solid var(--tatreg-acc);',
+      'border-radius:5px 5px 12px 12px;max-width:940px;width:100%;box-shadow:0 22px 70px rgba(0,0,0,0.6)}',
       '.tatreg-head{display:flex;align-items:center;gap:11px;padding:15px 20px;border-bottom:1px solid var(--border,#2a2e36)}',
-      '.tatreg-head .tatreg-mark{width:7px;height:20px;background:var(--accent,#ffb83a);border-radius:2px;flex:0 0 auto}',
+      '.tatreg-head .tatreg-mark{width:7px;height:20px;background:var(--tatreg-acc);border-radius:2px;flex:0 0 auto;box-shadow:0 0 11px rgba(43,156,255,0.6)}',
       '.tatreg-head h3{margin:0;font-size:15px;letter-spacing:1.2px;text-transform:uppercase;color:var(--fg,#e8ebef);font-weight:800;flex:1 1 auto}',
-      '.tatreg-x{background:none;border:none;color:var(--muted,#9199a4);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}',
-      '.tatreg-x:hover{color:var(--accent,#ffb83a)}',
-      '.tatreg-body{padding:6px 20px 22px}',
-      '.tatreg-group-h{display:flex;align-items:center;gap:9px;color:var(--accent,#ffb83a);font-size:11px;font-weight:800;',
-      'text-transform:uppercase;letter-spacing:1.4px;margin:20px 0 11px}',
-      '.tatreg-group-h::before{content:"";width:14px;height:3px;background:var(--accent,#ffb83a);border-radius:2px}',
+      '.tatreg-x{background:none;border:none;color:var(--muted,#9199a4);font-size:22px;line-height:1;cursor:pointer;padding:0 4px;transition:color .12s}',
+      '.tatreg-x:hover{color:var(--tatreg-acc)}',
+      '.tatreg-body{padding:4px 20px 22px}',
+      '.tatreg-group-h{display:flex;align-items:center;gap:10px;color:var(--tatreg-acc);font-size:11px;font-weight:800;',
+      'text-transform:uppercase;letter-spacing:1.5px;margin:21px 0 12px}',
+      '.tatreg-group-h:first-child{margin-top:12px}',
+      '.tatreg-group-h::before{content:"";width:16px;height:3px;background:var(--tatreg-acc);border-radius:2px;flex:0 0 auto}',
       '.tatreg-group-h::after{content:"";flex:1 1 auto;height:1px;background:var(--border,#2a2e36)}',
-      '.tatreg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:11px}',
+      '.tatreg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:12px}',
       '.tatreg-card{position:relative;border:1px solid var(--border,#2a2e36);border-radius:9px;overflow:hidden;',
-      'cursor:pointer;background:#0b1320;transition:border-color .12s,transform .08s}',
-      '.tatreg-card:hover{border-color:var(--accent-2,#5dd3ff);transform:translateY(-1px)}',
-      '.tatreg-card.sel{border-color:var(--accent,#ffb83a);box-shadow:0 0 0 2px var(--accent,#ffb83a) inset}',
-      '.tatreg-thumb{position:relative;display:block;line-height:0}',
+      'cursor:pointer;background:#070d18;transition:border-color .12s,box-shadow .12s,transform .08s}',
+      '.tatreg-card:hover{border-color:var(--tatreg-acc);transform:translateY(-1px)}',
+      '.tatreg-card.sel{border-color:var(--tatreg-acc);box-shadow:0 0 0 2px var(--tatreg-acc) inset}',
+      // Thumb is a fixed 8:5 frame; the canvas keeps that aspect (intrinsic
+      // 320x200) so the map inside is letterboxed, never stretched.
+      '.tatreg-thumb{position:relative;display:block;line-height:0;background:#070d18}',
       '.tatreg-thumb canvas{width:100%;height:auto;display:block}',
-      '.tatreg-lab{position:absolute;left:0;right:0;bottom:0;padding:14px 9px 6px;font-size:11.5px;font-weight:700;',
-      'color:#fff;text-align:left;background:linear-gradient(180deg,rgba(7,16,28,0),rgba(7,16,28,0.88))}',
-      '.tatreg-check{position:absolute;top:6px;right:6px;width:17px;height:17px;border-radius:50%;background:var(--accent,#ffb83a);',
-      'color:#1a1205;font-size:12px;font-weight:900;line-height:17px;text-align:center;display:none}',
+      '.tatreg-lab{position:absolute;left:0;right:0;bottom:0;padding:15px 9px 6px;font-size:11.5px;font-weight:700;',
+      'color:#fff;text-align:left;letter-spacing:0.2px;background:linear-gradient(180deg,rgba(7,13,24,0),rgba(7,13,24,0.9))}',
+      '.tatreg-check{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:50%;background:var(--tatreg-acc);',
+      'color:#04121f;font-size:12px;font-weight:900;line-height:18px;text-align:center;display:none;box-shadow:0 1px 4px rgba(0,0,0,0.45)}',
       '.tatreg-card.sel .tatreg-check{display:block}'
     ].join('');
     document.head.appendChild(s);
@@ -258,7 +277,10 @@
           card.setAttribute('data-key', r.key);
           card.setAttribute('role', 'button'); card.tabIndex = 0;
           var thumb = document.createElement('div'); thumb.className = 'tatreg-thumb';
-          var cv = document.createElement('canvas'); cv.width = 128; cv.height = 78;
+          // Fixed 8:5 bitmap; each region's true-aspect map is letterboxed inside
+          // it (see _renderThumbs), so every card is the same size and no map is
+          // stretched. Generous resolution keeps it crisp when CSS downscales.
+          var cv = document.createElement('canvas'); cv.width = 320; cv.height = 200;
           var lab = document.createElement('span'); lab.className = 'tatreg-lab'; lab.textContent = r.label;
           var chk = document.createElement('span'); chk.className = 'tatreg-check'; chk.innerHTML = '&#10003;';
           thumb.appendChild(cv); thumb.appendChild(lab); thumb.appendChild(chk);
@@ -301,13 +323,37 @@
     this._thumbsDone = false;
   };
 
+  // Render each thumbnail at its region's TRUE equirectangular aspect ratio
+  // (lon-span / lat-span of the display extent), centered and letterboxed inside
+  // the fixed 8:5 card - so a wide box (Tropical Pacific, North Hemisphere) and a
+  // boxy one (Western US, Australia) keep their real proportions, never stretched
+  // to fill. The letterbox bars are the card frame tone; a hairline outlines the
+  // map so it reads as a framed inset.
   RegionPicker.prototype._renderThumbs = function () {
     if (this._thumbsDone || !this.geo) return;
     for (var k in this._cards) if (this._cards.hasOwnProperty(k)) {
-      var c = this._cards[k];
-      var g = c.canvas.getContext('2d');
-      drawBasemap(g, extentOf(c.region), this.geo, c.canvas.width, c.canvas.height,
-                  { ocean: '#0b1422', land: '#37475f', grid: 'rgba(255,255,255,0.04)', gridLw: 0.5 });
+      var c = this._cards[k], cv = c.canvas, W = cv.width, H = cv.height;
+      var g = cv.getContext('2d');
+      var ext = extentOf(c.region);
+      var ar = (ext[1] - ext[0]) / (ext[3] - ext[2]);   // true aspect of the crop
+      // letterbox fill (frame tone, deliberately darker than the map ocean)
+      g.clearRect(0, 0, W, H);
+      g.fillStyle = '#070d18'; g.fillRect(0, 0, W, H);
+      // largest ar-rect that fits, centered (fit-to-width else fit-to-height)
+      var mw = W, mh = W / ar;
+      if (mh > H) { mh = H; mw = H * ar; }
+      var ox = (W - mw) / 2, oy = (H - mh) / 2;
+      g.save();
+      g.beginPath(); g.rect(ox, oy, mw, mh); g.clip();
+      g.translate(ox, oy);
+      drawBasemap(g, ext, this.geo, mw, mh, {
+        ocean: '#0b1422', land: '#37475f',
+        coast: 'rgba(150,175,205,0.32)', coastLw: 1.0,
+        grid: 'rgba(255,255,255,0.05)', gridLw: 0.6
+      });
+      g.restore();
+      g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 1;
+      g.strokeRect(ox + 0.5, oy + 0.5, mw - 1, mh - 1);
     }
     this._thumbsDone = true;
   };
@@ -325,6 +371,7 @@
   window.TATRegions = {
     GROUPS: GROUPS, list: list, get: get, inRegion: inRegion, extentOf: extentOf,
     project: project, drawBasemap: drawBasemap, RegionPicker: RegionPicker,
-    loadGeo: loadGeo, COAST_RES: COAST_RES, LAND_RES: LAND_RES, THUMB_RES: THUMB_RES
+    loadGeo: loadGeo, COAST_RES: COAST_RES, LAND_RES: LAND_RES, THUMB_RES: THUMB_RES,
+    ACCENT: ACCENT
   };
 })();
