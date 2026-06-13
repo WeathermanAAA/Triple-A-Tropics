@@ -126,11 +126,16 @@
     this.idx = 0;          // index into fxxList (rendered frames only)
     this.playing = false;
     this.speed = 1;
-    this.timer = null;
+    // Playback pacing: a single requestAnimationFrame loop with a timestamp
+    // threshold (the satellite sat-simple canon), NOT setInterval — vsync-
+    // aligned, drift-free, and it never advances onto an undecoded frame.
+    this.raf = null;
+    this.lastTick = 0;
     this.pollTimer = null;
     this.pendingCycleKey = null;   // a newer cycle discovered mid-session
     this.preAnnounce = false;      // selected fallback because newest is empty
-    this.preloaded = {};   // url → HTMLImageElement (decoded cache; bounded to selection)
+    this.preloaded = {};   // url → HTMLImageElement (load-started cache; bounded to selection)
+    this.ready = {};       // url → true ONCE the image has DECODED (playback-gate)
     this.preloadGen = 0;   // bumped each selection so stale preloads are ignored
 
     this.dom = opts.els || {
@@ -846,6 +851,7 @@
     var self = this;
     var gen = ++this.preloadGen;
     this.preloaded = {};
+    this.ready = {};
     this._preloadUrls(this.fxxList.map(function (f) { return self._frameUrl(f); }), gen, true);
   };
 
@@ -866,13 +872,27 @@
     this.dom.buffer.textContent = 'Buffering ' + (this._bufDone || 0) + '/' + this._bufTotal;
     urls.forEach(function (u) {
       var im = new Image();
-      im.onload = im.onerror = function () {
+      im.decoding = 'async';
+      // Settle each frame exactly once (decoded OR errored) so the buffer
+      // readout always completes. `ready[u]` flips ONLY on a real decode, so
+      // the playback loop can skip a frame that hasn't decoded yet instead of
+      // swapping in a half-loaded image (the pop-in the old direct-src had).
+      function settle(ok) {
         if (gen !== self.preloadGen) return;   // superseded by a newer selection
         self.preloaded[u] = im;
+        if (ok) self.ready[u] = true;
         self._bufDone = (self._bufDone || 0) + 1;
         self.dom.buffer.textContent = 'Buffering ' + self._bufDone + '/' + self._bufTotal;
         if (self._bufDone >= self._bufTotal) self.dom.buffer.style.display = 'none';
+      }
+      im.onload = function () {
+        // Decode off the main thread before marking ready, so the first paint
+        // of this frame is an instant cached-bitmap swap (no decode hitch).
+        if (im.decode) { im.decode().then(function () { settle(true); },
+                                          function () { settle(true); }); }
+        else { settle(true); }
       };
+      im.onerror = function () { settle(false); };
       im.src = u;
     });
   };
@@ -888,26 +908,60 @@
     this.playing ? this._pause() : this._play();
   };
 
+  // Per-frame dwell (ms) at the current speed. Read fresh every tick so a
+  // speed change applies on the very next frame with no loop restart.
+  HafsViewer.prototype._frameMs = function () {
+    return 1000 / (BASE_FPS * (this.speed || 1));
+  };
+
+  // Has frame `i` (index into fxxList) DECODED? Playback only ever lands on
+  // decoded frames, so the swap is always an instant cached-bitmap paint.
+  HafsViewer.prototype._frameReady = function (i) {
+    var fxx = this.fxxList[i];
+    if (fxx === undefined) return false;
+    return !!this.ready[this._frameUrl(fxx)];
+  };
+
+  // Advance to the next DECODED frame over the rendered prefix (wrapping),
+  // skipping any still-loading frame. If nothing else has decoded yet we hold
+  // on the current frame rather than flash a half-loaded one.
+  HafsViewer.prototype._advance = function () {
+    var n = this.fxxList.length;
+    if (!n) return;
+    var j = this.idx;
+    for (var s = 0; s < n; s++) {
+      j = (j + 1) % n;
+      if (this._frameReady(j)) { this._show(j); return; }
+    }
+  };
+
+  // The whole pacing engine (the satellite sat-simple / TC-ATLAS pattern):
+  // one rAF loop, advance when enough wall-clock has elapsed. Don't reintroduce
+  // setInterval — it drifts off vsync and stutters under load.
+  HafsViewer.prototype._tick = function (ts) {
+    if (!this.playing) return;
+    if (ts - this.lastTick >= this._frameMs()) {
+      this.lastTick = ts;
+      this._advance();
+    }
+    var self = this;
+    this.raf = requestAnimationFrame(function (t) { self._tick(t); });
+  };
+
   HafsViewer.prototype._play = function () {
     if (this.fxxList.length <= 1) return;
     this.playing = true;
     this.dom.play.textContent = '❚❚ Pause';
+    this.lastTick = 0;
+    if (this.raf) cancelAnimationFrame(this.raf);
     var self = this;
-    var interval = 1000 / (BASE_FPS * this.speed);
-    clearInterval(this.timer);
-    this.timer = setInterval(function () {
-      // Loop over the RENDERED prefix; pause briefly at the end frame.
-      var next = self.idx + 1;
-      if (next >= self.fxxList.length) next = 0;
-      self._show(next);
-    }, interval);
+    this.raf = requestAnimationFrame(function (t) { self._tick(t); });
   };
 
   HafsViewer.prototype._pause = function () {
     this.playing = false;
     this.dom.play.textContent = '► Play';
-    clearInterval(this.timer);
-    this.timer = null;
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; }
   };
 
   // ---- manifest poll + diff-merge --------------------------------------
@@ -1063,7 +1117,10 @@
     }
     sp.addEventListener('change', function () {
       self.speed = parseFloat(this.value);
-      if (self.playing) self._play();   // restart timer at new rate
+      // _tick reads _frameMs() fresh each frame, so the new cadence applies on
+      // the next tick — just reset the threshold so it takes effect at once.
+      // (Calling _play() here would start a SECOND rAF loop = double speed.)
+      if (self.playing) self.lastTick = 0;
     });
 
     // Keyboard: ←/→ step, space play/pause. Skip when focus is on a form
