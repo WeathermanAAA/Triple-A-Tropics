@@ -1,0 +1,107 @@
+name: Update Ensemble Cyclone Centers (ECMWF ENS)
+
+# Read-only: this workflow commits NOTHING to main. The per-cycle detection
+# JSON + manifest are synced to R2 (s3://triple-a-tropics-media/models/enscenters/)
+# and the live site fetches them cross-origin from
+# cdn.triple-a-tropics.com/models/enscenters/ - same model as update-hafs.yml.
+#
+# ECMWF open-data ENS MSLP completes ~8 h after each synoptic time, so we fire
+# ~8.5 h post-cycle on a non-round, non-colliding minute (taken slots: ACE
+# :07/:37/:53, SST 13:17/13:47, subsurface 14:23/14:53, ARMOR3D 14:43/15:13,
+# sub-anim 16:33/17:03, season-gifs 03:23, GIBS 22:07/22:37, HAFS :53/:27). The
+# staggering is load-bearing - GitHub drops round-minute crons. The builder
+# resolves the latest COMPLETE cycle (terminal step present), so an early run
+# just picks the prior complete cycle rather than a half-written one; the :11
+# backup 30 min later catches a slow dissemination.
+
+on:
+  schedule:
+    - cron: "41 8,14,20,2 * * *"     # ~8.5 h after 00/06/12/18Z
+    - cron: "11 9,15,21,3 * * *"     # backup ~30 min later
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Force cycle YYYYMMDDHH (blank = latest complete)"
+        required: false
+      jobs:
+        description: "Parallel member workers"
+        required: false
+        default: "4"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-enscenters
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # numpy/scipy for detect, xarray+cfgrib+eccodes to decode GRIB2,
+          # ecmwf-opendata to byte-range fetch MSLP. eccodes wheel bundles the
+          # binary - no apt. No cartopy, no matplotlib (the builder emits JSON).
+          pip install numpy scipy xarray cfgrib eccodes ecmwf-opendata
+          python -c "import scipy, cfgrib, xarray; from ecmwf.opendata import Client; print('deps OK')"
+
+      - name: Build ensemble cyclone centers (latest complete cycle)
+        env:
+          # Pass dispatch inputs through env vars, never interpolate ${{ }} into
+          # the shell body (Actions script-injection hardening).
+          ENS_JOBS: ${{ github.event.inputs.jobs || '4' }}
+          ENS_CYCLE: ${{ github.event.inputs.cycle }}
+        run: |
+          python generate_enscenters.py \
+            --jobs "${ENS_JOBS:-4}" \
+            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
+
+      - name: Sync detection JSON + manifest to R2 (and prune old cycles)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -eo pipefail
+          SRC=./models/enscenters
+          DST=s3://triple-a-tropics-media/models/enscenters
+          # Nothing produced (no complete cycle yet) -> exit cleanly, prune NOTHING,
+          # leave the prior cycle + manifest live.
+          if [ ! -f "$SRC/manifest.json" ]; then
+            echo "no manifest produced - cycle incomplete, nothing to publish."
+            exit 0
+          fi
+
+          # 1. New per-cycle JSON first (no --delete, no --size-only so a re-run
+          #    with the same byte-size still re-uploads).
+          aws s3 sync "$SRC/" "$DST/" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=300" --content-type "application/json" \
+            --exclude "*" --include "*/*.json" --only-show-errors
+
+          # 2. Manifest (now references only cycle files that exist). Short TTL;
+          #    the viewer also cache-busts the manifest fetch.
+          aws s3 cp "$SRC/manifest.json" "$DST/manifest.json" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=60" --content-type "application/json" \
+            --only-show-errors
+
+          # 3. Prune cycles rolled out of the retention window. The `|| [ -n ]`
+          #    keeps the final line even if it lacks a trailing newline.
+          if [ -s "$SRC/prune_keys.txt" ]; then
+            while IFS= read -r key || [ -n "$key" ]; do
+              [ -n "$key" ] || continue
+              echo "prune $key"
+              aws s3 rm "$DST/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors || true
+            done < "$SRC/prune_keys.txt"
+          fi
+          echo "Published -> https://cdn.triple-a-tropics.com/models/enscenters/manifest.json"
