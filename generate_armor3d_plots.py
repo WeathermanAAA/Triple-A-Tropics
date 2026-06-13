@@ -1104,6 +1104,11 @@ def plot_tchp_anom(
         print(f"[armor3d]   records hatch {out_path.name}: "
               f"{n_hi} high / {n_lo} low cells in extent")
         records_overlay.draw_records_overlay(ax, LON2, LAT2, rh, rl)
+        # Compact hatch key (/// = record high, \\ = record low) — only on
+        # the records path, so the plain anomaly plot stays legend-free.
+        records_overlay.draw_records_legend(
+            ax, facecolor=gss.PANEL_COLOR, edgecolor=gss.MUTED_COLOR,
+            labelcolor=gss.TEXT_COLOR)
     # Overlay LAND_COLOR-filled country polygons so continents match the
     # unified SST look. The anomaly field can be 0.0 (or finite near-zero)
     # over land in regions where the climatology and the live field both
@@ -1332,9 +1337,16 @@ def main(argv: list[str] | None = None) -> int:
                             print(f"{log}   WARN: records overlay failed "
                                   f"({_exc}); plain anomaly.")
                     out = ARMOR_DIR / f"{rkey}_tchp_anom.png"
+                    # Title names the records layer ONLY when it is drawn;
+                    # every graceful-fallback path (kill switch, envelope
+                    # absent, grid mismatch, mask error) keeps the plain
+                    # title so the no-overlay plot is unchanged.
+                    anom_title = (f"{label} · TCHP Anomaly & Records"
+                                  if rec_hi is not None or rec_lo is not None
+                                  else f"{label} · TCHP Anomaly")
                     if plot_tchp_anom(
                         anom, anom_lat, lon, extent, figsize,
-                        title=f"{label} · TCHP Anomaly",
+                        title=anom_title,
                         subtitle=(
                             f"Valid: {date_label}  ·  ARMOR3D · "
                             f"anomaly vs. 1993-2020 weekly climatology"

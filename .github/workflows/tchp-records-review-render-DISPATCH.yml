@@ -292,6 +292,14 @@ jobs:
           summary = {"valid_date": vd, "regions": {}, "all_region_counts": counts}
           summary["repair"] = json.load(open("repair_stats.json"))
           ok = True
+          # The records render now LEGITIMATELY differs from base in three
+          # places: (1) the title reads "... & Records" (top text band),
+          # (2) the compact hatch key (legend box in the map body), and
+          # (3) the hatch cells themselves. Everything else must still be
+          # byte-identical. Changed pixels split into the title band vs the
+          # body so both expected diffs are individually visible; the diff
+          # boards remain the visual ground truth.
+          TITLE_BAND_FRAC = 0.12   # top 12% of rows = the two title lines
           for reg in REGIONS:
               b_path = f"review_base/{reg}_tchp_anom.png"
               r_path = f"armor3d/{reg}_tchp_anom.png"
@@ -302,16 +310,25 @@ jobs:
               assert b.shape == r.shape, f"{reg} shape {b.shape} vs {r.shape}"
               changed = np.abs(b - r).sum(axis=2) > 0
               n_ch = int(changed.sum()); pct = 100.0 * n_ch / changed.size
+              band_rows = int(changed.shape[0] * TITLE_BAND_FRAC)
+              title_ch = int(changed[:band_rows].sum())
+              body_ch = int(changed[band_rows:].sum())
               outside_identical = bool((b[~changed] == r[~changed]).all())
               c = counts.get(reg, {"high_cells": 0, "low_cells": 0})
               hatched = c["high_cells"] + c["low_cells"] > 0
-              clean = outside_identical and (hatched == (n_ch > 0)) and pct < 50.0
+              # records drawn => the title changed AND the body changed
+              # (hatch + legend); bounded so a wholesale restyle still fails.
+              clean = (outside_identical and title_ch > 0 and body_ch > 0
+                       and hatched and pct < 50.0)
               ok = ok and clean
               summary["regions"][reg] = {
                   **c, "changed_px": n_ch, "changed_pct": round(pct, 3),
+                  "title_band_changed_px": title_ch,
+                  "body_changed_px": body_ch,
                   "outside_identical": outside_identical, "diff_clean": clean}
               print(f"{reg}: {c['high_cells']} high / {c['low_cells']} low cells, "
-                    f"{pct:.3f}% px changed, clean={clean}")
+                    f"{pct:.3f}% px changed (title {title_ch}, body {body_ch}), "
+                    f"clean={clean}")
               # diff visual: dimmed base, pink where changed
               vis = (b * 0.30).astype(np.uint8); vis[changed] = [255, 80, 200]
               Image.fromarray(vis).save(f"review_out/{reg}_diff.png")
