@@ -11,6 +11,9 @@
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
 <link rel="stylesheet" href="/styles.css">
+<!-- gif.js: client-side animated-GIF encoder, the same one the /satellite/ loop
+     export uses, reused here for the Ensemble Cyclone Centers GIF Maker. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
 
 <style>
   html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
@@ -269,6 +272,28 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 13px; }
   .ens-scrub { width: 100%; margin-top: 12px; accent-color: var(--accent-2); cursor: pointer; }
   .ens-caption { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-top: 12px; }
+  /* GIF Maker dialog - same look/controls as the /satellite/ loop export. */
+  .sat-gif[disabled] { opacity: 0.5; cursor: progress; }
+  .sat-gifmodal { position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55); z-index: 9999; }
+  .sat-gifmodal.open { display: flex; }
+  .sat-gifdialog { background: var(--panel, #141821);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 20px 18px; width: 300px;
+    box-shadow: 0 14px 44px rgba(0,0,0,0.6); }
+  .sat-gifdialog h3 { margin: 0 0 8px; font-size: 15px; color: var(--fg);
+    display: flex; justify-content: space-between; align-items: center; }
+  .sat-gifdialog .row { display: flex; justify-content: space-between;
+    align-items: center; margin: 10px 0; font-size: 13px; color: var(--muted); }
+  .sat-gifdialog input { width: 74px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+    font-size: 13px; text-align: right; }
+  .sat-gifdialog .mk { color: var(--accent-2); cursor: pointer;
+    font-weight: 800; background: none; border: none; font-size: 14px; padding: 4px 0; }
+  .sat-gifdialog .mk:disabled { opacity: 0.5; cursor: not-allowed; }
+  .sat-gifx { cursor: pointer; color: var(--muted); background: none;
+    border: none; font-size: 20px; line-height: 1; }
 </style>
 </head>
 <body>
@@ -411,6 +436,8 @@
         </div>
         <button id="enscenters-trail" class="hafs-btn" type="button"
                 title="Accumulating trail vs current step only">Trail: on</button>
+        <button id="enscenters-gif" class="hafs-btn sat-gif" type="button"
+                title="Export this region's animation as a GIF">&#8681; GIF</button>
         <div class="ens-readout">
           <span id="enscenters-fhour">F000</span>
           <span id="enscenters-valid"></span>
@@ -460,6 +487,24 @@
     <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Model data: NOAA NWS HAFS via AWS Open Data</div>
   </div>
 </footer>
+
+<!-- GIF Maker dialog for the Ensemble Cyclone Centers viewer (same controls as
+     the /satellite/ loop export: frame count, FPS, skip-every). -->
+<div class="sat-gifmodal" id="enscenters-gifmodal">
+  <div class="sat-gifdialog">
+    <h3>GIF Maker <button class="sat-gifx" id="enscenters-gifx" type="button" aria-label="Close">&times;</button></h3>
+    <div class="row"><label for="enscenters-gifn">Number of frames</label>
+      <input type="number" id="enscenters-gifn" min="2" value="30"></div>
+    <div class="row"><label for="enscenters-giffps">Frames per second</label>
+      <input type="number" id="enscenters-giffps" min="1" max="30" value="10"></div>
+    <div class="row"><label for="enscenters-gifskip">Skip every</label>
+      <input type="number" id="enscenters-gifskip" min="0" value="0"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button class="mk" id="enscenters-gifmake" type="button">MAKE GIF</button></div>
+    <div class="row" id="enscenters-gifstatus"
+         style="display:none;color:var(--accent-2);justify-content:flex-end"></div>
+  </div>
+</div>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/hafs.js"></script>
