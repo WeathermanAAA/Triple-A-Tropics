@@ -77,9 +77,23 @@
       ' ' + c.slice(8, 10) + 'Z';
   }
 
-  // "2026060418" -> "18Z" (the short tag a cycle toggle button shows).
+  // "2026060418" -> "18Z" (the bare hour tag - kept for exports/back-compat).
   function cycleHourTag(c) {
     return (c && c.length >= 10) ? c.slice(8, 10) + 'Z' : (c || '');
+  }
+
+  // "2026061018" -> "Jun 10 18Z" - the DATED cycle tag every user-visible
+  // surface shows. Bare hour tags made two consecutive cross-midnight runs
+  // (06-10 18Z + 06-11 00Z) look like same-day runs with 06z/12z missing;
+  // the date makes the picker honest about WHEN each run is from.
+  var MONTH_TAGS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function cycleDayTag(c) {
+    if (!c || c.length < 10) return c || '';
+    var mo = parseInt(c.slice(4, 6), 10);
+    if (!(mo >= 1 && mo <= 12)) return cycleHourTag(c);
+    return MONTH_TAGS[mo - 1] + ' ' + parseInt(c.slice(6, 8), 10) + ' ' +
+      c.slice(8, 10) + 'Z';
   }
 
   function el(id) { return document.getElementById(id); }
@@ -309,7 +323,7 @@
     var defs = this.cycles.map(function (c) {
       return {
         slug: c.cycle,
-        label: cycleHourTag(c.cycle) + (c.in_progress ? ' · building' : '')
+        label: cycleDayTag(c.cycle) + (c.in_progress ? ' · building' : '')
       };
     });
     var active = this.cycle ? this.cycle.cycle : defs[0].slug;
@@ -757,7 +771,7 @@
     badge.className = 'hafs-badge';
     if (this.pendingCycleKey) {
       var cyc = this._cycleByKey(this.pendingCycleKey);
-      var tag = cycleHourTag(this.pendingCycleKey);
+      var tag = cycleDayTag(this.pendingCycleKey);
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'hafs-badge-btn';
@@ -776,7 +790,7 @@
       var newestKey = this.cycles.length ? this.cycles[0].cycle : '';
       var span = document.createElement('span');
       span.className = 'hafs-preannounce';
-      span.textContent = cycleHourTag(newestKey) + ' run started - first frames soon';
+      span.textContent = cycleDayTag(newestKey) + ' run started - first frames soon';
       badge.appendChild(span);
       badge.style.display = '';
     } else {
@@ -1091,7 +1105,8 @@
       pad: pad,
       fmtUTC: fmtUTC,
       fmtCycle: fmtCycle,
-      cycleHourTag: cycleHourTag
+      cycleHourTag: cycleHourTag,
+      cycleDayTag: cycleDayTag
     };
   }
 })();
