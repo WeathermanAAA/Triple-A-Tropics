@@ -136,6 +136,9 @@
   }
 
   // ---- one-time picker CSS (self-contained shared component) ----
+  // Triple-A-Tropics' OWN styling (NOT cyclonicwx): amber accent identity,
+  // accent-bar group headers, the region label overlaid on the thumbnail with a
+  // gradient, and an amber selected state with a corner check.
   function _injectCss() {
     if (document.getElementById('tatreg-css')) return;
     var s = document.createElement('style');
@@ -143,26 +146,34 @@
     s.textContent = [
       '.tatreg-btn{background:var(--bg,#131519);color:var(--fg,#e8ebef);border:1px solid var(--border,#2a2e36);',
       'border-radius:6px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;justify-content:space-between}',
-      '.tatreg-btn:hover{border-color:var(--accent-2,#5dd3ff)}',
-      '.tatreg-btn .tatreg-caret{color:var(--muted,#9199a4);font-size:11px}',
-      '.tatreg-overlay{position:fixed;inset:0;z-index:2000;background:rgba(4,8,14,0.72);',
+      '.tatreg-btn:hover{border-color:var(--accent,#ffb83a)}',
+      '.tatreg-btn .tatreg-caret{color:var(--accent,#ffb83a);font-size:11px}',
+      '.tatreg-overlay{position:fixed;inset:0;z-index:2000;background:rgba(4,8,14,0.78);backdrop-filter:blur(3px);',
       'display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}',
-      '.tatreg-modal{background:var(--panel,#1b1e24);border:1px solid var(--border,#2a2e36);border-radius:12px;',
-      'max-width:920px;width:100%;box-shadow:0 18px 60px rgba(0,0,0,0.5)}',
-      '.tatreg-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border,#2a2e36)}',
-      '.tatreg-head h3{margin:0;font-size:16px;color:var(--fg,#e8ebef)}',
+      '.tatreg-modal{background:var(--panel,#1b1e24);border:1px solid var(--border,#2a2e36);border-top:3px solid var(--accent,#ffb83a);',
+      'border-radius:4px 4px 12px 12px;max-width:940px;width:100%;box-shadow:0 22px 70px rgba(0,0,0,0.6)}',
+      '.tatreg-head{display:flex;align-items:center;gap:11px;padding:15px 20px;border-bottom:1px solid var(--border,#2a2e36)}',
+      '.tatreg-head .tatreg-mark{width:7px;height:20px;background:var(--accent,#ffb83a);border-radius:2px;flex:0 0 auto}',
+      '.tatreg-head h3{margin:0;font-size:15px;letter-spacing:1.2px;text-transform:uppercase;color:var(--fg,#e8ebef);font-weight:800;flex:1 1 auto}',
       '.tatreg-x{background:none;border:none;color:var(--muted,#9199a4);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}',
-      '.tatreg-x:hover{color:var(--fg,#e8ebef)}',
-      '.tatreg-body{padding:8px 20px 20px}',
-      '.tatreg-group-h{color:var(--muted,#9199a4);font-size:11px;font-weight:700;text-transform:uppercase;',
-      'letter-spacing:0.6px;margin:18px 0 10px}',
-      '.tatreg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}',
-      '.tatreg-card{background:var(--bg,#131519);border:1.5px solid var(--border,#2a2e36);border-radius:8px;',
-      'padding:6px;cursor:pointer;display:flex;flex-direction:column;gap:5px;transition:border-color .12s}',
-      '.tatreg-card:hover{border-color:var(--accent-2,#5dd3ff)}',
-      '.tatreg-card.sel{border-color:var(--accent-2,#5dd3ff);box-shadow:0 0 0 1px var(--accent-2,#5dd3ff)}',
-      '.tatreg-card canvas{width:100%;height:auto;border-radius:4px;display:block}',
-      '.tatreg-card span{font-size:11.5px;color:var(--fg,#e8ebef);text-align:center;font-weight:600}'
+      '.tatreg-x:hover{color:var(--accent,#ffb83a)}',
+      '.tatreg-body{padding:6px 20px 22px}',
+      '.tatreg-group-h{display:flex;align-items:center;gap:9px;color:var(--accent,#ffb83a);font-size:11px;font-weight:800;',
+      'text-transform:uppercase;letter-spacing:1.4px;margin:20px 0 11px}',
+      '.tatreg-group-h::before{content:"";width:14px;height:3px;background:var(--accent,#ffb83a);border-radius:2px}',
+      '.tatreg-group-h::after{content:"";flex:1 1 auto;height:1px;background:var(--border,#2a2e36)}',
+      '.tatreg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:11px}',
+      '.tatreg-card{position:relative;border:1px solid var(--border,#2a2e36);border-radius:9px;overflow:hidden;',
+      'cursor:pointer;background:#0b1320;transition:border-color .12s,transform .08s}',
+      '.tatreg-card:hover{border-color:var(--accent-2,#5dd3ff);transform:translateY(-1px)}',
+      '.tatreg-card.sel{border-color:var(--accent,#ffb83a);box-shadow:0 0 0 2px var(--accent,#ffb83a) inset}',
+      '.tatreg-thumb{position:relative;display:block;line-height:0}',
+      '.tatreg-thumb canvas{width:100%;height:auto;display:block}',
+      '.tatreg-lab{position:absolute;left:0;right:0;bottom:0;padding:14px 9px 6px;font-size:11.5px;font-weight:700;',
+      'color:#fff;text-align:left;background:linear-gradient(180deg,rgba(7,16,28,0),rgba(7,16,28,0.88))}',
+      '.tatreg-check{position:absolute;top:6px;right:6px;width:17px;height:17px;border-radius:50%;background:var(--accent,#ffb83a);',
+      'color:#1a1205;font-size:12px;font-weight:900;line-height:17px;text-align:center;display:none}',
+      '.tatreg-card.sel .tatreg-check{display:block}'
     ].join('');
     document.head.appendChild(s);
   }
@@ -183,10 +194,11 @@
     var ov = document.createElement('div'); ov.className = 'tatreg-overlay';
     var modal = document.createElement('div'); modal.className = 'tatreg-modal';
     var head = document.createElement('div'); head.className = 'tatreg-head';
+    var mark = document.createElement('span'); mark.className = 'tatreg-mark';
     var h = document.createElement('h3'); h.textContent = 'Model Regions';
     var x = document.createElement('button'); x.className = 'tatreg-x'; x.innerHTML = '&times;';
     x.setAttribute('aria-label', 'Close'); x.addEventListener('click', function () { self.close(); });
-    head.appendChild(h); head.appendChild(x);
+    head.appendChild(mark); head.appendChild(h); head.appendChild(x);
     var body = document.createElement('div'); body.className = 'tatreg-body';
 
     for (var gi = 0; gi < GROUPS.length; gi++) {
@@ -200,9 +212,12 @@
           card.className = 'tatreg-card' + (r.key === self.current ? ' sel' : '');
           card.setAttribute('data-key', r.key);
           card.setAttribute('role', 'button'); card.tabIndex = 0;
-          var cv = document.createElement('canvas'); cv.width = 116; cv.height = 70;
-          var lab = document.createElement('span'); lab.textContent = r.label;
-          card.appendChild(cv); card.appendChild(lab);
+          var thumb = document.createElement('div'); thumb.className = 'tatreg-thumb';
+          var cv = document.createElement('canvas'); cv.width = 128; cv.height = 78;
+          var lab = document.createElement('span'); lab.className = 'tatreg-lab'; lab.textContent = r.label;
+          var chk = document.createElement('span'); chk.className = 'tatreg-check'; chk.innerHTML = '&#10003;';
+          thumb.appendChild(cv); thumb.appendChild(lab); thumb.appendChild(chk);
+          card.appendChild(thumb);
           card.addEventListener('click', function () { self._pick(r.key); });
           card.addEventListener('keydown', function (ev) {
             if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); self._pick(r.key); }
