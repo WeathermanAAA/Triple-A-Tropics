@@ -1,11 +1,10 @@
-// jsdom smoke harness for the Ensemble Cyclone Centers viewer (models/enscenters.js)
-// plus the shared region layer (models/regions.js).
+// jsdom LOGIC smoke for the Ensemble Cyclone Centers viewer + shared region layer.
 //
-// Loads both under jsdom behind stubbed canvas/fetch/rAF, hydrates from a real
-// manifest + cycle JSON, and prints a JSON state probe so
-// tests/test_enscenters_viewer.py can assert the data wiring, transport, AND the
-// region crop (default region, region switch -> extent + peak-table + scatter
-// filter, dateline-wrap) offline (canvas is not installed -> 2D context stub).
+// The canvas is now the full figure; its PIXELS are verified in a real browser
+// (Playwright). jsdom does no real canvas/layout, so this guards only the LOGIC:
+// the viewer constructs, hydrates, region-filters, computes per-member peaks,
+// steps the transport, and toggles the trail mode. Canvas 2D calls hit a no-op
+// stub. Prints a JSON state probe for tests/test_enscenters_viewer.py.
 //
 //   node enscenters_viewer_smoke.cjs <enscenters.js> <manifest.json> <cycle.json>
 "use strict";
@@ -21,17 +20,10 @@ const cycle = JSON.parse(fs.readFileSync(CYCLE, "utf8"));
 
 const HTML = `<!doctype html><html><body>
 <div id="enscenters-viewer" tabindex="0">
-  <div class="ens-row">
-    <div class="ens-left">
-      <div class="ens-titlebox"><h2>Ensemble Cyclone Centers</h2><p id="enscenters-subtitle"></p></div>
-      <div id="enscenters-mapframe">
-        <canvas id="enscenters-canvas" width="900" height="500"></canvas>
-        <div id="enscenters-legend"></div>
-        <div id="enscenters-tooltip"></div>
-        <div id="enscenters-status" style="display:none"><span></span></div>
-      </div>
-    </div>
-    <div id="enscenters-peaks"></div>
+  <div id="enscenters-mapframe">
+    <canvas id="enscenters-canvas" width="900" height="560"></canvas>
+    <div id="enscenters-tooltip"></div>
+    <div id="enscenters-status" style="display:none"><span></span></div>
   </div>
   <div class="ens-controlbar">
     <button id="enscenters-region-btn"><span id="enscenters-region-label"></span></button>
@@ -39,6 +31,7 @@ const HTML = `<!doctype html><html><body>
     <button id="enscenters-step-back"></button>
     <button id="enscenters-play"></button>
     <button id="enscenters-step-fwd"></button>
+    <button id="enscenters-trail"></button>
     <span id="enscenters-fhour"></span><span id="enscenters-valid"></span>
     <select id="enscenters-speed"></select>
   </div>
@@ -48,10 +41,9 @@ const HTML = `<!doctype html><html><body>
 </div></body></html>`;
 
 const dom = new JSDOM(HTML, { runScripts: "outside-only",
-  url: "https://triple-a-tropics.com/models/" });   // non-opaque origin -> localStorage works
+  url: "https://triple-a-tropics.com/models/" });
 const win = dom.window;
 
-// ---- stubs ----
 const fake2d = new Proxy({}, {
   get(_t, k) {
     if (k === "canvas") return { width: 0, height: 0 };
@@ -64,7 +56,7 @@ win.requestAnimationFrame = function () { return 0; };
 win.cancelAnimationFrame = function () {};
 win.ResizeObserver = function () { this.observe = function () {}; };
 win.devicePixelRatio = 1;
-try { win.localStorage.clear(); } catch (e) { /* ignore */ }
+try { win.localStorage.clear(); } catch (e) {}
 
 const EMPTY_GEO = { type: "FeatureCollection", features: [] };
 win.fetch = function (url) {
@@ -76,73 +68,57 @@ win.fetch = function (url) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 };
 
-// ---- load the shared region layer THEN the viewer ----
 win.eval(fs.readFileSync(REGIONS, "utf8"));
 win.eval(fs.readFileSync(JS, "utf8"));
-
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const R = win.TATRegions;
 
 (async () => {
-  const root = win.document.getElementById("enscenters-viewer");
-  const V = new win.EnsCentersViewer(root);
-  for (let i = 0; i < 6; i++) await flush();   // basemap+manifest+cycle resolve
-
-  const peaksHtml = win.document.getElementById("enscenters-peaks").innerHTML;
-  const scrub = win.document.getElementById("enscenters-scrub");
+  const V = new win.EnsCentersViewer(win.document.getElementById("enscenters-viewer"));
+  for (let i = 0; i < 6; i++) await flush();
 
   const before = V.idx; V._step(1); const afterStep = V.idx;
   V._show(2);
   const fhour2 = win.document.getElementById("enscenters-fhour").textContent;
-  const lastIdx = V.steps.length - 1;
-  scrub.value = String(lastIdx); scrub.dispatchEvent(new win.Event("input"));
-  const afterScrub = V.idx;
 
-  // ---- region behavior ----
+  const peaksHasCTL = V.peaks.some((p) => p.id === "CTL");
+  const peaksSorted = V.peaks.length < 2 ||
+    V.peaks.every((p, i) => i === 0 || V.peaks[i - 1].mslp <= p.mslp);
+
+  // trail toggle
+  const trailDefault = V.trailMode;
+  V._setTrailMode("current");
+  const trailAfter = V.trailMode;
+  V._setTrailMode("trail");
+
+  // region switch
   const defaultRegion = V.region;
   const regionLabelText = win.document.getElementById("enscenters-region-label").textContent;
-  if (V.picker) V.picker.open();   // exercises the thumbnail render path
-  // count THIS viewer's own picker cards (the DOMContentLoaded auto-boot may
-  // create a second viewer in the harness; the real page only ever has one).
+  if (V.picker) V.picker.open();
   const pickerCards = V.picker ? V.picker.overlay.querySelectorAll(".tatreg-card").length : -1;
-  const pickerOpen = V.picker ? (V.picker.overlay.style.display === "flex") : false;
   if (V.picker) V.picker.close();
-
-  // switch to Global (Pacific-centered full extent), then West Pacific.
   V._selectRegion("global");
   const globalExtent = V.extent.slice();
-  const globalPeaksHasTitle = /Peak in Global/.test(win.document.getElementById("enscenters-peaks").innerHTML);
-
   V._selectRegion("wpac");
   V._show(0);
   const wpac = R.get("wpac");
   let allVisibleInWpac = true;
-  for (const c of V.visible) { if (!R.inRegion(c[1], c[0], wpac)) { allVisibleInWpac = false; break; } }
-  const wpacExtent = V.extent.slice();
-  let lastRegion = null;
-  try { lastRegion = win.localStorage.getItem("ens.region"); } catch (e) { /* */ }
+  for (const c of V.visible) if (!R.inRegion(c[1], c[0], wpac)) { allVisibleInWpac = false; break; }
+  let lastRegion = null; try { lastRegion = win.localStorage.getItem("ens.region"); } catch (e) {}
 
   process.stdout.write(JSON.stringify({
-    framesLen: V.frames.length,
+    regionFramesLen: V.regionFrames.length,
     runStepsLen: (V.data && V.data.run_steps || []).length,
     nCenters: V.data && V.data.n_centers,
     nMembers: V.data && V.data.n_members,
-    peaksHasCTL: /\bCTL\b/.test(peaksHtml),
-    scrubMax: Number(scrub.max),
-    idxBefore: before, idxAfterStep: afterStep,
-    fhourAfterShow2: fhour2, idxAfterScrub: afterScrub,
-    subtitle: win.document.getElementById("enscenters-subtitle").textContent,
-    // region probe
+    peaksLen: V.peaks.length, peaksHasCTL, peaksSorted,
+    idxBefore: before, idxAfterStep: afterStep, fhourAfterShow2: fhour2,
+    trailDefault, trailAfter,
     defaultRegion, regionLabelText,
-    // regression guard: the single-model auto-hide must hide ONLY the model
-    // group, never the whole control bar (the bug a real browser caught).
-    controlbarHidden: (win.document.querySelector(".ens-controlbar") || {}).style ?
-      win.document.querySelector(".ens-controlbar").style.display === "none" : null,
-    modelgroupHidden: (win.document.querySelector(".ens-modelgroup") || {}).style ?
-      win.document.querySelector(".ens-modelgroup").style.display === "none" : null,
-    pickerCardCount: pickerCards, pickerOpened: pickerOpen,
-    globalExtent, globalPeaksHasTitle,
-    wpacExtent, allVisibleInWpac, wpacVisibleCount: V.visible.length,
+    controlbarHidden: win.document.querySelector(".ens-controlbar").style.display === "none",
+    modelgroupHidden: win.document.querySelector(".ens-modelgroup").style.display === "none",
+    pickerCardCount: pickerCards,
+    globalExtent, wpacExtent: V.extent.slice(), allVisibleInWpac,
     lastRegionSaved: lastRegion,
   }));
   process.exit(0);

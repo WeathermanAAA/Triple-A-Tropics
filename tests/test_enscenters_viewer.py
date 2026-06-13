@@ -85,20 +85,20 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"harness failed:\n{proc.stderr}")
         s = json.loads(proc.stdout)
 
-        # data wiring
-        self.assertEqual(s["framesLen"], 3)
+        # data wiring + per-member region peaks
+        self.assertEqual(s["regionFramesLen"], 3)
         self.assertEqual(s["runStepsLen"], 3)
         self.assertEqual(s["nCenters"], 5)
         self.assertEqual(s["nMembers"], 2)
-        self.assertTrue(s["peaksHasCTL"])   # CTL's centers are in the Atlantic default
-        self.assertEqual(s["scrubMax"], 2)
+        self.assertTrue(s["peaksHasCTL"])     # CTL's centers are in the Atlantic default
+        self.assertTrue(s["peaksSorted"])     # ascending by Pmin
         # transport
         self.assertEqual(s["idxBefore"], 0)
         self.assertEqual(s["idxAfterStep"], 1)
         self.assertEqual(s["fhourAfterShow2"], "F072")
-        self.assertEqual(s["idxAfterScrub"], 2)
-        self.assertIn("ECMWF ENS", s["subtitle"])
-        self.assertIn("2 members", s["subtitle"])
+        # trail mode
+        self.assertEqual(s["trailDefault"], "trail")
+        self.assertEqual(s["trailAfter"], "current")
 
         # region layer (shared TATRegions)
         self.assertEqual(s["defaultRegion"], "atlantic")
@@ -107,9 +107,7 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertFalse(s["controlbarHidden"])
         self.assertTrue(s["modelgroupHidden"])
         self.assertEqual(s["pickerCardCount"], 23)        # all registry regions
-        self.assertTrue(s["pickerOpened"])
         self.assertEqual(s["globalExtent"], [0, 360, -88, 88])   # Pacific-centered
-        self.assertTrue(s["globalPeaksHasTitle"])
         self.assertEqual(s["wpacExtent"], [100, 180, 0, 45])
         self.assertTrue(s["allVisibleInWpac"])            # scatter filtered to region
         self.assertEqual(s["lastRegionSaved"], "wpac")    # localStorage persistence
