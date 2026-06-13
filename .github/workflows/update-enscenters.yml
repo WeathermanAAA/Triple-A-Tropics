@@ -5,23 +5,32 @@ name: Update Ensemble Cyclone Centers (ECMWF ENS)
 # and the live site fetches them cross-origin from
 # cdn.triple-a-tropics.com/models/enscenters/ - same model as update-hafs.yml.
 #
-# ECMWF open-data ENS MSLP completes ~8 h after each synoptic time, so we fire
-# ~8.5 h post-cycle on a non-round, non-colliding minute (taken slots: ACE
-# :07/:37/:53, SST 13:17/13:47, subsurface 14:23/14:53, ARMOR3D 14:43/15:13,
-# sub-anim 16:33/17:03, season-gifs 03:23, GIBS 22:07/22:37, HAFS :53/:27). The
-# staggering is load-bearing - GitHub drops round-minute crons. The builder
-# resolves the latest COMPLETE cycle (terminal step present), so an early run
-# just picks the prior complete cycle rather than a half-written one; the :11
-# backup 30 min later catches a slow dissemination.
+# ECMWF open-data ENS MSLP disseminates ~6-10 h after each synoptic time (the
+# full ENS lands ~7.5-8 h out). The builder uses a NEVER-MISS currency core: it
+# reads the published watermark from R2, lists the cycles COMPLETE on the source
+# (a per-cycle file-presence gate on the terminal step of BOTH oper/fc and
+# enfo/pf - never wall-clock), and BACKFILLS every complete-but-unpublished cycle
+# (oldest first, capped). So a fire that misses a late cycle is caught by the
+# next one; we never skip and never publish a half-written cycle.
+#
+# We therefore fire ~hourly ACROSS each cycle's delivery window so a late cycle is
+# live within ~an hour, on non-round, non-colliding minutes (the staggering is
+# load-bearing - GitHub drops round-minute crons). Taken slots: ACE :07/:37/:53,
+# SST :17/:47, subsurface :23/:53, ARMOR3D :43/:13, sub-anim :33/:03, season-gifs
+# :23, GIBS :07/:37, HAFS :53/:27 -> we use :19 (hourly) and :49 (peak backup).
 
 on:
   schedule:
-    - cron: "41 8,14,20,2 * * *"     # ~8.5 h after 00/06/12/18Z
-    - cron: "11 9,15,21,3 * * *"     # backup ~30 min later
+    # Hourly across the union of all four cycles' ~6-10 h delivery windows
+    # (00Z->06-10, 06Z->12-16, 12Z->18-22, 18Z->00-04 UTC). No-op when nothing is
+    # missing (a ~20-HEAD gate check), so most fires are cheap.
+    - cron: "19 0-4,6-10,12-16,18-22 * * *"
+    # Backup near the ~8 h ENS-completion peak (most likely fresh-cycle landing).
+    - cron: "49 2,8,14,20 * * *"
   workflow_dispatch:
     inputs:
       cycle:
-        description: "Force cycle YYYYMMDDHH (blank = latest complete)"
+        description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
         required: false
       jobs:
         description: "Parallel member workers"
@@ -56,15 +65,19 @@ jobs:
           pip install numpy scipy xarray cfgrib eccodes ecmwf-opendata
           python -c "import scipy, cfgrib, xarray; from ecmwf.opendata import Client; print('deps OK')"
 
-      - name: Build ensemble cyclone centers (latest complete cycle)
+      - name: Build ensemble cyclone centers (never-miss backfill)
         env:
           # Pass dispatch inputs through env vars, never interpolate ${{ }} into
           # the shell body (Actions script-injection hardening).
           ENS_JOBS: ${{ github.event.inputs.jobs || '4' }}
           ENS_CYCLE: ${{ github.event.inputs.cycle }}
         run: |
+          # --source aws: the AWS mirror dodges the open-data portal's 500-
+          # simultaneous-connection cap (we run 4 parallel member workers + the
+          # completeness HEADs). The watermark/gate/backfill are all in the CLI.
           python generate_enscenters.py \
             --jobs "${ENS_JOBS:-4}" \
+            --source aws \
             ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
 
       - name: Sync detection JSON + manifest to R2 (and prune old cycles)
@@ -89,8 +102,39 @@ jobs:
             --cache-control "public, max-age=300" --content-type "application/json" \
             --exclude "*" --include "*/*.json" --only-show-errors
 
-          # 2. Manifest (now references only cycle files that exist). Short TTL;
-          #    the viewer also cache-busts the manifest fetch.
+          # 1b. CONSISTENCY GATE (publish-or-abort): never swap in a manifest that
+          #     points at a cycle JSON not actually on R2. `aws s3 sync` already
+          #     exits non-zero on a failed transfer (so set -e usually catches a
+          #     dropped upload), but the manifest->object invariant must NOT rest
+          #     on CLI exit-code semantics: a manifest referencing a 404 cycle,
+          #     followed by the prune below deleting the prior good cycles, is
+          #     unrecoverable data loss. So HEAD every referenced cycle and abort
+          #     BEFORE the manifest swap + prune if any is missing - the prior
+          #     manifest/cycles stay live and the run retries next cron. (The
+          #     successfully-uploaded new JSONs are harmless orphans, re-referenced
+          #     on the next run.)
+          python3 - "$R2_ENDPOINT" <<'VALIDATE'
+          import json, os, subprocess, sys
+          endpoint, bucket = sys.argv[1], "triple-a-tropics-media"
+          man = json.load(open("./models/enscenters/manifest.json"))
+          missing, checked = [], 0
+          for model in man.get("models", []):
+              slug = model.get("slug")
+              for cyc in model.get("cycles", []):
+                  checked += 1
+                  key = "models/enscenters/%s/%s.json" % (slug, cyc)
+                  r = subprocess.run(["aws", "s3api", "head-object", "--endpoint-url", endpoint,
+                                      "--bucket", bucket, "--key", key], capture_output=True)
+                  if r.returncode != 0:
+                      missing.append(key)
+          if missing:
+              sys.stderr.write("ABORT: manifest references cycles NOT on R2 (partial sync?): %s\n" % missing)
+              sys.exit(1)
+          print("consistency OK: all %d referenced cycle(s) present on R2" % checked)
+          VALIDATE
+
+          # 2. Manifest (validated: references only cycle files that exist). Short
+          #    TTL; the viewer also cache-busts the manifest fetch.
           aws s3 cp "$SRC/manifest.json" "$DST/manifest.json" --endpoint-url "$R2_ENDPOINT" \
             --cache-control "public, max-age=60" --content-type "application/json" \
             --only-show-errors

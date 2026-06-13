@@ -58,6 +58,37 @@ class TestAssetVersioning(unittest.TestCase):
         self.assertNotEqual(before["/models/enscenters.js"], after["/models/enscenters.js"])
         self.assertEqual(before["/models/regions.js"], after["/models/regions.js"])  # unchanged file, same hash
 
+    def test_regex_robustness(self):
+        # The stamper must: replace an existing ?v=, replace a DIFFERENT query
+        # (not silently skip it), never touch a /models/*.json src or an external
+        # script, and be idempotent.
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / "models").mkdir()
+            (root / "models" / "a.js").write_text("A")
+            (root / "models" / "b.js").write_text("B")
+            (root / "models" / "data.json").write_text("{}")
+            html = (
+                '<script src="/models/a.js?v=deadbeef99"></script>\n'             # stale ?v= -> refreshed
+                '<script src="/models/b.js?foo=bar"></script>\n'                  # other query -> replaced
+                '<script src="/models/data.json"></script>\n'                     # .json -> untouched
+                '<script src="https://cdnjs.cloudflare.com/x/gif.js"></script>\n' # external -> untouched
+                '<script src="/models/a.js"></script>\n'                          # no query -> ?v= added
+            )
+            out, changed, _ = stamp.stamp_html(html, root)
+            ha, hb = stamp.file_hash(root / "models" / "a.js"), stamp.file_hash(root / "models" / "b.js")
+            self.assertTrue(changed)
+            self.assertIn(f'/models/a.js?v={ha}"', out)
+            self.assertIn(f'/models/b.js?v={hb}"', out)
+            self.assertNotIn("foo=bar", out)            # different query was NOT skipped
+            self.assertNotIn("deadbeef99", out)         # stale hash refreshed
+            self.assertIn('/models/data.json"', out)    # .json untouched, not mangled to data.js?v=
+            self.assertNotIn("data.js?v=", out)
+            self.assertIn('cdnjs.cloudflare.com/x/gif.js"', out)  # external untouched
+            out2, changed2, _ = stamp.stamp_html(out, root)
+            self.assertFalse(changed2)                  # idempotent
+
 
 if __name__ == "__main__":
     unittest.main()
