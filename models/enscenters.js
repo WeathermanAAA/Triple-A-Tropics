@@ -158,10 +158,14 @@
 
   EnsCentersViewer.prototype._loadBasemap = function () {
     var self = this;
-    return Promise.all([
-      fetch('/ne_110m_admin_0_countries.geojson').then(function (r) { return r.json(); }),
-      fetch('/ne_110m_coastline.geojson').then(function (r) { return r.json(); })
-    ]).then(function (g) { self.geo.countries = g[0]; self.geo.coast = g[1]; });
+    // basemap resolution is owned by the shared layer (TATRegions.COAST_RES =
+    // 10m), one source of truth for every non-storm-nest viewer.
+    var p = (window.TATRegions && TATRegions.loadGeo) ? TATRegions.loadGeo()
+      : Promise.all([
+          fetch('/ne_10m_admin_0_countries.geojson').then(function (r) { return r.json(); }),
+          fetch('/ne_10m_coastline.geojson').then(function (r) { return r.json(); })
+        ]).then(function (g) { return { countries: g[0], coast: g[1] }; });
+    return p.then(function (g) { self.geo = g; });
   };
 
   EnsCentersViewer.prototype._fetchManifest = function () {
@@ -240,7 +244,7 @@
     if (this.dom.regionLabel && r) this.dom.regionLabel.textContent = r.label;
     if (window.TATRegions) {
       this.picker = new TATRegions.RegionPicker({
-        geo: this.geo, current: this.region,
+        current: this.region,   // picker loads its own 110m thumbnail geo
         onPick: function (key) { self._selectRegion(key); }
       });
     }
@@ -354,22 +358,29 @@
     g.fillStyle = '#12182a'; g.strokeStyle = C.border; g.lineWidth = 1;
     g.fillRect(t.x, t.y, t.w, t.h);
     g.strokeRect(t.x + 0.5, t.y + 0.5, t.w - 1, t.h - 1);
-    var px = t.x + 9, py = t.y + 8;
     // title (accent bar + label)
     g.fillStyle = C.accent; g.fillRect(t.x, t.y, 3, 18);
     g.fillStyle = C.fg; g.font = '700 12px ' + FONT; g.textBaseline = 'top';
-    g.fillText('Peak  ·  ' + (r ? r.label : ''), px, py);
+    g.fillText('Peak  ·  ' + (r ? r.label : ''), t.x + 9, t.y + 8);
     // 2-column body
-    var bodyTop = t.y + 30, bodyH = t.h - 38;
     var n = rows.length, perCol = Math.ceil(n / 2);
     var colW = (t.w - 12) / 2;
+    var headerY = t.y + 32, bodyTop = t.y + 42, bodyH = t.h - 50;
     var rowH = Math.max(11, Math.min(bodyH / perCol, 18));
     var fs = Math.max(8.5, Math.min(rowH * 0.66, 11));
-    g.font = '600 ' + (fs - 0.5).toFixed(1) + 'px ' + FONT;
-    g.fillStyle = C.muted;
-    g.fillText('MEMBER', t.x + 22, bodyTop - 12);
-    g.textAlign = 'right'; g.fillText('Pmin', t.x + colW - 26, bodyTop - 12);
-    g.fillText('V', t.x + colW - 4, bodyTop - 12); g.textAlign = 'left';
+    // ONE compact header per column, label x-positions matched to the data
+    // columns below (member left, Pmin/V right-aligned) - no overlap.
+    g.font = '700 8px ' + FONT; g.fillStyle = C.muted; g.textBaseline = 'alphabetic';
+    for (var hc = 0; hc < 2; hc++) {
+      var hx = t.x + 6 + hc * colW;
+      g.textAlign = 'left'; g.fillText('MEMBER', hx + 6, headerY);
+      g.textAlign = 'right'; g.fillText('Pmin', hx + colW - 26, headerY);
+      g.fillText('V', hx + colW - 4, headerY);
+    }
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.strokeStyle = C.border; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(t.x + 6, headerY + 4); g.lineTo(t.x + t.w - 6, headerY + 4); g.stroke();
+    if (!n) { g.fillStyle = C.muted; g.font = '500 10px ' + FONT; g.fillText('No centers in region', t.x + 10, bodyTop + 4); }
     for (var i = 0; i < n; i++) {
       var col = (i < perCol) ? 0 : 1, rowi = (i < perCol) ? i : i - perCol;
       var cx = t.x + 6 + col * colW, cy = bodyTop + rowi * rowH;

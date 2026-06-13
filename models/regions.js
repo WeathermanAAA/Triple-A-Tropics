@@ -84,9 +84,33 @@
     return [(L - ext[0]) / (ext[1] - ext[0]) * W, (ext[3] - lat) / (ext[3] - ext[2]) * H];
   }
 
+  // per-feature lon/lat bbox, computed once and cached on the feature, so a
+  // region crop can skip the (most) features it does not show - the difference
+  // between a snappy 10m redraw and a multi-second one.
+  function _bbox(feat) {
+    if (feat._bb !== undefined) return feat._bb;
+    var g = feat.geometry;
+    if (!g || !g.coordinates) return (feat._bb = null);
+    var mnx = 1e9, mxx = -1e9, mny = 1e9, mxy = -1e9;
+    (function scan(c) {
+      if (typeof c[0] === 'number') {
+        if (c[0] < mnx) mnx = c[0]; if (c[0] > mxx) mxx = c[0];
+        if (c[1] < mny) mny = c[1]; if (c[1] > mxy) mxy = c[1];
+      } else { for (var i = 0; i < c.length; i++) scan(c[i]); }
+    })(g.coordinates);
+    return (feat._bb = [mnx, mxx, mny, mxy]);
+  }
+
+  function _visible(bb, ext, wrap) {
+    if (!bb) return true;
+    if (bb[3] < ext[2] || bb[2] > ext[3]) return false;          // lat outside
+    if (!wrap && (bb[1] < ext[0] || bb[0] > ext[1])) return false; // lon outside (non-wrapping)
+    return true;
+  }
+
   function _traceGeo(g, geojson, ext, W, H, closeRings) {
     if (!geojson || !geojson.features) return;
-    var JUMP = W * 0.5;
+    var JUMP = W * 0.5, wrap = (ext[1] > 180 || ext[0] < -180);
     function ring(coords) {
       var prevX = null, started = false;
       for (var i = 0; i < coords.length; i++) {
@@ -100,7 +124,9 @@
       if (closeRings && started) g.closePath();
     }
     for (var f = 0; f < geojson.features.length; f++) {
-      var geom = geojson.features[f].geometry; if (!geom) continue;
+      var feat = geojson.features[f];
+      if (!_visible(_bbox(feat), ext, wrap)) continue;
+      var geom = feat.geometry; if (!geom) continue;
       var t = geom.type, co = geom.coordinates;
       if (t === 'Polygon') { for (var a = 0; a < co.length; a++) ring(co[a]); }
       else if (t === 'MultiPolygon') { for (var b = 0; b < co.length; b++) for (var c = 0; c < co[b].length; c++) ring(co[b][c]); }
@@ -133,6 +159,25 @@
       g.lineJoin = 'round'; g.lineCap = 'round'; g.beginPath();
       _traceGeo(g, geo.coast, ext, W, H, false); g.stroke();
     }
+  }
+
+  // Basemap coastline/land resolution - ONE SHARED source of truth for every
+  // non-storm-nest viewer (change here, not per-viewer). The main figure uses
+  // Natural Earth 10m (high-detail coastlines); the picker thumbnails use 110m
+  // (tiny maps - drawing full 10m geojson into 23 cards would be far too slow).
+  var COAST_RES = '10m';   // figure COASTLINE resolution (the shared constant; high detail)
+  var LAND_RES = '50m';    // land-fill resolution (solid fill under the 10m coast; lighter)
+  var THUMB_RES = '110m';  // picker thumbnail resolution (tiny maps)
+
+  // Fetch the basemap geojson at the shared resolution. opts.coast / opts.land
+  // override (the picker passes 110m). Files live same-origin at /ne_<res>_*.
+  function loadGeo(opts) {
+    opts = opts || {};
+    var coastRes = opts.coast || COAST_RES, landRes = opts.land || LAND_RES;
+    return Promise.all([
+      fetch('/ne_' + landRes + '_admin_0_countries.geojson').then(function (r) { return r.json(); }),
+      fetch('/ne_' + coastRes + '_coastline.geojson').then(function (r) { return r.json(); })
+    ]).then(function (g) { return { countries: g[0], coast: g[1] }; });
   }
 
   // ---- one-time picker CSS (self-contained shared component) ----
@@ -181,7 +226,7 @@
   // ---- the picker (cyclonicwx-style grouped thumbnail modal) ----
   function RegionPicker(opts) {
     _injectCss();
-    this.geo = opts.geo || null;
+    this.geo = null;   // loaded lazily at THUMB_RES on first open
     this.onPick = opts.onPick || function () {};
     this.current = opts.current || 'atlantic';
     this._thumbsDone = false;
@@ -268,13 +313,18 @@
   };
 
   RegionPicker.prototype.open = function () {
-    this._renderThumbs();
+    var self = this;
     this.overlay.style.display = 'flex';
+    if (this.geo) { this._renderThumbs(); return; }
+    loadGeo({ coast: THUMB_RES, land: THUMB_RES })   // 110m thumbnails (fast)
+      .then(function (g) { self.geo = g; self._renderThumbs(); })
+      .catch(function () {});
   };
   RegionPicker.prototype.close = function () { this.overlay.style.display = 'none'; };
 
   window.TATRegions = {
     GROUPS: GROUPS, list: list, get: get, inRegion: inRegion, extentOf: extentOf,
-    project: project, drawBasemap: drawBasemap, RegionPicker: RegionPicker
+    project: project, drawBasemap: drawBasemap, RegionPicker: RegionPicker,
+    loadGeo: loadGeo, COAST_RES: COAST_RES, LAND_RES: LAND_RES, THUMB_RES: THUMB_RES
   };
 })();
