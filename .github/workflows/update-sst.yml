@@ -218,28 +218,22 @@ jobs:
       # those happen in Job 2 once everything is warm so the manifest
       # is unified. ffmpeg is therefore NOT installed in this job.
 
-      - name: Restore animation frame cache
-        # Split restore/save form (vs the combined actions/cache@v5) so
-        # the save step can run with `if: always()` even if the render
-        # step is cancelled.
-        #
-        # restore-keys fall through across runs: a fresh run picks up
-        # the most recent v3 cache (from any prior shard of any prior
-        # run), which on warm steady-state is the previous run's `-full`
-        # cache from Job 2.
-        #
-        # Version-prefix bumping (-vN-) is the sledgehammer for forcing
-        # a full cold re-render of the entire 90-day window. Bumped to
-        # v3 to seed a fresh cache under the render-once / prelim-first
-        # strategy: gsp.fetch_day_versioned now prefers prelim and
-        # never auto-promotes, so once a date is cached it sticks.
-        # See SST animator gotchas in CLAUDE.md.
-        uses: actions/cache/restore@v5
-        with:
-          path: _frame_cache
-          key: sst-mp4-frames-v3-${{ github.run_id }}-oisst
-          restore-keys: |
-            sst-mp4-frames-v3-
+      - name: Restore animation frame cache from R2
+        # The ~9.5 GB rolling frame cache lives in R2, NOT the GitHub
+        # Actions cache. The old GitHub-cache design saved two ~9.5 GB
+        # full-set copies per run (`-oisst` + `-full`); two of them
+        # against the 10 GB/repo cache cap evicted each other EVERY run,
+        # forcing a ~6 h cold re-render that re-stamped the OISST
+        # final/prelim seam (render-once never held). R2 has no cap, so
+        # one durable copy persists and render-once finally holds. To
+        # force a one-time cold re-render of the whole window, bump the
+        # `_vN` suffix in scripts/sst_frame_cache_r2.sh (the R2 analogue
+        # of the old `-vN-` key). See SST animator gotchas in CLAUDE.md.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: bash scripts/sst_frame_cache_r2.sh restore
 
       - name: Render OISST animation frames (4 products)
         # Cold start (empty cache) takes ~2–3 h: ~6,480 OISST frame
@@ -252,19 +246,19 @@ jobs:
             --render-only \
             --products actual anomaly anomaly_records anomaly_gmr
 
-      # Save the cache regardless of whether later steps fail — the
-      # rendered OISST frames are what Job 2 needs to skip rerunning
-      # the same ~3 h of work. With split restore/save, this step
-      # fires even on cancellation (graceful) and on render-step
-      # failure (because if: always()). It does NOT fire on the 6-hour
-      # Actions hard-kill, but the 6-hour budget per job is generous
-      # enough that the OISST shard alone should never approach it.
-      - name: Save animation frame cache (after OISST shard)
+      # Persist the OISST-updated frame cache to R2 so Job 2 inherits it
+      # (the cross-job handoff) and the next run starts warm. `if: always()`
+      # so a later-step failure doesn't lose the rendered frames;
+      # continue-on-error so a transient R2 save hiccup (which only costs a
+      # cold render next run) never fails the job after the frames rendered.
+      - name: Save animation frame cache to R2 (after OISST shard)
         if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: _frame_cache
-          key: sst-mp4-frames-v3-${{ github.run_id }}-oisst
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: bash scripts/sst_frame_cache_r2.sh save
 
   render-crw-and-publish:
     runs-on: ubuntu-latest
@@ -306,18 +300,17 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version
 
-      - name: Restore animation frame cache (warm OISST from Job 1)
-        # First restore-key matches Job 1's just-saved cache for THIS
-        # run, so we inherit the freshly rendered OISST frames. Second
-        # key falls through to any prior v3 cache as a backstop (e.g.
-        # if Job 1 itself ran cold and somehow lost its save).
-        uses: actions/cache/restore@v5
-        with:
-          path: _frame_cache
-          key: sst-mp4-frames-v3-${{ github.run_id }}-full
-          restore-keys: |
-            sst-mp4-frames-v3-${{ github.run_id }}-oisst
-            sst-mp4-frames-v3-
+      - name: Restore animation frame cache from R2 (warm OISST from Job 1)
+        # Job 1's save just overwrote the R2 tar with the freshly rendered
+        # OISST frames on top of the prior run's CRW frames, so this restore
+        # is the cross-job handoff: OISST warm-skips and only the new CRW
+        # delta cold-renders. On miss (e.g. Job 1's save hiccupped) the
+        # script leaves _frame_cache empty and the run cold-renders cleanly.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: bash scripts/sst_frame_cache_r2.sh restore
 
       - name: Render CRW frames + encode all MP4s + write unified manifest
         # Full pipeline run with no --products filter:
@@ -329,12 +322,14 @@ jobs:
         #     widget reads — this is the only manifest write of the run.
         run: python generate_sst_animations.py
 
-      - name: Save animation frame cache (full set)
+      - name: Save animation frame cache to R2 (full set)
         if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: _frame_cache
-          key: sst-mp4-frames-v3-${{ github.run_id }}-full
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: bash scripts/sst_frame_cache_r2.sh save
 
       - name: Upload SST MP4 animations to R2 (cdn.triple-a-tropics.com/sst/)
         # R2 is the PRIMARY source product_animator.js now reads from.
