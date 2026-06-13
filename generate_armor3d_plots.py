@@ -264,6 +264,12 @@ def _have_credentials() -> bool:
 # raises typed exceptions (credentials_utils), but importing them is fragile
 # across versions, so match class names + message text along the cause chain.
 _CMEMS_FATAL_TYPES = {"invalidusernameorpassword", "credentialscannotbenone"}
+# Requested window outside the dataset's coordinate bounds (e.g. asking the MY
+# reanalysis for a year past its time extent). Permanent for a given request —
+# retrying cannot help — but unlike "fatal" the caller may treat it as a
+# normal end-of-available-data signal rather than an error.
+_CMEMS_BEYOND_TYPES = {"coordinatesoutofdatasetbounds"}
+_CMEMS_BEYOND_MARKERS = ("exceed the dataset coordinates",)
 _CMEMS_TRANSIENT_TYPES = {"couldnotconnecttoauthenticationsystem"}
 _CMEMS_TRANSIENT_MARKERS = (
     "connection", "timeout", "timed out", "temporarily unavailable",
@@ -282,8 +288,10 @@ _CMEMS_RETRY_WAITS = {
 
 def _classify_cmems_error(exc: BaseException) -> str:
     """'fatal' = credentials genuinely rejected (retrying cannot help),
-    'transient' = connectivity / auth-service outage (retry with long
-    waits), 'other' = anything else (quick retry)."""
+    'beyond_dataset' = requested window outside the dataset's coordinate
+    bounds (terminal, never retried), 'transient' = connectivity /
+    auth-service outage (retry with long waits), 'other' = anything else
+    (quick retry)."""
     seen: set[int] = set()
     e: BaseException | None = exc
     while e is not None and id(e) not in seen:
@@ -291,11 +299,17 @@ def _classify_cmems_error(exc: BaseException) -> str:
         name = type(e).__name__.lower()
         if name in _CMEMS_FATAL_TYPES:
             return "fatal"
+        msg = str(e).lower()
+        # beyond-bounds checked before the transient text markers: a bounds
+        # message embeds the requested coordinates, which could in principle
+        # collide with a substring marker like "504".
+        if name in _CMEMS_BEYOND_TYPES or any(
+                m in msg for m in _CMEMS_BEYOND_MARKERS):
+            return "beyond_dataset"
         if (name in _CMEMS_TRANSIENT_TYPES
                 or isinstance(e, (ConnectionError, TimeoutError))
                 or "connectionerror" in name or "timeout" in name):
             return "transient"
-        msg = str(e).lower()
         if any(m in msg for m in _CMEMS_TRANSIENT_MARKERS):
             return "transient"
         e = e.__cause__ or e.__context__
@@ -322,7 +336,8 @@ def _cmems_subset(
     Thin wrapper around copernicusmarine.subset() so the rest of the
     script doesn't have to know the exact kwarg conventions. Transient
     failures (auth-service outages, connection errors) are retried with
-    long exponential backoff; invalid credentials fail immediately."""
+    long exponential backoff; invalid credentials and windows beyond the
+    dataset's coordinate bounds fail immediately (retrying cannot help)."""
     import copernicusmarine  # imported lazily — avoid import cost when unused
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -358,6 +373,11 @@ def _cmems_subset(
             if kind == "fatal":
                 print(f"{log}   FATAL {type(exc).__name__}: {exc} — "
                       "credentials rejected, not retrying.")
+                raise
+            if kind == "beyond_dataset":
+                print(f"{log}   BEYOND-BOUNDS {type(exc).__name__}: {exc} — "
+                      "requested window outside the dataset's coordinate "
+                      "bounds (permanent), not retrying.")
                 raise
             waits = _CMEMS_RETRY_WAITS[kind]
             if attempt > len(waits):
@@ -591,6 +611,61 @@ def climatology_slice_for(
     week is compared against the same calendar week's 1993-2020 mean."""
     woy = max(1, min(52, (valid_date.timetuple().tm_yday - 1) // 7 + 1))
     return climo.sel(week=woy).values.astype(np.float32)
+
+
+# --- Records envelope (per-WOY MAX/MIN, baked by bake_armor3d_tchp_records.py) ---
+RECORDS_PATH = OUTPUT_DIR / "sst" / "records" / "armor3d_tchp_record_1993_present.nc"
+
+
+def load_tchp_records() -> "xr.Dataset | None":
+    """Return the per-WOY TCHP record envelope (tchp_week_max/min, max/min_year)
+    or None if the records bake hasn't been published yet. Same missing-file
+    skip as load_tchp_climatology: no records file -> the anomaly map renders
+    exactly as today, with no hatch (the overlay is purely additive)."""
+    if not RECORDS_PATH.exists():
+        return None
+    try:
+        ds = xr.open_dataset(RECORDS_PATH)
+        if "tchp_week_max" not in ds.variables:
+            return None
+        return ds
+    except Exception as exc:
+        print(f"[armor3d]   WARN: could not open records envelope: {exc}")
+        return None
+
+
+# Same 1 kJ/cm² floor the anomaly plot uses to NaN-out "no signal" cells
+# (_near0 in main()). Outside the warm belt TCHP is structurally ZERO every
+# year, so the envelope degenerates to [0, 0] and the inclusive tie would
+# flag the entire extratropical ocean as record-high AND record-low at once
+# (proven on the first real render). Each direction must therefore show real
+# signal on its decisive side: record-high needs a live value above the
+# floor; record-low needs a standing record-min above the floor (a live
+# collapse TO zero from a real record-min still flags — that's signal).
+RECORDS_NO_SIGNAL_TCHP = 1.0
+
+
+def compute_record_masks(
+    tchp_now: np.ndarray, valid_date: dt.date, records: "xr.Dataset",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Inclusive record masks for the current NRT week vs the baked per-WOY
+    extremes (same week-of-year rounding as climatology_slice_for):
+        record-HIGH where NRT TCHP >= the WOY record-max  ("meets or exceeds")
+                    and the live value is real signal (>= 1 kJ/cm²)
+        record-LOW  where NRT TCHP <= the WOY record-min
+                    and the record-min is real signal (>= 1 kJ/cm²)
+    HONESTY GUARDS: cells with no reanalysis envelope (NaN max/min) or no live
+    value are NOT flagged, and the no-signal floor above keeps the degenerate
+    zero-on-zero envelope (extratropics) from hatching wall-to-wall.
+    `tchp_now` must be on the records grid (0.125deg, 0-360 — the same grid
+    the bake and the live generator use)."""
+    woy = max(1, min(52, (valid_date.timetuple().tm_yday - 1) // 7 + 1))
+    wmax = records["tchp_week_max"].sel(week=woy).values.astype(np.float32)
+    wmin = records["tchp_week_min"].sel(week=woy).values.astype(np.float32)
+    valid = np.isfinite(tchp_now) & np.isfinite(wmax) & np.isfinite(wmin)
+    high = valid & (tchp_now >= wmax) & (tchp_now >= RECORDS_NO_SIGNAL_TCHP)
+    low = valid & (tchp_now <= wmin) & (wmin >= RECORDS_NO_SIGNAL_TCHP)
+    return high, low
 
 
 # --- Cross-section rendering -------------------------------------------
@@ -981,8 +1056,17 @@ def plot_tchp_anom(
     title: str, subtitle: str,
     countries, coast,
     out_path: Path,
+    records_high: np.ndarray | None = None,
+    records_low: np.ndarray | None = None,
 ) -> bool:
     """TCHP-anomaly map (kJ/cm² relative to 1993–2020 climatology).
+
+    `records_high` / `records_low` are OPTIONAL boolean masks (same grid as
+    `anom_field`). When BOTH are None this renders byte-for-byte the same plot
+    it always has — the records overlay is purely additive (see the design-lock
+    pixel-identity test). When given, records_overlay.draw_records_overlay()
+    stipples the record cells ON TOP of the untouched anomaly canvas: forward
+    "///" record-high, back "\\\\" record-low, lw 0.55, each region outlined.
 
     Reuses generate_subsurface_plots.py's _plot_field plumbing by
     hand-rolling a diverging-colormap call — _plot_field is hard-wired
@@ -1005,6 +1089,26 @@ def plot_tchp_anom(
         )
     except Exception:
         pass
+    # Records overlay — the ONLY addition to this plot (design-lock). Drawn at
+    # zorder 1.8 (above the anomaly fill, below the basemap/coast) so the hatch
+    # sits ON the existing canvas. No-op when both masks are None, so the base
+    # anomaly plot is unchanged. One canon: records_overlay.draw_records_overlay.
+    if records_high is not None or records_low is not None:
+        import records_overlay
+        rh = (gss._subset_to_extent(records_high, lat, lon, extent)[0]
+              if records_high is not None else None)
+        rl = (gss._subset_to_extent(records_low, lat, lon, extent)[0]
+              if records_low is not None else None)
+        n_hi = int(np.asarray(rh, dtype=bool).sum()) if rh is not None else 0
+        n_lo = int(np.asarray(rl, dtype=bool).sum()) if rl is not None else 0
+        print(f"[armor3d]   records hatch {out_path.name}: "
+              f"{n_hi} high / {n_lo} low cells in extent")
+        records_overlay.draw_records_overlay(ax, LON2, LAT2, rh, rl)
+        # Compact hatch key (/// = record high, \\ = record low) — only on
+        # the records path, so the plain anomaly plot stays legend-free.
+        records_overlay.draw_records_legend(
+            ax, facecolor=gss.PANEL_COLOR, edgecolor=gss.MUTED_COLOR,
+            labelcolor=gss.TEXT_COLOR)
     # Overlay LAND_COLOR-filled country polygons so continents match the
     # unified SST look. The anomaly field can be 0.0 (or finite near-zero)
     # over land in regions where the climatology and the live field both
@@ -1132,6 +1236,18 @@ def main(argv: list[str] | None = None) -> int:
     date_label = valid_date.strftime("%B %-d, %Y")
     rendered: list[str] = []
 
+    # Records envelope (per-WOY TCHP extremes from bake_armor3d_tchp_records.py,
+    # published to R2 sst/records/). GRACEFUL ABSENCE: load_tchp_records() is
+    # None until the bake publishes it -> the anomaly maps render plain, exactly
+    # as today. KILL SWITCH: TCHP_RECORDS=off forces plain too. NRT note: the
+    # live field is the preliminary NRT product compared against the MY-reanalysis
+    # envelope; the disclosure panel flags that.
+    records_ds = (None if os.environ.get("TCHP_RECORDS", "on").lower() == "off"
+                  else load_tchp_records())
+    if records_ds is not None:
+        print(f"{log} TCHP records envelope loaded ({RECORDS_PATH.name}); "
+              "anomaly maps will hatch record cells.")
+
     # 6) Map products — TCHP, D26, (TCHP anomaly if climo present).
     if not args.cross_section_only:
         regions_to_render = (
@@ -1203,16 +1319,41 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     anom_raw = tchp_crop - tchp_climo_slice
                     anom = np.where(_nosig, np.nan, anom_raw).astype(np.float32)
+                    # Records overlay masks — ADDITIVE only; plain anomaly on
+                    # any absence / grid-mismatch / error (graceful fallback).
+                    # Inclusive tie: NRT >= week-max = record-high, <= week-min
+                    # = record-low. tchp_crop is the live NRT field on anom_lat.
+                    rec_hi = rec_lo = None
+                    if records_ds is not None:
+                        try:
+                            _rec_shape = records_ds["tchp_week_max"].shape[-2:]
+                            if _rec_shape == anom.shape:
+                                rec_hi, rec_lo = compute_record_masks(
+                                    tchp_crop, valid_date, records_ds)
+                            else:
+                                print(f"{log}   WARN: records grid {_rec_shape} "
+                                      f"!= anom {anom.shape}; plain anomaly.")
+                        except Exception as _exc:
+                            print(f"{log}   WARN: records overlay failed "
+                                  f"({_exc}); plain anomaly.")
                     out = ARMOR_DIR / f"{rkey}_tchp_anom.png"
+                    # Title names the records layer ONLY when it is drawn;
+                    # every graceful-fallback path (kill switch, envelope
+                    # absent, grid mismatch, mask error) keeps the plain
+                    # title so the no-overlay plot is unchanged.
+                    anom_title = (f"{label} · TCHP Anomaly & Records"
+                                  if rec_hi is not None or rec_lo is not None
+                                  else f"{label} · TCHP Anomaly")
                     if plot_tchp_anom(
                         anom, anom_lat, lon, extent, figsize,
-                        title=f"{label} · TCHP Anomaly",
+                        title=anom_title,
                         subtitle=(
                             f"Valid: {date_label}  ·  ARMOR3D · "
                             f"anomaly vs. 1993-2020 weekly climatology"
                         ),
                         countries=countries, coast=coast,
                         out_path=out,
+                        records_high=rec_hi, records_low=rec_lo,
                     ):
                         print(f"{log}   ✓ {out.name}")
                         rendered.append(out.name)
