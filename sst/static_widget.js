@@ -69,6 +69,11 @@
           <div class="chart-card sst-chart">
             <img class="sst-image sw-image" data-role="image" alt="">
             <div class="sst-caption sw-caption" data-role="caption"></div>
+            <details class="sst-caption sw-method" data-role="method" hidden
+                     style="margin-top:.35rem">
+              <summary style="cursor:pointer">How is this derived?</summary>
+              <div data-role="method-text" style="margin-top:.3rem"></div>
+            </details>
           </div>
         </section>
       `;
@@ -83,6 +88,8 @@
       this.toggleLabelsWrap = this.root.querySelector('[data-role="toggle-labels"]');
       this.image      = this.root.querySelector('[data-role="image"]');
       this.captionEl  = this.root.querySelector('[data-role="caption"]');
+      this.methodEl     = this.root.querySelector('[data-role="method"]');
+      this.methodTextEl = this.root.querySelector('[data-role="method-text"]');
 
       // Source options — same order as manifest.
       this.sourceSel.innerHTML = this.m.sources.map(s =>
@@ -244,6 +251,18 @@
         `${regionLabel}: ${variant.caption || ''}` +
         (this.use15d ? ' · 15-day running mean.' : '') +
         (this.showLabels ? ' · values overlaid.' : '');
+      // Method panel — the "how is this derived?" disclosure, shown only
+      // for variants that declare one in the manifest (e.g. the ARMOR3D
+      // TCHP record hatching). Collapses on variant change so a stale
+      // open panel never describes the wrong product.
+      if (variant.method) {
+        this.methodTextEl.textContent = variant.method;
+        this.methodEl.hidden = false;
+        this.methodEl.open = false;
+      } else {
+        this.methodTextEl.textContent = '';
+        this.methodEl.hidden = true;
+      }
       this._writeHash();
     }
 

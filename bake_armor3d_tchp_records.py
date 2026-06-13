@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""
+Triple-A-Tropics · ARMOR3D per-pixel per-week-of-year TCHP record envelope bake
+===============================================================================
+
+RUN ENVIRONMENT
+---------------
+This runs on the RENDER BOX (the machine that already has Copernicus Marine
+credentials and produces the /sst/ ARMOR3D anomaly), NOT in GitHub Actions —
+same as build_armor3d_climatology.py / bake_crw_doy_records.py. It does a single
+resumable pass over the ARMOR3D MULTI-YEAR REANALYSIS (1993 → present) and, per
+pixel and per WEEK-OF-YEAR (52 buckets, the same day-4 weekly sampling the
+climatology uses), records the all-archive MAX and MIN TCHP plus the YEAR each
+extreme was set.
+
+WHY A SEPARATE BAKE (the climatology mean is NOT enough)
+-------------------------------------------------------
+armor3d_climatology.nc holds only `tchp_climo` — the 1993-2020 weekly MEAN. A
+record needs the MAX/MIN ENVELOPE across the archive, which the mean cannot
+give. This bake computes that envelope directly from the reanalysis.
+
+WHAT IT COMPUTES (per WOY week 1..52, per pixel)
+------------------------------------------------
+    tchp_week_max  float  — highest day-4-weekly TCHP ever seen this WOY
+    tchp_week_min  float  — lowest  "        "        "
+    max_year       int16  — year the standing MAX was set (record margin/age)
+    min_year       int16  — year the standing MIN was set
+Coverage POR: 1993 → last complete reanalysis year/week. Ties keep the EARLIER
+year (the year the record was first set).
+
+RESUME / MEMORY
+---------------
+One per-YEAR state file (this year's day-4 weekly TCHP field) is written under
+.armor3d_records_state/ after the year completes; the per-week CMEMS raw caches
+under the same dir let a killed run resume mid-year (reused from the climatology
+builder's fetch). `--finalize` combines all per-year states with np.fmax / np.fmin
++ year stamping (the pure `update_minmax`, unit-tested in tests/), then writes the
+int16 NetCDF + manifest. Peak RAM = one year in flight (~52 × grid).
+
+OUTPUT (after --finalize)
+-------------------------
+    sst/records/armor3d_tchp_record_1993_present.nc
+        tchp_week_max int16  (scale 0.008, offset 150.0, fill -32768)  [week,lat,lon]
+        tchp_week_min int16  (same packing)
+        max_year      int16  (fill -32768)
+        min_year      int16  (fill -32768)
+    sst/records/manifest.json   (the consumer's gate: POR, generated_utc, grid)
+R2: s3://triple-a-tropics-media/sst/records/...  →  cdn.triple-a-tropics.com/sst/records/
+
+USAGE (on the box)
+------------------
+    python bake_armor3d_tchp_records.py --run                 # resumable pass
+    python bake_armor3d_tchp_records.py --run --time-budget-minutes 320
+    python bake_armor3d_tchp_records.py --finalize --upload    # combine -> NetCDF + R2
+
+ZERO touch to ACE / track / climo. Reuses generate_armor3d_plots (CMEMS fetch +
+compute_tchp) and build_armor3d_climatology (week helpers) so the records and the
+climatology are guaranteed to share grid + sampling.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+import xarray as xr
+
+import generate_armor3d_plots as a3d
+import build_armor3d_climatology as climo
+from build_armor3d_climatology import (
+    _week_of_year, LAT_MIN, LAT_MAX,
+)
+
+HERE = Path(__file__).resolve().parent
+STATE_DIR = HERE / ".armor3d_records_state"
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+OUT_DIR = HERE / "sst" / "records"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_NC = OUT_DIR / "armor3d_tchp_record_1993_present.nc"
+MANIFEST = OUT_DIR / "manifest.json"
+R2_PREFIX = "sst/records"
+MARKER_PATH = STATE_DIR / "last_year_completed.txt"
+LOG = "[armor3d-tchp-record]"
+
+YEAR_START = 1993
+NO_YEAR = np.int16(-32768)
+# Optimistic archive head: the MY product trails real time, so try up to
+# "this year - 1" and let the DATASET say where it really ends — run_pass
+# treats a year whose 52 weeks ALL come back beyond the dataset's time bounds
+# as the normal end of available data (recorded in beyond_bounds_year.txt and
+# folded into pass_is_complete()), so this constant never needs bumping when
+# the true latency is longer (it's ~2 years as of 2026: the archive ends
+# 2024-12-31) and the bake auto-extends when the reanalysis does.
+REANALYSIS_LATENCY_YEARS = 1
+# First probed year whose weeks were ALL beyond the dataset's time bounds —
+# i.e. the archive ends at (that year - 1). Written/refreshed by run_pass,
+# cleared again if a later run completes a year at/past it (archive extended).
+# It informs pass_is_complete() ONLY; run_pass keeps probing optimistically.
+BEYOND_MARKER_PATH = STATE_DIR / "beyond_bounds_year.txt"
+
+
+# --- Pure accumulator (unit-tested in tests/test_armor3d_records_bake.py) ----
+
+def update_minmax(max_acc, max_year, min_acc, min_year, obs, year):
+    """In-place fold of `obs` (this year's week field) into the running
+    per-week MAX and MIN envelopes, stamping `year` wherever it sets a new
+    extreme. NaN in `obs` = missing (land/no-data); np.fmax / np.fmin ignore
+    NaN so those pixels keep their standing value. Ties keep the EARLIER year.
+
+    "wins the max" = obs finite AND NOT (obs <= max_acc)   (handles -inf/NaN seed)
+    "wins the min" = obs finite AND NOT (obs >= min_acc)
+    """
+    with np.errstate(invalid="ignore"):
+        hi_wins = np.isfinite(obs) & ~(obs <= max_acc)
+        lo_wins = np.isfinite(obs) & ~(obs >= min_acc)
+    max_year[hi_wins] = np.int16(year)
+    min_year[lo_wins] = np.int16(year)
+    np.fmax(max_acc, obs, out=max_acc)
+    np.fmin(min_acc, obs, out=min_acc)
+
+
+# --- marker / resume ---------------------------------------------------------
+
+def _read_marker() -> int | None:
+    if not MARKER_PATH.exists():
+        return None
+    t = MARKER_PATH.read_text().strip()
+    return int(t) if t else None
+
+
+def _write_marker(year: int) -> None:
+    tmp = MARKER_PATH.with_suffix(".tmp")
+    tmp.write_text(str(year))
+    tmp.replace(MARKER_PATH)
+
+
+def _year_state_path(year: int) -> Path:
+    return STATE_DIR / f"recyear_{year}.nc"
+
+
+def _read_beyond_year() -> int | None:
+    if not BEYOND_MARKER_PATH.exists():
+        return None
+    t = BEYOND_MARKER_PATH.read_text().strip()
+    return int(t) if t else None
+
+
+def _write_beyond_year(year: int) -> None:
+    tmp = BEYOND_MARKER_PATH.with_suffix(".tmp")
+    tmp.write_text(str(year))
+    tmp.replace(BEYOND_MARKER_PATH)
+
+
+def archive_target_year(today: dt.date | None = None) -> int:
+    """Last year the pass is expected to bake: the optimistic head
+    (today - latency), capped by a detected dataset edge if run_pass has
+    ever probed a year that was entirely beyond the dataset's time bounds."""
+    t = today or dt.date.today()
+    head = t.year - REANALYSIS_LATENCY_YEARS
+    beyond = _read_beyond_year()
+    if beyond is not None:
+        head = min(head, beyond - 1)
+    return head
+
+
+def pass_is_complete(today: dt.date | None = None) -> tuple[bool, str]:
+    """(complete?, reason). Complete = every year through the end of the
+    AVAILABLE archive is baked. The workflow's finalize gate calls this via
+    --check-complete instead of assuming the archive reaches today-1."""
+    marker = _read_marker()
+    target = archive_target_year(today)
+    beyond = _read_beyond_year()
+    note = (f" (dataset edge detected: archive ends {beyond - 1})"
+            if beyond is not None else "")
+    if marker is None:
+        return False, f"no completed years yet; target {target}{note}"
+    if marker >= target:
+        return True, f"last completed year {marker} >= target {target}{note}"
+    return False, f"last completed year {marker} < target {target}{note}"
+
+
+# --- per-year fetch + derive (reuses a3d CMEMS + compute_tchp) ---------------
+
+def _raw_week_path(year: int, week: int) -> Path:
+    return STATE_DIR / f"_raw_{year}_w{week:02d}.nc"
+
+
+def _fetch_year(year: int, deadline: float | None) -> tuple[list[Path], int, int]:
+    """Download 52 day-4 weekly ARMOR3D MY samples for `year` (resumable;
+    per-week raw cached). Mirrors build_armor3d_climatology._fetch_year but
+    uses this bake's STATE_DIR. Honors a wall-clock deadline.
+
+    Returns (paths, n_failed, n_beyond). n_failed counts weeks whose fetch
+    failed even after _cmems_subset's retries — the caller must NOT finalize
+    the year in that case, or the missing weeks become permanent NaN holes in
+    the record envelope (the year marker would skip them forever). n_beyond
+    counts weeks rejected as outside the dataset's time bounds (terminal,
+    never retried) — when ALL 52 weeks of a year are beyond-bounds the caller
+    treats it as the end of the available archive, not a failure."""
+    paths: list[Path] = []
+    n_failed = 0
+    n_beyond = 0
+    for week in range(1, 53):
+        out = _raw_week_path(year, week)
+        if out.exists() and out.stat().st_size > 0:
+            paths.append(out)
+            continue
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"{LOG}   TIME BUDGET reached at {year} w{week:02d} — stopping clean.")
+            return paths, n_failed, n_beyond
+        doy = (week - 1) * 7 + 4
+        sample = dt.date(year, 1, 1) + dt.timedelta(days=doy - 1)
+        start = dt.datetime.combine(sample, dt.time.min)
+        end = dt.datetime.combine(sample, dt.time.max)
+        print(f"{LOG}   {year} w{week:02d} ({sample.isoformat()})…")
+        try:
+            a3d._cmems_subset(
+                dataset_id=a3d.ARMOR3D_MY_DATASET, start=start, end=end,
+                lon_min=-180.0, lon_max=180.0, lat_min=LAT_MIN, lat_max=LAT_MAX,
+                depth_min=a3d.DEPTH_MIN, depth_max=a3d.DEPTH_MAX,
+                variables=a3d.VARIABLES, out_path=out, log=LOG,
+            )
+            paths.append(out)
+        except Exception as exc:
+            if a3d._classify_cmems_error(exc) == "beyond_dataset":
+                n_beyond += 1
+                print(f"{LOG}   {year} w{week:02d} beyond the dataset's time "
+                      f"bounds ({type(exc).__name__}).")
+            else:
+                n_failed += 1
+                print(f"{LOG}   WARN {year} w{week:02d} failed after retries "
+                      f"({type(exc).__name__}): {exc}")
+            if out.exists() and out.stat().st_size == 0:
+                try:
+                    out.unlink()
+                except OSError:
+                    pass
+    return paths, n_failed, n_beyond
+
+
+def _process_year(year: int, raw_paths: list[Path]):
+    """Derive this year's per-week TCHP field (week, lat, lon) from the raw
+    per-week temperature files — the same load + lon-roll + compute_tchp the
+    climatology builder uses, so grid + sampling match exactly. A week with no
+    valid sample stays NaN."""
+    tchp_year = None
+    lat_arr = lon_new = None
+    for p in raw_paths:
+        with xr.open_dataset(p) as ds:
+            t = ds["to"] if "to" in ds else ds[list(ds.data_vars)[0]]
+            depth_arr = ds["depth"].values.astype(np.float32)
+            if tchp_year is None:
+                lat_arr = ds["latitude"].values.astype(np.float32)
+                lon = ds["longitude"].values.astype(np.float32)
+                roll = int(np.sum(lon < 0))
+                lon_new = (np.concatenate([lon[roll:], lon[:roll] + 360])
+                           if roll else lon.copy())
+                tchp_year = np.full((52, lat_arr.size, lon_new.size),
+                                    np.nan, dtype=np.float32)
+            else:
+                lon = ds["longitude"].values.astype(np.float32)
+                roll = int(np.sum(lon < 0))
+            for ti, t_val in enumerate(ds["time"].values):
+                d = a3d._np_datetime_to_date(t_val)
+                if d.year != year:
+                    continue
+                wi = _week_of_year(d) - 1
+                t_arr = t.isel(time=ti).values.astype(np.float32)
+                if roll:
+                    t_arr = np.concatenate(
+                        [t_arr[:, :, roll:], t_arr[:, :, :roll]], axis=2)
+                d26 = a3d.compute_d26(t_arr, depth_arr)
+                tchp = a3d.compute_tchp(t_arr, depth_arr, d26)   # (lat, lon)
+                # one day-4 sample per week-bucket; last write wins (rare dup)
+                tchp_year[wi] = np.where(np.isnan(tchp), tchp_year[wi], tchp)
+    if tchp_year is None:
+        raise RuntimeError(f"year {year}: processed zero timesteps")
+    out = _year_state_path(year)
+    xr.Dataset(
+        {"tchp_week": (["week", "latitude", "longitude"], tchp_year)},
+        coords={"week": np.arange(1, 53, dtype=np.int16),
+                "latitude": lat_arr, "longitude": lon_new},
+        attrs={"year": year},
+    ).to_netcdf(out, encoding={"tchp_week": {"zlib": True, "complevel": 4}})
+    return out
+
+
+# --- driver ------------------------------------------------------------------
+
+def run_pass(start_year, end_year, deadline):
+    today = dt.date.today()
+    hi = end_year or (today.year - REANALYSIS_LATENCY_YEARS)
+    lo = start_year or YEAR_START
+    marker = _read_marker()
+    if marker is not None and marker >= lo:
+        lo = marker + 1
+        print(f"{LOG} resuming after completed year {marker} → start {lo}")
+    if lo > hi:
+        print(f"{LOG} nothing to do: {lo} > {hi} (archive head).")
+        return 0
+    # Sweep raw weeklies of years already completed (a crash between marker
+    # write and the per-year cleanup, or restored pre-cleanup state) so they
+    # can't ride along in the state cache forever.
+    for p in STATE_DIR.glob("_raw_*"):
+        try:
+            raw_year = int(p.name.split("_")[2])
+        except (IndexError, ValueError):
+            continue
+        if raw_year < lo:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    print(f"{LOG} single pass {lo}..{hi}")
+    done = 0
+    for year in range(lo, hi + 1):
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"{LOG} TIME BUDGET reached before year {year} — stopping clean.")
+            break
+        raws, n_failed, n_beyond = _fetch_year(year, deadline)
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"{LOG} budget reached mid-fetch {year}; not finalizing the year.")
+            break
+        # ALL 52 weeks beyond the dataset's time bounds = the reanalysis
+        # archive simply ends before this year (the MY product trails real
+        # time). That is the normal end of available data, NOT a failure:
+        # record the detected edge for pass_is_complete() and stop clean so
+        # the workflow's finalize gate sees the pass as COMPLETE at the last
+        # finished year. (2025 did exactly this on 2026-06-09 — the archive
+        # ends 2024-12-31 — and burned the whole chunk on retries + a halt.)
+        if n_beyond == 52 and not raws and not n_failed:
+            _write_beyond_year(year)
+            print(f"{LOG} year {year}: all 52 weeks beyond the dataset's time "
+                  f"bounds — archive ends at {year - 1}; pass complete at the "
+                  "last finished year.")
+            break
+        # A fetch failure must STOP the chunk loudly (exit non-zero, no marker,
+        # no self-re-dispatch) instead of finalizing a year with NaN holes or
+        # skipping the year past the resume marker. The state cache still saves
+        # (if: always()), so a manual re-dispatch resumes at this year and only
+        # re-fetches the missing weeks. A year only PARTLY beyond-bounds (some
+        # weeks fetched or transient-failed) also halts here — a mid-year
+        # dataset edge needs human review (--end-year), never silent holes.
+        if n_failed or n_beyond:
+            detail = f"{n_failed} week fetch(es) failed even after retries"
+            if n_beyond:
+                detail += (f" and {n_beyond} week(s) were beyond the dataset's "
+                           f"time bounds (with {len(raws)} week(s) fetched)")
+            raise RuntimeError(
+                f"year {year}: {detail} — stopping without finalizing the "
+                "year; re-dispatch to resume here.")
+        if not raws:
+            raise RuntimeError(f"year {year}: zero raw weeks fetched — aborting.")
+        _process_year(year, raws)
+        _write_marker(year)
+        # A year at/past a previously-detected bounds edge baked fine — the
+        # archive has extended; drop the stale edge so completeness re-arms
+        # for the years that just became available.
+        beyond = _read_beyond_year()
+        if beyond is not None and year >= beyond:
+            try:
+                BEYOND_MARKER_PATH.unlink()
+            except OSError:
+                pass
+        # recyear_*.nc is now the durable state for this year — drop its raw
+        # weekly files (incl. crash-orphaned netCDF tmp files). Keeping them
+        # fills the runner disk in ~10 years (ENOSPC + segfault + failed
+        # cache save killed the 2026-06-09 run at year 2003) and would blow
+        # the actions/cache budget.
+        for p in STATE_DIR.glob(f"_raw_{year}_w*.nc*"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        done += 1
+        print(f"{LOG} year {year} done.")
+    return done
+
+
+def finalize():
+    states = sorted(STATE_DIR.glob("recyear_*.nc"))
+    if not states:
+        raise RuntimeError("no per-year state files; run --run first.")
+    print(f"{LOG} combining {len(states)} years…")
+    rmax = rmin = ymax = ymin = lat = lon = None
+    years = []
+    for p in states:
+        with xr.open_dataset(p) as ds:
+            tw = ds["tchp_week"].values.astype(np.float32)
+            yr = int(ds.attrs["year"])
+            years.append(yr)
+            if rmax is None:
+                shape = tw.shape
+                rmax = np.full(shape, -np.inf, dtype=np.float32)
+                rmin = np.full(shape, np.inf, dtype=np.float32)
+                ymax = np.full(shape, NO_YEAR, dtype=np.int16)
+                ymin = np.full(shape, NO_YEAR, dtype=np.int16)
+                lat = ds["latitude"].values
+                lon = ds["longitude"].values
+            update_minmax(rmax, ymax, rmin, ymin, tw, yr)
+    # cells never observed (all-NaN) → fill
+    never = ~np.isfinite(rmax)
+    rmax[never] = np.nan
+    rmin[~np.isfinite(rmin)] = np.nan
+    # int16 packing MUST cover the data range — numpy's int16 cast WRAPS
+    # out-of-range values silently (no clip, no error). The original
+    # scale 0.004 / offset 100 topped out at 231.07 kJ/cm² while real
+    # warm-pool record maxima reach ~290, so every cell above the ceiling
+    # wrapped to garbage negatives (~0.4% of cell-weeks, all in the deep
+    # tropics — exactly the record-prone cells). scale 0.008 / offset 150
+    # covers -112.1..412.1 at 0.008 kJ/cm² resolution; the asserts below
+    # turn any future overflow into a loud failure instead of silent wrap.
+    PACK_SCALE, PACK_OFFSET = np.float32(0.008), np.float32(150.0)
+    pack_lo = float(PACK_OFFSET) + float(PACK_SCALE) * (-32767)
+    pack_hi = float(PACK_OFFSET) + float(PACK_SCALE) * 32767
+    both = np.isfinite(rmax) & np.isfinite(rmin)
+    n_inverted = int((rmin[both] > rmax[both]).sum())
+    if n_inverted:
+        raise RuntimeError(
+            f"{LOG} {n_inverted} cells have week-min > week-max — "
+            "accumulator corruption; refusing to write the envelope.")
+    for name, arr in (("tchp_week_max", rmax), ("tchp_week_min", rmin)):
+        fin = arr[np.isfinite(arr)]
+        if fin.size and (fin.min() < pack_lo or fin.max() > pack_hi):
+            raise RuntimeError(
+                f"{LOG} {name} range {fin.min():.2f}..{fin.max():.2f} exceeds "
+                f"the int16 packing range {pack_lo:.2f}..{pack_hi:.2f} — "
+                "widen the packing; refusing to write a wrapped envelope.")
+    pack = {"zlib": True, "complevel": 9, "dtype": "int16",
+            "scale_factor": PACK_SCALE, "add_offset": PACK_OFFSET,
+            "_FillValue": np.int16(-32768)}
+    ypack = {"zlib": True, "complevel": 9, "_FillValue": np.int16(-32768)}
+    xr.Dataset(
+        {"tchp_week_max": (["week", "latitude", "longitude"], rmax,
+                           {"units": "kJ/cm^2", "long_name": "per-WOY record-high TCHP"}),
+         "tchp_week_min": (["week", "latitude", "longitude"], rmin,
+                           {"units": "kJ/cm^2", "long_name": "per-WOY record-low TCHP"}),
+         "max_year": (["week", "latitude", "longitude"], ymax),
+         "min_year": (["week", "latitude", "longitude"], ymin)},
+        coords={"week": np.arange(1, 53, dtype=np.int16),
+                "latitude": lat, "longitude": lon},
+        attrs={"source": "Copernicus Marine ARMOR3D MY weekly reanalysis",
+               "product_id": a3d.ARMOR3D_MY_DATASET,
+               "por_note": ("record within the ARMOR3D reanalysis archive "
+                            f"({min(years)}-{max(years)}), not all-time"),
+               "method": "per-pixel per-week-of-year (day-4 weekly sampling) MAX/MIN",
+               "generated_utc": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")},
+    ).to_netcdf(OUT_NC, encoding={"tchp_week_max": pack, "tchp_week_min": pack,
+                                  "max_year": ypack, "min_year": ypack})
+    MANIFEST.write_text(json.dumps({
+        "product": "armor3d_tchp_record",
+        "file": OUT_NC.name,
+        "por_start": min(years), "por_end": max(years),
+        "weeks": 52, "grid_deg": 0.125,
+        "source": "Copernicus Marine ARMOR3D MY reanalysis (MULTIOBS_GLO_PHY_TSUV_3D)",
+        "honest_line": ("record within the ARMOR3D reanalysis archive "
+                        f"(since {min(years)}), not all-time"),
+        "generated_utc": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }, indent=2))
+    print(f"{LOG} wrote {OUT_NC} ({OUT_NC.stat().st_size/1e6:.1f} MB) + manifest "
+          f"(POR {min(years)}-{max(years)}).")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--run", action="store_true")
+    ap.add_argument("--finalize", action="store_true")
+    ap.add_argument("--upload", action="store_true")
+    ap.add_argument("--check-complete", action="store_true",
+                    help="exit 0 if the pass has reached the end of the "
+                         "available archive, 1 otherwise (workflow gate)")
+    ap.add_argument("--start-year", type=int, default=None)
+    ap.add_argument("--end-year", type=int, default=None)
+    ap.add_argument("--time-budget-minutes", type=float, default=None)
+    a = ap.parse_args()
+    deadline = (time.monotonic() + a.time_budget_minutes * 60
+                if a.time_budget_minutes else None)
+    if a.run:
+        if not a3d._have_credentials():
+            raise SystemExit(f"{LOG} no Copernicus Marine credentials — run on the box.")
+        run_pass(a.start_year, a.end_year, deadline)
+    if a.finalize:
+        finalize()
+    if a.upload:
+        from build_crw_doy_climatology import upload_to_r2
+        upload_to_r2(OUT_NC, f"{R2_PREFIX}/{OUT_NC.name}")
+        upload_to_r2(MANIFEST, f"{R2_PREFIX}/{MANIFEST.name}")
+        print(f"{LOG} uploaded to R2 {R2_PREFIX}/.")
+    if a.check_complete:
+        ok, why = pass_is_complete()
+        print(f"{LOG} pass {'COMPLETE' if ok else 'NOT complete'}: {why}")
+        if not ok:
+            raise SystemExit(1)
+    if not (a.run or a.finalize or a.upload or a.check_complete):
+        ap.print_help()
+
+
+if __name__ == "__main__":
+    main()
