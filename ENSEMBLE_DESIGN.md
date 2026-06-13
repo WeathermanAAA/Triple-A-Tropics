@@ -1,6 +1,6 @@
 # Ensemble Cyclone Centers - multi-model TC ensemble platform (DESIGN)
 
-**Status: STAGE 1 BUILT 2026-06-13 - ECMWF ENS only. Andrew's reference design is locked in (final ring colors, navy basemap, Pacific-centered map); pending his final look/smoothness sign-off on the live page (his Mac). Clusters and models 2 to 5 are later stages and are NOT in scope here.**
+**Status: STAGE 1 LIVE 2026-06-13 - ECMWF ENS centers on /models/, with the shared Model Regions picker (section 8). Final ring colors, navy basemap, Pacific-centered map; fully global detection (region = client-side crop). Pending Andrew's final look/region-framing sign-off on the live page (his Mac). Clusters and models 2 to 5 are later stages and are NOT in scope here.**
 
 This is the design canon for the `/models/` "Ensemble Cyclone Centers" product.
 It follows the house convention of `SATELLITE.md` / `CYCLOLAB_DESIGN.md`:
@@ -163,6 +163,12 @@ Per member, per step, on the global MSLP field (`enscenters/detect.py`):
    normalized to [-180, 180).
 4. **P -> V**: Atkinson-Holliday `vmax_kt = 6.7 * (1010 - Pc)^0.644`.
 
+Detection is **fully global to `lat_limit` = ~|lat| 88** (all closed lows, all
+latitudes) so the viewer's Hemisphere and Global region crops are populated; the
+region is a client-side view crop, not a detection limit. The polar cap (>88) is
+dropped (the 0.25 deg grid is degenerate and the closed test's geometry is
+unreliable there).
+
 Validated on synthetic fields (closed lows found at exact location/pressure,
 open troughs rejected, a dateline-straddling low located correctly) - see
 `tests/test_enscenters.py`.
@@ -182,7 +188,35 @@ sits in the right gutter, sorted by minimum pressure, control included. Model
 selector (ECENS only now) uses the HAFS `_buildToggle` so it auto-grows. No
 em-dashes in on-screen text; no AI-disclosure on the page.
 
-## 8. Automation
+## 8. Shared Model Regions layer
+
+`models/regions.js` is a SHARED layer (a cyclonicwx-style "Model Regions"
+picker) reused unchanged by every non-storm-nest model viewer: ECMWF ENS centers
+now, AIFS-ENS / GEFS / GDM-FNV3 / GDM-GenCast and any future synoptic ensemble or
+global product later. **Storm-NEST viewers (HAFS, which auto-centers on a storm)
+are EXCLUDED** - they keep their storm-following framing and never load it.
+
+- **Detection is fully global** (to ~|lat| 88, see section 6). The region is a
+  **client-side VIEW CROP only** - no per-region files. Selecting a region sets
+  the map extent, filters the displayed scatter to the box, and recomputes the
+  per-member peak table for that box (so "Atlantic" ranks each member's deepest
+  Atlantic system). Global/Hemisphere views legitimately include extratropical
+  lows.
+- **Region registry**: grouped (Tropics / United States / Land / Hemispheres),
+  each a `{w, e, s, n}` box. **Pacific boxes cross the dateline** (`w > e` wraps
+  past 180); `inRegion` and the display `extentOf` both handle the wrap, and
+  full-globe boxes display Pacific-centered (`[0,360]`).
+- **Picker UI**: a grouped, thumbnail-card modal (one mini basemap-crop per
+  region, selected outlined), dark theme, self-injected CSS so any page that
+  loads `regions.js` gets it. Default region **Atlantic**; the last pick is
+  remembered in `localStorage` (`ens.region`).
+- **Exports** `window.TATRegions`: `GROUPS`, `get`, `inRegion`, `extentOf`,
+  `project`, `drawBasemap` (shared by the viewer canvas AND the thumbnails so
+  they cannot drift), and `RegionPicker`. The transport, the ring ramp, and the
+  Pacific-centered projection all stay; only the extent + scatter subset + peak
+  table change per region.
+
+## 9. Automation
 
 `.github/workflows/update-enscenters.yml`, R2-only. Fires ~8.5 h after each
 00/06/12/18Z cycle on a non-round, non-colliding minute (`:41` primary, `:11`
@@ -197,7 +231,7 @@ MB) and detection parallelizes across members with `--jobs`.
 `workflow_dispatch` only). The viewer degrades to an empty state if the manifest
 is absent. Forcing a re-run: `gh workflow run update-enscenters.yml`.
 
-## 9. Roadmap - five models, two views, one super-ensemble
+## 10. Roadmap - five models, two views, one super-ensemble
 
 Each stage is gated; do not start the next without sign-off.
 
@@ -214,7 +248,7 @@ Each stage is gated; do not start the next without sign-off.
   models' centers. **Disclosure mandatory** - the viewer must label it derived
   and name the pooling method (`method_version`). Pooling is not a real model.
 
-## 10. Open questions for Andrew
+## 11. Open questions for Andrew
 
 1. ~~The five bin colors.~~ RESOLVED 2026-06-13: pale `#dfe8ff` / blue `#1f9bff`
    / yellow `#ffd21a` / red `#ff1f47` / hot pink `#ff3d9a`, bold hollow rings,
