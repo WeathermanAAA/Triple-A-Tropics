@@ -64,3 +64,34 @@ def draw_records_overlay(ax, lon2, lat2, records_high=None, records_low=None,
         mpl.rcParams["hatch.linewidth"] = prev_lw
         mpl.rcParams["hatch.color"] = prev_color
     return drawn
+
+
+def draw_records_legend(ax, *, loc="lower left", fontsize=8,
+                        facecolor="#0a1324", edgecolor="#8ea2bd",
+                        labelcolor="#e5edf6"):
+    """Compact hatch key so a viewer knows /// = record high, \\\\ = record
+    low. House dark style (defaults = the SST/ARMOR3D panel palette); callers
+    can pass their own colors. Drawn only by the records-overlay path —
+    the plain anomaly plot never shows it.
+
+    Patch hatches take their stroke color from the patch edgecolor, so each
+    swatch carries its layer's canon color without touching rcParams. Each
+    swatch sits on a faint warm/cool tint so the key shows the hatch the way
+    it actually appears on the map (near-black strokes over anomaly color),
+    not floating on the dark panel."""
+    from matplotlib.patches import Patch
+
+    handles = [
+        Patch(facecolor="#f4a582", edgecolor=HIGH_COLOR, hatch=HIGH_PATTERN,
+              linewidth=0.0, label="record high"),
+        Patch(facecolor="#92c5de", edgecolor=LOW_COLOR, hatch=LOW_PATTERN,
+              linewidth=0.0, label="record low"),
+    ]
+    leg = ax.legend(
+        handles=handles, loc=loc, fontsize=fontsize,
+        framealpha=0.85, facecolor=facecolor, edgecolor=edgecolor,
+        labelcolor=labelcolor, handlelength=1.6, handleheight=1.1,
+        borderpad=0.5, handletextpad=0.6, borderaxespad=0.6,
+    )
+    leg.set_zorder(10)
+    return leg
