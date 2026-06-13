@@ -91,6 +91,13 @@
     var d = new Date(initMs);
     return MO[d.getUTCMonth()] + ' ' + d.getUTCDate() + ' ' + String(d.getUTCHours()).padStart(2, '0') + 'Z';
   }
+  // "2026061306" -> "Jun 13 06Z" (Run-selector option label; same shape as shortInit)
+  function cycleLabel(cyc) {
+    cyc = String(cyc);
+    if (cyc.length < 10) return cyc;
+    var mo = parseInt(cyc.slice(4, 6), 10) - 1, day = parseInt(cyc.slice(6, 8), 10), hr = cyc.slice(8, 10);
+    return (MO[mo] || '?') + ' ' + day + ' ' + hr + 'Z';
+  }
 
   // ========================================================================
   function EnsCentersViewer(root) {
@@ -110,6 +117,7 @@
       fhour: el('enscenters-fhour'),
       valid: el('enscenters-valid'),
       speed: el('enscenters-speed'),
+      run: el('enscenters-run'),
       scrub: el('enscenters-scrub'),
       trail: el('enscenters-trail'),
       gif: el('enscenters-gif'),
@@ -142,6 +150,8 @@
     this.visible = [];         // current step region-filtered (for hover)
     this.playing = false;
     this.speed = 1;
+    this.followLatest = true;   // Run selector: true = track the newest cycle on poll
+    this._runSig = null;        // cached signature of the Run <select> options
     this.raf = null;
     this.lastTick = 0;
     this.geo = { countries: null, coast: null };
@@ -226,14 +236,42 @@
     var entry = this._modelEntry(slug);
     if (!entry || !entry.latest) return;
     this.model = slug;
+    this.followLatest = true;            // a new model starts on its latest run
     this._highlight(this.dom.models, slug);
+    this._buildRunSelect(entry, entry.latest);
     this._loadCycle(slug, entry.latest);
+  };
+
+  // Populate the "Run" <select> from THIS model's manifest cycle list (the
+  // rolling window already on R2, newest-first), newest labelled "(latest)".
+  // Shared / model-agnostic: reads whatever model's entry it is handed. Rebuilds
+  // only when the cycle list actually changes (so a poll doesn't disrupt an open
+  // dropdown), then reflects ``selected``.
+  EnsCentersViewer.prototype._buildRunSelect = function (entry, selected) {
+    var sel = this.dom.run;
+    if (!sel || !entry) return;
+    var cycles = (entry.cycles && entry.cycles.length) ? entry.cycles.slice()
+      : (entry.latest ? [entry.latest] : []);
+    var sig = cycles.join(',') + '|' + (entry.latest || '');
+    if (sig !== this._runSig) {
+      sel.innerHTML = '';
+      for (var i = 0; i < cycles.length; i++) {
+        var o = document.createElement('option');
+        o.value = cycles[i];
+        o.textContent = cycleLabel(cycles[i]) + (cycles[i] === entry.latest ? ' (latest)' : '');
+        sel.appendChild(o);
+      }
+      this._runSig = sig;
+    }
+    if (selected && cycles.indexOf(selected) !== -1) sel.value = selected;
+    else if (cycles.length) sel.value = cycles[0];
   };
 
   EnsCentersViewer.prototype._loadCycle = function (slug, cycle) {
     var self = this;
     this._pause();
     this.loadedCycle = cycle;
+    if (this.dom.run) this.dom.run.value = cycle;   // keep the Run selector in sync
     this._status('Loading ' + slug.toUpperCase() + ' ' + cycle + '…');
     fetch(DATA_BASE + slug + '/' + cycle + '.json?v=' + cycle, { cache: 'force-cache' })
       .then(function (r) { if (!r.ok) throw new Error('cycle HTTP ' + r.status); return r.json(); })
@@ -638,6 +676,18 @@
       if (SPEED_OPTIONS[i] === 1) o.selected = true; sp.appendChild(o);
     }
     sp.addEventListener('change', function () { self.speed = parseFloat(this.value); if (self.playing) self.lastTick = 0; });
+
+    // Run (cycle) selector: load the chosen cycle's JSON and re-render the full
+    // figure for it. Region / trail / speed persist (instance state, untouched by
+    // _onData); the scrubber resets to the new run's steps.
+    if (this.dom.run) {
+      this.dom.run.addEventListener('change', function () {
+        var entry = self._modelEntry(self.model), cyc = this.value;
+        if (!entry || !cyc) return;
+        self.followLatest = (cyc === entry.latest);   // picking latest re-enables auto-advance
+        self._loadCycle(self.model, cyc);
+      });
+    }
     this.dom.scrub.addEventListener('input', function () { self._pause(); self._show(parseInt(this.value, 10) || 0); });
 
     this.root.addEventListener('keydown', function (e) {
@@ -819,7 +869,18 @@
     this._fetchManifest().then(function (m) {
       self.manifest = m;
       var entry = self._modelEntry(self.model);
-      if (entry && entry.latest && entry.latest !== self.loadedCycle) self._loadCycle(self.model, entry.latest);
+      if (!entry) return;
+      // A pinned older run that has rolled off the retention window is gone from
+      // R2 - fall back to following the latest so we never show a 404'd cycle.
+      if (!self.followLatest && entry.cycles && entry.cycles.indexOf(self.loadedCycle) === -1) {
+        self.followLatest = true;
+      }
+      self._buildRunSelect(entry, self.followLatest ? entry.latest : self.loadedCycle);
+      // Only auto-advance to a fresh cycle when the user is following latest;
+      // a user who picked a specific run stays on it.
+      if (self.followLatest && entry.latest && entry.latest !== self.loadedCycle) {
+        self._loadCycle(self.model, entry.latest);
+      }
     }).catch(function () {}).then(function () { self._schedulePoll(); });
   };
 

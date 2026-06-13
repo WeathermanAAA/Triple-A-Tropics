@@ -267,9 +267,14 @@
     font-variant-numeric: tabular-nums; }
   #enscenters-fhour { color: var(--accent); font-size: 15px; font-weight: 700; }
   #enscenters-valid { color: var(--muted); font-size: 12px; }
-  .ens-speed { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-  .ens-speed select { background: var(--bg); color: var(--fg);
+  .ens-speed, .ens-run { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .ens-speed select, .ens-run select { background: var(--bg); color: var(--fg);
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 13px; }
+  .ens-run select { max-width: 170px; }
+  /* --accent is self-scoped to bright blue on #enscenters-viewer, so these match
+     the Region picker's blue accent. */
+  .ens-speed select:focus, .ens-run select:focus,
+  .ens-speed select:hover, .ens-run select:hover { border-color: var(--accent); outline: none; }
   .ens-scrub { width: 100%; margin-top: 12px; accent-color: var(--accent-2); cursor: pointer; }
   .ens-caption { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-top: 12px; }
   /* GIF Maker dialog - same look/controls as the /satellite/ loop export. */
@@ -443,6 +448,7 @@
           <span id="enscenters-valid"></span>
         </div>
         <div class="ens-speed"><span>Speed</span><select id="enscenters-speed"></select></div>
+        <div class="ens-run"><span>Run</span><select id="enscenters-run" title="Forecast cycle (model run)"></select></div>
       </div>
 
       <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0"
@@ -507,8 +513,8 @@
 </div>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
-<script src="/models/hafs.js"></script>
-<script src="/models/regions.js"></script>
-<script src="/models/enscenters.js"></script>
+<script src="/models/hafs.js?v=690bcc5aa3"></script>
+<script src="/models/regions.js?v=15a6d78a75"></script>
+<script src="/models/enscenters.js?v=6573f94e7e"></script>
 </body>
 </html>

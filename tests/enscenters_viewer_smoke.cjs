@@ -34,6 +34,7 @@ const HTML = `<!doctype html><html><body>
     <button id="enscenters-trail"></button>
     <span id="enscenters-fhour"></span><span id="enscenters-valid"></span>
     <select id="enscenters-speed"></select>
+    <select id="enscenters-run"></select>
   </div>
   <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0" value="0">
   <p class="ens-caption"></p>
@@ -109,7 +110,16 @@ const R = win.TATRegions;
   for (const c of V.visible) if (!R.inRegion(c[1], c[0], wpac)) { allVisibleInWpac = false; break; }
   let lastRegion = null; try { lastRegion = win.localStorage.getItem("ens.region"); } catch (e) {}
 
+  // Run (cycle) selector: built from the manifest's per-model cycle list.
+  const runSel = win.document.getElementById("enscenters-run");
+  const runOptions = runSel ? Array.from(runSel.options).map((o) => o.textContent) : [];
+  const runValue = runSel ? runSel.value : null;
+
   process.stdout.write(JSON.stringify({
+    runOptionCount: runOptions.length,
+    runValue,
+    runFirstLabel: runOptions[0] || null,
+    runSecondLabel: runOptions[1] || null,
     regionFramesLen: V.regionFrames.length,
     runStepsLen: (V.data && V.data.run_steps || []).length,
     nCenters: V.data && V.data.n_centers,
