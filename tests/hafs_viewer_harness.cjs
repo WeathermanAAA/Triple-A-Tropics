@@ -193,6 +193,11 @@ global.setTimeout = function (fn, ms) {
 global.clearTimeout = function () {};
 global.setInterval = function () { return 0; };
 global.clearInterval = function () {};
+// The player paces playback on requestAnimationFrame (the satellite canon).
+// These behavioral tests never enter playback (no "play" action, no autoplay),
+// so a no-op stub is enough to satisfy the symbol if a play path is ever added.
+global.requestAnimationFrame = function () { return 0; };
+global.cancelAnimationFrame = function () {};
 
 // ---- load the viewer -------------------------------------------------------
 
