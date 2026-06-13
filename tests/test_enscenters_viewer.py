@@ -103,6 +103,9 @@ class TestEnsCentersViewer(unittest.TestCase):
         # region layer (shared TATRegions)
         self.assertEqual(s["defaultRegion"], "atlantic")
         self.assertEqual(s["regionLabelText"], "Atlantic")
+        # the single-model auto-hide must hide only the model group, not the bar
+        self.assertFalse(s["controlbarHidden"])
+        self.assertTrue(s["modelgroupHidden"])
         self.assertEqual(s["pickerCardCount"], 23)        # all registry regions
         self.assertTrue(s["pickerOpened"])
         self.assertEqual(s["globalExtent"], [0, 360, -88, 88])   # Pacific-centered

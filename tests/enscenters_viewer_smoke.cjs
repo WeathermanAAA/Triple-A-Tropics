@@ -21,28 +21,29 @@ const cycle = JSON.parse(fs.readFileSync(CYCLE, "utf8"));
 
 const HTML = `<!doctype html><html><body>
 <div id="enscenters-viewer" tabindex="0">
-  <div id="enscenters-stage">
-    <canvas id="enscenters-canvas" width="900" height="450"></canvas>
-    <div id="enscenters-status" style="display:none"><span></span></div>
-    <div id="enscenters-tooltip"></div>
-  </div>
-  <div class="vw-aside">
-    <div id="enscenters-controls">
-      <div class="hafs-group"><button id="enscenters-region-btn"><span id="enscenters-region-label"></span></button></div>
-      <div class="hafs-group"><div id="enscenters-models" class="hafs-seg-group"></div></div>
+  <div class="ens-row">
+    <div class="ens-left">
+      <div class="ens-titlebox"><h2>Ensemble Cyclone Centers</h2><p id="enscenters-subtitle"></p></div>
+      <div id="enscenters-mapframe">
+        <canvas id="enscenters-canvas" width="900" height="500"></canvas>
+        <div id="enscenters-legend"></div>
+        <div id="enscenters-tooltip"></div>
+        <div id="enscenters-status" style="display:none"><span></span></div>
+      </div>
     </div>
-    <div id="enscenters-player">
-      <button id="enscenters-step-back"></button>
-      <button id="enscenters-play"></button>
-      <button id="enscenters-step-fwd"></button>
-      <span id="enscenters-fhour"></span><span id="enscenters-valid"></span>
-      <select id="enscenters-speed"></select>
-    </div>
-    <div id="enscenters-legend"></div>
     <div id="enscenters-peaks"></div>
   </div>
-  <div class="vw-below"><input id="enscenters-scrub" type="range" min="0" max="0" value="0"></div>
-  <p id="enscenters-subtitle"></p>
+  <div class="ens-controlbar">
+    <button id="enscenters-region-btn"><span id="enscenters-region-label"></span></button>
+    <div class="ens-modelgroup"><div id="enscenters-models" class="hafs-seg-group"></div></div>
+    <button id="enscenters-step-back"></button>
+    <button id="enscenters-play"></button>
+    <button id="enscenters-step-fwd"></button>
+    <span id="enscenters-fhour"></span><span id="enscenters-valid"></span>
+    <select id="enscenters-speed"></select>
+  </div>
+  <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0" value="0">
+  <p class="ens-caption"></p>
   <div id="enscenters-empty" style="display:none"></div>
 </div></body></html>`;
 
@@ -133,6 +134,12 @@ const R = win.TATRegions;
     subtitle: win.document.getElementById("enscenters-subtitle").textContent,
     // region probe
     defaultRegion, regionLabelText,
+    // regression guard: the single-model auto-hide must hide ONLY the model
+    // group, never the whole control bar (the bug a real browser caught).
+    controlbarHidden: (win.document.querySelector(".ens-controlbar") || {}).style ?
+      win.document.querySelector(".ens-controlbar").style.display === "none" : null,
+    modelgroupHidden: (win.document.querySelector(".ens-modelgroup") || {}).style ?
+      win.document.querySelector(".ens-modelgroup").style.display === "none" : null,
     pickerCardCount: pickerCards, pickerOpened: pickerOpen,
     globalExtent, globalPeaksHasTitle,
     wpacExtent, allVisibleInWpac, wpacVisibleCount: V.visible.length,
