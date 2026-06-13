@@ -27,6 +27,9 @@
   var SPEED_OPTIONS = [0.5, 1, 2, 4];
   var BASE_FPS = 4;
   var POLL_IDLE_MS = 300000;
+  var GIF_MAX_W = 1000;          // downscale the figure for a shareable GIF
+  var GIF_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js';
+  var GIF_LAST_DWELL = 6;        // hold the full-cloud frame N x longer before looping
 
   var DEFAULT_REGION = 'atlantic';
   var LS_REGION = 'ens.region';
@@ -90,6 +93,14 @@
       speed: el('enscenters-speed'),
       scrub: el('enscenters-scrub'),
       trail: el('enscenters-trail'),
+      gif: el('enscenters-gif'),
+      gifmodal: el('enscenters-gifmodal'),
+      gifn: el('enscenters-gifn'),
+      giffps: el('enscenters-giffps'),
+      gifskip: el('enscenters-gifskip'),
+      gifmake: el('enscenters-gifmake'),
+      gifstatus: el('enscenters-gifstatus'),
+      gifx: el('enscenters-gifx'),
       tooltip: el('enscenters-tooltip'),
       empty: el('enscenters-empty'),
       regionBtn: el('enscenters-region-btn'),
@@ -579,6 +590,12 @@
     if (this.dom.trail) this.dom.trail.addEventListener('click', function () {
       self._setTrailMode(self.trailMode === 'trail' ? 'current' : 'trail');
     });
+    if (this.dom.gif) this.dom.gif.addEventListener('click', function () { self._openGif(); });
+    if (this.dom.gifmake) this.dom.gifmake.addEventListener('click', function () { self._makeGif(); });
+    if (this.dom.gifx) this.dom.gifx.addEventListener('click', function () { self._closeGif(); });
+    if (this.dom.gifmodal) this.dom.gifmodal.addEventListener('click', function (e) {
+      if (e.target === self.dom.gifmodal && !self.encoding) self._closeGif();
+    });
     this.dom.play.addEventListener('click', function () { self._togglePlay(); });
     this.dom.stepB.addEventListener('click', function () { self._pause(); self._step(-1); });
     this.dom.stepF.addEventListener('click', function () { self._pause(); self._step(1); });
@@ -646,6 +663,119 @@
       Math.abs(best[1]).toFixed(1) + (best[1] >= 0 ? 'E' : 'W');
   };
 
+  // ---- GIF export (reuses the /satellite/ gif.js 0.2.0 pattern) ----
+  EnsCentersViewer.prototype._ensureGifWorker = function (cb) {
+    if (this._gifWorker) { cb(this._gifWorker); return; }
+    var self = this;
+    fetch(GIF_WORKER_URL).then(function (r) { return r.text(); }).then(function (src) {
+      self._gifWorker = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      cb(self._gifWorker);
+    }).catch(function () { cb(GIF_WORKER_URL); });   // CDN fallback
+  };
+
+  EnsCentersViewer.prototype._openGif = function () {
+    if (!this.steps.length) return;
+    var nIn = this.dom.gifn;
+    nIn.max = this.steps.length;
+    if (!parseInt(nIn.value, 10) || parseInt(nIn.value, 10) > this.steps.length) {
+      nIn.value = Math.min(this.steps.length, 30);
+    }
+    this.dom.gifstatus.style.display = 'none';
+    this.dom.gifmake.disabled = false;
+    this.dom.gifmodal.classList.add('open');
+  };
+
+  EnsCentersViewer.prototype._closeGif = function () {
+    this.dom.gifmodal.classList.remove('open');
+    this.encoding = false;
+  };
+
+  // The forecast steps to capture: the full run thinned by "skip every", then
+  // evenly sampled down to N, always ending on the last step (the full cloud).
+  EnsCentersViewer.prototype._pickSteps = function (total, n, skip) {
+    var base = [];
+    for (var i = 0; i < total; i++) if (skip <= 0 || i % (skip + 1) === 0) base.push(i);
+    if (base[base.length - 1] !== total - 1) base.push(total - 1);
+    if (base.length <= n) return base;
+    var out = [], seen = {};
+    for (var k = 0; k < n; k++) {
+      var st = base[Math.round(k * (base.length - 1) / (n - 1))];
+      if (!seen[st]) { seen[st] = 1; out.push(st); }
+    }
+    return out;
+  };
+
+  EnsCentersViewer.prototype._makeGif = function () {
+    if (typeof window.GIF === 'undefined') { alert('GIF library still loading, try again in a second.'); return; }
+    var total = this.steps.length;
+    if (total < 2) return;
+    var n = Math.max(2, Math.min(total, parseInt(this.dom.gifn.value, 10) || total));
+    var fps = Math.max(1, Math.min(30, parseInt(this.dom.giffps.value, 10) || 10));
+    var skip = Math.max(0, parseInt(this.dom.gifskip.value, 10) || 0);
+    var delay = Math.round(1000 / fps);
+    var sel = this._pickSteps(total, n, skip);
+    if (sel.length < 2) { alert('Not enough frames for a GIF; lower "Skip every".'); return; }
+    var selSet = {}; for (var s = 0; s < sel.length; s++) selSet[sel[s]] = 1;
+    var lastSel = sel[sel.length - 1];
+
+    // GIF canvas (downscaled from the retina figure canvas)
+    var cw = this.dom.canvas.width, ch = this.dom.canvas.height;
+    var W = Math.min(this.figW, GIF_MAX_W), H = Math.round(W * this.figH / this.figW);
+    var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+    var octx = oc.getContext('2d');
+
+    var status = this.dom.gifstatus, mk = this.dom.gifmake, self = this;
+    status.style.display = ''; status.textContent = 'Encoding… 0%'; mk.disabled = true;
+    this.encoding = true;
+    this._pause();
+    var settled = false, safety = null;
+    function end() { if (settled) return; settled = true; if (safety) { clearTimeout(safety); safety = null; } }
+    function fail(msg) {
+      if (settled) return; end(); self.encoding = false; mk.disabled = false;
+      status.style.display = ''; status.textContent = msg || 'GIF export failed - try again.';
+    }
+
+    this._ensureGifWorker(function (worker) {
+      var gif;
+      try {
+        gif = new window.GIF({ workers: 2, quality: 10, width: W, height: H,
+          workerScript: worker, background: '#0b1320' });
+      } catch (e) { fail('GIF encoder unavailable.'); return; }
+      gif.on('progress', function (p) { status.textContent = 'Encoding… ' + Math.round(p * 100) + '%'; });
+      gif.on('error', function () { fail('GIF encoding failed - try again.'); });
+      gif.on('finished', function (blob) {
+        end();
+        var u = URL.createObjectURL(blob), a = document.createElement('a');
+        a.href = u;
+        a.download = 'ecens_' + self.region + '_' + (self.data ? self.data.init_cycle : 'cycle') + '.gif';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        requestAnimationFrame(function () { URL.revokeObjectURL(u); });
+        status.textContent = 'Done!'; mk.disabled = false;
+        setTimeout(function () { self._closeGif(); }, 700);
+      });
+
+      // Render the run in order so the trail builds incrementally (honoring the
+      // current region crop + trail/current toggle), capturing the sampled
+      // steps. The synchronous loop never repaints mid-way, so the visible
+      // canvas does not flash.
+      var savedIdx = self.idx, added = 0;
+      self.trailUpTo = -1;
+      for (var i = 0; i < total; i++) {
+        self._show(i);
+        if (selSet[i]) {
+          octx.clearRect(0, 0, W, H);
+          try { octx.drawImage(self.dom.canvas, 0, 0, cw, ch, 0, 0, W, H); } catch (e) { continue; }
+          gif.addFrame(octx, { copy: true, delay: (i === lastSel) ? delay * GIF_LAST_DWELL : delay });
+          added++;
+        }
+      }
+      self._show(savedIdx);   // restore the viewer
+      if (added < 2) { fail('Could not render enough frames.'); return; }
+      safety = setTimeout(function () { fail('GIF encoding timed out - try again.'); }, 90000);
+      try { gif.render(); } catch (e) { fail('GIF encoder failed to start.'); }
+    });
+  };
+
   // ---- poll for newer cycle ----
   EnsCentersViewer.prototype._schedulePoll = function () {
     clearTimeout(this._pollTimer);
@@ -654,6 +784,7 @@
   };
   EnsCentersViewer.prototype._poll = function () {
     var self = this;
+    if (this.encoding) { this._schedulePoll(); return; }   // don't reload mid-encode
     this._fetchManifest().then(function (m) {
       self.manifest = m;
       var entry = self._modelEntry(self.model);
