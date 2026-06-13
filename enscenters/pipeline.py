@@ -22,6 +22,7 @@ import urllib.request
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Optional
 
+from . import warmcore
 from .detect import detect_centers
 from .ingest import IngestSession, iter_member_fields, make_client, resolve_latest_complete
 from .registry import (
@@ -53,15 +54,21 @@ def _cycle_iso(cycle: dt.datetime) -> str:
 def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
                    steps: List[int], tmpdir: str, source: str):
     """Ingest + detect one member, STREAMING per step so only one field is
-    resident. Returns (member_id, peak|None, centers_rows)."""
+    resident. When the model self-detects MSLP (spec.warm_core), the iterator also
+    yields the 300-500 thickness field and we keep ONLY warm-core tropical centers.
+    Returns (member_id, peak|None, centers_rows)."""
     client = make_client(source)
     kwargs = spec.detect.as_kwargs()
+    wc_kwargs = spec.warm_core_params.as_kwargs() if spec.warm_core else None
     centers: List[list] = []
     peak: Optional[dict] = None
     gen = iter_member_fields(client, spec, cycle, member_id, steps, tmpdir)
     try:
-        for lats, lons, step_h, field in gen:
-            for c in detect_centers(field, lats, lons, **kwargs):
+        for lats, lons, step_h, field, thk in gen:
+            cs = detect_centers(field, lats, lons, **kwargs)
+            if wc_kwargs is not None:
+                cs = warmcore.filter_centers(cs, thk, lats, lons, **wc_kwargs)
+            for c in cs:
                 centers.append([step_h, c["lat"], c["lon"], c["mslp_hpa"], c["vmax_kt"]])
                 if peak is None or c["mslp_hpa"] < peak["mslp_hpa"]:
                     peak = {"mslp_hpa": c["mslp_hpa"], "vmax_kt": c["vmax_kt"],

@@ -83,6 +83,37 @@ class DetectParams:
         }
 
 
+# --- warm-core (tropical-only) filter knobs ------------------------------
+# Applied to SELF-DETECTED centers only (see enscenters.warmcore). The defaults
+# are the community-standard upper-level thickness test: a closed THK (gh300 -
+# gh500) max within ~1 deg of the surface low, falling >= ~6 m (58.8 m^2/s^2 / g)
+# within 6.5 deg, plus |lat| <= 50 and a high-terrain (thermal-low) mask.
+@dataclass(frozen=True)
+class WarmCoreParams:
+    max_lat: float = 50.0
+    terrain_max_m: Optional[float] = 1000.0
+    bg_box_deg: float = 10.0          # boxcar half-width for the background mean (anomaly)
+    warm_anom_min_m: float = 6.0      # minimum core thickness ANOMALY (warm-core amplitude)
+    search_max_deg: float = 1.0
+    closed_drop_m: float = 6.0
+    closed_radius_deg: float = 6.5
+    n_azimuth: int = 16
+    n_radial: int = 12
+
+    def as_kwargs(self) -> dict:
+        return {
+            "max_lat": self.max_lat,
+            "terrain_max_m": self.terrain_max_m,
+            "bg_box_deg": self.bg_box_deg,
+            "warm_anom_min_m": self.warm_anom_min_m,
+            "search_max_deg": self.search_max_deg,
+            "closed_drop_m": self.closed_drop_m,
+            "closed_radius_deg": self.closed_radius_deg,
+            "n_azimuth": self.n_azimuth,
+            "n_radial": self.n_radial,
+        }
+
+
 # --- model spec ----------------------------------------------------------
 @dataclass(frozen=True)
 class EnsModelSpec:
@@ -112,6 +143,16 @@ class EnsModelSpec:
     control_step_short: int = 90
     # --- detect config ---
     detect: DetectParams = field(default_factory=DetectParams)
+    # --- warm-core (tropical-only) filter on the SELF-DETECTED centers ---
+    # True for every model that self-detects MSLP (ECMWF ENS, AIFS-ENS). When on,
+    # the ingest also pulls gh at gh_levels to build the thickness field. The
+    # already-TC-only models would ingest tracks via a different adapter and set
+    # this False.
+    warm_core: bool = True
+    warm_core_params: WarmCoreParams = field(default_factory=WarmCoreParams)
+    gh_param: str = "gh"                       # geopotential HEIGHT (gpm), not z
+    gh_levels: Tuple[int, int] = (300, 500)    # thickness layer top, bottom (hPa)
+    gh_param_id: int = 156                      # cfgrib paramId for gh
     # --- provenance ---
     attribution: str = "ECMWF open data (CC-BY-4.0)"
 
