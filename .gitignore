@@ -37,6 +37,11 @@ gibs/manifest.json
 # (models/index.html, models/hafs.js, both tracked) reads them cross-origin.
 # Only the rendered output under models/hafs/ is ignored, not the page.
 models/hafs/
+# Ensemble Cyclone Centers: per-cycle detection JSON + manifest are built each
+# cycle and synced to cdn.triple-a-tropics.com/models/enscenters/ by
+# update-enscenters.yml. The frontend (models/index.html, models/enscenters.js,
+# both tracked) reads them cross-origin. Only the built output is ignored.
+models/enscenters/
 # Dev artifact from the standalone single-frame slice (python hafs_plot.py).
 hafs_test.png
 # Local scratch renders used to eyeball palettes/masking before a full cycle.

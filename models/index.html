@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Model Plots · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="HAFS-A and HAFS-B hurricane model forecast plots: mean sea-level pressure over 10 m wind or composite radar reflectivity for every active storm, storm-following nest and parent domain, out to 126 hours.">
+<meta name="description" content="Tropical model guidance: HAFS-A and HAFS-B forecast plots (MSLP over 10 m wind or composite reflectivity, out to 126 h) and ECMWF ensemble cyclone centers (51-member MSLP minima, animatable out to 10 days).">
 <meta property="og:title" content="Model Plots · Triple-A-Tropics">
-<meta property="og:description" content="HAFS-A / HAFS-B forecast guidance: MSLP with 10 m wind or composite reflectivity, every active storm, out to 126 h.">
+<meta property="og:description" content="HAFS-A / HAFS-B forecast guidance plus ECMWF ensemble cyclone centers: 51-member MSLP minima, colored by central pressure, animatable out to 10 days.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
@@ -233,6 +233,46 @@
       gap: 3px; padding: 0 12px 12px;
     }
   }
+
+  /* ---- Ensemble Cyclone Centers viewer (models/enscenters.js). Isolated from
+     the HAFS viewer: it only reuses the shared chrome classes (.vw-grid,
+     .hafs-stage, .vw-aside, .vw-below, .hafs-*) for layout; these enscenters-*
+     rules style its own canvas, scrubber, legend, peak table and tooltip. */
+  #enscenters-stage {
+    width: clamp(320px, 58vw, 900px);
+    min-height: auto; padding: 0; background: #07101c;
+  }
+  #enscenters-canvas { display: block; width: 100%; height: auto; cursor: crosshair; }
+  #enscenters-tooltip {
+    position: absolute; display: none; pointer-events: none; z-index: 5;
+    background: rgba(10,13,18,0.92); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--fg);
+    line-height: 1.35; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .ens-scrub { width: 100%; accent-color: var(--accent-2); cursor: pointer; }
+  #enscenters-legend { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+  .ens-leg { display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: var(--muted); }
+  .ens-sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 1.7px solid #fff; background: transparent; box-sizing: border-box;
+    vertical-align: middle; }
+  #enscenters-peaks {
+    border: 1px solid var(--border); border-radius: 8px; overflow: auto;
+    max-height: 340px; font-variant-numeric: tabular-nums;
+  }
+  .ens-peaks-head, .ens-peak-row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
+    padding: 3px 10px; font-size: 11.5px;
+  }
+  .ens-peaks-head {
+    position: sticky; top: 0; background: var(--panel); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.4px; font-size: 10px;
+    font-weight: 700; border-bottom: 1px solid var(--border);
+  }
+  .ens-peak-row span:first-child { display: flex; align-items: center; gap: 6px; }
+  .ens-peak-row.ctl { color: var(--accent); font-weight: 700; }
+  #enscenters-subtitle { color: var(--fg); font-size: 13px; font-weight: 700;
+    padding-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -347,6 +387,79 @@
   </div>
 </section>
 
+<header class="page-head">
+  <h1>Ensemble Cyclone Centers</h1>
+  <p>Every member of the ECMWF ensemble, every forecast step: each dot is one
+  member's detected cyclone center (a closed mean-sea-level-pressure low),
+  colored by central pressure. Play the loop to watch where the 51-member
+  ensemble takes each system out to 10 days, and read each member's peak storm
+  off the table.</p>
+</header>
+
+<section class="chart-section">
+  <div class="chart-card">
+    <div id="enscenters-viewer" class="vw-grid" tabindex="0">
+
+      <!-- Canvas scatter (main column) -->
+      <div id="enscenters-stage" class="hafs-stage">
+        <canvas id="enscenters-canvas" width="900" height="450"
+                aria-label="Ensemble cyclone centers over a world map"></canvas>
+        <div id="enscenters-status" class="hafs-statusbox">
+          <div class="hafs-spinner"></div><span>Loading…</span>
+        </div>
+        <div id="enscenters-tooltip"></div>
+      </div>
+
+      <!-- Control column (gutter) -->
+      <div class="vw-aside">
+        <div id="enscenters-controls" class="hafs-controls">
+          <div class="hafs-group">
+            <label>Model</label>
+            <div id="enscenters-models" class="hafs-seg-group"></div>
+          </div>
+        </div>
+        <div id="enscenters-player" class="hafs-player">
+          <button id="enscenters-step-back" class="hafs-btn" type="button" title="Previous step (←)">◄</button>
+          <button id="enscenters-play" class="hafs-btn hafs-play" type="button" title="Play / pause (space)">► Play</button>
+          <button id="enscenters-step-fwd" class="hafs-btn" type="button" title="Next step (→)">►</button>
+          <div class="hafs-readout">
+            <span id="enscenters-fhour">F000</span>
+            <span id="enscenters-valid"></span>
+          </div>
+          <div class="hafs-speed-wrap">
+            <span>Speed</span><select id="enscenters-speed"></select>
+          </div>
+        </div>
+        <div id="enscenters-legend"></div>
+        <div id="enscenters-peaks"></div>
+      </div>
+
+      <!-- Scrubber (full width beneath) -->
+      <div class="vw-below">
+        <input id="enscenters-scrub" class="ens-scrub" type="range"
+               min="0" max="0" step="1" value="0" aria-label="Forecast step">
+      </div>
+
+      <p id="enscenters-subtitle" class="hafs-caption"></p>
+      <p class="hafs-caption">
+        Centers are mean-sea-level-pressure minima that sit inside a closed
+        circulation (the pressure rises in every direction around them), the same
+        filter that separates real lows from open troughs. Peak winds in the
+        table are the Atkinson-Holliday estimate from central pressure. Data:
+        ECMWF open data (CC BY 4.0).
+      </p>
+
+      <div id="enscenters-empty" class="hafs-empty" style="display:none">
+        <h2>Ensemble cyclone centers are not available right now</h2>
+        <p>This view publishes after each ECMWF ensemble run (00 / 06 / 12 / 18
+        UTC) finishes disseminating, a few hours after the cycle time. Check back
+        shortly.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
 <section class="chart-section about">
   <h2>About HAFS</h2>
   <p>The <b>Hurricane Analysis and Forecast System</b> is NOAA's operational
@@ -369,5 +482,6 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/hafs.js"></script>
+<script src="/models/enscenters.js"></script>
 </body>
 </html>
