@@ -47,7 +47,11 @@ concurrency:
 jobs:
   detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # The warm-core filter pulls gh at 2 levels alongside MSLP, ~tripling the
+    # per-cycle transfer/time; a backfill of up to --max-per-run cycles must still
+    # fit under GitHub's 6 h job hard-limit. A typical run does 0-1 cycle; this
+    # headroom only matters after an outage when several cycles backfill at once.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v6
 

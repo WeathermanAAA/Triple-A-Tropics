@@ -160,6 +160,56 @@ def _data_type_for_member(spec: EnsModelSpec, member_id: str) -> str:
     return spec.control_type if member_id == "CTL" else spec.pf_type
 
 
+def _gh_request_for_member(spec: EnsModelSpec, member_id: str, steps: List[int]) -> dict:
+    """Byte-range request for ONE member's gh (param=gh only) at the thickness
+    levels - the warm-core layer alongside MSLP."""
+    base = dict(levtype="pl", param=spec.gh_param, levelist=list(spec.gh_levels), step=steps)
+    if member_id == "CTL":
+        return dict(stream=spec.control_stream, type=spec.control_type, **base)
+    return dict(stream=spec.ens_stream, type=spec.pf_type, number=int(member_id[1:]), **base)
+
+
+def _gh_thk_accessor(ds_gh, spec: EnsModelSpec):
+    """Return ``step_h -> THK(gpm) 2-D array`` (gh[top] - gh[bottom]) for the gh
+    dataset, or a function yielding None when the step/levels are unavailable
+    (the warm-core filter then passes that step's centers through unfiltered)."""
+    none = lambda step_h: None
+    if not getattr(ds_gh, "data_vars", None):
+        return none
+    var = spec.gh_param if spec.gh_param in ds_gh.data_vars else list(ds_gh.data_vars)[0]
+    gh = ds_gh[var]
+    if "isobaricInhPa" not in gh.dims:
+        return none
+    levs = list(np.atleast_1d(ds_gh["isobaricInhPa"].values).astype(int))
+    top, bot = int(spec.gh_levels[0]), int(spec.gh_levels[1])
+    if top not in levs or bot not in levs:
+        return none
+    it, ib = levs.index(top), levs.index(bot)
+    has_step = "step" in gh.dims
+    idx_by_h = {}
+    if has_step:
+        sv = np.atleast_1d(ds_gh["step"].values)
+        for i in range(len(sv)):
+            s = sv[i]
+            h = (int(s / np.timedelta64(1, "h"))
+                 if np.issubdtype(np.asarray(s).dtype, np.timedelta64) else int(s))
+            idx_by_h[h] = i
+
+    def thk(step_h):
+        g = gh
+        if has_step:
+            i = idx_by_h.get(step_h)
+            if i is None:
+                return None
+            g = gh.isel(step=i)
+        top_f = np.asarray(g.isel(isobaricInhPa=it).values, dtype=float)
+        bot_f = np.asarray(g.isel(isobaricInhPa=ib).values, dtype=float)
+        out = top_f - bot_f
+        return out if np.isfinite(out).any() else None
+
+    return thk
+
+
 def iter_member_fields(
     client,
     spec: EnsModelSpec,
@@ -167,15 +217,18 @@ def iter_member_fields(
     member_id: str,
     steps: List[int],
     tmpdir: str,
-) -> Iterator[Tuple[np.ndarray, np.ndarray, int, np.ndarray]]:
-    """Download one member's MSLP, then yield (lats, lons, step_h, hPa 2-D field)
-    one step at a time. Only a single field is resident at once. The temp GRIB
-    (+ any .idx) is removed when the generator is exhausted or closed.
+) -> Iterator[Tuple[np.ndarray, np.ndarray, int, np.ndarray, Optional[np.ndarray]]]:
+    """Download one member's MSLP (and, when ``spec.warm_core``, its gh at the
+    thickness levels), then yield (lats, lons, step_h, hPa MSLP field, THK gpm
+    field or None) one step at a time. Only a single step's fields are resident at
+    once; both temp GRIBs (+ any .idx) are removed when the generator is exhausted
+    or closed - this is the process-and-delete that keeps peak disk small even
+    though gh roughly triples the per-member pull.
 
     The control member may publish fewer steps than the perturbed members
     (oper/fc stops at 240h at 00/12Z, 90h at 06/18Z); only the steps actually
-    present are yielded. Filter by paramId + dataType only - msl's typeOfLevel is
-    "meanSea" (constraining typeOfLevel="surface" matches zero messages).
+    present are yielded. Filter MSLP by paramId + dataType only - msl's
+    typeOfLevel is "meanSea" (constraining typeOfLevel="surface" matches zero).
     """
     import xarray as xr
 
@@ -184,6 +237,9 @@ def iter_member_fields(
     request["date"] = cycle.strftime("%Y%m%d")
     request["time"] = cycle.hour
 
+    gh_target = None
+    ds_gh = None
+    thk_of = lambda step_h: None
     try:
         _retrieve(client, target, **request)
         ds = xr.open_dataset(
@@ -197,6 +253,25 @@ def iter_member_fields(
                 "indexpath": "",
             },
         )
+        if spec.warm_core:
+            gh_target = os.path.join(tmpdir, f"{spec.slug}_{cycle:%Y%m%d%H}_{member_id}_gh.grib2")
+            gh_req = _gh_request_for_member(spec, member_id, steps)
+            gh_req["date"] = cycle.strftime("%Y%m%d")
+            gh_req["time"] = cycle.hour
+            _retrieve(client, gh_target, **gh_req)
+            ds_gh = xr.open_dataset(
+                gh_target,
+                engine="cfgrib",
+                backend_kwargs={
+                    "filter_by_keys": {
+                        "paramId": spec.gh_param_id,
+                        "typeOfLevel": "isobaricInhPa",
+                        "dataType": _data_type_for_member(spec, member_id),
+                    },
+                    "indexpath": "",
+                },
+            )
+            thk_of = _gh_thk_accessor(ds_gh, spec)
         try:
             if not ds.data_vars:
                 raise RuntimeError(f"no MSLP messages decoded for member {member_id} of {cycle}")
@@ -217,13 +292,16 @@ def iter_member_fields(
                     continue  # all-NaN step -> skip (failed decode for this step)
                 if finite.max() > 2000.0:  # Pa -> hPa
                     arr = arr / 100.0
-                yield lats, lons, step_h, arr
+                yield lats, lons, step_h, arr, thk_of(step_h)
         finally:
             ds.close()
+            if ds_gh is not None:
+                ds_gh.close()
     finally:
-        for p in (target, target + ".idx"):
+        for p in (target, target + ".idx",
+                  gh_target, (gh_target + ".idx") if gh_target else None):
             try:
-                if os.path.exists(p):
+                if p and os.path.exists(p):
                     os.remove(p)
             except OSError:
                 pass
