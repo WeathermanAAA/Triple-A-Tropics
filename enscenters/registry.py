@@ -63,7 +63,11 @@ class DetectParams:
     n_azimuth: int = 16
     n_radial: int = 12
     dedup_km: float = 250.0
-    lat_limit: Optional[float] = 75.0
+    # Detection is FULLY GLOBAL: centers to ~|lat| 88 so the viewer's Hemisphere
+    # and Global region crops are populated (the region is a client-side view
+    # crop, not a detection limit). The polar cap (>88) is dropped - the 0.25 deg
+    # grid is degenerate there and the closed test's geometry is unreliable.
+    lat_limit: Optional[float] = 88.0
     max_central_hpa: float = 1015.0
 
     def as_kwargs(self) -> dict:

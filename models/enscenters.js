@@ -26,11 +26,10 @@
   var BASE_FPS = 4;                     // steps/sec at 1x
   var POLL_IDLE_MS = 300000;            // re-check manifest every 5 min
 
-  // Global equirectangular extent [lon_min, lon_max, lat_min, lat_max].
-  // Pacific-centered (central_longitude = 180): the visible x-range is 0..360
-  // with the dateline at center, so WPAC systems near +/-180 stay together and
-  // the seam falls on the Atlantic. project() folds -180..180 inputs into 0..360.
-  var MAP_EXTENT = [0, 360, -90, 90];
+  // The map extent is now per-REGION (TATRegions.extentOf), not a fixed global
+  // box. Detection stays fully global; the region is a client-side view crop.
+  var DEFAULT_REGION = 'atlantic';   // Andrew's default
+  var LS_REGION = 'ens.region';      // remember the user's last pick
 
   // Pressure-bin ring colors (Andrew's reference, FINAL), keyed by manifest bin
   // key. Bold HOLLOW rings (stroke, no fill) on the navy basemap; warmer/pinker
@@ -43,18 +42,19 @@
     lt950: '#ff3d9a'       // <950       - hot pink (most intense)
   };
 
-  // Basemap (Andrew's reference, FINAL): navy panel, muted land.
-  var BASEMAP = {
-    ocean: '#07101c',
-    land: '#2f3f59',
-    coast: 'rgba(150,175,205,0.28)',
-    grid: 'rgba(255,255,255,0.05)',
-    coast_lw: 0.6,
-    grid_lw: 0.5
+  // Basemap style (Andrew's reference, FINAL) passed to the shared renderer.
+  var BASEMAP_STYLE = {
+    ocean: '#07101c', land: '#2f3f59',
+    coast: 'rgba(150,175,205,0.28)', coastLw: 0.6,
+    grid: 'rgba(255,255,255,0.05)', gridLw: 0.5
   };
 
   var RING_ALPHA = 0.92;    // crisp but overlapping rings still read as density
   var BIN_ORDER = ['gt1000', 'p990_1000', 'p970_990', 'p950_970', 'lt950'];
+
+  function regionOr(key) {
+    return (window.TATRegions && TATRegions.get(key)) ? key : DEFAULT_REGION;
+  }
 
   function el(id) { return document.getElementById(id); }
   function fmtInt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -95,7 +95,9 @@
       peaks: el('enscenters-peaks'),
       subtitle: el('enscenters-subtitle'),
       tooltip: el('enscenters-tooltip'),
-      empty: el('enscenters-empty')
+      empty: el('enscenters-empty'),
+      regionBtn: el('enscenters-region-btn'),
+      regionLabel: el('enscenters-region-label')
     };
     this.ctx = this.dom.canvas.getContext('2d');
     this.basemapCanvas = document.createElement('canvas');
@@ -114,6 +116,14 @@
     this.W = 0;
     this.H = 0;
     this.geo = { countries: null, coast: null };
+    this.visible = [];    // region-filtered centers of the current frame (for hover)
+
+    // region: remembered pick or Atlantic default
+    var saved = null;
+    try { saved = localStorage.getItem(LS_REGION); } catch (e) { /* ignore */ }
+    this.region = regionOr(saved || DEFAULT_REGION);
+    this.extent = (window.TATRegions ? TATRegions.extentOf(TATRegions.get(this.region)) : [0, 360, -90, 90]);
+    this.picker = null;
 
     this._wire();
     this._boot();
@@ -144,6 +154,7 @@
     this._status('Loading…');
     Promise.all([this._loadBasemap(), this._fetchManifest()])
       .then(function (res) {
+        self._initRegion();        // geo is ready -> build the region picker
         self._onManifest(res[1]);
       })
       .catch(function (e) {
@@ -151,6 +162,31 @@
         self._status('');
         self._showEmpty(true);
       });
+  };
+
+  // ---- region (shared TATRegions layer) ----
+  EnsCentersViewer.prototype._initRegion = function () {
+    var self = this;
+    var r = window.TATRegions ? TATRegions.get(this.region) : null;
+    if (this.dom.regionLabel && r) this.dom.regionLabel.textContent = r.label;
+    if (window.TATRegions) {
+      this.picker = new TATRegions.RegionPicker({
+        geo: this.geo, current: this.region,
+        onPick: function (key) { self._selectRegion(key); }
+      });
+    }
+  };
+
+  EnsCentersViewer.prototype._selectRegion = function (key) {
+    if (!window.TATRegions) return;
+    var r = TATRegions.get(key); if (!r) return;
+    this.region = key;
+    this.extent = TATRegions.extentOf(r);
+    try { localStorage.setItem(LS_REGION, key); } catch (e) { /* ignore */ }
+    if (this.dom.regionLabel) this.dom.regionLabel.textContent = r.label;
+    if (this.picker) this.picker.setCurrent(key);
+    if (this.data) this._buildRegionPeaks();
+    this._resize();   // redraw basemap at the new extent + re-show (filters scatter)
   };
 
   EnsCentersViewer.prototype._loadBasemap = function () {
@@ -233,7 +269,7 @@
     this.dom.scrub.value = 0;
 
     this._buildLegend(d.pressure_bins || []);
-    this._buildPeaks(members);
+    this._buildRegionPeaks();
     this._setSubtitle();
     this._resize();           // sizes canvas + draws basemap
     this._status('');
@@ -249,12 +285,18 @@
       ' members  ·  ' + fmtInt(d.n_centers) + ' centers';
   };
 
-  // ---- canvas sizing + basemap ----
+  // ---- canvas sizing + basemap (shared TATRegions projection/basemap) ----
   EnsCentersViewer.prototype._resize = function () {
     var stage = this.dom.stage;
     var cssW = stage.clientWidth || 900;
-    var aspect = (MAP_EXTENT[1] - MAP_EXTENT[0]) / (MAP_EXTENT[3] - MAP_EXTENT[2]); // 2:1
-    var cssH = Math.round(cssW / aspect);
+    var e = this.extent;
+    var aspect = (e[1] - e[0]) / (e[3] - e[2]);   // per-region aspect
+    var cssH = cssW / aspect;
+    // cap height for tall/portrait regions so the canvas stays in the viewport;
+    // shrink width to preserve aspect.
+    var maxH = Math.min(660, (window.innerHeight || 800) * 0.72);
+    if (cssH > maxH) { cssH = maxH; cssW = Math.round(cssH * aspect); }
+    cssW = Math.round(cssW); cssH = Math.round(cssH);
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.W = Math.round(cssW * dpr);
     this.H = Math.round(cssH * dpr);
@@ -269,75 +311,13 @@
   };
 
   EnsCentersViewer.prototype._project = function (lon, lat) {
-    var e = MAP_EXTENT, L = lon;
-    if (e[1] > 180 && L < e[0]) L += 360;
-    return [(L - e[0]) / (e[1] - e[0]) * this.W, (e[3] - lat) / (e[3] - e[2]) * this.H];
-  };
-
-  // Trace each ring/line onto ctx, starting a new subpath at the antimeridian
-  // seam (a projected jump > half the canvas width).
-  EnsCentersViewer.prototype._traceGeo = function (g, geojson, closeRings) {
-    if (!geojson || !geojson.features) return;
-    var JUMP = this.W * 0.5;
-    var self = this;
-    function ring(coords) {
-      var prevX = null, started = false;
-      for (var i = 0; i < coords.length; i++) {
-        var p = self._project(coords[i][0], coords[i][1]);
-        if (prevX === null || Math.abs(p[0] - prevX) > JUMP) {
-          if (started && closeRings) g.closePath();  // close the prior seam subpath
-          g.moveTo(p[0], p[1]);
-          started = true;
-        } else {
-          g.lineTo(p[0], p[1]);
-        }
-        prevX = p[0];
-      }
-      if (closeRings && started) g.closePath();
-    }
-    for (var f = 0; f < geojson.features.length; f++) {
-      var geom = geojson.features[f].geometry;
-      if (!geom) continue;
-      var t = geom.type, co = geom.coordinates;
-      if (t === 'Polygon') { for (var a = 0; a < co.length; a++) ring(co[a]); }
-      else if (t === 'MultiPolygon') { for (var b = 0; b < co.length; b++) for (var c = 0; c < co[b].length; c++) ring(co[b][c]); }
-      else if (t === 'LineString') { ring(co); }
-      else if (t === 'MultiLineString') { for (var e2 = 0; e2 < co.length; e2++) ring(co[e2]); }
-    }
+    return TATRegions.project(lon, lat, this.extent, this.W, this.H);
   };
 
   EnsCentersViewer.prototype._drawBasemap = function () {
     var bg = this.basemapCanvas;
     bg.width = this.W; bg.height = this.H;
-    var g = bg.getContext('2d');
-    g.clearRect(0, 0, this.W, this.H);
-    g.fillStyle = BASEMAP.ocean;
-    g.fillRect(0, 0, this.W, this.H);
-
-    // graticule (every 30 deg)
-    g.strokeStyle = BASEMAP.grid;
-    g.lineWidth = BASEMAP.grid_lw;
-    g.beginPath();
-    for (var lon = 0; lon < 360; lon += 30) { var p = this._project(lon, 0); g.moveTo(p[0], 0); g.lineTo(p[0], this.H); }
-    for (var lat = -60; lat <= 60; lat += 30) { var q = this._project(0, lat); g.moveTo(0, q[1]); g.lineTo(this.W, q[1]); }
-    g.stroke();
-
-    // land fill
-    if (this.geo.countries) {
-      g.fillStyle = BASEMAP.land;
-      g.beginPath();
-      this._traceGeo(g, this.geo.countries, true);
-      g.fill('nonzero');
-    }
-    // coastlines
-    if (this.geo.coast) {
-      g.strokeStyle = BASEMAP.coast;
-      g.lineWidth = BASEMAP.coast_lw;
-      g.lineJoin = 'round'; g.lineCap = 'round';
-      g.beginPath();
-      this._traceGeo(g, this.geo.coast, false);
-      g.stroke();
-    }
+    TATRegions.drawBasemap(bg.getContext('2d'), this.extent, this.geo, this.W, this.H, BASEMAP_STYLE);
   };
 
   // ---- the per-step scatter draw ----
@@ -349,8 +329,17 @@
     ctx.clearRect(0, 0, this.W, this.H);
     ctx.drawImage(this.basemapCanvas, 0, 0);
 
-    var centers = this.frames[this.idx];
-    // bucket by bin so each color is one fill pass, drawn deepest-last (on top)
+    // region crop: keep only centers inside the selected region (frame center
+    // is [lat, lon, mslp, vmax]). The visible set also drives hover.
+    var all = this.frames[this.idx];
+    var r = TATRegions.get(this.region);
+    var centers = [];
+    for (var f = 0; f < all.length; f++) {
+      if (TATRegions.inRegion(all[f][1], all[f][0], r)) centers.push(all[f]);
+    }
+    this.visible = centers;
+
+    // bucket by bin so each color is one stroke pass, drawn deepest-last (on top)
     var buckets = {}; var bo;
     for (bo = 0; bo < BIN_ORDER.length; bo++) buckets[BIN_ORDER[bo]] = [];
     for (var k = 0; k < centers.length; k++) buckets[binKey(centers[k][2])].push(centers[k]);
@@ -399,21 +388,35 @@
     }
   };
 
-  EnsCentersViewer.prototype._buildPeaks = function (members) {
-    var host = this.dom.peaks; if (!host) return;
-    var rows = members.filter(function (m) { return m.peak; })
-      .map(function (m) { return { id: m.id, label: m.id, peak: m.peak }; })
-      .sort(function (a, b) { return a.peak.mslp_hpa - b.peak.mslp_hpa; });
-    var html = '<div class="ens-peaks-head"><span>Member</span><span>Pmin</span><span>Vmax</span></div>';
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      var cls = 'ens-peak-row' + (r.id === 'CTL' ? ' ctl' : '');
-      var sw = '<i class="ens-sw" style="border-color:' + (PRESSURE_BIN_COLORS[binKey(Number(r.peak.mslp_hpa))] || '#fff') + '"></i>';
-      html += '<div class="' + cls + '">' +
-        '<span>' + sw + r.label + '</span>' +
-        '<span>' + fix0(r.peak.mslp_hpa) + '</span>' +
-        '<span>' + fix0(r.peak.vmax_kt) + '</span></div>';
+  // Per-member peak recomputed for the SELECTED region: each member's deepest
+  // center inside the region box, across all forecast steps.
+  EnsCentersViewer.prototype._buildRegionPeaks = function () {
+    var host = this.dom.peaks; if (!host || !this.data) return;
+    var r = TATRegions.get(this.region);
+    var members = this.data.members || [];
+    var rows = [];
+    for (var i = 0; i < members.length; i++) {
+      var cs = members[i].centers || [], best = null;
+      for (var k = 0; k < cs.length; k++) {
+        var c = cs[k];   // [step_h, lat, lon, mslp, vmax]
+        if (!TATRegions.inRegion(c[2], c[1], r)) continue;
+        if (best === null || c[3] < best.mslp) best = { mslp: c[3], vmax: c[4] };
+      }
+      if (best) rows.push({ id: members[i].id, best: best });
     }
+    rows.sort(function (a, b) { return a.best.mslp - b.best.mslp; });
+    var html = '<div class="ens-peaks-title">Peak in ' + r.label + '</div>' +
+      '<div class="ens-peaks-head"><span>Member</span><span>Pmin</span><span>Vmax</span></div>';
+    for (var x = 0; x < rows.length; x++) {
+      var row = rows[x];
+      var cls = 'ens-peak-row' + (row.id === 'CTL' ? ' ctl' : '');
+      var sw = '<i class="ens-sw" style="border-color:' + (PRESSURE_BIN_COLORS[binKey(row.best.mslp)] || '#fff') + '"></i>';
+      html += '<div class="' + cls + '">' +
+        '<span>' + sw + row.id + '</span>' +
+        '<span>' + fix0(row.best.mslp) + '</span>' +
+        '<span>' + fix0(row.best.vmax) + '</span></div>';
+    }
+    if (!rows.length) html += '<div class="ens-peaks-empty">No centers in this region</div>';
     host.innerHTML = html;
   };
 
@@ -476,6 +479,9 @@
 
   EnsCentersViewer.prototype._wire = function () {
     var self = this;
+    if (this.dom.regionBtn) {
+      this.dom.regionBtn.addEventListener('click', function () { if (self.picker) self.picker.open(); });
+    }
     this.dom.play.addEventListener('click', function () { self._togglePlay(); });
     this.dom.stepB.addEventListener('click', function () { self._pause(); self._step(-1); });
     this.dom.stepF.addEventListener('click', function () { self._pause(); self._step(1); });
@@ -529,7 +535,7 @@
     var rect = this.dom.canvas.getBoundingClientRect();
     var dpr = this.W / rect.width;
     var mx = (ev.clientX - rect.left) * dpr, my = (ev.clientY - rect.top) * dpr;
-    var centers = this.frames[this.idx];
+    var centers = this.visible || [];   // region-filtered (matches what is drawn)
     var best = null, bestD = (12 * dpr) * (12 * dpr);
     for (var k = 0; k < centers.length; k++) {
       var p = this._project(centers[k][1], centers[k][0]);

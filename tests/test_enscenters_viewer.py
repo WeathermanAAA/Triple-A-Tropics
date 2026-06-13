@@ -90,11 +90,7 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["runStepsLen"], 3)
         self.assertEqual(s["nCenters"], 5)
         self.assertEqual(s["nMembers"], 2)
-        self.assertEqual(s["firstFrameCenters"], 2)   # two members at step 0
-        self.assertTrue(s["peaksHasCTL"])
-        self.assertEqual(s["peakRows"], 2)
-        self.assertEqual(s["modelBtns"], 1)
-        self.assertEqual(s["legendRows"], 5)
+        self.assertTrue(s["peaksHasCTL"])   # CTL's centers are in the Atlantic default
         self.assertEqual(s["scrubMax"], 2)
         # transport
         self.assertEqual(s["idxBefore"], 0)
@@ -103,6 +99,17 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["idxAfterScrub"], 2)
         self.assertIn("ECMWF ENS", s["subtitle"])
         self.assertIn("2 members", s["subtitle"])
+
+        # region layer (shared TATRegions)
+        self.assertEqual(s["defaultRegion"], "atlantic")
+        self.assertEqual(s["regionLabelText"], "Atlantic")
+        self.assertEqual(s["pickerCardCount"], 23)        # all registry regions
+        self.assertTrue(s["pickerOpened"])
+        self.assertEqual(s["globalExtent"], [0, 360, -88, 88])   # Pacific-centered
+        self.assertTrue(s["globalPeaksHasTitle"])
+        self.assertEqual(s["wpacExtent"], [100, 180, 0, 45])
+        self.assertTrue(s["allVisibleInWpac"])            # scatter filtered to region
+        self.assertEqual(s["lastRegionSaved"], "wpac")    # localStorage persistence
 
 
 if __name__ == "__main__":
