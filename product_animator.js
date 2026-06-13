@@ -66,9 +66,17 @@
       this.productSlug = null;
       this.timescale = null;
       this.speed = 1;
-      this._clipStart = 0;
+      this._clipStart = 0;       // window-start TIME (s) within the MP4
+      this._frames = 0;          // total frames in the active clip
+      this._winStart = 0;        // global index of the window's first frame
+      this._winFrames = 0;       // frames visible in the selected window
       this._scrubbing = false;
       this._wasPlayingBeforeScrub = false;
+      // Frame-accurate playhead when available (smooth, per-presented-frame);
+      // the 'timeupdate' handler (~4 Hz) is the fallback for browsers without it.
+      this._rvfc = (typeof HTMLVideoElement !== 'undefined' &&
+                    'requestVideoFrameCallback' in HTMLVideoElement.prototype);
+      this._rvfcGen = 0;         // bumped each load so a stale rVFC chain dies
       this._renderShell();
       this._wireEvents();
       // Pick the first non-disabled source as the initial selection.
@@ -140,6 +148,7 @@
         <div class="pa-stage">
           <video class="pa-video" data-role="video"
                  playsinline preload="metadata"></video>
+          <div class="pa-spinner" data-role="spinner" hidden aria-hidden="true"></div>
           <div class="pa-status" data-role="status">Loading manifest…</div>
         </div>
         <div class="pa-scrub-row">
@@ -165,6 +174,7 @@
       this.scrub         = this.root.querySelector('[data-role="scrub"]');
       this.dateEl        = this.root.querySelector('[data-role="date"]');
       this.captionEl     = this.root.querySelector('[data-role="caption"]');
+      this.spinnerEl     = this.root.querySelector('[data-role="spinner"]');
     }
 
     _wireEvents() {
@@ -190,40 +200,55 @@
         this.video.playbackRate = this.speed;
       });
 
-      // Loop within the user-selected timescale window.
+      // FALLBACK loop + playhead for browsers without requestVideoFrameCallback.
+      // When rVFC is available it owns the loop (frame-accurate, no jitter) and
+      // the playhead (per presented frame, smooth), so this no-ops.
       this.video.addEventListener('timeupdate', () => {
+        if (this._rvfc) return;
         if (!this.video.duration || !isFinite(this.video.duration)) return;
         if (this.video.currentTime >= this.video.duration - 0.05) {
           try { this.video.currentTime = this._clipStart; }
           catch (e) { /* iOS sometimes blocks pre-metadata seeks */ }
         }
-        if (!this._scrubbing) this._syncScrubberFromVideo();
+        if (!this._scrubbing) this._syncFromVideo();
       });
       this.video.addEventListener('loadedmetadata', () => {
         this._applyClipBounds();
         this.video.playbackRate = this.speed;
-        this._syncScrubberFromVideo();
         this.scrub.disabled = false;
         this.playBtn.disabled = false;
+        // POSTER/LABEL AGREEMENT: the poster is the clip's LAST (newest) frame,
+        // so park the video + scrubber + date on that same frame at load. Play
+        // restarts from the window start (see _togglePlay).
+        try { this.video.currentTime = this._timeForFrame(this._frames - 1); }
+        catch (e) { /* pre-metadata seek can throw on iOS */ }
+        this._syncFromVideo();
+        // Start the frame-accurate playhead/loop chain for this load.
+        this._rvfcGen += 1;
+        this._scheduleRvfc(this._rvfcGen);
       });
       this.video.addEventListener('error', () => {
+        this._showSpinner(false);
         this._setStatus('Video failed to load. The MP4 may not be ready yet.');
       });
       this.video.addEventListener('play',  () => this._updatePlayIcon());
       this.video.addEventListener('pause', () => this._updatePlayIcon());
       this.video.addEventListener('ended', () => this._updatePlayIcon());
 
-      this.playBtn.addEventListener('click', () => this._togglePlay());
-      // Space-to-toggle when the button has focus, matching the
-      // keyboard behavior of a native <video controls>.
-      this.playBtn.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' || e.key === ' ') {
-          e.preventDefault();
-          this._togglePlay();
-        }
-      });
+      // Buffering / seeking affordance: a scrub or a cold seek can stall while
+      // the browser fetches the target keyframe — show a spinner so it never
+      // looks frozen. Cleared as soon as the frame is ready / playback resumes.
+      this.video.addEventListener('seeking', () => this._showSpinner(true));
+      this.video.addEventListener('waiting', () => this._showSpinner(true));
+      this.video.addEventListener('seeked',  () => this._showSpinner(false));
+      this.video.addEventListener('canplay', () => this._showSpinner(false));
+      this.video.addEventListener('playing', () => this._showSpinner(false));
 
-      // Scrubber: pause during drag, seek on input, optionally resume.
+      this.playBtn.addEventListener('click', () => this._togglePlay());
+
+      // Scrubber: pause during drag, FRAME-QUANTIZED seek on input, resume.
+      // The range is one step per frame (set in _applyClipBounds), so every
+      // value maps to a real frame and the date label can never drift.
       this.scrub.addEventListener('pointerdown', () => {
         this._scrubbing = true;
         this._wasPlayingBeforeScrub = !this.video.paused;
@@ -231,13 +256,10 @@
       });
       this.scrub.addEventListener('input', () => {
         const dur = this.video.duration;
-        if (!dur || !isFinite(dur)) return;
-        // Range maps 0→1000 onto [_clipStart, duration]. Stays inside
-        // the active timescale window so drag can't escape it.
-        const frac = parseInt(this.scrub.value, 10) / 1000;
-        const t = this._clipStart + frac * (dur - this._clipStart);
-        try { this.video.currentTime = t; } catch (e) { /* noop */ }
-        this._updateDateLabel(this.video.currentTime);
+        if (!dur || !isFinite(dur) || !this._winFrames) return;
+        const gf = this._winStart + (parseInt(this.scrub.value, 10) || 0);
+        try { this.video.currentTime = this._timeForFrame(gf); } catch (e) { /* noop */ }
+        this.dateEl.textContent = this._dateForFrame(gf);
       });
       const endScrub = () => {
         if (!this._scrubbing) return;
@@ -249,6 +271,17 @@
       this.scrub.addEventListener('pointerup', endScrub);
       this.scrub.addEventListener('pointercancel', endScrub);
       this.scrub.addEventListener('change', endScrub);
+
+      // Transport keyboard, scoped to the player (events bubble up from the
+      // focused control). ←/→ step one frame (pausing); Space toggles play.
+      // SELECT / TEXTAREA / links keep their native key behavior.
+      this.root.addEventListener('keydown', (e) => {
+        const tag = e.target && e.target.tagName;
+        if (tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'A') return;
+        if (e.key === 'ArrowLeft') { e.preventDefault(); this._stepFrame(-1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); this._stepFrame(1); }
+        else if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); this._togglePlay(); }
+      });
     }
 
     _setSource(slug) {
@@ -511,7 +544,10 @@
         `<b>${escapeHTML((region && region.label) || this.regionSlug)}</b>: ` +
         `${escapeHTML(desc || '')}` +
         `<span class="pa-meta">${range}${sizeMB}</span>`;
-      this.dateEl.textContent = clip.first_frame ? fmtDate(clip.first_frame) : '-';
+      // Initial label = the LAST (newest) frame, matching the poster (which is
+      // the newest frame) so the load state is coherent before metadata lands.
+      this.dateEl.textContent = clip.last_frame ? fmtDate(clip.last_frame)
+                              : (clip.first_frame ? fmtDate(clip.first_frame) : '-');
     }
 
     _applyClipBounds() {
@@ -519,14 +555,24 @@
       if (!win) return;
       const dur = this.video.duration;
       if (!dur || !isFinite(dur)) return;
-      const frac = (win.length - this.timescale) / win.length;
-      this._clipStart = Math.max(0, frac * dur);
+      const N = this._frameCount();
+      // Window = the newest `timescale` frames (clamped to what the clip has).
+      const winFrames = Math.max(1, Math.min(this.timescale || win.length, N));
+      this._frames = N;
+      this._winFrames = winFrames;
+      this._winStart = N - winFrames;
+      this._clipStart = this._timeForFrame(this._winStart);
+      // FRAME-QUANTIZED scrubber: exactly one step per frame in the window, so
+      // every thumb position lands on a real frame (no 1000-step ±1-day drift).
+      this.scrub.min = '0';
+      this.scrub.step = '1';
+      this.scrub.max = String(winFrames - 1);
       try {
         if (this.video.currentTime < this._clipStart) {
           this.video.currentTime = this._clipStart;
         }
       } catch (e) { /* swallow pre-metadata seek errors */ }
-      this._syncScrubberFromVideo();
+      this._syncFromVideo();
     }
 
     _togglePlay() {
@@ -547,36 +593,105 @@
       this.playBtn.textContent = (this.video.paused || this.video.ended) ? '▶' : '❚❚';
     }
 
-    _syncScrubberFromVideo() {
-      const dur = this.video.duration;
-      if (!dur || !isFinite(dur)) return;
-      const windowDur = dur - this._clipStart;
-      if (windowDur <= 0) return;
-      const frac = (this.video.currentTime - this._clipStart) / windowDur;
-      this.scrub.value = String(Math.max(0, Math.min(1000, Math.round(frac * 1000))));
-      this._updateDateLabel(this.video.currentTime);
+    // ---- frame <-> time <-> date (the scrubber is frame-quantized) ----------
+
+    // Total frames in the active clip. Authoritative from the manifest
+    // (clip.frames); falls back to the window length, then the date span.
+    _frameCount() {
+      const c = this._currentClip;
+      const win = this.manifest && this.manifest.window;
+      let n = (c && c.frames) || (win && win.length) || 0;
+      if (!n && c && c.first_frame && c.last_frame) {
+        const s = Date.UTC(+c.first_frame.slice(0, 4), +c.first_frame.slice(5, 7) - 1,
+                           +c.first_frame.slice(8, 10));
+        const e = Date.UTC(+c.last_frame.slice(0, 4), +c.last_frame.slice(5, 7) - 1,
+                           +c.last_frame.slice(8, 10));
+        n = Math.round((e - s) / 86400000) + 1;
+      }
+      return Math.max(1, n);
     }
 
-    _updateDateLabel(currentTime) {
-      const clip = this._currentClip;
-      if (!clip || !clip.first_frame || !clip.last_frame) return;
+    // Time (s) at the CENTER of global frame gf's slot, so a seek lands cleanly
+    // inside that frame rather than on a slot boundary.
+    _timeForFrame(gf) {
       const dur = this.video.duration;
-      if (!dur || !isFinite(dur)) return;
-      const start = Date.UTC(
-        +clip.first_frame.slice(0, 4),
-        +clip.first_frame.slice(5, 7) - 1,
-        +clip.first_frame.slice(8, 10));
-      const end = Date.UTC(
-        +clip.last_frame.slice(0, 4),
-        +clip.last_frame.slice(5, 7) - 1,
-        +clip.last_frame.slice(8, 10));
-      const spanDays = Math.max(1, Math.round((end - start) / 86400000));
-      const frac = Math.max(0, Math.min(1, currentTime / dur));
-      const dayIdx = Math.round(frac * spanDays);
-      const d = new Date(start + dayIdx * 86400000);
-      this.dateEl.textContent = d.toLocaleDateString('en-US', {
+      const N = this._frameCount();
+      if (!dur || !isFinite(dur) || !N) return 0;
+      const g = Math.max(0, Math.min(N - 1, gf));
+      return Math.min(dur - 1e-3, (g + 0.5) * dur / N);
+    }
+
+    // Global frame index displayed at time t.
+    _globalFrameAt(t) {
+      const dur = this.video.duration;
+      const N = this._frameCount();
+      if (!dur || !isFinite(dur) || !N) return 0;
+      return Math.max(0, Math.min(N - 1, Math.floor(t * N / dur)));
+    }
+
+    // Exact date for a frame: uniform daily cadence (confirmed: clip.frames ==
+    // date span), so date = first_frame + gf days. No time->date interpolation,
+    // hence no ±1-day drift, and no per-frame date array needed in the manifest.
+    _dateForFrame(gf) {
+      const c = this._currentClip;
+      if (!c || !c.first_frame) return '-';
+      const start = Date.UTC(+c.first_frame.slice(0, 4), +c.first_frame.slice(5, 7) - 1,
+                             +c.first_frame.slice(8, 10));
+      const d = new Date(start + Math.max(0, gf) * 86400000);
+      return d.toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
       });
+    }
+
+    _syncFromVideo() {
+      const dur = this.video.duration;
+      if (!dur || !isFinite(dur) || !this._winFrames) return;
+      const gf = this._globalFrameAt(this.video.currentTime);
+      const v = Math.max(0, Math.min(this._winFrames - 1, gf - this._winStart));
+      this.scrub.value = String(v);
+      this.dateEl.textContent = this._dateForFrame(gf);
+    }
+
+    // ←/→ transport: step one frame within the window, pausing playback.
+    _stepFrame(delta) {
+      if (!this.video.src || !this._winFrames) return;
+      if (!this.video.paused) this.video.pause();
+      const cur = this._globalFrameAt(this.video.currentTime);
+      const gf = Math.max(this._winStart, Math.min(this._frames - 1, cur + delta));
+      try { this.video.currentTime = this._timeForFrame(gf); } catch (e) { /* noop */ }
+      this.scrub.value = String(Math.max(0, Math.min(this._winFrames - 1, gf - this._winStart)));
+      this.dateEl.textContent = this._dateForFrame(gf);
+    }
+
+    // Frame-accurate playhead + clean loop. rVFC fires once per PRESENTED frame
+    // (only while playing or after a seek), so the scrubber/date track smoothly
+    // and the loop restarts exactly at the last frame — no `duration - 0.05`
+    // overshoot/jitter. `gen` retires the chain when a new clip loads.
+    _scheduleRvfc(gen) {
+      if (!this._rvfc) return;
+      this.video.requestVideoFrameCallback((now, metadata) => {
+        if (gen !== this._rvfcGen) return;   // superseded by a newer load
+        const dur = this.video.duration;
+        if (dur && isFinite(dur) && this._winFrames) {
+          const t = (metadata && typeof metadata.mediaTime === 'number')
+            ? metadata.mediaTime : this.video.currentTime;
+          const gf = this._globalFrameAt(t);
+          if (!this.video.paused && gf >= this._frames - 1) {
+            try { this.video.currentTime = this._timeForFrame(this._winStart); }
+            catch (e) { /* noop */ }
+          } else if (!this._scrubbing) {
+            const v = Math.max(0, Math.min(this._winFrames - 1, gf - this._winStart));
+            this.scrub.value = String(v);
+            this.dateEl.textContent = this._dateForFrame(gf);
+          }
+        }
+        this._scheduleRvfc(gen);
+      });
+    }
+
+    _showSpinner(on) {
+      if (!this.spinnerEl) return;
+      this.spinnerEl.hidden = !on;
     }
 
     _setStatus(msg) {

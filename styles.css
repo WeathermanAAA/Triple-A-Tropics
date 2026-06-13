@@ -963,6 +963,20 @@ footer {
   background: rgba(19, 21, 25, 0.78);
   pointer-events: none;
 }
+/* Seeking / buffering affordance: a small corner spinner so a scrub or a
+   cold seek never looks frozen. Hidden via the [hidden] attribute. */
+.pa-spinner {
+  position: absolute;
+  top: 10px; right: 10px;
+  width: 22px; height: 22px;
+  border: 2.5px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent, #79f0d6);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: pa-spin 0.7s linear infinite;
+}
+.pa-spinner[hidden] { display: none; }
+@keyframes pa-spin { to { transform: rotate(360deg); } }
 .pa-caption {
   margin-top: 12px;
   color: var(--muted);
