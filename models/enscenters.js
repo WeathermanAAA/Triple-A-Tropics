@@ -49,8 +49,11 @@
     coast: 'rgba(150,175,205,0.28)', coastLw: 0.6,
     grid: 'rgba(255,255,255,0.05)', gridLw: 0.5
   };
-  // figure palette
-  var C = { bg: '#0b1320', fg: '#e8ebef', muted: '#9199a4', accent: '#ffb83a',
+  // figure palette. accent = the shared bright blue (TATRegions.ACCENT, same as
+  // the picker) so the whole ENS product reads as one blue identity; falls back
+  // to the literal if the shared layer somehow isn't loaded yet.
+  var ACCENT = (typeof window !== 'undefined' && window.TATRegions && window.TATRegions.ACCENT) || '#2b9cff';
+  var C = { bg: '#0b1320', fg: '#e8ebef', muted: '#9199a4', accent: ACCENT,
             border: '#2a2e36', panel: '#12182280' };
 
   function el(id) { return document.getElementById(id); }
@@ -63,6 +66,18 @@
     if (p < 990) return 'p970_990';
     if (p < 1000) return 'p990_1000';
     return 'gt1000';
+  }
+
+  // small rounded-rect path (used for the neutral CTL chip in the peak table)
+  function roundRectPath(g, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
   }
 
   var WK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -80,6 +95,10 @@
   // ========================================================================
   function EnsCentersViewer(root) {
     this.root = root;
+    // Self-scope the figure's DOM chrome (F-hour readout, trail-on indicator)
+    // to the shared bright blue by overriding --accent on THIS viewer's root
+    // only - the site-global amber --accent (satellite/HAFS) is untouched.
+    if (root && root.style) root.style.setProperty('--accent', ACCENT);
     this.dom = {
       mapframe: el('enscenters-mapframe'),
       canvas: el('enscenters-canvas'),
@@ -394,19 +413,31 @@
     if (!n) { g.fillStyle = C.muted; g.font = '500 10px ' + FONT; g.fillText('No centers in region', t.x + 10, bodyTop + 4); }
     for (var i = 0; i < n; i++) {
       var col = (i < perCol) ? 0 : 1, rowi = (i < perCol) ? i : i - perCol;
-      var cx = t.x + 6 + col * colW, cy = bodyTop + rowi * rowH;
+      var cx = t.x + 6 + col * colW, cy = bodyTop + rowi * rowH, midY = cy + rowH / 2;
       var row = rows[i], ctl = (row.id === 'CTL');
-      // swatch ring
+      // swatch ring (pressure-bin color; identical for every member incl. CTL)
       g.strokeStyle = PRESSURE_BIN_COLORS[binKey(row.mslp)] || '#fff';
-      g.lineWidth = 1.4; g.beginPath(); g.arc(cx + 5, cy + rowH / 2, 3.4, 0, 6.2832); g.stroke();
+      g.lineWidth = 1.4; g.beginPath(); g.arc(cx + 5, midY, 3.4, 0, 6.2832); g.stroke();
       g.font = (ctl ? '700 ' : '600 ') + fs.toFixed(1) + 'px ' + FONT;
-      g.fillStyle = ctl ? C.accent : C.fg; g.textBaseline = 'middle';
-      g.textAlign = 'left'; g.fillText(row.id, cx + 13, cy + rowH / 2);
+      g.textBaseline = 'middle'; g.textAlign = 'left';
+      // member id. The control run gets a NEUTRAL white-outlined chip + bold
+      // white text - NOT the accent and NOT any pressure-bin hue - so it reads
+      // as "the control", distinct from the 970-990 yellow and 990-1000 blue bins.
+      if (ctl) {
+        var tw = g.measureText(row.id).width;
+        var chH = Math.min(rowH - 2, fs + 4), chW = tw + 8, chX = cx + 11, chY = midY - chH / 2;
+        roundRectPath(g, chX, chY, chW, chH, Math.min(3, chH / 2));
+        g.fillStyle = 'rgba(255,255,255,0.10)'; g.fill();
+        g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.stroke();
+        g.fillStyle = '#ffffff'; g.fillText(row.id, chX + 4, midY);
+      } else {
+        g.fillStyle = C.fg; g.fillText(row.id, cx + 13, midY);
+      }
       g.textAlign = 'right';
-      g.fillStyle = ctl ? C.accent : C.fg;
-      g.fillText(row.mslp.toFixed(0), cx + colW - 26, cy + rowH / 2);
-      g.fillStyle = ctl ? C.accent : C.muted;
-      g.fillText(row.vmax.toFixed(0), cx + colW - 4, cy + rowH / 2);
+      g.fillStyle = ctl ? '#ffffff' : C.fg;
+      g.fillText(row.mslp.toFixed(0), cx + colW - 26, midY);
+      g.fillStyle = ctl ? '#ffffff' : C.muted;
+      g.fillText(row.vmax.toFixed(0), cx + colW - 4, midY);
       g.textAlign = 'left'; g.textBaseline = 'top';
     }
     g.restore();

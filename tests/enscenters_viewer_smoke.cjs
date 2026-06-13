@@ -47,6 +47,9 @@ const win = dom.window;
 const fake2d = new Proxy({}, {
   get(_t, k) {
     if (k === "canvas") return { width: 0, height: 0 };
+    // real 2d contexts always have measureText -> TextMetrics (the peak-table
+    // CTL chip measures its label); the no-op default would yield undefined.
+    if (k === "measureText") return (s) => ({ width: String(s == null ? "" : s).length * 6 });
     return typeof k === "string" ? () => {} : undefined;
   },
   set() { return true; },
