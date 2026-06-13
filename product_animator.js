@@ -217,12 +217,13 @@
         this.video.playbackRate = this.speed;
         this.scrub.disabled = false;
         this.playBtn.disabled = false;
-        // POSTER/LABEL AGREEMENT: the poster is the clip's LAST (newest) frame,
-        // so park the video + scrubber + date on that same frame at load. Play
-        // restarts from the window start (see _togglePlay).
-        try { this.video.currentTime = this._timeForFrame(this._frames - 1); }
-        catch (e) { /* pre-metadata seek can throw on iOS */ }
-        this._syncFromVideo();
+        // POSTER/LABEL AGREEMENT, crisply: the poster IS the newest frame and
+        // is a sharp JPG, so DON'T seek (a seek would repaint it as a soft
+        // decoded yuv420p frame). Just park the scrubber + date on that newest
+        // frame so the load state agrees; currentTime stays at the window
+        // start, ready for play to animate forward.
+        this.scrub.value = String(Math.max(0, this._winFrames - 1));
+        this.dateEl.textContent = this._dateForFrame(this._frames - 1);
         // Start the frame-accurate playhead/loop chain for this load.
         this._rvfcGen += 1;
         this._scheduleRvfc(this._rvfcGen);
@@ -561,7 +562,11 @@
       this._frames = N;
       this._winFrames = winFrames;
       this._winStart = N - winFrames;
-      this._clipStart = this._timeForFrame(this._winStart);
+      // START-EDGE of the window's first frame (NOT the mid-slot): at the
+      // default full window this is 0, so the load-time clamp below does not
+      // fire and the crisp poster JPG is preserved (a metadata-preload seek
+      // would replace it with a soft fast-seek frame on Safari).
+      this._clipStart = (this._winStart / N) * dur;
       // FRAME-QUANTIZED scrubber: exactly one step per frame in the window, so
       // every thumb position lands on a real frame (no 1000-step ±1-day drift).
       this.scrub.min = '0';
