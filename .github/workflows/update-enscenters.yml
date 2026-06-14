@@ -106,6 +106,18 @@ jobs:
             --cache-control "public, max-age=300" --content-type "application/json" \
             --exclude "*" --include "*/*.json" --only-show-errors
 
+          # 1a. SIBLING-PRESERVE GUARD: re-read the CURRENT live manifest directly
+          #     from R2 (authenticated S3 API - NOT the public CDN, which can briefly
+          #     403 a present object and make the build's prior-read come back empty,
+          #     yielding a fresh manifest that CLOBBERS the other models). Union back
+          #     any live model this manifest lacks; it ONLY adds, never drops this
+          #     run's own entry. The consistency gate below validates the preserved
+          #     cycles too. A failed live read -> empty -> no-op (gate then decides).
+          aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket triple-a-tropics-media \
+            --key models/enscenters/manifest.json /tmp/live_manifest.json >/dev/null 2>&1 \
+            || echo '{}' > /tmp/live_manifest.json
+          python3 scripts/enscenters_manifest_guard.py "$SRC/manifest.json" /tmp/live_manifest.json
+
           # 1b. CONSISTENCY GATE (publish-or-abort): never swap in a manifest that
           #     points at a cycle JSON not actually on R2. `aws s3 sync` already
           #     exits non-zero on a failed transfer (so set -e usually catches a
