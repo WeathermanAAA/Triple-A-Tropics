@@ -1,0 +1,134 @@
+name: Update GEFS (Ensemble Genesis Tracks)
+
+# GEFS is the third model on the Ensemble Cyclone Centers platform. UNLIKE ECMWF
+# ENS / AIFS-ENS it does NOT self-detect closed lows from MSLP fields: it parses
+# NOAA's ensemble GENESIS TRACKER (atcf_gen), which is ALREADY warm-core / TC
+# filtered. So this is a LIGHT path - one small ATCF text file per cycle, no GRIB
+# download, no field detection, no warm-core compute. It runs in minutes and needs
+# only numpy+scipy (pulled in transitively by the shared package import; the GRIB
+# stack - cfgrib/xarray/ecmwf-opendata - is NOT installed because GEFS never
+# touches a field).
+#
+# Shares the SAME R2 prefix (models/enscenters/) and the SAME manifest as the
+# field models: the merge replaces only the gefs model entry, and build_cycle /
+# run_currency re-read the manifest just before merging so the three models'
+# separate workflows don't clobber each other's entries. Read-only: commits
+# NOTHING to main; per-cycle gefs JSON + the shared manifest sync to R2.
+#
+# Timing: the NCO genesis tracker posts ~5-6 h after each synoptic cycle, so we
+# fire across a generous window 6-9 h after 00/06/12/18Z and let the never-miss
+# completeness gate (the genesis file is fetchable) decide when a cycle is
+# actually ready. Staggered odd minutes (ecens :19/:49, ecaie :29/:59 -> gefs
+# :37/:53) since GitHub drops round-minute crons.
+
+on:
+  schedule:
+    - cron: "37 6-9,12-15,18-21 * * *"   # 00Z->06-09, 06Z->12-15, 12Z->18-21
+    - cron: "37 0-3 * * *"               # 18Z (prev day) -> 00-03
+    - cron: "53 9,15,21,3 * * *"         # backup 30 min after each window tail
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-gefs
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # Minutes, not hours: one small genesis ATCF file per cycle, parsed in pure
+    # Python. Generous cap for a multi-cycle backfill of tiny files.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          # LIGHT: only numpy+scipy (transitive import of the shared detect/
+          # warmcore modules). No GRIB stack - GEFS parses text, never a field.
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+          python -c "import numpy, scipy; print('deps OK')"
+
+      - name: Build GEFS cyclone centers (never-miss backfill)
+        env:
+          ENS_CYCLE: ${{ github.event.inputs.cycle }}
+        run: |
+          # --model gefs selects the genesis-track registry spec; the CLI routes
+          # it to the light tracks ingest (no GRIB client, no --source/--jobs).
+          python generate_enscenters.py \
+            --model gefs \
+            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
+
+      - name: Sync detection JSON + manifest to R2 (and prune old cycles)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -eo pipefail
+          SRC=./models/enscenters
+          DST=s3://triple-a-tropics-media/models/enscenters
+          # Nothing produced (no complete cycle yet) -> exit cleanly, prune NOTHING,
+          # leave the prior cycle + manifest live.
+          if [ ! -f "$SRC/manifest.json" ]; then
+            echo "no manifest produced - cycle incomplete, nothing to publish."
+            exit 0
+          fi
+
+          # 1. New per-cycle JSON first. This run wrote only gefs/*.json; the sync
+          #    has no --delete so the sibling ecens/ + ecaie/ JSON on R2 are untouched.
+          aws s3 sync "$SRC/" "$DST/" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=300" --content-type "application/json" \
+            --exclude "*" --include "*/*.json" --only-show-errors
+
+          # 1b. CONSISTENCY GATE: never swap in a manifest pointing at a cycle JSON
+          #     not on R2. HEAD every referenced cycle (all models) and abort before
+          #     the manifest swap + prune if any is missing - the prior manifest /
+          #     cycles stay live and the run retries next cron.
+          python3 - "$R2_ENDPOINT" <<'VALIDATE'
+          import json, os, subprocess, sys
+          endpoint, bucket = sys.argv[1], "triple-a-tropics-media"
+          man = json.load(open("./models/enscenters/manifest.json"))
+          missing, checked = [], 0
+          for model in man.get("models", []):
+              slug = model.get("slug")
+              for cyc in model.get("cycles", []):
+                  checked += 1
+                  key = "models/enscenters/%s/%s.json" % (slug, cyc)
+                  r = subprocess.run(["aws", "s3api", "head-object", "--endpoint-url", endpoint,
+                                      "--bucket", bucket, "--key", key], capture_output=True)
+                  if r.returncode != 0:
+                      missing.append(key)
+          if missing:
+              sys.stderr.write("ABORT: manifest references cycles NOT on R2 (partial sync?): %s\n" % missing)
+              sys.exit(1)
+          print("consistency OK: all %d referenced cycle(s) present on R2" % checked)
+          VALIDATE
+
+          # 2. Manifest (validated). Short TTL; the viewer cache-busts it anyway.
+          aws s3 cp "$SRC/manifest.json" "$DST/manifest.json" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=60" --content-type "application/json" \
+            --only-show-errors
+
+          # 3. Prune gefs cycles rolled out of the retention window (prune_keys is
+          #    model-scoped, so ecens / ecaie cycles are never touched here).
+          if [ -s "$SRC/prune_keys.txt" ]; then
+            while IFS= read -r key || [ -n "$key" ]; do
+              [ -n "$key" ] || continue
+              echo "prune $key"
+              aws s3 rm "$DST/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors || true
+            done < "$SRC/prune_keys.txt"
+          fi
+          echo "Published -> https://cdn.triple-a-tropics.com/models/enscenters/manifest.json"

@@ -1,6 +1,6 @@
 # Ensemble Cyclone Centers - multi-model TC ensemble platform (DESIGN)
 
-**Status: STAGE 1 LIVE 2026-06-13 - ECMWF ENS centers on /models/, with the shared Model Regions picker (section 8). Final ring colors, navy basemap, Pacific-centered map; fully global detection (region = client-side crop). Pending Andrew's final look/region-framing sign-off on the live page (his Mac). Clusters and models 2 to 5 are later stages and are NOT in scope here.**
+**Status: STAGES 1-3 LIVE - ECMWF ENS (2026-06-13) + AIFS-ENS + GEFS on /models/, with the shared Model Regions picker (section 8) and a model selector that grows from the manifest. Final ring colors, navy basemap, Pacific-centered map; ECMWF/AIFS fully global detection (region = client-side crop), GEFS via NOAA genesis tracks (already TC-filtered). Pending Andrew's final look/region-framing sign-off on the live page (his Mac). Clusters and models 4 to 5 (GDM) are later stages and are NOT in scope here.**
 
 This is the design canon for the `/models/` "Ensemble Cyclone Centers" product.
 It follows the house convention of `SATELLITE.md` / `CYCLOLAB_DESIGN.md`:
@@ -237,9 +237,30 @@ Each stage is gated; do not start the next without sign-off.
 
 - **Stage 1 (this):** ECMWF ENS centers, end to end. GATE: Andrew's look + the
   bin colors / map centering from his reference plot.
-- **Stage 2:** AIFS-ENS centers (ECMWF open-data `model="aifs-ens"`). New
-  registry spec + ingest reuse. Same schema, same viewer (model selector grows).
-- **Stage 3:** GEFS centers (NOMADS/AWS GRIB; new ingest adapter). Same schema.
+- **Stage 2 (LIVE):** AIFS-ENS centers (`slug: "ecaie"`, ECMWF open-data
+  `model="aifs-ens"`). PURE CONFIG - a twin `EnsModelSpec` (control is enfo/cf not
+  oper/fc; 6-hourly to 360 h every cycle; no `gh`, so the warm-core thickness uses
+  `z`/g). It inherits the detector, warm-core filter, never-miss currency core,
+  cache-version helper, viewer, regions, GIF, and run selector unchanged. Own
+  workflow (`update-aifs-ens.yml`, :29/:59), same R2 prefix + shared manifest.
+- **Stage 3 (LIVE):** GEFS centers (`slug: "gefs"`). DIVERGENT METHODOLOGY, not a
+  GRIB field detect: GEFS parses NOAA's ensemble GENESIS TRACKER (`atcf_gen`,
+  NCO `ens_tracker/prod/gefs.YYYYMMDD/CC/`), which is ALREADY warm-core / TC
+  filtered. So `source_kind="genesis_tracks"` (vs `"self_detect"`) routes the CLI
+  to a LIGHT ingest (`enscenters/tracks.py`): one small ATCF text file per cycle,
+  parsed straight into the same model-agnostic JSON - NO GRIB pull, NO detector,
+  NO warm-core compute. `warm_core=False`; `vmax` is the model's OWN ATCF wind,
+  not an Atkinson-Holliday estimate (the per-cycle JSON carries its own `caption`
+  saying so, which the viewer swaps in). 31 members (control + 30 perturbed), 4x
+  /day to 384 h. Own light workflow (`update-gefs.yml`, numpy+scipy only, :37/:53,
+  fires 6-9 h after each cycle when the tracker posts), same R2 prefix + shared
+  manifest. **Shared-manifest safety:** every model publishes to the one
+  `manifest.json` from its own workflow, so both the never-miss path
+  (`run_currency`) and the forced `--cycle` path (`build_cycle`) RE-READ the
+  manifest just before merging and `merge_manifest_multi` replaces only this
+  model's entry; `fetch_prior_manifest` retries a transient 403/404 (a present-
+  manifest blip must never be read as "absent" and fresh-start the merge, which
+  would clobber the sibling models' entries).
 - **Stage 4:** GDM-FNV3 and GDM-GenCast centers (Google DeepMind models). New
   ingest adapters; same schema.
 - **View 2 (clusters):** the "Ensemble Cyclone Clusters" view (group members

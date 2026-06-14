@@ -131,7 +131,8 @@
       tooltip: el('enscenters-tooltip'),
       empty: el('enscenters-empty'),
       regionBtn: el('enscenters-region-btn'),
-      regionLabel: el('enscenters-region-label')
+      regionLabel: el('enscenters-region-label'),
+      caption: el('enscenters-caption')
     };
     this.ctx = this.dom.canvas.getContext('2d');
     this.staticLayer = document.createElement('canvas');
@@ -287,6 +288,7 @@
 
   EnsCentersViewer.prototype._onData = function (d) {
     this.data = d;
+    this._applyCaption(d);
     this.steps = d.run_steps || [];
     this.initMs = Date.parse(d.init_time);
     var byStep = {};
@@ -309,6 +311,17 @@
     this._drawFigure();
     this._status('');
     this._show(0);
+  };
+
+  // Model-aware caption: a model whose per-cycle JSON carries its own `caption`
+  // (e.g. GEFS - genesis tracks, vmax is the model's own wind, different source)
+  // overrides the default ECMWF text; everything else falls back to the
+  // data-default attribute so the field models keep the closed-low explainer.
+  EnsCentersViewer.prototype._applyCaption = function (d) {
+    var elc = this.dom.caption;
+    if (!elc) return;
+    var dflt = elc.getAttribute('data-default') || elc.textContent;
+    elc.textContent = (d && d.caption) ? d.caption : dflt;
   };
 
   // ---- region (shared TATRegions layer) ----
