@@ -219,29 +219,55 @@ def build_cycle(
     """Single-cycle convenience: build ONE cycle and fold it into the manifest +
     prune list (the historical entry point; the never-miss path uses
     ``currency.run_currency`` instead). Reads the prior manifest first so a hard
-    CDN read failure aborts before any ingest rather than overwriting live data."""
-    if prior_manifest is None:
+    CDN read failure aborts before any ingest rather than overwriting live data.
+    Dispatches the per-model ingest: GEFS's light genesis-track path vs the field
+    models' closed-low detect."""
+    fetched = prior_manifest is None
+    if fetched:
         prior_manifest = fetch_prior_manifest()
-    res = build_one_cycle(spec, cycle, out_dir, members=members, steps=steps,
-                          jobs=jobs, min_members_frac=min_members_frac,
-                          source=source, progress=progress)
+    if getattr(spec, "source_kind", "self_detect") == "genesis_tracks":
+        from .tracks import build_gefs_cycle
+        res = build_gefs_cycle(spec, cycle, out_dir, progress=progress)
+    else:
+        res = build_one_cycle(spec, cycle, out_dir, members=members, steps=steps,
+                              jobs=jobs, min_members_frac=min_members_frac,
+                              source=source, progress=progress)
+    # Re-read the manifest just before merge: every model publishes to the SAME
+    # manifest.json from its OWN workflow, and this run's ingest is a wide window
+    # for another model to have published. Merging against the FRESH copy preserves
+    # that concurrent update (merge_manifest_multi only replaces THIS model's
+    # entry) - without this, the forced path clobbered ECMWF ENS when AIFS-ENS ran.
+    # Tolerant: on a re-read failure keep the start-of-run manifest. Only re-read
+    # when we fetched it ourselves (tests inject a fixed prior).
+    if fetched:
+        try:
+            latest = fetch_prior_manifest()
+            if latest is not None:
+                prior_manifest = latest
+        except Exception as e:  # noqa: BLE001 - keep the start-of-run manifest
+            progress(f"[{spec.slug}] WARN: manifest re-read before merge failed ({e}); "
+                     f"using start-of-run manifest")
     manifest, prune_keys = merge_manifest_multi(
         prior_manifest, spec, [res["cycle"]], retain,
         new_versions={res["cycle"]: res.get("generated_at")})
     write_outputs(out_dir, manifest, prune_keys)
-    progress(f"[ecens] manifest updated; prune {len(prune_keys)} old cycle(s)")
+    progress(f"[{spec.slug}] manifest updated; prune {len(prune_keys)} old cycle(s)")
     return {**res, "prune_keys": prune_keys, "manifest": manifest}
 
 
 def fetch_prior_manifest(url: str = MANIFEST_URL, timeout: float = 15.0,
-                         attempts: int = 3) -> Optional[dict]:
+                         attempts: int = 4) -> Optional[dict]:
     """Read the live manifest from the CDN (read-only, no creds).
 
-    Returns None for an ABSENT manifest (first run). On the Cloudflare R2 custom
-    domain a missing object returns 403 (not 404), so both are treated as absent.
-    A persistent network/5xx/parse failure RAISES, so build_cycle aborts rather
-    than overwriting the live manifest with a single-cycle one (which would
-    collapse the viewer's history and permanently orphan the prior cycles)."""
+    Returns None ONLY for a manifest that is PERSISTENTLY absent (genuine first
+    run). On the Cloudflare R2 custom domain a missing object returns 403 (not
+    404). CRITICAL: a 403/404 is now RETRIED, not treated as absent on the first
+    try - a transient Cloudflare 403 on a PRESENT manifest must never be mistaken
+    for an absent one, because the merge would then fresh-start and clobber every
+    OTHER model's entry in the shared manifest (this exact bug dropped ECMWF ENS
+    when AIFS-ENS published). Only a 403/404 that persists across ALL attempts is
+    treated as absent; any other persistent failure RAISES so the caller aborts
+    rather than overwriting live data."""
     last = None
     for i in range(attempts):
         try:
@@ -250,14 +276,12 @@ def fetch_prior_manifest(url: str = MANIFEST_URL, timeout: float = 15.0,
                 headers={"Cache-Control": "no-cache"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            if e.code in (403, 404):
-                return None  # absent on R2's CDN: fresh start
-            last = e
-        except Exception as e:  # noqa: BLE001 - network / parse
+        except Exception as e:  # noqa: BLE001 - HTTP (incl 403/404) / network / parse; retry
             last = e
         if i < attempts - 1:
             time.sleep(2.0 * (i + 1))
+    if isinstance(last, urllib.error.HTTPError) and last.code in (403, 404):
+        return None  # PERSISTENTLY absent on R2's CDN: genuine fresh start
     raise RuntimeError(f"could not read prior manifest from {url}: {last}")
 
 

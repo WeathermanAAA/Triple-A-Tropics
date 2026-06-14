@@ -96,9 +96,11 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(spec.steps_for_cycle_hour(0)[-1], 360)
         self.assertEqual(spec.steps_for_cycle_hour(6)[-1], 144)
 
+    def test_model_slugs_in_registry_order(self):
+        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs"])
+
     def test_aifs_ens_spec(self):
         # AIFS-ENS ("ecaie"): ECMWF ENS's AI twin - config only.
-        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie"])
         s = reg.get_spec("ecaie")
         self.assertEqual(s.od_model, "aifs-ens")
         self.assertEqual((s.ens_stream, s.pf_type), ("enfo", "pf"))
@@ -114,6 +116,18 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(s.gh_param_id, 129)
         self.assertAlmostEqual(s.gh_to_gpm, 1.0 / 9.80665, places=6)
         self.assertTrue(s.warm_core)
+
+    def test_gefs_spec(self):
+        # GEFS: genesis-track path - NOT field self-detect, NOT warm-core filtered
+        # by us (NOAA's tracker already TC-filters), 31 members, own caption.
+        s = reg.get_spec("gefs")
+        self.assertEqual(s.source_kind, "genesis_tracks")
+        self.assertFalse(s.warm_core)
+        self.assertEqual(len(s.member_ids()), 31)       # control + 30 perturbed
+        self.assertEqual(s.member_ids()[0], "CTL")
+        self.assertEqual(s.member_ids()[-1], "P30")
+        self.assertIsNotNone(s.caption)                  # model-aware viewer caption
+        self.assertIn("Atkinson", s.caption)             # says vmax is NOT an AH estimate
 
     def test_pressure_bins(self):
         bins = reg.pressure_bins_json()
@@ -181,6 +195,80 @@ class TestManifestMerge(unittest.TestCase):
             self.assertEqual(m["models"][0]["slug"], "ecens")
             self.assertEqual(m["models"][0]["cycles"], ["2026061300"])
             self.assertEqual(prune, [])
+
+
+class TestGefsTracks(unittest.TestCase):
+    """GEFS genesis-track ATCF parsing (enscenters.tracks). No network."""
+
+    # A crafted atcf_gen snippet: control (AC00) + two perturbed (AP01, AP05),
+    # one ensemble-mean row (AEMN -> must be skipped), a tenths lat/lon, an
+    # EAST-of-dateline lon (1750E), a bad pressure (mslp 0 -> skip), and a
+    # duplicate id-row (same member/step/pos -> de-duped).
+    SAMPLE = "\n".join([
+        # basin, cycid, init,        ??, tech, tau, lat,   lon,    vmax, mslp
+        "AL, 90, 2026061400, 03, AC00, 000, 150N, 0600W, 0035, 1004",
+        "AL, 90, 2026061400, 03, AC00, 006, 158N, 0612W, 0042, 0998",
+        "AL, 90, 2026061400, 03, AC00, 006, 158N, 0612W, 0042, 0998",  # dup -> dropped
+        "WP, 91, 2026061400, 03, AP01, 000, 120N, 1750E, 0028, 1006",  # east lon
+        "WP, 91, 2026061400, 03, AP01, 012, 130N, 1755E, 0050, 0990",
+        "AL, 92, 2026061400, 03, AP05, 000, 200N, 0700W, 0000, 0000",  # mslp 0 -> skip
+        "AL, 92, 2026061400, 03, AP05, 006, 205N, 0705W, 0060, 0975",
+        "AL, 99, 2026061400, 03, AEMN, 000, 180N, 0650W, 0040, 1000",  # mean -> skip
+    ])
+
+    def test_member_id_mapping(self):
+        from enscenters.tracks import _member_id
+        self.assertEqual(_member_id("AC00"), "CTL")
+        self.assertEqual(_member_id("AP01"), "P01")
+        self.assertEqual(_member_id("AP30"), "P30")
+        self.assertIsNone(_member_id("AEMN"))   # ensemble mean - skipped
+        self.assertIsNone(_member_id("AVNO"))   # other model - skipped
+
+    def test_parse_latlon(self):
+        from enscenters.tracks import _parse_latlon
+        self.assertAlmostEqual(_parse_latlon("150N"), 15.0)
+        self.assertAlmostEqual(_parse_latlon("0600W"), -60.0)
+        self.assertAlmostEqual(_parse_latlon("1750E"), 175.0)
+        self.assertAlmostEqual(_parse_latlon("0250S"), -25.0)
+
+    def test_parse_atcf_genesis(self):
+        from enscenters.tracks import parse_atcf_genesis
+        m = parse_atcf_genesis(self.SAMPLE)
+        self.assertEqual(set(m), {"CTL", "P01", "P05"})       # AEMN skipped
+        # control: 2 unique centers (dup dropped); schema row [step,lat,lon,mslp,vmax]
+        self.assertEqual(len(m["CTL"]), 2)
+        self.assertEqual(m["CTL"][0], [0, 15.0, -60.0, 1004.0, 35.0])
+        self.assertEqual(m["CTL"][1][0], 6)
+        # P01 east-of-dateline lon preserved positive
+        self.assertAlmostEqual(m["P01"][0][2], 175.0)
+        # P05: the mslp=0 row is dropped, only the good one remains
+        self.assertEqual(len(m["P05"]), 1)
+        self.assertEqual(m["P05"][0][3], 975.0)
+        # vmax is the model's own ATCF wind, carried straight through
+        self.assertEqual(m["P05"][0][4], 60.0)
+
+    def test_build_gefs_cycle_writes_schema(self):
+        import datetime as dt
+        import json
+        import tempfile
+        from unittest import mock
+        from enscenters import tracks
+        spec = reg.get_spec("gefs")
+        cyc = dt.datetime(2026, 6, 14, 0)
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(tracks, "find_genesis_url", return_value="http://x/f"), \
+                 mock.patch.object(tracks, "fetch_genesis_text", return_value=self.SAMPLE):
+                res = tracks.build_gefs_cycle(spec, cyc, d)
+            data = json.load(open(os.path.join(d, "gefs", "2026061400.json")))
+        self.assertEqual(data["model"], "gefs")
+        self.assertEqual(data["source"], "genesis_tracks")
+        self.assertEqual(data["center_fields"],
+                         ["step_h", "lat", "lon", "mslp_hpa", "vmax_kt"])
+        self.assertEqual(data["n_members"], 3)
+        self.assertIsNotNone(data["caption"])
+        ids = [mm["id"] for mm in data["members"]]
+        self.assertEqual(ids, ["CTL", "P01", "P05"])          # canonical order
+        self.assertEqual(res["cycle"], "2026061400")
 
 
 if __name__ == "__main__":

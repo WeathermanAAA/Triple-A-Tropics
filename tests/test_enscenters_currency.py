@@ -181,6 +181,53 @@ class TestMergeManifestMulti(unittest.TestCase):
         self.assertEqual(published_cycles({"models": "bad"}, "ecens"), set())
 
 
+class TestFetchPriorManifestRetry(unittest.TestCase):
+    """Regression for the shared-manifest CLOBBER bug: a TRANSIENT 403 on a
+    PRESENT manifest must NOT be read as 'absent' (which would fresh-start the
+    merge and drop every sibling model). Retry; only a PERSISTENT 403/404 is
+    absent; any other persistent error raises (abort, don't overwrite)."""
+    import urllib.error as _ue
+
+    def _http(self, code):
+        return self._ue.HTTPError("u", code, "x", None, None)
+
+    def _patch(self, side_effect):
+        import contextlib
+        import io
+        from unittest import mock
+        from enscenters import pipeline
+
+        @contextlib.contextmanager
+        def fake_urlopen(req, timeout=None):
+            r = side_effect.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            yield io.BytesIO(json.dumps(r).encode())
+        return mock.patch.object(pipeline.urllib.request, "urlopen", fake_urlopen), \
+            mock.patch.object(pipeline.time, "sleep", lambda *_a: None)
+
+    def test_transient_403_then_success_returns_manifest(self):
+        from enscenters.pipeline import fetch_prior_manifest
+        good = {"models": [{"slug": "ecens", "cycles": ["x"]}]}
+        up, sl = self._patch([self._http(403), good])
+        with up, sl:
+            out = fetch_prior_manifest()
+        self.assertEqual(out, good)            # recovered: NOT mistaken for absent
+
+    def test_persistent_403_is_absent(self):
+        from enscenters.pipeline import fetch_prior_manifest
+        up, sl = self._patch([self._http(403)] * 4)
+        with up, sl:
+            self.assertIsNone(fetch_prior_manifest())   # genuine first run
+
+    def test_persistent_500_raises(self):
+        from enscenters.pipeline import fetch_prior_manifest
+        up, sl = self._patch([self._http(500)] * 4)
+        with up, sl:
+            with self.assertRaises(RuntimeError):       # abort, don't overwrite live
+                fetch_prior_manifest()
+
+
 class _Recorder:
     """Stub ingest_cycle hook: records calls, optionally raises for given cycles."""
     def __init__(self, fail=()):

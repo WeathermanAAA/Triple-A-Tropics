@@ -76,8 +76,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     spec = get_spec(args.model)
     members = _parse_members(spec, args.members)
     steps = _parse_steps(args.steps)
+    tag = spec.slug
+    is_tracks = getattr(spec, "source_kind", "self_detect") == "genesis_tracks"
 
     # --- forced single cycle (manual backfill / dispatch): bypass the gate ---
+    # build_cycle dispatches the per-model ingest internally (genesis tracks vs
+    # field detect), so this path is model-agnostic.
     if args.cycle:
         cycle = _parse_cycle(args.cycle).replace(minute=0, second=0, microsecond=0)
         try:
@@ -88,26 +92,41 @@ def main(argv: Optional[List[str]] = None) -> int:
                 source=args.source,
             )
         except RuntimeError as e:
-            print(f"[ecens] FATAL: {e}", file=sys.stderr)
+            print(f"[{tag}] FATAL: {e}", file=sys.stderr)
             return 1
-        print(f"[ecens] OK forced cycle={summary['cycle']} members={summary['members']} "
+        print(f"[{tag}] OK forced cycle={summary['cycle']} members={summary['members']} "
               f"centers={summary['n_centers']} json={summary['bytes_json']/1e6:.2f}MB")
         return 0
 
     # --- never-miss path: backfill every complete-but-unpublished cycle ---
-    client = make_client(args.source, spec.od_model)
     now = _utcnow()
 
-    def list_complete(lookback: int):
-        candidates = synoptic_cycles_back(now, lookback)
-        return _ingest.list_complete_cycles(
-            spec, candidates, lambda cycle, req: files_present(client, cycle, req))
+    if is_tracks:
+        # GEFS: NOAA's genesis tracker - one small ATCF file per cycle, no GRIB
+        # client, no field detection. The completeness gate is "the genesis file
+        # for the cycle is fetchable"; ingest = parse + map to the shared schema.
+        from . import tracks as _tracks
 
-    def ingest_one(cycle: dt.datetime) -> dict:
-        return build_one_cycle(
-            spec, cycle, args.out_dir,
-            members=members, steps=steps, jobs=args.jobs,
-            min_members_frac=args.min_members_frac, source=args.source)
+        def list_complete(lookback: int):
+            candidates = synoptic_cycles_back(now, lookback)
+            return _tracks.list_complete_cycles(spec, candidates)
+
+        def ingest_one(cycle: dt.datetime) -> dict:
+            return _tracks.build_gefs_cycle(spec, cycle, args.out_dir)
+    else:
+        # ECMWF ENS / AIFS-ENS: closed-low detection on the perturbed MSLP fields.
+        client = make_client(args.source, spec.od_model)
+
+        def list_complete(lookback: int):
+            candidates = synoptic_cycles_back(now, lookback)
+            return _ingest.list_complete_cycles(
+                spec, candidates, lambda cycle, req: files_present(client, cycle, req))
+
+        def ingest_one(cycle: dt.datetime) -> dict:
+            return build_one_cycle(
+                spec, cycle, args.out_dir,
+                members=members, steps=steps, jobs=args.jobs,
+                min_members_frac=args.min_members_frac, source=args.source)
 
     try:
         summary = run_currency(
@@ -116,13 +135,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             retain=args.retain, lookback=args.lookback, max_per_run=args.max_per_run,
         )
     except RuntimeError as e:
-        print(f"[ecens] FATAL: {e}", file=sys.stderr)
+        print(f"[{tag}] FATAL: {e}", file=sys.stderr)
         return 1
 
     if summary.get("skipped"):
-        print("[ecens] no missing complete cycle - nothing to publish.")
+        print(f"[{tag}] no missing complete cycle - nothing to publish.")
         return 0
-    print(f"[ecens] OK published={summary['published']} "
+    print(f"[{tag}] OK published={summary['published']} "
           f"failed={summary['failed']} pruned={len(summary.get('prune_keys', []))}")
     return 0
 

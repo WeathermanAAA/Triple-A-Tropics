@@ -454,7 +454,8 @@
       <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0"
              step="1" value="0" aria-label="Forecast step">
 
-      <p class="ens-caption">
+      <p id="enscenters-caption" class="ens-caption"
+         data-default="Right-click the figure to copy or save it as a PNG. Centers are mean-sea-level-pressure minima that sit inside a closed circulation, the filter that separates real lows from open troughs. Filled circles are the current step; hollow rings are the accumulated trail. Peak winds in the table are the Atkinson-Holliday estimate from central pressure. Data: ECMWF open data (CC BY 4.0).">
         Right-click the figure to copy or save it as a PNG. Centers are
         mean-sea-level-pressure minima that sit inside a closed circulation, the
         filter that separates real lows from open troughs. Filled circles are the
@@ -515,6 +516,6 @@
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/hafs.js?v=690bcc5aa3"></script>
 <script src="/models/regions.js?v=f264596260"></script>
-<script src="/models/enscenters.js?v=1cd31c72e1"></script>
+<script src="/models/enscenters.js?v=a4acda9ced"></script>
 </body>
 </html>

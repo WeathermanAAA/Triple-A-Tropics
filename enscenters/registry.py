@@ -126,6 +126,15 @@ class EnsModelSpec:
     slug: str                       # R2 subdir + manifest model slug, e.g. "ecens"
     label: str                      # human label, e.g. "ECMWF ENS"
     source: str                     # ingest backend, e.g. "ecmwf-opendata"
+    # How centers are produced: "self_detect" = our MSLP closed-low detector +
+    # warm-core filter (ECMWF ENS, AIFS-ENS); "genesis_tracks" = parse NOAA's
+    # already-TC-filtered ensemble genesis tracker ATCF (GEFS) - a light path
+    # with no field pull / detect / warmcore (see enscenters.tracks).
+    source_kind: str = "self_detect"
+    # Optional model-specific viewer caption suffix (None -> the default
+    # Atkinson-Holliday / ECMWF text). GEFS sets this because its vmax is the
+    # model's own wind, not an AH estimate, and the data source differs.
+    caption: Optional[str] = None
     # --- ecmwf-opendata ingest config ---
     od_model: str = "ifs"           # ecmwf-opendata model
     od_resol: str = "0p25"
@@ -225,8 +234,26 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         gh_param_id=129,
         gh_to_gpm=1.0 / 9.80665,
     ),
-    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "gefs", "gdm_fnv3",
-    # "gdm_gencast", and a derived "super" entry.
+    # GEFS: NOAA's ensemble. UNLIKE ECMWF/AIFS it does NOT self-detect from
+    # fields - it parses NOAA's already-warm-core/TC-filtered genesis tracker
+    # (atcf_gen), a different methodology (fine standalone and for the
+    # super-ensemble). Light track ingest (see enscenters.tracks); no field
+    # pull, no warmcore. 31 members (control + 30 perturbed), 4x/day to 384 h.
+    EnsModelSpec(
+        slug="gefs",
+        label="GEFS",
+        source="noaa-gefs-genesis",
+        source_kind="genesis_tracks",
+        n_perturbed=30,                 # + control = 31 members
+        warm_core=False,                # the tracker already TC-filters
+        attribution="NOAA GEFS ensemble genesis tracker (atcf_gen)",
+        caption=("Genesis tracks from NOAA's GEFS ensemble tracker - already "
+                 "warm-core / TC filtered. Peak winds are the model's own maximum "
+                 "10 m wind from the ATCF (not an Atkinson-Holliday estimate). "
+                 "Data: NOAA GEFS genesis tracker."),
+    ),
+    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "gdm_fnv3", "gdm_gencast",
+    # and a derived "super" entry.
 )
 
 REGISTRY = {s.slug: s for s in _SPECS}
