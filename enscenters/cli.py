@@ -95,7 +95,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     # --- never-miss path: backfill every complete-but-unpublished cycle ---
-    client = make_client(args.source)
+    client = make_client(args.source, spec.od_model)
     now = _utcnow()
 
     def list_complete(lookback: int):

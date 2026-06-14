@@ -26,6 +26,12 @@ from typing import List, Optional, Tuple
 STEPS_LONG: List[int] = list(range(0, 145, 3)) + list(range(150, 361, 6))
 STEPS_SHORT: List[int] = list(range(0, 145, 3))
 
+# AIFS-ENS (ECMWF's AI ensemble, open-data model "aifs-ens") is plain 6-hourly to
+# 360 h for EVERY cycle hour (00/06/12/18Z), control included - no long/short
+# split, no 3-hourly head. Verified live 2026-06-13: 50 perturbed + cf control,
+# msl + gh(300/500) at 0..360 by 6, same 721x1440 0.25 deg grid as IFS ENS.
+STEPS_AIFS: List[int] = list(range(0, 361, 6))   # 61 steps
+
 
 # --- pressure bins (Andrew's five) ---------------------------------------
 # The thresholds are canonical and model-agnostic; they drive both the detect
@@ -150,9 +156,15 @@ class EnsModelSpec:
     # this False.
     warm_core: bool = True
     warm_core_params: WarmCoreParams = field(default_factory=WarmCoreParams)
-    gh_param: str = "gh"                       # geopotential HEIGHT (gpm), not z
+    # Upper-level thickness layer for the warm-core test. IFS ENS publishes gh
+    # (geopotential HEIGHT, gpm) so gh_to_gpm=1.0; AIFS-ENS publishes NO gh, only
+    # z (geopotential, m^2/s^2), so it uses param=z, paramId 129, and gh_to_gpm
+    # =1/g to convert the layer difference to thickness in gpm. THK is then in the
+    # same units (gpm) for both, so warmcore.py is unchanged.
+    gh_param: str = "gh"                       # thickness param: "gh" (IFS) or "z" (AIFS)
     gh_levels: Tuple[int, int] = (300, 500)    # thickness layer top, bottom (hPa)
-    gh_param_id: int = 156                      # cfgrib paramId for gh
+    gh_param_id: int = 156                      # cfgrib paramId: 156 (gh) / 129 (z)
+    gh_to_gpm: float = 1.0                       # factor: 1.0 (gh) / 1/9.80665 (z->gpm)
     # --- provenance ---
     attribution: str = "ECMWF open data (CC-BY-4.0)"
 
@@ -188,9 +200,33 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         label="ECMWF ENS",
         source="ecmwf-opendata",
     ),
-    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "aifsens", "gefs",
-    # "gdm_fnv3", "gdm_gencast", and a derived "super" entry. Each is a new
-    # EnsModelSpec here plus its own ingest adapter in ingest.py.
+    # AIFS-ENS ("ECAIE"): ECMWF ENS's AI twin. Pure config - it inherits the
+    # detector, warm-core filter, currency core, cache-version helper, viewer,
+    # regions, GIF, and run selector unchanged. open-data differences from IFS
+    # ENS: model="aifs-ens"; control is enfo/cf (NOT oper/fc); 6-hourly to 360 h
+    # for ALL cycle hours (control included), so steps_long == steps_short and
+    # both terminals are 360.
+    EnsModelSpec(
+        slug="ecaie",
+        label="AIFS-ENS",
+        source="ecmwf-opendata",
+        od_model="aifs-ens",
+        ens_stream="enfo",
+        pf_type="pf",
+        n_perturbed=50,
+        control_stream="enfo",
+        control_type="cf",
+        steps_long=list(STEPS_AIFS),
+        steps_short=list(STEPS_AIFS),
+        control_step_long=STEPS_AIFS[-1],   # control runs to 360 h too
+        control_step_short=STEPS_AIFS[-1],
+        # AIFS-ENS has NO gh; use z (geopotential) at 300/500 and /g for thickness.
+        gh_param="z",
+        gh_param_id=129,
+        gh_to_gpm=1.0 / 9.80665,
+    ),
+    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "gefs", "gdm_fnv3",
+    # "gdm_gencast", and a derived "super" entry.
 )
 
 REGISTRY = {s.slug: s for s in _SPECS}

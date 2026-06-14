@@ -57,7 +57,7 @@ def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
     resident. When the model self-detects MSLP (spec.warm_core), the iterator also
     yields the 300-500 thickness field and we keep ONLY warm-core tropical centers.
     Returns (member_id, peak|None, centers_rows)."""
-    client = make_client(source)
+    client = make_client(source, spec.od_model)
     kwargs = spec.detect.as_kwargs()
     wc_kwargs = spec.warm_core_params.as_kwargs() if spec.warm_core else None
     centers: List[list] = []
