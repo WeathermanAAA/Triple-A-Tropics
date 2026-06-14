@@ -198,8 +198,10 @@ class TestManifestMerge(unittest.TestCase):
 
 
 class TestManifestGuard(unittest.TestCase):
-    """The workflow sibling-preserve guard (scripts/enscenters_manifest_guard.py):
-    a fresh/clobbered new manifest must NEVER drop a model that's live on R2."""
+    """The workflow reconcile guard (scripts/enscenters_manifest_guard.py) at the
+    main()/file-IO level: a fresh/clobbered/stale new manifest must NEVER drop a
+    model that's live on R2 and NEVER regress a model's latest. (The pure
+    reconcile() logic is covered exhaustively in test_enscenters_manifest_guard.)"""
 
     def _guard(self):
         import importlib.util
@@ -236,8 +238,10 @@ class TestManifestGuard(unittest.TestCase):
         by = {m["slug"]: m for m in out["models"]}
         self.assertEqual(by["ecaie"]["cycle_versions"], {"2026061318": "av"})  # verbatim
 
-    def test_own_entry_is_authoritative(self):
-        # live has a stale gefs; new has the fresh gefs -> new's gefs wins (not unioned)
+    def test_own_entry_unions_never_drops_live_cycle(self):
+        # new ADVANCES gefs but its build lists only the new cycle; the live gefs
+        # cycle (within retention) is UNIONED back, never dropped -> monotone
+        # history, and the latest moves forward, never backward.
         new = {"default_model": "gefs", "models": [
             {"slug": "gefs", "cycles": ["2026061218"], "latest": "2026061218"}]}
         live = {"models": [
@@ -245,9 +249,21 @@ class TestManifestGuard(unittest.TestCase):
             {"slug": "ecens", "cycles": ["2026061312"], "latest": "2026061312"}]}
         out = self._run(new, live)
         by = {m["slug"]: m for m in out["models"]}
-        self.assertEqual(by["gefs"]["cycles"], ["2026061218"])   # this run's gefs, not live's
+        self.assertEqual(by["gefs"]["cycles"], ["2026061218", "2026061200"])  # unioned, newest first
+        self.assertEqual(by["gefs"]["latest"], "2026061218")     # advanced
         self.assertIn("ecens", by)                                # other sibling preserved
         self.assertEqual(out["default_model"], "ecens")           # normalized to canonical default
+
+    def test_own_latest_never_regresses(self):
+        # the prod bug: new's gefs build REGRESSED (older cycles than live). The
+        # guard must keep gefs at its live latest, not move it backward.
+        new = {"default_model": "gefs", "models": [
+            {"slug": "gefs", "cycles": ["2026061118", "2026061112"], "latest": "2026061118"}]}
+        live = {"models": [
+            {"slug": "gefs", "cycles": ["2026061218", "2026061212"], "latest": "2026061218"}]}
+        out = self._run(new, live)
+        by = {m["slug"]: m for m in out["models"]}
+        self.assertEqual(by["gefs"]["latest"], "2026061218")     # NOT regressed
 
     def test_empty_live_is_noop(self):
         new = {"default_model": "gefs", "models": [
@@ -343,6 +359,9 @@ class TestGefsTracks(unittest.TestCase):
         ids = [mm["id"] for mm in data["members"]]
         self.assertEqual(ids, ["CTL", "P03"])                  # canonical (file) order
         self.assertEqual(res["cycle"], "2026061312")
+        # run_steps is TRIMMED to the data's real horizon (deepest center step=18),
+        # not the full 384 h parse grid -> no dead trailing scrubber frames.
+        self.assertEqual(data["run_steps"], [0, 6, 12, 18])
 
     def test_build_gefs_cycle_quiet_publishes_empty(self):
         # All 31 files present but no candidates -> publish an empty-but-valid
@@ -361,6 +380,7 @@ class TestGefsTracks(unittest.TestCase):
             data = json.load(open(os.path.join(d, "gefs", "2026061312.json")))
         self.assertEqual(data["n_members"], 0)
         self.assertEqual(data["n_centers"], 0)
+        self.assertEqual(data["run_steps"], [0])               # quiet cycle keeps one frame
 
     def test_build_gefs_cycle_quorum_raises_on_partial(self):
         # Only a couple member files fetch (dir mid-dissemination) -> raise so the

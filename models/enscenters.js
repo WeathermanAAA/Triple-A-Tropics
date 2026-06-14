@@ -637,7 +637,10 @@
       b.addEventListener('click', function () { onPick(def.slug); });
       container.appendChild(b);
     })(defs[i]);
-    container.parentNode.style.display = defs.length > 1 ? '' : 'none';
+    // Always show the model selector when there is at least one model (even a
+    // single one), so the active model is always labelled; only hide it if the
+    // manifest somehow carried zero models.
+    container.parentNode.style.display = defs.length ? '' : 'none';
   };
 
   EnsCentersViewer.prototype._highlight = function (container, slug) {
