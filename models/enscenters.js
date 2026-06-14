@@ -273,7 +273,13 @@
     this.loadedCycle = cycle;
     if (this.dom.run) this.dom.run.value = cycle;   // keep the Run selector in sync
     this._status('Loading ' + slug.toUpperCase() + ' ' + cycle + '…');
-    fetch(DATA_BASE + slug + '/' + cycle + '.json?v=' + cycle, { cache: 'force-cache' })
+    // Cache-bust on the cycle's CONTENT version (not the stable cycle string), so
+    // a backfill/overwrite of this cycle's JSON busts the browser + CDN cache; an
+    // unchanged cycle keeps its token and stays cached. force-cache is safe now
+    // that the URL is version-keyed. See TATRegions.cycleVersion.
+    var ver = (window.TATRegions && TATRegions.cycleVersion)
+      ? TATRegions.cycleVersion(this.manifest, slug, cycle) : cycle;
+    fetch(DATA_BASE + slug + '/' + cycle + '.json?v=' + ver, { cache: 'force-cache' })
       .then(function (r) { if (!r.ok) throw new Error('cycle HTTP ' + r.status); return r.json(); })
       .then(function (d) { self._onData(d); })
       .catch(function (e) { console.warn('enscenters: cycle load failed', e); self._status('Could not load cycle.'); });

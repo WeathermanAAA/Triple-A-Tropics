@@ -191,6 +191,30 @@
     ]).then(function (g) { return { countries: g[0], coast: g[1] }; });
   }
 
+  // ---- shared cache-busting token for a model's per-cycle data fetch ----
+  // A backfill/overwrite rewrites a cycle's JSON at its STABLE R2 key, so a
+  // stable fetch URL (?v=<cycle>) lets the browser + Cloudflare serve the old
+  // copy indefinitely. Key the URL on the cycle's content version instead: the
+  // per-cycle generated_at from the manifest (manifest.models[].cycle_versions)
+  // when present, so an overwrite changes the URL (busts both caches) while an
+  // UNCHANGED cycle keeps its token (stays cached). Fall back to the manifest's
+  // top-level generated_at (busts on every publish - the transition state before
+  // cycle_versions ships), then to the cycle string. Returned URL-safe. Every
+  // ensemble model viewer (ECMWF ENS now, AIFS/GEFS later) shares this.
+  function cycleVersion(manifest, slug, cycle) {
+    var ver = String(cycle);
+    if (manifest) {
+      var models = manifest.models || [], entry = null;
+      for (var i = 0; i < models.length; i++) {
+        if (models[i] && models[i].slug === slug) { entry = models[i]; break; }
+      }
+      var perCycle = entry && entry.cycle_versions && entry.cycle_versions[cycle];
+      if (perCycle) ver = cycle + '-' + perCycle;
+      else if (manifest.generated_at) ver = cycle + '-' + manifest.generated_at;
+    }
+    return ver.replace(/[^A-Za-z0-9]/g, '');
+  }
+
   // ---- one-time picker CSS (self-contained shared component) ----
   // Triple-A-Tropics' OWN styling: a bright-blue accent (--tatreg-acc, scoped to
   // the picker so the site's amber --accent never leaks in), accent-bar group
@@ -372,6 +396,6 @@
     GROUPS: GROUPS, list: list, get: get, inRegion: inRegion, extentOf: extentOf,
     project: project, drawBasemap: drawBasemap, RegionPicker: RegionPicker,
     loadGeo: loadGeo, COAST_RES: COAST_RES, LAND_RES: LAND_RES, THUMB_RES: THUMB_RES,
-    ACCENT: ACCENT
+    ACCENT: ACCENT, cycleVersion: cycleVersion
   };
 })();
