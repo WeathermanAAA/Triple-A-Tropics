@@ -78,70 +78,10 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: |
-          set -eo pipefail
-          SRC=./models/enscenters
-          DST=s3://triple-a-tropics-media/models/enscenters
-          # Nothing produced (no complete cycle yet) -> exit cleanly, prune NOTHING,
-          # leave the prior cycle + manifest live.
-          if [ ! -f "$SRC/manifest.json" ]; then
-            echo "no manifest produced - cycle incomplete, nothing to publish."
-            exit 0
-          fi
-
-          # 1. New per-cycle JSON first. This run wrote only ecaie/*.json; the sync
-          #    has no --delete so the sibling ecens/*.json on R2 are untouched.
-          aws s3 sync "$SRC/" "$DST/" --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "public, max-age=300" --content-type "application/json" \
-            --exclude "*" --include "*/*.json" --only-show-errors
-
-          # 1a. SIBLING-PRESERVE GUARD: re-read the CURRENT live manifest directly
-          #     from R2 (authenticated S3 API - NOT the public CDN, which can briefly
-          #     403 a present object and make the build's prior-read come back empty,
-          #     yielding a fresh manifest that CLOBBERS the other models). Union back
-          #     any live model this manifest lacks; it ONLY adds, never drops this
-          #     run's own entry. The consistency gate below validates the preserved
-          #     cycles too. A failed live read -> empty -> no-op (gate then decides).
-          aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket triple-a-tropics-media \
-            --key models/enscenters/manifest.json /tmp/live_manifest.json >/dev/null 2>&1 \
-            || echo '{}' > /tmp/live_manifest.json
-          python3 scripts/enscenters_manifest_guard.py "$SRC/manifest.json" /tmp/live_manifest.json
-
-          # 1b. CONSISTENCY GATE: never swap in a manifest pointing at a cycle JSON
-          #     not on R2. HEAD every referenced cycle (ecens + ecaie) and abort
-          #     before the manifest swap + prune if any is missing - the prior
-          #     manifest/cycles stay live and the run retries next cron.
-          python3 - "$R2_ENDPOINT" <<'VALIDATE'
-          import json, os, subprocess, sys
-          endpoint, bucket = sys.argv[1], "triple-a-tropics-media"
-          man = json.load(open("./models/enscenters/manifest.json"))
-          missing, checked = [], 0
-          for model in man.get("models", []):
-              slug = model.get("slug")
-              for cyc in model.get("cycles", []):
-                  checked += 1
-                  key = "models/enscenters/%s/%s.json" % (slug, cyc)
-                  r = subprocess.run(["aws", "s3api", "head-object", "--endpoint-url", endpoint,
-                                      "--bucket", bucket, "--key", key], capture_output=True)
-                  if r.returncode != 0:
-                      missing.append(key)
-          if missing:
-              sys.stderr.write("ABORT: manifest references cycles NOT on R2 (partial sync?): %s\n" % missing)
-              sys.exit(1)
-          print("consistency OK: all %d referenced cycle(s) present on R2" % checked)
-          VALIDATE
-
-          # 2. Manifest (validated). Short TTL; the viewer cache-busts it anyway.
-          aws s3 cp "$SRC/manifest.json" "$DST/manifest.json" --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "public, max-age=60" --content-type "application/json" \
-            --only-show-errors
-
-          # 3. Prune ecaie cycles rolled out of the retention window (prune_keys is
-          #    model-scoped, so ecens cycles are never touched here).
-          if [ -s "$SRC/prune_keys.txt" ]; then
-            while IFS= read -r key || [ -n "$key" ]; do
-              [ -n "$key" ] || continue
-              echo "prune $key"
-              aws s3 rm "$DST/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors || true
-            done < "$SRC/prune_keys.txt"
-          fi
-          echo "Published -> https://cdn.triple-a-tropics.com/models/enscenters/manifest.json"
+          # Atomic, concurrency-safe shared-manifest publish: read live (authoritative
+          # R2) -> reconcile this run's build with it per model -> consistency gate ->
+          # CAS re-read -> write -> filtered prune. NEVER drops a sibling model, NEVER
+          # regresses a model's latest, survives concurrent sibling writes. The whole
+          # dance lives in ONE script that all three per-model workflows call (see its
+          # header). The active slug for this workflow is `ecaie` (AIFS-ENS).
+          scripts/enscenters_publish_manifest.sh ecaie

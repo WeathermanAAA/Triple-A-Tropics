@@ -52,8 +52,15 @@ GATE_MEMBER = "ap30"
 # file; this guards against a half-written directory, not against low activity.
 MIN_MEMBER_FILES_FRAC = 0.6
 
-# 6-hourly to 384 h - the GEFS genesis-tracker horizon. A genesis candidate can
-# first appear at any 6-hourly step, so we keep every step on the grid.
+# PARSE grid: 6-hourly to 384 h. This is the PERMISSIVE upper bound on which
+# steps we accept from the tracker, NOT the published horizon. NOAA's ensemble
+# GENESIS tracker (atcf_gen) only tracks candidates to ~120 h (verified live
+# 2026-06-14: max tau == 120 across all 31 members), far short of GEFS's 384 h
+# forecast length. We keep the grid permissive so that if NOAA ever lengthens the
+# tracker we capture it automatically; the per-cycle ``run_steps`` written to the
+# JSON is then TRIMMED to the data's actual horizon (see build_gefs_cycle) so the
+# viewer's scrubber/animation spans the real genesis window with no dead trailing
+# frames.
 GEFS_STEPS: List[int] = list(range(0, 385, 6))
 _STEP_SET = set(GEFS_STEPS)
 
@@ -210,6 +217,16 @@ def build_gefs_cycle(spec: EnsModelSpec, cycle: dt.datetime, out_dir: str,
             f"GEFS {stamp}: only {fetched}/{len(GEFS_MEMBER_FILES)} member files "
             f"fetched (< quorum {need}); dir mid-dissemination, retry next run")
 
+    # run_steps spans the genesis tracker's ACTUAL horizon for this cycle: the
+    # deepest step any member reaches (the tracker tops out near 120 h, not GEFS's
+    # 384 h forecast length). Trimming to it keeps the viewer scrubber/animation on
+    # real data instead of ~44 always-empty trailing frames, and auto-extends if
+    # NOAA lengthens the tracker (the parse grid still accepts to 384 h). A fully
+    # quiet cycle (no candidates anywhere) keeps a single F000 frame so GEFS still
+    # appears in the selector.
+    max_step = max((c[0] for m in members_objs for c in m["centers"]), default=0)
+    run_steps = [s for s in GEFS_STEPS if s <= max_step] or [0]
+
     data = {
         "schema_version": SCHEMA_VERSION,
         "model": spec.slug,
@@ -220,7 +237,7 @@ def build_gefs_cycle(spec: EnsModelSpec, cycle: dt.datetime, out_dir: str,
         "generated_at": _utcnow_iso(),
         "attribution": spec.attribution,
         "grid": "n/a (genesis tracks)",
-        "run_steps": list(GEFS_STEPS),
+        "run_steps": run_steps,
         "n_members": len(members_objs),
         "n_centers": total,
         "source": "genesis_tracks",                    # vs the field models' "detect"
