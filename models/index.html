@@ -104,8 +104,14 @@
     background: var(--accent-2); color: #06222e; border-color: var(--accent-2);
   }
 
-  /* Image stage. object-fit:contain keeps the storm-following nest steady as
-     its extent shifts frame to frame. */
+  /* Image stage. The frame FILLS the gutter's image column (width:100%) so the
+     control panel sits flush beside the map at every viewport. The old
+     max-height:78vh cap shrank the (square ~1:1) HAFS frame on short laptop
+     viewports, leaving the column - which is pinned wide by the full-width
+     hours/caption rows below - wider than the frame, so the frame floated
+     centered and the panel drifted right with up to ~100px of dead space. The
+     column width is already bounded (~797px) by the 1180px site content cap, so
+     a width-filled square frame is at most ~745px tall - no height cap needed. */
   .hafs-stage {
     position: relative;
     background: #0a0d12;            /* matches the rendered PNG bg */
@@ -113,8 +119,8 @@
     display: flex; align-items: center; justify-content: center;
   }
   #hafs-img {
-    display: block; max-width: 100%; max-height: 78vh;
-    width: auto; height: auto;
+    display: block; width: 100%; height: auto;
+    max-width: 100%; max-height: none;
   }
   .hafs-statusbox {
     position: absolute; inset: 0;

@@ -405,10 +405,19 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
 
     rows = []
     for it in data:
-        if (it.get("origin_basin") or "").upper() != letter:
+        atcf_id = (it.get("atcf_id") or "").strip().upper()
+        # Basin match off the ATCF id's trailing letter (the authoritative ATCF
+        # basin designator: "93E" -> E.Pac, "92W" -> W.Pac, "96P" -> S.Pac).
+        # knackwx's separate origin_basin field is sometimes null (observed on
+        # EP invests like 93E, which froze them off the tracks map), so deriving
+        # the basin from the id itself is what keeps EP/AL invests from being
+        # silently dropped; origin_basin is only a fallback when the id has no
+        # usable trailing letter.
+        id_letter = atcf_id[-1] if atcf_id[-1:].isalpha() else ""
+        basin_letter = id_letter or (it.get("origin_basin") or "").strip().upper()
+        if basin_letter != letter:
             continue
-        atcf_id = (it.get("atcf_id") or "").strip()
-        # "91W" → 91 (last char is the basin letter we already matched).
+        # "93E" -> 93 (drop the trailing basin letter).
         try:
             storm_num = int(atcf_id[:-1])
         except (ValueError, IndexError):
