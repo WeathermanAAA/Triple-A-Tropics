@@ -15,7 +15,13 @@ plot ("MSLP minima from EPS GRIB2, closed-circulation filter"):
   3. ANTIMERIDIAN-SAFE: longitude indices wrap modulo nlon, and the reported
      longitude is normalized to [-180, 180), so WPAC systems near +/-180 are not
      mislocated.
-  4. P->V via Atkinson-Holliday: ``vmax_kt = 6.7 * (1010 - Pc_hPa) ** 0.644``
+  4. SUB-GRID POSITION: the reported lat/lon are refined off the grid node by
+     parabolic (quadratic-vertex) interpolation of MSLP along each axis, so
+     centers do not snap to the model grid and tile into a visible lattice. This
+     refines the PLOTTED position ONLY - Pmin stays the grid-cell minimum, vmax is
+     from that Pmin, and the warm-core lookup rounds back to the nearest node, so
+     intensities, counts and pass/fail are unchanged.
+  5. P->V via Atkinson-Holliday: ``vmax_kt = 6.7 * (1010 - Pc_hPa) ** 0.644``
      (environmental pressure 1010 hPa).
 
 Pure numpy + scipy. No I/O, no GRIB. ``detect_centers`` takes a 2-D hPa field
@@ -63,6 +69,23 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dl = math.radians(((lon2 - lon1 + 180) % 360) - 180)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _parabolic_offset(ym1: float, y0: float, yp1: float) -> float:
+    """Sub-grid offset (in grid-index units, clamped to [-0.5, +0.5]) of a
+    quadratic vertex fitted through three EQUALLY-SPACED samples with ``y0`` the
+    centre (the local minimum). Returns 0.0 unless the samples are convex
+    (``denom > 0`` = a real minimum), so a flat trough or a saddle falls back to
+    the grid node. De-grids the reported centre position WITHOUT touching Pmin."""
+    denom = ym1 - 2.0 * y0 + yp1
+    if denom <= 0:
+        return 0.0
+    off = 0.5 * (ym1 - yp1) / denom
+    if off > 0.5:
+        return 0.5
+    if off < -0.5:
+        return -0.5
+    return off
 
 
 def detect_centers(
@@ -129,7 +152,11 @@ def detect_centers(
     if n_comp == 0:
         return []
     pos = minimum_position(field, lbl, index=np.arange(1, n_comp + 1))
-    if n_comp == 1:
+    # minimum_position returns a list of tuples for an array index (incl. a
+    # single-element one) and a bare tuple only for a scalar index. Wrap ONLY a
+    # bare tuple, so a single connected min-component (e.g. a degenerate/flat
+    # field) doesn't double-wrap and crash on p[1]. (Was: `if n_comp == 1`.)
+    if not isinstance(pos, list):
         pos = [pos]
     ii = np.array([p[0] for p in pos])
     jj = np.array([p[1] for p in pos])
@@ -181,7 +208,17 @@ def detect_centers(
                 closed = False
                 break
         if closed:
-            keep.append((pc, lat0, _normalize_lon(lon_j)))
+            # Sub-grid PARABOLIC refinement of the PLOTTED position only (Pmin,
+            # vmax, and the warm-core lookup stay grid-based - see module doc).
+            # One axis at a time about the minimum cell; convert with the SIGNED
+            # grid step so a descending latitude axis is handled.
+            off_i = (_parabolic_offset(float(field[i - 1, j]), pc, float(field[i + 1, j]))
+                     if 0 < i < nlat - 1 else 0.0)            # no lat wrap at poles
+            off_j = _parabolic_offset(float(field[i, (j - 1) % nlon]), pc,
+                                      float(field[i, (j + 1) % nlon]))   # lon wraps
+            rlat = lat0 + off_i * (float(lats[1]) - float(lats[0]))
+            rlon = lon_j + off_j * (float(lons[1]) - float(lons[0]))
+            keep.append((pc, rlat, _normalize_lon(rlon)))
 
     # --- 3. non-max suppression (plateau / adjacent minima) -------------
     keep.sort(key=lambda t: t[0])  # ascending pressure (deepest first)

@@ -430,7 +430,7 @@ class TestMemberWatchdog(unittest.TestCase):
     def test_stalled_member_is_abandoned_not_hung(self):
         import time, tempfile, datetime as dt
         from enscenters import pipeline as pl
-        spec = reg.get_spec("ecens")
+        spec = reg.get_spec("gefs")   # no prepare() hook -> watchdog test stays offline
         # 8 members, one (P99) hangs; quorum 0.75 -> need 6, so 7 good publishes.
         members = ["P0%d" % i for i in range(1, 8)] + ["P99"]
         orig = pl.process_member
@@ -507,6 +507,259 @@ class TestGefsIngest(unittest.TestCase):
         ranges = gi.idx_byte_ranges(gi.parse_idx(idx))
         self.assertNotIn(("PRMSL", "mean sea level"), ranges)
         self.assertLess(len(ranges), 3)             # _download_subset would skip the step
+
+
+class TestDetectRefinement(unittest.TestCase):
+    """FIX 2: sub-grid parabolic refinement de-grids the reported position without
+    changing Pmin / counts. (`detect`, `_parabolic_offset`.)"""
+
+    @staticmethod
+    def _low(lats, lons, tlat, tlon, depth=22.0, sig=1.6, base=1013.0):
+        from enscenters.detect import _normalize_lon
+        LA, LO = np.meshgrid(lats, lons, indexing="ij")
+        dlon = ((LO - tlon + 180) % 360) - 180
+        return base - depth * np.exp(-((LA - tlat) ** 2 + dlon ** 2) / (2 * sig ** 2))
+
+    def test_parabolic_offset_math(self):
+        from enscenters.detect import _parabolic_offset
+        self.assertEqual(_parabolic_offset(5, 5, 5), 0.0)          # flat -> node
+        self.assertEqual(_parabolic_offset(1, 5, 1), 0.0)          # concave (max) -> 0
+        # minimum skewed toward the ym1 side -> negative offset
+        self.assertLess(_parabolic_offset(10.0, 1.0, 12.0), 0.0)
+        self.assertGreater(_parabolic_offset(12.0, 1.0, 10.0), 0.0)
+        # symmetric convex -> vertex at the node
+        self.assertAlmostEqual(_parabolic_offset(11.0, 10.0, 11.0), 0.0)
+        # clamp
+        self.assertLessEqual(abs(_parabolic_offset(2.0, 1.0, 1.0000001)), 0.5)
+
+    def test_off_grid_low_is_refined_off_node(self):
+        from enscenters.detect import detect_centers
+        lats = 25.0 - np.arange(81) * 0.5     # descending, 25..-15
+        lons = 120.0 + np.arange(120) * 0.5
+        tlat, tlon = 10.3, 150.7              # deliberately between nodes
+        field = self._low(lats, lons, tlat, tlon)
+        cs = detect_centers(field, lats, lons)
+        self.assertTrue(cs)
+        c = min(cs, key=lambda d: abs(d["lat"] - tlat) + abs(d["lon"] - tlon))
+        self.assertLess(abs(c["lat"] - tlat), 0.1)        # within <=0.1 deg of true min
+        self.assertLess(abs(c["lon"] - tlon), 0.1)
+        # NOT snapped to a node (nearest node is 10.5 / 150.5)
+        self.assertGreater(abs(c["lat"] - 10.5), 0.05)
+        self.assertGreater(abs(c["lon"] - 150.5), 0.05)
+
+    def test_grid_aligned_low_stays_on_node(self):
+        from enscenters.detect import detect_centers
+        lats = 25.0 - np.arange(81) * 0.5
+        lons = 120.0 + np.arange(120) * 0.5
+        field = self._low(lats, lons, 10.0, 150.0)        # exactly on nodes
+        cs = detect_centers(field, lats, lons)
+        c = min(cs, key=lambda d: abs(d["lat"] - 10.0) + abs(d["lon"] - 150.0))
+        self.assertLess(abs(c["lat"] - 10.0), 0.05)
+        self.assertLess(abs(c["lon"] - 150.0), 0.05)
+
+    def test_refinement_preserves_pmin_and_count(self):
+        from enscenters.detect import detect_centers
+        lats = 25.0 - np.arange(81) * 0.5
+        lons = 120.0 + np.arange(120) * 0.5
+        # two well-separated off-grid lows -> exactly two centers, each Pmin = the
+        # grid-cell minimum (refinement is position-only).
+        f = np.minimum(self._low(lats, lons, 8.3, 140.7),
+                       self._low(lats, lons, -5.7, 165.2))
+        cs = detect_centers(f, lats, lons)
+        self.assertEqual(len(cs), 2)
+        gridmin = round(float(np.min(f)), 1)
+        self.assertEqual(min(c["mslp_hpa"] for c in cs), gridmin)   # Pmin = grid min
+        for c in cs:
+            self.assertFalse(np.isnan(c["lat"]) or np.isnan(c["lon"]))
+
+    def test_flat_field_no_centers_no_nan(self):
+        from enscenters.detect import detect_centers
+        lats = 25.0 - np.arange(40) * 0.5
+        lons = 120.0 + np.arange(60) * 0.5
+        self.assertEqual(detect_centers(np.full((40, 60), 1010.0), lats, lons), [])
+
+
+class TestEcmwfGcsIndex(unittest.TestCase):
+    """FIX 1: the JSON-Lines .index filter for the Google byte-range backend."""
+
+    SAMPLE = "\n".join([
+        '{"type":"pf","stream":"enfo","step":"0","levtype":"sfc","number":"1","param":"msl","_offset":"100","_length":"50"}',
+        '{"type":"pf","stream":"enfo","step":"0","levtype":"pl","levelist":"300","number":"1","param":"gh","_offset":"200","_length":"60"}',
+        '{"type":"pf","stream":"enfo","step":"0","levtype":"pl","levelist":"500","number":"1","param":"gh","_offset":"300","_length":"60"}',
+        '{"type":"pf","stream":"enfo","step":"0","levtype":"pl","levelist":"850","number":"1","param":"gh","_offset":"400","_length":"60"}',
+        '{"type":"pf","stream":"enfo","step":"0","levtype":"sfc","number":"2","param":"msl","_offset":"500","_length":"50"}',
+        '{"type":"pf","stream":"enfo","step":"0","levtype":"pl","levelist":"300","number":"2","param":"t","_offset":"560","_length":"60"}',
+        '{"type":"fc","stream":"oper","step":"0","levtype":"sfc","param":"msl","_offset":"900","_length":"50"}',
+        '{"type":"fc","stream":"oper","step":"0","levtype":"pl","levelist":"300","param":"gh","_offset":"960","_length":"60"}',
+        '{"type":"fc","stream":"oper","step":"0","levtype":"pl","levelist":"500","param":"gh","_offset":"1020","_length":"60"}',
+    ])
+
+    def test_filter_index_ifs(self):
+        from enscenters import ecmwf_byterange_ingest as gi
+        spec = reg.get_spec("ecens")    # gh_param=gh, levels (300,500), pf/fc
+        out = gi.filter_index(self.SAMPLE, spec)
+        self.assertEqual(set(out["1"]), {"msl", "gh300", "gh500"})
+        self.assertEqual(out["1"]["msl"], (100, 50))
+        self.assertEqual(out["1"]["gh300"], (200, 60))
+        self.assertEqual(out["1"]["gh500"], (300, 60))
+        self.assertEqual(set(out["2"]), {"msl"})        # no gh for member 2 in sample
+        self.assertEqual(set(out["ctl"]), {"msl", "gh300", "gh500"})   # control (type fc, no number)
+
+    def test_filter_index_aifs_uses_z(self):
+        from enscenters import ecmwf_byterange_ingest as gi
+        spec = reg.get_spec("ecaie")    # gh_param=z, control_type=cf
+        sample = self.SAMPLE.replace('"param":"gh"', '"param":"z"').replace('"type":"fc"', '"type":"cf"')
+        out = gi.filter_index(sample, spec)
+        self.assertEqual(set(out["1"]), {"msl", "gh300", "gh500"})   # z mapped to gh<level> keys
+        self.assertIn("ctl", out)
+
+    def test_path_is_mirror_independent(self):
+        from enscenters import ecmwf_byterange_ingest as gi
+        # the same object PATH is recovered from either mirror's URL, and each
+        # mirror's base + path reconstructs that mirror's URL.
+        p = gi._path_of("https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com/20260614/12z/ifs/0p25/enfo/x-ef.grib2")
+        self.assertEqual(p, "20260614/12z/ifs/0p25/enfo/x-ef.grib2")
+        names = [m[0] for m in gi.MIRRORS]
+        self.assertEqual(names, ["gcs", "aws"])     # GCS preferred
+        bases = dict(gi.MIRRORS)
+        self.assertEqual(bases["gcs"] + "/" + p,
+                         "https://storage.googleapis.com/ecmwf-open-data/20260614/12z/ifs/0p25/enfo/x-ef.grib2")
+
+
+class _FakeResp:
+    def __init__(self, status, content=b""):
+        self.status_code = status
+        self.content = content
+
+
+class _FakeSession:
+    """Routes GET/HEAD by which mirror host the URL targets, via a handler
+    ``(mirror_name, is_head) -> _FakeResp`` and records the mirrors hit."""
+
+    def __init__(self, handler):
+        self.handler = handler
+        self.get_mirrors: list = []
+        self.head_mirrors: list = []
+
+    @staticmethod
+    def _mirror(url):
+        return "gcs" if "storage.googleapis.com" in url else "aws"
+
+    def get(self, url, headers=None, timeout=None):
+        m = self._mirror(url)
+        self.get_mirrors.append(m)
+        r = self.handler(m, False)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    def head(self, url, timeout=None):
+        m = self._mirror(url)
+        self.head_mirrors.append(m)
+        r = self.handler(m, True)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+class TestEcmwfMirrorFallback(unittest.TestCase):
+    """FIX (multi-homing): mirror fallback + sticky circuit-breaker + mirror-aware
+    completeness gate for the ECMWF/AIFS byte-range backend."""
+
+    def setUp(self):
+        from enscenters import ecmwf_byterange_ingest as gi
+        self.gi = gi
+        gi.reset_breaker()
+        self._bk = gi._BACKOFF_S
+        gi._BACKOFF_S = 0.0           # no sleeps in tests
+        self.addCleanup(setattr, gi, "_BACKOFF_S", self._bk)
+        self.addCleanup(gi.reset_breaker)
+
+    def _client(self, handler):
+        c = self.gi._Client(None, _FakeSession(handler))
+        return c
+
+    def test_fallback_to_aws_when_gcs_fails_identical_bytes(self):
+        DATA = b"GRIB....7777"
+        # GCS hard-fails (503); AWS serves the bytes.
+        c = self._client(lambda m, head: _FakeResp(503) if m == "gcs" else _FakeResp(206, DATA))
+        data, mirror = self.gi.fetch(c, "p/x.grib2", headers={"Range": "bytes=0-11"})
+        self.assertEqual(data, DATA)
+        self.assertEqual(mirror, "aws")
+        # identical to the GCS-served bytes when GCS is up
+        c2 = self._client(lambda m, head: _FakeResp(206, DATA))
+        d2, m2 = self.gi.fetch(c2, "p/x.grib2", headers={"Range": "bytes=0-11"})
+        self.assertEqual(d2, data)
+        self.assertEqual(m2, "gcs")           # prefers GCS when healthy
+
+    def test_sticky_demotion_after_k_failures(self):
+        gi = self.gi
+        c = self._client(lambda m, head: _FakeResp(503) if m == "gcs" else _FakeResp(206, b"ok"))
+        for _ in range(gi._DEMOTE_AFTER):
+            gi.fetch(c, "p/x.grib2")
+        self.assertIn("gcs", gi._DEMOTED)                 # demoted after K
+        c.session.get_mirrors.clear()
+        gi.fetch(c, "p/y.grib2")
+        self.assertNotIn("gcs", c.session.get_mirrors)    # subsequent requests skip GCS
+        self.assertIn("aws", c.session.get_mirrors)
+
+    def test_404_falls_through_without_demoting(self):
+        gi = self.gi
+        # GCS 404 (cycle not yet published there) -> AWS serves; NOT a breaker hit.
+        c = self._client(lambda m, head: _FakeResp(404) if m == "gcs" else _FakeResp(206, b"D"))
+        data, mirror = gi.fetch(c, "p/x.grib2")
+        self.assertEqual((data, mirror), (b"D", "aws"))
+        self.assertEqual(gi._FAILS.get("gcs", 0), 0)      # 404 is "absent", not "fail"
+
+    def test_both_mirrors_down_clean_error(self):
+        c = self._client(lambda m, head: _FakeResp(503))
+        data, mirror = self.gi.fetch(c, "p/x.grib2")
+        self.assertIsNone(data)
+        self.assertIsNone(mirror)                          # clean error, no hang
+
+    def test_both_mirrors_network_exception_clean_error(self):
+        c = self._client(lambda m, head: ConnectionError("dead host"))
+        data, mirror = self.gi.fetch(c, "p/x.grib2")
+        self.assertEqual((data, mirror), (None, None))
+
+    def test_gate_complete_on_aws_only(self):
+        gi = self.gi
+        spec = reg.get_spec("ecens")
+        c = gi.make_client("aws", spec.od_model)
+        c.session = _FakeSession(lambda m, head: _FakeResp(200) if m == "aws" else _FakeResp(404))
+        import datetime as dt
+        self.assertTrue(gi.cycle_complete(spec, dt.datetime(2026, 6, 14, 12), c))  # AWS-only -> ingestable
+
+    def test_gate_prefers_gcs(self):
+        gi = self.gi
+        spec = reg.get_spec("ecens")
+        c = gi.make_client("aws", spec.od_model)
+        c.session = _FakeSession(lambda m, head: _FakeResp(200))   # both up
+        import datetime as dt
+        path = gi._index_path(gi.resolve_path(c, dt.datetime(2026, 6, 14, 12),
+                                              spec.ens_stream, spec.pf_type, spec.pf_terminal_step(12)))
+        self.assertEqual(gi.head_any(c, path), "gcs")              # prefers GCS
+
+    def test_gate_incomplete_on_both(self):
+        gi = self.gi
+        spec = reg.get_spec("ecens")
+        c = gi.make_client("aws", spec.od_model)
+        c.session = _FakeSession(lambda m, head: _FakeResp(404))
+        import datetime as dt
+        self.assertFalse(gi.cycle_complete(spec, dt.datetime(2026, 6, 14, 12), c))
+
+    def test_resolve_path_is_bucket_relative_regardless_of_source(self):
+        # Path resolution must yield a BUCKET-RELATIVE key ("{date}/...") that both
+        # mirror bases expect - even when the CLI --source is the portal ("ecmwf",
+        # which would otherwise prepend "/forecasts") or "google" ("ecmwf-open-data/").
+        import datetime as dt
+        gi = self.gi
+        for src in ("ecmwf", "google", "aws"):
+            c = gi.make_client(src, "ifs")
+            p = gi.resolve_path(c, dt.datetime(2026, 6, 14, 12), "enfo", "pf", 0)
+            self.assertTrue(p.startswith("20260614/"), f"{src}: {p}")
+            self.assertFalse(p.startswith(("forecasts/", "ecmwf-open-data/")), f"{src}: {p}")
+            self.assertTrue(p.endswith(".grib2"))
 
 
 if __name__ == "__main__":
