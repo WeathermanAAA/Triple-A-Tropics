@@ -50,11 +50,12 @@ class TestPlanBackfill(unittest.TestCase):
     def test_nothing_missing_is_empty(self):
         self.assertEqual(plan_backfill(self.ALL, self.ALL, retain=8, max_per_run=3), [])
 
-    def test_cap_bounds_and_is_oldest_first(self):
+    def test_cap_bounds_and_is_newest_first(self):
         published = [self.ALL[-1]]           # only the newest is published; 7 missing
         plan = plan_backfill(published, self.ALL, retain=8, max_per_run=3)
         self.assertEqual(len(plan), 3)
-        self.assertEqual(plan, self.ALL[:3])   # the 3 OLDEST missing, in order
+        # the 3 NEWEST missing, newest first, so `latest` advances every run
+        self.assertEqual(plan, [self.ALL[6], self.ALL[5], self.ALL[4]])
 
     def test_window_bounded_does_not_ingest_beyond_retain(self):
         # complete has 8 but retain=4: only cycles inside the newest-4 window are
@@ -292,7 +293,7 @@ class TestRunCurrency(unittest.TestCase):
         rec = _Recorder()
         summary, manifest, _ = self._run(published, self.ALL, rec, max_per_run=2)
         self.assertEqual(len(rec.calls), 2)
-        self.assertEqual(rec.calls, self.ALL[:2])          # oldest 2
+        self.assertEqual(rec.calls, [self.ALL[2], self.ALL[1]])   # newest 2, newest first
 
     def test_all_fail_raises(self):
         published = self.ALL[:-1]

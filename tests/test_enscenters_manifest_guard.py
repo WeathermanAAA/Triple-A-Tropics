@@ -120,11 +120,14 @@ class TestReconcileAbort(unittest.TestCase):
         self.assertIsNone(out)
         self.assertIn("failed", reason.lower())
 
-    def test_empty_new_aborts(self):
-        live = manifest(entry("ecens", ["2026061312"]))
-        out, ok, reason = guard.reconcile({"models": []}, live, "ok")
+    def test_suspected_listing_failure_aborts(self):
+        # R2 listing came back EMPTY but live has models -> a bad listing, not a
+        # genuinely-empty bucket -> refuse to publish (would clobber).
+        live = manifest(entry("ecens", ["2026061312"]), entry("gefs", ["2026061312"]))
+        out, ok, reason = guard.reconcile({"models": []}, live, "ok", r2_present={})
         self.assertFalse(ok)
         self.assertIsNone(out)
+        self.assertIn("listing", reason.lower())
 
     def test_absent_live_first_run_publishes_new(self):
         new = manifest(entry("ecens", ["2026061312"]))
@@ -132,19 +135,76 @@ class TestReconcileAbort(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(slugs_of(out), ["ecens"])
 
-    def test_refuse_to_write_gate_trips_on_drop(self):
-        # Defensive backstop: if a bug ever made the merge omit a live model, the
-        # refuse-to-write gate must catch it and abort. retain=0 forces every model
-        # to be trimmed away, so a live model with cycles ends up dropped -> abort.
-        live = manifest(
-            entry("ecens", ["2026061312"]),
-            entry("gefs", ["2026061312"]),
-        )
-        new = manifest(entry("ecens", ["2026061312"]))
-        out, ok, reason = guard.reconcile(new, live, "ok", retain=0)
+    def test_nothing_anywhere_aborts(self):
+        out, ok, reason = guard.reconcile({"models": []}, {}, "ok", r2_present={})
         self.assertFalse(ok)
         self.assertIsNone(out)
-        self.assertIn("DROP", reason)
+
+
+class TestReconcileFromR2(unittest.TestCase):
+    """The real path: the manifest is DERIVED from the R2 object listing
+    (``r2_present``), not the (possibly stale) live manifest entry."""
+
+    def test_nonrunning_model_advances_to_newest_on_r2(self):
+        # THE prod bug: the live manifest is frozen at ecens@Jun-12 while newer
+        # ecens cycles already exist on R2. A gefs run (which does not touch ecens)
+        # must re-point ecens at the newest cycle present on R2.
+        live = manifest(entry("ecens", ["2026061206"]), entry("gefs", ["2026061306"]))
+        new = manifest(entry("gefs", ["2026061318"]))   # this run built gefs
+        r2 = {"ecens": ["2026061206", "2026061212"],     # ecens has a NEWER object on R2
+              "gefs": ["2026061318", "2026061306"]}
+        out, ok, reason = guard.reconcile(new, live, "ok", r2_present=r2)
+        self.assertTrue(ok, reason)
+        self.assertEqual(latest_of(out, "ecens"), "2026061212")   # advanced from R2, not stale Jun-12-06
+        self.assertEqual(latest_of(out, "gefs"), "2026061318")
+
+    def test_latest_is_newest_object_on_r2(self):
+        live = manifest(entry("ecens", ["2026061312"]))
+        new = manifest(entry("ecens", ["2026061312"]))
+        r2 = {"ecens": ["2026061300", "2026061306", "2026061312", "2026061318"]}
+        out, ok, _ = guard.reconcile(new, live, "ok", r2_present=r2)
+        self.assertTrue(ok)
+        self.assertEqual(latest_of(out, "ecens"), "2026061318")   # newest object wins
+
+    def test_model_only_on_r2_is_resurrected(self):
+        # gefs has objects on R2 but is absent from the live manifest (dropped) and
+        # isn't this run's model -> it must reappear, labelled from the registry.
+        live = manifest(entry("ecens", ["2026061312"]))
+        new = manifest(entry("ecens", ["2026061312"]))
+        r2 = {"ecens": ["2026061312"], "gefs": ["2026061312"]}
+        out, ok, _ = guard.reconcile(new, live, "ok", r2_present=r2)
+        self.assertTrue(ok)
+        self.assertIn("gefs", slugs_of(out))
+        gefs = [m for m in out["models"] if m["slug"] == "gefs"][0]
+        self.assertEqual(gefs["label"], "GEFS")
+
+    def test_new_cycle_folded_in_before_listing_catches_up(self):
+        # The just-built cycle may not be in the listing yet (eventual consistency);
+        # union it in so this run's own publish reflects it immediately.
+        live = manifest(entry("gefs", ["2026061312"]))
+        new = manifest(entry("gefs", ["2026061318", "2026061312"]))
+        r2 = {"gefs": ["2026061312"]}                    # listing lags the sync
+        out, ok, _ = guard.reconcile(new, live, "ok", r2_present=r2)
+        self.assertTrue(ok)
+        self.assertEqual(latest_of(out, "gefs"), "2026061318")
+
+    def test_retain_trims_r2_listing(self):
+        live = manifest(entry("ecens", ["2026061318"]))
+        new = manifest(entry("ecens", ["2026061400"]))
+        r2 = {"ecens": ["2026061318", "2026061312", "2026061306", "2026061300"]}
+        out, ok, _ = guard.reconcile(new, live, "ok", retain=2, r2_present=r2)
+        self.assertTrue(ok)
+        self.assertEqual([m for m in out["models"] if m["slug"] == "ecens"][0]["cycles"],
+                         ["2026061400", "2026061318"])   # newest 2 of (R2 + new)
+
+    def test_versions_preserved_from_live_and_new(self):
+        live = manifest(entry("ecens", ["2026061312"], versions={"2026061312": "lv"}))
+        new = manifest(entry("ecens", ["2026061318"], versions={"2026061318": "nv"}))
+        r2 = {"ecens": ["2026061312", "2026061318"]}
+        out, ok, _ = guard.reconcile(new, live, "ok", r2_present=r2)
+        self.assertTrue(ok)
+        cv = [m for m in out["models"] if m["slug"] == "ecens"][0]["cycle_versions"]
+        self.assertEqual(cv, {"2026061312": "lv", "2026061318": "nv"})
 
 
 class TestThreeModelRace(unittest.TestCase):
@@ -215,6 +275,22 @@ class TestThreeModelRace(unittest.TestCase):
         self.assertEqual(latest_of(v3, "ecens"), "2026061318")   # healed
         self.assertEqual(latest_of(v3, "gefs"), "2026061318")    # preserved
         self.assertEqual(set(slugs_of(v3)), {"ecens", "ecaie", "gefs"})
+
+    def test_r2_truth_makes_race_trivially_correct(self):
+        # The real path: every run derives from the SHARED R2 listing. Once all three
+        # models' objects are on R2, ANY model's run produces the full, current
+        # manifest regardless of order or whose build it is -- no lost update.
+        r2 = {"ecens": ["2026061318", "2026061312"],
+              "ecaie": ["2026061318", "2026061312"],
+              "gefs": ["2026061318", "2026061312"]}
+        live = manifest(entry("ecens", ["2026061306"]))   # arbitrarily stale
+        for slug in ("ecens", "ecaie", "gefs"):
+            out, ok, reason = guard.reconcile(manifest(entry(slug, ["2026061318"])),
+                                              live, "ok", r2_present=r2)
+            self.assertTrue(ok, reason)
+            self.assertEqual(set(slugs_of(out)), {"ecens", "ecaie", "gefs"}, slug)
+            for m in ("ecens", "ecaie", "gefs"):
+                self.assertEqual(latest_of(out, m), "2026061318", f"{slug}->{m}")
 
 
 if __name__ == "__main__":

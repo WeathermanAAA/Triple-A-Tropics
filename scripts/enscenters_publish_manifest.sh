@@ -53,42 +53,67 @@ aws s3 sync "$SRC/" "$DST/" --endpoint-url "$R2_ENDPOINT" \
   --cache-control "public, max-age=300" --content-type "application/json" \
   --exclude "*" --include "*/*.json" --only-show-errors
 
-# read_live <outfile> -> prints ok|absent|failed (never fails the shell)
+# read_live <outfile> -> best-effort fetch of the live manifest for cache-bust
+# tokens + default_model. NOT the source of truth (R2 listing is). On absence or
+# any error we just write {} and carry on; the listing still drives the manifest.
 read_live() {
-  local out="$1" err
-  if err=$(aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$BUCKET" \
-            --key "$KEY" "$out" 2>&1); then
-    echo ok; return 0
+  local out="$1"
+  if aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$BUCKET" \
+        --key "$KEY" "$out" >/dev/null 2>&1; then
+    return 0
   fi
-  # Only the precise S3 "key/bucket genuinely absent" codes count as a first run;
-  # ANY other error (timeout, 5xx, throttle, a transient gateway 404) routes to
-  # `failed` so we SKIP rather than fresh-start a clobbering thin manifest.
-  if printf '%s' "$err" | grep -qE 'NoSuchKey|NoSuchBucket'; then
-    echo '{}' > "$out"; echo absent; return 0
+  echo '{}' > "$out"
+}
+
+# list_r2 <outfile> -> writes {slug:[cycles]} from the AUTHORITATIVE R2 object
+# listing (the source of truth for the manifest). Prints ok|failed; on failure we
+# SKIP the publish (never derive a thinned manifest from a bad listing).
+list_r2() {
+  local out="$1" raw
+  if ! raw=$(aws s3 ls "s3://$BUCKET/$PREFIX/" --recursive --endpoint-url "$R2_ENDPOINT" 2>&1); then
+    printf '[%s] R2 listing error: %s\n' "$SLUG" "$raw" >&2
+    echo failed; return 0
   fi
-  printf '[%s] live manifest read error: %s\n' "$SLUG" "$err" >&2
-  echo failed; return 0
+  if ! printf '%s\n' "$raw" | python3 -c '
+import json, re, sys
+present = {}
+for line in sys.stdin:
+    parts = line.split()
+    if not parts:
+        continue
+    m = re.search(r"models/enscenters/([^/]+)/(\d{10})\.json$", parts[-1])
+    if m:
+        present.setdefault(m.group(1), []).append(m.group(2))
+json.dump(present, open(sys.argv[1], "w"), separators=(",", ":"))
+' "$out"; then
+    echo failed; return 0
+  fi
+  echo ok; return 0
 }
 
 BUILT=/tmp/ens_built.json          # this run's freshly built manifest (immutable here)
 LIVE_A=/tmp/ens_live_a.json
 LIVE_B=/tmp/ens_live_b.json
+R2_PRESENT=/tmp/ens_r2_present.json
 FINAL=/tmp/ens_final.json
 cp "$SRC/manifest.json" "$BUILT"
 
 published=""
 for attempt in 1 2 3 4 5; do
-  st="$(read_live "$LIVE_A")"
-  if [ "$st" = failed ]; then
-    echo "[$SLUG] WARN: could not read live manifest from R2; SKIP publish this run (cron self-heals)."
+  # 2a. AUTHORITATIVE R2 listing = the truth source for every model's cycle set.
+  if [ "$(list_r2 "$R2_PRESENT")" = failed ]; then
+    echo "[$SLUG] WARN: could not list R2 objects; SKIP publish this run (cron self-heals)."
     exit 0
   fi
+  read_live "$LIVE_A"   # best-effort (cache-bust tokens + default_model)
 
-  # 2. reconcile this run's build against live (monotone, refuse drop/regress)
+  # 2b. reconcile: DERIVE each model's cycle set + latest from R2 reality (+ this
+  #     run's freshly-built cycles). Aborts only on a suspected listing failure or
+  #     a would-drop-a-model bug -> skip (prior stays live, self-heals next run).
   cp "$BUILT" "$FINAL"
-  if ! python3 "$GUARD" "$FINAL" "$LIVE_A" "$st"; then
-    echo "[$SLUG] ERROR: guard refused the write (drop/regress/bad-read); abort (prior stays live)." >&2
-    exit 1
+  if ! python3 "$GUARD" "$FINAL" "$LIVE_A" "$R2_PRESENT"; then
+    echo "[$SLUG] WARN: guard refused the write (suspected bad listing / empty); SKIP (prior stays live)."
+    exit 0
   fi
 
   # 3. consistency gate: the manifest must never point at a cycle JSON that is not
@@ -158,14 +183,11 @@ GATE
     exit 1
   fi
 
-  # 4. CAS: re-read live; if it changed under us, re-reconcile against the fresh copy
-  st2="$(read_live "$LIVE_B")"
-  if [ "$st2" = failed ]; then
-    echo "[$SLUG] WARN: live re-read failed; SKIP publish this run (cron self-heals)."
-    exit 0
-  fi
+  # 4. CAS: re-read live; if a sibling PUBLISHED under us (live changed), re-loop so
+  #    we re-list R2 and re-derive against the sibling's newest cycles.
+  read_live "$LIVE_B"
   if ! cmp -s "$LIVE_A" "$LIVE_B"; then
-    echo "[$SLUG] live manifest changed under us (concurrent sibling publish); re-reconciling (attempt $attempt)."
+    echo "[$SLUG] live manifest changed under us (concurrent sibling publish); re-deriving (attempt $attempt)."
     sleep "$attempt"
     continue
   fi
