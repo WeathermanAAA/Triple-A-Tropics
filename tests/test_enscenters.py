@@ -197,6 +197,65 @@ class TestManifestMerge(unittest.TestCase):
             self.assertEqual(prune, [])
 
 
+class TestManifestGuard(unittest.TestCase):
+    """The workflow sibling-preserve guard (scripts/enscenters_manifest_guard.py):
+    a fresh/clobbered new manifest must NEVER drop a model that's live on R2."""
+
+    def _guard(self):
+        import importlib.util
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "scripts", "enscenters_manifest_guard.py")
+        spec = importlib.util.spec_from_file_location("ens_guard", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _run(self, new, live):
+        import json
+        import tempfile
+        g = self._guard()
+        with tempfile.TemporaryDirectory() as d:
+            np_, lp = os.path.join(d, "new.json"), os.path.join(d, "live.json")
+            json.dump(new, open(np_, "w"))
+            json.dump(live, open(lp, "w"))
+            g.main(["x", np_, lp])
+            return json.load(open(np_))
+
+    def test_preserves_clobbered_sibling(self):
+        # this run fresh-started (gefs only); live R2 still has ecais -> union back
+        new = {"default_model": "gefs", "models": [
+            {"slug": "gefs", "label": "GEFS", "cycles": ["2026061218"], "latest": "2026061218"}]}
+        live = {"default_model": "ecaie", "models": [
+            {"slug": "ecaie", "label": "AIFS-ENS", "cycles": ["2026061318"], "latest": "2026061318",
+             "cycle_versions": {"2026061318": "av"}}]}
+        out = self._run(new, live)
+        slugs = [m["slug"] for m in out["models"]]
+        self.assertIn("ecaie", slugs)                  # sibling preserved
+        self.assertIn("gefs", slugs)                   # own entry kept
+        self.assertEqual(slugs, ["ecaie", "gefs"])     # canonical order
+        by = {m["slug"]: m for m in out["models"]}
+        self.assertEqual(by["ecaie"]["cycle_versions"], {"2026061318": "av"})  # verbatim
+
+    def test_own_entry_is_authoritative(self):
+        # live has a stale gefs; new has the fresh gefs -> new's gefs wins (not unioned)
+        new = {"default_model": "gefs", "models": [
+            {"slug": "gefs", "cycles": ["2026061218"], "latest": "2026061218"}]}
+        live = {"models": [
+            {"slug": "gefs", "cycles": ["2026061200"], "latest": "2026061200"},
+            {"slug": "ecens", "cycles": ["2026061312"], "latest": "2026061312"}]}
+        out = self._run(new, live)
+        by = {m["slug"]: m for m in out["models"]}
+        self.assertEqual(by["gefs"]["cycles"], ["2026061218"])   # this run's gefs, not live's
+        self.assertIn("ecens", by)                                # other sibling preserved
+        self.assertEqual(out["default_model"], "ecens")           # normalized to canonical default
+
+    def test_empty_live_is_noop(self):
+        new = {"default_model": "gefs", "models": [
+            {"slug": "gefs", "cycles": ["2026061218"], "latest": "2026061218"}]}
+        out = self._run(new, {})
+        self.assertEqual([m["slug"] for m in out["models"]], ["gefs"])
+
+
 class TestGefsTracks(unittest.TestCase):
     """GEFS genesis-track parsing (enscenters.tracks). No network.
 
