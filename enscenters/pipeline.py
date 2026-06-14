@@ -19,7 +19,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from typing import List, Optional
 
 from . import warmcore
@@ -40,6 +40,14 @@ MANIFEST_URL = f"{CDN_BASE}/{R2_PREFIX}/manifest.json"
 CENTER_FIELDS = ["step_h", "lat", "lon", "mslp_hpa", "vmax_kt"]
 DEFAULT_RETAIN = 8  # rolling window of cycles kept on R2 per model (~2 days)
 DEFAULT_MIN_MEMBERS_FRAC = 0.75  # refuse to publish a sparse cycle (quorum)
+# Hard wall-clock ceiling for ONE cycle's member gather (parallel path). The
+# upstream clients (ecmwf-opendata -> multiurl, and our S3 fetch) can stall on a
+# degraded portal with NO hard timeout, which otherwise wedges the run to the
+# workflow's wall-clock limit (observed: a healthy ECMWF cycle finishes well
+# under 2 h; a stalled one rode past 3.5 h). At the deadline we abandon the
+# un-finished members and force-kill their workers; the quorum check + never-miss
+# retry then handle the gap. Generous so a slow-but-healthy cycle never trips it.
+DEFAULT_MEMBER_DEADLINE_S = 9000  # 150 min
 
 
 def _utcnow_iso() -> str:
@@ -103,6 +111,7 @@ def build_one_cycle(
     jobs: int = 1,
     min_members_frac: float = DEFAULT_MIN_MEMBERS_FRAC,
     source: str = "ecmwf",
+    member_deadline_s: float = DEFAULT_MEMBER_DEADLINE_S,
     progress=print,
 ) -> dict:
     """Ingest + detect every member for ONE cycle, assemble the model-agnostic
@@ -123,21 +132,44 @@ def build_one_cycle(
     with IngestSession(spec) as sess:
         tmpdir = sess.tmpdir
         if jobs and jobs > 1:
-            with ProcessPoolExecutor(max_workers=jobs) as ex:
+            # NOT a `with` block: on a stall we force-kill workers and shut down
+            # with wait=True ourselves (the default context-manager shutdown would
+            # block forever on a worker stuck in an uninterruptible C-level
+            # download).
+            ex = ProcessPoolExecutor(max_workers=jobs)
+            try:
                 futs = {ex.submit(process_member, spec, cycle, mid, steps, tmpdir, source): mid
                         for mid in members}
                 done = 0
-                for fut in as_completed(futs):
-                    mid = futs[fut]
-                    try:
-                        m_id, peak, centers = fut.result()
-                        results[m_id] = (peak, centers)
-                    except Exception as e:  # noqa: BLE001
-                        failures.append(mid)
-                        progress(f"[{spec.slug}]   member {mid} FAILED: {e}")
-                    done += 1
-                    if done % 5 == 0 or done == len(members):
-                        progress(f"[{spec.slug}]   {done}/{len(members)} members done")
+                try:
+                    for fut in as_completed(futs, timeout=member_deadline_s):
+                        mid = futs[fut]
+                        try:
+                            m_id, peak, centers = fut.result()
+                            results[m_id] = (peak, centers)
+                        except Exception as e:  # noqa: BLE001
+                            failures.append(mid)
+                            progress(f"[{spec.slug}]   member {mid} FAILED: {e}")
+                        done += 1
+                        if done % 5 == 0 or done == len(members):
+                            progress(f"[{spec.slug}]   {done}/{len(members)} members done")
+                except FuturesTimeoutError:
+                    # A member's download stalled with no hard timeout. Abandon the
+                    # un-finished members (the quorum check + never-miss retry handle
+                    # the gap) and force-KILL the worker processes so the stuck
+                    # C-level download cannot block shutdown. Bounds every field
+                    # model (ECMWF/AIFS/GEFS) identically.
+                    stuck = [futs[f] for f in futs if not f.done()]
+                    failures.extend(stuck)
+                    progress(f"[{spec.slug}]   DEADLINE {member_deadline_s}s hit; "
+                             f"abandoning {len(stuck)} stalled member(s): {stuck}")
+                    for p in list(getattr(ex, "_processes", {}).values()):
+                        try:
+                            p.kill()
+                        except Exception:  # noqa: BLE001
+                            pass
+            finally:
+                ex.shutdown(wait=True, cancel_futures=True)
         else:
             for k, mid in enumerate(members, 1):
                 try:

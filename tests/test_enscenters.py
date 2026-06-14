@@ -409,6 +409,48 @@ class TestGefsTracks(unittest.TestCase):
                     tracks.build_gefs_cycle(spec, cyc, d)
 
 
+def _stub_member_worker(spec, cycle, member_id, steps, tmpdir, source):
+    """Module-level (picklable) stand-in for pipeline.process_member used by the
+    watchdog test: P99 hangs (simulating a stalled, no-timeout download); every
+    other member returns one synthetic center immediately."""
+    import time
+    if member_id == "P99":
+        time.sleep(120)            # longer than the test's member_deadline_s
+    peak = {"mslp_hpa": 1000.0, "vmax_kt": 30.0, "lat": 12.0, "lon": 130.0, "step_h": 0}
+    return member_id, peak, [[0, 12.0, 130.0, 1000.0, 30.0]]
+
+
+class TestMemberWatchdog(unittest.TestCase):
+    """A stalled member must NOT wedge the cycle to the wall-clock limit: the
+    parallel gather has a hard deadline that abandons the un-finished member(s)
+    and force-kills the workers, then the quorum + never-miss path takes over.
+    Regression guard for the 2026-06-14 ECMWF/AIFS hang (ecmwf-opendata /
+    multiurl download has no hard timeout)."""
+
+    def test_stalled_member_is_abandoned_not_hung(self):
+        import time, tempfile, datetime as dt
+        from enscenters import pipeline as pl
+        spec = reg.get_spec("ecens")
+        # 8 members, one (P99) hangs; quorum 0.75 -> need 6, so 7 good publishes.
+        members = ["P0%d" % i for i in range(1, 8)] + ["P99"]
+        orig = pl.process_member
+        pl.process_member = _stub_member_worker
+        t0 = time.time()
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                res = pl.build_one_cycle(
+                    spec, dt.datetime(2026, 6, 14, 12), d,
+                    members=members, steps=[0], jobs=4,
+                    member_deadline_s=4, progress=lambda *a, **k: None)
+        finally:
+            pl.process_member = orig
+        elapsed = time.time() - t0
+        # Returned promptly after the deadline (not after the 120 s stall).
+        self.assertLess(elapsed, 60, "watchdog did not bound the stalled member")
+        self.assertEqual(res["members"], 7)          # the 7 good members published
+        self.assertIn("P99", res["failures"])        # the stalled one was abandoned
+
+
 class TestGefsIngest(unittest.TestCase):
     """GEFS S3 .idx byte-range ingest (enscenters.gefs_ingest). Pure functions,
     no network: member mapping, URL construction, and .idx -> byte-range parsing."""
