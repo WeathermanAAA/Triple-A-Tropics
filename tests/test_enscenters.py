@@ -198,54 +198,69 @@ class TestManifestMerge(unittest.TestCase):
 
 
 class TestGefsTracks(unittest.TestCase):
-    """GEFS genesis-track ATCF parsing (enscenters.tracks). No network."""
+    """GEFS genesis-track parsing (enscenters.tracks). No network.
 
-    # A crafted atcf_gen snippet: control (AC00) + two perturbed (AP01, AP05),
-    # one ensemble-mean row (AEMN -> must be skipped), a tenths lat/lon, an
-    # EAST-of-dateline lon (1750E), a bad pressure (mslp 0 -> skip), and a
-    # duplicate id-row (same member/step/pos -> de-duped).
-    SAMPLE = "\n".join([
-        # basin, cycid, init,        ??, tech, tau, lat,   lon,    vmax, mslp
-        "AL, 90, 2026061400, 03, AC00, 000, 150N, 0600W, 0035, 1004",
-        "AL, 90, 2026061400, 03, AC00, 006, 158N, 0612W, 0042, 0998",
-        "AL, 90, 2026061400, 03, AC00, 006, 158N, 0612W, 0042, 0998",  # dup -> dropped
-        "WP, 91, 2026061400, 03, AP01, 000, 120N, 1750E, 0028, 1006",  # east lon
-        "WP, 91, 2026061400, 03, AP01, 012, 130N, 1755E, 0050, 0990",
-        "AL, 92, 2026061400, 03, AP05, 000, 200N, 0700W, 0000, 0000",  # mslp 0 -> skip
-        "AL, 92, 2026061400, 03, AP05, 006, 205N, 0705W, 0060, 0975",
-        "AL, 99, 2026061400, 03, AEMN, 000, 180N, 0650W, 0040, 1000",  # mean -> skip
+    The genesis "altg" ATCF (verified live) has an EXTRA storm-id column vs plain
+    atcfunix, so the data columns are shifted: [6]=tau, [7]=lat, [8]=lon,
+    [9]=vmax(kt), [10]=mslp(mb). Each file is ONE member; the member comes from
+    the FILENAME (ac00 / apNN), not from a row column.
+    """
+
+    # One member's file. Real-format rows (tag, cand#, storm-id, init, technum,
+    # tech, tau, lat, lon, vmax, mslp, type, radii...): two unique centers, a
+    # duplicate (same step/pos -> dropped), an off-grid step (013 -> dropped), and
+    # a non-positive pressure (-> dropped). East-of-dateline lon kept positive.
+    CTL_FILE = "\n".join([
+        "TG, 0022, 2026061312_F012_268N_1199E_FOF, 2026061312, 03, AC00, 012, 268N, 1199E,  26, 1003, XX, 34, NEQ",
+        "TG, 0022, 2026061312_F018_277N_1223E_FOF, 2026061312, 03, AC00, 018, 277N, 1223E,  37, 1001, XX, 34, NEQ",
+        "TG, 0022, 2026061312_F012_268N_1199E_FOF, 2026061312, 03, AC00, 012, 268N, 1199E,  26, 1003, XX, 34, NEQ",  # dup
+        "TG, 0022, 2026061312_F013_280N_1240E_FOF, 2026061312, 03, AC00, 013, 280N, 1240E,  30, 1000, XX, 34, NEQ",  # off-grid step
+        "TG, 0022, 2026061312_F024_300N_1260E_FOF, 2026061312, 03, AC00, 024, 300N, 1260E,  20,    0, XX, 34, NEQ",  # mslp 0
     ])
+    # A perturbed member with one center at an east-of-dateline longitude.
+    P03_FILE = "TG, 0027, 2026061312_F012_262N_1750E_FOF, 2026061312, 03, AP03, 012, 262N, 1750E,  29, 1004, XX, 34, NEQ"
 
     def test_member_id_mapping(self):
         from enscenters.tracks import _member_id
-        self.assertEqual(_member_id("AC00"), "CTL")
-        self.assertEqual(_member_id("AP01"), "P01")
-        self.assertEqual(_member_id("AP30"), "P30")
-        self.assertIsNone(_member_id("AEMN"))   # ensemble mean - skipped
-        self.assertIsNone(_member_id("AVNO"))   # other model - skipped
+        self.assertEqual(_member_id("ac00"), "CTL")
+        self.assertEqual(_member_id("ap01"), "P01")
+        self.assertEqual(_member_id("ap30"), "P30")
+
+    def test_member_file_roster(self):
+        from enscenters.tracks import GEFS_MEMBER_FILES
+        self.assertEqual(len(GEFS_MEMBER_FILES), 31)           # control + 30 perturbed
+        self.assertEqual(GEFS_MEMBER_FILES[0], "ac00")
+        self.assertEqual(GEFS_MEMBER_FILES[-1], "ap30")
 
     def test_parse_latlon(self):
         from enscenters.tracks import _parse_latlon
-        self.assertAlmostEqual(_parse_latlon("150N"), 15.0)
+        self.assertAlmostEqual(_parse_latlon("268N"), 26.8)
         self.assertAlmostEqual(_parse_latlon("0600W"), -60.0)
-        self.assertAlmostEqual(_parse_latlon("1750E"), 175.0)
+        self.assertAlmostEqual(_parse_latlon("1199E"), 119.9)
         self.assertAlmostEqual(_parse_latlon("0250S"), -25.0)
 
-    def test_parse_atcf_genesis(self):
-        from enscenters.tracks import parse_atcf_genesis
-        m = parse_atcf_genesis(self.SAMPLE)
-        self.assertEqual(set(m), {"CTL", "P01", "P05"})       # AEMN skipped
-        # control: 2 unique centers (dup dropped); schema row [step,lat,lon,mslp,vmax]
-        self.assertEqual(len(m["CTL"]), 2)
-        self.assertEqual(m["CTL"][0], [0, 15.0, -60.0, 1004.0, 35.0])
-        self.assertEqual(m["CTL"][1][0], 6)
-        # P01 east-of-dateline lon preserved positive
-        self.assertAlmostEqual(m["P01"][0][2], 175.0)
-        # P05: the mslp=0 row is dropped, only the good one remains
-        self.assertEqual(len(m["P05"]), 1)
-        self.assertEqual(m["P05"][0][3], 975.0)
-        # vmax is the model's own ATCF wind, carried straight through
-        self.assertEqual(m["P05"][0][4], 60.0)
+    def test_parse_member_genesis_columns(self):
+        from enscenters.tracks import parse_member_genesis
+        c = parse_member_genesis(self.CTL_FILE)
+        # 2 unique centers survive (dup + off-grid + mslp<=0 dropped)
+        self.assertEqual(len(c), 2)
+        # schema row [step_h, lat, lon, mslp_hpa, vmax_kt] from cols [6..10]
+        self.assertEqual(c[0], [12, 26.8, 119.9, 1003.0, 26.0])
+        self.assertEqual(c[1], [18, 27.7, 122.3, 1001.0, 37.0])
+        # east-of-dateline lon stays positive; vmax is the model's own ATCF wind
+        p = parse_member_genesis(self.P03_FILE)
+        self.assertEqual(p[0], [12, 26.2, 175.0, 1004.0, 29.0])
+
+    def _fake_get(self, base="http://x/genesis/"):
+        """A _get stub: real content for ac00 + ap03, an empty-but-present file for
+        every other member (so the quorum is met and they skip with 0 centers)."""
+        def get(url, timeout=None):
+            if "storms.ac00." in url:
+                return self.CTL_FILE.encode()
+            if "storms.ap03." in url:
+                return self.P03_FILE.encode()
+            return b""   # present but no candidates
+        return get
 
     def test_build_gefs_cycle_writes_schema(self):
         import datetime as dt
@@ -254,21 +269,57 @@ class TestGefsTracks(unittest.TestCase):
         from unittest import mock
         from enscenters import tracks
         spec = reg.get_spec("gefs")
-        cyc = dt.datetime(2026, 6, 14, 0)
+        cyc = dt.datetime(2026, 6, 13, 12)
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(tracks, "find_genesis_url", return_value="http://x/f"), \
-                 mock.patch.object(tracks, "fetch_genesis_text", return_value=self.SAMPLE):
+            with mock.patch.object(tracks, "genesis_dir", return_value="http://x/genesis/"), \
+                 mock.patch.object(tracks, "_get", self._fake_get()):
                 res = tracks.build_gefs_cycle(spec, cyc, d)
-            data = json.load(open(os.path.join(d, "gefs", "2026061400.json")))
+            data = json.load(open(os.path.join(d, "gefs", "2026061312.json")))
         self.assertEqual(data["model"], "gefs")
         self.assertEqual(data["source"], "genesis_tracks")
         self.assertEqual(data["center_fields"],
                          ["step_h", "lat", "lon", "mslp_hpa", "vmax_kt"])
-        self.assertEqual(data["n_members"], 3)
+        self.assertEqual(data["n_members"], 2)                 # only ac00 + ap03 had tracks
         self.assertIsNotNone(data["caption"])
         ids = [mm["id"] for mm in data["members"]]
-        self.assertEqual(ids, ["CTL", "P01", "P05"])          # canonical order
-        self.assertEqual(res["cycle"], "2026061400")
+        self.assertEqual(ids, ["CTL", "P03"])                  # canonical (file) order
+        self.assertEqual(res["cycle"], "2026061312")
+
+    def test_build_gefs_cycle_quiet_publishes_empty(self):
+        # All 31 files present but no candidates -> publish an empty-but-valid
+        # cycle (GEFS still appears in the selector), NOT a raise.
+        import datetime as dt
+        import json
+        import tempfile
+        from unittest import mock
+        from enscenters import tracks
+        spec = reg.get_spec("gefs")
+        cyc = dt.datetime(2026, 6, 13, 12)
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(tracks, "genesis_dir", return_value="http://x/genesis/"), \
+                 mock.patch.object(tracks, "_get", lambda url, timeout=None: b""):
+                tracks.build_gefs_cycle(spec, cyc, d)
+            data = json.load(open(os.path.join(d, "gefs", "2026061312.json")))
+        self.assertEqual(data["n_members"], 0)
+        self.assertEqual(data["n_centers"], 0)
+
+    def test_build_gefs_cycle_quorum_raises_on_partial(self):
+        # Only a couple member files fetch (dir mid-dissemination) -> raise so the
+        # currency core skips + retries instead of publishing a partial cycle.
+        import datetime as dt
+        import tempfile
+        from unittest import mock
+        from enscenters import tracks
+        spec = reg.get_spec("gefs")
+        cyc = dt.datetime(2026, 6, 13, 12)
+
+        def sparse_get(url, timeout=None):
+            return self.CTL_FILE.encode() if "storms.ac00." in url else None
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(tracks, "genesis_dir", return_value="http://x/genesis/"), \
+                 mock.patch.object(tracks, "_get", sparse_get):
+                with self.assertRaises(RuntimeError):
+                    tracks.build_gefs_cycle(spec, cyc, d)
 
 
 if __name__ == "__main__":

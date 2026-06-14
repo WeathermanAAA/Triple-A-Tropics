@@ -67,8 +67,12 @@ jobs:
         run: |
           # --model gefs selects the genesis-track registry spec; the CLI routes
           # it to the light tracks ingest (no GRIB client, no --source/--jobs).
+          # --lookback 8 == retain, bounding the completeness gate's per-cycle
+          # HEAD probes (nomads-first; an unposted cycle costs one ~8 s ftpprd
+          # fallback HEAD, so we cap how many we probe).
           python generate_enscenters.py \
             --model gefs \
+            --lookback 8 \
             ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
 
       - name: Sync detection JSON + manifest to R2 (and prune old cycles)
