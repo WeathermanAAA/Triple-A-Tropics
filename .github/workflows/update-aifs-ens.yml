@@ -1,0 +1,135 @@
+name: Update AIFS-ENS (ECMWF AI Ensemble)
+
+# AIFS-ENS ("ECAIE") is ECMWF ENS's AI twin. This workflow is the ECMWF-ENS one
+# with --model ecaie: it shares the detector, warm-core filter, never-miss
+# currency core, the SAME R2 prefix (models/enscenters/), and the SAME manifest
+# (the merge replaces only the ecaie model entry, preserving ecens; run_currency
+# re-reads the manifest just before merging so the two models' separate workflows
+# don't clobber each other). Read-only: commits NOTHING to main; per-cycle ecaie
+# JSON + the shared manifest sync to R2.
+#
+# open-data differences (verified live): model="aifs-ens"; control is enfo/cf
+# (not oper/fc); 6-hourly to 360 h for ALL cycle hours; NO gh, so the warm-core
+# thickness uses z (geopotential) at 300/500 hPa, /g (handled in the registry).
+# AIFS is an AI model and disseminates EARLIER than IFS, so we still fire ~hourly
+# across the windows and let the never-miss completeness gate decide when a cycle
+# is actually complete. Staggered odd minutes (ecens uses :19/:49 -> we use
+# :29/:59) since GitHub drops round-minute crons.
+
+on:
+  schedule:
+    - cron: "29 0-4,6-10,12-16,18-22 * * *"
+    - cron: "59 4,10,16,22 * * *"
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
+        required: false
+      jobs:
+        description: "Parallel member workers"
+        required: false
+        default: "4"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-aifs-ens
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    # Same headroom as ECMWF ENS: the warm-core filter pulls z at 2 levels
+    # alongside MSLP (~triples the per-cycle transfer); a multi-cycle backfill must
+    # still fit under GitHub's 6 h job hard-limit. ECMWF's 50-member run came in
+    # ~78 min, so this is ample.
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy xarray cfgrib eccodes ecmwf-opendata
+          python -c "import scipy, cfgrib, xarray; from ecmwf.opendata import Client; print('deps OK')"
+
+      - name: Build AIFS-ENS cyclone centers (never-miss backfill)
+        env:
+          ENS_JOBS: ${{ github.event.inputs.jobs || '4' }}
+          ENS_CYCLE: ${{ github.event.inputs.cycle }}
+        run: |
+          # --model ecaie selects the AIFS-ENS registry spec (model=aifs-ens,
+          # enfo/cf control, z->thickness). --source aws dodges the portal cap.
+          python generate_enscenters.py \
+            --model ecaie \
+            --jobs "${ENS_JOBS:-4}" \
+            --source aws \
+            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
+
+      - name: Sync detection JSON + manifest to R2 (and prune old cycles)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -eo pipefail
+          SRC=./models/enscenters
+          DST=s3://triple-a-tropics-media/models/enscenters
+          # Nothing produced (no complete cycle yet) -> exit cleanly, prune NOTHING,
+          # leave the prior cycle + manifest live.
+          if [ ! -f "$SRC/manifest.json" ]; then
+            echo "no manifest produced - cycle incomplete, nothing to publish."
+            exit 0
+          fi
+
+          # 1. New per-cycle JSON first. This run wrote only ecaie/*.json; the sync
+          #    has no --delete so the sibling ecens/*.json on R2 are untouched.
+          aws s3 sync "$SRC/" "$DST/" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=300" --content-type "application/json" \
+            --exclude "*" --include "*/*.json" --only-show-errors
+
+          # 1b. CONSISTENCY GATE: never swap in a manifest pointing at a cycle JSON
+          #     not on R2. HEAD every referenced cycle (ecens + ecaie) and abort
+          #     before the manifest swap + prune if any is missing - the prior
+          #     manifest/cycles stay live and the run retries next cron.
+          python3 - "$R2_ENDPOINT" <<'VALIDATE'
+          import json, os, subprocess, sys
+          endpoint, bucket = sys.argv[1], "triple-a-tropics-media"
+          man = json.load(open("./models/enscenters/manifest.json"))
+          missing, checked = [], 0
+          for model in man.get("models", []):
+              slug = model.get("slug")
+              for cyc in model.get("cycles", []):
+                  checked += 1
+                  key = "models/enscenters/%s/%s.json" % (slug, cyc)
+                  r = subprocess.run(["aws", "s3api", "head-object", "--endpoint-url", endpoint,
+                                      "--bucket", bucket, "--key", key], capture_output=True)
+                  if r.returncode != 0:
+                      missing.append(key)
+          if missing:
+              sys.stderr.write("ABORT: manifest references cycles NOT on R2 (partial sync?): %s\n" % missing)
+              sys.exit(1)
+          print("consistency OK: all %d referenced cycle(s) present on R2" % checked)
+          VALIDATE
+
+          # 2. Manifest (validated). Short TTL; the viewer cache-busts it anyway.
+          aws s3 cp "$SRC/manifest.json" "$DST/manifest.json" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=60" --content-type "application/json" \
+            --only-show-errors
+
+          # 3. Prune ecaie cycles rolled out of the retention window (prune_keys is
+          #    model-scoped, so ecens cycles are never touched here).
+          if [ -s "$SRC/prune_keys.txt" ]; then
+            while IFS= read -r key || [ -n "$key" ]; do
+              [ -n "$key" ] || continue
+              echo "prune $key"
+              aws s3 rm "$DST/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors || true
+            done < "$SRC/prune_keys.txt"
+          fi
+          echo "Published -> https://cdn.triple-a-tropics.com/models/enscenters/manifest.json"

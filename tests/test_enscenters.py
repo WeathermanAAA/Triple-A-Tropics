@@ -96,6 +96,25 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(spec.steps_for_cycle_hour(0)[-1], 360)
         self.assertEqual(spec.steps_for_cycle_hour(6)[-1], 144)
 
+    def test_aifs_ens_spec(self):
+        # AIFS-ENS ("ecaie"): ECMWF ENS's AI twin - config only.
+        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie"])
+        s = reg.get_spec("ecaie")
+        self.assertEqual(s.od_model, "aifs-ens")
+        self.assertEqual((s.ens_stream, s.pf_type), ("enfo", "pf"))
+        self.assertEqual((s.control_stream, s.control_type), ("enfo", "cf"))  # NOT oper/fc
+        self.assertEqual(len(s.member_ids()), 51)                              # 50 pert + control
+        # 6-hourly to 360 h for EVERY cycle hour (no long/short split)
+        for h in (0, 6, 12, 18):
+            self.assertEqual(len(s.steps_for_cycle_hour(h)), 61)
+            self.assertEqual(s.pf_terminal_step(h), 360)
+            self.assertEqual(s.control_terminal_step(h), 360)
+        # AIFS has no gh: z (geopotential) at 300/500, /g -> thickness in gpm
+        self.assertEqual(s.gh_param, "z")
+        self.assertEqual(s.gh_param_id, 129)
+        self.assertAlmostEqual(s.gh_to_gpm, 1.0 / 9.80665, places=6)
+        self.assertTrue(s.warm_core)
+
     def test_pressure_bins(self):
         bins = reg.pressure_bins_json()
         self.assertEqual(len(bins), 5)

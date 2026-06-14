@@ -98,6 +98,15 @@ class TestCompletenessGate(unittest.TestCase):
         self.assertEqual(steps06[("enfo", "pf")], 144)   # perturbed terminal 06/18Z
         self.assertEqual(steps06[("oper", "fc")], 90)    # control terminal 06/18Z
 
+    def test_aifs_cycle_requests(self):
+        # AIFS-ENS: enfo/pf + enfo/cf control, both terminals 360 for every hour.
+        ecaie = reg.get_spec("ecaie")
+        for h in ("2026061300", "2026061306"):
+            reqs = cycle_requests(ecaie, C(h))
+            steps = {(r["stream"], r["type"]): r["step"] for r in reqs}
+            self.assertEqual(steps[("enfo", "pf")], 360)
+            self.assertEqual(steps[("enfo", "cf")], 360)
+
     def test_all_present_is_complete(self):
         self.assertTrue(cycle_complete(SPEC, C("2026061300"), lambda cyc, req: True))
 
@@ -129,6 +138,34 @@ class TestMergeManifestMulti(unittest.TestCase):
                          ["2026061218", "2026061212", "2026061206"])
         self.assertEqual(m["models"][0]["latest"], "2026061218")
         self.assertEqual(prune, [])
+
+    def test_multi_model_preserves_sibling(self):
+        # ecens + ecaie share manifest.json; the AIFS run must update only ecaie
+        # and PRESERVE the ecens entry (incl. its cycle_versions) and vice versa.
+        ecaie = reg.get_spec("ecaie")
+        prior = {"models": [
+            {"slug": "ecens", "label": "ECMWF ENS", "cycles": ["2026061312"],
+             "latest": "2026061312", "cycle_versions": {"2026061312": "ecens-v"}},
+            {"slug": "ecaie", "label": "AIFS-ENS", "cycles": ["2026061306"],
+             "latest": "2026061306", "cycle_versions": {"2026061306": "old"}},
+        ]}
+        m, prune = merge_manifest_multi(prior, ecaie, ["2026061312"], retain=8,
+                                        new_versions={"2026061312": "ecaie-new"})
+        by = {e["slug"]: e for e in m["models"]}
+        self.assertEqual(by["ecens"]["cycles"], ["2026061312"])          # untouched
+        self.assertEqual(by["ecens"]["cycle_versions"], {"2026061312": "ecens-v"})
+        self.assertEqual(by["ecaie"]["latest"], "2026061312")            # refreshed
+        self.assertEqual(by["ecaie"]["cycle_versions"]["2026061312"], "ecaie-new")
+        self.assertEqual(prune, [])                                      # nothing pruned
+
+    def test_cycle_versions_recorded_and_trimmed(self):
+        prior = manifest_with(["2026061212"])
+        m, prune = merge_manifest_multi(prior, SPEC, ["2026061218"], retain=1,
+                                        new_versions={"2026061218": "v218"})
+        # retain=1 keeps only the newest; cycle_versions trimmed to kept cycles
+        self.assertEqual(m["models"][0]["cycles"], ["2026061218"])
+        self.assertEqual(m["models"][0]["cycle_versions"], {"2026061218": "v218"})
+        self.assertEqual(prune, ["ecens/2026061212.json"])
 
     def test_backfilled_old_plus_new_prunes_from_final_set(self):
         prior = manifest_with(["2026061212", "2026061206"])

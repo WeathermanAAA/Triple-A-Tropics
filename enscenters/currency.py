@@ -131,6 +131,19 @@ def run_currency(
         # workflow aborts before the prune and the prior data stays live.
         raise RuntimeError(f"all {len(plan)} planned cycle(s) failed to ingest: {plan}")
 
+    # Re-read the manifest just before merging: every model (ECMWF ENS, AIFS-ENS,
+    # ...) publishes to the SAME manifest.json from its OWN workflow, and this
+    # run's long ingest is a wide window for another model to have published in
+    # between. Merging against the FRESH manifest preserves that concurrent update
+    # (merge_manifest_multi only replaces THIS model's entry). Tolerant: on a
+    # re-read failure, fall back to the start-of-run manifest.
+    try:
+        latest = fetch_prior()
+        if latest is not None:
+            prior_manifest = latest
+    except Exception as e:  # noqa: BLE001 - keep the start-of-run manifest
+        progress(f"[currency] WARN: manifest re-read before merge failed ({e}); "
+                 f"using start-of-run manifest")
     manifest, prune_keys = merge_manifest_multi(
         prior_manifest, spec, ingested, retain, new_versions=versions)
     write_outputs(out_dir, manifest, prune_keys)

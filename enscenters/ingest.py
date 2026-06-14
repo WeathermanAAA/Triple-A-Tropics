@@ -31,10 +31,12 @@ _RETRIES = 4
 _BACKOFF_S = 5.0
 
 
-def make_client(source: str = "ecmwf"):
-    """Build an ecmwf-opendata Client. ``source`` can be ecmwf|aws|azure|google."""
+def make_client(source: str = "ecmwf", model: str = "ifs"):
+    """Build an ecmwf-opendata Client. ``source`` can be ecmwf|aws|azure|google;
+    ``model`` is the open-data model (``ifs`` for ECMWF ENS, ``aifs-ens`` for
+    AIFS-ENS - the client maps its enfo types to pf/cf for aifs-ens)."""
     from ecmwf.opendata import Client
-    return Client(source=source)
+    return Client(source=source, model=model)
 
 
 def resolve_latest_complete(client, spec: EnsModelSpec):
@@ -204,7 +206,9 @@ def _gh_thk_accessor(ds_gh, spec: EnsModelSpec):
             g = gh.isel(step=i)
         top_f = np.asarray(g.isel(isobaricInhPa=it).values, dtype=float)
         bot_f = np.asarray(g.isel(isobaricInhPa=ib).values, dtype=float)
-        out = top_f - bot_f
+        # gh_to_gpm converts the layer difference to thickness in gpm: 1.0 when
+        # the param is gh (already gpm, IFS), 1/g when it is z (geopotential, AIFS).
+        out = (top_f - bot_f) * spec.gh_to_gpm
         return out if np.isfinite(out).any() else None
 
     return thk
