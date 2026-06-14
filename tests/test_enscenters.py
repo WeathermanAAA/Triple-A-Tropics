@@ -118,16 +118,24 @@ class TestRegistry(unittest.TestCase):
         self.assertTrue(s.warm_core)
 
     def test_gefs_spec(self):
-        # GEFS: genesis-track path - NOT field self-detect, NOT warm-core filtered
-        # by us (NOAA's tracker already TC-filters), 31 members, own caption.
+        # GEFS: now field SELF-DETECT (the same methodology as ECMWF/AIFS), pulled
+        # from the 0.5 deg S3 fields, warm-core filtered, full 384 h, 31 members.
         s = reg.get_spec("gefs")
-        self.assertEqual(s.source_kind, "genesis_tracks")
-        self.assertFalse(s.warm_core)
-        self.assertEqual(len(s.member_ids()), 31)       # control + 30 perturbed
+        self.assertEqual(s.source_kind, "self_detect")
+        self.assertEqual(s.source, "noaa-gefs-aws")
+        self.assertTrue(s.warm_core)                     # we run the thickness filter
+        self.assertEqual(s.gh_param, "gh")               # GEFS HGT is geopotential height
+        self.assertAlmostEqual(s.gh_to_gpm, 1.0)         # gpm already (no z/g conversion)
+        self.assertEqual(s.gh_levels, (300, 500))
+        self.assertEqual(s.grid_label, "0.5 deg")
+        self.assertEqual(len(s.member_ids()), 31)        # gec00 control + gep01..gep30
         self.assertEqual(s.member_ids()[0], "CTL")
         self.assertEqual(s.member_ids()[-1], "P30")
+        # full 384 h horizon for every cycle hour
+        for h in (0, 6, 12, 18):
+            self.assertEqual(s.steps_for_cycle_hour(h)[-1], 384)
         self.assertIsNotNone(s.caption)                  # model-aware viewer caption
-        self.assertIn("Atkinson", s.caption)             # says vmax is NOT an AH estimate
+        self.assertIn("Atkinson", s.caption)             # vmax IS an AH estimate now
 
     def test_pressure_bins(self):
         bins = reg.pressure_bins_json()
@@ -399,6 +407,64 @@ class TestGefsTracks(unittest.TestCase):
                  mock.patch.object(tracks, "_get", sparse_get):
                 with self.assertRaises(RuntimeError):
                     tracks.build_gefs_cycle(spec, cyc, d)
+
+
+class TestGefsIngest(unittest.TestCase):
+    """GEFS S3 .idx byte-range ingest (enscenters.gefs_ingest). Pure functions,
+    no network: member mapping, URL construction, and .idx -> byte-range parsing."""
+
+    def test_member_s3_mapping(self):
+        from enscenters import gefs_ingest as gi
+        self.assertEqual(gi.member_s3("CTL"), "gec00")
+        self.assertEqual(gi.member_s3("P01"), "gep01")
+        self.assertEqual(gi.member_s3("P30"), "gep30")
+
+    def test_url_construction(self):
+        import datetime as dt
+        from enscenters import gefs_ingest as gi
+        cyc = dt.datetime(2026, 6, 14, 12)
+        url = gi.grib_url(cyc, "gec00", 384)
+        self.assertTrue(url.endswith(
+            "gefs.20260614/12/atmos/pgrb2ap5/gec00.t12z.pgrb2a.0p50.f384"))
+        self.assertEqual(gi.idx_url(cyc, "gep01", 0),
+                         gi.grib_url(cyc, "gep01", 0) + ".idx")
+
+    def test_idx_parse_and_byte_ranges(self):
+        from enscenters import gefs_ingest as gi
+        idx = "\n".join([
+            "1:0:d=2026061412:HGT:10 mb:anl:ENS=low-res ctl",
+            "26:4485211:d=2026061412:HGT:300 mb:anl:ENS=low-res ctl",
+            "27:4600000:d=2026061412:RH:300 mb:anl:ENS=low-res ctl",
+            "31:5379112:d=2026061412:HGT:500 mb:anl:ENS=low-res ctl",
+            "32:5500000:d=2026061412:RH:500 mb:anl:ENS=low-res ctl",
+            "71:13324582:d=2026061412:PRMSL:mean sea level:anl:ENS=low-res ctl",
+            "72:13420000:d=2026061412:APCP:surface:anl:ENS=low-res ctl",
+        ])
+        rows = gi.parse_idx(idx)
+        self.assertEqual(len(rows), 7)
+        ranges = gi.idx_byte_ranges(rows)
+        # all three wanted records resolved, each [start, next_start)
+        self.assertEqual(ranges[("PRMSL", "mean sea level")], (13324582, 13420000))
+        self.assertEqual(ranges[("HGT", "300 mb")], (4485211, 4600000))
+        self.assertEqual(ranges[("HGT", "500 mb")], (5379112, 5500000))
+
+    def test_idx_last_record_open_ended(self):
+        from enscenters import gefs_ingest as gi
+        # PRMSL is the final record -> open-ended range (end None -> "bytes=start-")
+        idx = "\n".join([
+            "31:5379112:d=2026061412:HGT:500 mb:anl:x",
+            "26:4485211:d=2026061412:HGT:300 mb:anl:x",
+            "71:13324582:d=2026061412:PRMSL:mean sea level:anl:x",
+        ])
+        ranges = gi.idx_byte_ranges(gi.parse_idx(idx))
+        self.assertEqual(ranges[("PRMSL", "mean sea level")], (13324582, None))
+
+    def test_byte_ranges_missing_field(self):
+        from enscenters import gefs_ingest as gi
+        idx = "1:0:d=2026061412:HGT:500 mb:anl:x"   # no PRMSL, no HGT 300
+        ranges = gi.idx_byte_ranges(gi.parse_idx(idx))
+        self.assertNotIn(("PRMSL", "mean sea level"), ranges)
+        self.assertLess(len(ranges), 3)             # _download_subset would skip the step
 
 
 if __name__ == "__main__":

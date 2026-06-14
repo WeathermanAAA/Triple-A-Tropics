@@ -113,6 +113,23 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         def ingest_one(cycle: dt.datetime) -> dict:
             return _tracks.build_gefs_cycle(spec, cycle, args.out_dir)
+    elif spec.source == "noaa-gefs-aws":
+        # GEFS: closed-low detection on the 0.5 deg fields pulled via S3 .idx
+        # byte-range (enscenters.gefs_ingest). Same detect + warm-core + currency
+        # path as the ECMWF models; only the completeness gate (terminal-step file
+        # present on noaa-gefs-pds) and the per-member download differ.
+        from . import gefs_ingest as _gefs
+        gate_client = _gefs.make_client()
+
+        def list_complete(lookback: int):
+            candidates = synoptic_cycles_back(now, lookback)
+            return _gefs.list_complete_cycles(spec, candidates, gate_client)
+
+        def ingest_one(cycle: dt.datetime) -> dict:
+            return build_one_cycle(
+                spec, cycle, args.out_dir,
+                members=members, steps=steps, jobs=args.jobs,
+                min_members_frac=args.min_members_frac, source=args.source)
     else:
         # ECMWF ENS / AIFS-ENS: closed-low detection on the perturbed MSLP fields.
         client = make_client(args.source, spec.od_model)

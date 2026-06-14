@@ -1,36 +1,45 @@
-name: Update GEFS (Ensemble Genesis Tracks)
+name: Update GEFS (Ensemble Cyclone Centers)
 
-# GEFS is the third model on the Ensemble Cyclone Centers platform. UNLIKE ECMWF
-# ENS / AIFS-ENS it does NOT self-detect closed lows from MSLP fields: it parses
-# NOAA's ensemble GENESIS TRACKER (atcf_gen), which is ALREADY warm-core / TC
-# filtered. So this is a LIGHT path - one small ATCF text file per cycle, no GRIB
-# download, no field detection, no warm-core compute. It runs in minutes and needs
-# only numpy+scipy (pulled in transitively by the shared package import; the GRIB
-# stack - cfgrib/xarray/ecmwf-opendata - is NOT installed because GEFS never
-# touches a field).
+# GEFS is the third model on the Ensemble Cyclone Centers platform, and now uses
+# the SAME methodology as ECMWF ENS / AIFS-ENS: it SELF-DETECTS closed MSLP lows
+# from the GEFS 0.5 deg "a" fields and runs the identical warm-core thickness
+# filter, so the three models form one clean super-ensemble. (It previously
+# parsed NOAA's genesis tracker, which capped at ~120 h; self-detect reaches the
+# full 384 h.)
+#
+# Ingest: the public noaa-gefs-pds S3 bucket, one GRIB2 file per (member, step),
+# byte-range subset via the sidecar .idx to just PRMSL + HGT 300/500 mb (~0.6 MB
+# each). 31 members (gec00 + gep01..gep30), 3-hourly to 192 h then 6-hourly to
+# 384 h. Process-and-delete per step keeps peak disk tiny; the whole cycle pulls
+# ~2 GB (lighter than ECMWF ENS). Needs the GRIB stack (cfgrib/eccodes/xarray) +
+# requests; NOT ecmwf-opendata (GEFS hits S3 directly).
 #
 # Shares the SAME R2 prefix (models/enscenters/) and the SAME manifest as the
-# field models: the merge replaces only the gefs model entry, and build_cycle /
-# run_currency re-read the manifest just before merging so the three models'
-# separate workflows don't clobber each other's entries. Read-only: commits
-# NOTHING to main; per-cycle gefs JSON + the shared manifest sync to R2.
+# other models: the publish script reconciles against R2 reality and replaces
+# only the gefs entry, so the three per-model workflows never clobber each other.
+# Read-only: commits NOTHING to main; per-cycle gefs JSON + the shared manifest
+# sync to R2.
 #
-# Timing: the NCO genesis tracker posts ~5-6 h after each synoptic cycle, so we
-# fire across a generous window 6-9 h after 00/06/12/18Z and let the never-miss
-# completeness gate (the genesis file is fetchable) decide when a cycle is
-# actually ready. Staggered odd minutes (ecens :19/:49, ecaie :29/:59 -> gefs
-# :37/:53) since GitHub drops round-minute crons.
+# Timing: GEFS GRIB disseminates a few hours after each synoptic cycle, so we fire
+# across a generous window 4-9 h after 00/06/12/18Z and let the never-miss
+# completeness gate (the f384 terminal file is present for control + last member)
+# decide when a cycle is actually ready. Staggered odd minutes (ecens :19/:49,
+# ecaie :29/:59 -> gefs :41) since GitHub drops round-minute crons.
 
 on:
   schedule:
-    - cron: "37 6-9,12-15,18-21 * * *"   # 00Z->06-09, 06Z->12-15, 12Z->18-21
-    - cron: "37 0-3 * * *"               # 18Z (prev day) -> 00-03
-    - cron: "53 9,15,21,3 * * *"         # backup 30 min after each window tail
+    - cron: "41 4-9,10-15,16-21 * * *"   # 00Z->04-09, 06Z->10-15, 12Z->16-21
+    - cron: "41 0-3,22-23 * * *"         # 18Z (prev day) -> 22-03
+    - cron: "57 9,15,21,3 * * *"         # backup 30 min after each window tail
   workflow_dispatch:
     inputs:
       cycle:
         description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
         required: false
+      jobs:
+        description: "Parallel member workers"
+        required: false
+        default: "4"
 
 permissions:
   contents: read
@@ -42,9 +51,9 @@ concurrency:
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    # Minutes, not hours: one small genesis ATCF file per cycle, parsed in pure
-    # Python. Generous cap for a multi-cycle backfill of tiny files.
-    timeout-minutes: 30
+    # Field self-detect over 31 members x ~97 steps via S3 byte-range. Measured
+    # lighter than ECMWF ENS (~78 min); generous cap covers a multi-cycle backfill.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v6
 
@@ -55,23 +64,27 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          # LIGHT: only numpy+scipy (transitive import of the shared detect/
-          # warmcore modules). No GRIB stack - GEFS parses text, never a field.
           python -m pip install --upgrade pip
-          pip install numpy scipy
-          python -c "import numpy, scipy; print('deps OK')"
+          # numpy/scipy for detect+warmcore, xarray+cfgrib+eccodes to decode the
+          # byte-range GRIB subsets, requests for the S3 .idx range GETs. eccodes
+          # wheel bundles the binary - no apt. No ecmwf-opendata (GEFS uses S3).
+          pip install numpy scipy xarray cfgrib eccodes requests
+          python -c "import scipy, cfgrib, xarray, requests; print('deps OK')"
 
       - name: Build GEFS cyclone centers (never-miss backfill)
         env:
+          # Pass dispatch inputs through env vars, never interpolate ${{ }} into
+          # the shell body (Actions script-injection hardening).
+          ENS_JOBS: ${{ github.event.inputs.jobs || '4' }}
           ENS_CYCLE: ${{ github.event.inputs.cycle }}
         run: |
-          # --model gefs selects the genesis-track registry spec; the CLI routes
-          # it to the light tracks ingest (no GRIB client, no --source/--jobs).
-          # --lookback 8 == retain, bounding the completeness gate's per-cycle
-          # HEAD probes (nomads-first; an unposted cycle costs one ~8 s ftpprd
-          # fallback HEAD, so we cap how many we probe).
+          # --model gefs selects the self-detect registry spec; the CLI routes it
+          # to the S3 byte-range backend (enscenters.gefs_ingest) + the shared
+          # detect/warmcore path. --lookback 8 == retain, bounding the gate's HEAD
+          # probes. No --source: GEFS has exactly one source (the S3 bucket).
           python generate_enscenters.py \
             --model gefs \
+            --jobs "${ENS_JOBS:-4}" \
             --lookback 8 \
             ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
 

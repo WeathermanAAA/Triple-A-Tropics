@@ -24,7 +24,7 @@ from typing import List, Optional
 
 from . import warmcore
 from .detect import detect_centers
-from .ingest import IngestSession, iter_member_fields, make_client, resolve_latest_complete
+from .ingest import IngestSession
 from .registry import (
     DEFAULT_MODEL,
     EnsModelSpec,
@@ -50,6 +50,20 @@ def _cycle_iso(cycle: dt.datetime) -> str:
     return cycle.replace(tzinfo=None).isoformat() + "Z"
 
 
+# --- ingest-backend selection -------------------------------------------
+# The field self-detect path is shared, but the per-member DOWNLOAD differs by
+# model source: ECMWF ENS / AIFS-ENS pull via the ecmwf-opendata client
+# (enscenters.ingest); GEFS pulls 0.5 deg fields via S3 .idx byte-range
+# (enscenters.gefs_ingest). Both expose make_client + iter_member_fields with the
+# identical signature, so process_member is otherwise model-agnostic.
+def _ingest_backend(spec: EnsModelSpec):
+    if getattr(spec, "source", "") == "noaa-gefs-aws":
+        from . import gefs_ingest as backend
+    else:
+        from . import ingest as backend
+    return backend
+
+
 # --- per-member work (module-level so ProcessPoolExecutor can pickle it) ---
 def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
                    steps: List[int], tmpdir: str, source: str):
@@ -57,12 +71,13 @@ def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
     resident. When the model self-detects MSLP (spec.warm_core), the iterator also
     yields the 300-500 thickness field and we keep ONLY warm-core tropical centers.
     Returns (member_id, peak|None, centers_rows)."""
-    client = make_client(source, spec.od_model)
+    backend = _ingest_backend(spec)
+    client = backend.make_client(source, spec.od_model)
     kwargs = spec.detect.as_kwargs()
     wc_kwargs = spec.warm_core_params.as_kwargs() if spec.warm_core else None
     centers: List[list] = []
     peak: Optional[dict] = None
-    gen = iter_member_fields(client, spec, cycle, member_id, steps, tmpdir)
+    gen = backend.iter_member_fields(client, spec, cycle, member_id, steps, tmpdir)
     try:
         for lats, lons, step_h, field, thk in gen:
             cs = detect_centers(field, lats, lons, **kwargs)
@@ -101,7 +116,7 @@ def build_one_cycle(
     members = members or spec.member_ids()
     steps = steps if steps is not None else spec.steps_for_cycle_hour(cycle.hour)
 
-    progress(f"[ecens] cycle {cycle:%Y-%m-%d %HZ}: {len(members)} members x {len(steps)} steps, jobs={jobs}")
+    progress(f"[{spec.slug}] cycle {cycle:%Y-%m-%d %HZ}: {len(members)} members x {len(steps)} steps, jobs={jobs}")
 
     results: dict = {}
     failures: List[str] = []
@@ -119,10 +134,10 @@ def build_one_cycle(
                         results[m_id] = (peak, centers)
                     except Exception as e:  # noqa: BLE001
                         failures.append(mid)
-                        progress(f"[ecens]   member {mid} FAILED: {e}")
+                        progress(f"[{spec.slug}]   member {mid} FAILED: {e}")
                     done += 1
                     if done % 5 == 0 or done == len(members):
-                        progress(f"[ecens]   {done}/{len(members)} members done")
+                        progress(f"[{spec.slug}]   {done}/{len(members)} members done")
         else:
             for k, mid in enumerate(members, 1):
                 try:
@@ -130,9 +145,9 @@ def build_one_cycle(
                     results[mid] = (peak, centers)
                 except Exception as e:  # noqa: BLE001
                     failures.append(mid)
-                    progress(f"[ecens]   member {mid} FAILED: {e}")
+                    progress(f"[{spec.slug}]   member {mid} FAILED: {e}")
                 if k % 5 == 0 or k == len(members):
-                    progress(f"[ecens]   {k}/{len(members)} members done")
+                    progress(f"[{spec.slug}]   {k}/{len(members)} members done")
 
     # Member QUORUM: refuse to publish a sparse cycle. Without this, a partial
     # ingest failure (transient open-data 5xx, a half-published cycle) would write
@@ -170,7 +185,8 @@ def build_one_cycle(
         "cycle_hour": cycle.hour,
         "generated_at": _utcnow_iso(),
         "attribution": spec.attribution,
-        "grid": "0.25 deg",
+        "caption": spec.caption,                 # model-aware viewer caption (None -> default)
+        "grid": spec.grid_label,
         "run_steps": list(steps),
         "n_members": len(member_objs),
         "n_centers": total_centers,
@@ -189,7 +205,7 @@ def build_one_cycle(
         json.dump(data, f, separators=(",", ":"))
 
     bytes_json = os.path.getsize(cycle_path)
-    progress(f"[ecens] wrote {cycle_path} ({bytes_json/1e6:.2f} MB), "
+    progress(f"[{spec.slug}] wrote {cycle_path} ({bytes_json/1e6:.2f} MB), "
              f"{len(member_objs)} members, {total_centers} centers, {len(failures)} failed")
     return {
         "cycle": cyc_str,
