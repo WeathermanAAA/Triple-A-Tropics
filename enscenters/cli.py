@@ -130,8 +130,27 @@ def main(argv: Optional[List[str]] = None) -> int:
                 spec, cycle, args.out_dir,
                 members=members, steps=steps, jobs=args.jobs,
                 min_members_frac=args.min_members_frac, source=args.source)
+    elif spec.source == "ecmwf-opendata":
+        # ECMWF ENS / AIFS-ENS: closed-low detection on the perturbed MSLP fields,
+        # ingested via the multi-homed direct byte-range backend. The completeness
+        # gate is MIRROR-AWARE: a cycle is ingestable if its terminal step is on
+        # EITHER mirror (preferring GCS), so we never block on the slower-publishing
+        # one. The per-member download + mirror fallback live in build_one_cycle.
+        from . import ecmwf_byterange_ingest as _ecbr
+        gate_client = _ecbr.make_client(args.source, spec.od_model)
+
+        def list_complete(lookback: int):
+            candidates = synoptic_cycles_back(now, lookback)
+            return _ecbr.list_complete_cycles(spec, candidates, gate_client)
+
+        def ingest_one(cycle: dt.datetime) -> dict:
+            return build_one_cycle(
+                spec, cycle, args.out_dir,
+                members=members, steps=steps, jobs=args.jobs,
+                min_members_frac=args.min_members_frac, source=args.source)
     else:
-        # ECMWF ENS / AIFS-ENS: closed-low detection on the perturbed MSLP fields.
+        # Legacy ecmwf-opendata client path (no current model uses it; kept as a
+        # safety fallback for an unrecognized self-detect source).
         client = make_client(args.source, spec.od_model)
 
         def list_complete(lookback: int):

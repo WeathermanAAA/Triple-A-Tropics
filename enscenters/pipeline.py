@@ -67,8 +67,13 @@ def _cycle_iso(cycle: dt.datetime) -> str:
 # (enscenters.gefs_ingest). Both expose make_client + iter_member_fields with the
 # identical signature, so process_member is otherwise model-agnostic.
 def _ingest_backend(spec: EnsModelSpec):
-    if getattr(spec, "source", "") == "noaa-gefs-aws":
+    src = getattr(spec, "source", "")
+    if src == "noaa-gefs-aws":
         from . import gefs_ingest as backend
+    elif src == "ecmwf-opendata":
+        # Direct .index byte-range, multi-homed (prefer the fast US Google mirror,
+        # fall back to AWS) - replaces the slow eu-central-1 ecmwf-opendata client.
+        from . import ecmwf_byterange_ingest as backend
     else:
         from . import ingest as backend
     return backend
@@ -133,6 +138,12 @@ def build_one_cycle(
     failures: List[str] = []
     with IngestSession(spec) as sess:
         tmpdir = sess.tmpdir
+        # Some backends pre-fetch a per-step index ONCE (shared across members)
+        # before the member pool - ECMWF/AIFS's ~2 MB index packs all members, so
+        # re-fetching it per member would be wasteful. GEFS has no prepare hook.
+        prep = getattr(_ingest_backend(spec), "prepare", None)
+        if prep is not None:
+            prep(spec, cycle, steps, tmpdir, source=source, progress=progress)
         if jobs and jobs > 1:
             # NOT a `with` block: on a stall we force-kill workers and shut down
             # with wait=True ourselves (the default context-manager shutdown would
