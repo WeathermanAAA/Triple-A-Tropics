@@ -51,6 +51,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import matplotlib as mpl
@@ -73,6 +75,12 @@ SST_BUILD_DIR = BUILD_DIR / "sst"
 
 WINDOW_DAYS = 90
 FPS = 15
+
+# The live manifest on R2 (read-only public CDN). A partial run (one shard's
+# product family) MERGES against this so it never drops the OTHER family's clips
+# — see _write_manifest. Lets the OISST shard (Job 1) and the CRW shard (Job 2)
+# each publish independently without clobbering each other's entries.
+LIVE_MANIFEST_URL = "https://cdn.triple-a-tropics.com/sst/manifest.json"
 # Match generate_sst_plots.py savefig dpi so animator frames have the
 # same pixel dimensions as the on-site static PNG for each region.
 # Anything lower quietly downscales the frame before ffmpeg sees it,
@@ -977,37 +985,131 @@ def _date_from_frame(p: Path) -> dt.date | None:
 # ----------------------------------------------------------------------
 # Manifest + README writers
 # ----------------------------------------------------------------------
+def _fetch_live_manifest(log: str = "[sst-anim]", attempts: int = 3) -> dict | None:
+    """Read the live manifest from the public CDN so a partial (single-shard)
+    run can MERGE rather than clobber the other family's clips. Returns the
+    parsed dict, or None if it is genuinely absent / unreachable."""
+    url = f"{LIVE_MANIFEST_URL}?t={int(time.time())}"
+    last = None
+    for i in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404):
+                return None  # absent (first run / R2 custom-domain 403-on-missing)
+            last = e
+        except Exception as e:  # noqa: BLE001 - network / parse
+            last = e
+        if i < attempts - 1:
+            time.sleep(2 * (i + 1))
+    print(f"{log} WARN: could not read live manifest ({last}); this run's "
+          f"manifest will NOT preserve the other shard's clips", file=sys.stderr)
+    return None
+
+
 def _write_manifest(clips: dict, regions: list[str], products: list[dict],
-                    end_date: dt.date) -> Path:
-    """Write the per-family manifest the widget reads."""
+                    end_date: dt.date, *, merge: bool = True,
+                    log: str = "[sst-anim]") -> dict:
+    """Write the per-family manifest the widget reads, MERGING with the live
+    manifest so a single-shard run (OISST in Job 1, CRW in Job 2) refreshes only
+    its OWN products and preserves the other shard's clips/products/regions.
+    Without the merge a partial run would publish a manifest missing the other
+    family until the next full run. Returns the written manifest dict."""
     SST_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    encoded = {p["slug"] for p in products}
+    live = (_fetch_live_manifest(log) if merge else None) or {}
+
+    # clips: keep the live clips for products NOT (re)encoded this run; the
+    # encoded products' clips are fully replaced by this run's fresh set (so a
+    # dropped region's stale clip is removed, not stranded).
+    merged_clips = {
+        k: v for k, v in (live.get("clips") or {}).items()
+        if isinstance(v, dict) and v.get("product") not in encoded
+    }
+    merged_clips.update(clips)
+
+    # products: live (others) + this run's fresh defs, ordered by CORE_PRODUCTS.
+    prod_by_slug = {p["slug"]: p for p in (live.get("products") or [])
+                    if isinstance(p, dict) and p.get("slug")}
+    for p in products:
+        prod_by_slug[p["slug"]] = {"slug": p["slug"], "label": p["label"],
+                                   "description": p["description"]}
+    core_order = [cp["slug"] for cp in CORE_PRODUCTS]
+    ordered_products = [prod_by_slug[s] for s in core_order if s in prod_by_slug]
+    ordered_products += [prod_by_slug[s] for s in prod_by_slug if s not in core_order]
+
+    # regions: live + this run's, ordered by gsp.REGIONS.
+    reg_by_slug = {r["slug"]: r for r in (live.get("regions") or [])
+                   if isinstance(r, dict) and r.get("slug")}
+    for r in regions:
+        reg_by_slug[r] = {"slug": r, "label": gsp.REGIONS[r]["label"],
+                          "extent": list(gsp.REGIONS[r]["extent"])}
+    ordered_regions = [reg_by_slug[s] for s in gsp.REGIONS if s in reg_by_slug]
+    ordered_regions += [reg_by_slug[s] for s in reg_by_slug if s not in gsp.REGIONS]
+
     manifest = {
         "family": "sst",
         "generated_at": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "frame_rate_fps": FPS,
         "window": {"unit": "days", "length": WINDOW_DAYS},
-        "regions": [
-            {
-                "slug": r,
-                "label": gsp.REGIONS[r]["label"],
-                "extent": list(gsp.REGIONS[r]["extent"]),
-            }
-            for r in regions
-        ],
-        "products": [
-            {
-                "slug": p["slug"],
-                "label": p["label"],
-                "description": p["description"],
-            }
-            for p in products
-        ],
-        "clips": clips,
+        "regions": ordered_regions,
+        "products": ordered_products,
+        "clips": merged_clips,
     }
     out = SST_BUILD_DIR / "manifest.json"
     out.write_text(json.dumps(manifest, indent=2) + "\n")
-    print(f"[sst-anim] wrote {out}  ({len(clips)} clips)")
-    return out
+    print(f"{log} wrote {out}  ({len(merged_clips)} clips total, "
+          f"{len(clips)} fresh from this shard)")
+    return manifest
+
+
+def _family_of(slug: str) -> str:
+    return "OISST" if slug in OISST_PRODUCT_SLUGS else "CRW"
+
+
+def _check_drift(manifest: dict, end_date: dt.date, encoded_products: list[dict],
+                 log: str = "[sst-anim]") -> None:
+    """Guard: surface (as a GitHub Actions ::warning::) if a product family THIS
+    shard just published fell behind the static maps' latest available day — so
+    the animator-vs-static drift is caught automatically, not by eye. Only the
+    shard's OWN families are checked (the OISST shard does not warn about CRW,
+    which is Job 2's responsibility and not yet refreshed when Job 1 runs)."""
+    families = {_family_of(p["slug"]) for p in encoded_products}
+    latest_by_family: dict[str, dt.date] = {}
+    for c in (manifest.get("clips") or {}).values():
+        if not isinstance(c, dict):
+            continue
+        fam = _family_of(c.get("product", ""))
+        if fam not in families:
+            continue
+        lf = c.get("last_frame")
+        if not lf:
+            continue
+        try:
+            d = dt.date.fromisoformat(lf)
+        except ValueError:
+            continue
+        if fam not in latest_by_family or d > latest_by_family[fam]:
+            latest_by_family[fam] = d
+    for fam in families:
+        latest = latest_by_family.get(fam)
+        if latest is None:
+            print(f"::warning title=SST animation drift::{fam} shard produced "
+                  f"NO clips this run (static latest {end_date}).")
+            continue
+        lag = (end_date - latest).days
+        if lag >= 1:
+            print(f"::warning title=SST animation drift::{fam} animation is "
+                  f"{lag} day(s) behind the static maps (animation latest "
+                  f"{latest}, static latest {end_date}); this shard did not keep "
+                  f"pace this cycle.")
+            print(f"{log} DRIFT: {fam} animation {latest} < static {end_date} "
+                  f"({lag}d behind)", file=sys.stderr)
+        else:
+            print(f"{log} currency OK: {fam} animation at {latest} "
+                  f"(static latest {end_date})")
 
 
 def _write_branch_readme() -> Path:
@@ -1133,9 +1235,14 @@ def main(argv=None):
     clips = _encode_all(end_date, regions, products, log)
     print(f"{log} encode phase: {time.time() - t1:.1f}s — {len(clips)} clips")
 
-    # Manifest + README
-    _write_manifest(clips, regions, products, end_date)
+    # Manifest (merged with the live one so this shard preserves the other
+    # shard's clips) + README
+    manifest = _write_manifest(clips, regions, products, end_date, log=log)
     _write_branch_readme()
+
+    # Drift guard: surface (::warning::) if THIS shard's family fell behind the
+    # static maps' latest available day.
+    _check_drift(manifest, end_date, products, log)
 
     # Prune
     _prune_old_frames(end_date)

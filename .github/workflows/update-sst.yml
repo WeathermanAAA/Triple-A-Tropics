@@ -210,13 +210,29 @@ jobs:
           exit 1
 
       # --------------------------------------------------------------
-      # Animation pipeline — OISST shard
+      # Animation pipeline — OISST shard (DECOUPLED: render + ENCODE +
+      # PUBLISH)
       # --------------------------------------------------------------
-      # This shard renders only the four OISST-family products
-      # (actual / anomaly / anomaly_records / anomaly_gmr). It uses
-      # `--render-only` to skip ffmpeg encode, manifest, and README —
-      # those happen in Job 2 once everything is warm so the manifest
-      # is unified. ffmpeg is therefore NOT installed in this job.
+      # This shard now renders AND encodes AND publishes the four OISST
+      # products itself, so the OISST animation reaches the same latest day
+      # as the static OISST maps EVERY cycle — it no longer waits on (or is
+      # lost to) the slow CRW shard in Job 2. Job 2 was the only place the
+      # animation used to publish, and it kept hitting the GitHub 6-hour
+      # job hard-limit (killed mid-CRW-render), so the static maps advanced
+      # while the live MP4 + manifest stayed a day (or more) behind.
+      #
+      # The manifest write is MERGE-safe (generate_sst_animations._write_manifest
+      # reads the live manifest and refreshes only THIS shard's product
+      # family), so OISST here and CRW in Job 2 never clobber each other.
+
+      - name: Install ffmpeg (OISST encode)
+        # ubuntu-latest does not ship ffmpeg; needed now that this shard
+        # encodes its own MP4s. Verify on PATH to fail fast.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
 
       - name: Restore animation frame cache from R2
         # The ~9.5 GB rolling frame cache lives in R2, NOT the GitHub
@@ -235,15 +251,15 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: bash scripts/sst_frame_cache_r2.sh restore
 
-      - name: Render OISST animation frames (4 products)
-        # Cold start (empty cache) takes ~2–3 h: ~6,480 OISST frame
-        # renders at ~1 s each. Warm runs do ~72 new frames + skip the
-        # rest in well under 5 min. `--render-only` skips encode +
-        # manifest entirely — Job 2 produces the unified output once
-        # CRW frames are also rendered.
+      - name: Render + encode OISST animations + write merged manifest
+        # No --render-only: render the OISST frames, encode the 72 OISST
+        # MP4s + posters, and write the manifest MERGED with the live one
+        # (preserving the CRW clips). Cold start (empty cache) ~2–3 h; warm
+        # runs do ~72 new frames + a fast 72-MP4 encode in well under
+        # 10 min. The drift guard (::warning::) fires if OISST didn't reach
+        # the static latest day.
         run: |
           python generate_sst_animations.py \
-            --render-only \
             --products actual anomaly anomaly_records anomaly_gmr
 
       # Persist the OISST-updated frame cache to R2 so Job 2 inherits it
@@ -259,6 +275,44 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: bash scripts/sst_frame_cache_r2.sh save
+
+      - name: Upload OISST MP4s + manifest to R2 (PRIMARY publish)
+        # R2 is the primary source product_animator.js reads. `aws s3 sync`
+        # has NO --delete, so this adds/updates the OISST MP4s + the merged
+        # manifest and leaves the CRW MP4s in place. Content-types explicit
+        # (mp4 / jpeg / json+CORS); manifest skips --size-only so a
+        # changed-but-same-size manifest still refreshes.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          SRC=_mp4_build/sst
+          if [ ! -d "$SRC" ] || [ -z "$(ls -A "$SRC" 2>/dev/null)" ]; then
+            echo "No SST build output at $SRC — nothing to upload."
+            exit 0
+          fi
+          CC="public, max-age=300"
+          DST=s3://triple-a-tropics-media/sst/
+          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "$CC" --content-type "video/mp4" \
+            --exclude "*" --include "*.mp4" --size-only --only-show-errors
+          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "$CC" --content-type "image/jpeg" \
+            --exclude "*" --include "*.jpg" --size-only --only-show-errors
+          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "$CC" --content-type "application/json" \
+            --exclude "*" --include "*.json" --only-show-errors
+
+      - name: Push OISST MP4 artifacts to orphan branch (overlay, merge-safe)
+        # Fallback publish surface. OVERLAY (no `rm -rf sst`) so this shard's
+        # OISST MP4s + merged manifest are added on top of the existing
+        # branch contents, preserving the CRW shard's MP4s. Each shard
+        # overlays its own family; the merged manifest references both.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/sst_publish_orphan.sh
 
   render-crw-and-publish:
     runs-on: ubuntu-latest
@@ -312,15 +366,18 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: bash scripts/sst_frame_cache_r2.sh restore
 
-      - name: Render CRW frames + encode all MP4s + write unified manifest
-        # Full pipeline run with no --products filter:
-        #   * OISST families warm-skip (Job 1 just rendered them).
-        #   * CRW families cold-render (~2–3 h on bootstrap, ~30 s warm).
-        #   * `_encode_all` produces 144 MP4s + 144 poster JPGs covering
-        #     ALL 8 products × 18 regions in a single consolidated pass.
-        #   * `_write_manifest` writes the unified manifest the on-page
-        #     widget reads — this is the only manifest write of the run.
-        run: python generate_sst_animations.py
+      - name: Render + encode CRW animations + write merged manifest
+        # CRW shard ONLY now (--products crw_*): OISST was already rendered,
+        # encoded, and PUBLISHED by Job 1, so this job no longer re-encodes
+        # the 72 OISST MP4s — it is lighter and likelier to finish inside
+        # the 6-hour budget. It cold-renders the four CRW products (~2–3 h
+        # bootstrap, ~30 s warm), encodes the 72 CRW MP4s, and writes the
+        # manifest MERGED with the live one (preserving Job 1's fresh OISST
+        # clips). If this job stalls, the OISST animation Job 1 published is
+        # already current; only CRW lags, and the drift guard surfaces it.
+        run: |
+          python generate_sst_animations.py \
+            --products crw_actual crw_anomaly crw_anomaly_records crw_anomaly_gmr
 
       - name: Save animation frame cache to R2 (full set)
         if: always()
@@ -363,58 +420,10 @@ jobs:
             --cache-control "$CC" --content-type "application/json" \
             --exclude "*" --include "*.json" --only-show-errors
 
-      - name: Push SST MP4 artifacts to orphan branch (force-push, scoped)
-        # Force-push is intentional and SAFE here:
-        #   * The `mp4-artifacts` branch is purpose-built for rewrites —
-        #     each workflow run rewrites only its OWN family directory
-        #     (`sst/`) and leaves sibling families' dirs untouched.
-        #   * No source code lives on this branch; it is a CDN-friendly
-        #     publish surface for raw.githubusercontent.com.
-        #   * `main` is never touched by this step.
-        # If the branch doesn't exist yet (first SST run), it is
-        # created as an orphan with just `sst/` + `README.md`.
+      - name: Push CRW MP4 artifacts to orphan branch (overlay, merge-safe)
+        # Same shared overlay publisher as Job 1: adds this shard's CRW MP4s
+        # + merged manifest on top of the branch (which already has Job 1's
+        # fresh OISST), preserving both families. See scripts/sst_publish_orphan.sh.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -eo pipefail
-          ARTIFACTS_DIR=/tmp/mp4-artifacts
-          rm -rf "$ARTIFACTS_DIR"
-          mkdir -p "$ARTIFACTS_DIR"
-          cd "$ARTIFACTS_DIR"
-
-          git init -q
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-          # Pull the existing branch if it's there; otherwise start fresh
-          # as an orphan so the very first SST run can bootstrap it.
-          if git fetch --depth=1 origin mp4-artifacts 2>/dev/null; then
-            git checkout -q -b mp4-artifacts FETCH_HEAD
-          else
-            echo "mp4-artifacts branch does not exist yet — creating it"
-            git checkout -q --orphan mp4-artifacts
-            git rm -rfq . 2>/dev/null || true
-          fi
-
-          # Wipe ONLY the SST family dir; preserve sibling families'
-          # dirs (subsurface/, armor3d/) when those workflows start
-          # writing to this branch in future PRs.
-          rm -rf sst
-          mkdir -p sst
-          cp -r "${GITHUB_WORKSPACE}/_mp4_build/sst/." sst/
-
-          # Refresh README only if missing — manual edits survive.
-          if [ ! -f README.md ]; then
-            cp "${GITHUB_WORKSPACE}/_mp4_build/README.md" README.md
-          fi
-
-          git add sst README.md
-          if git diff --cached --quiet; then
-            echo "No SST artifact changes to push."
-            exit 0
-          fi
-          git commit -q -m "chore: refresh SST MP4 artifacts ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-          # Force-push is fine here — see step header comment.
-          git push --force origin mp4-artifacts
+        run: bash scripts/sst_publish_orphan.sh
