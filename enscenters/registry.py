@@ -32,6 +32,13 @@ STEPS_SHORT: List[int] = list(range(0, 145, 3))
 # msl + gh(300/500) at 0..360 by 6, same 721x1440 0.25 deg grid as IFS ENS.
 STEPS_AIFS: List[int] = list(range(0, 361, 6))   # 61 steps
 
+# GEFS 0.5 deg (pgrb2ap5) forecast steps, identical for EVERY cycle hour
+# (00/06/12/18Z all reach f384). Verified live 2026-06-14: the bucket publishes
+# 3-hourly to 240 h then 6-hourly to 384 h; we SAMPLE 3-hourly to 192 h then
+# 6-hourly to 384 h (the same shape as ECMWF ENS: dense early, coarse in the long
+# range), so the viewer scrubs the full 384 h horizon.
+STEPS_GEFS: List[int] = list(range(0, 193, 3)) + list(range(198, 385, 6))   # 97 steps
+
 
 # --- pressure bins (Andrew's five) ---------------------------------------
 # The thresholds are canonical and model-agnostic; they drive both the detect
@@ -174,6 +181,9 @@ class EnsModelSpec:
     gh_levels: Tuple[int, int] = (300, 500)    # thickness layer top, bottom (hPa)
     gh_param_id: int = 156                      # cfgrib paramId: 156 (gh) / 129 (z)
     gh_to_gpm: float = 1.0                       # factor: 1.0 (gh) / 1/9.80665 (z->gpm)
+    # Grid label stamped into the per-cycle JSON (informational; the viewer shows
+    # it). 0.25 deg for the ECMWF open-data models, 0.5 deg for GEFS pgrb2ap5.
+    grid_label: str = "0.25 deg"
     # --- provenance ---
     attribution: str = "ECMWF open data (CC-BY-4.0)"
 
@@ -234,23 +244,42 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         gh_param_id=129,
         gh_to_gpm=1.0 / 9.80665,
     ),
-    # GEFS: NOAA's ensemble. UNLIKE ECMWF/AIFS it does NOT self-detect from
-    # fields - it parses NOAA's already-warm-core/TC-filtered genesis tracker
-    # (atcf_gen), a different methodology (fine standalone and for the
-    # super-ensemble). Light track ingest (see enscenters.tracks); no field
-    # pull, no warmcore. 31 members (control + 30 perturbed), 4x/day to 384 h.
+    # GEFS: NOAA's ensemble - now the SAME methodology as ECMWF ENS / AIFS-ENS.
+    # It SELF-DETECTS closed MSLP lows from the 0.5 deg "a" fields (pgrb2ap5 on
+    # the public noaa-gefs-pds S3 bucket) and runs the identical warm-core
+    # thickness filter, so all three models form one clean super-ensemble. The
+    # ingest is the S3 .idx byte-range backend (enscenters.gefs_ingest); detect,
+    # warm-core, currency, viewer, regions, GIF and run-selector are all reused
+    # unchanged. 31 members (gec00 control + gep01..gep30), 4x/day, full 384 h.
+    # GEFS publishes HGT (geopotential HEIGHT, gpm), so THK = HGT300 - HGT500
+    # directly (gh_param "gh", gh_to_gpm 1.0). vmax is Atkinson-Holliday from the
+    # central pressure, SAME as ECMWF/AIFS (not the genesis tracker's 10 m wind).
     EnsModelSpec(
         slug="gefs",
         label="GEFS",
-        source="noaa-gefs-genesis",
-        source_kind="genesis_tracks",
-        n_perturbed=30,                 # + control = 31 members
-        warm_core=False,                # the tracker already TC-filters
-        attribution="NOAA GEFS ensemble genesis tracker (atcf_gen)",
-        caption=("Genesis tracks from NOAA's GEFS ensemble tracker - already "
-                 "warm-core / TC filtered. Peak winds are the model's own maximum "
-                 "10 m wind from the ATCF (not an Atkinson-Holliday estimate). "
-                 "Data: NOAA GEFS genesis tracker."),
+        source="noaa-gefs-aws",
+        source_kind="self_detect",
+        n_perturbed=30,                 # gec00 control + gep01..gep30 = 31 members
+        control_stream="gec00",         # truthy so member_ids() includes CTL
+        control_type="ctl",             # (GEFS gate is in gefs_ingest, not used here)
+        param="prmsl",
+        param_id=151,                   # PRMSL (mean sea level)
+        steps_long=list(STEPS_GEFS),
+        steps_short=list(STEPS_GEFS),   # GEFS reaches 384 h for every cycle hour
+        control_step_long=STEPS_GEFS[-1],
+        control_step_short=STEPS_GEFS[-1],
+        warm_core=True,                 # self-detected -> warm-core thickness filter
+        gh_param="gh",                  # GEFS HGT is geopotential height (gpm)
+        gh_param_id=156,
+        gh_to_gpm=1.0,
+        gh_levels=(300, 500),
+        grid_label="0.5 deg",
+        attribution="NOAA GEFS 0.5 deg open data (noaa-gefs-pds)",
+        caption=("Self-detected closed MSLP lows from the GEFS 0.5 deg ensemble, "
+                 "filtered to warm-core tropical systems by the same upper-level "
+                 "thickness test as the ECMWF models. Peak winds are an "
+                 "Atkinson-Holliday estimate from central pressure. "
+                 "Data: NOAA GEFS (noaa-gefs-pds)."),
     ),
     # Roadmap (later stages, ENSEMBLE_DESIGN.md): "gdm_fnv3", "gdm_gencast",
     # and a derived "super" entry.
