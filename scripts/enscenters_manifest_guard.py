@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
-"""Atomic, monotonic reconcile for the shared Ensemble Cyclone Centers manifest.
+"""R2-truth reconcile for the shared Ensemble Cyclone Centers manifest.
 
 Every ensemble model (ecens, ecaie, gefs, ...) publishes to ONE shared
-``models/enscenters/manifest.json`` from its OWN per-model workflow. Those
-workflows race: each builds a manifest from a best-effort read of the prior
-(over the public CDN, which can transiently 403 a PRESENT object) and then has
-to fold its update into whatever the SIBLINGS published in the meantime. Two
-failure modes clobbered the live manifest in practice:
+``models/enscenters/manifest.json`` from its OWN per-model workflow. The manifest
+is DERIVED FROM WHAT ACTUALLY EXISTS ON R2: the publishing workflow lists the
+cycle objects under each ``models/enscenters/{slug}/`` prefix (authenticated S3,
+the source of truth) and this reconcile sets each model's entry to the newest
+``retain`` of those, with ``latest`` == the newest object present. The live
+manifest contributes only cache-bust tokens (cycle_versions), labels, and
+default_model. Consequences:
+
+  * A model can NEVER stay frozen on an old cycle while newer cycles already sit
+    on R2 (the prod bug: ecens/ecaie stuck at Jun-12 while Jun-13 JSONs were live
+    on R2 but unreferenced) -- ANY model's run re-derives every model from R2.
+  * ``latest`` is always the newest object on R2, so it can only move forward
+    (prune removes the OLDEST beyond retain, never the newest).
+  * A sibling is never dropped: if it has objects on R2 it is in the result.
+
+This replaces the earlier prior-manifest-union guard, which trusted a (possibly
+stale) prior entry and so kept a model frozen when its own workflow hadn't
+re-published. The two historical failure modes it also fixes:
 
   (A) REGRESSION of a model's OWN latest. If the builder's CDN read came back
       empty (a persistent Cloudflare 403, indistinguishable there from a genuine
@@ -19,36 +32,21 @@ failure modes clobbered the live manifest in practice:
       back to ``{}`` on ANY read hiccup (``get-object ... || echo '{}'``), which
       silently disabled the preserve and let a thin manifest clobber the others.
 
-This guard closes both. It reconciles the freshly-built manifest against the
-AUTHORITATIVE live manifest (read by the workflow directly from R2 via the
-authenticated S3 API - reliable, NOT the flaky public CDN) with three rules that
-make a clobber IMPOSSIBLE:
+  (A) REGRESSION of a model's own latest, when its build had an empty watermark.
+  (B) DROPPED siblings, when a read hiccup left the prior manifest empty.
 
-  * MERGE BY MODEL: for every model present in EITHER side, the result keeps the
-    UNION of its cycles (newest ``retain`` kept), so a model's latest can only
-    move FORWARD and a sibling is always carried through.
-  * NEVER DROP: every model that is live with >=1 cycle survives.
-  * NEVER REGRESS: every model's resulting ``latest`` is >= its live ``latest``.
-
-The last two are also asserted after the merge as a hard refuse-to-write gate:
-if the reconciled manifest would somehow drop a model or regress a latest (a
-logic bug), the guard writes NOTHING and exits non-zero - the workflow then
-leaves the prior manifest live and the next cron self-heals. Worst case is a
-skipped publish, never a clobber.
-
-``live_status`` (argv[3]) lets the workflow tell the guard whether the live read
-is TRUSTWORTHY:
-  ok      -> live_manifest is the real live JSON; reconcile against it.
-  absent  -> live object genuinely does not exist (first run); nothing to
-             preserve, the new manifest stands (still validated to be non-empty).
-  failed  -> the workflow could not read live R2; ABORT (exit non-zero) so we
-             never publish a manifest that might clobber siblings. (The workflow
-             normally skips the publish itself before reaching here; this is a
-             belt-and-suspenders backstop.)
+Deriving from the R2 listing makes BOTH impossible by construction: the truth is
+the set of objects on R2, not any manifest read. A refuse-to-write backstop still
+aborts (writes nothing, prior stays live) if the result would drop a model that
+has objects on R2, or if the listing came back empty while the live manifest has
+models (a suspected listing failure) -- worst case a skipped publish, never a
+clobber. The workflow skips the publish entirely on a listing failure, so when
+this guard is reached the listing succeeded.
 
 stdlib only (the GEFS workflow installs no JSON/cloud deps).
 
-argv: <new_manifest_path> <live_manifest_path> [live_status=ok] [retain=8]
+argv: <new_manifest_path> <live_manifest_path> <r2_present_json> [retain=8]
+  r2_present_json: {slug: [cycles...]} from `aws s3 ls` of each model prefix.
 """
 import datetime as dt
 import json
@@ -57,6 +55,7 @@ import sys
 # Canonical selector order (matches enscenters.registry order). Unknown slugs are
 # appended after, so a future model still publishes even before this list is bumped.
 ORDER = ["ecens", "ecaie", "gefs"]
+LABELS = {"ecens": "ECMWF ENS", "ecaie": "AIFS-ENS", "gefs": "GEFS"}
 DEFAULT_MODEL = "ecens"           # mirrors enscenters.registry.DEFAULT_MODEL
 SCHEMA_VERSION = 1
 DEFAULT_RETAIN = 8                # mirrors enscenters.pipeline.DEFAULT_RETAIN
@@ -94,59 +93,74 @@ def _latest(entry: dict):
     return max(cyc) if cyc else None
 
 
+def _present_map(r2_present, live_models, new_models):
+    """The authoritative per-model cycle EXISTENCE map. When ``r2_present`` (the R2
+    object listing, ``{slug: [cycles]}``) is given it IS the truth. When it is None
+    (callers/tests without a listing) we fall back to the live manifest's own cycle
+    lists, which reproduces the prior union-of-live-and-new behaviour."""
+    if r2_present is not None:
+        out = {}
+        for slug, cyc in r2_present.items():
+            out[slug] = [c for c in (cyc or []) if isinstance(c, str)]
+        return out
+    return {slug: list(l.get("cycles") or []) for slug, l in live_models.items()}
+
+
 def reconcile(new: dict, live: dict, live_status: str = "ok",
-              retain: int = DEFAULT_RETAIN):
-    """Pure core. Merge the freshly-built ``new`` manifest with the authoritative
-    ``live`` one, per model, monotonically. Returns ``(manifest, ok, reason)``:
+              retain: int = DEFAULT_RETAIN, r2_present=None):
+    """Pure core. Derive the published manifest from what ACTUALLY EXISTS ON R2
+    (``r2_present``: ``{slug: [cycles]}`` from the authenticated object listing),
+    folding in this run's freshly-built cycles. The live manifest contributes only
+    cycle_versions (cache-bust tokens), labels, and default_model -- it is NOT the
+    source of truth for a model's cycle list, so a model can NEVER stay frozen on an
+    old cycle while newer cycles sit on R2 (the prod bug), and ``latest`` is always
+    the newest cycle present on R2.
 
-      * ``ok=True``  -> ``manifest`` is safe to publish.
-      * ``ok=False`` -> do NOT write; ``reason`` says why (read failed, or a
-        refuse-to-write invariant tripped). ``manifest`` is None.
-
-    Invariants on a successful return, vs ``live``: every live model with cycles
-    is present, and no model's ``latest`` moved backward.
+    Returns ``(manifest, ok, reason)``: ``ok=False`` -> do NOT write (``manifest``
+    is None). By construction every model with objects on R2 is present and its
+    ``latest`` is the newest such object, so the result can never drop a model that
+    has R2 data nor regress a latest below R2 reality.
     """
     if live_status == "failed":
-        return None, False, "live R2 read failed; refusing to publish (avoid clobber)"
+        return None, False, "live read failed; refusing to publish (avoid clobber)"
 
     new_models = _models(new)
-    if not new_models:
-        # The builder only writes a manifest when it published >=1 cycle, so an
-        # empty new manifest is itself a bug; never publish it over live data.
-        return None, False, "new manifest has no models; refusing to publish"
+    live_models = _models(live)
+    present = _present_map(r2_present, live_models, new_models)
 
-    live_models = _models(live) if live_status == "ok" else {}
+    # Suspected listing failure: R2 came back empty yet the live manifest has models
+    # with cycles -> do NOT publish an empty/thinned manifest over live data.
+    if r2_present is not None and not any(present.values()) \
+            and any(l.get("cycles") for l in live_models.values()):
+        return None, False, ("R2 listing returned no cycles but live manifest has "
+                             "models; suspected listing failure, refusing to publish")
 
-    # --- merge by model: union cycles, newest `retain`, monotone latest ---
+    # --- derive each model from R2 truth (+ this run's just-built cycles) ---
     merged = {}
-    for slug in set(new_models) | set(live_models):
-        n = new_models.get(slug, {})
-        l = live_models.get(slug, {})
-        cycles = sorted(set(n.get("cycles", [])) | set(l.get("cycles", [])), reverse=True)
-        kept = cycles[:retain]
+    for slug in set(present) | set(new_models):
+        cyc = set(present.get(slug, []))
+        cyc |= set(new_models.get(slug, {}).get("cycles", []))   # listing may lag the sync
+        kept = sorted(cyc, reverse=True)[:retain]
         if not kept:
             continue                      # a model with no cycles is omitted
-        versions = dict(l.get("cycle_versions") or {})
-        versions.update(n.get("cycle_versions") or {})   # this run's versions win
-        entry = dict(n) if n else dict(l)                # prefer this run's label/meta
-        entry["slug"] = slug
-        entry["label"] = n.get("label") or l.get("label") or slug
-        entry["cycles"] = kept
-        entry["latest"] = kept[0]
-        entry["cycle_versions"] = {c: versions[c] for c in kept if c in versions}
-        merged[slug] = entry
+        lv, nv = live_models.get(slug, {}), new_models.get(slug, {})
+        versions = dict(lv.get("cycle_versions") or {})
+        versions.update(nv.get("cycle_versions") or {})          # this run's versions win
+        merged[slug] = {
+            "slug": slug,
+            "label": nv.get("label") or lv.get("label") or LABELS.get(slug) or slug,
+            "cycles": kept,
+            "latest": kept[0],
+            "cycle_versions": {c: versions[c] for c in kept if c in versions},
+        }
 
-    # --- refuse-to-write gate: never drop a live model, never regress a latest ---
-    for slug, l in live_models.items():
-        if not l.get("cycles"):
-            continue
-        if slug not in merged:
-            return None, False, f"refusing to write: would DROP live model {slug!r}"
-        live_latest = _latest(l)
-        res_latest = merged[slug].get("latest")
-        if live_latest and (res_latest is None or res_latest < live_latest):
-            return None, False, (f"refusing to write: would REGRESS {slug!r} latest "
-                                 f"{live_latest} -> {res_latest}")
+    if not merged:
+        return None, False, "no model has any cycle on R2 or in this run; nothing to publish"
+
+    # refuse-to-write backstop: a model that HAS objects on R2 must survive.
+    for slug, cyc in present.items():
+        if cyc and slug not in merged:
+            return None, False, f"refusing to write: would DROP model {slug!r} that has cycles on R2"
 
     # order by registry, unknown slugs appended (a new model still publishes)
     ordered = [merged[s] for s in ORDER if s in merged]
@@ -169,16 +183,23 @@ def reconcile(new: dict, live: dict, live_status: str = "ok",
 
 
 def main(argv) -> int:
+    # argv: <new_manifest> <live_manifest> <r2_present_json> [retain]
+    # r2_present_json is the authoritative R2 listing {slug: [cycles]} the shell
+    # produced (it skips the publish entirely on a listing failure, so when we are
+    # called the listing succeeded; the live manifest is best-effort for versions).
     new_path = argv[1]
     live_path = argv[2]
-    live_status = argv[3] if len(argv) > 3 else "ok"
+    r2_path = argv[3] if len(argv) > 3 else None
     retain = int(argv[4]) if len(argv) > 4 else DEFAULT_RETAIN
 
     new = _load(new_path)
     live = _load(live_path)
+    r2_present = _load(r2_path) if r2_path else None
+    if r2_present is not None and not isinstance(r2_present, dict):
+        r2_present = None
 
-    live_before = sorted(_models(live).keys())
-    manifest, ok, reason = reconcile(new, live, live_status, retain)
+    live_before = [(s, _latest(m)) for s, m in sorted(_models(live).items())]
+    manifest, ok, reason = reconcile(new, live, "ok", retain, r2_present=r2_present)
     if not ok:
         sys.stderr.write(f"[guard] ABORT: {reason}\n")
         return 2
@@ -186,12 +207,9 @@ def main(argv) -> int:
     with open(new_path, "w") as f:
         json.dump(manifest, f, separators=(",", ":"))
 
-    new_slugs = set(_models(new).keys())
     after = [(m["slug"], m.get("latest")) for m in manifest["models"]]
-    preserved = [s for s in live_before if s not in new_slugs]  # siblings carried through
-    print(f"[guard] reconciled (live_status={live_status}); "
-          f"live models={live_before or '[]'} -> published {after}; "
-          f"preserved siblings={preserved or '[]'}")
+    print(f"[guard] reconciled against R2 reality; live={live_before or '[]'} "
+          f"-> published {after}")
     return 0
 
 

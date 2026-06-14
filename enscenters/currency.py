@@ -60,10 +60,15 @@ def plan_backfill(published: Iterable[str], complete: Iterable[str],
     """Pure planner - the heart of never-miss. Given the published watermark and
     the cycles COMPLETE on the source, return the cycle strings to ingest THIS
     run: cycles inside the target window (the newest ``retain`` of published U
-    complete) that are complete but not yet published, OLDEST FIRST, capped at
+    complete) that are complete but not yet published, NEWEST FIRST, capped at
     ``max_per_run``.
 
-    - Oldest-first so a gap fills from the back rather than the newest starving it.
+    - NEWEST-first so a fresh cycle is published as soon as it disseminates and
+      ``latest`` tracks reality every run; this is what keeps the manifest from
+      lagging behind R2. Older gaps in the window still fill on subsequent runs
+      (the window is bounded, so the whole window catches up within a few runs and
+      hourly fires far outpace the 4 cycles/day arrival rate, so an old gap is
+      never starved in practice).
     - Window-bounded so we never ingest a cycle that would be pruned immediately.
     - Capped so per-run work is bounded; leftovers (incl. a long backlog) catch
       up monotonically over subsequent runs.
@@ -71,7 +76,7 @@ def plan_backfill(published: Iterable[str], complete: Iterable[str],
     pub: Set[str] = set(published)
     comp: Set[str] = set(complete)
     window = sorted(comp | pub, reverse=True)[:retain]   # the set we want live
-    missing = sorted(c for c in window if c in comp and c not in pub)  # oldest first
+    missing = sorted((c for c in window if c in comp and c not in pub), reverse=True)  # newest first
     return missing[:max_per_run]
 
 
