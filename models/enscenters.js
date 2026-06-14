@@ -374,7 +374,7 @@
     }
     rows.sort(function (a, b) { return a.mslp - b.mslp; });
     this.peaks = rows;
-    this.trailUpTo = -1;   // region changed -> trail invalid
+    this._resetTrail();    // region changed -> trail invalid (clear pixels + counter)
   };
 
   // ---- figure layout (CSS px; contexts are dpr-scaled so we draw in CSS px) ----
@@ -409,7 +409,7 @@
     // size offscreen layers
     this.staticLayer.width = cv.width; this.staticLayer.height = cv.height;
     this.trailLayer.width = Math.round(this.map.w * dpr); this.trailLayer.height = Math.round(this.map.h * dpr);
-    this.trailUpTo = -1;
+    this._resetTrail();    // reassigning width already wiped the bitmap; reset counter via the one helper
   };
 
   EnsCentersViewer.prototype._scale = function (ctx) {
@@ -570,15 +570,33 @@
   };
 
   // ensure the trail layer holds hollow rings for steps 0..(i-1)
+  // Invalidate the trail: clear the offscreen layer's pixels AND reset the
+  // progress counter, together. The invariant "trailUpTo === -1 implies the
+  // layer is empty" must hold unconditionally, so callers that mean to
+  // invalidate the trail use THIS (never a bare `trailUpTo = -1`, which would
+  // leave stale pixels for _ensureTrail to draw a new pass on top of).
+  EnsCentersViewer.prototype._resetTrail = function () {
+    var g = this.trailLayer.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, this.trailLayer.width, this.trailLayer.height);
+    this.trailUpTo = -1;
+  };
+
   EnsCentersViewer.prototype._ensureTrail = function (i) {
     var target = (this.trailMode === 'trail') ? (i - 1) : -1;
     var g = this.trailLayer.getContext('2d');
     if (target < 0) {
-      if (this.trailUpTo !== -1) { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, this.trailLayer.width, this.trailLayer.height); this.trailUpTo = -1; }
+      // ALWAYS clear - never trust a possibly-dirty layer. Clearing an
+      // already-empty layer is a cheap no-op.
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, this.trailLayer.width, this.trailLayer.height);
+      this.trailUpTo = -1;
       return;
     }
     if (this.trailUpTo === target) return;
-    if (this.trailUpTo > target) {   // scrubbed back -> rebuild
+    // Scrubbed back -> rebuild, OR a from-scratch build (counter at -1): clear
+    // before the draw loop so a new pass never lands on stale pixels. An
+    // in-range forward step (0 <= trailUpTo < target) keeps building incrementally.
+    if (this.trailUpTo > target || this.trailUpTo === -1) {
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, this.trailLayer.width, this.trailLayer.height);
       this.trailUpTo = -1;
     }
@@ -622,7 +640,7 @@
     this.trailMode = (mode === 'current') ? 'current' : 'trail';
     try { localStorage.setItem(LS_TRAIL, this.trailMode); } catch (e) {}
     this._syncTrailBtn();
-    this.trailUpTo = -1;
+    this._resetTrail();   // clear pixels too, not just the counter (the bug)
     if (this.regionFrames.length) this._show(this.idx);
   };
 
@@ -862,7 +880,7 @@
       // steps. The synchronous loop never repaints mid-way, so the visible
       // canvas does not flash.
       var savedIdx = self.idx, added = 0;
-      self.trailUpTo = -1;
+      self._resetTrail();   // build the GIF trail from a clean layer
       for (var i = 0; i < total; i++) {
         self._show(i);
         if (selSet[i]) {

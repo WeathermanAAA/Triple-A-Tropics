@@ -20,6 +20,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 HARNESS = Path(__file__).resolve().parent / "enscenters_viewer_smoke.cjs"
+TRAIL_HARNESS = Path(__file__).resolve().parent / "enscenters_trail_smoke.cjs"
 JS = REPO / "models" / "enscenters.js"
 NODE = shutil.which("node")
 
@@ -119,6 +120,24 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["runValue"], "2026061300")
         self.assertEqual(s["runFirstLabel"], "Jun 13 00Z (latest)")
         self.assertEqual(s["runSecondLabel"], "Jun 12 18Z")
+
+    def test_trail_clears_on_toggle_no_stale_rings(self):
+        # Stale-trail regression: accumulate the trail to a late step, toggle
+        # Trail OFF, move to an earlier step (idx=2), toggle Trail ON. The trail
+        # must hold ONLY steps 0..1 - no leftover rings from the later steps.
+        # Pre-fix (bare `trailUpTo = -1` without clearing the bitmap) this set
+        # was [0,1,2,3,4]; the fix makes it [0,1].
+        proc = subprocess.run(
+            [NODE, str(TRAIL_HARNESS), str(JS)],
+            cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"trail harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        # sanity: the trail genuinely accumulated the later steps first
+        self.assertEqual(s["afterAccumSteps"], [0, 1, 2, 3, 4])
+        self.assertEqual(s["idx"], 2)
+        # the fix: after the off->on toggle at idx=2, ONLY steps 0..1 remain
+        self.assertEqual(s["trailDrawnSteps"], [0, 1],
+                         "stale trail rings beyond step 1 survived the toggle")
 
 
 if __name__ == "__main__":
