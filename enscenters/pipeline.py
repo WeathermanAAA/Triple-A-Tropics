@@ -193,6 +193,7 @@ def build_one_cycle(
              f"{len(member_objs)} members, {total_centers} centers, {len(failures)} failed")
     return {
         "cycle": cyc_str,
+        "generated_at": data["generated_at"],   # per-cycle cache-bust version
         "members": len(member_objs),
         "failures": failures,
         "n_centers": total_centers,
@@ -224,7 +225,9 @@ def build_cycle(
     res = build_one_cycle(spec, cycle, out_dir, members=members, steps=steps,
                           jobs=jobs, min_members_frac=min_members_frac,
                           source=source, progress=progress)
-    manifest, prune_keys = merge_manifest_multi(prior_manifest, spec, [res["cycle"]], retain)
+    manifest, prune_keys = merge_manifest_multi(
+        prior_manifest, spec, [res["cycle"]], retain,
+        new_versions={res["cycle"]: res.get("generated_at")})
     write_outputs(out_dir, manifest, prune_keys)
     progress(f"[ecens] manifest updated; prune {len(prune_keys)} old cycle(s)")
     return {**res, "prune_keys": prune_keys, "manifest": manifest}
@@ -270,13 +273,19 @@ def published_cycles(manifest: Optional[dict], slug: str):
     return set()
 
 
-def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, retain: int):
+def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, retain: int,
+                         new_versions: Optional[dict] = None):
     """Upsert ``new_cycles`` (a list of YYYYMMDDHH strings) into the manifest,
     trim to ``retain`` newest per model, and return (manifest, prune_keys). Models
     with no cycles are omitted so the viewer's selector only shows models that
     have data. ``latest`` is always the newest retained cycle. Folding several
     backfilled cycles in one call (and computing prune ONCE from the final kept
     set) means an old backfilled gap is never spuriously listed as a prune.
+
+    ``new_versions`` maps each rebuilt cycle -> its content version (the per-cycle
+    ``generated_at``); it is recorded under the model's ``cycle_versions`` so the
+    viewer can cache-bust the data fetch on overwrite (an unchanged cycle keeps
+    its version and stays cached). Versions for pruned cycles are dropped.
 
     Tolerant of a malformed prior manifest fetched from the public CDN: a
     non-list `models`, entries missing `slug`, or a non-list `cycles` are
@@ -298,6 +307,11 @@ def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, 
     kept, pruned = cycles[:retain], cycles[retain:]
     entry["cycles"] = kept
     entry["latest"] = kept[0]
+    # per-cycle cache-bust versions: prior + this run's, trimmed to retained cycles
+    versions = dict(entry.get("cycle_versions") or {})
+    if new_versions:
+        versions.update(new_versions)
+    entry["cycle_versions"] = {c: versions[c] for c in kept if c in versions}
     by_slug[spec.slug] = entry
 
     # order by registry; include only models that have at least one cycle

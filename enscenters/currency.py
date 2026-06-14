@@ -116,10 +116,12 @@ def run_currency(
 
     ingested: List[str] = []
     failed: List[str] = []
+    versions: dict = {}                       # cycle -> per-cycle generated_at (cache-bust)
     for cyc_str in plan:                      # oldest-first
         try:
             res = ingest_cycle(by_str[cyc_str])
             ingested.append(res["cycle"])
+            versions[res["cycle"]] = res.get("generated_at")
         except Exception as e:  # noqa: BLE001 - skip a sparse/failed cycle, retry next run
             failed.append(cyc_str)
             progress(f"[currency] cycle {cyc_str} ingest FAILED, skipping (retries next run): {e}")
@@ -129,7 +131,8 @@ def run_currency(
         # workflow aborts before the prune and the prior data stays live.
         raise RuntimeError(f"all {len(plan)} planned cycle(s) failed to ingest: {plan}")
 
-    manifest, prune_keys = merge_manifest_multi(prior_manifest, spec, ingested, retain)
+    manifest, prune_keys = merge_manifest_multi(
+        prior_manifest, spec, ingested, retain, new_versions=versions)
     write_outputs(out_dir, manifest, prune_keys)
     progress(f"[currency] published {len(ingested)} cycle(s) {ingested}; "
              f"prune {len(prune_keys)} old cycle(s); "
