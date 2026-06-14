@@ -43,11 +43,13 @@ DEFAULT_MIN_MEMBERS_FRAC = 0.75  # refuse to publish a sparse cycle (quorum)
 # Hard wall-clock ceiling for ONE cycle's member gather (parallel path). The
 # upstream clients (ecmwf-opendata -> multiurl, and our S3 fetch) can stall on a
 # degraded portal with NO hard timeout, which otherwise wedges the run to the
-# workflow's wall-clock limit (observed: a healthy ECMWF cycle finishes well
-# under 2 h; a stalled one rode past 3.5 h). At the deadline we abandon the
-# un-finished members and force-kill their workers; the quorum check + never-miss
-# retry then handle the gap. Generous so a slow-but-healthy cycle never trips it.
-DEFAULT_MEMBER_DEADLINE_S = 9000  # 150 min
+# workflow's wall-clock limit (observed: a healthy ECMWF cycle finishes ~2 h; a
+# stalled one rode past 3.5 h). At the deadline we abandon the un-finished members
+# and force-kill their workers; the quorum check + never-miss retry then handle
+# the gap. Set well ABOVE the healthy single-cycle time (~126 min observed) so a
+# slow-but-healthy cycle never false-trips, yet well BELOW the workflow's 330-min
+# timeout so a true stall is bounded and recovered ~2 h sooner than before.
+DEFAULT_MEMBER_DEADLINE_S = 12000  # 200 min
 
 
 def _utcnow_iso() -> str:
