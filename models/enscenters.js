@@ -36,13 +36,19 @@
   var LS_TRAIL = 'ens.trail';
   var LS_STYLE = 'ens.style';     // 'cheerios' (default) | 'lines'
   var LS_MEAN = 'ens.mean';       // 'on' | 'off' (default)
+  var LS_PPTS = 'ens.ppts';       // mean-track dated MSLP labels: 'on' | 'off' (default)
   // Toolkit (Stage 2) overlays consume the sibling tracks JSON. Tracks are an
   // OPTIONAL sibling: loaded lazily ONLY when a track-consuming feature is on, so
   // the default Cheerios view stays lean and a model without a tracks file falls
-  // back cleanly (toggles hide). Lines = thin/muted per-member spaghetti; the mean
-  // track is BOLD with a dark casing so it pops on the navy without overpowering
-  // the centers field.
+  // back cleanly (toggles hide). Lines = subtle neutral connector threads UNDER the
+  // pressure-bin colored per-member center circles (the colored circles carry the
+  // emphasis, with a filled leading head at the current F-hour); the mean track is
+  // BOLD with a dark casing so it pops on the navy without overpowering the field.
   var LINE_LW = 1.0, LINE_ALPHA = 0.5;
+  // Lines mode connector threads: thin, low-opacity, neutral grey so each member's
+  // path reads without the old bold-color spaghetti competing with the circles.
+  var CONNECTOR_COLOR = 'rgba(176,190,212,0.30)', CONNECTOR_LW = 0.8;
+  var TRAIL_RING_R = 2.3, TRAIL_RING_LW = 1.2;   // hollow per-step rings in Lines mode
   var MEAN_LW = 3.0, MEAN_DIM_LW = 1.5, MEAN_DIM_ALPHA = 0.45;
   var MEAN_CASING = 'rgba(7,16,28,0.9)';
   var MEAN_MIN_MEMBERS = 3;       // hide clusters tinier than this (unreliable)
@@ -188,6 +194,7 @@
       trail: el('enscenters-trail'),
       style: el('enscenters-style'),
       mean: el('enscenters-mean'),
+      ppts: el('enscenters-ppts'),
       obs: el('enscenters-obs'),
       gif: el('enscenters-gif'),
       gifmodal: el('enscenters-gifmodal'),
@@ -238,6 +245,8 @@
     this.dataStyle = (ds === 'lines') ? 'lines' : 'cheerios';
     var mn = null; try { mn = localStorage.getItem(LS_MEAN); } catch (e) {}
     this.meanOn = (mn === 'on');
+    var pp = null; try { pp = localStorage.getItem(LS_PPTS); } catch (e) {}
+    this.pptsOn = (pp === 'on');   // dated mean-track MSLP labels; default OFF (busy)
     var ob = null; try { ob = localStorage.getItem(LS_OBS); } catch (e) {}
     this.obsOn = (ob === 'on');
     this.obs = null;             // active observed systems (from global_storms.geojson)
@@ -549,38 +558,49 @@
     }
   };
 
-  // Lines: thin, muted per-member spaghetti up to the current F-hour, colored by
-  // the same pressure-bin palette (segment colored by its endpoint's pressure).
-  // Segments are batched per bin (5 strokes/frame) and broken across the dateline
-  // (a >half-map x jump) so a wrapping track never draws a streak.
+  // Lines: the easterly-wave look. A THIN, low-opacity, NEUTRAL grey thread links
+  // each member's consecutive per-step centers (drawn UNDER), then the pressure-bin
+  // colored circles carry the emphasis - hollow rings for the trail, a FILLED head
+  // at the current F-hour - so each member's path reads without bold-color clutter.
+  // Threads are broken across the dateline (a >half-map x jump) so a wrap never
+  // draws a streak; circles are batched per bin.
   EnsCentersViewer.prototype._drawLines = function (g, idx) {
     if (!this.tracksRegion || !this.tracksRegion.length) return;
     var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
     var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
-    var buckets = {}, heads = {};
-    for (var b = 0; b < BIN_ORDER.length; b++) { buckets[BIN_ORDER[b]] = []; heads[BIN_ORDER[b]] = []; }
+    var conn = [], rings = {}, heads = {};
+    for (var b = 0; b < BIN_ORDER.length; b++) { rings[BIN_ORDER[b]] = []; heads[BIN_ORDER[b]] = []; }
     var trs = this.tracksRegion;
     for (var i = 0; i < trs.length; i++) {
-      var fixes = trs[i], prev = null, head = null;
+      var fixes = trs[i], prev = null, proj = [];
       for (var k = 0; k < fixes.length; k++) {
         var f = fixes[k]; if (f[0] > uptoStep) break;          // step-sorted
         var p = TATRegions.project(wrap180(f[2]), f[1], ext, mw, mh);
         var bk = (f[3] != null) ? binKey(f[3]) : BIN_ORDER[0];
-        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) buckets[bk].push(prev[0], prev[1], p[0], p[1]);
-        prev = p; head = [p[0], p[1], bk];                     // current F-hour position (leads the line)
+        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) conn.push(prev[0], prev[1], p[0], p[1]);
+        prev = p; proj.push([p[0], p[1], bk]);
       }
-      if (head) heads[head[2]].push(head[0], head[1]);
+      if (!proj.length) continue;
+      var last = proj.length - 1;
+      for (var j = 0; j < last; j++) rings[proj[j][2]].push(proj[j][0], proj[j][1]);   // trail -> hollow rings
+      heads[proj[last][2]].push(proj[last][0], proj[last][1]);                          // current F-hour -> filled head
     }
-    // thin trailing spaghetti, batched per pressure bin
-    g.globalAlpha = LINE_ALPHA; g.lineWidth = LINE_LW; g.lineJoin = 'round'; g.lineCap = 'round';
-    for (var bo = 0; bo < BIN_ORDER.length; bo++) {
-      var key = BIN_ORDER[bo], seg = buckets[key]; if (!seg.length) continue;
-      g.strokeStyle = PRESSURE_BIN_COLORS[key] || '#fff'; g.beginPath();
-      for (var s = 0; s < seg.length; s += 4) { g.moveTo(seg[s], seg[s + 1]); g.lineTo(seg[s + 2], seg[s + 3]); }
+    // 1) neutral connector threads, UNDER the circles
+    if (conn.length) {
+      g.globalAlpha = 1; g.strokeStyle = CONNECTOR_COLOR; g.lineWidth = CONNECTOR_LW;
+      g.lineJoin = 'round'; g.lineCap = 'round'; g.beginPath();
+      for (var c = 0; c < conn.length; c += 4) { g.moveTo(conn[c], conn[c + 1]); g.lineTo(conn[c + 2], conn[c + 3]); }
       g.stroke();
     }
-    // filled leading heads at the current F-hour (Cheerio "filled = current step"
-    // style: pressure-bin colored, opaque, so the heads lead the lines as it animates)
+    // 2) hollow pressure-bin rings for the trail centers (batched per bin)
+    g.globalAlpha = 0.92; g.lineWidth = TRAIL_RING_LW; var rr = TRAIL_RING_R;
+    for (var bo = 0; bo < BIN_ORDER.length; bo++) {
+      var rk = BIN_ORDER[bo], rg = rings[rk]; if (!rg.length) continue;
+      g.strokeStyle = PRESSURE_BIN_COLORS[rk] || '#fff'; g.beginPath();
+      for (var rs = 0; rs < rg.length; rs += 2) { g.moveTo(rg[rs] + rr, rg[rs + 1]); g.arc(rg[rs], rg[rs + 1], rr, 0, 6.2832); }
+      g.stroke();
+    }
+    // 3) filled leading heads at the current F-hour (opaque, lead the threads)
     g.globalAlpha = 1; var hr = this.fillR;
     for (var ho = 0; ho < BIN_ORDER.length; ho++) {
       var hk = BIN_ORDER[ho], hd = heads[hk]; if (!hd.length) continue;
@@ -658,9 +678,9 @@
       g.beginPath(); g.moveTo(pts[s2 - 1][0], pts[s2 - 1][1]); g.lineTo(pts[s2][0], pts[s2][1]); g.stroke();
     }
     if (!dim) {
-      // dated median-MSLP labels at daily leads (the TropicalTidbits EEMN look),
-      // then the filled leading marker on top so it leads the bold track.
-      if (labelDaily) this._drawMeanDailyLabels(g, pts, lut);
+      // dated median-MSLP labels at daily leads (the TropicalTidbits EEMN look) -
+      // behind the "Pressure points" toggle (default off), headline cluster only.
+      if (labelDaily && this.pptsOn) this._drawMeanDailyLabels(g, pts, lut);
       var last = pts[pts.length - 1], hmslp = lut[last[2]];
       var hcol = PRESSURE_BIN_COLORS[(hmslp != null) ? binKey(hmslp) : BIN_ORDER[0]] || '#fff';
       g.globalAlpha = 1;
@@ -673,50 +693,81 @@
   // Dated median-MSLP labels stepping along the bold ensemble-mean track at DAILY
   // leads (step % 24 == 0), keyed to the actual mean-track points (clusters often
   // start mid-run, so we never assume a 0/24/48 origin). MSLP is the cluster's p50
-  // at that lead (lut, already joined from plume.mslp). Plain casing-stroked text +
-  // a small tick - readable over the field, never a heavy boxed placard. Drawn in
-  // the translated/clipped map space; de-cluttered so stacked daily points (a
-  // slow-mover) don't pile labels on top of each other.
+  // at that lead (lut, joined from plume.mslp). Legibility over a busy field: each
+  // label is OFFSET consistently up-and-right of its track point (flipped left near
+  // the map's right edge) with a tiny leader, sits on a small dark halo pill, and
+  // COLLISION-AVOIDED - a candidate whose box would overlap an already-placed label
+  // (or its own track point clutter) is skipped, so a slow-mover never piles labels.
   EnsCentersViewer.prototype._drawMeanDailyLabels = function (g, pts, lut) {
-    var lastX = -1e9, lastY = -1e9;
-    g.save();
-    g.font = '600 9px ' + FONT; g.lineJoin = 'round';
+    // gather daily candidates first
+    var cand = [];
     for (var i = 0; i < pts.length; i++) {
       var step = pts[i][2];
       if (step <= 0 || step % 24 !== 0) continue;
       var mslp = lut[step]; if (mslp == null) continue;
-      var x = pts[i][0], y = pts[i][1];
-      var dx = x - lastX, dy = y - lastY;
-      if (dx * dx + dy * dy < 26 * 26) continue;             // de-clutter: radial gap from last label
-      lastX = x; lastY = y;
       var d = new Date(this.initMs + step * 3600000);
-      var txt = MO[d.getUTCMonth()] + ' ' + d.getUTCDate() + '  ' + Math.round(mslp) + ' hPa';
-      // tick dot
-      g.globalAlpha = 1; g.fillStyle = MEAN_CASING; g.beginPath(); g.arc(x, y, 3.0, 0, 6.2832); g.fill();
-      g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 1.7, 0, 6.2832); g.fill();
-      // label: right of the point, flipped left near the map's right edge
-      g.textBaseline = 'middle';
-      var tw = g.measureText(txt).width, lx = x + 7;
-      if (lx + tw > this.map.w - 2) { lx = x - 7; g.textAlign = 'right'; } else { g.textAlign = 'left'; }
-      g.lineWidth = 2.6; g.strokeStyle = 'rgba(7,16,28,0.92)'; g.strokeText(txt, lx, y);
-      g.fillStyle = '#eef3fb'; g.fillText(txt, lx, y);
+      cand.push({ x: pts[i][0], y: pts[i][1],
+        txt: MO[d.getUTCMonth()] + ' ' + d.getUTCDate() + '  ' + Math.round(mslp) + ' hPa' });
+    }
+    if (!cand.length) return;
+    g.save();
+    g.font = '600 9px ' + FONT; g.lineJoin = 'round';
+    var OFFX = 9, OFFY = -13, PADX = 4, BH = 13, placed = [];
+    function overlaps(r) {
+      for (var j = 0; j < placed.length; j++) {
+        var q = placed[j];
+        if (r.x < q.x + q.w + 3 && r.x + r.w + 3 > q.x && r.y < q.y + q.h + 2 && r.y + r.h + 2 > q.y) return true;
+      }
+      return false;
+    }
+    for (var c = 0; c < cand.length; c++) {
+      var x = cand[c].x, y = cand[c].y, txt = cand[c].txt;
+      var tw = g.measureText(txt).width, bw = tw + PADX * 2;
+      // consistent up-right offset; flip to up-left near the right edge
+      var left = (x + OFFX + bw <= this.map.w - 2);
+      var bx = left ? (x + OFFX) : (x - OFFX - bw);
+      var by = y + OFFY - BH / 2;
+      if (by < 2) by = 2;
+      var rect = { x: bx, y: by, w: bw, h: BH };
+      if (overlaps(rect)) continue;                          // collision avoidance: skip
+      placed.push(rect);
+      // tiny leader from the track point to the label pill
+      g.globalAlpha = 1; g.strokeStyle = 'rgba(160,180,208,0.55)'; g.lineWidth = 0.8;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(left ? bx : bx + bw, by + BH / 2); g.stroke();
+      // tick dot at the track point
+      g.fillStyle = MEAN_CASING; g.beginPath(); g.arc(x, y, 2.8, 0, 6.2832); g.fill();
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 1.5, 0, 6.2832); g.fill();
+      // dark halo pill + text
+      roundRectPath(g, bx, by, bw, BH, 3); g.fillStyle = 'rgba(7,16,28,0.78)'; g.fill();
+      g.strokeStyle = 'rgba(120,140,170,0.35)'; g.lineWidth = 0.8; g.stroke();
+      g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillStyle = '#eef3fb';
+      g.fillText(txt, bx + PADX, by + BH / 2 + 0.5);
     }
     g.restore();
   };
 
-  // Vmax plume inset, TOP-RIGHT (opposite the legend; the dense member cloud rises
-  // from the bottom, so both corners stay clear up top). Shown only in Mean mode.
-  // Three delineated, LABELED member statistics - HIGHEST (max), MEDIAN (p50), and
-  // LOWEST (min) - over a light p10-p90 spread band, each curve SSHWS-colored along
-  // its length (it is a wind plume; warmer = stronger). Median is the bold headline
-  // line; max/min are thinner. A vertical marker tracks the current F-hour.
+  // Vmax plume inset, TOP-RIGHT (opposite the legend). Shown only in Mean mode;
+  // describes the headline cluster. Calm + data-forward: ONE low-opacity p10-p90
+  // spread band, a clear MEDIAN line as the emphasis (SSHWS-colored - it is a wind
+  // plume), and thin NEUTRAL Max + Min bound lines, each labeled. Curves are lightly
+  // smoothed to kill per-step jaggedness. A vertical marker tracks the current
+  // F-hour; tidy kt axis; "Vmax plume - N members" caption.
   EnsCentersViewer.prototype._drawPlumeInset = function (g) {
     if (!this.tracks || !this.tracks.clusters) return;
     var dom = this._dominantCluster();
     if (!dom) return;
     var pv = (dom.plume && dom.plume.vmax) || null;
     if (!pv || !pv.lead || pv.lead.length < 2) return;
-    var leads = pv.lead, p10 = pv.p10, p90 = pv.p90, vMax = pv.max, vMed = pv.p50, vMin = pv.min;
+    // light [1,2,1]/4 smoothing for display only (kills per-step jaggedness)
+    function smooth(arr) {
+      var o = []; for (var i = 0; i < arr.length; i++) {
+        var a = arr[Math.max(0, i - 1)], b = arr[i], c = arr[Math.min(arr.length - 1, i + 1)];
+        o.push((a + 2 * b + c) / 4);
+      } return o;
+    }
+    var leads = pv.lead;
+    var p10 = smooth(pv.p10), p90 = smooth(pv.p90),
+        sMax = smooth(pv.max), sMed = smooth(pv.p50), sMin = smooth(pv.min);
     var w = 192, h = 120, x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
@@ -727,45 +778,47 @@
     var cx = x + 8, cy = y + 24, gutter = 36, cw = w - 16 - gutter, ch = h - 34;
     var lmin = leads[0], lmax = leads[leads.length - 1], lspan = Math.max(1, lmax - lmin);
     var vlo = Infinity, vhi = -Infinity;
-    for (var k = 0; k < leads.length; k++) { if (vMin[k] < vlo) vlo = vMin[k]; if (vMax[k] > vhi) vhi = vMax[k]; }
+    for (var k = 0; k < leads.length; k++) { if (sMin[k] < vlo) vlo = sMin[k]; if (sMax[k] > vhi) vhi = sMax[k]; }
     if (!(vhi > vlo)) vhi = vlo + 1;
     var pad = (vhi - vlo) * 0.08;
     vlo = Math.max(0, vlo - pad); vhi += pad;   // wind can't be negative -> floor the axis at 0
     function px(l) { return cx + ((l - lmin) / lspan) * cw; }
     function py(v) { return cy + ch - ((v - vlo) / (vhi - vlo)) * ch; }
-    // light p10-p90 spread band behind the lines
+    function poly(vals) {
+      g.beginPath();
+      for (var s = 0; s < leads.length; s++) { var X = px(leads[s]), Y = py(vals[s]); s ? g.lineTo(X, Y) : g.moveTo(X, Y); }
+      g.stroke();
+    }
+    // 1) single low-opacity p10-p90 spread band
     g.beginPath();
     for (var a = 0; a < leads.length; a++) { var X = px(leads[a]), Y = py(p90[a]); a ? g.lineTo(X, Y) : g.moveTo(X, Y); }
     for (var bb = leads.length - 1; bb >= 0; bb--) g.lineTo(px(leads[bb]), py(p10[bb]));
-    g.closePath(); g.fillStyle = 'rgba(120,150,190,0.18)'; g.fill();
-    // current-F-hour marker
+    g.closePath(); g.fillStyle = 'rgba(43,156,255,0.12)'; g.fill();
+    // 2) current-F-hour marker
     var curStep = this.steps[Math.min(this.idx, this.steps.length - 1)];
     var mx = px(Math.max(lmin, Math.min(curStep, lmax)));
-    g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1; g.beginPath(); g.moveTo(mx, cy); g.lineTo(mx, cy + ch); g.stroke();
-    // three SSHWS-colored curves (per-segment, so intensification shows through)
+    g.strokeStyle = 'rgba(255,255,255,0.4)'; g.lineWidth = 1; g.beginPath(); g.moveTo(mx, cy); g.lineTo(mx, cy + ch); g.stroke();
+    // 3) thin NEUTRAL Max + Min bound lines, then the MEDIAN emphasis line on top
     g.lineJoin = 'round'; g.lineCap = 'round'; g.globalAlpha = 1;
-    function series(vals, lw) {
-      for (var s = 1; s < leads.length; s++) {
-        g.strokeStyle = sshwsColor(vals[s]); g.lineWidth = lw;
-        g.beginPath(); g.moveTo(px(leads[s - 1]), py(vals[s - 1])); g.lineTo(px(leads[s]), py(vals[s])); g.stroke();
-      }
+    g.strokeStyle = 'rgba(196,208,224,0.5)'; g.lineWidth = 1.0; poly(sMax); poly(sMin);
+    for (var s2 = 1; s2 < leads.length; s2++) {   // median: SSHWS-colored per (smoothed) segment
+      g.strokeStyle = sshwsColor(sMed[s2]); g.lineWidth = 2.4;
+      g.beginPath(); g.moveTo(px(leads[s2 - 1]), py(sMed[s2 - 1])); g.lineTo(px(leads[s2]), py(sMed[s2])); g.stroke();
     }
-    series(vMin, 1.3); series(vMax, 1.3); series(vMed, 2.6);   // median bold, drawn last (on top)
-    // Max / Median / Min labels in the right gutter, at each curve's end value,
-    // de-collided top-to-bottom (max >= median >= min, so already y-ordered).
+    // labels in the right gutter (max>=median>=min => y-ordered; de-collide downward)
     function clampY(v) { return Math.max(cy + 6, Math.min(cy + ch - 2, py(v))); }
-    var lyHi = clampY(vMax[vMax.length - 1]);
-    var lyMd = Math.max(lyHi + 11, clampY(vMed[vMed.length - 1]));
-    var lyLo = Math.max(lyMd + 11, clampY(vMin[vMin.length - 1]));
-    var gx = x + w - 6;
+    var lyHi = clampY(sMax[sMax.length - 1]);
+    var lyMd = Math.max(lyHi + 11, clampY(sMed[sMed.length - 1]));
+    var lyLo = Math.max(lyMd + 11, clampY(sMin[sMin.length - 1]));
+    var gx = x + w - 6, NEU = 'rgba(212,222,236,0.9)';
     g.font = '700 9px ' + FONT; g.textBaseline = 'middle'; g.textAlign = 'right'; g.lineJoin = 'round';
     function gutterLabel(text, ly, col) {
       g.lineWidth = 2.6; g.strokeStyle = 'rgba(7,16,28,0.92)'; g.strokeText(text, gx, ly);
       g.fillStyle = col; g.fillText(text, gx, ly);
     }
-    gutterLabel('Max', lyHi, sshwsColor(vMax[vMax.length - 1]));
-    gutterLabel('Median', lyMd, sshwsColor(vMed[vMed.length - 1]));
-    gutterLabel('Min', lyLo, sshwsColor(vMin[vMin.length - 1]));
+    gutterLabel('Max', lyHi, NEU);
+    gutterLabel('Median', lyMd, sshwsColor(sMed[sMed.length - 1]));
+    gutterLabel('Min', lyLo, NEU);
     // y-axis kt range (subtle)
     g.fillStyle = C.muted; g.font = '600 8px ' + FONT; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
     g.fillText(Math.round(vhi) + ' kt', cx + 1, cy + 7);
@@ -786,6 +839,11 @@
       this.dom.mean.textContent = this.meanOn ? 'Mean: on' : 'Mean: off';
       this.dom.mean.classList.toggle('on', this.meanOn);
     }
+    if (this.dom.ppts) {                           // dated MSLP labels - only meaningful with the mean track shown
+      this.dom.ppts.style.display = (avail && this.meanOn) ? '' : 'none';
+      this.dom.ppts.textContent = this.pptsOn ? 'Pressure points: on' : 'Pressure points: off';
+      this.dom.ppts.classList.toggle('on', this.pptsOn);
+    }
     if (this.dom.obs) {                            // obs needs clusters to compare against
       this.dom.obs.style.display = avail ? '' : 'none';
       this.dom.obs.textContent = this.obsOn ? 'Obs: on' : 'Obs: off';
@@ -804,8 +862,15 @@
   EnsCentersViewer.prototype._setMean = function (on) {
     this.meanOn = !!on;
     try { localStorage.setItem(LS_MEAN, this.meanOn ? 'on' : 'off'); } catch (e) {}
-    this._syncToolkitButtons();
+    this._syncToolkitButtons();   // also reveals/hides the dependent Pressure-points toggle
     this._ensureTracks();
+    if (this.regionFrames.length) this._show(this.idx);
+  };
+
+  EnsCentersViewer.prototype._setPpts = function (on) {
+    this.pptsOn = !!on;
+    try { localStorage.setItem(LS_PPTS, this.pptsOn ? 'on' : 'off'); } catch (e) {}
+    this._syncToolkitButtons();
     if (this.regionFrames.length) this._show(this.idx);
   };
 
@@ -1181,15 +1246,37 @@
     g.restore();
   };
 
+  // Legend home is TOP-LEFT (below the burned-in header; pairs with the top-right
+  // Vmax plume). But some regions are wide-short letterboxed strips (e.g. Tropical
+  // Pacific) where the tropical centers land top-left and the legend would bury the
+  // cloud, so we RELOCATE to bottom-left ONLY when top-left is crowded AND
+  // bottom-left is clearer. Decided from the full-trail center density, cached per
+  // region+layout so it never jiggles during playback.
+  EnsCentersViewer.prototype._legendXY = function (w, h) {
+    var m = this.map, tl = { x: m.x + 8, y: m.y + 8 }, bl = { x: m.x + 8, y: m.y + m.h - h - 8 };
+    var key = this.region + '|' + Math.round(m.w) + 'x' + Math.round(m.h) + '|' + this.regionFrames.length;
+    if (this._legendKey !== key) {
+      this._legendKey = key;
+      var ext = this.extent, mw = m.w, mh = m.h, nTL = 0, nBL = 0, total = 0;
+      for (var s = 0; s < this.regionFrames.length; s++) {
+        var pts = this.regionFrames[s];
+        for (var k = 0; k < pts.length; k++) {
+          var p = TATRegions.project(pts[k][1], pts[k][0], ext, mw, mh); total++;
+          if (p[0] >= 8 && p[0] <= 8 + w && p[1] >= 8 && p[1] <= 8 + h) nTL++;
+          if (p[0] >= 8 && p[0] <= 8 + w && p[1] >= mh - h - 8 && p[1] <= mh - 8) nBL++;
+        }
+      }
+      var thresh = Math.max(8, total * 0.03);
+      this._legendCorner = (nTL <= thresh || nTL <= nBL) ? 'tl' : 'bl';   // prefer TL; relocate only if crowded + BL clearer
+    }
+    return this._legendCorner === 'bl' ? bl : tl;
+  };
+
   EnsCentersViewer.prototype._drawLegend = function (g) {
     var bins = (this.data && this.data.pressure_bins) || [];
     var lines = bins.length + 2, lh = 14, padx = 9, pady = 7;
     var w = 132, h = pady * 2 + lines * lh;
-    // Legend lives TOP-LEFT in EVERY view (Cheerios + Lines/Mean), below the
-    // burned-in header (which sits in the strip above the map box). The dense
-    // centers/tracks rise from the bottom, so keeping the legend up top clears the
-    // active area and pairs it with the top-right Vmax plume.
-    var x = this.map.x + 8, y = this.map.y + 8;
+    var xy = this._legendXY(w, h), x = xy.x, y = xy.y;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.78)'; g.strokeStyle = C.border; g.lineWidth = 1;
     g.fillRect(x, y, w, h); g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
@@ -1206,9 +1293,11 @@
     var ny = y + pady + bins.length * lh;
     g.font = '500 9.5px ' + FONT; g.textBaseline = 'middle';
     if (this.dataStyle === 'lines' && this.tracksReady()) {
-      g.strokeStyle = 'rgba(232,235,239,0.6)'; g.lineWidth = LINE_LW;
-      g.beginPath(); g.moveTo(x + padx, ny + lh / 2); g.lineTo(x + padx + 9, ny + lh / 2); g.stroke();
-      g.fillStyle = C.muted; g.fillText('Member tracks', x + padx + 14, ny + lh / 2);
+      var my = ny + lh / 2;                                   // connector thread + a colored dot
+      g.strokeStyle = CONNECTOR_COLOR; g.lineWidth = CONNECTOR_LW;
+      g.beginPath(); g.moveTo(x + padx, my); g.lineTo(x + padx + 9, my); g.stroke();
+      g.fillStyle = '#dfe8ff'; g.beginPath(); g.arc(x + padx + 4.5, my, 2, 0, 6.2832); g.fill();
+      g.fillStyle = C.muted; g.fillText('Member tracks', x + padx + 14, my);
       if (this.meanOn) {
         g.strokeStyle = '#fff'; g.lineWidth = MEAN_LW;
         g.beginPath(); g.moveTo(x + padx, ny + lh + lh / 2); g.lineTo(x + padx + 9, ny + lh + lh / 2); g.stroke();
@@ -1409,6 +1498,9 @@
     });
     if (this.dom.mean) this.dom.mean.addEventListener('click', function () {
       self._setMean(!self.meanOn);
+    });
+    if (this.dom.ppts) this.dom.ppts.addEventListener('click', function () {
+      self._setPpts(!self.pptsOn);
     });
     if (this.dom.obs) this.dom.obs.addEventListener('click', function () {
       self._setObs(!self.obsOn);

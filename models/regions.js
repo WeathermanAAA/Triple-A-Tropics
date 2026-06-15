@@ -119,20 +119,49 @@
     return true;
   }
 
+  // Trace geojson rings/lines into the current path. Longitude is unwrapped
+  // CONTINUOUSLY per ring (each vertex takes the +/-360 multiple nearest the
+  // previous one), so a contiguous landmass never picks up an internal 360 jump.
+  // The OLD code unwrapped per-point in project() and broke on a projected-x JUMP:
+  // for a Pacific-centered extent, land near the 180 seam got vertices 360 apart,
+  // and for a FILL the break did closePath()+moveTo, chord-closing across the
+  // polygon interior -> a triangular land wedge (e.g. Australia in Tropical
+  // Pacific). Now each ring is drawn at EVERY 360-shift whose span overlaps the
+  // extent's longitude window, so a ring that genuinely straddles the antimeridian
+  // is rendered on BOTH edges as separate CLOSED loops; the map-rect clip (below)
+  // trims the off-window remainder. closePath therefore only ever joins a ring's
+  // true first/last vertices (adjacent on the real boundary) - never a chord.
   function _traceGeo(g, geojson, ext, W, H, closeRings) {
     if (!geojson || !geojson.features) return;
-    var JUMP = W * 0.5, wrap = (ext[1] > 180 || ext[0] < -180);
+    var wrap = (ext[1] > 180 || ext[0] < -180);
+    var lon0 = ext[0], lonSpan = (ext[1] - ext[0]) || 1;
+    var latHi = ext[3], latSpan = (ext[3] - ext[2]) || 1;
     function ring(coords) {
-      var prevX = null, started = false;
-      for (var i = 0; i < coords.length; i++) {
-        var p = project(coords[i][0], coords[i][1], ext, W, H);
-        if (prevX === null || Math.abs(p[0] - prevX) > JUMP) {
-          if (started && closeRings) g.closePath();
-          g.moveTo(p[0], p[1]); started = true;
-        } else { g.lineTo(p[0], p[1]); }
-        prevX = p[0];
+      var n = coords.length; if (n < 2) return;
+      // continuous unwrapped longitudes (no internal 360 discontinuity)
+      var U = new Array(n), minU, maxU, i;
+      U[0] = coords[0][0]; minU = maxU = U[0];
+      for (i = 1; i < n; i++) {
+        var d = coords[i][0] - coords[i - 1][0];
+        d -= 360 * Math.round(d / 360);                 // nearest equivalent step
+        U[i] = U[i - 1] + d;
+        if (U[i] < minU) minU = U[i];
+        if (U[i] > maxU) maxU = U[i];
       }
-      if (closeRings && started) g.closePath();
+      // every 360-shift whose [minU,maxU]+360k overlaps the visible lon window
+      var kMin = Math.ceil((lon0 - maxU) / 360), kMax = Math.floor((ext[1] - minU) / 360);
+      if (kMax < kMin) return;                           // not in view at any shift
+      if (kMax - kMin > 4) {                             // degenerate (ring wider than the window): one centered copy
+        kMin = Math.round(((lon0 + ext[1]) / 2 - (minU + maxU) / 2) / 360); kMax = kMin;
+      }
+      for (var k = kMin; k <= kMax; k++) {
+        var off = 360 * k;
+        for (var j = 0; j < n; j++) {
+          var X = (U[j] + off - lon0) / lonSpan * W, Y = (latHi - coords[j][1]) / latSpan * H;
+          if (j === 0) g.moveTo(X, Y); else g.lineTo(X, Y);
+        }
+        if (closeRings) g.closePath();
+      }
     }
     for (var f = 0; f < geojson.features.length; f++) {
       var feat = geojson.features[f];
@@ -157,6 +186,8 @@
   // UNDER the data: ocean fill + optional graticule + land fill.
   function drawBasemapFill(g, ext, geo, W, H, opts) {
     opts = opts || {};
+    g.save();
+    g.beginPath(); g.rect(0, 0, W, H); g.clip();      // never paint a fill outside the map rect
     g.clearRect(0, 0, W, H);
     g.fillStyle = opts.ocean || '#07101c';
     g.fillRect(0, 0, W, H);
@@ -172,6 +203,7 @@
       g.fillStyle = opts.land || '#2f3f59'; g.beginPath();
       _traceGeo(g, geo.countries, ext, W, H, true); g.fill('nonzero');
     }
+    g.restore();
   }
 
   // ON TOP of the data: coastline, then country (admin_0) borders, then
@@ -181,6 +213,8 @@
   // borders stroke the optional admin_1 layer.
   function drawBasemapLines(g, ext, geo, W, H, opts) {
     opts = opts || {};
+    g.save();
+    g.beginPath(); g.rect(0, 0, W, H); g.clip();      // keep border strokes inside the map rect
     g.lineJoin = 'round'; g.lineCap = 'round';
     if (geo && geo.coast && opts.coast) {
       g.strokeStyle = opts.coast; g.lineWidth = opts.coastLw || 0.6; g.beginPath();
@@ -194,6 +228,7 @@
       g.strokeStyle = opts.state; g.lineWidth = opts.stateLw || 0.4; g.beginPath();
       _traceGeo(g, geo.states, ext, W, H, true); g.stroke();
     }
+    g.restore();
   }
 
   // Full basemap (fill + lines) in one call, for callers without a data field on
