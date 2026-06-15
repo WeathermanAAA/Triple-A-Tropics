@@ -43,15 +43,23 @@
      transport is ONE compact row, and the readout sits on its own line. */
   .vw-aside .hafs-controls { flex-direction: column; align-items: stretch;
     gap: 14px; padding: 0; background: none; border: none; }
-  .vw-aside .hafs-seg-group { flex-wrap: wrap; gap: 6px; }
+  /* Every seg group FILLS the gutter as equal-width cells, so both edges are flush
+     and columns align (no ragged/skewed panel): 2 columns for the binary groups
+     (Cycle/Model/Domain), a 3-wide grid for Product (a short last row left-justifies
+     on the same column grid). Buttons are uniform height/padding/font, center-text,
+     ellipsis if a label is long. */
+  .vw-aside .hafs-seg-group { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .vw-aside #hafs-products { grid-template-columns: repeat(3, 1fr); }
   .vw-aside .hafs-seg-group .hafs-seg { border: 1px solid var(--border);
-    border-radius: 7px; padding: 6px 11px; font-size: 11.5px; }
-  .vw-aside .hafs-seg-group .hafs-seg.active { border-color: var(--accent-2); }
-  .vw-aside .hafs-player { flex-direction: row; flex-wrap: wrap;
-    align-items: center; gap: 8px; padding: 0; background: none; border: none; }
-  .vw-aside .hafs-player .hafs-play { flex: 1 1 auto; }
+    border-radius: 7px; padding: 7px 8px; font-size: 11.5px; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .vw-aside .hafs-seg-group .hafs-seg.active { background: var(--accent-2); color: #06222e; border-color: var(--accent-2); }
+  /* Transport fills the panel: back | Play(fills) | forward, with the readout and
+     the speed each spanning their own full-width line beneath. */
+  .vw-aside .hafs-player { display: grid; grid-template-columns: auto 1fr auto;
+    gap: 8px; padding: 0; background: none; border: none; align-items: center; }
   .vw-aside .hafs-player .hafs-readout,
-  .vw-aside .hafs-player .hafs-speed-wrap { flex: 1 1 100%; }
+  .vw-aside .hafs-player .hafs-speed-wrap { grid-column: 1 / -1; min-width: 0; }
   .vw-aside .hafs-group select,
   .vw-aside .hafs-speed-wrap select { width: 100%; min-width: 0; }
   .vw-below .hafs-hours { padding-left: 0; padding-right: 0; }
@@ -261,14 +269,20 @@
     background: rgba(7,16,28,0.94); border: 1px solid var(--border);
     border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--fg);
     line-height: 1.35; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ens-controlbar { display: flex; flex-wrap: wrap; align-items: center;
-    gap: 10px 14px; margin-top: 14px; }
-  .ens-controlbar > .tatreg-btn { width: auto; min-width: 150px; }
+  /* Toolkit controls: three CENTERED rows grouped by function - SELECTION (region /
+     model / run), DISPLAY toggles, and TRANSPORT+EXPORT (with the scrubber on its
+     own full-width line within the row). Shares the HAFS .hafs-btn sizing so the two
+     viewers read as one product. */
+  .ens-controlbar { display: flex; flex-direction: column; align-items: stretch;
+    gap: 12px; margin-top: 14px; }
+  .ens-row { display: flex; flex-wrap: wrap; justify-content: center;
+    align-items: center; gap: 8px 12px; }
+  .ens-row .tatreg-btn { width: auto; min-width: 150px; }
   .ens-modelgroup { display: flex; }
   .ens-transport { display: flex; gap: 6px; }
   .ens-play { min-width: 92px; }
-  #enscenters-trail, #enscenters-style, #enscenters-mean, #enscenters-obs, #enscenters-ppts { min-width: 84px; }
-  #enscenters-trail.on, #enscenters-style.on, #enscenters-mean.on, #enscenters-obs.on, #enscenters-ppts.on { border-color: var(--accent); color: var(--accent); }
+  #enscenters-trail, #enscenters-style, #enscenters-mean, #enscenters-obs, #enscenters-ppts, #enscenters-minp { min-width: 84px; }
+  #enscenters-trail.on, #enscenters-style.on, #enscenters-mean.on, #enscenters-obs.on, #enscenters-ppts.on, #enscenters-minp.on { border-color: var(--accent); color: var(--accent); }
   .ens-readout { display: flex; flex-direction: column; min-width: 200px;
     font-variant-numeric: tabular-nums; }
   #enscenters-fhour { color: var(--accent); font-size: 15px; font-weight: 700; }
@@ -281,7 +295,7 @@
      the Region picker's blue accent. */
   .ens-speed select:focus, .ens-run select:focus,
   .ens-speed select:hover, .ens-run select:hover { border-color: var(--accent); outline: none; }
-  .ens-scrub { width: 100%; margin-top: 12px; accent-color: var(--accent-2); cursor: pointer; }
+  .ens-scrub { width: 100%; flex-basis: 100%; margin: 6px 0 0; accent-color: var(--accent-2); cursor: pointer; }
   .ens-caption { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-top: 12px; }
   /* GIF Maker dialog - same look/controls as the /satellite/ loop export. */
   .sat-gif[disabled] { opacity: 0.5; cursor: progress; }
@@ -440,38 +454,50 @@
       </div>
 
       <div class="ens-controlbar">
-        <button id="enscenters-region-btn" class="tatreg-btn" type="button" aria-haspopup="dialog">
-          <span id="enscenters-region-label">Atlantic</span>
-          <span class="tatreg-caret">&#9662;</span>
-        </button>
-        <div class="ens-modelgroup"><div id="enscenters-models" class="hafs-seg-group"></div></div>
-        <div class="ens-transport">
-          <button id="enscenters-step-back" class="hafs-btn" type="button" title="Previous step (left arrow)">◄</button>
-          <button id="enscenters-play" class="hafs-btn ens-play" type="button" title="Play / pause (space)">► Play</button>
-          <button id="enscenters-step-fwd" class="hafs-btn" type="button" title="Next step (right arrow)">►</button>
+        <!-- Row 1: SELECTION (region · model · run) -->
+        <div class="ens-row ens-row-sel">
+          <button id="enscenters-region-btn" class="tatreg-btn" type="button" aria-haspopup="dialog">
+            <span id="enscenters-region-label">Atlantic</span>
+            <span class="tatreg-caret">&#9662;</span>
+          </button>
+          <div class="ens-modelgroup"><div id="enscenters-models" class="hafs-seg-group"></div></div>
+          <div class="ens-run"><span>Run</span><select id="enscenters-run" title="Forecast cycle (model run)"></select></div>
         </div>
-        <button id="enscenters-trail" class="hafs-btn" type="button"
-                title="Accumulating trail vs current step only">Trail: on</button>
-        <button id="enscenters-style" class="hafs-btn" type="button" style="display:none"
-                title="Cheerios (per-step centers) vs Lines (connected per-member tracks)">Style: Cheerios</button>
-        <button id="enscenters-mean" class="hafs-btn" type="button" style="display:none"
-                title="Overlay each clustered system's ensemble-mean track + Vmax plume">Mean: off</button>
-        <button id="enscenters-ppts" class="hafs-btn" type="button" style="display:none"
-                title="Dated median-MSLP labels along the ensemble-mean track (daily)">Pressure points: off</button>
-        <button id="enscenters-obs" class="hafs-btn" type="button" style="display:none"
-                title="Plot a live observed invest/storm against its matching ensemble cluster's envelope">Obs: off</button>
-        <button id="enscenters-gif" class="hafs-btn sat-gif" type="button"
-                title="Export this region's animation as a GIF">&#8681; GIF</button>
-        <div class="ens-readout">
-          <span id="enscenters-fhour">F000</span>
-          <span id="enscenters-valid"></span>
-        </div>
-        <div class="ens-speed"><span>Speed</span><select id="enscenters-speed"></select></div>
-        <div class="ens-run"><span>Run</span><select id="enscenters-run" title="Forecast cycle (model run)"></select></div>
-      </div>
 
-      <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0"
-             step="1" value="0" aria-label="Forecast step">
+        <!-- Row 2: DISPLAY toggles -->
+        <div class="ens-row ens-row-disp">
+          <button id="enscenters-style" class="hafs-btn" type="button" style="display:none"
+                  title="Cheerios (per-step centers) vs Lines (connected per-member tracks)">Style: Cheerios</button>
+          <button id="enscenters-mean" class="hafs-btn" type="button" style="display:none"
+                  title="Overlay each clustered system's ensemble-mean track + Vmax plume">Mean: off</button>
+          <button id="enscenters-ppts" class="hafs-btn" type="button" style="display:none"
+                  title="Dated median-MSLP labels along the ensemble-mean track (daily)">Pressure points: off</button>
+          <button id="enscenters-obs" class="hafs-btn" type="button" style="display:none"
+                  title="Plot a live observed invest/storm against its matching ensemble cluster's envelope">Obs: off</button>
+          <button id="enscenters-minp" class="hafs-btn" type="button"
+                  title="Highlight the deepest center (minimum MSLP) in the selected region">Min MSLP: off</button>
+          <button id="enscenters-trail" class="hafs-btn" type="button"
+                  title="Accumulating trail vs current step only">Trail: on</button>
+        </div>
+
+        <!-- Row 3: TRANSPORT + EXPORT (scrubber on its own full-width line) -->
+        <div class="ens-row ens-row-trans">
+          <div class="ens-transport">
+            <button id="enscenters-step-back" class="hafs-btn" type="button" title="Previous step (left arrow)">◄</button>
+            <button id="enscenters-play" class="hafs-btn ens-play" type="button" title="Play / pause (space)">► Play</button>
+            <button id="enscenters-step-fwd" class="hafs-btn" type="button" title="Next step (right arrow)">►</button>
+          </div>
+          <div class="ens-speed"><span>Speed</span><select id="enscenters-speed"></select></div>
+          <div class="ens-readout">
+            <span id="enscenters-fhour">F000</span>
+            <span id="enscenters-valid"></span>
+          </div>
+          <button id="enscenters-gif" class="hafs-btn sat-gif" type="button"
+                  title="Export this region's animation as a GIF">&#8681; GIF</button>
+          <input id="enscenters-scrub" class="ens-scrub" type="range" min="0" max="0"
+                 step="1" value="0" aria-label="Forecast step">
+        </div>
+      </div>
 
       <p id="enscenters-caption" class="ens-caption"
          data-default="Right-click the figure to copy or save it as a PNG. Centers are mean-sea-level-pressure minima that sit inside a closed circulation, the filter that separates real lows from open troughs. Filled circles are the current step; hollow rings are the accumulated trail. Peak winds in the table are the Atkinson-Holliday estimate from central pressure. Data: ECMWF open data (CC BY 4.0).">
@@ -533,8 +559,8 @@
 </div>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
-<script src="/models/hafs.js?v=690bcc5aa3"></script>
+<script src="/models/hafs.js?v=b274bd2a02"></script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/models/enscenters.js?v=52821c6895"></script>
+<script src="/models/enscenters.js?v=d28ed73438"></script>
 </body>
 </html>
