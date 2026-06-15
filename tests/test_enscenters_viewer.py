@@ -113,9 +113,11 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertFalse(s["controlbarHidden"])
         self.assertFalse(s["modelgroupHidden"])
         self.assertEqual(s["pickerCardCount"], 23)        # all registry regions
-        self.assertEqual(s["globalExtent"], [0, 360, -88, 88])   # Pacific-centered
-        self.assertEqual(s["wpacExtent"], [100, 180, 0, 45])
-        self.assertTrue(s["allVisibleInWpac"])            # scatter filtered to region
+        # the DISPLAY extent is framed to the fixed 2:1 box aspect (frameExtent):
+        # global expands lat to the poles; wpac (too narrow) expands lon symmetrically.
+        self.assertEqual(s["globalExtent"], [0, 360, -90, 90])   # Pacific-centered, framed to poles
+        self.assertEqual(s["wpacExtent"], [95, 185, 0, 45])      # lon expanded 80 -> 90 to hit 2:1
+        self.assertTrue(s["allVisibleInWpac"])            # scatter filtered to region (tight bounds, unframed)
         self.assertEqual(s["lastRegionSaved"], "wpac")    # localStorage persistence
 
         # Run (cycle) selector: built from the manifest cycle list, newest first,
