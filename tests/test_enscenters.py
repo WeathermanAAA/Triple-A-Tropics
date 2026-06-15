@@ -97,7 +97,7 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(spec.steps_for_cycle_hour(6)[-1], 144)
 
     def test_model_slugs_in_registry_order(self):
-        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs"])
+        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs", "fnv3"])
 
     def test_aifs_ens_spec(self):
         # AIFS-ENS ("ecaie"): ECMWF ENS's AI twin - config only.
@@ -760,6 +760,107 @@ class TestEcmwfMirrorFallback(unittest.TestCase):
             self.assertTrue(p.startswith("20260614/"), f"{src}: {p}")
             self.assertFalse(p.startswith(("forecasts/", "ecmwf-open-data/")), f"{src}: {p}")
             self.assertTrue(p.endswith(".grib2"))
+
+
+class TestFnv3Ingest(unittest.TestCase):
+    """FNV3 (Weather Lab) native TC-track CSV parsing -> shared schema. No network."""
+
+    CSV = "\n".join([
+        "# If this file contains data ... TERMS OF USE ...",
+        "#   https://storage.googleapis.com/weathernext-public/terms-of-use.pdf",
+        "init_time,track_id,sample,valid_time,lead_time,lead_time_hours,lat,lon,"
+        "minimum_sea_level_pressure_hpa,maximum_sustained_wind_speed_knots,radius_of_maximum_winds_km",
+        "2026-06-14 18:00:00,12,0.0,2026-06-26 06:00:00,11 days,276,9.7,137.53,1005.0,22.5,109.0",
+        "2026-06-14 18:00:00,12,0.0,2026-06-26 12:00:00,11 days,282,9.9,136.02,1004.2,24.4,60.0",
+        "2026-06-14 18:00:00,5,0.0,2026-06-20 00:00:00,5 days,126,15.0,140.0,975.0,88.0,30.0",   # member 0 deepest
+        "2026-06-14 18:00:00,EP93,1.0,2026-06-14 18:00:00,0 days,0,8.1,-132.0,1007.0,25.0,185.0",
+        "2026-06-14 18:00:00,EP93,1.0,2026-06-14 18:00:00,0 days,7,8.2,-132.5,1006.0,26.0,180.0",   # bad step (not %6) -> dropped
+    ])
+
+    def test_parse_cyclogenesis_to_schema(self):
+        from enscenters import fnv3_ingest as fi
+        members, total, run_steps = fi.parse_csv(self.CSV)
+        self.assertEqual([m["id"] for m in members], ["M00", "M01"])      # grouped by sample
+        m0 = members[0]
+        self.assertEqual(m0["label"], "Member 0")
+        self.assertEqual(m0["n_centers"], 3)                              # 276,282,126
+        # centers sorted by step, CENTER_FIELDS order [step,lat,lon,mslp,vmax]
+        self.assertEqual([c[0] for c in m0["centers"]], [126, 276, 282])
+        self.assertEqual(m0["centers"][0], [126, 15.0, 140.0, 975.0, 88.0])
+        # NATIVE vmax preserved (not AH): 88 kt at 975 hPa would be ~AH 50 kt
+        self.assertEqual(m0["peak"]["vmax_kt"], 88.0)
+        self.assertEqual(m0["peak"]["mslp_hpa"], 975.0)                   # deepest center
+        m1 = members[1]
+        self.assertEqual(m1["n_centers"], 1)                             # step 7 (not 6-hourly) dropped
+        self.assertEqual(m1["centers"][0], [0, 8.1, -132.0, 1007.0, 25.0])
+        self.assertEqual(total, 4)
+        self.assertEqual(run_steps[0], 0)
+        self.assertEqual(run_steps[-1], 282)                             # trimmed to max step
+        self.assertEqual(run_steps, list(range(0, 283, 6)))              # 6-hourly grid
+        self.assertEqual(fi.CENTER_FIELDS, CENTER_FIELDS)               # same positional schema
+
+    def test_url_shape(self):
+        import datetime as dt
+        from enscenters import fnv3_ingest as fi
+        u = fi.cycle_url(dt.datetime(2026, 6, 14, 18))
+        self.assertEqual(u, "https://deepmind.google.com/science/weatherlab/download/cyclones/"
+                            "FNV3/ensemble/cyclogenesis/csv/FNV3_2026_06_14T18_00_cyclogenesis.csv")
+
+    def test_registry_entry(self):
+        s = reg.get_spec("fnv3")
+        self.assertEqual(s.source_kind, "track_csv")
+        self.assertFalse(s.warm_core)                                    # native objects, no warmcore
+        self.assertEqual(s.label, "FNV3 (50)")                          # member count unambiguous
+        self.assertIn("not for real-world use", s.caption)              # experimental disclaimer
+        self.assertIn("Weather Lab", s.caption)                        # attribution
+        self.assertIn("fnv3", reg.model_slugs())
+
+
+class TestFiveModelReconcile(unittest.TestCase):
+    """Step 4: the shared derive-from-R2 reconcile must scale to all models -
+    adding FNV3 must NOT change ecens/ecaie/gefs, must keep canonical order, and
+    must survive a per-model write that only lists its own (newest) cycle."""
+
+    def _guard(self):
+        import importlib.util
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "scripts", "enscenters_manifest_guard.py")
+        spec = importlib.util.spec_from_file_location("ens_guard5", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _run(self, new, live):
+        import json, tempfile
+        g = self._guard()
+        with tempfile.TemporaryDirectory() as d:
+            np_, lp = os.path.join(d, "n.json"), os.path.join(d, "l.json")
+            json.dump(new, open(np_, "w")); json.dump(live, open(lp, "w"))
+            g.main(["x", np_, lp])
+            return json.load(open(np_))
+
+    def test_fnv3_publish_preserves_all_siblings(self):
+        # the FNV3 workflow publishes only its own fresh cycle; the live R2
+        # manifest already has the four other entries -> all must survive, in
+        # canonical registry order, with their cycle_versions verbatim.
+        new = {"default_model": "fnv3", "models": [
+            {"slug": "fnv3", "label": "FNV3 (50)", "cycles": ["2026061418"], "latest": "2026061418",
+             "cycle_versions": {"2026061418": "fv"}}]}
+        live = {"default_model": "ecens", "models": [
+            {"slug": "ecens", "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "ev"}},
+            {"slug": "ecaie", "cycles": ["2026061418"], "latest": "2026061418", "cycle_versions": {"2026061418": "av"}},
+            {"slug": "gefs",  "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "gv"}},
+            {"slug": "fnv3",  "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "f0"}}]}
+        out = self._run(new, live)
+        by = {m["slug"]: m for m in out["models"]}
+        self.assertEqual([m["slug"] for m in out["models"]], ["ecens", "ecaie", "gefs", "fnv3"])  # canonical order
+        # the three field models are byte-untouched
+        self.assertEqual(by["ecens"]["latest"], "2026061412")
+        self.assertEqual(by["ecaie"]["cycle_versions"], {"2026061418": "av"})
+        self.assertEqual(by["gefs"]["latest"], "2026061412")
+        # fnv3 advanced + unioned its prior live cycle (monotone history)
+        self.assertEqual(by["fnv3"]["latest"], "2026061418")
+        self.assertEqual(by["fnv3"]["cycles"], ["2026061418", "2026061412"])
 
 
 if __name__ == "__main__":

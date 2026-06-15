@@ -10,6 +10,30 @@ committed to `main`), exactly like HAFS.
 
 ---
 
+## 0. HARD RULE - every model plot's burned-in header carries forecast hour + valid time
+
+Standing convention for ALL model plots (this product, HAFS, and any future
+model plot): the **burned-in / shared header** - the pixels that travel when a
+still is copied or a GIF/MP4 is exported - MUST show, per frame:
+
+- the init / cycle time,
+- the **current forecast hour** (Fxxx), and
+- the **valid time** for that hour (UTC/Z).
+
+A shared frame must be self-documenting: which hour, and when it is valid for.
+Putting F-hour / valid time ONLY in the HTML control chrome is a bug, because the
+chrome is lost on copy/export. It MUST be drawn in the per-frame render path (not
+a static layer) so each exported frame carries its own hour + valid time. Keep
+the HTML chrome too for the live UI; the burned-in canvas/PNG is the source of
+truth for anything shared.
+
+Compliance (2026-06-15): enscenters canvas header (`_drawHeader`, this product) -
+fixed to add F-hour + valid; HAFS rendered PNG (`hafs_render/hafs_plot.py`
+subtitle "Init -> F-hour -> Valid") - already compliant. New model plots inherit
+this by default.
+
+---
+
 ## 1. What it is
 
 For each ensemble run (ECMWF ENS now; AIFS-ENS, GEFS, GDM-FNV3, GDM-GenCast

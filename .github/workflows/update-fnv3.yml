@@ -1,0 +1,86 @@
+name: Update FNV3 (Ensemble Cyclone Centers)
+
+# FNV3 is the fourth model on the Ensemble Cyclone Centers platform. UNLIKE the
+# ECMWF/GEFS field models it does NOT self-detect closed lows: it is a NATIVE
+# TC-track product (Google DeepMind Weather Lab emits tropical cyclones directly),
+# so there is no GRIB pull, no field detection, no warm-core filter. This is a
+# LIGHT path - one cyclogenesis CSV per cycle (every member's basin-wide tracks),
+# parsed in pure Python and mapped to the shared per-cycle JSON. Member peak winds
+# are the model's OWN sustained wind (not an Atkinson-Holliday estimate).
+#
+# Shares the SAME R2 prefix (models/enscenters/) and the SAME manifest as the
+# other models: the publish script reconciles against R2 reality and replaces
+# only the fnv3 entry, so the per-model workflows never clobber each other. The
+# data is EXPERIMENTAL (Weather Lab ToU, attribution required); the disclaimer +
+# attribution live in the registry caption shown in the viewer. Read-only: commits
+# NOTHING to main; per-cycle fnv3 JSON + the shared manifest sync to R2.
+#
+# Timing: Weather Lab posts each synoptic cycle (00/06/12/18Z) a few hours later,
+# so we fire across a generous window and let the never-miss completeness gate
+# (the cyclogenesis CSV is fetchable) decide when a cycle is ready. Staggered odd
+# minute (ecens :19/:49, ecaie :29/:59, gefs :41 -> fnv3 :47).
+
+on:
+  schedule:
+    - cron: "47 4-9,10-15,16-21 * * *"   # 00Z->04-09, 06Z->10-15, 12Z->16-21
+    - cron: "47 0-3,22-23 * * *"         # 18Z (prev day) -> 22-03
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-fnv3
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # Light: fetch + parse one CSV per cycle in pure Python. Generous cap covers a
+    # multi-cycle never-miss backfill of small files.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # numpy/scipy only - imported transitively by the shared detect/warmcore
+          # modules when the CLI loads. FNV3 itself parses the CSV with the stdlib
+          # (csv + urllib); no GRIB stack, no requests, no pandas.
+          pip install numpy scipy
+          python -c "import numpy, scipy; print('deps OK')"
+
+      - name: Build FNV3 cyclone centers (never-miss backfill)
+        env:
+          ENS_CYCLE: ${{ github.event.inputs.cycle }}
+        run: |
+          # --model fnv3 selects the native TC-track registry spec; the CLI routes
+          # it to the cyclogenesis-CSV ingest (enscenters.fnv3_ingest) + the shared
+          # currency/manifest path. No --source/--jobs (single CSV per cycle).
+          python generate_enscenters.py \
+            --model fnv3 \
+            --lookback 8 \
+            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
+
+      - name: Sync detection JSON + manifest to R2 (and prune old cycles)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          # Atomic, concurrency-safe shared-manifest publish: read live (authoritative
+          # R2) -> reconcile this run's build with it per model -> consistency gate ->
+          # CAS re-read -> write -> filtered prune. NEVER drops a sibling model, NEVER
+          # regresses a model's latest, survives concurrent sibling writes. The active
+          # slug for this workflow is `fnv3`.
+          scripts/enscenters_publish_manifest.sh fnv3

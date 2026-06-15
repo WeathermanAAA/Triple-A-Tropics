@@ -281,8 +281,33 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
                  "Atkinson-Holliday estimate from central pressure. "
                  "Data: NOAA GEFS (noaa-gefs-pds)."),
     ),
-    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "gdm_fnv3", "gdm_gencast",
-    # and a derived "super" entry.
+    # FNV3 (Google DeepMind Weather Lab): a NATIVE TC-track product - the model
+    # emits tropical cyclones directly, so there is NO self-detection and NO
+    # warm-core filter. We ingest the per-cycle cyclogenesis CSV (every member's
+    # basin-wide tracks) via enscenters.fnv3_ingest and use the model's OWN Vmax
+    # (not Atkinson-Holliday). Label carries the member count because FNV3-1000 is
+    # a SEPARATE future entry. Caption carries the source + the required
+    # experimental disclaimer + Weather Lab attribution (ToU). GenCast is not
+    # exposed under the anonymous endpoint (404, 2026-06-14), so it is not added.
+    EnsModelSpec(
+        slug="fnv3",
+        label="FNV3 (50)",
+        source="gdm-weatherlab",
+        source_kind="track_csv",
+        n_perturbed=50,
+        control_stream=None,            # no control/perturbed split; members are samples 0..49
+        warm_core=False,                # native TC objects; no detect, no warmcore
+        grid_label="native TC tracks",
+        attribution="Google DeepMind Weather Lab (FNV3)",
+        caption=("Native tropical-cyclone tracks from Google DeepMind's FNV3 "
+                 "ensemble (50 members), Weather Lab. Peak winds are the model's "
+                 "own maximum sustained wind (not an Atkinson-Holliday estimate). "
+                 "Experimental model output, not for real-world use. "
+                 "Data: Google DeepMind Weather Lab."),
+    ),
+    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "fnv3-1000" (per-disturbance
+    # 1000-member, needs clustering), "gdm_gencast" (not yet exposed), and a
+    # derived "super" entry.
 )
 
 REGISTRY = {s.slug: s for s in _SPECS}
