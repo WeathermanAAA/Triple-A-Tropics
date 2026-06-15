@@ -507,8 +507,18 @@
     g.fillStyle = C.fg; g.font = '800 17px ' + FONT;
     g.fillText((d.model_label || 'ECMWF ENS') + '  ·  Ensemble Cyclone Centers', this.headerXY.x, this.headerXY.y + 17);
     g.fillStyle = C.muted; g.font = '500 12px ' + FONT;
-    g.fillText('init ' + shortInit(this.initMs) + '   ·   ' + (d.n_members || 0) + ' members   ·   ' +
-      fmtInt(acc) + ' centers shown', this.headerXY.x, this.headerXY.y + 35);
+    // HARD RULE: the burned-in header carries the CURRENT forecast hour + its
+    // valid time (not just init), so a copied still / every GIF frame is self-
+    // documenting. Drawn per-frame here (not on the static layer) so each frame
+    // shows its own F-hour + valid time. The HTML chrome (dom.fhour/dom.valid)
+    // is kept for the live UI, but the canvas is the source of truth on share.
+    var stepH = (this.steps && this.steps.length)
+      ? this.steps[Math.min(i, this.steps.length - 1)] : 0;
+    g.fillText('init ' + shortInit(this.initMs) +
+      '  ·  F' + String(stepH).padStart(3, '0') +
+      '  ·  valid ' + validLabel(this.initMs, stepH) +
+      '  ·  ' + (d.n_members || 0) + ' members  ·  ' + fmtInt(acc) + ' centers',
+      this.headerXY.x, this.headerXY.y + 35);
     g.restore();
   };
 

@@ -54,8 +54,8 @@ import sys
 
 # Canonical selector order (matches enscenters.registry order). Unknown slugs are
 # appended after, so a future model still publishes even before this list is bumped.
-ORDER = ["ecens", "ecaie", "gefs"]
-LABELS = {"ecens": "ECMWF ENS", "ecaie": "AIFS-ENS", "gefs": "GEFS"}
+ORDER = ["ecens", "ecaie", "gefs", "fnv3"]
+LABELS = {"ecens": "ECMWF ENS", "ecaie": "AIFS-ENS", "gefs": "GEFS", "fnv3": "FNV3 (50)"}
 DEFAULT_MODEL = "ecens"           # mirrors enscenters.registry.DEFAULT_MODEL
 SCHEMA_VERSION = 1
 DEFAULT_RETAIN = 8                # mirrors enscenters.pipeline.DEFAULT_RETAIN

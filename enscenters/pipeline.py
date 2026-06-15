@@ -286,9 +286,15 @@ def build_cycle(
     fetched = prior_manifest is None
     if fetched:
         prior_manifest = fetch_prior_manifest()
-    if getattr(spec, "source_kind", "self_detect") == "genesis_tracks":
+    _kind = getattr(spec, "source_kind", "self_detect")
+    if _kind == "genesis_tracks":
         from .tracks import build_gefs_cycle
         res = build_gefs_cycle(spec, cycle, out_dir, progress=progress)
+    elif _kind == "track_csv":
+        # Native TC-track product (FNV3): fetch + parse the cyclogenesis CSV; no
+        # detect, no warmcore. The manifest merge below is shared/unchanged.
+        from .fnv3_ingest import build_cycle as build_track_cycle
+        res = build_track_cycle(spec, cycle, out_dir, progress=progress)
     else:
         res = build_one_cycle(spec, cycle, out_dir, members=members, steps=steps,
                               jobs=jobs, min_members_frac=min_members_frac,

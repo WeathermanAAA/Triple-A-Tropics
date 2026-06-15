@@ -113,6 +113,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         def ingest_one(cycle: dt.datetime) -> dict:
             return _tracks.build_gefs_cycle(spec, cycle, args.out_dir)
+    elif getattr(spec, "source_kind", "") == "track_csv":
+        # FNV3 (Weather Lab): native TC-track CSV, one file per cycle. Gate = the
+        # cyclogenesis CSV is fetchable; ingest = parse + map to the shared schema.
+        from . import fnv3_ingest as _fnv3
+
+        def list_complete(lookback: int):
+            candidates = synoptic_cycles_back(now, lookback)
+            return _fnv3.list_complete_cycles(spec, candidates)
+
+        def ingest_one(cycle: dt.datetime) -> dict:
+            return _fnv3.build_cycle(spec, cycle, args.out_dir)
     elif spec.source == "noaa-gefs-aws":
         # GEFS: closed-low detection on the 0.5 deg fields pulled via S3 .idx
         # byte-range (enscenters.gefs_ingest). Same detect + warm-core + currency

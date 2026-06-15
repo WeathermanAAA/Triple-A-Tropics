@@ -21,6 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 HARNESS = Path(__file__).resolve().parent / "enscenters_viewer_smoke.cjs"
 TRAIL_HARNESS = Path(__file__).resolve().parent / "enscenters_trail_smoke.cjs"
+HEADER_HARNESS = Path(__file__).resolve().parent / "enscenters_header_smoke.cjs"
 JS = REPO / "models" / "enscenters.js"
 NODE = shutil.which("node")
 
@@ -120,6 +121,27 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["runValue"], "2026061300")
         self.assertEqual(s["runFirstLabel"], "Jun 13 00Z (latest)")
         self.assertEqual(s["runSecondLabel"], "Jun 12 18Z")
+
+    def test_burned_in_header_has_fhour_and_valid_per_frame(self):
+        # ITEM 1 hard rule: the burned-in canvas header (what travels in a copied
+        # still / every GIF frame) must carry the CURRENT forecast hour + valid
+        # time, and update per frame.
+        proc = subprocess.run([NODE, str(HEADER_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"header harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        h1, h3 = s["header_at_idx1"], s["header_at_idx3"]
+        for h in (h1, h3):
+            self.assertIn("init ", h)
+            self.assertIn("valid ", h)
+            self.assertNotIn("—", h)            # no em-dash
+        # forecast hour present + INCREMENTS per frame (idx1 -> F024, idx3 -> F120)
+        self.assertIn("F024", h1)
+        self.assertIn("F120", h3)
+        # valid time present + advances (Mon Jun 15 -> Fri Jun 19)
+        self.assertIn("Jun 15", h1)
+        self.assertIn("Jun 19", h3)
+        self.assertNotEqual(h1, h3)
 
     def test_trail_clears_on_toggle_no_stale_rings(self):
         # Stale-trail regression: accumulate the trail to a late step, toggle
