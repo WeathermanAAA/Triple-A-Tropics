@@ -45,8 +45,10 @@ this guard is reached the listing succeeded.
 
 stdlib only (the GEFS workflow installs no JSON/cloud deps).
 
-argv: <new_manifest_path> <live_manifest_path> <r2_present_json> [retain=8]
-  r2_present_json: {slug: [cycles...]} from `aws s3 ls` of each model prefix.
+argv: <new_manifest_path> <live_manifest_path> <r2_present_json> [r2_tracks_json]
+  r2_present_json: {slug: [cycles...]} of the centers JSON from `aws s3 ls`.
+  r2_tracks_json:  {slug: [cycles...]} of the sibling .tracks.json from the same
+    listing; when given, tracks_versions is DERIVED from it (race-proof presence).
 """
 import datetime as dt
 import json
@@ -109,7 +111,7 @@ def _present_map(r2_present, live_models, new_models):
 
 
 def reconcile(new: dict, live: dict, live_status: str = "ok",
-              retain: int = DEFAULT_RETAIN, r2_present=None):
+              retain: int = DEFAULT_RETAIN, r2_present=None, r2_tracks=None):
     """Pure core. Derive the published manifest from what ACTUALLY EXISTS ON R2
     (``r2_present``: ``{slug: [cycles]}`` from the authenticated object listing),
     folding in this run's freshly-built cycles. The live manifest contributes only
@@ -157,7 +159,20 @@ def reconcile(new: dict, live: dict, live_status: str = "ok",
             "latest": kept[0],
             "cycle_versions": {c: versions[c] for c in kept if c in versions},
         }
-        tkept = {c: tversions[c] for c in kept if c in tversions}
+        # tracks_versions: when the authoritative R2 TRACKS listing is given, DERIVE
+        # presence from it (exactly like cycles) - a concurrent sibling publish can
+        # race the live+new token merge and drop another model's tracks token, but
+        # the .tracks.json object itself is on R2, so deriving from the listing makes
+        # tracks_versions race-proof and self-healing on any subsequent run. The
+        # precise per-cycle token (live/new) is kept when available; otherwise we
+        # fall back to the centers cache-bust token (then the cycle string), so the
+        # viewer always gets SOME cache-bust value for a tracks file that exists.
+        if r2_tracks is not None:
+            present_tr = set(r2_tracks.get(slug, []) or [])
+            tkept = {c: (tversions.get(c) or versions.get(c) or c)
+                     for c in kept if c in present_tr}
+        else:
+            tkept = {c: tversions[c] for c in kept if c in tversions}
         if tkept:
             entry["tracks_versions"] = tkept                     # only when present
         merged[slug] = entry
@@ -198,16 +213,23 @@ def main(argv) -> int:
     new_path = argv[1]
     live_path = argv[2]
     r2_path = argv[3] if len(argv) > 3 else None
-    retain = int(argv[4]) if len(argv) > 4 else DEFAULT_RETAIN
+    # argv[4] = R2 TRACKS listing {slug:[cycles with a .tracks.json]} (optional);
+    # retain stays at its default (the shell never overrides it).
+    tracks_path = argv[4] if len(argv) > 4 else None
+    retain = DEFAULT_RETAIN
 
     new = _load(new_path)
     live = _load(live_path)
     r2_present = _load(r2_path) if r2_path else None
     if r2_present is not None and not isinstance(r2_present, dict):
         r2_present = None
+    r2_tracks = _load(tracks_path) if tracks_path else None
+    if r2_tracks is not None and not isinstance(r2_tracks, dict):
+        r2_tracks = None
 
     live_before = [(s, _latest(m)) for s, m in sorted(_models(live).items())]
-    manifest, ok, reason = reconcile(new, live, "ok", retain, r2_present=r2_present)
+    manifest, ok, reason = reconcile(new, live, "ok", retain, r2_present=r2_present,
+                                     r2_tracks=r2_tracks)
     if not ok:
         sys.stderr.write(f"[guard] ABORT: {reason}\n")
         return 2
