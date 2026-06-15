@@ -146,9 +146,16 @@
     }
   }
 
-  // Shared basemap (ocean + graticule + land fill + coast) for an extent. Used
-  // by the viewer canvas AND the picker thumbnails so they cannot drift.
-  function drawBasemap(g, ext, geo, W, H, opts) {
+  // CANONICAL TAT BASEMAP - the ONE filled basemap for every model plot. Split in
+  // two so a viewer can put its DATA FIELD between them and keep the line work ON
+  // TOP (canonical order: ocean -> land fill -> [data] -> coast -> country borders
+  // -> state borders). Borders are deliberately MUTED/secondary so they never
+  // overpower the data. Shared by the viewer canvas AND the picker thumbnails so
+  // the two cannot drift. Spec values live in the caller's opts (see enscenters
+  // BASEMAP_STYLE); the defaults here are the same canonical hexes.
+
+  // UNDER the data: ocean fill + optional graticule + land fill.
+  function drawBasemapFill(g, ext, geo, W, H, opts) {
     opts = opts || {};
     g.clearRect(0, 0, W, H);
     g.fillStyle = opts.ocean || '#07101c';
@@ -165,11 +172,36 @@
       g.fillStyle = opts.land || '#2f3f59'; g.beginPath();
       _traceGeo(g, geo.countries, ext, W, H, true); g.fill('nonzero');
     }
+  }
+
+  // ON TOP of the data: coastline, then country (admin_0) borders, then
+  // state/province (admin_1) borders. Each guarded so a missing layer or an
+  // un-set style is a no-op (never breaks the basemap). Country borders STROKE
+  // the same admin_0 polygons used for the land fill (no extra fetch); state
+  // borders stroke the optional admin_1 layer.
+  function drawBasemapLines(g, ext, geo, W, H, opts) {
+    opts = opts || {};
+    g.lineJoin = 'round'; g.lineCap = 'round';
     if (geo && geo.coast && opts.coast) {
-      g.strokeStyle = opts.coast; g.lineWidth = opts.coastLw || 0.6;
-      g.lineJoin = 'round'; g.lineCap = 'round'; g.beginPath();
+      g.strokeStyle = opts.coast; g.lineWidth = opts.coastLw || 0.6; g.beginPath();
       _traceGeo(g, geo.coast, ext, W, H, false); g.stroke();
     }
+    if (geo && geo.countries && opts.country) {
+      g.strokeStyle = opts.country; g.lineWidth = opts.countryLw || 0.7; g.beginPath();
+      _traceGeo(g, geo.countries, ext, W, H, true); g.stroke();
+    }
+    if (geo && geo.states && opts.state) {
+      g.strokeStyle = opts.state; g.lineWidth = opts.stateLw || 0.4; g.beginPath();
+      _traceGeo(g, geo.states, ext, W, H, true); g.stroke();
+    }
+  }
+
+  // Full basemap (fill + lines) in one call, for callers without a data field on
+  // top (the picker thumbnails). Viewers with a data field call the two halves
+  // around their field instead.
+  function drawBasemap(g, ext, geo, W, H, opts) {
+    drawBasemapFill(g, ext, geo, W, H, opts);
+    drawBasemapLines(g, ext, geo, W, H, opts);
   }
 
   // Basemap coastline/land resolution - ONE SHARED source of truth for every
@@ -185,10 +217,22 @@
   function loadGeo(opts) {
     opts = opts || {};
     var coastRes = opts.coast || COAST_RES, landRes = opts.land || LAND_RES;
+    // admin_1 state/province borders: 50m (10m is huge + slow to draw; 50m is
+    // plenty at these scales). OPTIONAL + guarded - a missing/failed layer
+    // resolves to null and the basemap simply draws without state borders.
+    // Skipped for the picker thumbnails (opts.states === false) where the tiny
+    // maps don't need them and the 2 MB fetch would be wasted.
+    var wantStates = opts.states !== false;
+    var statesP = wantStates
+      ? fetch('/ne_50m_admin_1_states_provinces.geojson')
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .catch(function () { return null; })
+      : Promise.resolve(null);
     return Promise.all([
       fetch('/ne_' + landRes + '_admin_0_countries.geojson').then(function (r) { return r.json(); }),
-      fetch('/ne_' + coastRes + '_coastline.geojson').then(function (r) { return r.json(); })
-    ]).then(function (g) { return { countries: g[0], coast: g[1] }; });
+      fetch('/ne_' + coastRes + '_coastline.geojson').then(function (r) { return r.json(); }),
+      statesP
+    ]).then(function (g) { return { countries: g[0], coast: g[1], states: g[2] }; });
   }
 
   // ---- shared cache-busting token for a model's per-cycle data fetch ----
@@ -386,7 +430,7 @@
     var self = this;
     this.overlay.style.display = 'flex';
     if (this.geo) { this._renderThumbs(); return; }
-    loadGeo({ coast: THUMB_RES, land: THUMB_RES })   // 110m thumbnails (fast)
+    loadGeo({ coast: THUMB_RES, land: THUMB_RES, states: false })   // 110m thumbnails (fast; no state borders)
       .then(function (g) { self.geo = g; self._renderThumbs(); })
       .catch(function () {});
   };
@@ -394,7 +438,9 @@
 
   window.TATRegions = {
     GROUPS: GROUPS, list: list, get: get, inRegion: inRegion, extentOf: extentOf,
-    project: project, drawBasemap: drawBasemap, RegionPicker: RegionPicker,
+    project: project, drawBasemap: drawBasemap,
+    drawBasemapFill: drawBasemapFill, drawBasemapLines: drawBasemapLines,
+    RegionPicker: RegionPicker,
     loadGeo: loadGeo, COAST_RES: COAST_RES, LAND_RES: LAND_RES, THUMB_RES: THUMB_RES,
     ACCENT: ACCENT, cycleVersion: cycleVersion
   };
