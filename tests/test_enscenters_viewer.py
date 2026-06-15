@@ -23,6 +23,7 @@ HARNESS = Path(__file__).resolve().parent / "enscenters_viewer_smoke.cjs"
 TRAIL_HARNESS = Path(__file__).resolve().parent / "enscenters_trail_smoke.cjs"
 HEADER_HARNESS = Path(__file__).resolve().parent / "enscenters_header_smoke.cjs"
 GIFNAME_HARNESS = Path(__file__).resolve().parent / "enscenters_gifname_smoke.cjs"
+GIFSIZE_HARNESS = Path(__file__).resolve().parent / "enscenters_gifsize_smoke.cjs"
 TOOLKIT_HARNESS = Path(__file__).resolve().parent / "enscenters_toolkit_smoke.cjs"
 OBS_HARNESS = Path(__file__).resolve().parent / "enscenters_obs_smoke.cjs"
 JS = REPO / "models" / "enscenters.js"
@@ -143,6 +144,38 @@ class TestEnsCentersViewer(unittest.TestCase):
         # FIX 2: Google prefix on the two Google models; others unchanged
         self.assertEqual(s["chips"],
                          ["ECMWF ENS", "AIFS-ENS", "GEFS", "Google FNV3 (50)", "Google GenCast"])
+
+    def test_gif_size_quality_preset(self):
+        # GIF preset toggle: the preset only moves export WIDTH + (for Discord)
+        # frame count - color fidelity (quality:1, no dither, in _gifRun) is fixed.
+        #   * Full caps width at 1600 and never trims frames; the size readout
+        #     matches the blob and the >10 MB warning fires when it's too big.
+        #   * Discord caps width at 900, AUTO-TRIMS frames to land under ~9.5 MB,
+        #     but never below the floor (8) - and warns if it still can't fit.
+        proc = subprocess.run([NODE, str(GIFSIZE_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"gifsize harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        fn, fo, dt, df = s["fullNormal"], s["fullOver"], s["discordTrim"], s["discordFloor"]
+        # Full: one pass at width 1600, no auto-trim
+        self.assertEqual(len(fn["attempts"]), 1)
+        self.assertEqual(fn["W"], 1600)
+        self.assertIn("6.6 MB", fn["status"])          # readout matches the delivered blob
+        self.assertFalse(fn["warned"])
+        # Full too big: still one pass, but the over-cap warning fires
+        self.assertEqual(len(fo["attempts"]), 1)
+        self.assertTrue(fo["warned"])
+        # Discord: width 900, trims frame count (22 -> fewer) and lands under cap
+        self.assertEqual(dt["W"], 900)
+        self.assertGreater(len(dt["attempts"]), 1)
+        self.assertLess(dt["finalN"], 22)
+        self.assertFalse(dt["warned"])
+        # Discord impossible: trims only down to the floor (8), then warns
+        self.assertEqual(df["finalN"], 8)
+        self.assertTrue(df["warned"])
+        # filename still carries the active model slug + region + cycle
+        for r in (fn, fo, dt, df):
+            self.assertEqual(r["download"], "fnv3_wpac_2026061412.gif")
 
     def test_burned_in_header_has_fhour_and_valid_per_frame(self):
         # ITEM 1 hard rule: the burned-in canvas header (what travels in a copied

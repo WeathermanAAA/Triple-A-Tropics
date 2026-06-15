@@ -314,6 +314,10 @@
   .sat-gifdialog input { width: 74px; background: var(--bg); color: var(--fg);
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
     font-size: 13px; text-align: right; }
+  .sat-gifdialog select { background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+    font-size: 13px; }
+  .sat-gifdialog select:focus { outline: 1px solid var(--accent-2); }
   .sat-gifdialog .mk { color: var(--accent-2); cursor: pointer;
     font-weight: 800; background: none; border: none; font-size: 14px; padding: 4px 0; }
   .sat-gifdialog .mk:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -545,6 +549,12 @@
 <div class="sat-gifmodal" id="enscenters-gifmodal">
   <div class="sat-gifdialog">
     <h3>GIF Maker <button class="sat-gifx" id="enscenters-gifx" type="button" aria-label="Close">&times;</button></h3>
+    <div class="row"><label for="enscenters-gifpreset">Size / quality</label>
+      <select id="enscenters-gifpreset" title="Colors stay accurate at every size; only resolution/frames change">
+        <option value="full">Full — sharpest</option>
+        <option value="balanced">Balanced</option>
+        <option value="discord">Discord (&le;10&nbsp;MB)</option>
+      </select></div>
     <div class="row"><label for="enscenters-gifn">Number of frames</label>
       <input type="number" id="enscenters-gifn" min="2" value="30"></div>
     <div class="row"><label for="enscenters-giffps">Frames per second</label>
@@ -561,6 +571,6 @@
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/hafs.js?v=b274bd2a02"></script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/models/enscenters.js?v=6b8bfa7a96"></script>
+<script src="/models/enscenters.js?v=db900ba6d0"></script>
 </body>
 </html>
