@@ -1,7 +1,13 @@
 """
-FNV3 (Google DeepMind Weather Lab) ensemble TC-track ingest.
+Google DeepMind Weather Lab ensemble TC-track ingest (FNV3 + GenCast).
 
-FNV3 emits tropical cyclones DIRECTLY (native TC objects), so there is NO self-
+This is the shared "track_csv" backend for the Weather Lab native-TC products:
+FNV3 (download slug "FNV3") and GenCast / "WeatherNext Gen" (slug "GENC"). They
+are IDENTICAL except the slug - same endpoint, CSV schema, native Vmax, and
+no-detect/no-warmcore treatment - so the model is selected by ``spec.api_model``;
+there is ONE parser, not a fork per model.
+
+FNV3/GenCast emit tropical cyclones DIRECTLY (native TC objects), so there is NO self-
 detection and NO warm-core filter (unlike the ECMWF/GEFS field models). We pull
 the per-cycle "cyclogenesis" CSV (every member's TC tracks, basin-wide) from the
 anonymous Weather Lab download endpoint and normalize to the model-agnostic
@@ -47,8 +53,8 @@ from .registry import EnsModelSpec, pressure_bins_json
 BASE_URL = ("https://deepmind.google.com/science/weatherlab/download/cyclones/"
             "{model}/ensemble/{pairing}/csv/"
             "{model}_{y}_{m:02d}_{d:02d}T{h:02d}_00_{pairing}.csv")
-API_MODEL = "FNV3"
-PAIRING = "cyclogenesis"
+DEFAULT_API_MODEL = "FNV3"            # fallback when a spec omits api_model
+PAIRING = "cyclogenesis"             # per-member basin-wide tracks (not "paired")
 STEP_H = 6
 MAX_LEAD_H = 480                      # cap; observed max ~312 h
 FNV3_STEPS: List[int] = list(range(0, MAX_LEAD_H + 1, STEP_H))
@@ -66,15 +72,19 @@ _COL_MSLP = "minimum_sea_level_pressure_hpa"
 _COL_VMAX = "maximum_sustained_wind_speed_knots"
 
 
-def cycle_url(cycle: dt.datetime) -> str:
-    return BASE_URL.format(model=API_MODEL, pairing=PAIRING,
+def _api_model(spec: EnsModelSpec) -> str:
+    return getattr(spec, "api_model", None) or DEFAULT_API_MODEL
+
+
+def cycle_url(api_model: str, cycle: dt.datetime) -> str:
+    return BASE_URL.format(model=api_model, pairing=PAIRING,
                            y=cycle.year, m=cycle.month, d=cycle.day, h=cycle.hour)
 
 
-def fetch_cycle_csv(cycle: dt.datetime) -> Optional[str]:
+def fetch_cycle_csv(api_model: str, cycle: dt.datetime) -> Optional[str]:
     """CSV text for one cycle, or None if not published yet (404). Bounded retry
     on transient errors; raises only on persistent non-404 failure."""
-    url = cycle_url(cycle)
+    url = cycle_url(api_model, cycle)
     last = None
     for attempt in range(1, _RETRIES + 1):
         try:
@@ -90,14 +100,15 @@ def fetch_cycle_csv(cycle: dt.datetime) -> Optional[str]:
     raise RuntimeError(f"FNV3 fetch failed for {cycle:%Y%m%d%H}: {last}")
 
 
-def cycle_complete(cycle: dt.datetime) -> bool:
+def cycle_complete(api_model: str, cycle: dt.datetime) -> bool:
     """The cycle's CSV is published (one file, atomic) -> ingestable."""
-    return fetch_cycle_csv(cycle) is not None
+    return fetch_cycle_csv(api_model, cycle) is not None
 
 
 def list_complete_cycles(spec: EnsModelSpec, candidates) -> List[dt.datetime]:
     """Filter candidate cycle datetimes to those whose CSV is published, ascending."""
-    return sorted(c for c in candidates if cycle_complete(c))
+    am = _api_model(spec)
+    return sorted(c for c in candidates if cycle_complete(am, c))
 
 
 def _f(v) -> Optional[float]:
@@ -159,10 +170,11 @@ def build_cycle(spec: EnsModelSpec, cycle: dt.datetime, out_dir: str,
     cycle and write the model-agnostic per-cycle JSON (same schema as the other
     models). Raises if the cycle CSV is not published yet, so the currency core
     skips it and retries."""
-    progress(f"[{spec.slug}] cycle {cycle:%Y-%m-%d %HZ}: {cycle_url(cycle)}")
-    text = fetch_cycle_csv(cycle)
+    am = _api_model(spec)
+    progress(f"[{spec.slug}] cycle {cycle:%Y-%m-%d %HZ}: {cycle_url(am, cycle)}")
+    text = fetch_cycle_csv(am, cycle)
     if text is None:
-        raise RuntimeError(f"FNV3 CSV not published for {cycle:%Y%m%d%H}")
+        raise RuntimeError(f"{spec.slug} CSV not published for {cycle:%Y%m%d%H}")
     members_objs, total, run_steps = parse_csv(text)
 
     stamp = f"{cycle:%Y%m%d%H}"

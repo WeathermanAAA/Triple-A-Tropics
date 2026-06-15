@@ -184,6 +184,10 @@ class EnsModelSpec:
     # Grid label stamped into the per-cycle JSON (informational; the viewer shows
     # it). 0.25 deg for the ECMWF open-data models, 0.5 deg for GEFS pgrb2ap5.
     grid_label: str = "0.25 deg"
+    # Weather Lab download model slug for the track-CSV products (FNV3 -> "FNV3",
+    # GenCast/WeatherNext Gen -> "GENC"). Only read by enscenters.fnv3_ingest;
+    # None for the field models.
+    api_model: Optional[str] = None
     # --- provenance ---
     attribution: str = "ECMWF open data (CC-BY-4.0)"
 
@@ -294,6 +298,7 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         label="FNV3 (50)",
         source="gdm-weatherlab",
         source_kind="track_csv",
+        api_model="FNV3",               # Weather Lab download slug
         n_perturbed=50,
         control_stream=None,            # no control/perturbed split; members are samples 0..49
         warm_core=False,                # native TC objects; no detect, no warmcore
@@ -305,9 +310,31 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
                  "Experimental model output, not for real-world use. "
                  "Data: Google DeepMind Weather Lab."),
     ),
-    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "fnv3-1000" (per-disturbance
-    # 1000-member, needs clustering), "gdm_gencast" (not yet exposed), and a
-    # derived "super" entry.
+    # GenCast (Google DeepMind, rebranded "WeatherNext Gen", Weather Lab download
+    # slug GENC): the SAME native TC-track path as FNV3 - identical endpoint, CSV
+    # schema, native Vmax, no detect/warmcore - only the download slug differs
+    # (FNV3 -> GENC). Verified live 2026-06-15: GENC/ensemble/cyclogenesis/csv 200,
+    # columns identical to FNV3. Reuses enscenters.fnv3_ingest via api_model.
+    EnsModelSpec(
+        slug="genc",
+        label="GenCast",
+        source="gdm-weatherlab",
+        source_kind="track_csv",
+        api_model="GENC",
+        n_perturbed=50,
+        control_stream=None,
+        warm_core=False,
+        grid_label="native TC tracks",
+        attribution="Google DeepMind Weather Lab (GenCast / WeatherNext Gen)",
+        caption=("Native tropical-cyclone tracks from Google DeepMind's GenCast "
+                 "(WeatherNext Gen) ensemble, Weather Lab. Peak winds are the "
+                 "model's own maximum sustained wind (not an Atkinson-Holliday "
+                 "estimate). Experimental model output, not for real-world use. "
+                 "Data: Google DeepMind Weather Lab."),
+    ),
+    # Roadmap (later stages, ENSEMBLE_DESIGN.md): "fnv3-1000" (the experimental
+    # 1000-member view, needs clustering), "WeatherNext Graph"/GraphCast, and a
+    # derived "super" entry - all on the same Weather Lab download pattern.
 )
 
 REGISTRY = {s.slug: s for s in _SPECS}
