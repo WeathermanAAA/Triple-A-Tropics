@@ -53,11 +53,14 @@
   var MEAN_LW = 3.0, MEAN_DIM_LW = 1.5, MEAN_DIM_ALPHA = 0.45;
   var MEAN_CASING = 'rgba(7,16,28,0.9)';
   var MEAN_MIN_MEMBERS = 3;       // hide clusters tinier than this (unreliable)
-  // Left-side INFO COLUMN: the legend sits on top and the Vmax plume stacks directly
-  // beneath it (Mean mode), so the whole top-left is the info column and the right
-  // side stays clear for data. The stack travels together to the least-crowded
-  // corner (see _legendXY). Plume box size is fixed; only its position moves.
-  var PLUME_W = 192, PLUME_H = 120, INFO_GAP = 8;
+  // ONE canonical map-box aspect (w/h) for EVERY region + model, so every plot is the
+  // same shape/size. 2.0 is forced by Global: lon spans the full 360 and lat caps at
+  // the poles (180), so Global can only fill a 2:1 box without cropping lon or
+  // letterboxing. Each region's extent is EXPANDED (never cropped) on its deficient
+  // axis to this aspect (see frameExtent), so the map fills the box undistorted with
+  // no letterbox bands. Legend is pinned top-left, the Vmax plume top-right.
+  var BOX_ASPECT = 2.0;
+  var PLUME_W = 192, PLUME_H = 120;
   // Stage 2b OBS-vs-envelope. The observed-system feed is the SAME global feed the
   // home/global tracks map already reads (cdn .../global_storms.geojson, written by
   // the main-repo ace_core storm-display path). It is fetched INDEPENDENTLY and
@@ -93,6 +96,28 @@
     if (kt == null || isNaN(kt)) return '#3fa4ff';
     for (var i = 0; i < SSHWS_RAMP.length; i++) if (kt <= SSHWS_RAMP[i][0]) return SSHWS_RAMP[i][1];
     return '#b03bff';   // C5
+  }
+  // Expand an extent [w,e,s,n] symmetrically on its DEFICIENT axis until its geo
+  // aspect (lonSpan/latSpan) equals `aspect`, so it fills the fixed-aspect map box
+  // undistorted with NO crop + NO letterbox (we only ever ADD surrounding ocean,
+  // never trim the region). Too-wide -> grow lat (clamped into [-90,90], shifting the
+  // window if a pole is hit); too-narrow -> grow lon (unbounded; project() handles
+  // ext[1]>180). Region stays centered. The region object (data filtering, peak
+  // table) is unchanged - only the DISPLAY window grows.
+  function frameExtent(ext, aspect) {
+    var w = ext[0], e = ext[1], s = ext[2], n = ext[3];
+    var lonSpan = e - w, latSpan = n - s, geoA = lonSpan / latSpan;
+    if (geoA > aspect) {                          // too wide -> grow latitude
+      var tLat = lonSpan / aspect, c = (s + n) / 2, half = tLat / 2;
+      var lo = c - half, hi = c + half;
+      if (lo < -90) { hi = Math.min(90, hi + (-90 - lo)); lo = -90; }
+      if (hi > 90) { lo = Math.max(-90, lo - (hi - 90)); hi = 90; }
+      s = lo; n = hi;
+    } else if (geoA < aspect) {                   // too narrow -> grow longitude (unbounded)
+      var tLon = latSpan * aspect, cl = (w + e) / 2, halfL = tLon / 2;
+      w = cl - halfL; e = cl + halfL;
+    }
+    return [w, e, s, n];
   }
   // CANONICAL TAT BASEMAP spec (single source of truth - same hexes server-side).
   // Borders muted/secondary so they never overpower the centers. Draw order:
@@ -244,7 +269,7 @@
 
     var saved = null; try { saved = localStorage.getItem(LS_REGION); } catch (e) {}
     this.region = regionOr(saved || DEFAULT_REGION);
-    this.extent = (window.TATRegions ? TATRegions.extentOf(TATRegions.get(this.region)) : [0, 360, -90, 90]);
+    this.extent = (window.TATRegions ? frameExtent(TATRegions.extentOf(TATRegions.get(this.region)), BOX_ASPECT) : [0, 360, -90, 90]);
     var tm = null; try { tm = localStorage.getItem(LS_TRAIL); } catch (e) {}
     this.trailMode = (tm === 'current') ? 'current' : 'trail';
     // Toolkit (Stage 2) state. Persisted like trail; tracks are loaded lazily.
@@ -453,7 +478,7 @@
     if (!window.TATRegions) return;
     var r = TATRegions.get(key); if (!r) return;
     this.region = key;
-    this.extent = TATRegions.extentOf(r);
+    this.extent = frameExtent(TATRegions.extentOf(r), BOX_ASPECT);   // fixed-aspect display window
     try { localStorage.setItem(LS_REGION, key); } catch (e) {}
     if (this.dom.regionLabel) this.dom.regionLabel.textContent = r.label;
     if (this.picker) this.picker.setCurrent(key);
@@ -814,9 +839,8 @@
     var leads = pv.lead;
     var p10 = smooth(pv.p10), p90 = smooth(pv.p90),
         sMax = smooth(pv.max), sMed = smooth(pv.p50), sMin = smooth(pv.min);
-    // stacked directly BELOW the legend (the left info column); travels with it
-    var ld = this._legendDims(), lxy = this._legendXY(ld.w, ld.h);
-    var w = PLUME_W, h = PLUME_H, x = lxy.x, y = lxy.y + ld.h + INFO_GAP;
+    // FIXED top-right (opposite the top-left legend); same spot on every region
+    var w = PLUME_W, h = PLUME_H, x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
     roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
@@ -876,13 +900,12 @@
 
   // Compact chip when Mean is on but no cluster falls in the region, so the plume +
   // dated labels hide cleanly with a one-line reason (mirrors the obs "no system"
-  // note). Sits where the plume would be: below the legend in the left info column.
+  // note). Sits where the plume would be: FIXED top-right.
   EnsCentersViewer.prototype._drawPlumeNote = function (g) {
     var msg = 'No system in this region';
     g.save(); g.font = '600 11px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
-    var ld = this._legendDims(), lxy = this._legendXY(ld.w, ld.h);
     var pad = 8, tw = g.measureText(msg).width, w = tw + pad * 2, h = 26;
-    var x = lxy.x, y = lxy.y + ld.h + INFO_GAP;
+    var x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
     roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
     g.fillStyle = C.muted; g.fillText(msg, x + pad, y + 8);
@@ -1217,11 +1240,10 @@
     var pad = 14, gap = 14, headerH = 50;
     var tableW = (figW < 620) ? Math.round(figW * 0.3) : 212;
     var mapBoxW = figW - 2 * pad - tableW - gap;
-    var e = this.extent, aspect = (e[1] - e[0]) / (e[3] - e[2]);
-    var boxH = Math.max(360, Math.min(mapBoxW / aspect, 560));   // table always >= 360 tall
-    // contain the map within [mapBoxW x boxH] preserving aspect
-    var drawW = mapBoxW, drawH = mapBoxW / aspect;
-    if (drawH > boxH) { drawH = boxH; drawW = boxH * aspect; }
+    // ONE fixed box aspect for every region/model. The extent is pre-framed to
+    // BOX_ASPECT (frameExtent), so the map FILLS the box exactly - no contain-fit, no
+    // letterbox bands, identical figure dimensions for a given figW across all regions.
+    var boxH = mapBoxW / BOX_ASPECT;
     var figH = pad + headerH + boxH + pad;
 
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1231,9 +1253,9 @@
     cv.style.width = displayW + 'px';
     cv.style.height = (displayW * figH / figW) + 'px';
     this._scale(this.ctx);
-    // map box (allocated) + drawn map rect (contained, centered)
+    // the map rect == the box (fills it; framed extent guarantees no distortion)
     this.box = { x: pad, y: pad + headerH, w: mapBoxW, h: boxH };
-    this.map = { x: pad + (mapBoxW - drawW) / 2, y: pad + headerH + (boxH - drawH) / 2, w: drawW, h: drawH };
+    this.map = { x: pad, y: pad + headerH, w: mapBoxW, h: boxH };
     this.table = { x: pad + mapBoxW + gap, y: pad + headerH, w: tableW, h: boxH };
     this.headerXY = { x: pad, y: pad };
     this.ringR = 2.3; this.ringLW = 1.4; this.fillR = 2.5;
@@ -1355,53 +1377,14 @@
     g.restore();
   };
 
-  // Legend box dimensions (one source of truth for the legend draw + the info-column
-  // layout): width is fixed, height = padding + (pressure bins + 2 note lines).
-  EnsCentersViewer.prototype._legendDims = function () {
-    var bins = (this.data && this.data.pressure_bins) || [];
-    return { w: 132, h: 7 * 2 + (bins.length + 2) * 14 };   // pady*2 + lines*lh
-  };
-  // The plume is part of the info column only when it actually draws (Mean on + tracks
-  // ready) - matches the `if (meanOn)` guard in _show that calls _drawPlumeInset.
-  EnsCentersViewer.prototype._infoHasPlume = function () { return this.meanOn && this.tracksReady(); };
-
-  // Top-left anchor of the LEFT INFO COLUMN (legend on top, Vmax plume stacked beneath
-  // it when Mean is on). Home is TOP-LEFT, below the burned-in header. Some regions are
-  // wide-short letterboxed strips (e.g. Tropical Pacific) where the centers land
-  // top-left and the column would bury the cloud, so the WHOLE column relocates to
-  // bottom-left when top-left is crowded AND bottom-left is clearer. The crowding test
-  // uses the full STACK footprint (legend + plume), so the plume travels with the
-  // legend and never collides with it. Decided from full-trail density, cached per
-  // region+layout+plume-state so it never jiggles during playback. Returns the legend
-  // top-left; the plume sits at y + legendH + INFO_GAP.
-  EnsCentersViewer.prototype._legendXY = function (w, h) {
-    var m = this.map, hasPlume = this._infoHasPlume();
-    var stackW = hasPlume ? Math.max(w, PLUME_W) : w;
-    var stackH = hasPlume ? (h + INFO_GAP + PLUME_H) : h;
-    var key = this.region + '|' + Math.round(m.w) + 'x' + Math.round(m.h) + '|' + this.regionFrames.length + '|' + (hasPlume ? 1 : 0);
-    if (this._legendKey !== key) {
-      this._legendKey = key;
-      var ext = this.extent, mw = m.w, mh = m.h, nTL = 0, nBL = 0, total = 0;
-      for (var s = 0; s < this.regionFrames.length; s++) {
-        var pts = this.regionFrames[s];
-        for (var k = 0; k < pts.length; k++) {
-          var p = TATRegions.project(pts[k][1], pts[k][0], ext, mw, mh); total++;
-          if (p[0] >= 8 && p[0] <= 8 + stackW && p[1] >= 8 && p[1] <= 8 + stackH) nTL++;
-          if (p[0] >= 8 && p[0] <= 8 + stackW && p[1] >= mh - stackH - 8 && p[1] <= mh - 8) nBL++;
-        }
-      }
-      var thresh = Math.max(8, total * 0.03);
-      this._legendCorner = (nTL <= thresh || nTL <= nBL) ? 'tl' : 'bl';   // prefer TL; relocate only if crowded + BL clearer
-    }
-    var top = (this._legendCorner === 'bl') ? Math.max(m.y + 8, m.y + m.h - stackH - 8) : (m.y + 8);
-    return { x: m.x + 8, y: top };
-  };
-
+  // Legend: FIXED top-left, below the burned-in header. No relocation, no crowding
+  // test - with the uniform fixed-aspect frame it sits in the same spot on every
+  // region/model (the Vmax plume is pinned top-right in _drawPlumeInset).
   EnsCentersViewer.prototype._drawLegend = function (g) {
     var bins = (this.data && this.data.pressure_bins) || [];
-    var lh = 14, padx = 9, pady = 7;
-    var dims = this._legendDims(), w = dims.w, h = dims.h;
-    var xy = this._legendXY(w, h), x = xy.x, y = xy.y;
+    var lines = bins.length + 2, lh = 14, padx = 9, pady = 7;
+    var w = 132, h = pady * 2 + lines * lh;
+    var x = this.map.x + 8, y = this.map.y + 8;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.78)'; g.strokeStyle = C.border; g.lineWidth = 1;
     g.fillRect(x, y, w, h); g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
