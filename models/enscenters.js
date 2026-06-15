@@ -30,9 +30,16 @@
   var GIF_MAX_W = 1600;          // cap GIF width; high enough to export at ~source res (color fidelity)
   var GIF_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js';
   var GIF_LAST_DWELL = 6;        // hold the full-cloud frame N x longer before looping
+  // SIZE/QUALITY presets. The lever is RESOLUTION + FRAME COUNT, never palette
+  // quality (always gif.js quality:1, no dither) - so colors stay true at any size.
+  var GIF_PRESET_W = { full: 1600, balanced: 1200, discord: 900 };   // per-preset width cap
+  var GIF_DISCORD_TARGET = 9.5 * 1024 * 1024;   // aim under this (safety margin below 10 MB)
+  var GIF_HARD_CAP = 10 * 1024 * 1024;          // Discord free-tier reject threshold
+  var GIF_FLOOR_FRAMES = 8;                     // don't trim a Discord loop below this
 
   var DEFAULT_REGION = 'atlantic';
   var LS_REGION = 'ens.region';
+  var LS_GIFPRESET = 'ens.gifpreset';   // GIF size/quality preset: full | balanced | discord
   var LS_TRAIL = 'ens.trail';
   var LS_STYLE = 'ens.style';     // 'cheerios' (default) | 'lines'
   var LS_MEAN = 'ens.mean';       // 'on' | 'off' (default)
@@ -249,6 +256,7 @@
       gifn: el('enscenters-gifn'),
       giffps: el('enscenters-giffps'),
       gifskip: el('enscenters-gifskip'),
+      gifpreset: el('enscenters-gifpreset'),
       gifmake: el('enscenters-gifmake'),
       gifstatus: el('enscenters-gifstatus'),
       gifx: el('enscenters-gifx'),
@@ -1673,6 +1681,9 @@
       self._setMinp(!self.minpOn);
     });
     if (this.dom.gif) this.dom.gif.addEventListener('click', function () { self._openGif(); });
+    if (this.dom.gifpreset) this.dom.gifpreset.addEventListener('change', function () {
+      try { localStorage.setItem(LS_GIFPRESET, this.value); } catch (e) {}
+    });
     if (this.dom.gifmake) this.dom.gifmake.addEventListener('click', function () { self._makeGif(); });
     if (this.dom.gifx) this.dom.gifx.addEventListener('click', function () { self._closeGif(); });
     if (this.dom.gifmodal) this.dom.gifmodal.addEventListener('click', function (e) {
@@ -1768,12 +1779,21 @@
     }).catch(function () { cb(GIF_WORKER_URL); });   // CDN fallback
   };
 
+  EnsCentersViewer.prototype._gifPreset = function () {
+    var p = this.dom.gifpreset && this.dom.gifpreset.value;
+    return GIF_PRESET_W[p] ? p : 'full';
+  };
+
   EnsCentersViewer.prototype._openGif = function () {
     if (!this.steps.length) return;
     var nIn = this.dom.gifn;
     nIn.max = this.steps.length;
     if (!parseInt(nIn.value, 10) || parseInt(nIn.value, 10) > this.steps.length) {
       nIn.value = Math.min(this.steps.length, 30);
+    }
+    if (this.dom.gifpreset) {                      // reflect the persisted preset
+      var saved = null; try { saved = localStorage.getItem(LS_GIFPRESET); } catch (e) {}
+      if (saved && GIF_PRESET_W[saved]) this.dom.gifpreset.value = saved;
     }
     this.dom.gifstatus.style.display = 'none';
     this.dom.gifmake.disabled = false;
@@ -1807,61 +1827,86 @@
     var n = Math.max(2, Math.min(total, parseInt(this.dom.gifn.value, 10) || total));
     var fps = Math.max(1, Math.min(30, parseInt(this.dom.giffps.value, 10) || 10));
     var skip = Math.max(0, parseInt(this.dom.gifskip.value, 10) || 0);
-    var delay = Math.round(1000 / fps);
-    var sel = this._pickSteps(total, n, skip);
-    if (sel.length < 2) { alert('Not enough frames for a GIF; lower "Skip every".'); return; }
-    var selSet = {}; for (var s = 0; s < sel.length; s++) selSet[sel[s]] = 1;
-    var lastSel = sel[sel.length - 1];
-
-    // GIF canvas. Export at (near) the SOURCE device resolution cw - sizing off cw
-    // (not the CSS figW) keeps the downscale minimal/none, so the fine peak-table
-    // rings + thin plume lines aren't bilinear-blended into shifted colors. Only a
-    // very wide retina canvas is capped at GIF_MAX_W. Smoothing stays ON (no dither),
-    // and the encoder palette is built at quality:1 below for true-to-screen hues.
-    var cw = this.dom.canvas.width, ch = this.dom.canvas.height;
-    var W = Math.min(cw, GIF_MAX_W), H = Math.round(W * ch / cw);
-    var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
-    var octx = oc.getContext('2d');
-
+    var preset = this._gifPreset();
+    // The preset's only effect: the export WIDTH cap (color fidelity is fixed -
+    // quality:1, no dither, in _gifRun). Discord additionally auto-trims FRAME COUNT
+    // to land under the size budget. Width is capped at the source device width cw.
+    var W = Math.min(this.dom.canvas.width, GIF_PRESET_W[preset] || GIF_MAX_W);
     var status = this.dom.gifstatus, mk = this.dom.gifmake, self = this;
     status.style.display = ''; status.textContent = 'Encoding… 0%'; mk.disabled = true;
     this.encoding = true;
     this._pause();
-    var settled = false, safety = null;
-    function end() { if (settled) return; settled = true; if (safety) { clearTimeout(safety); safety = null; } }
+    var maxTry = (preset === 'discord') ? 4 : 1;
+
     function fail(msg) {
-      if (settled) return; end(); self.encoding = false; mk.disabled = false;
+      self.encoding = false; mk.disabled = false;
       status.style.display = ''; status.textContent = msg || 'GIF export failed - try again.';
     }
+    function deliver(blob) {
+      var bytes = (blob && blob.size) || 0;
+      var mb = (bytes / 1048576).toFixed(1), over = bytes > GIF_HARD_CAP;
+      var u = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = u;
+      a.download = (self.model || 'ens') + '_' + self.region + '_' + (self.data ? self.data.init_cycle : 'cycle') + '.gif';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      requestAnimationFrame(function () { URL.revokeObjectURL(u); });
+      self.encoding = false; mk.disabled = false;
+      if (over) {
+        status.textContent = 'Saved — ' + mb + ' MB  ⚠ over Discord’s 10 MB; try the Discord preset, fewer frames, or a lower FPS.';
+      } else {
+        status.textContent = 'Saved — ' + mb + ' MB';
+        setTimeout(function () { self._closeGif(); }, 1400);
+      }
+    }
+    function attempt(nFrames, tryNo) {
+      self._gifRun(nFrames, fps, skip, W, function (blob) {
+        // Discord: under-target? deliver. Over? trim frame count proportionally
+        // (size ~ linear in frames; quality/colors untouched) and re-encode.
+        if (preset === 'discord' && blob.size > GIF_DISCORD_TARGET && tryNo < maxTry && nFrames > GIF_FLOOR_FRAMES) {
+          var next = Math.floor(nFrames * (GIF_DISCORD_TARGET / blob.size) * 0.92);
+          next = Math.max(GIF_FLOOR_FRAMES, Math.min(next, nFrames - 2));   // always make progress
+          status.textContent = 'Trimming to fit Discord (' + (blob.size / 1048576).toFixed(1) + ' MB)…';
+          attempt(next, tryNo + 1);
+        } else {
+          deliver(blob);
+        }
+      }, fail);
+    }
+    attempt(n, 1);
+  };
+
+  // One encode pass at width W with `n` frames (skip-thinned). quality:1 + no dither
+  // (color fidelity); builds the burned-in-header frames off the live canvas. Calls
+  // onBlob(blob) on success, onFail(msg) on any error/timeout. Re-callable (Discord
+  // auto-fit re-runs it with fewer frames).
+  EnsCentersViewer.prototype._gifRun = function (n, fps, skip, W, onBlob, onFail) {
+    var self = this, total = this.steps.length;
+    var sel = this._pickSteps(total, n, skip);
+    if (sel.length < 2) { onFail('Not enough frames for a GIF; lower "Skip every".'); return; }
+    var selSet = {}; for (var s = 0; s < sel.length; s++) selSet[sel[s]] = 1;
+    var lastSel = sel[sel.length - 1], delay = Math.round(1000 / fps);
+    var cw = this.dom.canvas.width, ch = this.dom.canvas.height;
+    var H = Math.round(W * ch / cw);
+    var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+    var octx = oc.getContext('2d');
+    var status = this.dom.gifstatus;
+    var settled = false, safety = null;
+    function done() { if (settled) return true; settled = true; if (safety) { clearTimeout(safety); safety = null; } return false; }
 
     this._ensureGifWorker(function (worker) {
       var gif;
       try {
-        // quality:1 = the most accurate NeuQuant palette (vs the coarse default 10),
-        // so pressure-bin ring colors, the SSHWS plume gradient + green Median map
-        // true-to-screen. dither stays off (default) so flat swatches don't get noisy.
         gif = new window.GIF({ workers: 2, quality: 1, width: W, height: H,
           workerScript: worker, background: '#0b1320' });
-      } catch (e) { fail('GIF encoder unavailable.'); return; }
+      } catch (e) { if (!done()) onFail('GIF encoder unavailable.'); return; }
       gif.on('progress', function (p) { status.textContent = 'Encoding… ' + Math.round(p * 100) + '%'; });
-      gif.on('error', function () { fail('GIF encoding failed - try again.'); });
-      gif.on('finished', function (blob) {
-        end();
-        var u = URL.createObjectURL(blob), a = document.createElement('a');
-        a.href = u;
-        a.download = (self.model || 'ens') + '_' + self.region + '_' + (self.data ? self.data.init_cycle : 'cycle') + '.gif';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        requestAnimationFrame(function () { URL.revokeObjectURL(u); });
-        status.textContent = 'Done!'; mk.disabled = false;
-        setTimeout(function () { self._closeGif(); }, 700);
-      });
+      gif.on('error', function () { if (!done()) onFail('GIF encoding failed - try again.'); });
+      gif.on('finished', function (blob) { if (!done()) onBlob(blob); });
 
-      // Render the run in order so the trail builds incrementally (honoring the
-      // current region crop + trail/current toggle), capturing the sampled
-      // steps. The synchronous loop never repaints mid-way, so the visible
-      // canvas does not flash.
+      // Render the run in order so the trail builds incrementally; the synchronous
+      // loop never repaints mid-way, so the visible canvas does not flash.
       var savedIdx = self.idx, added = 0;
-      self._resetTrail();   // build the GIF trail from a clean layer
+      self._resetTrail();
       for (var i = 0; i < total; i++) {
         self._show(i);
         if (selSet[i]) {
@@ -1872,9 +1917,9 @@
         }
       }
       self._show(savedIdx);   // restore the viewer
-      if (added < 2) { fail('Could not render enough frames.'); return; }
-      safety = setTimeout(function () { fail('GIF encoding timed out - try again.'); }, 90000);
-      try { gif.render(); } catch (e) { fail('GIF encoder failed to start.'); }
+      if (added < 2) { if (!done()) onFail('Could not render enough frames.'); return; }
+      safety = setTimeout(function () { if (!done()) onFail('GIF encoding timed out - try again.'); }, 90000);
+      try { gif.render(); } catch (e) { if (!done()) onFail('GIF encoder failed to start.'); }
     });
   };
 
