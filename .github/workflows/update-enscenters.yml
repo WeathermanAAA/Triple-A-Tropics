@@ -32,6 +32,9 @@ on:
       cycle:
         description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
         required: false
+      tracks_only:
+        description: "Build ONLY the sibling tracks JSON for --cycle (no field re-ingest)"
+        required: false
       jobs:
         description: "Parallel member workers"
         required: false
@@ -75,6 +78,7 @@ jobs:
           # the shell body (Actions script-injection hardening).
           ENS_JOBS: ${{ github.event.inputs.jobs || '4' }}
           ENS_CYCLE: ${{ github.event.inputs.cycle }}
+          ENS_TRACKS_ONLY: ${{ github.event.inputs.tracks_only }}
         run: |
           # --source aws: the AWS mirror dodges the open-data portal's 500-
           # simultaneous-connection cap (we run 4 parallel member workers + the
@@ -82,7 +86,8 @@ jobs:
           python generate_enscenters.py \
             --jobs "${ENS_JOBS:-4}" \
             --source aws \
-            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"}
+            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"} \
+            ${ENS_TRACKS_ONLY:+--tracks-only}
 
       - name: Sync detection JSON + manifest to R2 (and prune old cycles)
         env:

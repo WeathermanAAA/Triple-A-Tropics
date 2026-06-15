@@ -54,6 +54,69 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
 
+def _tracks_only(spec, cycle: dt.datetime, out_dir: str, *, retain: int) -> int:
+    """Build the sibling tracks JSON for an already-published cycle WITHOUT
+    re-ingesting fields, and fold a tracks_versions reference into the manifest
+    (centers cache-bust token untouched). The publish step syncs the new .tracks.json
+    + reconciled manifest. Idempotent. Returns a process exit code."""
+    import json
+    import os
+    import tempfile
+    import urllib.request
+
+    from .pipeline import (CDN_BASE, R2_PREFIX, fetch_prior_manifest,
+                           merge_manifest_multi, write_outputs)
+    from .tracking import build_tracks_for_cycle
+
+    slug, stamp = spec.slug, f"{cycle:%Y%m%d%H}"
+    native = None
+    cyc_path = None
+    if getattr(spec, "source_kind", "self_detect") == "track_csv":
+        from . import fnv3_ingest as _fnv3
+        text = _fnv3.fetch_cycle_csv(_fnv3._api_model(spec), cycle)
+        if text is None:
+            print(f"[{slug}] FATAL: native CSV not published for {stamp}", file=sys.stderr)
+            return 1
+        native = _fnv3.member_tracks_from_csv(text)
+    else:
+        url = f"{CDN_BASE}/{R2_PREFIX}/{slug}/{stamp}.json"
+        hdrs = {"Cache-Control": "no-cache",
+                "User-Agent": "triple-a-tropics.com enscenters (weather hobby site)"}
+        doc, last = None, None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs), timeout=60) as r:
+                    doc = json.loads(r.read().decode("utf-8"))
+                break
+            except Exception as e:  # noqa: BLE001
+                last = e
+        if doc is None:
+            print(f"[{slug}] FATAL: cannot fetch existing centers JSON {url}: {last}", file=sys.stderr)
+            return 1
+        # read-only temp copy so we do NOT re-upload the (unchanged) centers JSON
+        cyc_path = os.path.join(tempfile.gettempdir(), f"ens_{slug}_{stamp}_centers.json")
+        with open(cyc_path, "w") as f:
+            json.dump(doc, f)
+
+    try:
+        tr = build_tracks_for_cycle(spec, cycle, out_dir, cycle_path=cyc_path,
+                                    native_member_tracks=native)
+    except Exception as e:  # noqa: BLE001
+        print(f"[{slug}] FATAL: tracks build failed for {stamp}: {e}", file=sys.stderr)
+        return 1
+
+    # add tracks_versions for this (already-published) cycle; keep centers tokens
+    # (new_versions=None) so the centers JSON cache-bust is unchanged.
+    prior = fetch_prior_manifest()
+    manifest, prune_keys = merge_manifest_multi(
+        prior, spec, [stamp], retain, new_versions=None,
+        new_tracks_versions={stamp: tr["generated_at"]})
+    write_outputs(out_dir, manifest, prune_keys)
+    print(f"[{slug}] OK tracks-only cycle={stamp} clusters={tr['n_clusters']} "
+          f"member_tracks={tr['n_member_tracks']}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Build ensemble cyclone-center JSON for R2 (never-miss).")
     p.add_argument("--model", default="ecens", help="registry model slug (default ecens)")
@@ -71,9 +134,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--min-members-frac", type=float, default=DEFAULT_MIN_MEMBERS_FRAC,
                    help="quorum: refuse to publish a cycle if fewer than this fraction of members ingest")
     p.add_argument("--source", default="ecmwf", help="ecmwf-opendata source: ecmwf|aws|azure|google")
+    p.add_argument("--tracks-only", action="store_true",
+                   help="build ONLY the sibling tracks/clusters JSON for --cycle from the "
+                        "EXISTING centers (no field re-ingest); idempotent tracks backfill")
     args = p.parse_args(argv)
 
     spec = get_spec(args.model)
+
+    # --- tracks-only backfill: build the sibling tracks JSON for an ALREADY-published
+    # cycle WITHOUT re-ingesting the fields. Self-detected models read the existing
+    # centers JSON from R2/CDN; native models re-parse the (tiny) cyclogenesis CSV
+    # for track_id. The publish step then syncs the .tracks.json + manifest. ---
+    if args.tracks_only:
+        if not args.cycle:
+            print("[ens] FATAL: --tracks-only requires --cycle", file=sys.stderr)
+            return 1
+        return _tracks_only(spec, _parse_cycle(args.cycle).replace(minute=0, second=0, microsecond=0),
+                            args.out_dir, retain=args.retain)
     members = _parse_members(spec, args.members)
     steps = _parse_steps(args.steps)
     tag = spec.slug
