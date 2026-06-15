@@ -67,6 +67,21 @@
     p950_970: '#ff1f47', lt950: '#ff3d9a'
   };
   var BIN_ORDER = ['gt1000', 'p990_1000', 'p970_990', 'p950_970', 'lt950'];
+  // SSHWS wind-category palette for the Vmax plume ONLY. The plume is a WIND
+  // product, so a Saffir-Simpson ramp is a genuinely different, meaningful
+  // encoding from the pressure-bin centers (and reads "warmer = stronger" at a
+  // glance). Ramp matches the live active-banner: TD blue -> TS green -> C1
+  // yellow -> C2 orange -> C3 red -> C4 magenta -> C5 purple. Confined to the
+  // boxed inset (labeled "kt"), so it never competes with the field's bin colors.
+  var SSHWS_RAMP = [
+    [33, '#3fa4ff'], [63, '#46c56a'], [82, '#ffe14d'], [95, '#ff9a2f'],
+    [112, '#ff4d3b'], [136, '#e33ad4']
+  ];
+  function sshwsColor(kt) {
+    if (kt == null || isNaN(kt)) return '#3fa4ff';
+    for (var i = 0; i < SSHWS_RAMP.length; i++) if (kt <= SSHWS_RAMP[i][0]) return SSHWS_RAMP[i][1];
+    return '#b03bff';   // C5
+  }
   // CANONICAL TAT BASEMAP spec (single source of truth - same hexes server-side).
   // Borders muted/secondary so they never overpower the centers. Draw order:
   // ocean -> land fill (static layer) -> centers -> coast -> country -> state
@@ -542,26 +557,36 @@
     if (!this.tracksRegion || !this.tracksRegion.length) return;
     var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
     var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
-    var buckets = {}; for (var b = 0; b < BIN_ORDER.length; b++) buckets[BIN_ORDER[b]] = [];
+    var buckets = {}, heads = {};
+    for (var b = 0; b < BIN_ORDER.length; b++) { buckets[BIN_ORDER[b]] = []; heads[BIN_ORDER[b]] = []; }
     var trs = this.tracksRegion;
     for (var i = 0; i < trs.length; i++) {
-      var fixes = trs[i], prev = null;
+      var fixes = trs[i], prev = null, head = null;
       for (var k = 0; k < fixes.length; k++) {
         var f = fixes[k]; if (f[0] > uptoStep) break;          // step-sorted
         var p = TATRegions.project(wrap180(f[2]), f[1], ext, mw, mh);
-        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) {
-          var bk = (f[3] != null) ? binKey(f[3]) : BIN_ORDER[0];
-          buckets[bk].push(prev[0], prev[1], p[0], p[1]);
-        }
-        prev = p;
+        var bk = (f[3] != null) ? binKey(f[3]) : BIN_ORDER[0];
+        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) buckets[bk].push(prev[0], prev[1], p[0], p[1]);
+        prev = p; head = [p[0], p[1], bk];                     // current F-hour position (leads the line)
       }
+      if (head) heads[head[2]].push(head[0], head[1]);
     }
+    // thin trailing spaghetti, batched per pressure bin
     g.globalAlpha = LINE_ALPHA; g.lineWidth = LINE_LW; g.lineJoin = 'round'; g.lineCap = 'round';
     for (var bo = 0; bo < BIN_ORDER.length; bo++) {
       var key = BIN_ORDER[bo], seg = buckets[key]; if (!seg.length) continue;
       g.strokeStyle = PRESSURE_BIN_COLORS[key] || '#fff'; g.beginPath();
       for (var s = 0; s < seg.length; s += 4) { g.moveTo(seg[s], seg[s + 1]); g.lineTo(seg[s + 2], seg[s + 3]); }
       g.stroke();
+    }
+    // filled leading heads at the current F-hour (Cheerio "filled = current step"
+    // style: pressure-bin colored, opaque, so the heads lead the lines as it animates)
+    g.globalAlpha = 1; var hr = this.fillR;
+    for (var ho = 0; ho < BIN_ORDER.length; ho++) {
+      var hk = BIN_ORDER[ho], hd = heads[hk]; if (!hd.length) continue;
+      g.fillStyle = PRESSURE_BIN_COLORS[hk] || '#fff'; g.beginPath();
+      for (var hh = 0; hh < hd.length; hh += 2) { g.moveTo(hd[hh] + hr, hd[hh + 1]); g.arc(hd[hh], hd[hh + 1], hr, 0, 6.2832); }
+      g.fill();
     }
     g.globalAlpha = 1;
   };
@@ -585,12 +610,26 @@
     }
     // draw de-emphasized (low_confidence) first so bold consensus sits on top
     items.sort(function (a, b) { return (a.low_confidence ? 0 : 1) - (b.low_confidence ? 0 : 1); });
+    // dated MSLP labels go on the HEADLINE system only (the same dominant cluster
+    // the plume describes), so secondary tracks don't crowd the field with text.
+    var dom = this._dominantCluster();
     for (var it = 0; it < items.length; it++) {
-      this._drawMeanTrack(g, items[it], uptoStep, ext, mw, mh, JUMP, !!items[it].low_confidence);
+      this._drawMeanTrack(g, items[it], uptoStep, ext, mw, mh, JUMP,
+        !!items[it].low_confidence, items[it] === dom);
     }
   };
 
-  EnsCentersViewer.prototype._drawMeanTrack = function (g, c, uptoStep, ext, mw, mh, JUMP, dim) {
+  // The headline cluster: first confident cluster of reliable size, else the first
+  // of reliable size. Shared by the Vmax plume + the dated mean-track labels so
+  // they always describe the same system.
+  EnsCentersViewer.prototype._dominantCluster = function () {
+    var cl = (this.tracks && this.tracks.clusters) || [];
+    for (var i = 0; i < cl.length; i++) if ((cl[i].member_count || 0) >= MEAN_MIN_MEMBERS && !cl[i].low_confidence) return cl[i];
+    for (var j = 0; j < cl.length; j++) if ((cl[j].member_count || 0) >= MEAN_MIN_MEMBERS) return cl[j];
+    return null;
+  };
+
+  EnsCentersViewer.prototype._drawMeanTrack = function (g, c, uptoStep, ext, mw, mh, JUMP, dim, labelDaily) {
     var mt = c.mean_track || []; if (mt.length < 2) return;
     var pm = (c.plume && c.plume.mslp) || { lead: [], p50: [] };
     var lut = {}; for (var i = 0; i < pm.lead.length; i++) lut[pm.lead[i]] = pm.p50[i];
@@ -618,49 +657,119 @@
       g.strokeStyle = PRESSURE_BIN_COLORS[(mslp != null) ? binKey(mslp) : BIN_ORDER[0]] || '#fff';
       g.beginPath(); g.moveTo(pts[s2 - 1][0], pts[s2 - 1][1]); g.lineTo(pts[s2][0], pts[s2][1]); g.stroke();
     }
-    if (!dim) {                                                   // leading-edge dot at current step
-      var last = pts[pts.length - 1];
-      g.globalAlpha = 1; g.fillStyle = '#fff'; g.beginPath(); g.arc(last[0], last[1], 2.6, 0, 6.2832); g.fill();
+    if (!dim) {
+      // dated median-MSLP labels at daily leads (the a-reference-site EEMN look),
+      // then the filled leading marker on top so it leads the bold track.
+      if (labelDaily) this._drawMeanDailyLabels(g, pts, lut);
+      var last = pts[pts.length - 1], hmslp = lut[last[2]];
+      var hcol = PRESSURE_BIN_COLORS[(hmslp != null) ? binKey(hmslp) : BIN_ORDER[0]] || '#fff';
+      g.globalAlpha = 1;
+      g.fillStyle = MEAN_CASING; g.beginPath(); g.arc(last[0], last[1], 5.4, 0, 6.2832); g.fill();   // dark casing
+      g.fillStyle = hcol; g.beginPath(); g.arc(last[0], last[1], 4.0, 0, 6.2832); g.fill();           // bin-colored head
     }
     g.globalAlpha = 1;
   };
 
-  // Compact Vmax plume inset (dominant cluster's p10-p90 band + p50 line) in the
-  // map's bottom-right, opposite the legend. Secondary, shown only in Mean mode.
+  // Dated median-MSLP labels stepping along the bold ensemble-mean track at DAILY
+  // leads (step % 24 == 0), keyed to the actual mean-track points (clusters often
+  // start mid-run, so we never assume a 0/24/48 origin). MSLP is the cluster's p50
+  // at that lead (lut, already joined from plume.mslp). Plain casing-stroked text +
+  // a small tick - readable over the field, never a heavy boxed placard. Drawn in
+  // the translated/clipped map space; de-cluttered so stacked daily points (a
+  // slow-mover) don't pile labels on top of each other.
+  EnsCentersViewer.prototype._drawMeanDailyLabels = function (g, pts, lut) {
+    var lastX = -1e9, lastY = -1e9;
+    g.save();
+    g.font = '600 9px ' + FONT; g.lineJoin = 'round';
+    for (var i = 0; i < pts.length; i++) {
+      var step = pts[i][2];
+      if (step <= 0 || step % 24 !== 0) continue;
+      var mslp = lut[step]; if (mslp == null) continue;
+      var x = pts[i][0], y = pts[i][1];
+      var dx = x - lastX, dy = y - lastY;
+      if (dx * dx + dy * dy < 26 * 26) continue;             // de-clutter: radial gap from last label
+      lastX = x; lastY = y;
+      var d = new Date(this.initMs + step * 3600000);
+      var txt = MO[d.getUTCMonth()] + ' ' + d.getUTCDate() + '  ' + Math.round(mslp) + ' hPa';
+      // tick dot
+      g.globalAlpha = 1; g.fillStyle = MEAN_CASING; g.beginPath(); g.arc(x, y, 3.0, 0, 6.2832); g.fill();
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 1.7, 0, 6.2832); g.fill();
+      // label: right of the point, flipped left near the map's right edge
+      g.textBaseline = 'middle';
+      var tw = g.measureText(txt).width, lx = x + 7;
+      if (lx + tw > this.map.w - 2) { lx = x - 7; g.textAlign = 'right'; } else { g.textAlign = 'left'; }
+      g.lineWidth = 2.6; g.strokeStyle = 'rgba(7,16,28,0.92)'; g.strokeText(txt, lx, y);
+      g.fillStyle = '#eef3fb'; g.fillText(txt, lx, y);
+    }
+    g.restore();
+  };
+
+  // Vmax plume inset, TOP-RIGHT (opposite the legend; the dense member cloud rises
+  // from the bottom, so both corners stay clear up top). Shown only in Mean mode.
+  // Three delineated, LABELED member statistics - HIGHEST (max), MEDIAN (p50), and
+  // LOWEST (min) - over a light p10-p90 spread band, each curve SSHWS-colored along
+  // its length (it is a wind plume; warmer = stronger). Median is the bold headline
+  // line; max/min are thinner. A vertical marker tracks the current F-hour.
   EnsCentersViewer.prototype._drawPlumeInset = function (g) {
     if (!this.tracks || !this.tracks.clusters) return;
-    var cl = this.tracks.clusters, dom = null;
-    for (var i = 0; i < cl.length; i++) if ((cl[i].member_count || 0) >= MEAN_MIN_MEMBERS && !cl[i].low_confidence) { dom = cl[i]; break; }
-    if (!dom) for (var j = 0; j < cl.length; j++) if ((cl[j].member_count || 0) >= MEAN_MIN_MEMBERS) { dom = cl[j]; break; }
+    var dom = this._dominantCluster();
     if (!dom) return;
     var pv = (dom.plume && dom.plume.vmax) || null;
     if (!pv || !pv.lead || pv.lead.length < 2) return;
-    var w = 162, h = 92, x = this.map.x + this.map.w - w - 8, y = this.map.y + this.map.h - h - 8;
+    var leads = pv.lead, p10 = pv.p10, p90 = pv.p90, vMax = pv.max, vMed = pv.p50, vMin = pv.min;
+    var w = 192, h = 120, x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
     roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
     g.fillStyle = C.fg; g.font = '700 10px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
     g.fillText('Vmax plume  ·  ' + dom.member_count + ' members', x + 8, y + 6);
-    var cx = x + 8, cy = y + 24, cw = w - 16, ch = h - 32;
-    var leads = pv.lead, p10 = pv.p10, p50 = pv.p50, p90 = pv.p90;
-    var lmax = leads[leads.length - 1] || 1, vmin = Infinity, vmax = -Infinity;
-    for (var k = 0; k < leads.length; k++) { if (p10[k] < vmin) vmin = p10[k]; if (p90[k] > vmax) vmax = p90[k]; }
-    if (!(vmax > vmin)) vmax = vmin + 1;
-    function px(l) { return cx + (l / lmax) * cw; }
-    function py(v) { return cy + ch - ((v - vmin) / (vmax - vmin)) * ch; }
+    // plot area; right gutter reserved for the Max/Median/Min labels
+    var cx = x + 8, cy = y + 24, gutter = 36, cw = w - 16 - gutter, ch = h - 34;
+    var lmin = leads[0], lmax = leads[leads.length - 1], lspan = Math.max(1, lmax - lmin);
+    var vlo = Infinity, vhi = -Infinity;
+    for (var k = 0; k < leads.length; k++) { if (vMin[k] < vlo) vlo = vMin[k]; if (vMax[k] > vhi) vhi = vMax[k]; }
+    if (!(vhi > vlo)) vhi = vlo + 1;
+    var pad = (vhi - vlo) * 0.08;
+    vlo = Math.max(0, vlo - pad); vhi += pad;   // wind can't be negative -> floor the axis at 0
+    function px(l) { return cx + ((l - lmin) / lspan) * cw; }
+    function py(v) { return cy + ch - ((v - vlo) / (vhi - vlo)) * ch; }
+    // light p10-p90 spread band behind the lines
     g.beginPath();
     for (var a = 0; a < leads.length; a++) { var X = px(leads[a]), Y = py(p90[a]); a ? g.lineTo(X, Y) : g.moveTo(X, Y); }
     for (var bb = leads.length - 1; bb >= 0; bb--) g.lineTo(px(leads[bb]), py(p10[bb]));
-    g.closePath(); g.fillStyle = 'rgba(43,156,255,0.22)'; g.fill();
-    g.beginPath();
-    for (var d = 0; d < leads.length; d++) { var X2 = px(leads[d]), Y2 = py(p50[d]); d ? g.lineTo(X2, Y2) : g.moveTo(X2, Y2); }
-    g.strokeStyle = C.accent; g.lineWidth = 1.5; g.stroke();
+    g.closePath(); g.fillStyle = 'rgba(120,150,190,0.18)'; g.fill();
+    // current-F-hour marker
     var curStep = this.steps[Math.min(this.idx, this.steps.length - 1)];
-    var mx = px(Math.min(curStep, lmax));
-    g.strokeStyle = 'rgba(255,255,255,0.6)'; g.lineWidth = 1; g.beginPath(); g.moveTo(mx, cy); g.lineTo(mx, cy + ch); g.stroke();
+    var mx = px(Math.max(lmin, Math.min(curStep, lmax)));
+    g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1; g.beginPath(); g.moveTo(mx, cy); g.lineTo(mx, cy + ch); g.stroke();
+    // three SSHWS-colored curves (per-segment, so intensification shows through)
+    g.lineJoin = 'round'; g.lineCap = 'round'; g.globalAlpha = 1;
+    function series(vals, lw) {
+      for (var s = 1; s < leads.length; s++) {
+        g.strokeStyle = sshwsColor(vals[s]); g.lineWidth = lw;
+        g.beginPath(); g.moveTo(px(leads[s - 1]), py(vals[s - 1])); g.lineTo(px(leads[s]), py(vals[s])); g.stroke();
+      }
+    }
+    series(vMin, 1.3); series(vMax, 1.3); series(vMed, 2.6);   // median bold, drawn last (on top)
+    // Max / Median / Min labels in the right gutter, at each curve's end value,
+    // de-collided top-to-bottom (max >= median >= min, so already y-ordered).
+    function clampY(v) { return Math.max(cy + 6, Math.min(cy + ch - 2, py(v))); }
+    var lyHi = clampY(vMax[vMax.length - 1]);
+    var lyMd = Math.max(lyHi + 11, clampY(vMed[vMed.length - 1]));
+    var lyLo = Math.max(lyMd + 11, clampY(vMin[vMin.length - 1]));
+    var gx = x + w - 6;
+    g.font = '700 9px ' + FONT; g.textBaseline = 'middle'; g.textAlign = 'right'; g.lineJoin = 'round';
+    function gutterLabel(text, ly, col) {
+      g.lineWidth = 2.6; g.strokeStyle = 'rgba(7,16,28,0.92)'; g.strokeText(text, gx, ly);
+      g.fillStyle = col; g.fillText(text, gx, ly);
+    }
+    gutterLabel('Max', lyHi, sshwsColor(vMax[vMax.length - 1]));
+    gutterLabel('Median', lyMd, sshwsColor(vMed[vMed.length - 1]));
+    gutterLabel('Min', lyLo, sshwsColor(vMin[vMin.length - 1]));
+    // y-axis kt range (subtle)
     g.fillStyle = C.muted; g.font = '600 8px ' + FONT; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
-    g.fillText(Math.round(vmax) + ' kt', cx + 1, cy + 7);
-    g.fillText(Math.round(vmin) + ' kt', cx + 1, cy + ch - 1);
+    g.fillText(Math.round(vhi) + ' kt', cx + 1, cy + 7);
+    g.fillText(Math.round(vlo) + ' kt', cx + 1, cy + ch - 1);
     g.restore();
   };
 
@@ -1076,7 +1185,13 @@
     var bins = (this.data && this.data.pressure_bins) || [];
     var lines = bins.length + 2, lh = 14, padx = 9, pady = 7;
     var w = 132, h = pady * 2 + lines * lh;
-    var x = this.map.x + 8, y = this.map.y + this.map.h - h - 8;
+    // In the toolkit (Lines / Mean) views the dense member cloud + tracks rise from
+    // the bottom, so the legend lives TOP-LEFT (below the burned-in header, which
+    // sits in the strip above the map box) to keep the active area clear and pair
+    // with the top-right Vmax plume. The plain Cheerios view is left UNCHANGED
+    // (legend bottom-left) so the centers product reads exactly as before.
+    var toolkit = this.tracksReady() && (this.dataStyle === 'lines' || this.meanOn);
+    var x = this.map.x + 8, y = toolkit ? (this.map.y + 8) : (this.map.y + this.map.h - h - 8);
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.78)'; g.strokeStyle = C.border; g.lineWidth = 1;
     g.fillRect(x, y, w, h); g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
