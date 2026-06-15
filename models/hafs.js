@@ -680,6 +680,7 @@
         b.type = 'button';
         b.className = 'hafs-seg' + (def.slug === active ? ' active' : '');
         b.textContent = def[labelKey] || def.label;
+        b.title = def.label || def[labelKey] || '';   // full name on hover (cells may ellipsize)
         b.setAttribute('data-slug', def.slug);
         b.addEventListener('click', function () { onPick(def.slug); });
         container.appendChild(b);

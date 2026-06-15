@@ -27,7 +27,7 @@
   var SPEED_OPTIONS = [0.5, 1, 2, 4];
   var BASE_FPS = 4;
   var POLL_IDLE_MS = 300000;
-  var GIF_MAX_W = 1000;          // downscale the figure for a shareable GIF
+  var GIF_MAX_W = 1600;          // cap GIF width; high enough to export at ~source res (color fidelity)
   var GIF_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js';
   var GIF_LAST_DWELL = 6;        // hold the full-cloud frame N x longer before looping
 
@@ -37,18 +37,19 @@
   var LS_STYLE = 'ens.style';     // 'cheerios' (default) | 'lines'
   var LS_MEAN = 'ens.mean';       // 'on' | 'off' (default)
   var LS_PPTS = 'ens.ppts';       // mean-track dated MSLP labels: 'on' | 'off' (default)
-  // Toolkit (Stage 2) overlays consume the sibling tracks JSON. Tracks are an
-  // OPTIONAL sibling: loaded lazily ONLY when a track-consuming feature is on, so
-  // the default Cheerios view stays lean and a model without a tracks file falls
-  // back cleanly (toggles hide). Lines = subtle neutral connector threads UNDER the
-  // pressure-bin colored per-member center circles (the colored circles carry the
-  // emphasis, with a filled leading head at the current F-hour); the mean track is
-  // BOLD with a dark casing so it pops on the navy without overpowering the field.
-  var LINE_LW = 1.0, LINE_ALPHA = 0.5;
-  // Lines mode connector threads: thin, low-opacity, neutral grey so each member's
-  // path reads without the old bold-color spaghetti competing with the circles.
+  var LS_MINP = 'ens.minp';       // region-deepest-center highlight: 'on' | 'off' (default)
+  // Toolkit overlays consume the sibling tracks JSON (loaded whenever a tracks file
+  // exists - the DEFAULT Cheerios view draws subtle connector threads from it; Lines
+  // / Mean / Obs use it too). A model without a tracks file falls back cleanly: plain
+  // Cheerios dots, track toggles hidden. Two data styles:
+  //   CHEERIOS (default) = pressure-bin dots (hollow trail + filled current head)
+  //     PLUS thin neutral connector threads linking each member's points.
+  //   LINES = bold pressure-colored per-member spaghetti tracks.
+  // The mean track is BOLD with a dark casing so it pops without burying the field.
+  var LINE_LW = 1.0, LINE_ALPHA = 0.5;          // bold Lines-mode spaghetti
+  // Cheerios connector threads: thin, low-opacity, neutral grey - link each member's
+  // points without competing with the colored dots.
   var CONNECTOR_COLOR = 'rgba(176,190,212,0.30)', CONNECTOR_LW = 0.8;
-  var TRAIL_RING_R = 2.3, TRAIL_RING_LW = 1.2;   // hollow per-step rings in Lines mode
   var MEAN_LW = 3.0, MEAN_DIM_LW = 1.5, MEAN_DIM_ALPHA = 0.45;
   var MEAN_CASING = 'rgba(7,16,28,0.9)';
   var MEAN_MIN_MEMBERS = 3;       // hide clusters tinier than this (unreliable)
@@ -195,6 +196,7 @@
       style: el('enscenters-style'),
       mean: el('enscenters-mean'),
       ppts: el('enscenters-ppts'),
+      minp: el('enscenters-minp'),
       obs: el('enscenters-obs'),
       gif: el('enscenters-gif'),
       gifmodal: el('enscenters-gifmodal'),
@@ -247,6 +249,9 @@
     this.meanOn = (mn === 'on');
     var pp = null; try { pp = localStorage.getItem(LS_PPTS); } catch (e) {}
     this.pptsOn = (pp === 'on');   // dated mean-track MSLP labels; default OFF (busy)
+    var mp = null; try { mp = localStorage.getItem(LS_MINP); } catch (e) {}
+    this.minpOn = (mp === 'on');   // region-deepest-center highlight; default OFF
+    this.minCenter = null;         // {id,mslp,vmax,lat,lon,step} deepest center in region
     var ob = null; try { ob = localStorage.getItem(LS_OBS); } catch (e) {}
     this.obsOn = (ob === 'on');
     this.obs = null;             // active observed systems (from global_storms.geojson)
@@ -462,7 +467,8 @@
     });
     this.regionPrefix = []; var run = 0;
     for (var s = 0; s < this.regionFrames.length; s++) { run += this.regionFrames[s].length; this.regionPrefix[s] = run; }
-    // per-member region peaks
+    // per-member region peaks. Capture the deepest center's lat/lon/step too (not
+    // just mslp/vmax) so the Min-MSLP highlight can be placed; c = [step,lat,lon,mslp,vmax].
     var members = (this.data && this.data.members) || [];
     var rows = [];
     for (var m = 0; m < members.length; m++) {
@@ -470,12 +476,13 @@
       for (var k = 0; k < cs.length; k++) {
         var c = cs[k];
         if (r && !TATRegions.inRegion(c[2], c[1], r)) continue;
-        if (best === null || c[3] < best.mslp) best = { mslp: c[3], vmax: c[4] };
+        if (best === null || c[3] < best.mslp) best = { mslp: c[3], vmax: c[4], lat: c[1], lon: c[2], step: c[0] };
       }
-      if (best) rows.push({ id: members[m].id, mslp: best.mslp, vmax: best.vmax });
+      if (best) rows.push({ id: members[m].id, mslp: best.mslp, vmax: best.vmax, lat: best.lat, lon: best.lon, step: best.step });
     }
     rows.sort(function (a, b) { return a.mslp - b.mslp; });
     this.peaks = rows;
+    this.minCenter = rows.length ? rows[0] : null;   // region-deepest center (peak-table top row)
     this._prepTracksRegion();   // re-crop the toolkit tracks to the new region (no-op if none)
     this._resetTrail();    // region changed -> trail invalid (clear pixels + counter)
   };
@@ -505,9 +512,10 @@
   // version-keyed for cache-bust. Graceful: a 404 / parse error hides the toggles
   // and falls back to Cheerios, never throwing.
   EnsCentersViewer.prototype._ensureTracks = function () {
-    // obs mode also needs the clusters to compare against
-    if (this.dataStyle !== 'lines' && !this.meanOn && !this.obsOn) return;
-    if (!this._tracksAvailable()) return;                     // no file -> stay Cheerios
+    // Load whenever a tracks file exists: the DEFAULT Cheerios view now draws subtle
+    // per-member connector threads (needs the sibling tracks JSON), and Lines / Mean
+    // / Obs consume it too. Graceful: no file -> no threads, plain Cheerios dots.
+    if (!this._tracksAvailable()) return;
     if (this.tracksReady() || this.tracksLoading) return;     // already have / loading
     this._loadTracks(this.model, this.loadedCycle);
   };
@@ -558,49 +566,64 @@
     }
   };
 
-  // Lines: the easterly-wave look. A THIN, low-opacity, NEUTRAL grey thread links
-  // each member's consecutive per-step centers (drawn UNDER), then the pressure-bin
-  // colored circles carry the emphasis - hollow rings for the trail, a FILLED head
-  // at the current F-hour - so each member's path reads without bold-color clutter.
-  // Threads are broken across the dateline (a >half-map x jump) so a wrap never
-  // draws a streak; circles are batched per bin.
+  // Subtle CONNECTOR THREADS for the default CHEERIOS view: a thin, low-opacity,
+  // NEUTRAL grey line linking each member's consecutive per-step centers, drawn
+  // UNDER the pressure-bin dots so the dots stay the emphasis (dots + threads).
+  // Dateline-safe (broken on a >half-map x jump). Needs the sibling tracks JSON
+  // (per-member connectivity); a no-op when tracks aren't available.
+  EnsCentersViewer.prototype._drawConnectors = function (g, idx) {
+    if (!this.tracksRegion || !this.tracksRegion.length) return;
+    var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
+    var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
+    var conn = [], trs = this.tracksRegion;
+    for (var i = 0; i < trs.length; i++) {
+      var fixes = trs[i], prev = null;
+      for (var k = 0; k < fixes.length; k++) {
+        var f = fixes[k]; if (f[0] > uptoStep) break;          // step-sorted
+        var p = TATRegions.project(wrap180(f[2]), f[1], ext, mw, mh);
+        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) conn.push(prev[0], prev[1], p[0], p[1]);
+        prev = p;
+      }
+    }
+    if (!conn.length) return;
+    g.globalAlpha = 1; g.strokeStyle = CONNECTOR_COLOR; g.lineWidth = CONNECTOR_LW;
+    g.lineJoin = 'round'; g.lineCap = 'round'; g.beginPath();
+    for (var c = 0; c < conn.length; c += 4) { g.moveTo(conn[c], conn[c + 1]); g.lineTo(conn[c + 2], conn[c + 3]); }
+    g.stroke();
+  };
+
+  // LINES mode: BOLD pressure-colored per-member spaghetti tracks up to the current
+  // F-hour - each segment colored by its endpoint's pressure bin (batched per bin),
+  // with a filled leading head at the current step. Dateline-safe (a >half-map x
+  // jump breaks the stroke, never a wrapping streak). The distinct, heavier
+  // counterpart to Cheerios' dots+threads.
   EnsCentersViewer.prototype._drawLines = function (g, idx) {
     if (!this.tracksRegion || !this.tracksRegion.length) return;
     var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
     var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
-    var conn = [], rings = {}, heads = {};
-    for (var b = 0; b < BIN_ORDER.length; b++) { rings[BIN_ORDER[b]] = []; heads[BIN_ORDER[b]] = []; }
+    var buckets = {}, heads = {};
+    for (var b = 0; b < BIN_ORDER.length; b++) { buckets[BIN_ORDER[b]] = []; heads[BIN_ORDER[b]] = []; }
     var trs = this.tracksRegion;
     for (var i = 0; i < trs.length; i++) {
-      var fixes = trs[i], prev = null, proj = [];
+      var fixes = trs[i], prev = null, head = null;
       for (var k = 0; k < fixes.length; k++) {
         var f = fixes[k]; if (f[0] > uptoStep) break;          // step-sorted
         var p = TATRegions.project(wrap180(f[2]), f[1], ext, mw, mh);
         var bk = (f[3] != null) ? binKey(f[3]) : BIN_ORDER[0];
-        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) conn.push(prev[0], prev[1], p[0], p[1]);
-        prev = p; proj.push([p[0], p[1], bk]);
+        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) buckets[bk].push(prev[0], prev[1], p[0], p[1]);
+        prev = p; head = [p[0], p[1], bk];                     // current F-hour position (leads the line)
       }
-      if (!proj.length) continue;
-      var last = proj.length - 1;
-      for (var j = 0; j < last; j++) rings[proj[j][2]].push(proj[j][0], proj[j][1]);   // trail -> hollow rings
-      heads[proj[last][2]].push(proj[last][0], proj[last][1]);                          // current F-hour -> filled head
+      if (head) heads[head[2]].push(head[0], head[1]);
     }
-    // 1) neutral connector threads, UNDER the circles
-    if (conn.length) {
-      g.globalAlpha = 1; g.strokeStyle = CONNECTOR_COLOR; g.lineWidth = CONNECTOR_LW;
-      g.lineJoin = 'round'; g.lineCap = 'round'; g.beginPath();
-      for (var c = 0; c < conn.length; c += 4) { g.moveTo(conn[c], conn[c + 1]); g.lineTo(conn[c + 2], conn[c + 3]); }
-      g.stroke();
-    }
-    // 2) hollow pressure-bin rings for the trail centers (batched per bin)
-    g.globalAlpha = 0.92; g.lineWidth = TRAIL_RING_LW; var rr = TRAIL_RING_R;
+    // bold pressure-colored segments, batched per bin
+    g.globalAlpha = LINE_ALPHA; g.lineWidth = LINE_LW; g.lineJoin = 'round'; g.lineCap = 'round';
     for (var bo = 0; bo < BIN_ORDER.length; bo++) {
-      var rk = BIN_ORDER[bo], rg = rings[rk]; if (!rg.length) continue;
-      g.strokeStyle = PRESSURE_BIN_COLORS[rk] || '#fff'; g.beginPath();
-      for (var rs = 0; rs < rg.length; rs += 2) { g.moveTo(rg[rs] + rr, rg[rs + 1]); g.arc(rg[rs], rg[rs + 1], rr, 0, 6.2832); }
+      var key = BIN_ORDER[bo], seg = buckets[key]; if (!seg.length) continue;
+      g.strokeStyle = PRESSURE_BIN_COLORS[key] || '#fff'; g.beginPath();
+      for (var s = 0; s < seg.length; s += 4) { g.moveTo(seg[s], seg[s + 1]); g.lineTo(seg[s + 2], seg[s + 3]); }
       g.stroke();
     }
-    // 3) filled leading heads at the current F-hour (opaque, lead the threads)
+    // filled leading heads at the current F-hour
     g.globalAlpha = 1; var hr = this.fillR;
     for (var ho = 0; ho < BIN_ORDER.length; ho++) {
       var hk = BIN_ORDER[ho], hd = heads[hk]; if (!hd.length) continue;
@@ -639,14 +662,32 @@
     }
   };
 
-  // The headline cluster: first confident cluster of reliable size, else the first
-  // of reliable size. Shared by the Vmax plume + the dated mean-track labels so
-  // they always describe the same system.
+  // The headline cluster for the CURRENTLY SELECTED REGION: among clusters of
+  // reliable size whose mean track enters the region (same crop the peak table +
+  // _drawMean use), pick the dominant one - confident beats low-confidence, then
+  // most-populous. Region-aware so the plume + dated labels describe the in-region
+  // system (and its "N members" count), not a globally-first system elsewhere; on a
+  // region with no system it returns null and the plume/labels hide cleanly.
+  // Recomputed at draw time, so a region switch redraws against the new region.
   EnsCentersViewer.prototype._dominantCluster = function () {
     var cl = (this.tracks && this.tracks.clusters) || [];
-    for (var i = 0; i < cl.length; i++) if ((cl[i].member_count || 0) >= MEAN_MIN_MEMBERS && !cl[i].low_confidence) return cl[i];
-    for (var j = 0; j < cl.length; j++) if ((cl[j].member_count || 0) >= MEAN_MIN_MEMBERS) return cl[j];
-    return null;
+    var r = window.TATRegions ? TATRegions.get(this.region) : null;
+    function inRegion(c) {
+      if (!r) return true;
+      var mt = c.mean_track || [];
+      for (var k = 0; k < mt.length; k++) if (TATRegions.inRegion(wrap180(mt[k][2]), mt[k][1], r)) return true;
+      return false;
+    }
+    var best = null;
+    for (var i = 0; i < cl.length; i++) {
+      var c = cl[i];
+      if ((c.member_count || 0) < MEAN_MIN_MEMBERS || !inRegion(c)) continue;
+      if (!best) { best = c; continue; }
+      var cConf = !c.low_confidence, bConf = !best.low_confidence;
+      if (cConf !== bConf) { if (cConf) best = c; continue; }          // confident wins
+      if ((c.member_count || 0) > (best.member_count || 0)) best = c;   // then most members
+    }
+    return best;
   };
 
   EnsCentersViewer.prototype._drawMeanTrack = function (g, c, uptoStep, ext, mw, mh, JUMP, dim, labelDaily) {
@@ -755,9 +796,9 @@
   EnsCentersViewer.prototype._drawPlumeInset = function (g) {
     if (!this.tracks || !this.tracks.clusters) return;
     var dom = this._dominantCluster();
-    if (!dom) return;
+    if (!dom) { this._drawPlumeNote(g); return; }   // no in-region system: clean note, no plume
     var pv = (dom.plume && dom.plume.vmax) || null;
-    if (!pv || !pv.lead || pv.lead.length < 2) return;
+    if (!pv || !pv.lead || pv.lead.length < 2) { this._drawPlumeNote(g); return; }
     // light [1,2,1]/4 smoothing for display only (kills per-step jaggedness)
     function smooth(arr) {
       var o = []; for (var i = 0; i < arr.length; i++) {
@@ -826,6 +867,55 @@
     g.restore();
   };
 
+  // Compact top-right chip when Mean is on but no cluster falls in the region, so
+  // the plume + dated labels hide cleanly with a one-line reason (mirrors the obs
+  // "no system" note). Sits where the plume would be.
+  EnsCentersViewer.prototype._drawPlumeNote = function (g) {
+    var msg = 'No system in this region';
+    g.save(); g.font = '600 11px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
+    var pad = 8, tw = g.measureText(msg).width, w = tw + pad * 2, h = 26;
+    var x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
+    g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
+    roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
+    g.fillStyle = C.muted; g.fillText(msg, x + pad, y + 8);
+    g.restore();
+  };
+
+  // Min-MSLP highlight: a bold, sober WHITE reticle (crosshair + double ring, dark
+  // casing) at the DEEPEST member-center in the selected region (this.minCenter, the
+  // peak table's top row) with its value label. Distinct from the pressure-bin field
+  // + the lime obs marker; region-aware (recomputed in _recomputeRegion); dateline-
+  // safe via project's per-point unwrap; drawn in the translated map space.
+  EnsCentersViewer.prototype._drawMinMslp = function (g) {
+    var mc = this.minCenter; if (!mc || mc.mslp == null) return;
+    var p = TATRegions.project(mc.lon, mc.lat, this.extent, this.map.w, this.map.h);
+    var x = p[0], y = p[1];
+    if (x < -20 || x > this.map.w + 20 || y < -20 || y > this.map.h + 20) return;   // off-map guard
+    g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+    function reticle(stroke, lwRing, lwTick) {
+      g.strokeStyle = stroke; g.lineWidth = lwRing;
+      g.beginPath(); g.arc(x, y, 9.5, 0, 6.2832); g.stroke();
+      g.beginPath(); g.arc(x, y, 4.3, 0, 6.2832); g.stroke();
+      g.lineWidth = lwTick; g.beginPath();
+      g.moveTo(x - 15, y); g.lineTo(x - 11, y); g.moveTo(x + 11, y); g.lineTo(x + 15, y);
+      g.moveTo(x, y - 15); g.lineTo(x, y - 11); g.moveTo(x, y + 11); g.lineTo(x, y + 15); g.stroke();
+    }
+    reticle('rgba(7,16,28,0.92)', 4.5, 4);     // dark casing
+    reticle('#ffffff', 2, 1.6);                // bright reticle on top
+    // value label on a dark halo pill, offset to one side (flip near the right edge)
+    var txt = Math.round(mc.mslp) + ' hPa';
+    g.font = '700 11px ' + FONT; g.textBaseline = 'middle';
+    var tw = g.measureText(txt).width, padx = 5, bw = tw + padx * 2, bh = 17;
+    var left = (x + 16 + bw <= this.map.w - 2);
+    var bx = left ? (x + 16) : (x - 16 - bw), by = y - bh / 2;
+    if (by < 2) by = 2; if (by + bh > this.map.h) by = this.map.h - bh;
+    roundRectPath(g, bx, by, bw, bh, 4);
+    g.fillStyle = 'rgba(7,16,28,0.82)'; g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.stroke();
+    g.textAlign = 'left'; g.fillStyle = '#ffffff'; g.fillText(txt, bx + padx, by + bh / 2 + 0.5);
+    g.restore();
+  };
+
   EnsCentersViewer.prototype._syncToolkitButtons = function () {
     var avail = this._tracksAvailable();
     if (this.dom.style) {
@@ -849,6 +939,10 @@
       this.dom.obs.textContent = this.obsOn ? 'Obs: on' : 'Obs: off';
       this.dom.obs.classList.toggle('on', this.obsOn);
     }
+    if (this.dom.minp) {                           // deepest-center highlight: uses CENTERS (always present), not tracks
+      this.dom.minp.textContent = this.minpOn ? 'Min MSLP: on' : 'Min MSLP: off';
+      this.dom.minp.classList.toggle('on', this.minpOn);
+    }
   };
 
   EnsCentersViewer.prototype._setDataStyle = function (mode) {
@@ -870,6 +964,13 @@
   EnsCentersViewer.prototype._setPpts = function (on) {
     this.pptsOn = !!on;
     try { localStorage.setItem(LS_PPTS, this.pptsOn ? 'on' : 'off'); } catch (e) {}
+    this._syncToolkitButtons();
+    if (this.regionFrames.length) this._show(this.idx);
+  };
+
+  EnsCentersViewer.prototype._setMinp = function (on) {
+    this.minpOn = !!on;
+    try { localStorage.setItem(LS_MINP, this.minpOn ? 'on' : 'off'); } catch (e) {}
     this._syncToolkitButtons();
     if (this.regionFrames.length) this._show(this.idx);
   };
@@ -1406,8 +1507,14 @@
     ctx.beginPath(); ctx.rect(this.map.x, this.map.y, this.map.w, this.map.h); ctx.clip();
     if (!lines && this.trailMode === 'trail') ctx.drawImage(this.trailLayer, this.map.x, this.map.y, this.map.w, this.map.h);
     ctx.translate(this.map.x, this.map.y);
-    if (lines) this._drawLines(ctx, this.idx);
-    else this._drawStep(ctx, this.idx, true);    // current step filled
+    if (lines) {
+      this._drawLines(ctx, this.idx);            // bold per-member spaghetti
+    } else {
+      // Cheerios: subtle grey connector threads UNDER the dots, then the per-step
+      // hollow trail (drawn above) + the filled current heads on top.
+      if (this.tracksReady()) this._drawConnectors(ctx, this.idx);
+      this._drawStep(ctx, this.idx, true);       // current step filled
+    }
     if (meanOn) this._drawMean(ctx, this.idx);   // bold ensemble-mean tracks
     // obs mode: muted matched-cluster envelope + mean UNDER the coast lines
     if (obsResolved && obsResolved.length) this._drawObsEnvelopes(ctx, obsResolved);
@@ -1416,7 +1523,9 @@
     if (window.TATRegions && TATRegions.drawBasemapLines) {
       TATRegions.drawBasemapLines(ctx, this.extent, this.geo, this.map.w, this.map.h, BASEMAP_STYLE);
     }
-    // the bold focal obs marker + readout sit ON TOP of everything (the point)
+    // annotations ON TOP of everything: the region-deepest-center highlight, then
+    // the bold focal obs marker + readout (the point of obs mode).
+    if (this.minpOn) this._drawMinMslp(ctx);
     if (obsResolved && obsResolved.length) this._drawObsMarkers(ctx, obsResolved);
     ctx.restore();
     this._drawLegend(ctx);
@@ -1426,7 +1535,11 @@
 
     var stepH = this.steps[this.idx];
     this.dom.fhour.textContent = 'F' + String(stepH).padStart(3, '0');
-    this.dom.valid.textContent = validLabel(this.initMs, stepH) + '  ·  ' + fmtInt(this.visible.length) + ' this step';
+    var validTxt = validLabel(this.initMs, stepH) + '  ·  ' + fmtInt(this.visible.length) + ' this step';
+    if (this.minpOn && this.minCenter && this.minCenter.mslp != null) {
+      validTxt += '  ·  min MSLP ' + Math.round(this.minCenter.mslp) + ' hPa (F' + String(this.minCenter.step).padStart(3, '0') + ')';
+    }
+    this.dom.valid.textContent = validTxt;
     if (String(this.dom.scrub.value) !== String(this.idx)) this.dom.scrub.value = this.idx;
   };
 
@@ -1504,6 +1617,9 @@
     });
     if (this.dom.obs) this.dom.obs.addEventListener('click', function () {
       self._setObs(!self.obsOn);
+    });
+    if (this.dom.minp) this.dom.minp.addEventListener('click', function () {
+      self._setMinp(!self.minpOn);
     });
     if (this.dom.gif) this.dom.gif.addEventListener('click', function () { self._openGif(); });
     if (this.dom.gifmake) this.dom.gifmake.addEventListener('click', function () { self._makeGif(); });
@@ -1646,9 +1762,13 @@
     var selSet = {}; for (var s = 0; s < sel.length; s++) selSet[sel[s]] = 1;
     var lastSel = sel[sel.length - 1];
 
-    // GIF canvas (downscaled from the retina figure canvas)
+    // GIF canvas. Export at (near) the SOURCE device resolution cw - sizing off cw
+    // (not the CSS figW) keeps the downscale minimal/none, so the fine peak-table
+    // rings + thin plume lines aren't bilinear-blended into shifted colors. Only a
+    // very wide retina canvas is capped at GIF_MAX_W. Smoothing stays ON (no dither),
+    // and the encoder palette is built at quality:1 below for true-to-screen hues.
     var cw = this.dom.canvas.width, ch = this.dom.canvas.height;
-    var W = Math.min(this.figW, GIF_MAX_W), H = Math.round(W * this.figH / this.figW);
+    var W = Math.min(cw, GIF_MAX_W), H = Math.round(W * ch / cw);
     var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
     var octx = oc.getContext('2d');
 
@@ -1666,7 +1786,10 @@
     this._ensureGifWorker(function (worker) {
       var gif;
       try {
-        gif = new window.GIF({ workers: 2, quality: 10, width: W, height: H,
+        // quality:1 = the most accurate NeuQuant palette (vs the coarse default 10),
+        // so pressure-bin ring colors, the SSHWS plume gradient + green Median map
+        // true-to-screen. dither stays off (default) so flat swatches don't get noisy.
+        gif = new window.GIF({ workers: 2, quality: 1, width: W, height: H,
           workerScript: worker, background: '#0b1320' });
       } catch (e) { fail('GIF encoder unavailable.'); return; }
       gif.on('progress', function (p) { status.textContent = 'Encoding… ' + Math.round(p * 100) + '%'; });
