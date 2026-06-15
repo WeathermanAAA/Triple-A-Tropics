@@ -295,7 +295,7 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
     # exposed under the anonymous endpoint (404, 2026-06-14), so it is not added.
     EnsModelSpec(
         slug="fnv3",
-        label="FNV3 (50)",
+        label="Google FNV3 (50)",
         source="gdm-weatherlab",
         source_kind="track_csv",
         api_model="FNV3",               # Weather Lab download slug
@@ -317,7 +317,7 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
     # columns identical to FNV3. Reuses enscenters.fnv3_ingest via api_model.
     EnsModelSpec(
         slug="genc",
-        label="GenCast",
+        label="Google GenCast",
         source="gdm-weatherlab",
         source_kind="track_csv",
         api_model="GENC",

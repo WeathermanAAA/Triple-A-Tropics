@@ -22,6 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 HARNESS = Path(__file__).resolve().parent / "enscenters_viewer_smoke.cjs"
 TRAIL_HARNESS = Path(__file__).resolve().parent / "enscenters_trail_smoke.cjs"
 HEADER_HARNESS = Path(__file__).resolve().parent / "enscenters_header_smoke.cjs"
+GIFNAME_HARNESS = Path(__file__).resolve().parent / "enscenters_gifname_smoke.cjs"
 JS = REPO / "models" / "enscenters.js"
 NODE = shutil.which("node")
 
@@ -121,6 +122,23 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["runValue"], "2026061300")
         self.assertEqual(s["runFirstLabel"], "Jun 13 00Z (latest)")
         self.assertEqual(s["runSecondLabel"], "Jun 12 18Z")
+
+    def test_gif_filename_per_model_and_google_labels(self):
+        # FIX 1: each model's exported GIF is named for its OWN slug (was a
+        # hardcoded "ecens"). FIX 2: the selector labels read "Google FNV3 (50)"
+        # / "Google GenCast". Drives the real _makeGif download line per model.
+        proc = subprocess.run([NODE, str(GIFNAME_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"gifname harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        # FIX 1: filename starts with the model's own slug, never "ecens_" for others
+        for slug, name in s["names"].items():
+            self.assertTrue(name and name.startswith(slug + "_"),
+                            f"{slug} GIF named {name!r}")
+        self.assertNotEqual(s["names"]["fnv3"][:6], "ecens_")
+        # FIX 2: Google prefix on the two Google models; others unchanged
+        self.assertEqual(s["chips"],
+                         ["ECMWF ENS", "AIFS-ENS", "GEFS", "Google FNV3 (50)", "Google GenCast"])
 
     def test_burned_in_header_has_fhour_and_valid_per_frame(self):
         # ITEM 1 hard rule: the burned-in canvas header (what travels in a copied
