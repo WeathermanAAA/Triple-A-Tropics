@@ -65,27 +65,34 @@ read_live() {
   echo '{}' > "$out"
 }
 
-# list_r2 <outfile> -> writes {slug:[cycles]} from the AUTHORITATIVE R2 object
-# listing (the source of truth for the manifest). Prints ok|failed; on failure we
-# SKIP the publish (never derive a thinned manifest from a bad listing).
+# list_r2 <centers_out> <tracks_out> -> writes {slug:[cycles]} for the centers JSON
+# (the AUTHORITATIVE source of truth for the manifest) AND {slug:[cycles]} for the
+# sibling .tracks.json files (so tracks_versions is derived from R2 reality too,
+# race-proof). Prints ok|failed; on failure we SKIP the publish.
 list_r2() {
-  local out="$1" raw
+  local out="$1" tout="$2" raw
   if ! raw=$(aws s3 ls "s3://$BUCKET/$PREFIX/" --recursive --endpoint-url "$R2_ENDPOINT" 2>&1); then
     printf '[%s] R2 listing error: %s\n' "$SLUG" "$raw" >&2
     echo failed; return 0
   fi
   if ! printf '%s\n' "$raw" | python3 -c '
 import json, re, sys
-present = {}
+present, tracks = {}, {}
 for line in sys.stdin:
     parts = line.split()
     if not parts:
         continue
-    m = re.search(r"models/enscenters/([^/]+)/(\d{10})\.json$", parts[-1])
+    key = parts[-1]
+    mt = re.search(r"models/enscenters/([^/]+)/(\d{10})\.tracks\.json$", key)
+    if mt:
+        tracks.setdefault(mt.group(1), []).append(mt.group(2))
+        continue
+    m = re.search(r"models/enscenters/([^/]+)/(\d{10})\.json$", key)
     if m:
         present.setdefault(m.group(1), []).append(m.group(2))
 json.dump(present, open(sys.argv[1], "w"), separators=(",", ":"))
-' "$out"; then
+json.dump(tracks, open(sys.argv[2], "w"), separators=(",", ":"))
+' "$out" "$tout"; then
     echo failed; return 0
   fi
   echo ok; return 0
@@ -95,13 +102,14 @@ BUILT=/tmp/ens_built.json          # this run's freshly built manifest (immutabl
 LIVE_A=/tmp/ens_live_a.json
 LIVE_B=/tmp/ens_live_b.json
 R2_PRESENT=/tmp/ens_r2_present.json
+R2_TRACKS=/tmp/ens_r2_tracks.json  # {slug:[cycles with a .tracks.json]} from the listing
 FINAL=/tmp/ens_final.json
 cp "$SRC/manifest.json" "$BUILT"
 
 published=""
 for attempt in 1 2 3 4 5; do
   # 2a. AUTHORITATIVE R2 listing = the truth source for every model's cycle set.
-  if [ "$(list_r2 "$R2_PRESENT")" = failed ]; then
+  if [ "$(list_r2 "$R2_PRESENT" "$R2_TRACKS")" = failed ]; then
     echo "[$SLUG] WARN: could not list R2 objects; SKIP publish this run (cron self-heals)."
     exit 0
   fi
@@ -111,7 +119,7 @@ for attempt in 1 2 3 4 5; do
   #     run's freshly-built cycles). Aborts only on a suspected listing failure or
   #     a would-drop-a-model bug -> skip (prior stays live, self-heals next run).
   cp "$BUILT" "$FINAL"
-  if ! python3 "$GUARD" "$FINAL" "$LIVE_A" "$R2_PRESENT"; then
+  if ! python3 "$GUARD" "$FINAL" "$LIVE_A" "$R2_PRESENT" "$R2_TRACKS"; then
     echo "[$SLUG] WARN: guard refused the write (suspected bad listing / empty); SKIP (prior stays live)."
     exit 0
   fi

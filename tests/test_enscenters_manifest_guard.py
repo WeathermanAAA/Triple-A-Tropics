@@ -293,5 +293,41 @@ class TestThreeModelRace(unittest.TestCase):
                 self.assertEqual(latest_of(out, m), "2026061318", f"{slug}->{m}")
 
 
+class TestTracksVersionsFromR2(unittest.TestCase):
+    """tracks_versions is DERIVED from the R2 .tracks.json listing (race-proof),
+    not just merged from live+new - so a concurrent sibling publish that drops a
+    model's tracks token in the live+new merge is self-healed from R2 reality."""
+
+    def test_tracks_derived_even_when_token_missing(self):
+        # live + new carry NO tracks token for ecaie, but R2 HAS its .tracks.json
+        new = manifest(entry("ecens", ["2026061418"]), entry("ecaie", ["2026061418"]))
+        live = manifest(entry("ecens", ["2026061418"]), entry("ecaie", ["2026061418"]))
+        r2 = {"ecens": ["2026061418"], "ecaie": ["2026061418"]}
+        r2_tracks = {"ecens": ["2026061418"], "ecaie": ["2026061418"]}
+        out, ok, _ = guard.reconcile(new, live, "ok", r2_present=r2, r2_tracks=r2_tracks)
+        self.assertTrue(ok)
+        for m in out["models"]:
+            self.assertIn("2026061418", m.get("tracks_versions", {}),
+                          f"{m['slug']} lost its tracks_version despite the R2 file")
+
+    def test_tracks_dropped_when_no_r2_object(self):
+        # a stale tracks token in live, but NO .tracks.json on R2 -> dropped
+        live = manifest(entry("ecens", ["2026061418"]))
+        live["models"][0]["tracks_versions"] = {"2026061418": "stale"}
+        new = manifest(entry("ecens", ["2026061418"]))
+        out, ok, _ = guard.reconcile(new, live, "ok",
+                                     r2_present={"ecens": ["2026061418"]},
+                                     r2_tracks={"ecens": []})
+        self.assertNotIn("tracks_versions", out["models"][0])
+
+    def test_precise_token_kept_when_available(self):
+        new = manifest(entry("ecens", ["2026061418"]))
+        new["models"][0]["tracks_versions"] = {"2026061418": "v-precise"}
+        out, ok, _ = guard.reconcile(new, {}, "ok",
+                                     r2_present={"ecens": ["2026061418"]},
+                                     r2_tracks={"ecens": ["2026061418"]})
+        self.assertEqual(out["models"][0]["tracks_versions"]["2026061418"], "v-precise")
+
+
 if __name__ == "__main__":
     unittest.main()
