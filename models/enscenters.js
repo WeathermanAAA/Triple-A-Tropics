@@ -1139,21 +1139,31 @@
   // drawn). Markers/labels sit ON TOP (drawn after the coast lines in _show).
   EnsCentersViewer.prototype._drawObsMarkers = function (g, resolved) {
     var ext = this.extent, mw = this.map.w, mh = this.map.h;
-    for (var i = 0; i < resolved.length; i++) {
+    // Project all markers first and seed the OCCUPIED list with each glyph footprint,
+    // so a label never lands on another system's icon. Each label then picks the
+    // first candidate anchor (around its own marker) clear of everything placed so
+    // far (other glyphs + earlier labels) - collision avoidance for nearby systems.
+    var items = [], placed = [], i;
+    for (i = 0; i < resolved.length; i++) {
       var o = resolved[i].obs;
       var p = TATRegions.project(wrap180(o.lon), o.lat, ext, mw, mh);
-      var col = this._drawObsMarker(g, p[0], p[1], o);
+      items.push({ o: o, x: p[0], y: p[1] });
+      placed.push({ x: p[0] - 12, y: p[1] - 12, w: 24, h: 24 });
+    }
+    for (i = 0; i < items.length; i++) {
+      var it = items[i], ob = it.o;
+      var col = this._drawObsMarker(g, it.x, it.y, ob);
       // readout: name, location, time of fix, intensity (V wind / P pressure)
-      var lon180 = wrap180(o.lon);
-      var loc = Math.abs(o.lat).toFixed(1) + (o.lat >= 0 ? 'N' : 'S') + '  ' +
+      var lon180 = wrap180(ob.lon);
+      var loc = Math.abs(ob.lat).toFixed(1) + (ob.lat >= 0 ? 'N' : 'S') + '  ' +
                 Math.abs(lon180).toFixed(1) + (lon180 >= 0 ? 'E' : 'W');
-      var lines = [o.name, loc];
-      if (o.timeMs) lines.push(shortInit(o.timeMs));
+      var lines = [ob.name, loc];
+      if (ob.timeMs) lines.push(shortInit(ob.timeMs));
       var vp = [];
-      if (o.kt != null) vp.push('V ' + Math.round(o.kt) + ' kt');
-      if (o.mslp != null) vp.push('P ' + Math.round(o.mslp) + ' hPa');
+      if (ob.kt != null) vp.push('V ' + Math.round(ob.kt) + ' kt');
+      if (ob.mslp != null) vp.push('P ' + Math.round(ob.mslp) + ' hPa');
       if (vp.length) lines.push(vp.join('   '));
-      this._drawObsLabel(g, p[0], p[1], lines, col);
+      this._drawObsLabel(g, it.x, it.y, lines, col, placed);
     }
   };
 
@@ -1199,15 +1209,47 @@
     return color;
   };
 
-  EnsCentersViewer.prototype._drawObsLabel = function (g, x, y, lines, accent) {
+  EnsCentersViewer.prototype._drawObsLabel = function (g, x, y, lines, accent, placed) {
     accent = accent || '#cfd8e6';   // neutral fallback (marker always supplies its color)
+    placed = placed || [];
     g.save(); g.font = '700 10px ' + FONT;
     var w = 0, i; for (i = 0; i < lines.length; i++) w = Math.max(w, g.measureText(lines[i]).width);
     var pad = 5, lh = 13, bw = w + pad * 2, bh = lines.length * lh + pad * 2;
-    var bx = x + 13, by = y - bh / 2;
-    if (bx + bw > this.map.w) bx = x - 13 - bw;
-    if (bx < 2) bx = 2;
-    if (by < 2) by = 2; if (by + bh > this.map.h) by = this.map.h - bh;
+    var mapW = this.map.w, mapH = this.map.h;
+    // candidate anchors around the marker in RINGS of increasing distance (right,
+    // left, below, above, then diagonals at each ring); first clear of `placed`
+    // (+ in bounds) wins, so a crowded label escapes farther out instead of stacking.
+    var cands = [], rings = [13, 46, 82], ri, d;
+    for (ri = 0; ri < rings.length; ri++) {
+      d = rings[ri];
+      cands.push([x + d, y - bh / 2], [x - d - bw, y - bh / 2],
+                 [x - bw / 2, y + d], [x - bw / 2, y - d - bh],
+                 [x + d, y + d], [x - d - bw, y + d],
+                 [x + d, y - d - bh], [x - d - bw, y - d - bh]);
+    }
+    function overlaps(bx, by) {
+      for (var k = 0; k < placed.length; k++) {
+        var q = placed[k];
+        if (bx < q.x + q.w + 3 && bx + bw + 3 > q.x && by < q.y + q.h + 3 && by + bh + 3 > q.y) return true;
+      }
+      return false;
+    }
+    var bx = null, by = null, fbx = null, fby = null;
+    for (i = 0; i < cands.length; i++) {
+      var cx = Math.max(2, Math.min(cands[i][0], mapW - bw - 2));
+      var cy = Math.max(2, Math.min(cands[i][1], mapH - bh - 2));
+      if (fbx === null) { fbx = cx; fby = cy; }     // first (preferred) as the fallback
+      if (!overlaps(cx, cy)) { bx = cx; by = cy; break; }
+    }
+    if (bx === null) { bx = fbx; by = fby; }         // all crowded -> least-bad (right of marker)
+    placed.push({ x: bx, y: by, w: bw, h: bh });
+    // leader from the marker to the label's nearest edge when it sits far out, so a
+    // pushed-aside label still clearly belongs to its system.
+    var nx = Math.max(bx, Math.min(x, bx + bw)), ny = Math.max(by, Math.min(y, by + bh));
+    if ((nx - x) * (nx - x) + (ny - y) * (ny - y) > 16 * 16) {
+      g.strokeStyle = accent; g.globalAlpha = 0.55; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke(); g.globalAlpha = 1;
+    }
     g.fillStyle = 'rgba(7,16,28,0.85)'; g.strokeStyle = accent; g.lineWidth = 1;
     roundRectPath(g, bx, by, bw, bh, 4); g.fill(); g.stroke();
     g.textBaseline = 'top'; g.textAlign = 'left';
