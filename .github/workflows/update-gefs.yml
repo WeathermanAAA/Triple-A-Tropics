@@ -68,8 +68,8 @@ jobs:
           # numpy/scipy for detect+warmcore, xarray+cfgrib+eccodes to decode the
           # byte-range GRIB subsets, requests for the S3 .idx range GETs. eccodes
           # wheel bundles the binary - no apt. No ecmwf-opendata (GEFS uses S3).
-          pip install numpy scipy xarray cfgrib eccodes requests
-          python -c "import scipy, cfgrib, xarray, requests; print('deps OK')"
+          pip install numpy scipy scikit-learn xarray cfgrib eccodes requests
+          python -c "import scipy, cfgrib, xarray, requests, sklearn; print('deps OK')"
 
       - name: Build GEFS cyclone centers (never-miss backfill)
         env:

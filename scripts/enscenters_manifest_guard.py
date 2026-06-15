@@ -85,6 +85,7 @@ def _models(man: dict) -> dict:
             d = dict(m)
             d["cycles"] = [c for c in (d.get("cycles") or []) if isinstance(c, str)]
             d["cycle_versions"] = dict(d.get("cycle_versions") or {})
+            d["tracks_versions"] = dict(d.get("tracks_versions") or {})
             out[d["slug"]] = d
     return out
 
@@ -147,13 +148,19 @@ def reconcile(new: dict, live: dict, live_status: str = "ok",
         lv, nv = live_models.get(slug, {}), new_models.get(slug, {})
         versions = dict(lv.get("cycle_versions") or {})
         versions.update(nv.get("cycle_versions") or {})          # this run's versions win
-        merged[slug] = {
+        tversions = dict(lv.get("tracks_versions") or {})
+        tversions.update(nv.get("tracks_versions") or {})        # sibling tracks JSON tokens
+        entry = {
             "slug": slug,
             "label": nv.get("label") or lv.get("label") or LABELS.get(slug) or slug,
             "cycles": kept,
             "latest": kept[0],
             "cycle_versions": {c: versions[c] for c in kept if c in versions},
         }
+        tkept = {c: tversions[c] for c in kept if c in tversions}
+        if tkept:
+            entry["tracks_versions"] = tkept                     # only when present
+        merged[slug] = entry
 
     if not merged:
         return None, False, "no model has any cycle on R2 or in this run; nothing to publish"

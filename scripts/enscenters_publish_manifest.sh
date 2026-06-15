@@ -164,8 +164,14 @@ for model in man.get("models", []):
         changed = True
         sys.stderr.write("gate: %s dropping older cycle(s) with no R2 object: %s\n" % (slug, dropped))
     cv = model.get("cycle_versions") or {}
+    tv = model.get("tracks_versions") or {}
     model["cycles"], model["latest"] = good, (max(good) if good else None)
     model["cycle_versions"] = {c: cv[c] for c in good if c in cv}
+    tkept = {c: tv[c] for c in good if c in tv}
+    if tkept:
+        model["tracks_versions"] = tkept
+    elif "tracks_versions" in model:
+        del model["tracks_versions"]
     kept.append(model)
 man["models"] = kept
 if changed:

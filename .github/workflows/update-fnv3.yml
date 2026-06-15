@@ -57,8 +57,8 @@ jobs:
           # numpy/scipy only - imported transitively by the shared detect/warmcore
           # modules when the CLI loads. FNV3 itself parses the CSV with the stdlib
           # (csv + urllib); no GRIB stack, no requests, no pandas.
-          pip install numpy scipy
-          python -c "import numpy, scipy; print('deps OK')"
+          pip install numpy scipy scikit-learn
+          python -c "import numpy, scipy, sklearn; print('deps OK')"
 
       - name: Build FNV3 cyclone centers (never-miss backfill)
         env:

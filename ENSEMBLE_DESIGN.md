@@ -185,6 +185,78 @@ Only models with at least one published cycle appear, so the viewer's model
 selector grows automatically as models 2 to 5 come online (and auto-hides while
 there is just one).
 
+## 4b. Tracking + clustering keystone - the SIBLING tracks JSON
+
+The lean centers JSON above is per-STEP (the fast Cheerios view). The keystone
+(`enscenters/tracking.py`) turns those into per-MEMBER tracks and per-SYSTEM
+clusters and writes an **additive sibling** file - the centers JSON is never
+touched, so the default view stays fast and the richer file loads only when the
+viewer needs lines / mean / plume / envelope (the viewer features are a follow-up;
+this is the data layer). It runs per cycle right after each model's centers
+ingest, reusing the never-miss currency + shared reconcile, and is idempotent.
+
+- **R2 key:** `models/enscenters/{slug}/{cycle}.tracks.json` (synced by the same
+  `*/*.json` rule; the R2 listing's `(\d{10})\.json$` regex does NOT match it, so
+  it never pollutes the cycle reconcile).
+- **Manifest reference:** a per-model `tracks_versions` map (cycle -> the tracks
+  file's `generated_at`), a sibling of `cycle_versions`, carried through the guard
+  reconcile and trimmed to retained cycles. A cycle without an entry simply has no
+  tracks file (viewer falls back to centers-only). Pruned cycles drop BOTH JSONs.
+
+Per-model routing: **self-detected** (ecens, ecaie, gefs) run Stage A then B+C;
+**native tracks** (fnv3, genc) SKIP Stage A (already per-member linked by the CSV
+`track_id`, handed in-memory to the tracks step - no re-fetch).
+
+- **Stage A - linkage** (self-detected only): greedy great-circle nearest-neighbour
+  stitch with an advected first guess (linear extrapolation of the last two fixes)
+  and an intensity-continuity tie-break `w_pos*(gc/range)+w_int*(|dMSLP|/dMSLP_norm)`;
+  range scales with step spacing (~5 deg at 6 h, ~3 deg at 3 h), `maxgap` 1-2 steps,
+  an implausible-pressure-jump cap kills cross-system links, and tracks below the
+  min duration (~24 h) or min path distance are dropped (stationary spurious).
+- **Stage B - per-system clustering** (all models): genesis/overlap-proximity seeds
+  (co-location over OVERLAPPING valid times, so a late-forming member is not mis-seeded
+  by its displaced first fix), then HDBSCAN (`metric="precomputed"`) on a track-to-track
+  distance = mean great-circle separation over overlapping leads. `min_cluster_size`
+  ~= 13% of members, `min_samples` low. A post-HDBSCAN, scale-adaptive merge +
+  noise re-absorption coalesces a coherent system that HDBSCAN would otherwise
+  shatter (the uniform-blob failure mode) while leaving a genuinely divergent
+  second system in the seed split, and far outliers as dropped noise. Each cluster
+  records `member_count`, `coverage_fraction`, `population`, and a `low_confidence`
+  flag for small clusters. *(Documented upgrade path if quality is insufficient:
+  regression-mixture / cubic-polynomial clustering a la Kowaleski-Evans - not built.)*
+- **Stage C - derived products** (per cluster, per lead, members present only):
+  robust spherical **mean track** (geometric median of unit-sphere positions, with
+  the supporting member count per point); intensity **plume** (p10/p25/p50/p75/p90
+  + min/max of Vmax AND MSLP, separately, by lead); position **envelope** (per-lead
+  50%/90% covariance ellipses on a local tangent plane, chained to a swath, with the
+  2x2 km covariance for an obs z-score); and an `obs_support` helper returning an
+  observed position's percentile rank + Mahalanobis offset within the nearest-lead
+  member distribution.
+
+All geometry is unit-sphere / haversine; display longitudes are UNWRAPPED to a
+continuous, dateline-safe sequence. Sibling-JSON shape:
+
+```jsonc
+{
+  "schema_version": 1, "model": "ecens", "init_cycle": "2026061418",
+  "generated_at": "...", "source_kind": "self_detect", "spacing_h": 3.0,
+  "n_members": 51, "n_member_tracks": 430, "n_clusters": 21,
+  "members": [ { "id": "CTL", "tracks": [ [ [0,21.3,-58.1,1004.2,11.6], ... ] ] } ],
+  "clusters": [ {
+    "id": 0, "members": ["CTL","P01",...], "member_count": 49,
+    "coverage_fraction": 0.96, "population": 72, "low_confidence": false,
+    "genesis": {"lat": -15.82, "lon": 170.23, "step": 0},
+    "mean_track": [ [0,-14.97,170.34,16], ... ],          // [step, lat, lon, n]
+    "plume": { "vmax": {"lead":[...], "p10":[...], ..., "min":[...], "max":[...], "n":[...]},
+               "mslp": { ... } },
+    "envelope": [ { "step":72, "n":40, "mean_lat":..., "mean_lon":...,
+                    "cov_km":[[..,..],[..,..]],
+                    "ell50":{"a_km":340,"b_km":..,"bearing_deg":..,"poly":[[lat,lon],...]},
+                    "ell90":{ ... } }, ... ]
+  } ]
+}
+```
+
 ## 5. The model registry (registry-as-data)
 
 `enscenters/registry.py`. One `EnsModelSpec` per model carries: identity

@@ -56,8 +56,8 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy xarray cfgrib eccodes ecmwf-opendata
-          python -c "import scipy, cfgrib, xarray; from ecmwf.opendata import Client; print('deps OK')"
+          pip install numpy scipy scikit-learn xarray cfgrib eccodes ecmwf-opendata
+          python -c "import scipy, cfgrib, xarray, sklearn; from ecmwf.opendata import Client; print('deps OK')"
 
       - name: Build AIFS-ENS cyclone centers (never-miss backfill)
         env:

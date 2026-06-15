@@ -175,6 +175,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 members=members, steps=steps, jobs=args.jobs,
                 min_members_frac=args.min_members_frac, source=args.source)
 
+    # Wrap the per-cycle ingest so the sibling tracks/clusters JSON is built right
+    # after each centers ingest (Stage A-D), reusing the never-miss currency loop.
+    # The wrapper is additive: a tracks-build failure never blocks the centers
+    # publish, and native models (fnv3/genc) skip Stage A automatically.
+    from .tracking import wrap_ingest
+    ingest_one = wrap_ingest(ingest_one, spec, args.out_dir)
+
     try:
         summary = run_currency(
             spec=spec, out_dir=args.out_dir,

@@ -306,6 +306,18 @@ def build_cycle(
     # entry) - without this, the forced path clobbered ECMWF ENS when AIFS-ENS ran.
     # Tolerant: on a re-read failure keep the start-of-run manifest. Only re-read
     # when we fetched it ourselves (tests inject a fixed prior).
+    # Sibling tracks/clusters JSON (additive; never blocks the centers publish).
+    tracks_version = None
+    try:
+        from .tracking import build_tracks_for_cycle
+        tr = build_tracks_for_cycle(
+            spec, cycle, out_dir, cycle_path=res.get("cycle_path"),
+            native_member_tracks=res.get("native_member_tracks"), progress=progress)
+        tracks_version = tr.get("generated_at")
+    except Exception as e:  # noqa: BLE001 - additive layer, centers still publish
+        progress(f"[{spec.slug}] WARN: tracks build failed for {res['cycle']} ({e}); "
+                 f"centers still published")
+
     if fetched:
         try:
             latest = fetch_prior_manifest()
@@ -316,7 +328,8 @@ def build_cycle(
                      f"using start-of-run manifest")
     manifest, prune_keys = merge_manifest_multi(
         prior_manifest, spec, [res["cycle"]], retain,
-        new_versions={res["cycle"]: res.get("generated_at")})
+        new_versions={res["cycle"]: res.get("generated_at")},
+        new_tracks_versions={res["cycle"]: tracks_version})
     write_outputs(out_dir, manifest, prune_keys)
     progress(f"[{spec.slug}] manifest updated; prune {len(prune_keys)} old cycle(s)")
     return {**res, "prune_keys": prune_keys, "manifest": manifest}
@@ -365,7 +378,8 @@ def published_cycles(manifest: Optional[dict], slug: str):
 
 
 def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, retain: int,
-                         new_versions: Optional[dict] = None):
+                         new_versions: Optional[dict] = None,
+                         new_tracks_versions: Optional[dict] = None):
     """Upsert ``new_cycles`` (a list of YYYYMMDDHH strings) into the manifest,
     trim to ``retain`` newest per model, and return (manifest, prune_keys). Models
     with no cycles are omitted so the viewer's selector only shows models that
@@ -403,6 +417,16 @@ def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, 
     if new_versions:
         versions.update(new_versions)
     entry["cycle_versions"] = {c: versions[c] for c in kept if c in versions}
+    # SIBLING tracks/clusters JSON cache-bust tokens (additive; a cycle without a
+    # tracks file simply has no entry, so the viewer falls back to centers-only).
+    tversions = dict(entry.get("tracks_versions") or {})
+    if new_tracks_versions:
+        tversions.update({c: v for c, v in new_tracks_versions.items() if v})
+    tkept = {c: tversions[c] for c in kept if c in tversions}
+    if tkept:
+        entry["tracks_versions"] = tkept
+    elif "tracks_versions" in entry:
+        del entry["tracks_versions"]
     by_slug[spec.slug] = entry
 
     # order by registry; include only models that have at least one cycle
@@ -421,7 +445,12 @@ def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, 
         "default_model": default_model,
         "models": models,
     }
+    # prune the rolled-out centers JSON AND its sibling tracks JSON (the shell's
+    # prune filter keeps any key still referenced by the final manifest; a tracks
+    # key is never "referenced" there, so only these explicitly-pruned cycles' track
+    # files are removed - retained cycles' track files are never in this list).
     prune_keys = [f"{spec.slug}/{c}.json" for c in pruned]
+    prune_keys += [f"{spec.slug}/{c}.tracks.json" for c in pruned]
     return manifest, prune_keys
 
 
