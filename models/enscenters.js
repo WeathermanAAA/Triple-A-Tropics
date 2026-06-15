@@ -34,6 +34,18 @@
   var DEFAULT_REGION = 'atlantic';
   var LS_REGION = 'ens.region';
   var LS_TRAIL = 'ens.trail';
+  var LS_STYLE = 'ens.style';     // 'cheerios' (default) | 'lines'
+  var LS_MEAN = 'ens.mean';       // 'on' | 'off' (default)
+  // Toolkit (Stage 2) overlays consume the sibling tracks JSON. Tracks are an
+  // OPTIONAL sibling: loaded lazily ONLY when a track-consuming feature is on, so
+  // the default Cheerios view stays lean and a model without a tracks file falls
+  // back cleanly (toggles hide). Lines = thin/muted per-member spaghetti; the mean
+  // track is BOLD with a dark casing so it pops on the navy without overpowering
+  // the centers field.
+  var LINE_LW = 1.0, LINE_ALPHA = 0.5;
+  var MEAN_LW = 3.0, MEAN_DIM_LW = 1.5, MEAN_DIM_ALPHA = 0.45;
+  var MEAN_CASING = 'rgba(7,16,28,0.9)';
+  var MEAN_MIN_MEMBERS = 3;       // hide clusters tinier than this (unreliable)
   var MIN_FIG_W = 760;     // figure renders at least this wide (legible PNG; scales on mobile)
   var WATERMARK = '@WeathermanAAA_';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
@@ -65,6 +77,7 @@
   function el(id) { return document.getElementById(id); }
   function fmtInt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
   function regionOr(key) { return (window.TATRegions && TATRegions.get(key)) ? key : DEFAULT_REGION; }
+  function wrap180(lo) { return ((lo + 180) % 360 + 360) % 360 - 180; }   // tracks JSON lons are display-unwrapped
 
   function binKey(p) {
     if (p < 950) return 'lt950';
@@ -126,6 +139,8 @@
       run: el('enscenters-run'),
       scrub: el('enscenters-scrub'),
       trail: el('enscenters-trail'),
+      style: el('enscenters-style'),
+      mean: el('enscenters-mean'),
       gif: el('enscenters-gif'),
       gifmodal: el('enscenters-gifmodal'),
       gifn: el('enscenters-gifn'),
@@ -170,6 +185,16 @@
     this.extent = (window.TATRegions ? TATRegions.extentOf(TATRegions.get(this.region)) : [0, 360, -90, 90]);
     var tm = null; try { tm = localStorage.getItem(LS_TRAIL); } catch (e) {}
     this.trailMode = (tm === 'current') ? 'current' : 'trail';
+    // Toolkit (Stage 2) state. Persisted like trail; tracks are loaded lazily.
+    var ds = null; try { ds = localStorage.getItem(LS_STYLE); } catch (e) {}
+    this.dataStyle = (ds === 'lines') ? 'lines' : 'cheerios';
+    var mn = null; try { mn = localStorage.getItem(LS_MEAN); } catch (e) {}
+    this.meanOn = (mn === 'on');
+    this.tracks = null;          // parsed tracks JSON for the loaded model+cycle
+    this.tracksCycle = null;     // which cycle this.tracks belongs to
+    this.tracksModel = null;     // which model this.tracks belongs to
+    this.tracksRegion = null;    // region-cropped per-member tracks (for Lines)
+    this.tracksLoading = false;
 
     this._wire();
     this._boot();
@@ -278,6 +303,10 @@
     var self = this;
     this._pause();
     this.loadedCycle = cycle;
+    // a new model/cycle invalidates any loaded tracks; reset so the toolkit
+    // re-checks availability + lazily reloads for the new selection.
+    this.tracks = null; this.tracksModel = null; this.tracksCycle = null;
+    this.tracksRegion = null; this._tracksFailedKey = null;
     if (this.dom.run) this.dom.run.value = cycle;   // keep the Run selector in sync
     this._status('Loading ' + slug.toUpperCase() + ' ' + cycle + '…');
     // Cache-bust on the cycle's CONTENT version (not the stable cycle string), so
@@ -317,6 +346,10 @@
     this._drawFigure();
     this._status('');
     this._show(0);
+    // toolkit: reflect this model+cycle's tracks availability, then lazily load
+    // the sibling tracks JSON if a track-consuming feature is currently enabled.
+    this._syncToolkitButtons();
+    this._ensureTracks();
   };
 
   // Model-aware caption: a model whose per-cycle JSON carries its own `caption`
@@ -380,7 +413,246 @@
     }
     rows.sort(function (a, b) { return a.mslp - b.mslp; });
     this.peaks = rows;
+    this._prepTracksRegion();   // re-crop the toolkit tracks to the new region (no-op if none)
     this._resetTrail();    // region changed -> trail invalid (clear pixels + counter)
+  };
+
+  // ===================== Stage 2 toolkit: tracks + clusters =====================
+  // tracks_versions in the manifest is the cache-bust token AND the availability
+  // signal; absent -> the model has no tracks file (toggles hide).
+  EnsCentersViewer.prototype._tracksVersion = function (slug, cycle) {
+    var e = this._modelEntry(slug);
+    var tv = e && e.tracks_versions;
+    return (tv && tv[cycle]) ? tv[cycle] : null;
+  };
+  EnsCentersViewer.prototype._hasTracks = function () {
+    return !!this._tracksVersion(this.model, this.loadedCycle);
+  };
+  // available = the manifest says a tracks file exists AND it has not failed to
+  // load for the current model+cycle (a fetch failure hides the toggles too).
+  EnsCentersViewer.prototype._tracksAvailable = function () {
+    return this._hasTracks() && this._tracksFailedKey !== (this.model + '|' + this.loadedCycle);
+  };
+  // ready = the loaded tracks JSON matches the current model+cycle on screen.
+  EnsCentersViewer.prototype.tracksReady = function () {
+    return !!(this.tracks && this.tracksModel === this.model && this.tracksCycle === this.loadedCycle);
+  };
+
+  // Load the sibling tracks JSON ONLY when a track-consuming feature is enabled,
+  // version-keyed for cache-bust. Graceful: a 404 / parse error hides the toggles
+  // and falls back to Cheerios, never throwing.
+  EnsCentersViewer.prototype._ensureTracks = function () {
+    if (this.dataStyle !== 'lines' && !this.meanOn) return;   // nothing needs tracks
+    if (!this._tracksAvailable()) return;                     // no file -> stay Cheerios
+    if (this.tracksReady() || this.tracksLoading) return;     // already have / loading
+    this._loadTracks(this.model, this.loadedCycle);
+  };
+
+  EnsCentersViewer.prototype._loadTracks = function (slug, cycle) {
+    var self = this, ver = this._tracksVersion(slug, cycle) || cycle;
+    this.tracksLoading = true;
+    fetch(DATA_BASE + slug + '/' + cycle + '.tracks.json?v=' + ver, { cache: 'force-cache' })
+      .then(function (r) { if (!r.ok) throw new Error('tracks HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
+        self.tracksLoading = false;
+        if (slug !== self.model || cycle !== self.loadedCycle) return;   // user moved on
+        self.tracks = d; self.tracksModel = slug; self.tracksCycle = cycle;
+        self._prepTracksRegion();
+        self._syncToolkitButtons();
+        if (self.regionFrames.length) self._show(self.idx);
+      })
+      .catch(function (e) {
+        self.tracksLoading = false;
+        console.warn('enscenters: tracks load failed (Cheerios fallback)', e);
+        if (slug === self.model && cycle === self.loadedCycle) {
+          self.tracks = null; self.tracksModel = null; self.tracksCycle = null;
+          self._tracksFailedKey = slug + '|' + cycle;   // hide toggles for this cycle
+          self._syncToolkitButtons();
+          if (self.regionFrames.length) self._show(self.idx);
+        }
+      });
+  };
+
+  // region-crop the per-member tracks for Lines: keep a track if ANY fix lands in
+  // the region (so a track entering/leaving the crop shows its full in-view path).
+  EnsCentersViewer.prototype._prepTracksRegion = function () {
+    this.tracksRegion = [];
+    if (!this.tracks || !this.tracks.members) return;
+    var r = window.TATRegions ? TATRegions.get(this.region) : null;
+    var members = this.tracks.members;
+    for (var i = 0; i < members.length; i++) {
+      var trs = members[i].tracks || [];
+      for (var t = 0; t < trs.length; t++) {
+        var fixes = trs[t];
+        if (!fixes || fixes.length < 2) continue;
+        var inR = !r;
+        for (var k = 0; k < fixes.length && !inR; k++) {
+          if (TATRegions.inRegion(wrap180(fixes[k][2]), fixes[k][1], r)) inR = true;
+        }
+        if (inR) this.tracksRegion.push(fixes);
+      }
+    }
+  };
+
+  // Lines: thin, muted per-member spaghetti up to the current F-hour, colored by
+  // the same pressure-bin palette (segment colored by its endpoint's pressure).
+  // Segments are batched per bin (5 strokes/frame) and broken across the dateline
+  // (a >half-map x jump) so a wrapping track never draws a streak.
+  EnsCentersViewer.prototype._drawLines = function (g, idx) {
+    if (!this.tracksRegion || !this.tracksRegion.length) return;
+    var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
+    var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
+    var buckets = {}; for (var b = 0; b < BIN_ORDER.length; b++) buckets[BIN_ORDER[b]] = [];
+    var trs = this.tracksRegion;
+    for (var i = 0; i < trs.length; i++) {
+      var fixes = trs[i], prev = null;
+      for (var k = 0; k < fixes.length; k++) {
+        var f = fixes[k]; if (f[0] > uptoStep) break;          // step-sorted
+        var p = TATRegions.project(wrap180(f[2]), f[1], ext, mw, mh);
+        if (prev && Math.abs(p[0] - prev[0]) <= JUMP) {
+          var bk = (f[3] != null) ? binKey(f[3]) : BIN_ORDER[0];
+          buckets[bk].push(prev[0], prev[1], p[0], p[1]);
+        }
+        prev = p;
+      }
+    }
+    g.globalAlpha = LINE_ALPHA; g.lineWidth = LINE_LW; g.lineJoin = 'round'; g.lineCap = 'round';
+    for (var bo = 0; bo < BIN_ORDER.length; bo++) {
+      var key = BIN_ORDER[bo], seg = buckets[key]; if (!seg.length) continue;
+      g.strokeStyle = PRESSURE_BIN_COLORS[key] || '#fff'; g.beginPath();
+      for (var s = 0; s < seg.length; s += 4) { g.moveTo(seg[s], seg[s + 1]); g.lineTo(seg[s + 2], seg[s + 3]); }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  };
+
+  // Mean: each confident cluster's ensemble-mean track as a BOLD line (dark casing
+  // for legibility) colored by the cluster's p50 MSLP at each lead. low_confidence
+  // / tiny clusters are de-emphasized (thin, faint) or hidden, so the eye goes to
+  // the strong consensus systems. Drawn up to the current F-hour, dateline-safe.
+  EnsCentersViewer.prototype._drawMean = function (g, idx) {
+    if (!this.tracks || !this.tracks.clusters) return;
+    var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
+    var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
+    var r = window.TATRegions ? TATRegions.get(this.region) : null;
+    var items = [];
+    for (var i = 0; i < this.tracks.clusters.length; i++) {
+      var c = this.tracks.clusters[i];
+      if ((c.member_count || 0) < MEAN_MIN_MEMBERS) continue;     // hide tiny clusters
+      var mt = c.mean_track || [], vis = !r;
+      for (var k = 0; k < mt.length && !vis; k++) if (TATRegions.inRegion(wrap180(mt[k][2]), mt[k][1], r)) vis = true;
+      if (vis) items.push(c);
+    }
+    // draw de-emphasized (low_confidence) first so bold consensus sits on top
+    items.sort(function (a, b) { return (a.low_confidence ? 0 : 1) - (b.low_confidence ? 0 : 1); });
+    for (var it = 0; it < items.length; it++) {
+      this._drawMeanTrack(g, items[it], uptoStep, ext, mw, mh, JUMP, !!items[it].low_confidence);
+    }
+  };
+
+  EnsCentersViewer.prototype._drawMeanTrack = function (g, c, uptoStep, ext, mw, mh, JUMP, dim) {
+    var mt = c.mean_track || []; if (mt.length < 2) return;
+    var pm = (c.plume && c.plume.mslp) || { lead: [], p50: [] };
+    var lut = {}; for (var i = 0; i < pm.lead.length; i++) lut[pm.lead[i]] = pm.p50[i];
+    var lw = dim ? MEAN_DIM_LW : MEAN_LW;
+    var pts = [];
+    for (var k = 0; k < mt.length; k++) {
+      if (mt[k][0] > uptoStep) break;
+      var p = TATRegions.project(wrap180(mt[k][2]), mt[k][1], ext, mw, mh);
+      pts.push([p[0], p[1], mt[k][0]]);
+    }
+    if (pts.length < 2) return;
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    if (!dim) {                                                   // dark casing under the bold line
+      g.strokeStyle = MEAN_CASING; g.lineWidth = lw + 2.5; g.globalAlpha = 0.9; g.beginPath();
+      for (var s = 1; s < pts.length; s++) {
+        if (Math.abs(pts[s][0] - pts[s - 1][0]) > JUMP) continue;
+        g.moveTo(pts[s - 1][0], pts[s - 1][1]); g.lineTo(pts[s][0], pts[s][1]);
+      }
+      g.stroke();
+    }
+    g.globalAlpha = dim ? MEAN_DIM_ALPHA : 0.95; g.lineWidth = lw;
+    for (var s2 = 1; s2 < pts.length; s2++) {
+      if (Math.abs(pts[s2][0] - pts[s2 - 1][0]) > JUMP) continue;
+      var mslp = lut[pts[s2][2]];
+      g.strokeStyle = PRESSURE_BIN_COLORS[(mslp != null) ? binKey(mslp) : BIN_ORDER[0]] || '#fff';
+      g.beginPath(); g.moveTo(pts[s2 - 1][0], pts[s2 - 1][1]); g.lineTo(pts[s2][0], pts[s2][1]); g.stroke();
+    }
+    if (!dim) {                                                   // leading-edge dot at current step
+      var last = pts[pts.length - 1];
+      g.globalAlpha = 1; g.fillStyle = '#fff'; g.beginPath(); g.arc(last[0], last[1], 2.6, 0, 6.2832); g.fill();
+    }
+    g.globalAlpha = 1;
+  };
+
+  // Compact Vmax plume inset (dominant cluster's p10-p90 band + p50 line) in the
+  // map's bottom-right, opposite the legend. Secondary, shown only in Mean mode.
+  EnsCentersViewer.prototype._drawPlumeInset = function (g) {
+    if (!this.tracks || !this.tracks.clusters) return;
+    var cl = this.tracks.clusters, dom = null;
+    for (var i = 0; i < cl.length; i++) if ((cl[i].member_count || 0) >= MEAN_MIN_MEMBERS && !cl[i].low_confidence) { dom = cl[i]; break; }
+    if (!dom) for (var j = 0; j < cl.length; j++) if ((cl[j].member_count || 0) >= MEAN_MIN_MEMBERS) { dom = cl[j]; break; }
+    if (!dom) return;
+    var pv = (dom.plume && dom.plume.vmax) || null;
+    if (!pv || !pv.lead || pv.lead.length < 2) return;
+    var w = 162, h = 92, x = this.map.x + this.map.w - w - 8, y = this.map.y + this.map.h - h - 8;
+    g.save();
+    g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
+    roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
+    g.fillStyle = C.fg; g.font = '700 10px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
+    g.fillText('Vmax plume  ·  ' + dom.member_count + ' members', x + 8, y + 6);
+    var cx = x + 8, cy = y + 24, cw = w - 16, ch = h - 32;
+    var leads = pv.lead, p10 = pv.p10, p50 = pv.p50, p90 = pv.p90;
+    var lmax = leads[leads.length - 1] || 1, vmin = Infinity, vmax = -Infinity;
+    for (var k = 0; k < leads.length; k++) { if (p10[k] < vmin) vmin = p10[k]; if (p90[k] > vmax) vmax = p90[k]; }
+    if (!(vmax > vmin)) vmax = vmin + 1;
+    function px(l) { return cx + (l / lmax) * cw; }
+    function py(v) { return cy + ch - ((v - vmin) / (vmax - vmin)) * ch; }
+    g.beginPath();
+    for (var a = 0; a < leads.length; a++) { var X = px(leads[a]), Y = py(p90[a]); a ? g.lineTo(X, Y) : g.moveTo(X, Y); }
+    for (var bb = leads.length - 1; bb >= 0; bb--) g.lineTo(px(leads[bb]), py(p10[bb]));
+    g.closePath(); g.fillStyle = 'rgba(43,156,255,0.22)'; g.fill();
+    g.beginPath();
+    for (var d = 0; d < leads.length; d++) { var X2 = px(leads[d]), Y2 = py(p50[d]); d ? g.lineTo(X2, Y2) : g.moveTo(X2, Y2); }
+    g.strokeStyle = C.accent; g.lineWidth = 1.5; g.stroke();
+    var curStep = this.steps[Math.min(this.idx, this.steps.length - 1)];
+    var mx = px(Math.min(curStep, lmax));
+    g.strokeStyle = 'rgba(255,255,255,0.6)'; g.lineWidth = 1; g.beginPath(); g.moveTo(mx, cy); g.lineTo(mx, cy + ch); g.stroke();
+    g.fillStyle = C.muted; g.font = '600 8px ' + FONT; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
+    g.fillText(Math.round(vmax) + ' kt', cx + 1, cy + 7);
+    g.fillText(Math.round(vmin) + ' kt', cx + 1, cy + ch - 1);
+    g.restore();
+  };
+
+  EnsCentersViewer.prototype._syncToolkitButtons = function () {
+    var avail = this._tracksAvailable();
+    if (this.dom.style) {
+      this.dom.style.style.display = avail ? '' : 'none';
+      var lines = (this.dataStyle === 'lines');
+      this.dom.style.textContent = lines ? 'Style: Lines' : 'Style: Cheerios';
+      this.dom.style.classList.toggle('on', lines);
+    }
+    if (this.dom.mean) {
+      this.dom.mean.style.display = avail ? '' : 'none';
+      this.dom.mean.textContent = this.meanOn ? 'Mean: on' : 'Mean: off';
+      this.dom.mean.classList.toggle('on', this.meanOn);
+    }
+  };
+
+  EnsCentersViewer.prototype._setDataStyle = function (mode) {
+    this.dataStyle = (mode === 'lines') ? 'lines' : 'cheerios';
+    try { localStorage.setItem(LS_STYLE, this.dataStyle); } catch (e) {}
+    this._syncToolkitButtons();
+    this._ensureTracks();
+    if (this.regionFrames.length) this._show(this.idx);
+  };
+
+  EnsCentersViewer.prototype._setMean = function (on) {
+    this.meanOn = !!on;
+    try { localStorage.setItem(LS_MEAN, this.meanOn ? 'on' : 'off'); } catch (e) {}
+    this._syncToolkitButtons();
+    this._ensureTracks();
+    if (this.regionFrames.length) this._show(this.idx);
   };
 
   // ---- figure layout (CSS px; contexts are dpr-scaled so we draw in CSS px) ----
@@ -546,14 +818,27 @@
       g.fillStyle = C.fg; g.font = '600 10.5px ' + FONT;
       g.fillText(bins[i].label, x + padx + 14, cy);
     }
-    // filled vs hollow note
+    // bottom note(s): glyph key. Cheerios = filled/hollow (unchanged); Lines mode
+    // explains the spaghetti + (if on) the bold ensemble mean.
     var ny = y + pady + bins.length * lh;
-    g.fillStyle = C.muted; g.font = '500 9.5px ' + FONT;
-    g.textBaseline = 'middle';
-    g.fillStyle = '#fff'; g.beginPath(); g.arc(x + padx + 4, ny + lh / 2, 3.2, 0, 6.2832); g.fill();
-    g.fillStyle = C.muted; g.fillText('Filled = current step', x + padx + 14, ny + lh / 2);
-    g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.arc(x + padx + 4, ny + lh + lh / 2, 3.4, 0, 6.2832); g.stroke();
-    g.fillText('Hollow = trail', x + padx + 14, ny + lh + lh / 2);
+    g.font = '500 9.5px ' + FONT; g.textBaseline = 'middle';
+    if (this.dataStyle === 'lines' && this.tracksReady()) {
+      g.strokeStyle = 'rgba(232,235,239,0.6)'; g.lineWidth = LINE_LW;
+      g.beginPath(); g.moveTo(x + padx, ny + lh / 2); g.lineTo(x + padx + 9, ny + lh / 2); g.stroke();
+      g.fillStyle = C.muted; g.fillText('Member tracks', x + padx + 14, ny + lh / 2);
+      if (this.meanOn) {
+        g.strokeStyle = '#fff'; g.lineWidth = MEAN_LW;
+        g.beginPath(); g.moveTo(x + padx, ny + lh + lh / 2); g.lineTo(x + padx + 9, ny + lh + lh / 2); g.stroke();
+        g.fillStyle = C.muted; g.fillText('Ensemble mean', x + padx + 14, ny + lh + lh / 2);
+      } else {
+        g.fillStyle = C.muted; g.fillText('Up to current F-hour', x + padx, ny + lh + lh / 2);
+      }
+    } else {
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(x + padx + 4, ny + lh / 2, 3.2, 0, 6.2832); g.fill();
+      g.fillStyle = C.muted; g.fillText('Filled = current step', x + padx + 14, ny + lh / 2);
+      g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.arc(x + padx + 4, ny + lh + lh / 2, 3.4, 0, 6.2832); g.stroke();
+      g.fillText('Hollow = trail', x + padx + 14, ny + lh + lh / 2);
+    }
     g.restore();
   };
 
@@ -629,7 +914,8 @@
     var n = this.regionFrames.length;
     this.idx = ((i % n) + n) % n;
     this.visible = this.regionFrames[this.idx];
-    this._ensureTrail(this.idx);
+    // the Cheerios trail layer is not used in Lines mode; skip building it there.
+    if (!(this.dataStyle === 'lines' && this.tracksReady())) this._ensureTrail(this.idx);
 
     var ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -638,12 +924,18 @@
     ctx.drawImage(this.staticLayer, 0, 0);
     this._scale(ctx);
     this._drawHeader(ctx, this.idx);
-    // dots into the map rect
+    // data into the map rect. Default = Cheerios (per-step rings/dots, unchanged);
+    // Lines = per-member spaghetti. Mean overlay (independent) sits ABOVE the data
+    // but BELOW the coast lines (canonical order), so geography stays legible.
+    var lines = (this.dataStyle === 'lines' && this.tracksReady());
+    var meanOn = (this.meanOn && this.tracksReady());
     ctx.save();
     ctx.beginPath(); ctx.rect(this.map.x, this.map.y, this.map.w, this.map.h); ctx.clip();
-    if (this.trailMode === 'trail') ctx.drawImage(this.trailLayer, this.map.x, this.map.y, this.map.w, this.map.h);
+    if (!lines && this.trailMode === 'trail') ctx.drawImage(this.trailLayer, this.map.x, this.map.y, this.map.w, this.map.h);
     ctx.translate(this.map.x, this.map.y);
-    this._drawStep(ctx, this.idx, true);    // current step filled
+    if (lines) this._drawLines(ctx, this.idx);
+    else this._drawStep(ctx, this.idx, true);    // current step filled
+    if (meanOn) this._drawMean(ctx, this.idx);   // bold ensemble-mean tracks
     // coast + country + state borders ON TOP of the centers (canonical order),
     // still clipped + translated to the map rect.
     if (window.TATRegions && TATRegions.drawBasemapLines) {
@@ -651,6 +943,7 @@
     }
     ctx.restore();
     this._drawLegend(ctx);
+    if (meanOn) this._drawPlumeInset(ctx);       // compact Vmax plume, bottom-right
     this._drawWatermark(ctx);
 
     var stepH = this.steps[this.idx];
@@ -722,6 +1015,12 @@
     if (this.dom.trail) this.dom.trail.addEventListener('click', function () {
       self._setTrailMode(self.trailMode === 'trail' ? 'current' : 'trail');
     });
+    if (this.dom.style) this.dom.style.addEventListener('click', function () {
+      self._setDataStyle(self.dataStyle === 'lines' ? 'cheerios' : 'lines');
+    });
+    if (this.dom.mean) this.dom.mean.addEventListener('click', function () {
+      self._setMean(!self.meanOn);
+    });
     if (this.dom.gif) this.dom.gif.addEventListener('click', function () { self._openGif(); });
     if (this.dom.gifmake) this.dom.gifmake.addEventListener('click', function () { self._makeGif(); });
     if (this.dom.gifx) this.dom.gifx.addEventListener('click', function () { self._closeGif(); });
@@ -762,6 +1061,7 @@
     });
 
     this._syncTrailBtn();
+    this._syncToolkitButtons();
 
     this.dom.canvas.addEventListener('mousemove', function (ev) { self._hover(ev); });
     this.dom.canvas.addEventListener('mouseleave', function () { if (self.dom.tooltip) self.dom.tooltip.style.display = 'none'; });

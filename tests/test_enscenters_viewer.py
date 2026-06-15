@@ -23,6 +23,7 @@ HARNESS = Path(__file__).resolve().parent / "enscenters_viewer_smoke.cjs"
 TRAIL_HARNESS = Path(__file__).resolve().parent / "enscenters_trail_smoke.cjs"
 HEADER_HARNESS = Path(__file__).resolve().parent / "enscenters_header_smoke.cjs"
 GIFNAME_HARNESS = Path(__file__).resolve().parent / "enscenters_gifname_smoke.cjs"
+TOOLKIT_HARNESS = Path(__file__).resolve().parent / "enscenters_toolkit_smoke.cjs"
 JS = REPO / "models" / "enscenters.js"
 NODE = shutil.which("node")
 
@@ -178,6 +179,43 @@ class TestEnsCentersViewer(unittest.TestCase):
         # the fix: after the off->on toggle at idx=2, ONLY steps 0..1 remain
         self.assertEqual(s["trailDrawnSteps"], [0, 1],
                          "stale trail rings beyond step 1 survived the toggle")
+
+    def test_toolkit_lines_mean_fallback_and_persistence(self):
+        # Stage 2 Ensemble Toolkit: data-style (Cheerios/Lines), ensemble-mean +
+        # plume overlay, lazy + graceful tracks loading, dateline-safe mean track,
+        # localStorage persistence, and the Cheerios-byte-identity guard.
+        proc = subprocess.run([NODE, str(TOOLKIT_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"toolkit harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        # toolkit OFF (default): ONLY Cheerios runs - no track drawer touches the
+        # frame, so the centers view is byte-identical to pre-toolkit.
+        self.assertEqual(s["off"], {"lines": 0, "mean": 0, "step": 1, "plume": 0})
+        # a model WITH tracks shows both toggles
+        self.assertTrue(s["ecens_style_visible"] and s["ecens_mean_visible"])
+        # Lines mode: lazily loaded tracks, drew lines, animated, NOT Cheerios
+        self.assertTrue(s["lines_tracksReady"])
+        self.assertGreaterEqual(s["lines_after"]["lines"], 2)
+        self.assertEqual(s["lines_after"]["step"], 0)
+        self.assertEqual(s["ls_style"], "lines")
+        # Mean mode: mean track + plume drawn
+        self.assertGreaterEqual(s["mean_after"]["mean"], 1)
+        self.assertGreaterEqual(s["mean_after"]["plume"], 1)
+        self.assertEqual(s["ls_mean"], "on")
+        # the S. Pacific mean track is CONTINUOUS across the dateline (no projected
+        # x jump anywhere near the half-map break threshold)
+        self.assertGreater(s["dateline_jumpLimit"], 0)
+        self.assertLess(s["dateline_maxJump"], s["dateline_jumpLimit"] * 0.5)
+        # toggles persist across a reload (a fresh viewer reads localStorage)
+        self.assertEqual(s["persist_style"], "lines")
+        self.assertTrue(s["persist_mean"])
+        # a model with NO tracks: toggles hidden, Cheerios only, no error
+        self.assertFalse(s["noend_style_visible"] or s["noend_mean_visible"])
+        self.assertEqual(s["noend_after"], {"lines": 0, "mean": 0, "step": 1})
+        self.assertFalse(s["noend_threw"])
+        # a model whose tracks.json fails to load: toggles hidden, no error
+        self.assertFalse(s["failm_style_visible"] or s["failm_mean_visible"])
+        self.assertFalse(s["failm_threw"])
 
 
 if __name__ == "__main__":
