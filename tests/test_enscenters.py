@@ -813,7 +813,7 @@ class TestFnv3Ingest(unittest.TestCase):
             "GENC/ensemble/cyclogenesis/csv/GENC_2026_06_14T18_00_cyclogenesis.csv")
 
     def test_registry_entries(self):
-        for slug, label, api in [("fnv3", "FNV3 (50)", "FNV3"), ("genc", "GenCast", "GENC")]:
+        for slug, label, api in [("fnv3", "Google FNV3 (50)", "FNV3"), ("genc", "Google GenCast", "GENC")]:
             s = reg.get_spec(slug)
             self.assertEqual(s.source_kind, "track_csv")
             self.assertFalse(s.warm_core)                                # native objects, no warmcore

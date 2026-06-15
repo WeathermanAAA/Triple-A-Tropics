@@ -878,7 +878,7 @@
         end();
         var u = URL.createObjectURL(blob), a = document.createElement('a');
         a.href = u;
-        a.download = 'ecens_' + self.region + '_' + (self.data ? self.data.init_cycle : 'cycle') + '.gif';
+        a.download = (self.model || 'ens') + '_' + self.region + '_' + (self.data ? self.data.init_cycle : 'cycle') + '.gif';
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         requestAnimationFrame(function () { URL.revokeObjectURL(u); });
         status.textContent = 'Done!'; mk.disabled = false;
