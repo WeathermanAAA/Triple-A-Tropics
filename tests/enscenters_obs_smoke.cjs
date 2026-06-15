@@ -107,10 +107,9 @@ const vis = (b) => b && b.style.display !== "none";
 
   out.obs_btn_visible = vis(V.dom.obs);
 
-  // spy on draw passes
-  const calls = { env: 0, markers: 0, note: 0 };
-  const o = { e: V._drawObsEnvelopes, m: V._drawObsMarkers, n: V._drawObsNote };
-  V._drawObsEnvelopes = function () { calls.env++; return o.e.apply(this, arguments); };
+  // spy on draw passes (envelope ellipses retired - obs draws just the marker + note)
+  const calls = { markers: 0, note: 0 };
+  const o = { m: V._drawObsMarkers, n: V._drawObsNote };
   V._drawObsMarkers = function () { calls.markers++; return o.m.apply(this, arguments); };
   V._drawObsNote = function () { calls.note++; return o.n.apply(this, arguments); };
 
@@ -120,10 +119,9 @@ const vis = (b) => b && b.style.display !== "none";
   out.ls_obs = win.localStorage.getItem("ens.obs");
   out.obs_fetched_url = fetched.filter((u) => /global_storms\.geojson/.test(u)).slice(-1)[0] || null;
   out.obs_fetched_any_floater = fetched.some((u) => /floater/i.test(u));   // must be false (isolation)
-  calls.env = calls.markers = calls.note = 0;
+  calls.markers = calls.note = 0;
   V._show(V.idx);
   out.markers_drawn = calls.markers;
-  out.env_drawn = calls.env;
 
   // resolve directly: 3 active systems in global view; INV_A + STM_S matched, INV_B not
   const res = V._resolveObs();
