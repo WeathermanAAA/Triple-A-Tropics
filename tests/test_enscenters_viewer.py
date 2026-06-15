@@ -24,6 +24,7 @@ TRAIL_HARNESS = Path(__file__).resolve().parent / "enscenters_trail_smoke.cjs"
 HEADER_HARNESS = Path(__file__).resolve().parent / "enscenters_header_smoke.cjs"
 GIFNAME_HARNESS = Path(__file__).resolve().parent / "enscenters_gifname_smoke.cjs"
 TOOLKIT_HARNESS = Path(__file__).resolve().parent / "enscenters_toolkit_smoke.cjs"
+OBS_HARNESS = Path(__file__).resolve().parent / "enscenters_obs_smoke.cjs"
 JS = REPO / "models" / "enscenters.js"
 NODE = shutil.which("node")
 
@@ -216,6 +217,47 @@ class TestEnsCentersViewer(unittest.TestCase):
         # a model whose tracks.json fails to load: toggles hidden, no error
         self.assertFalse(s["failm_style_visible"] or s["failm_mean_visible"])
         self.assertFalse(s["failm_threw"])
+
+    def test_obs_vs_envelope_match_rank_and_fallbacks(self):
+        # Stage 2b: match a live observed system to its ensemble cluster, rank it in
+        # the envelope, draw the focal marker, degrade cleanly, and read ONLY the
+        # sanctioned global_storms.geojson feed (floater isolation).
+        proc = subprocess.run([NODE, str(OBS_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"obs harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        # ISOLATION: the obs feed is the home map's global_storms.geojson, and NO
+        # floater URL is ever fetched.
+        self.assertTrue(s["obs_fetched_url"].endswith("global_storms.geojson"))
+        self.assertFalse(s["obs_fetched_any_floater"])
+        # toggle shows (model has tracks), persists, draws the marker overlay
+        self.assertTrue(s["obs_btn_visible"])
+        self.assertEqual(s["ls_obs"], "on")
+        self.assertTrue(s["persist_obs"])
+        self.assertEqual(s["markers_drawn"], 1)
+        self.assertEqual(s["env_drawn"], 1)
+        # matching: invest near a cluster matches; far invest does not; active named
+        # storm (track is_active) matches via its latest observation fix
+        self.assertEqual(s["resolved_n"], 3)
+        self.assertTrue(s["invA_matched"])
+        self.assertFalse(s["invB_matched"])
+        self.assertTrue(s["stmS_matched"])
+        # rank is sane (0..100) with a compass side; matched the dateline cluster
+        # (lon 170) -> dateline-safe match
+        self.assertGreaterEqual(s["invA_rank"]["pct"], 0)
+        self.assertLessEqual(s["invA_rank"]["pct"], 100)
+        self.assertIn(s["invA_rank"]["side"], ["N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+        self.assertEqual(s["invA_rank"]["clusterGenesisLon"], 170)
+        # no active system in view -> note, no markers, no error
+        self.assertEqual(s["natl_resolved"], 0)
+        self.assertEqual(s["natl_markers"], 0)
+        self.assertEqual(s["natl_note"], 1)
+        # no-tracks model -> obs toggle hidden, no error
+        self.assertFalse(s["noend_obs_visible"])
+        self.assertFalse(s["noend_threw"])
+        # obs feed fetch fails -> empty, clean no-op, no error
+        self.assertEqual(s["fail_obs_len"], 0)
+        self.assertFalse(s["fail_threw"])
 
 
 if __name__ == "__main__":

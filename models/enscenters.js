@@ -46,6 +46,17 @@
   var MEAN_LW = 3.0, MEAN_DIM_LW = 1.5, MEAN_DIM_ALPHA = 0.45;
   var MEAN_CASING = 'rgba(7,16,28,0.9)';
   var MEAN_MIN_MEMBERS = 3;       // hide clusters tinier than this (unreliable)
+  // Stage 2b OBS-vs-envelope. The observed-system feed is the SAME global feed the
+  // home/global tracks map already reads (cdn .../global_storms.geojson, written by
+  // the main-repo ace_core storm-display path). It is fetched INDEPENDENTLY and
+  // READ-ONLY here - the floater poller / floater code is never touched or imported,
+  // and nothing here writes back to track/ACE/climo (invest isolation, both ways).
+  var LS_OBS = 'ens.obs';
+  var OBS_FEED_URL = BASE + '/global_storms.geojson';
+  var OBS_MATCH_MAX_DEG = 9.0;    // refuse a match beyond this great-circle gap
+  var OBS_FOCAL = '#39ff14';      // bold lime focal marker - NOT a pressure-bin hue
+  var OBS_CASING = 'rgba(7,16,28,0.92)';
+  var COMPASS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   var MIN_FIG_W = 760;     // figure renders at least this wide (legible PNG; scales on mobile)
   var WATERMARK = '@WeathermanAAA_';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
@@ -78,6 +89,27 @@
   function fmtInt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
   function regionOr(key) { return (window.TATRegions && TATRegions.get(key)) ? key : DEFAULT_REGION; }
   function wrap180(lo) { return ((lo + 180) % 360 + 360) % 360 - 180; }   // tracks JSON lons are display-unwrapped
+  var EARTH_R_KM = 6371.0088;
+  function gcDeg(la1, lo1, la2, lo2) {            // haversine, degrees of arc (dateline-safe)
+    var R = Math.PI / 180, p1 = la1 * R, p2 = la2 * R;
+    var dp = (la2 - la1) * R, dl = (lo2 - lo1) * R;
+    var a = Math.sin(dp / 2) * Math.sin(dp / 2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+    return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) / R;
+  }
+  // local east/north offset (km) of a point from a reference, dateline-safe (the
+  // lon delta is wrapped before scaling) - for the covariance z-score + bearing.
+  function localXYkm(la, lo, rla, rlo) {
+    var R = Math.PI / 180, dlon = lo - rlo; dlon -= 360 * Math.round(dlon / 360);
+    return [dlon * R * Math.cos(rla * R) * EARTH_R_KM, (la - rla) * R * EARTH_R_KM];
+  }
+  function compass8(eastKm, northKm) {            // 8-point compass of an offset
+    var ang = (Math.atan2(eastKm, northKm) * 180 / Math.PI + 360) % 360;
+    return COMPASS8[Math.round(ang / 45) % 8];
+  }
+  function ordinal(n) {
+    var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
 
   function binKey(p) {
     if (p < 950) return 'lt950';
@@ -141,6 +173,7 @@
       trail: el('enscenters-trail'),
       style: el('enscenters-style'),
       mean: el('enscenters-mean'),
+      obs: el('enscenters-obs'),
       gif: el('enscenters-gif'),
       gifmodal: el('enscenters-gifmodal'),
       gifn: el('enscenters-gifn'),
@@ -190,6 +223,11 @@
     this.dataStyle = (ds === 'lines') ? 'lines' : 'cheerios';
     var mn = null; try { mn = localStorage.getItem(LS_MEAN); } catch (e) {}
     this.meanOn = (mn === 'on');
+    var ob = null; try { ob = localStorage.getItem(LS_OBS); } catch (e) {}
+    this.obsOn = (ob === 'on');
+    this.obs = null;             // active observed systems (from global_storms.geojson)
+    this.obsLoading = false;
+    this._obsFailed = false;
     this.tracks = null;          // parsed tracks JSON for the loaded model+cycle
     this.tracksCycle = null;     // which cycle this.tracks belongs to
     this.tracksModel = null;     // which model this.tracks belongs to
@@ -347,9 +385,10 @@
     this._status('');
     this._show(0);
     // toolkit: reflect this model+cycle's tracks availability, then lazily load
-    // the sibling tracks JSON if a track-consuming feature is currently enabled.
+    // the sibling tracks JSON + obs feed if a consuming feature is currently on.
     this._syncToolkitButtons();
     this._ensureTracks();
+    this._ensureObs();
   };
 
   // Model-aware caption: a model whose per-cycle JSON carries its own `caption`
@@ -442,7 +481,8 @@
   // version-keyed for cache-bust. Graceful: a 404 / parse error hides the toggles
   // and falls back to Cheerios, never throwing.
   EnsCentersViewer.prototype._ensureTracks = function () {
-    if (this.dataStyle !== 'lines' && !this.meanOn) return;   // nothing needs tracks
+    // obs mode also needs the clusters to compare against
+    if (this.dataStyle !== 'lines' && !this.meanOn && !this.obsOn) return;
     if (!this._tracksAvailable()) return;                     // no file -> stay Cheerios
     if (this.tracksReady() || this.tracksLoading) return;     // already have / loading
     this._loadTracks(this.model, this.loadedCycle);
@@ -637,6 +677,11 @@
       this.dom.mean.textContent = this.meanOn ? 'Mean: on' : 'Mean: off';
       this.dom.mean.classList.toggle('on', this.meanOn);
     }
+    if (this.dom.obs) {                            // obs needs clusters to compare against
+      this.dom.obs.style.display = avail ? '' : 'none';
+      this.dom.obs.textContent = this.obsOn ? 'Obs: on' : 'Obs: off';
+      this.dom.obs.classList.toggle('on', this.obsOn);
+    }
   };
 
   EnsCentersViewer.prototype._setDataStyle = function (mode) {
@@ -652,6 +697,231 @@
     try { localStorage.setItem(LS_MEAN, this.meanOn ? 'on' : 'off'); } catch (e) {}
     this._syncToolkitButtons();
     this._ensureTracks();
+    if (this.regionFrames.length) this._show(this.idx);
+  };
+
+  // ===================== Stage 2b: OBS vs ENVELOPE =====================
+  // Lazily load the SAME global observed-system feed the home tracks map uses
+  // (READ-ONLY; never the floater poller), only while the toggle is on.
+  EnsCentersViewer.prototype._ensureObs = function () {
+    if (!this.obsOn) return;
+    if (!this._tracksAvailable()) return;        // need clusters to compare against
+    if (this.obs || this.obsLoading) return;
+    this._loadObs();
+  };
+
+  EnsCentersViewer.prototype._loadObs = function () {
+    var self = this; this.obsLoading = true;
+    fetch(OBS_FEED_URL, { cache: 'no-cache' })
+      .then(function (r) { if (!r.ok) throw new Error('obs HTTP ' + r.status); return r.json(); })
+      .then(function (gj) {
+        self.obsLoading = false; self._obsFailed = false;
+        self.obs = self._extractActiveObs(gj);
+        if (self.regionFrames.length) self._show(self.idx);
+      })
+      .catch(function (e) {
+        self.obsLoading = false; self._obsFailed = true; self.obs = [];   // clean no-op
+        console.warn('enscenters: obs feed load failed (overlay no-ops)', e);
+        if (self.regionFrames.length) self._show(self.idx);
+      });
+  };
+
+  // Parse the global_storms.geojson into CURRENT positions of ACTIVE systems:
+  // active invests (the active_marker points) + named storms whose track is_active
+  // (their latest observation fix). Everything else (historical fixes, inactive
+  // tracks) is ignored - this is purely a read of observed reality.
+  EnsCentersViewer.prototype._extractActiveObs = function (gj) {
+    var feats = (gj && gj.features) || [], out = [], latest = {};
+    for (var i = 0; i < feats.length; i++) {
+      var p = feats[i].properties || {}, g = feats[i].geometry || {};
+      if (p.kind === 'observation' && g.type === 'Point') {
+        var t = Date.parse(p.time_iso || '') || 0, id = p.storm_id;
+        if (!latest[id] || t > latest[id].t) latest[id] = { t: t, lon: g.coordinates[0], lat: g.coordinates[1], kt: p.intensity_kt };
+      }
+    }
+    for (var j = 0; j < feats.length; j++) {
+      var p2 = feats[j].properties || {}, g2 = feats[j].geometry || {};
+      if (p2.kind === 'active_marker' && g2.type === 'Point') {
+        out.push({ id: p2.storm_id, name: p2.name || p2.designation || p2.storm_id,
+          lat: g2.coordinates[1], lon: g2.coordinates[0], kt: p2.current_intensity_kt,
+          timeMs: Date.parse(p2.last_fix || '') || 0, kind: 'invest' });
+      }
+    }
+    for (var k = 0; k < feats.length; k++) {
+      var p3 = feats[k].properties || {};
+      if (p3.kind === 'track' && p3.is_active === true) {
+        var lf = latest[p3.storm_id];
+        if (lf) out.push({ id: p3.storm_id, name: p3.name || p3.designation || p3.storm_id,
+          lat: lf.lat, lon: lf.lon, kt: lf.kt, timeMs: lf.t, kind: 'storm' });
+      }
+    }
+    return out;
+  };
+
+  // active systems in the current region, each matched (or not) to a cluster
+  EnsCentersViewer.prototype._resolveObs = function () {
+    var out = [];
+    if (!this.obs || !this.tracks) return out;
+    var r = window.TATRegions ? TATRegions.get(this.region) : null;
+    for (var i = 0; i < this.obs.length; i++) {
+      var o = this.obs[i];
+      if (r && !TATRegions.inRegion(wrap180(o.lon), o.lat, r)) continue;   // not in view
+      var leadH = (o.timeMs && this.initMs) ? Math.max(0, (o.timeMs - this.initMs) / 3600000) : 0;
+      out.push({ obs: o, match: this._matchCluster(o, leadH) });
+    }
+    return out;
+  };
+
+  // nearest cluster by mean position at the obs's valid lead (nearest-valid-time
+  // bucket); null if none within a sane great-circle distance.
+  EnsCentersViewer.prototype._matchCluster = function (o, leadH) {
+    var cl = (this.tracks && this.tracks.clusters) || [], best = null;
+    for (var i = 0; i < cl.length; i++) {
+      var c = cl[i]; if ((c.member_count || 0) < MEAN_MIN_MEMBERS) continue;
+      var mt = c.mean_track || [], bp = null, bstep = null, bd = 1e9;
+      for (var k = 0; k < mt.length; k++) {
+        var dl = Math.abs(mt[k][0] - leadH);
+        if (dl < bd) { bd = dl; bp = mt[k]; bstep = mt[k][0]; }
+      }
+      if (!bp) continue;
+      var dist = gcDeg(o.lat, wrap180(o.lon), bp[1], wrap180(bp[2]));
+      if (best === null || dist < best.dist) best = { cluster: c, step: bstep, dist: dist };
+    }
+    return (best && best.dist <= OBS_MATCH_MAX_DEG) ? best : null;
+  };
+
+  // obs_support, client-side from the emitted envelope covariance: percentile rank
+  // (bivariate-normal coverage at the obs's Mahalanobis radius) + which side of the
+  // mean it sits + offset distance.
+  EnsCentersViewer.prototype._obsRank = function (cluster, step, lat, lon) {
+    var env = cluster.envelope || [], e = null, bd = 1e9;
+    for (var i = 0; i < env.length; i++) { var d = Math.abs(env[i].step - step); if (d < bd) { bd = d; e = env[i]; } }
+    if (!e || e.mean_lat == null) return null;
+    var v = localXYkm(lat, wrap180(lon), e.mean_lat, e.mean_lon);
+    var out = { side: compass8(v[0], v[1]), offsetKm: Math.sqrt(v[0] * v[0] + v[1] * v[1]), step: e.step, pct: null };
+    if (e.cov_km) {
+      var cxx = e.cov_km[0][0], cxy = e.cov_km[0][1], cyy = e.cov_km[1][1], det = cxx * cyy - cxy * cxy;
+      if (det > 1e-6) {
+        var ix = cyy / det, ixy = -cxy / det, iy = cxx / det;
+        var m2 = v[0] * (ix * v[0] + ixy * v[1]) + v[1] * (ixy * v[0] + iy * v[1]);   // Mahalanobis^2
+        if (m2 >= 0) out.pct = Math.max(0, Math.min(100, (1 - Math.exp(-m2 / 2)) * 100));
+      }
+    }
+    return out;
+  };
+
+  // closed, dateline-safe polygon path; returns false (skip) if it spans the seam
+  EnsCentersViewer.prototype._polyPath = function (g, poly, ext, mw, mh, JUMP) {
+    if (!poly || poly.length < 3) return false;
+    var pts = [], minx = 1e9, maxx = -1e9;
+    for (var i = 0; i < poly.length; i++) {
+      var p = TATRegions.project(wrap180(poly[i][1]), poly[i][0], ext, mw, mh);
+      pts.push(p); if (p[0] < minx) minx = p[0]; if (p[0] > maxx) maxx = p[0];
+    }
+    if (maxx - minx > JUMP) return false;
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+    for (var j = 1; j < pts.length; j++) g.lineTo(pts[j][0], pts[j][1]);
+    g.closePath(); return true;
+  };
+
+  // MUTED envelope: a faint 90% swath across leads + the matched lead's 50/90 rings
+  EnsCentersViewer.prototype._drawClusterEnvelope = function (g, c, matchedStep, ext, mw, mh, JUMP) {
+    var env = c.envelope || [], i;
+    g.fillStyle = 'rgba(43,156,255,0.07)';
+    for (i = 0; i < env.length; i++) {
+      if (env[i].ell90 && env[i].ell90.poly && this._polyPath(g, env[i].ell90.poly, ext, mw, mh, JUMP)) g.fill();
+    }
+    var me = null, bd = 1e9;
+    for (i = 0; i < env.length; i++) { var d = Math.abs(env[i].step - matchedStep); if (d < bd) { bd = d; me = env[i]; } }
+    if (me) {
+      g.lineWidth = 1.2;
+      if (me.ell90 && me.ell90.poly && this._polyPath(g, me.ell90.poly, ext, mw, mh, JUMP)) { g.strokeStyle = 'rgba(120,170,230,0.55)'; g.stroke(); }
+      if (me.ell50 && me.ell50.poly && this._polyPath(g, me.ell50.poly, ext, mw, mh, JUMP)) { g.strokeStyle = 'rgba(165,205,250,0.8)'; g.stroke(); }
+    }
+  };
+
+  EnsCentersViewer.prototype._drawObsEnvelopes = function (g, resolved) {
+    var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
+    var uptoStep = this.steps[Math.min(this.idx, this.steps.length - 1)];
+    for (var i = 0; i < resolved.length; i++) {
+      var m = resolved[i].match; if (!m) continue;
+      this._drawClusterEnvelope(g, m.cluster, m.step, ext, mw, mh, JUMP);
+      this._drawMeanTrack(g, m.cluster, uptoStep, ext, mw, mh, JUMP, false);   // matched mean (context)
+    }
+  };
+
+  EnsCentersViewer.prototype._drawObsMarkers = function (g, resolved) {
+    var ext = this.extent, mw = this.map.w, mh = this.map.h;
+    for (var i = 0; i < resolved.length; i++) {
+      var o = resolved[i].obs, m = resolved[i].match;
+      var p = TATRegions.project(wrap180(o.lon), o.lat, ext, mw, mh);
+      this._drawObsMarker(g, p[0], p[1]);
+      var lines = [o.name + (o.kt != null ? '  ' + Math.round(o.kt) + ' kt' : '')];
+      if (m) {
+        var rk = this._obsRank(m.cluster, m.step, o.lat, o.lon);
+        if (rk && rk.pct != null) {
+          // spread available: percentile rank + which side of the mean
+          lines.push('Obs ~' + ordinal(Math.round(rk.pct)) + ' pct, ' + rk.side + ' of mean');
+        } else if (rk) {
+          // early/degenerate lead (little ensemble spread yet): side + offset km
+          lines.push('Obs ' + rk.side + ' of mean, ~' + Math.round(rk.offsetKm) + ' km');
+        } else {
+          lines.push('matched ensemble system');
+        }
+      } else {
+        lines.push('no matching ensemble system');
+      }
+      this._drawObsLabel(g, p[0], p[1], lines);
+    }
+  };
+
+  EnsCentersViewer.prototype._drawObsMarker = function (g, x, y) {
+    var R = 7;
+    g.save();
+    g.strokeStyle = OBS_CASING; g.lineWidth = 4; g.beginPath();
+    g.moveTo(x, y - R); g.lineTo(x + R, y); g.lineTo(x, y + R); g.lineTo(x - R, y); g.closePath(); g.stroke();
+    g.strokeStyle = OBS_FOCAL; g.lineWidth = 2; g.beginPath();
+    g.moveTo(x, y - R); g.lineTo(x + R, y); g.lineTo(x, y + R); g.lineTo(x - R, y); g.closePath(); g.stroke();
+    g.fillStyle = OBS_FOCAL; g.beginPath(); g.arc(x, y, 1.6, 0, 6.2832); g.fill();
+    g.strokeStyle = OBS_FOCAL; g.lineWidth = 1.4;
+    g.beginPath();
+    g.moveTo(x - R - 3, y); g.lineTo(x - R + 1, y); g.moveTo(x + R - 1, y); g.lineTo(x + R + 3, y);
+    g.moveTo(x, y - R - 3); g.lineTo(x, y - R + 1); g.moveTo(x, y + R - 1); g.lineTo(x, y + R + 3); g.stroke();
+    g.restore();
+  };
+
+  EnsCentersViewer.prototype._drawObsLabel = function (g, x, y, lines) {
+    g.save(); g.font = '700 10px ' + FONT;
+    var w = 0, i; for (i = 0; i < lines.length; i++) w = Math.max(w, g.measureText(lines[i]).width);
+    var pad = 5, lh = 13, bw = w + pad * 2, bh = lines.length * lh + pad * 2;
+    var bx = x + 11, by = y - bh / 2;
+    if (bx + bw > this.map.w) bx = x - 11 - bw;
+    if (bx < 2) bx = 2;
+    if (by < 2) by = 2; if (by + bh > this.map.h) by = this.map.h - bh;
+    g.fillStyle = 'rgba(7,16,28,0.85)'; g.strokeStyle = OBS_FOCAL; g.lineWidth = 1;
+    roundRectPath(g, bx, by, bw, bh, 4); g.fill(); g.stroke();
+    g.textBaseline = 'top'; g.textAlign = 'left';
+    for (i = 0; i < lines.length; i++) { g.fillStyle = (i === 0) ? OBS_FOCAL : C.fg; g.fillText(lines[i], bx + pad, by + pad + i * lh); }
+    g.restore();
+  };
+
+  // canvas-space note when obs mode is on but nothing is in view to compare
+  EnsCentersViewer.prototype._drawObsNote = function (g) {
+    var msg = this._obsFailed ? 'Obs feed unavailable' : 'No active system to compare';
+    g.save(); g.font = '600 11px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
+    var pad = 7, tw = g.measureText(msg).width, w = tw + pad * 2, h = 24;
+    var x = this.map.x + this.map.w / 2 - w / 2, y = this.map.y + 8;
+    g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
+    roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
+    g.fillStyle = C.muted; g.fillText(msg, x + pad, y + 6);
+    g.restore();
+  };
+
+  EnsCentersViewer.prototype._setObs = function (on) {
+    this.obsOn = !!on;
+    try { localStorage.setItem(LS_OBS, this.obsOn ? 'on' : 'off'); } catch (e) {}
+    this._syncToolkitButtons();
+    this._ensureTracks(); this._ensureObs();
     if (this.regionFrames.length) this._show(this.idx);
   };
 
@@ -929,6 +1199,7 @@
     // but BELOW the coast lines (canonical order), so geography stays legible.
     var lines = (this.dataStyle === 'lines' && this.tracksReady());
     var meanOn = (this.meanOn && this.tracksReady());
+    var obsResolved = (this.obsOn && this.tracksReady() && this.obs) ? this._resolveObs() : null;
     ctx.save();
     ctx.beginPath(); ctx.rect(this.map.x, this.map.y, this.map.w, this.map.h); ctx.clip();
     if (!lines && this.trailMode === 'trail') ctx.drawImage(this.trailLayer, this.map.x, this.map.y, this.map.w, this.map.h);
@@ -936,14 +1207,19 @@
     if (lines) this._drawLines(ctx, this.idx);
     else this._drawStep(ctx, this.idx, true);    // current step filled
     if (meanOn) this._drawMean(ctx, this.idx);   // bold ensemble-mean tracks
+    // obs mode: muted matched-cluster envelope + mean UNDER the coast lines
+    if (obsResolved && obsResolved.length) this._drawObsEnvelopes(ctx, obsResolved);
     // coast + country + state borders ON TOP of the centers (canonical order),
     // still clipped + translated to the map rect.
     if (window.TATRegions && TATRegions.drawBasemapLines) {
       TATRegions.drawBasemapLines(ctx, this.extent, this.geo, this.map.w, this.map.h, BASEMAP_STYLE);
     }
+    // the bold focal obs marker + readout sit ON TOP of everything (the point)
+    if (obsResolved && obsResolved.length) this._drawObsMarkers(ctx, obsResolved);
     ctx.restore();
     this._drawLegend(ctx);
     if (meanOn) this._drawPlumeInset(ctx);       // compact Vmax plume, bottom-right
+    if (this.obsOn && this.tracksReady() && obsResolved && !obsResolved.length) this._drawObsNote(ctx);
     this._drawWatermark(ctx);
 
     var stepH = this.steps[this.idx];
@@ -1020,6 +1296,9 @@
     });
     if (this.dom.mean) this.dom.mean.addEventListener('click', function () {
       self._setMean(!self.meanOn);
+    });
+    if (this.dom.obs) this.dom.obs.addEventListener('click', function () {
+      self._setObs(!self.obsOn);
     });
     if (this.dom.gif) this.dom.gif.addEventListener('click', function () { self._openGif(); });
     if (this.dom.gifmake) this.dom.gifmake.addEventListener('click', function () { self._makeGif(); });
@@ -1244,6 +1523,8 @@
       if (self.followLatest && entry.latest && entry.latest !== self.loadedCycle) {
         self._loadCycle(self.model, entry.latest);
       }
+      // refresh the live observed-system feed too (when obs mode is on)
+      if (self.obsOn && self._tracksAvailable() && !self.obsLoading) self._loadObs();
     }).catch(function () {}).then(function () { self._schedulePoll(); });
   };
 
