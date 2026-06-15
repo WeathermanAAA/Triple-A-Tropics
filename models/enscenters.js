@@ -1185,13 +1185,11 @@
     var bins = (this.data && this.data.pressure_bins) || [];
     var lines = bins.length + 2, lh = 14, padx = 9, pady = 7;
     var w = 132, h = pady * 2 + lines * lh;
-    // In the toolkit (Lines / Mean) views the dense member cloud + tracks rise from
-    // the bottom, so the legend lives TOP-LEFT (below the burned-in header, which
-    // sits in the strip above the map box) to keep the active area clear and pair
-    // with the top-right Vmax plume. The plain Cheerios view is left UNCHANGED
-    // (legend bottom-left) so the centers product reads exactly as before.
-    var toolkit = this.tracksReady() && (this.dataStyle === 'lines' || this.meanOn);
-    var x = this.map.x + 8, y = toolkit ? (this.map.y + 8) : (this.map.y + this.map.h - h - 8);
+    // Legend lives TOP-LEFT in EVERY view (Cheerios + Lines/Mean), below the
+    // burned-in header (which sits in the strip above the map box). The dense
+    // centers/tracks rise from the bottom, so keeping the legend up top clears the
+    // active area and pairs it with the top-right Vmax plume.
+    var x = this.map.x + 8, y = this.map.y + 8;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.78)'; g.strokeStyle = C.border; g.lineWidth = 1;
     g.fillRect(x, y, w, h); g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
