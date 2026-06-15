@@ -53,6 +53,11 @@
   var MEAN_LW = 3.0, MEAN_DIM_LW = 1.5, MEAN_DIM_ALPHA = 0.45;
   var MEAN_CASING = 'rgba(7,16,28,0.9)';
   var MEAN_MIN_MEMBERS = 3;       // hide clusters tinier than this (unreliable)
+  // Left-side INFO COLUMN: the legend sits on top and the Vmax plume stacks directly
+  // beneath it (Mean mode), so the whole top-left is the info column and the right
+  // side stays clear for data. The stack travels together to the least-crowded
+  // corner (see _legendXY). Plume box size is fixed; only its position moves.
+  var PLUME_W = 192, PLUME_H = 120, INFO_GAP = 8;
   // Stage 2b OBS-vs-envelope. The observed-system feed is the SAME global feed the
   // home/global tracks map already reads (cdn .../global_storms.geojson, written by
   // the main-repo ace_core storm-display path). It is fetched INDEPENDENTLY and
@@ -809,7 +814,9 @@
     var leads = pv.lead;
     var p10 = smooth(pv.p10), p90 = smooth(pv.p90),
         sMax = smooth(pv.max), sMed = smooth(pv.p50), sMin = smooth(pv.min);
-    var w = 192, h = 120, x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
+    // stacked directly BELOW the legend (the left info column); travels with it
+    var ld = this._legendDims(), lxy = this._legendXY(ld.w, ld.h);
+    var w = PLUME_W, h = PLUME_H, x = lxy.x, y = lxy.y + ld.h + INFO_GAP;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
     roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
@@ -867,14 +874,15 @@
     g.restore();
   };
 
-  // Compact top-right chip when Mean is on but no cluster falls in the region, so
-  // the plume + dated labels hide cleanly with a one-line reason (mirrors the obs
-  // "no system" note). Sits where the plume would be.
+  // Compact chip when Mean is on but no cluster falls in the region, so the plume +
+  // dated labels hide cleanly with a one-line reason (mirrors the obs "no system"
+  // note). Sits where the plume would be: below the legend in the left info column.
   EnsCentersViewer.prototype._drawPlumeNote = function (g) {
     var msg = 'No system in this region';
     g.save(); g.font = '600 11px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
+    var ld = this._legendDims(), lxy = this._legendXY(ld.w, ld.h);
     var pad = 8, tw = g.measureText(msg).width, w = tw + pad * 2, h = 26;
-    var x = this.map.x + this.map.w - w - 8, y = this.map.y + 8;
+    var x = lxy.x, y = lxy.y + ld.h + INFO_GAP;
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
     roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
     g.fillStyle = C.muted; g.fillText(msg, x + pad, y + 8);
@@ -1347,15 +1355,30 @@
     g.restore();
   };
 
-  // Legend home is TOP-LEFT (below the burned-in header; pairs with the top-right
-  // Vmax plume). But some regions are wide-short letterboxed strips (e.g. Tropical
-  // Pacific) where the tropical centers land top-left and the legend would bury the
-  // cloud, so we RELOCATE to bottom-left ONLY when top-left is crowded AND
-  // bottom-left is clearer. Decided from the full-trail center density, cached per
-  // region+layout so it never jiggles during playback.
+  // Legend box dimensions (one source of truth for the legend draw + the info-column
+  // layout): width is fixed, height = padding + (pressure bins + 2 note lines).
+  EnsCentersViewer.prototype._legendDims = function () {
+    var bins = (this.data && this.data.pressure_bins) || [];
+    return { w: 132, h: 7 * 2 + (bins.length + 2) * 14 };   // pady*2 + lines*lh
+  };
+  // The plume is part of the info column only when it actually draws (Mean on + tracks
+  // ready) - matches the `if (meanOn)` guard in _show that calls _drawPlumeInset.
+  EnsCentersViewer.prototype._infoHasPlume = function () { return this.meanOn && this.tracksReady(); };
+
+  // Top-left anchor of the LEFT INFO COLUMN (legend on top, Vmax plume stacked beneath
+  // it when Mean is on). Home is TOP-LEFT, below the burned-in header. Some regions are
+  // wide-short letterboxed strips (e.g. Tropical Pacific) where the centers land
+  // top-left and the column would bury the cloud, so the WHOLE column relocates to
+  // bottom-left when top-left is crowded AND bottom-left is clearer. The crowding test
+  // uses the full STACK footprint (legend + plume), so the plume travels with the
+  // legend and never collides with it. Decided from full-trail density, cached per
+  // region+layout+plume-state so it never jiggles during playback. Returns the legend
+  // top-left; the plume sits at y + legendH + INFO_GAP.
   EnsCentersViewer.prototype._legendXY = function (w, h) {
-    var m = this.map, tl = { x: m.x + 8, y: m.y + 8 }, bl = { x: m.x + 8, y: m.y + m.h - h - 8 };
-    var key = this.region + '|' + Math.round(m.w) + 'x' + Math.round(m.h) + '|' + this.regionFrames.length;
+    var m = this.map, hasPlume = this._infoHasPlume();
+    var stackW = hasPlume ? Math.max(w, PLUME_W) : w;
+    var stackH = hasPlume ? (h + INFO_GAP + PLUME_H) : h;
+    var key = this.region + '|' + Math.round(m.w) + 'x' + Math.round(m.h) + '|' + this.regionFrames.length + '|' + (hasPlume ? 1 : 0);
     if (this._legendKey !== key) {
       this._legendKey = key;
       var ext = this.extent, mw = m.w, mh = m.h, nTL = 0, nBL = 0, total = 0;
@@ -1363,20 +1386,21 @@
         var pts = this.regionFrames[s];
         for (var k = 0; k < pts.length; k++) {
           var p = TATRegions.project(pts[k][1], pts[k][0], ext, mw, mh); total++;
-          if (p[0] >= 8 && p[0] <= 8 + w && p[1] >= 8 && p[1] <= 8 + h) nTL++;
-          if (p[0] >= 8 && p[0] <= 8 + w && p[1] >= mh - h - 8 && p[1] <= mh - 8) nBL++;
+          if (p[0] >= 8 && p[0] <= 8 + stackW && p[1] >= 8 && p[1] <= 8 + stackH) nTL++;
+          if (p[0] >= 8 && p[0] <= 8 + stackW && p[1] >= mh - stackH - 8 && p[1] <= mh - 8) nBL++;
         }
       }
       var thresh = Math.max(8, total * 0.03);
       this._legendCorner = (nTL <= thresh || nTL <= nBL) ? 'tl' : 'bl';   // prefer TL; relocate only if crowded + BL clearer
     }
-    return this._legendCorner === 'bl' ? bl : tl;
+    var top = (this._legendCorner === 'bl') ? Math.max(m.y + 8, m.y + m.h - stackH - 8) : (m.y + 8);
+    return { x: m.x + 8, y: top };
   };
 
   EnsCentersViewer.prototype._drawLegend = function (g) {
     var bins = (this.data && this.data.pressure_bins) || [];
-    var lines = bins.length + 2, lh = 14, padx = 9, pady = 7;
-    var w = 132, h = pady * 2 + lines * lh;
+    var lh = 14, padx = 9, pady = 7;
+    var dims = this._legendDims(), w = dims.w, h = dims.h;
     var xy = this._legendXY(w, h), x = xy.x, y = xy.y;
     g.save();
     g.fillStyle = 'rgba(7,16,28,0.78)'; g.strokeStyle = C.border; g.lineWidth = 1;
