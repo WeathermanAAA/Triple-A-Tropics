@@ -267,8 +267,8 @@
   .ens-modelgroup { display: flex; }
   .ens-transport { display: flex; gap: 6px; }
   .ens-play { min-width: 92px; }
-  #enscenters-trail { min-width: 84px; }
-  #enscenters-trail.on { border-color: var(--accent); color: var(--accent); }
+  #enscenters-trail, #enscenters-style, #enscenters-mean { min-width: 84px; }
+  #enscenters-trail.on, #enscenters-style.on, #enscenters-mean.on { border-color: var(--accent); color: var(--accent); }
   .ens-readout { display: flex; flex-direction: column; min-width: 200px;
     font-variant-numeric: tabular-nums; }
   #enscenters-fhour { color: var(--accent); font-size: 15px; font-weight: 700; }
@@ -419,6 +419,11 @@
   </div>
 </section>
 
+<header class="page-head">
+  <h1>Ensemble Toolkit</h1>
+  <p>Tropical cyclone centers across the global ensembles &mdash; <b>ECMWF ENS</b>, <b>AIFS-ENS</b>, <b>GEFS</b>, and Google DeepMind <b>FNV3</b> &amp; <b>GenCast</b> &mdash; with presentation tools layered on the same field. Switch the data style between <b>Cheerios</b> (per-step centers) and <b>Lines</b> (connected per-member tracks), overlay each clustered system's <b>ensemble-mean track</b> and intensity plume, crop to a region, toggle the accumulating trail, and export a GIF. Every still and frame is burned in with the init time, forecast hour, and valid time.</p>
+</header>
+
 <section class="chart-section">
   <div class="chart-card">
     <div id="enscenters-viewer" class="ens-viewer" tabindex="0">
@@ -447,6 +452,10 @@
         </div>
         <button id="enscenters-trail" class="hafs-btn" type="button"
                 title="Accumulating trail vs current step only">Trail: on</button>
+        <button id="enscenters-style" class="hafs-btn" type="button" style="display:none"
+                title="Cheerios (per-step centers) vs Lines (connected per-member tracks)">Style: Cheerios</button>
+        <button id="enscenters-mean" class="hafs-btn" type="button" style="display:none"
+                title="Overlay each clustered system's ensemble-mean track + Vmax plume">Mean: off</button>
         <button id="enscenters-gif" class="hafs-btn sat-gif" type="button"
                 title="Export this region's animation as a GIF">&#8681; GIF</button>
         <div class="ens-readout">
@@ -522,6 +531,6 @@
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/hafs.js?v=690bcc5aa3"></script>
 <script src="/models/regions.js?v=7001ba72ff"></script>
-<script src="/models/enscenters.js?v=281f0807b6"></script>
+<script src="/models/enscenters.js?v=9cd8c130cb"></script>
 </body>
 </html>
