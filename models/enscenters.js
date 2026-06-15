@@ -69,8 +69,28 @@
   var LS_OBS = 'ens.obs';
   var OBS_FEED_URL = BASE + '/global_storms.geojson';
   var OBS_MATCH_MAX_DEG = 9.0;    // refuse a match beyond this great-circle gap
-  var OBS_FOCAL = '#39ff14';      // bold lime focal marker - NOT a pressure-bin hue
-  var OBS_CASING = 'rgba(7,16,28,0.92)';
+  // The observed-position marker matches the home track maps: an INVEST gets the red
+  // X (NHC invest-area convention); an active STORM gets the spinning TAT hurricane
+  // glyph, colored + lettered by its SSHWS stage. Glyph path + scale + invest-X geom
+  // mirror generate_tracks_plot.py (HURRICANE_PATH / ICON_GLYPH_SCALE / the X path).
+  var HURRICANE_PATH_D = 'M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z';
+  // Path2D may be absent under jsdom (canvas stubbed); guard so the glyph degrades to
+  // a filled disc there (tests) while drawing the real icon in the browser/node-canvas.
+  var HURRICANE_PATH2D = (typeof Path2D !== 'undefined') ? new Path2D(HURRICANE_PATH_D) : null;
+  var GLYPH_SCALE = 0.5;          // x the +/-30-unit path -> ~30 px glyph
+  var INVEST_RED = '#ff2a2a';
+  // SSHWS stage -> {fill color, letter} for the active-storm glyph (matches
+  // ace_core.SSHS_COLORS + sshs_class/sshs_label thresholds, 1-min wind in kt).
+  function sshsMark(kt) {
+    if (kt == null || isNaN(kt)) return { color: '#3fa4ff', letter: 'D' };
+    if (kt < 34) return { color: '#3fa4ff', letter: 'D' };
+    if (kt < 64) return { color: '#46c56a', letter: 'S' };
+    if (kt < 83) return { color: '#ffe14d', letter: '1' };
+    if (kt < 96) return { color: '#ff9a2f', letter: '2' };
+    if (kt < 113) return { color: '#ff4d3b', letter: '3' };
+    if (kt < 137) return { color: '#e33ad4', letter: '4' };
+    return { color: '#b03bff', letter: '5' };
+  }
   var COMPASS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   var MIN_FIG_W = 760;     // figure renders at least this wide (legible PNG; scales on mobile)
   var WATERMARK = '@WeathermanAAA_';
@@ -1116,60 +1136,23 @@
     return out;
   };
 
-  // closed, dateline-safe polygon path; returns false (skip) if it spans the seam
-  EnsCentersViewer.prototype._polyPath = function (g, poly, ext, mw, mh, JUMP) {
-    if (!poly || poly.length < 3) return false;
-    var pts = [], minx = 1e9, maxx = -1e9;
-    for (var i = 0; i < poly.length; i++) {
-      var p = TATRegions.project(wrap180(poly[i][1]), poly[i][0], ext, mw, mh);
-      pts.push(p); if (p[0] < minx) minx = p[0]; if (p[0] > maxx) maxx = p[0];
-    }
-    if (maxx - minx > JUMP) return false;
-    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
-    for (var j = 1; j < pts.length; j++) g.lineTo(pts[j][0], pts[j][1]);
-    g.closePath(); return true;
-  };
-
-  // MUTED envelope: a faint 90% swath across leads + the matched lead's 50/90 rings
-  EnsCentersViewer.prototype._drawClusterEnvelope = function (g, c, matchedStep, ext, mw, mh, JUMP) {
-    var env = c.envelope || [], i;
-    g.fillStyle = 'rgba(43,156,255,0.07)';
-    for (i = 0; i < env.length; i++) {
-      if (env[i].ell90 && env[i].ell90.poly && this._polyPath(g, env[i].ell90.poly, ext, mw, mh, JUMP)) g.fill();
-    }
-    var me = null, bd = 1e9;
-    for (i = 0; i < env.length; i++) { var d = Math.abs(env[i].step - matchedStep); if (d < bd) { bd = d; me = env[i]; } }
-    if (me) {
-      g.lineWidth = 1.2;
-      if (me.ell90 && me.ell90.poly && this._polyPath(g, me.ell90.poly, ext, mw, mh, JUMP)) { g.strokeStyle = 'rgba(120,170,230,0.55)'; g.stroke(); }
-      if (me.ell50 && me.ell50.poly && this._polyPath(g, me.ell50.poly, ext, mw, mh, JUMP)) { g.strokeStyle = 'rgba(165,205,250,0.8)'; g.stroke(); }
-    }
-  };
-
-  EnsCentersViewer.prototype._drawObsEnvelopes = function (g, resolved) {
-    var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
-    var uptoStep = this.steps[Math.min(this.idx, this.steps.length - 1)];
-    for (var i = 0; i < resolved.length; i++) {
-      var m = resolved[i].match; if (!m) continue;
-      this._drawClusterEnvelope(g, m.cluster, m.step, ext, mw, mh, JUMP);
-      this._drawMeanTrack(g, m.cluster, uptoStep, ext, mw, mh, JUMP, false);   // matched mean (context)
-    }
-  };
-
+  // Obs overlay = just the observed position marker + a readout (NO envelope
+  // ellipses - they cluttered the tracks). The marker matches the home track maps:
+  // invest -> red X, active storm -> the spinning hurricane glyph. The readout still
+  // ranks the obs vs the matched cluster's spread (from the envelope covariance, not
+  // drawn). Markers/labels sit ON TOP (drawn after the coast lines in _show).
   EnsCentersViewer.prototype._drawObsMarkers = function (g, resolved) {
     var ext = this.extent, mw = this.map.w, mh = this.map.h;
     for (var i = 0; i < resolved.length; i++) {
       var o = resolved[i].obs, m = resolved[i].match;
       var p = TATRegions.project(wrap180(o.lon), o.lat, ext, mw, mh);
-      this._drawObsMarker(g, p[0], p[1]);
+      var col = this._drawObsMarker(g, p[0], p[1], o);
       var lines = [o.name + (o.kt != null ? '  ' + Math.round(o.kt) + ' kt' : '')];
       if (m) {
         var rk = this._obsRank(m.cluster, m.step, o.lat, o.lon);
         if (rk && rk.pct != null) {
-          // spread available: percentile rank + which side of the mean
           lines.push('Obs ~' + ordinal(Math.round(rk.pct)) + ' pct, ' + rk.side + ' of mean');
         } else if (rk) {
-          // early/degenerate lead (little ensemble spread yet): side + offset km
           lines.push('Obs ' + rk.side + ' of mean, ~' + Math.round(rk.offsetKm) + ' km');
         } else {
           lines.push('matched ensemble system');
@@ -1177,37 +1160,65 @@
       } else {
         lines.push('no matching ensemble system');
       }
-      this._drawObsLabel(g, p[0], p[1], lines);
+      this._drawObsLabel(g, p[0], p[1], lines, col);
     }
   };
 
-  EnsCentersViewer.prototype._drawObsMarker = function (g, x, y) {
-    var R = 7;
-    g.save();
-    g.strokeStyle = OBS_CASING; g.lineWidth = 4; g.beginPath();
-    g.moveTo(x, y - R); g.lineTo(x + R, y); g.lineTo(x, y + R); g.lineTo(x - R, y); g.closePath(); g.stroke();
-    g.strokeStyle = OBS_FOCAL; g.lineWidth = 2; g.beginPath();
-    g.moveTo(x, y - R); g.lineTo(x + R, y); g.lineTo(x, y + R); g.lineTo(x - R, y); g.closePath(); g.stroke();
-    g.fillStyle = OBS_FOCAL; g.beginPath(); g.arc(x, y, 1.6, 0, 6.2832); g.fill();
-    g.strokeStyle = OBS_FOCAL; g.lineWidth = 1.4;
-    g.beginPath();
-    g.moveTo(x - R - 3, y); g.lineTo(x - R + 1, y); g.moveTo(x + R - 1, y); g.lineTo(x + R + 3, y);
-    g.moveTo(x, y - R - 3); g.lineTo(x, y - R + 1); g.moveTo(x, y + R - 1); g.lineTo(x, y + R + 3); g.stroke();
-    g.restore();
+  // Draw the observed-position marker; returns its accent color (for the label).
+  EnsCentersViewer.prototype._drawObsMarker = function (g, x, y, o) {
+    return (o.kind === 'storm') ? this._drawStormGlyph(g, x, y, o) : this._drawInvestX(g, x, y);
   };
 
-  EnsCentersViewer.prototype._drawObsLabel = function (g, x, y, lines) {
+  // Invest: the NHC red X (mirrors render_tracks_svg's invest-current X), with a red
+  // glow so it reads on the field. Returns the label accent.
+  EnsCentersViewer.prototype._drawInvestX = function (g, x, y) {
+    var R = 7;
+    g.save();
+    g.shadowColor = 'rgba(255,42,42,0.9)'; g.shadowBlur = 7;
+    g.strokeStyle = INVEST_RED; g.lineWidth = 2.6; g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(x - R, y - R); g.lineTo(x + R, y + R);
+    g.moveTo(x - R, y + R); g.lineTo(x + R, y - R);
+    g.stroke();
+    g.restore();
+    return '#ff6a6a';
+  };
+
+  // Active storm: the spinning TAT hurricane glyph, filled + lettered by SSHWS stage
+  // (same icon/colors as the home maps). The path spins by frame index (CCW north of
+  // the equator, CW south) so a copied GIF shows it rotating; the stage letter stays
+  // upright. Returns the SSHWS fill color (for the label).
+  EnsCentersViewer.prototype._drawStormGlyph = function (g, x, y, o) {
+    var mk = sshsMark(o.kt), color = mk.color;
+    var dir = (o.lat >= 0) ? -1 : 1, rot = dir * ((this.idx || 0) * 0.4);
+    g.save();
+    g.translate(x, y); g.rotate(rot);
+    g.shadowColor = color; g.shadowBlur = 6; g.fillStyle = color;
+    if (HURRICANE_PATH2D) { g.scale(GLYPH_SCALE, GLYPH_SCALE); g.fill(HURRICANE_PATH2D); }
+    else { g.beginPath(); g.arc(0, 0, 11, 0, 6.2832); g.fill(); }   // jsdom fallback (no Path2D)
+    g.restore();
+    // stage letter, upright + centered, white with a dark casing
+    g.save();
+    g.font = '900 13px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+    g.lineWidth = 2.6; g.strokeStyle = 'rgba(0,0,0,0.6)'; g.strokeText(mk.letter, x, y);
+    g.fillStyle = '#ffffff'; g.fillText(mk.letter, x, y);
+    g.restore();
+    return color;
+  };
+
+  EnsCentersViewer.prototype._drawObsLabel = function (g, x, y, lines, accent) {
+    accent = accent || '#cfd8e6';   // neutral fallback (marker always supplies its color)
     g.save(); g.font = '700 10px ' + FONT;
     var w = 0, i; for (i = 0; i < lines.length; i++) w = Math.max(w, g.measureText(lines[i]).width);
     var pad = 5, lh = 13, bw = w + pad * 2, bh = lines.length * lh + pad * 2;
-    var bx = x + 11, by = y - bh / 2;
-    if (bx + bw > this.map.w) bx = x - 11 - bw;
+    var bx = x + 13, by = y - bh / 2;
+    if (bx + bw > this.map.w) bx = x - 13 - bw;
     if (bx < 2) bx = 2;
     if (by < 2) by = 2; if (by + bh > this.map.h) by = this.map.h - bh;
-    g.fillStyle = 'rgba(7,16,28,0.85)'; g.strokeStyle = OBS_FOCAL; g.lineWidth = 1;
+    g.fillStyle = 'rgba(7,16,28,0.85)'; g.strokeStyle = accent; g.lineWidth = 1;
     roundRectPath(g, bx, by, bw, bh, 4); g.fill(); g.stroke();
     g.textBaseline = 'top'; g.textAlign = 'left';
-    for (i = 0; i < lines.length; i++) { g.fillStyle = (i === 0) ? OBS_FOCAL : C.fg; g.fillText(lines[i], bx + pad, by + pad + i * lh); }
+    for (i = 0; i < lines.length; i++) { g.fillStyle = (i === 0) ? accent : C.fg; g.fillText(lines[i], bx + pad, by + pad + i * lh); }
     g.restore();
   };
 
@@ -1523,8 +1534,6 @@
       this._drawStep(ctx, this.idx, true);       // current step filled
     }
     if (meanOn) this._drawMean(ctx, this.idx);   // bold ensemble-mean tracks
-    // obs mode: muted matched-cluster envelope + mean UNDER the coast lines
-    if (obsResolved && obsResolved.length) this._drawObsEnvelopes(ctx, obsResolved);
     // coast + country + state borders ON TOP of the centers (canonical order),
     // still clipped + translated to the map rect.
     if (window.TATRegions && TATRegions.drawBasemapLines) {

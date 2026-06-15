@@ -236,8 +236,7 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertTrue(s["obs_btn_visible"])
         self.assertEqual(s["ls_obs"], "on")
         self.assertTrue(s["persist_obs"])
-        self.assertEqual(s["markers_drawn"], 1)
-        self.assertEqual(s["env_drawn"], 1)
+        self.assertEqual(s["markers_drawn"], 1)   # envelope ellipses retired - marker only
         # matching: invest near a cluster matches; far invest does not; active named
         # storm (track is_active) matches via its latest observation fix
         self.assertEqual(s["resolved_n"], 3)
