@@ -65,6 +65,7 @@ UA = {"User-Agent": "triple-a-tropics.com enscenters (weather hobby site)"}
 
 # CSV column names (verified live).
 _COL_SAMPLE = "sample"
+_COL_TRACK = "track_id"
 _COL_LEAD = "lead_time_hours"
 _COL_LAT = "lat"
 _COL_LON = "lon"
@@ -164,6 +165,40 @@ def parse_csv(text: str) -> Tuple[list, int, List[int]]:
     return members_objs, total, run_steps
 
 
+def member_tracks_from_csv(text: str):
+    """Per-member NATIVE tracks for the tracking keystone (Stage A is SKIPPED for
+    native models). The cyclogenesis CSV carries a ``track_id``, so a member
+    (sample) is already split into distinct storms: returns ``{member_id: [track,
+    ...]}`` where each track is a step-sorted list of ``[step, lat, lon, mslp,
+    vmax]``. This is the in-memory hand-off the lean centers JSON cannot carry (it
+    drops track_id to stay a flat per-step list) - NO re-fetch, centers untouched."""
+    lines = [ln for ln in text.splitlines() if not ln.startswith("#")]
+    if not lines:
+        return {}
+    reader = csv.DictReader(io.StringIO("\n".join(lines)))
+    by_key: dict = {}
+    for row in reader:
+        lat, lon = _f(row.get(_COL_LAT)), _f(row.get(_COL_LON))
+        lead = _f(row.get(_COL_LEAD))
+        smp = _f(row.get(_COL_SAMPLE))
+        if lat is None or lon is None or lead is None or smp is None:
+            continue
+        step = int(round(lead))
+        if step < 0 or step > MAX_LEAD_H or (step % STEP_H):
+            continue
+        tid = row.get(_COL_TRACK)
+        mid = f"M{int(smp):02d}"
+        mslp, vmax = _f(row.get(_COL_MSLP)), _f(row.get(_COL_VMAX))
+        center = [step, round(lat, 2), round(lon, 2),
+                  None if mslp is None else round(mslp, 1),
+                  None if vmax is None else round(vmax, 1)]
+        by_key.setdefault((mid, str(tid)), []).append(center)
+    out: dict = {}
+    for (mid, _tid), centers in by_key.items():
+        out.setdefault(mid, []).append(sorted(centers, key=lambda c: c[0]))
+    return out
+
+
 def build_cycle(spec: EnsModelSpec, cycle: dt.datetime, out_dir: str,
                 *, progress=print, **_ignored) -> dict:
     """The FNV3 ``ingest_cycle`` hook: fetch + parse the cyclogenesis CSV for one
@@ -176,6 +211,10 @@ def build_cycle(spec: EnsModelSpec, cycle: dt.datetime, out_dir: str,
     if text is None:
         raise RuntimeError(f"{spec.slug} CSV not published for {cycle:%Y%m%d%H}")
     members_objs, total, run_steps = parse_csv(text)
+    # NATIVE per-(sample, track_id) tracks for the tracking keystone (Stage A is
+    # skipped for native models) - handed to the tracks step in-memory so the lean
+    # centers JSON stays untouched and the CSV is not re-fetched.
+    native_tracks = member_tracks_from_csv(text)
 
     stamp = f"{cycle:%Y%m%d%H}"
     data = {
@@ -208,4 +247,5 @@ def build_cycle(spec: EnsModelSpec, cycle: dt.datetime, out_dir: str,
              f"{run_steps[0]}..{run_steps[-1]}")
     return {"cycle": stamp, "generated_at": data["generated_at"],
             "members": len(members_objs), "n_centers": total,
-            "bytes_json": bytes_json, "cycle_path": cycle_path, "failures": []}
+            "bytes_json": bytes_json, "cycle_path": cycle_path, "failures": [],
+            "native_member_tracks": native_tracks}

@@ -179,8 +179,10 @@ class TestManifestMerge(unittest.TestCase):
                              "cycles": ["2026061218", "2026061212", "2026061206"]}]}
         m, prune = merge_manifest(prior, self.spec, "2026061300", retain=2)
         self.assertEqual(m["models"][0]["cycles"], ["2026061300", "2026061218"])
-        # pruned keys are model-prefixed R2 keys
-        self.assertEqual(set(prune), {"ecens/2026061212.json", "ecens/2026061206.json"})
+        # pruned keys are model-prefixed R2 keys: the centers JSON AND its sibling
+        # tracks JSON for each rolled-out cycle.
+        self.assertEqual(set(prune), {"ecens/2026061212.json", "ecens/2026061206.json",
+                                      "ecens/2026061212.tracks.json", "ecens/2026061206.tracks.json"})
 
     def test_dedup_same_cycle(self):
         prior = {"models": [{"slug": "ecens", "label": "ECMWF ENS",

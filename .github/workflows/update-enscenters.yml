@@ -66,8 +66,8 @@ jobs:
           # numpy/scipy for detect, xarray+cfgrib+eccodes to decode GRIB2,
           # ecmwf-opendata to byte-range fetch MSLP. eccodes wheel bundles the
           # binary - no apt. No cartopy, no matplotlib (the builder emits JSON).
-          pip install numpy scipy xarray cfgrib eccodes ecmwf-opendata
-          python -c "import scipy, cfgrib, xarray; from ecmwf.opendata import Client; print('deps OK')"
+          pip install numpy scipy scikit-learn xarray cfgrib eccodes ecmwf-opendata
+          python -c "import scipy, cfgrib, xarray, sklearn; from ecmwf.opendata import Client; print('deps OK')"
 
       - name: Build ensemble cyclone centers (never-miss backfill)
         env:

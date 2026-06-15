@@ -166,7 +166,8 @@ class TestMergeManifestMulti(unittest.TestCase):
         # retain=1 keeps only the newest; cycle_versions trimmed to kept cycles
         self.assertEqual(m["models"][0]["cycles"], ["2026061218"])
         self.assertEqual(m["models"][0]["cycle_versions"], {"2026061218": "v218"})
-        self.assertEqual(prune, ["ecens/2026061212.json"])
+        # prune drops the rolled-out cycle's centers JSON AND its sibling tracks JSON
+        self.assertEqual(prune, ["ecens/2026061212.json", "ecens/2026061212.tracks.json"])
 
     def test_backfilled_old_plus_new_prunes_from_final_set(self):
         prior = manifest_with(["2026061212", "2026061206"])
@@ -174,7 +175,8 @@ class TestMergeManifestMulti(unittest.TestCase):
         m, prune = merge_manifest_multi(prior, SPEC, ["2026061200", "2026061218"], retain=3)
         self.assertEqual(m["models"][0]["cycles"],
                          ["2026061218", "2026061212", "2026061206"])
-        self.assertEqual(prune, ["ecens/2026061200.json"])  # the just-backfilled-but-overflow old one
+        # the just-backfilled-but-overflow old one: centers JSON + sibling tracks JSON
+        self.assertEqual(prune, ["ecens/2026061200.json", "ecens/2026061200.tracks.json"])
 
     def test_published_cycles_watermark(self):
         self.assertEqual(published_cycles(manifest_with(["a", "b"]), "ecens"), {"a", "b"})
