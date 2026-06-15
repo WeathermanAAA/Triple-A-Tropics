@@ -303,7 +303,13 @@ def _read_fields(target: str, spec: EnsModelSpec):
                     thk = d
         finally:
             dg.close()
-    except Exception:  # noqa: BLE001 - gh/z missing -> centers pass unfiltered
+    except Exception as e:  # noqa: BLE001
+        # LOUD, not silent: a thickness decode failure means warm-core can't run for
+        # this field, so the caller will apply the strict lat fallback (NOT pass the
+        # full track). Surface the reason so a warm-core outage is never hidden again.
+        import sys
+        print(f"[{spec.slug}] WARN thickness ({spec.gh_param}@{spec.gh_levels}) decode "
+              f"failed -> warm-core fallback for this field: {e!r}", file=sys.stderr)
         thk = None
     return lats, lons, arr, thk
 

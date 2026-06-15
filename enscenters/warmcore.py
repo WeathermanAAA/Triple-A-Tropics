@@ -164,14 +164,29 @@ def filter_centers(
     closed_radius_deg: float = 6.5,
     n_azimuth: int = 16,
     n_radial: int = 12,
+    subtrop_lat: float = 30.0,
+    subtrop_warm_anom_min_m: float = 12.0,
+    subtrop_closed_drop_m: float = 12.0,
+    subtrop_closed_radius_deg: float = 4.5,
 ) -> List[dict]:
     """Keep only warm-core tropical centers from ``detect_centers`` output. Cheap
     AND-gates (|lat| > max_lat, then high-terrain) run first; survivors face the
-    thickness-anomaly closure test (the anomaly field is built ONCE per step). If
-    ``thk`` is None (gh unavailable for this step) the centers pass through
-    UNFILTERED rather than being dropped - a degraded but lossless fallback."""
-    if thk is None or not centers:
+    thickness-anomaly closure test (anomaly field built ONCE per step), LATITUDE-
+    GRADED: poleward of ``subtrop_lat`` a center must show a stronger, more compact
+    closed warm core (``subtrop_*``) - this rejects broad subtropical/hybrid lows
+    while keeping compact recurving TCs.
+
+    FALLBACK when ``thk`` is None (gh/thickness unavailable for this step): do NOT
+    pass the full storm track. Apply only the cheap lat+terrain gates, so the
+    >max_lat storm-track band is still dropped (a STRICT lossy fallback, not the old
+    fail-open that splattered extratropical noise). The caller logs how often this
+    fires (see pipeline.process_member / build_one_cycle)."""
+    if not centers:
         return centers
+    if thk is None:
+        return [c for c in centers
+                if abs(c["lat"]) <= max_lat
+                and not (terrain_max_m is not None and elevation_at(c["lat"], c["lon"]) > terrain_max_m)]
     dlat = abs(float(lats[1] - lats[0]))
     dlon = abs(float(lons[1] - lons[0]))
     anom = thickness_anomaly(thk, dlat, dlon, bg_box_deg)
@@ -182,9 +197,13 @@ def filter_centers(
             continue
         if terrain_max_m is not None and elevation_at(lat, lon) > terrain_max_m:
             continue
+        if abs(lat) > subtrop_lat:      # subtropics/midlatitudes: strict compact core
+            wa, cd, cr = subtrop_warm_anom_min_m, subtrop_closed_drop_m, subtrop_closed_radius_deg
+        else:                           # deep tropics: lenient (catch weak/forming TCs)
+            wa, cd, cr = warm_anom_min_m, closed_drop_m, closed_radius_deg
         if not is_warm_core(lat, lon, anom, lats, lons,
-                            search_max_deg=search_max_deg, warm_anom_min_m=warm_anom_min_m,
-                            closed_drop_m=closed_drop_m, closed_radius_deg=closed_radius_deg,
+                            search_max_deg=search_max_deg, warm_anom_min_m=wa,
+                            closed_drop_m=cd, closed_radius_deg=cr,
                             n_azimuth=n_azimuth, n_radial=n_radial):
             continue
         kept.append(ctr)
