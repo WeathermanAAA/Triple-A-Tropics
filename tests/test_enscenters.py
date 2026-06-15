@@ -419,7 +419,7 @@ def _stub_member_worker(spec, cycle, member_id, steps, tmpdir, source):
     if member_id == "P99":
         time.sleep(120)            # longer than the test's member_deadline_s
     peak = {"mslp_hpa": 1000.0, "vmax_kt": 30.0, "lat": 12.0, "lon": 130.0, "step_h": 0}
-    return member_id, peak, [[0, 12.0, 130.0, 1000.0, 30.0]]
+    return member_id, peak, [[0, 12.0, 130.0, 1000.0, 30.0]], 0   # (.., wc_skipped)
 
 
 class TestMemberWatchdog(unittest.TestCase):

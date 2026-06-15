@@ -69,9 +69,22 @@ class TestWarmCore(unittest.TestCase):
         f = _with_bump(31.0, 88.0, 30.0)               # warm core over Tibet (~5130 m)
         self.assertEqual(wc.filter_centers([_center(31.0, 88.0, 1000.0)], f, LATS, LONS), [])
 
-    def test_thk_none_passthrough(self):
-        cs = [_center(15.0, 150.0)]
-        self.assertEqual(wc.filter_centers(cs, None, LATS, LONS), cs)
+    def test_thk_none_strict_fallback_not_passthrough(self):
+        # B3: thickness unavailable -> warm-core can't run; fallback is STRICT
+        # (lat + terrain gates), NOT the old "pass everything". The >max_lat
+        # storm-track band is still dropped; tropical survivors pass.
+        trop = _center(15.0, 150.0)
+        extra = _center(62.0, 150.0, 960.0)        # cold midlatitude low, |lat| > max_lat
+        self.assertEqual(wc.filter_centers([trop, extra], None, LATS, LONS), [trop])
+
+    def test_lat_graded_subtropical_strict(self):
+        # B4: a modest +8 m warm core passes the lenient deep-tropics test but fails
+        # the strict subtropical test -> kept at 15 N, dropped at 40 N (the
+        # recurving-TC-vs-broad-hybrid discriminator).
+        self.assertEqual(len(wc.filter_centers([_center(15.0, 150.0)],
+                                               _with_bump(15.0, 150.0, 8.0), LATS, LONS)), 1)
+        self.assertEqual(wc.filter_centers([_center(40.0, 150.0, 985.0)],
+                                           _with_bump(40.0, 150.0, 8.0), LATS, LONS), [])
 
     def test_anomaly_removes_smooth_gradient(self):
         anom = wc.thickness_anomaly(BASE, 0.25, 0.25, 10.0)

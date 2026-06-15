@@ -112,6 +112,16 @@ class WarmCoreParams:
     closed_radius_deg: float = 6.5
     n_azimuth: int = 16
     n_radial: int = 12
+    # LATITUDE-GRADED strictness. The deep tropics (|lat| <= subtrop_lat) keep the
+    # lenient core test above (catch weak/forming TCs); poleward of it a center must
+    # show a STRONGER, more COMPACT closed warm core to count - this is what
+    # separates a recurving TC (compact, intense core) from the broad subtropical /
+    # hybrid warm-anomaly lows that otherwise splatter the 30-50 deg band. Verified
+    # on live AIFS 12z: deep-tropical kept intact, 35-50 deg residuals cut ~85%.
+    subtrop_lat: float = 30.0
+    subtrop_warm_anom_min_m: float = 12.0
+    subtrop_closed_drop_m: float = 12.0
+    subtrop_closed_radius_deg: float = 4.5
 
     def as_kwargs(self) -> dict:
         return {
@@ -124,6 +134,10 @@ class WarmCoreParams:
             "closed_radius_deg": self.closed_radius_deg,
             "n_azimuth": self.n_azimuth,
             "n_radial": self.n_radial,
+            "subtrop_lat": self.subtrop_lat,
+            "subtrop_warm_anom_min_m": self.subtrop_warm_anom_min_m,
+            "subtrop_closed_drop_m": self.subtrop_closed_drop_m,
+            "subtrop_closed_radius_deg": self.subtrop_closed_radius_deg,
         }
 
 

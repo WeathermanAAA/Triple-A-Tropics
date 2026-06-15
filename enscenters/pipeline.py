@@ -92,11 +92,14 @@ def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
     wc_kwargs = spec.warm_core_params.as_kwargs() if spec.warm_core else None
     centers: List[list] = []
     peak: Optional[dict] = None
+    wc_skipped = 0   # steps where thickness was unavailable -> strict lat fallback (no warm-core)
     gen = backend.iter_member_fields(client, spec, cycle, member_id, steps, tmpdir)
     try:
         for lats, lons, step_h, field, thk in gen:
             cs = detect_centers(field, lats, lons, **kwargs)
             if wc_kwargs is not None:
+                if thk is None:
+                    wc_skipped += 1
                 cs = warmcore.filter_centers(cs, thk, lats, lons, **wc_kwargs)
             for c in cs:
                 centers.append([step_h, c["lat"], c["lon"], c["mslp_hpa"], c["vmax_kt"]])
@@ -105,7 +108,7 @@ def process_member(spec: EnsModelSpec, cycle: dt.datetime, member_id: str,
                             "lat": c["lat"], "lon": c["lon"], "step_h": step_h}
     finally:
         gen.close()  # triggers temp-file cleanup even on early exit
-    return member_id, peak, centers
+    return member_id, peak, centers, wc_skipped
 
 
 def build_one_cycle(
@@ -136,6 +139,7 @@ def build_one_cycle(
 
     results: dict = {}
     failures: List[str] = []
+    wc_skipped_total = 0   # B3 telemetry: member-steps that ran the strict no-thickness fallback
     with IngestSession(spec) as sess:
         tmpdir = sess.tmpdir
         # Some backends pre-fetch a per-step index ONCE (shared across members)
@@ -158,8 +162,9 @@ def build_one_cycle(
                     for fut in as_completed(futs, timeout=member_deadline_s):
                         mid = futs[fut]
                         try:
-                            m_id, peak, centers = fut.result()
+                            m_id, peak, centers, wcs = fut.result()
                             results[m_id] = (peak, centers)
+                            wc_skipped_total += wcs
                         except Exception as e:  # noqa: BLE001
                             failures.append(mid)
                             progress(f"[{spec.slug}]   member {mid} FAILED: {e}")
@@ -186,13 +191,23 @@ def build_one_cycle(
         else:
             for k, mid in enumerate(members, 1):
                 try:
-                    _, peak, centers = process_member(spec, cycle, mid, steps, tmpdir, source)
+                    _, peak, centers, wcs = process_member(spec, cycle, mid, steps, tmpdir, source)
                     results[mid] = (peak, centers)
+                    wc_skipped_total += wcs
                 except Exception as e:  # noqa: BLE001
                     failures.append(mid)
                     progress(f"[{spec.slug}]   member {mid} FAILED: {e}")
                 if k % 5 == 0 or k == len(members):
                     progress(f"[{spec.slug}]   {k}/{len(members)} members done")
+
+    # B3 telemetry: warm-core is meant to run on EVERY self-detect field. If the
+    # thickness was unavailable for any member-step we applied the strict lat
+    # fallback (not pass-through) - surface it LOUDLY so a warm-core outage can never
+    # again silently splatter extratropical noise.
+    if spec.warm_core and wc_skipped_total:
+        progress(f"[{spec.slug}] WARN warm-core thickness unavailable on "
+                 f"{wc_skipped_total} member-step(s) this cycle -> strict lat fallback "
+                 f"applied (centers NOT passed through unfiltered)")
 
     # Member QUORUM: refuse to publish a sparse cycle. Without this, a partial
     # ingest failure (transient open-data 5xx, a half-published cycle) would write
