@@ -318,17 +318,21 @@ def storm_basin(storm: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 _COUNTRIES: Optional[dict] = None
 _COAST: Optional[dict] = None
+_STATES: Optional[dict] = None
 
 
 def _worker_init() -> None:
     """Load the Natural Earth basemap once per pool worker."""
-    global _COUNTRIES, _COAST
+    global _COUNTRIES, _COAST, _STATES
     _COUNTRIES = (hp._load_geojson("ne_10m_admin_0_countries.geojson")
                   or hp._load_geojson("ne_50m_admin_0_countries.geojson")
                   or hp._load_geojson("ne_110m_admin_0_countries.geojson"))
     _COAST = (hp._load_geojson("ne_10m_coastline.geojson")
               or hp._load_geojson("ne_50m_coastline.geojson")
               or hp._load_geojson("ne_110m_coastline.geojson"))
+    # admin_1 state/province borders for the canonical filled basemap (50m,
+    # optional - a missing layer just omits state borders).
+    _STATES = hp._load_geojson("ne_50m_admin_1_states_provinces.geojson")
 
 
 @dataclass
@@ -434,7 +438,7 @@ def _render_one(job: RenderJob) -> dict:
                               want_pwat=want_pwat, want_upper=want_upper,
                               sat_parm=sat_parm)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
-        hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
+        hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST, states=_STATES,
                         product=job.product,
                         cen_lat=job.cen_lat, cen_lon=job.cen_lon,
                         anchor_lat=job.anchor_lat, anchor_lon=job.anchor_lon)
