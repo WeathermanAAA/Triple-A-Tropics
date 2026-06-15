@@ -81,6 +81,16 @@ HERE = Path(__file__).resolve().parent
 PLOT_BG = "#333333"   # plot interior (axes facecolor) ONLY; the figure margin /
                       # savefig frame use BAND_BG so the border matches the
                       # header band, not the plot interior.
+# CANONICAL TAT BASEMAP (single source of truth - same hexes as the client
+# models/regions.js). The dark navy ocean + slate land fill reads far better under
+# data fields than bare outlines; borders are MUTED/secondary so they never
+# overpower the data. Used for the field products (spec.filled_basemap True);
+# the full-frame simulated-satellite products keep their own styling.
+OCEAN_FILL = "#07101c"        # axes facecolor (ocean)
+LAND_FILL = "#2f3f59"         # land polygons, UNDER the data field
+COAST_BORDER = (150 / 255, 175 / 255, 205 / 255, 0.28)   # coastline, ON TOP
+COUNTRY_BORDER = (150 / 255, 175 / 255, 205 / 255, 0.45)  # admin_0 borders, ON TOP
+STATE_BORDER = (150 / 255, 175 / 255, 205 / 255, 0.18)   # admin_1 borders, subtle
 TEXT_COLOR = "#e8eef5"
 ACCENT_COLOR = "#79f0d6"
 MUTED_COLOR = "#9199a4"
@@ -917,6 +927,29 @@ def _draw_feature_lines(ax, features, extent, color, linewidth, zorder,
                         linewidth=linewidth + halo, foreground=SAT_COAST_HALO)])
 
 
+def _fill_polygons(ax, features, extent, color, zorder):
+    """Fill GeoJSON land polygons that intersect the extent (the canonical slate
+    land fill drawn UNDER the data). Per-ring fill with the same lon-wrap + extent
+    crop as _draw_feature_lines; a ring that straddles the antimeridian seam is
+    skipped (rare for storm-centered nests) so no fill stripe is drawn - the coast
+    line still outlines it."""
+    lon_min, lon_max, lat_min, lat_max = extent
+    mlon = (lon_max - lon_min) * 0.05 + 1.0
+    mlat = (lat_max - lat_min) * 0.05 + 1.0
+    for feat in features:
+        for ring in _feature_linestrings(feat):
+            if len(ring) < 3:
+                continue
+            xs = np.array([_wrap_into(p[0], lon_min, lon_max) for p in ring], dtype=float)
+            ys = np.array([p[1] for p in ring], dtype=float)
+            if (xs.max() < lon_min - mlon or xs.min() > lon_max + mlon
+                    or ys.max() < lat_min - mlat or ys.min() > lat_max + mlat):
+                continue
+            if xs.size > 1 and np.abs(np.diff(xs)).max() > 180.0:
+                continue   # seam-straddling ring: skip fill (avoid a stripe)
+            ax.fill(xs, ys, color=color, zorder=zorder, linewidth=0, antialiased=True)
+
+
 def _lon_label(x: float, _pos) -> str:
     v = x
     while v > 180:
@@ -1163,6 +1196,7 @@ def _parent_storm_center(frame, cen_lat=None, cen_lon=None,
 
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict],
+                 states: Optional[dict] = None,
                  product: str = "mslp_wind",
                  cen_lat: Optional[float] = None,
                  cen_lon: Optional[float] = None,
@@ -1291,7 +1325,11 @@ def render_frame(frame: HafsFrame, out_path: str,
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor=BAND_BG)
     ax = fig.add_axes([left_in / fig_w, map_bottom / fig_h,
                        map_w / fig_w, map_h / fig_h])
-    ax.set_facecolor(PLOT_BG)
+    # Canonical filled basemap for the field products (grib "atm"); the full-frame
+    # simulated-satellite products (grib "sat") fill the whole frame with the BT
+    # image, so they keep the plain interior + their own coast styling.
+    filled_basemap = spec.grib != "sat"
+    ax.set_facecolor(OCEAN_FILL if filled_basemap else PLOT_BG)
 
     # Resolve the fill field + its cmap/norm through the spec's color factory
     # (wind = continuous 0-165 kt TAT table; refl = discrete .pal table; BT =
@@ -1454,18 +1492,37 @@ def render_frame(frame: HafsFrame, out_path: str,
     # bright near-white with a dark halo (simulated satellite, legible over both
     # the colorful cold tops and grayscale warm halves of the IR/WV fills). The
     # coast and country borders share one color (equal for every product today).
-    coast_color = border_color = spec.coast_color
-    coast_lw, coast_halo = spec.coast_lw, spec.coast_halo
     # Both domains draw the 10 m Natural Earth basemap (crisp coastlines at the
     # parent ~40 deg span as well as the nest). Features are clipped to
     # ``feat_extent`` (the storm-centered crop on the parent) so far-away land is
     # dropped.
-    if coast:
-        _draw_feature_lines(ax, coast.get("features", []), feat_extent,
-                            coast_color, coast_lw, 6, halo=coast_halo)
-    if countries:
-        _draw_feature_lines(ax, countries.get("features", []), feat_extent,
-                            border_color, 0.8, 6, halo=coast_halo)
+    if filled_basemap:
+        # CANONICAL filled basemap: slate land UNDER the data (zorder 0.6 < the
+        # field's 2), then muted coast -> country -> state borders ON TOP (zorder
+        # 6 > the field). Replaces the old per-product black/neon-green outlines.
+        if countries:
+            _fill_polygons(ax, countries.get("features", []), feat_extent,
+                           LAND_FILL, 0.6)
+        if coast:
+            _draw_feature_lines(ax, coast.get("features", []), feat_extent,
+                                COAST_BORDER, 0.6, 6)
+        if countries:
+            _draw_feature_lines(ax, countries.get("features", []), feat_extent,
+                                COUNTRY_BORDER, 0.7, 6)
+        if states:
+            _draw_feature_lines(ax, states.get("features", []), feat_extent,
+                                STATE_BORDER, 0.4, 6)
+    else:
+        # Full-frame simulated-satellite products: keep the per-product coast
+        # styling (the BT image fills the frame, so land fill would hide it).
+        coast_color = border_color = spec.coast_color
+        coast_lw, coast_halo = spec.coast_lw, spec.coast_halo
+        if coast:
+            _draw_feature_lines(ax, coast.get("features", []), feat_extent,
+                                coast_color, coast_lw, 6, halo=coast_halo)
+        if countries:
+            _draw_feature_lines(ax, countries.get("features", []), feat_extent,
+                                border_color, 0.8, 6, halo=coast_halo)
 
     # (5) Bold "L" at the NAMESAKE's MSLP minimum, with the value just below it.
     # Part of the MSLP overlay, gated by spec.draw_mslp_markers (the upper-air
@@ -1665,6 +1722,9 @@ def main() -> int:
              or _load_geojson("ne_110m_coastline.geojson"))
     if not coast:
         log.warning("no coastline GeoJSON found - map will have no coastlines")
+    # admin_1 state/province borders for the canonical basemap (50m; optional -
+    # a missing layer just omits state borders).
+    states = _load_geojson("ne_50m_admin_1_states_provinces.geojson")
 
     # The namesake's track fix (this fhr) + last-known anchor, same as the
     # full-cycle builder wires in - so the standalone smoke shows production
@@ -1673,7 +1733,7 @@ def main() -> int:
     cen = track.get(args.fxx)
     prior = [t for t in sorted(track) if t <= args.fxx]
     anchor = track[prior[-1]] if prior else None
-    render_frame(frame, args.out, countries, coast, product=render_product,
+    render_frame(frame, args.out, countries, coast, states=states, product=render_product,
                  cen_lat=cen[0] if cen else None,
                  cen_lon=cen[1] if cen else None,
                  anchor_lat=anchor[0] if anchor else None,
