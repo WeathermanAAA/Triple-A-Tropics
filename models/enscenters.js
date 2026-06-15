@@ -44,9 +44,15 @@
     p950_970: '#ff1f47', lt950: '#ff3d9a'
   };
   var BIN_ORDER = ['gt1000', 'p990_1000', 'p970_990', 'p950_970', 'lt950'];
+  // CANONICAL TAT BASEMAP spec (single source of truth - same hexes server-side).
+  // Borders muted/secondary so they never overpower the centers. Draw order:
+  // ocean -> land fill (static layer) -> centers -> coast -> country -> state
+  // borders (overlaid ON TOP per frame, see _show).
   var BASEMAP_STYLE = {
     ocean: '#07101c', land: '#2f3f59',
     coast: 'rgba(150,175,205,0.28)', coastLw: 0.6,
+    country: 'rgba(150,175,205,0.45)', countryLw: 0.7,    // admin_0 borders
+    state: 'rgba(150,175,205,0.18)', stateLw: 0.4,        // admin_1 borders (subtle)
     grid: 'rgba(255,255,255,0.05)', gridLw: 0.5
   };
   // figure palette. accent = the shared bright blue (TATRegions.ACCENT, same as
@@ -430,7 +436,9 @@
     g.fillRect(this.box.x, this.box.y, this.box.w, this.box.h);
     g.beginPath(); g.rect(this.map.x, this.map.y, this.map.w, this.map.h); g.clip();
     g.translate(this.map.x, this.map.y);
-    TATRegions.drawBasemap(g, this.extent, this.geo, this.map.w, this.map.h, BASEMAP_STYLE);
+    // FILL only (ocean + grid + land) on the static layer; the coast + country +
+    // state border LINES are drawn ON TOP of the centers per frame (see _show).
+    TATRegions.drawBasemapFill(g, this.extent, this.geo, this.map.w, this.map.h, BASEMAP_STYLE);
     g.restore();
     // map box border
     g.strokeStyle = C.border; g.lineWidth = 1;
@@ -636,6 +644,11 @@
     if (this.trailMode === 'trail') ctx.drawImage(this.trailLayer, this.map.x, this.map.y, this.map.w, this.map.h);
     ctx.translate(this.map.x, this.map.y);
     this._drawStep(ctx, this.idx, true);    // current step filled
+    // coast + country + state borders ON TOP of the centers (canonical order),
+    // still clipped + translated to the map rect.
+    if (window.TATRegions && TATRegions.drawBasemapLines) {
+      TATRegions.drawBasemapLines(ctx, this.extent, this.geo, this.map.w, this.map.h, BASEMAP_STYLE);
+    }
     ctx.restore();
     this._drawLegend(ctx);
     this._drawWatermark(ctx);

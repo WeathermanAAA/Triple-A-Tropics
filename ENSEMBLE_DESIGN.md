@@ -34,6 +34,32 @@ this by default.
 
 ---
 
+## 0b. CANONICAL TAT BASEMAP - filled, with muted borders (client + server)
+
+Every model plot uses ONE basemap: a dark navy filled ocean + slate filled land
+with muted coast + country + state borders. The fill reads far better under data
+fields (reflectivity, vorticity, center clouds) than bare green coastline
+outlines, and the borders give geographic reference without competing with the
+data. Identical hex values in BOTH rendering stacks (client canvas + server
+cartopy/matplotlib); widths may be tuned but borders stay MUTED/secondary.
+
+  ocean fill         : #07101c
+  land fill          : #2f3f59
+  coastline          : rgba(150,175,205,0.28), width ~0.6
+  country borders    : rgba(150,175,205,0.45), width ~0.7   (admin_0)
+  state/prov borders : rgba(150,175,205,0.18), width ~0.4   (admin_1, subtle)
+
+DRAW ORDER everywhere: ocean -> land fill -> [data field] -> coastline ->
+country borders -> state borders, so coast + borders stay visible ON TOP of a
+filled data field. Client: `TATRegions.drawBasemapFill` (under the data) +
+`TATRegions.drawBasemapLines` (over the data) in `models/regions.js`; the admin_1
+layer is `ne_50m_admin_1_states_provinces.geojson` (50m, optional/guarded - 10m is
+too heavy for page load). Server (HAFS): land fill + `COASTLINE`/`BORDERS`/`STATES`
+at the spec colors, zorder land < data < lines. New model plots (radar viewer,
+etc.) use this filled basemap + borders by default.
+
+---
+
 ## 1. What it is
 
 For each ensemble run (ECMWF ENS now; AIFS-ENS, GEFS, GDM-FNV3, GDM-GenCast
