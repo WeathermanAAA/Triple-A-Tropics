@@ -97,7 +97,7 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(spec.steps_for_cycle_hour(6)[-1], 144)
 
     def test_model_slugs_in_registry_order(self):
-        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs", "fnv3"])
+        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs", "fnv3", "genc"])
 
     def test_aifs_ens_spec(self):
         # AIFS-ENS ("ecaie"): ECMWF ENS's AI twin - config only.
@@ -802,18 +802,30 @@ class TestFnv3Ingest(unittest.TestCase):
     def test_url_shape(self):
         import datetime as dt
         from enscenters import fnv3_ingest as fi
-        u = fi.cycle_url(dt.datetime(2026, 6, 14, 18))
-        self.assertEqual(u, "https://deepmind.google.com/science/weatherlab/download/cyclones/"
-                            "FNV3/ensemble/cyclogenesis/csv/FNV3_2026_06_14T18_00_cyclogenesis.csv")
+        # same template, only the slug differs (FNV3 -> GENC) - one parser, no fork
+        self.assertEqual(
+            fi.cycle_url("FNV3", dt.datetime(2026, 6, 14, 18)),
+            "https://deepmind.google.com/science/weatherlab/download/cyclones/"
+            "FNV3/ensemble/cyclogenesis/csv/FNV3_2026_06_14T18_00_cyclogenesis.csv")
+        self.assertEqual(
+            fi.cycle_url("GENC", dt.datetime(2026, 6, 14, 18)),
+            "https://deepmind.google.com/science/weatherlab/download/cyclones/"
+            "GENC/ensemble/cyclogenesis/csv/GENC_2026_06_14T18_00_cyclogenesis.csv")
 
-    def test_registry_entry(self):
-        s = reg.get_spec("fnv3")
-        self.assertEqual(s.source_kind, "track_csv")
-        self.assertFalse(s.warm_core)                                    # native objects, no warmcore
-        self.assertEqual(s.label, "FNV3 (50)")                          # member count unambiguous
-        self.assertIn("not for real-world use", s.caption)              # experimental disclaimer
-        self.assertIn("Weather Lab", s.caption)                        # attribution
-        self.assertIn("fnv3", reg.model_slugs())
+    def test_registry_entries(self):
+        for slug, label, api in [("fnv3", "FNV3 (50)", "FNV3"), ("genc", "GenCast", "GENC")]:
+            s = reg.get_spec(slug)
+            self.assertEqual(s.source_kind, "track_csv")
+            self.assertFalse(s.warm_core)                                # native objects, no warmcore
+            self.assertEqual(s.label, label)
+            self.assertEqual(s.api_model, api)                          # selects the Weather Lab slug
+            self.assertIn("not for real-world use", s.caption)          # experimental disclaimer
+            self.assertIn("Weather Lab", s.caption)                    # attribution
+            self.assertIn(slug, reg.model_slugs())
+        # both track models share ONE ingest module (no fork)
+        from enscenters import fnv3_ingest as fi
+        self.assertEqual(fi._api_model(reg.get_spec("genc")), "GENC")
+        self.assertEqual(fi._api_model(reg.get_spec("fnv3")), "FNV3")
 
 
 class TestFiveModelReconcile(unittest.TestCase):
@@ -839,28 +851,31 @@ class TestFiveModelReconcile(unittest.TestCase):
             g.main(["x", np_, lp])
             return json.load(open(np_))
 
-    def test_fnv3_publish_preserves_all_siblings(self):
-        # the FNV3 workflow publishes only its own fresh cycle; the live R2
-        # manifest already has the four other entries -> all must survive, in
+    def test_genc_publish_preserves_all_four_siblings(self):
+        # the GenCast workflow publishes only its own fresh cycle; the live R2
+        # manifest already has the four other entries -> all FIVE survive, in
         # canonical registry order, with their cycle_versions verbatim.
-        new = {"default_model": "fnv3", "models": [
-            {"slug": "fnv3", "label": "FNV3 (50)", "cycles": ["2026061418"], "latest": "2026061418",
-             "cycle_versions": {"2026061418": "fv"}}]}
+        new = {"default_model": "genc", "models": [
+            {"slug": "genc", "label": "GenCast", "cycles": ["2026061418"], "latest": "2026061418",
+             "cycle_versions": {"2026061418": "cv"}}]}
         live = {"default_model": "ecens", "models": [
             {"slug": "ecens", "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "ev"}},
             {"slug": "ecaie", "cycles": ["2026061418"], "latest": "2026061418", "cycle_versions": {"2026061418": "av"}},
             {"slug": "gefs",  "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "gv"}},
-            {"slug": "fnv3",  "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "f0"}}]}
+            {"slug": "fnv3",  "cycles": ["2026061418"], "latest": "2026061418", "cycle_versions": {"2026061418": "fv"}},
+            {"slug": "genc",  "cycles": ["2026061412"], "latest": "2026061412", "cycle_versions": {"2026061412": "c0"}}]}
         out = self._run(new, live)
         by = {m["slug"]: m for m in out["models"]}
-        self.assertEqual([m["slug"] for m in out["models"]], ["ecens", "ecaie", "gefs", "fnv3"])  # canonical order
-        # the three field models are byte-untouched
+        self.assertEqual([m["slug"] for m in out["models"]],
+                         ["ecens", "ecaie", "gefs", "fnv3", "genc"])      # canonical 5-model order
+        # the four siblings are byte-untouched
         self.assertEqual(by["ecens"]["latest"], "2026061412")
         self.assertEqual(by["ecaie"]["cycle_versions"], {"2026061418": "av"})
         self.assertEqual(by["gefs"]["latest"], "2026061412")
-        # fnv3 advanced + unioned its prior live cycle (monotone history)
         self.assertEqual(by["fnv3"]["latest"], "2026061418")
-        self.assertEqual(by["fnv3"]["cycles"], ["2026061418", "2026061412"])
+        # genc advanced + unioned its prior live cycle (monotone history)
+        self.assertEqual(by["genc"]["latest"], "2026061418")
+        self.assertEqual(by["genc"]["cycles"], ["2026061418", "2026061412"])
 
 
 if __name__ == "__main__":
