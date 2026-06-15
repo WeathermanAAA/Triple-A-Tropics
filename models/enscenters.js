@@ -178,10 +178,6 @@
     var ang = (Math.atan2(eastKm, northKm) * 180 / Math.PI + 360) % 360;
     return COMPASS8[Math.round(ang / 45) % 8];
   }
-  function ordinal(n) {
-    var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
-    return n + (s[(v - 20) % 10] || s[v] || s[0]);
-  }
 
   function binKey(p) {
     if (p < 950) return 'lt950';
@@ -1062,14 +1058,14 @@
       var p = feats[i].properties || {}, g = feats[i].geometry || {};
       if (p.kind === 'observation' && g.type === 'Point') {
         var t = Date.parse(p.time_iso || '') || 0, id = p.storm_id;
-        if (!latest[id] || t > latest[id].t) latest[id] = { t: t, lon: g.coordinates[0], lat: g.coordinates[1], kt: p.intensity_kt };
+        if (!latest[id] || t > latest[id].t) latest[id] = { t: t, lon: g.coordinates[0], lat: g.coordinates[1], kt: p.intensity_kt, mslp: p.mslp_mb };
       }
     }
     for (var j = 0; j < feats.length; j++) {
       var p2 = feats[j].properties || {}, g2 = feats[j].geometry || {};
       if (p2.kind === 'active_marker' && g2.type === 'Point') {
         out.push({ id: p2.storm_id, name: p2.name || p2.designation || p2.storm_id,
-          lat: g2.coordinates[1], lon: g2.coordinates[0], kt: p2.current_intensity_kt,
+          lat: g2.coordinates[1], lon: g2.coordinates[0], kt: p2.current_intensity_kt, mslp: p2.current_mslp_mb,
           timeMs: Date.parse(p2.last_fix || '') || 0, kind: 'invest' });
       }
     }
@@ -1078,7 +1074,7 @@
       if (p3.kind === 'track' && p3.is_active === true) {
         var lf = latest[p3.storm_id];
         if (lf) out.push({ id: p3.storm_id, name: p3.name || p3.designation || p3.storm_id,
-          lat: lf.lat, lon: lf.lon, kt: lf.kt, timeMs: lf.t, kind: 'storm' });
+          lat: lf.lat, lon: lf.lon, kt: lf.kt, mslp: lf.mslp, timeMs: lf.t, kind: 'storm' });
       }
     }
     return out;
@@ -1144,22 +1140,19 @@
   EnsCentersViewer.prototype._drawObsMarkers = function (g, resolved) {
     var ext = this.extent, mw = this.map.w, mh = this.map.h;
     for (var i = 0; i < resolved.length; i++) {
-      var o = resolved[i].obs, m = resolved[i].match;
+      var o = resolved[i].obs;
       var p = TATRegions.project(wrap180(o.lon), o.lat, ext, mw, mh);
       var col = this._drawObsMarker(g, p[0], p[1], o);
-      var lines = [o.name + (o.kt != null ? '  ' + Math.round(o.kt) + ' kt' : '')];
-      if (m) {
-        var rk = this._obsRank(m.cluster, m.step, o.lat, o.lon);
-        if (rk && rk.pct != null) {
-          lines.push('Obs ~' + ordinal(Math.round(rk.pct)) + ' pct, ' + rk.side + ' of mean');
-        } else if (rk) {
-          lines.push('Obs ' + rk.side + ' of mean, ~' + Math.round(rk.offsetKm) + ' km');
-        } else {
-          lines.push('matched ensemble system');
-        }
-      } else {
-        lines.push('no matching ensemble system');
-      }
+      // readout: name, location, time of fix, intensity (V wind / P pressure)
+      var lon180 = wrap180(o.lon);
+      var loc = Math.abs(o.lat).toFixed(1) + (o.lat >= 0 ? 'N' : 'S') + '  ' +
+                Math.abs(lon180).toFixed(1) + (lon180 >= 0 ? 'E' : 'W');
+      var lines = [o.name, loc];
+      if (o.timeMs) lines.push(shortInit(o.timeMs));
+      var vp = [];
+      if (o.kt != null) vp.push('V ' + Math.round(o.kt) + ' kt');
+      if (o.mslp != null) vp.push('P ' + Math.round(o.mslp) + ' hPa');
+      if (vp.length) lines.push(vp.join('   '));
       this._drawObsLabel(g, p[0], p[1], lines, col);
     }
   };
