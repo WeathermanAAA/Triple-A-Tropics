@@ -72,6 +72,19 @@ def _invest_storm(sid: str, atcf_id: str, lat: float, lon: float) -> dict:
     }
 
 
+def _ptc_storm(sid: str, atcf_id: str, lat: float, lon: float) -> dict:
+    """A Potential Tropical Cyclone: designated (is_ptc) + active, DS-natured,
+    NOT an invest. It must anchor its red X EXACTLY like an invest (same
+    invest_current_positions pass), only under its REAL designation."""
+    s = _invest_storm(sid, atcf_id, lat, lon)
+    s["name"] = "ONE"
+    s["is_invest"] = False
+    s["is_ptc"] = True
+    for p in s["points"]:
+        p["nature"] = "DS"
+    return s
+
+
 class TestPerBasinInvestXAnchor(unittest.TestCase):
     """Per-basin SVG path: X group translated to the fix px, centred
     path, label a sibling <text> offset (+11, +4) outside the group."""
@@ -121,6 +134,25 @@ class TestPerBasinInvestXAnchor(unittest.TestCase):
                                     gtp.BASINS[self.BASIN]["extent"])
         self._assert_anchored(svg, "92E")
 
+    def test_python_renderer_anchors_x_on_ptc_fix(self):
+        # A PTC anchors its X identically to an invest, labelled "01E".
+        storm = _ptc_storm("PTCTEST", "01E", self.LAT, self.LON)
+        svg = gtp.render_tracks_svg([storm],
+                                    gtp.BASINS[self.BASIN]["extent"])
+        self._assert_anchored(svg, "01E")
+
+    @unittest.skipIf(NODE is None, "node not on PATH")
+    def test_js_overlay_anchors_x_on_ptc_fix(self):
+        storm = _ptc_storm("PTCTEST", "01E", self.LAT, self.LON)
+        payload = {
+            "storms": [json.loads(json.dumps(storm))], "year": 2026,
+            "header": {"named": 0, "cat1plus": 0, "cat3plus": 0, "cat5": 0,
+                       "total_ace": 0.0},
+            "vocab": gtp.BASINS[self.BASIN]["vocab"],
+        }
+        svg = run_harness(self.BASIN, payload)["tracks"]
+        self._assert_anchored(svg, "01E")
+
     def test_label_length_cannot_shift_x(self):
         short = _invest_storm("XSHORT", "92E", self.LAT, self.LON)
         long = _invest_storm("XLONG", "INVEST-LONGLABEL", self.LAT, self.LON)
@@ -169,6 +201,9 @@ class TestGlobalMarkerRender(unittest.TestCase):
     FEATURES = [
         _marker_feature("invest_x", "92E", -88.4, 11.3),
         _marker_feature("invest_x", "INVEST-LONGLABEL", 140.0, 20.0),
+        # A Potential Tropical Cyclone: marker_type invest_x (the page keys on
+        # marker_type, not is_invest), labelled with its REAL designation.
+        _marker_feature("invest_x", "01L", -95.0, 27.0, is_ptc=True),
         # LEGACY pre-0.4.0 type — must render as the unified X.
         _marker_feature("L", "91W", 133.3, 32.0),
         # Same current stage (TD), three classification histories:
@@ -239,7 +274,7 @@ class TestGlobalMarkerRender(unittest.TestCase):
             r"overflow:\s*visible;\s*width:\s*100%;\s*height:\s*100%")
 
     def test_invest_x_centered_label_offset(self):
-        for name in ("92E", "INVEST-LONGLABEL", "91W"):
+        for name in ("92E", "INVEST-LONGLABEL", "01L", "91W"):
             m = self.by_name[name]
             self.assertIn("invest-x-marker", m["className"], name)
             vb = re.search(r'viewBox="([-\d. ]+)"', m["html"])

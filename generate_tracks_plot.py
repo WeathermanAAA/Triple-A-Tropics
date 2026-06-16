@@ -832,10 +832,13 @@ def render_tracks_svg(storms: list[dict], extent,
                     d_parts.append(f"L {x:.1f},{y:.1f}")
                 prev_x = x
             d = " ".join(d_parts)
-            # Dashed line for invests (90-99); solid for numbered TCs.
+            # Dashed line for invests (90-99) AND Potential Tropical Cyclones
+            # (designated but still a DB/DS disturbance NHC is advising on) —
+            # the uncertain/pre-genesis systems; solid for numbered TCs (01-89).
             # Keeping the dot styling identical so the wind-class colors
             # still convey intensity — only the connecting line changes.
-            dash_attr = (' stroke-dasharray="4 3"' if storm.get("is_invest")
+            dash_attr = (' stroke-dasharray="4 3"'
+                         if (storm.get("is_invest") or storm.get("is_ptc"))
                          else "")
             parts.append(f'<path d="{d}" fill="none" stroke="#ffffff" '
                          'stroke-width="1.2" stroke-opacity="0.5" '
@@ -852,7 +855,10 @@ def render_tracks_svg(storms: list[dict], extent,
         # TODO: scale invest X glow intensity with NHC/JTWC formation
         # probability (Low/Med/High or %) when a data source is wired
         # up — knackwx doesn't return it today. Tracked in POST_LAUNCH.md.
-        if storm.get("is_invest"):
+        # A Potential Tropical Cyclone (is_ptc) wears the SAME invest identity
+        # here — the red X labelled with its REAL designation (atcf_id "01L") —
+        # so it shares this entire pass; only its CycloLab page differs.
+        if storm.get("is_invest") or storm.get("is_ptc"):
             last_idx = len(xy) - 1
             for i, ((x, y), p) in enumerate(zip(xy, pts)):
                 wind = p.get("wind_kt")
@@ -1086,6 +1092,7 @@ def render_active_icons(storms: list[dict], extent,
         x, y = project(lon, last["lat"])
         sid = storm.get("sid") or ""
         is_invest = bool(storm.get("is_invest"))
+        is_ptc = bool(storm.get("is_ptc"))
         # Native-tooltip <title> (no JS) showing the storm name + the
         # timestamp of its most recent fix. Inserted as the first child of
         # whichever marker group is drawn below, so hovering any active
@@ -1095,10 +1102,12 @@ def render_active_icons(storms: list[dict], extent,
         title_txt = (f"{disp_name} - Last fix: {last_fix}"
                      if last_fix else disp_name)
         title_el = f'<title>{_xml_escape(title_txt)}</title>' if title_txt else ''
-        # Invests never reach the glyph below — they carry the red X from
-        # render_tracks_svg's second pass. Everything else active wears
-        # the spinning glyph; current_category picks its letter + color.
-        if is_invest:
+        # Invests AND Potential Tropical Cyclones never reach the glyph below —
+        # they carry the red X from render_tracks_svg's second pass (a PTC wears
+        # the invest identity). Skipping here is what prevents a PTC from drawing
+        # BOTH the red X and a spinning glyph. Everything else active wears the
+        # spinning glyph; current_category picks its letter + color.
+        if is_invest or is_ptc:
             continue
 
         cls = storm.get("current_category") or "TD"
@@ -2169,7 +2178,9 @@ LIVE_BASIN_JS = r"""
     // THE single client-side source of the marker classification.
     // Mirrors ace_core.build_global_geojson's marker_type fork
     // (ace_core/ace_core/__init__.py, the "Two flavors" block):
-    //   invest (active or not) -> "invest_x"   (NHC invest-area X)
+    //   invest OR PTC (active or not) -> "invest_x"  (NHC invest-area X; a
+    //                                          PTC wears the invest identity
+    //                                          under its REAL designation)
     //   active (designated)    -> "hurricane"  (glyph; current_category
     //                                           picks the letter/color)
     //   otherwise              -> null (no current-position marker)
@@ -2179,7 +2190,7 @@ LIVE_BASIN_JS = r"""
     // stage different markers. Stage now only picks the glyph letter.)
     // tests/test_marker_type_agreement.py asserts the two implementations
     // agree on every case - keep them in lockstep.
-    if (storm.is_invest) return "invest_x";
+    if (storm.is_invest || storm.is_ptc) return "invest_x";
     if (storm.is_active) return "hurricane";
     return null;
   }
@@ -2220,14 +2231,14 @@ LIVE_BASIN_JS = r"""
           prevX = xy[j][0];
         }
         var d = dParts.join(" ");
-        var dashAttr = storm.is_invest ? ' stroke-dasharray="4 3"' : "";
+        var dashAttr = (storm.is_invest || storm.is_ptc) ? ' stroke-dasharray="4 3"' : "";
         parts.push('<path d="' + d + '" fill="none" stroke="#ffffff" ' +
                    'stroke-width="1.2" stroke-opacity="0.5" ' +
                    'stroke-linejoin="round" stroke-linecap="round"' +
                    dashAttr + '/>');
       }
 
-      if (storm.is_invest) {
+      if (storm.is_invest || storm.is_ptc) {
         var lastIdx = xy.length - 1;
         for (var k = 0; k < xy.length; k++) {
           var x = xy[k][0], y = xy[k][1];
@@ -2978,14 +2989,18 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 
     // Two line layers because MapLibre's line-dasharray paint property
     // doesn't support data-driven feature expressions — only zoom-based.
-    // Splitting by is_invest in the layer filter is the standard fix.
+    // Splitting by is_invest in the layer filter is the standard fix. A PTC
+    // (is_ptc) wears the invest identity, so it joins the dashed layer and is
+    // excluded from the solid layer — the same uncertain/pre-genesis grouping
+    // as the per-basin dash_attr fork.
     map.addLayer({
       id: "tracks-line-solid",
       type: "line",
       source: "storms",
       filter: ["all",
         ["==", ["geometry-type"], "LineString"],
-        ["!=", ["get", "is_invest"], true]
+        ["!=", ["get", "is_invest"], true],
+        ["!=", ["get", "is_ptc"], true]
       ],
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
@@ -3000,7 +3015,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       source: "storms",
       filter: ["all",
         ["==", ["geometry-type"], "LineString"],
-        ["==", ["get", "is_invest"], true]
+        ["any",
+          ["==", ["get", "is_invest"], true],
+          ["==", ["get", "is_ptc"], true]
+        ]
       ],
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
