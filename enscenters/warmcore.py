@@ -42,7 +42,8 @@ from typing import List, Optional
 
 import numpy as np
 
-_OROG = None  # lazily-loaded (elev_int16, lats, lons)
+_OROG = None      # lazily-loaded (elev_int16, lats, lons)
+_INLAND = None    # lazily-built inland-distance (km) field, same grid as orography
 
 
 def _orography():
@@ -51,6 +52,32 @@ def _orography():
         d = np.load(os.path.join(os.path.dirname(__file__), "orography.npz"))
         _OROG = (d["elev"], d["lats"].astype(float), d["lons"].astype(float))
     return _OROG
+
+
+def _inland_field():
+    """Inland distance (km) at every orography cell: 0 over ocean, growing toward the
+    continental interior. Built ONCE per process from the bundled orography land mask
+    (elev > 0; ocean is exactly 0 in this dataset) via a Euclidean distance transform,
+    scaled by the grid spacing. Coarse but monotone - all we need to tell a coastal /
+    ocean TC (~0 km) from a continental heat low (hundreds of km inland)."""
+    global _INLAND
+    if _INLAND is None:
+        from scipy.ndimage import distance_transform_edt
+        elev, lats, _lons = _orography()
+        cell_km = abs(float(lats[1] - lats[0])) * 111.0
+        _INLAND = distance_transform_edt(elev > 0).astype("float32") * cell_km
+    return _INLAND
+
+
+def inland_km(lat: float, lon: float) -> float:
+    """Distance (km) inland from the nearest coast at a point (0 over water)."""
+    inl = _inland_field()
+    _elev, lats, lons = _orography()
+    dlat = abs(lats[1] - lats[0])
+    i = int(round((lats[0] - lat) / dlat)) if lats[0] > lats[-1] else int(round((lat - lats[0]) / dlat))
+    i = min(max(i, 0), len(lats) - 1)
+    j = int(round((lon - lons[0]) / abs(lons[1] - lons[0]))) % len(lons)
+    return float(inl[i, j])
 
 
 def thickness(gh300: np.ndarray, gh500: np.ndarray) -> np.ndarray:
@@ -82,6 +109,50 @@ def elevation_at(lat: float, lon: float) -> float:
     return float(elev[i, j])
 
 
+def hart_b_asymmetry(
+    mlat: float, mlon: float, anom: np.ndarray, lats: np.ndarray, lons: np.ndarray,
+    *, radius_deg: float = 3.0, n_azimuth: int = 16,
+) -> float:
+    """Motion-free Hart-B thermal asymmetry (gpm) of the warm core, sampled on a ring
+    of ``radius_deg`` around the anomaly peak. For each diameter orientation, the
+    thickness-anomaly difference between the two semicircles; B is the MAX over
+    orientations. A symmetric TC warm core gives B ~ a few m; a frontal / baroclinic /
+    hybrid low has a steep one-sided thermal contrast (warm sector vs cold sector) and
+    a large B. This is the discriminator the closed-core geometry alone cannot make:
+    a baroclinic low CAN have a closed local anomaly max but its B is large."""
+    anom = np.asarray(anom, dtype=float)
+    nlat, nlon = anom.shape
+    dlat = abs(float(lats[1] - lats[0])); dlon = abs(float(lons[1] - lons[0]))
+    lat_desc = lats[0] > lats[-1]; lon0g = float(lons[0])
+
+    def li(lat):
+        idx = round((lats[0] - lat) / dlat) if lat_desc else round((lat - lats[0]) / dlat)
+        return int(min(max(idx, 0), nlat - 1))
+
+    def lj(lon):
+        return int(round((lon - lon0g) / dlon)) % nlon
+
+    coslat = max(math.cos(math.radians(mlat)), 0.05)
+    vals = np.full(n_azimuth, np.nan)
+    for k in range(n_azimuth):
+        az = 2.0 * math.pi * k / n_azimuth
+        la = mlat + radius_deg * math.cos(az)
+        lo = mlon + radius_deg * math.sin(az) / coslat
+        if abs(la) <= 89.5:
+            vals[k] = anom[li(la), lj(lo)]
+    if np.all(np.isnan(vals)):
+        return 0.0
+    half = n_azimuth // 2
+    best = 0.0
+    for k in range(half):                      # each diameter orientation once
+        idxR = [(k + t) % n_azimuth for t in range(half)]
+        idxL = [(k + half + t) % n_azimuth for t in range(half)]
+        r = np.nanmean(vals[idxR]); l = np.nanmean(vals[idxL])
+        if np.isfinite(r) and np.isfinite(l) and abs(r - l) > best:
+            best = abs(r - l)
+    return float(best)
+
+
 def is_warm_core(
     lat0: float, lon0: float, anom: np.ndarray, lats: np.ndarray, lons: np.ndarray,
     *,
@@ -91,6 +162,8 @@ def is_warm_core(
     closed_radius_deg: float = 6.5,
     n_azimuth: int = 16,
     n_radial: int = 12,
+    hart_b_max_m: Optional[float] = None,
+    hart_b_radius_deg: float = 3.0,
 ) -> bool:
     """True iff the surface low SITS ON a closed warm thickness-anomaly core: the
     anomaly at the MSLP center is >= ``warm_anom_min_m`` (a genuine warm core, not
@@ -98,7 +171,10 @@ def is_warm_core(
     (within ``search_max_deg``, allowing slight vertical tilt) is enclosed by a
     closed contour falling >= ``closed_drop_m`` in EVERY azimuth within
     ``closed_radius_deg``. A cold-core / near-background low fails the collocated
-    amplitude gate; an open gradient fails closure."""
+    amplitude gate; an open gradient fails closure. When ``hart_b_max_m`` is set, the
+    core must ALSO be roughly SYMMETRIC (Hart-B asymmetry <= ``hart_b_max_m``), which
+    rejects the broad frontal / hybrid / subtropical lows whose closed local anomaly
+    max passes the geometry test but whose thermal field is strongly one-sided."""
     anom = np.asarray(anom, dtype=float)
     nlat, nlon = anom.shape
     dlat = abs(float(lats[1] - lats[0]))
@@ -149,6 +225,14 @@ def is_warm_core(
                 break
         if not reached:
             return False
+    # 3) symmetry: a closed warm anomaly is necessary but not sufficient - a frontal /
+    #    hybrid low can close a local anomaly max yet be strongly one-sided. Require a
+    #    roughly symmetric core (Hart-B small) when a ceiling is set.
+    if hart_b_max_m is not None:
+        b = hart_b_asymmetry(mlat, mlon, anom, lats, lons,
+                             radius_deg=hart_b_radius_deg, n_azimuth=n_azimuth)
+        if b > hart_b_max_m:
+            return False
     return True
 
 
@@ -157,6 +241,7 @@ def filter_centers(
     *,
     max_lat: float = 50.0,
     terrain_max_m: Optional[float] = 1000.0,
+    inland_max_km: Optional[float] = 250.0,
     bg_box_deg: float = 10.0,
     warm_anom_min_m: float = 6.0,
     search_max_deg: float = 1.0,
@@ -164,47 +249,65 @@ def filter_centers(
     closed_radius_deg: float = 6.5,
     n_azimuth: int = 16,
     n_radial: int = 12,
-    subtrop_lat: float = 30.0,
+    subtrop_lat: float = 25.0,
     subtrop_warm_anom_min_m: float = 12.0,
     subtrop_closed_drop_m: float = 12.0,
     subtrop_closed_radius_deg: float = 4.5,
+    hart_b_radius_deg: float = 3.0,
+    hart_b_max_trop_m: Optional[float] = 14.0,
+    hart_b_max_subtrop_m: Optional[float] = 9.0,
 ) -> List[dict]:
     """Keep only warm-core tropical centers from ``detect_centers`` output. Cheap
-    AND-gates (|lat| > max_lat, then high-terrain) run first; survivors face the
-    thickness-anomaly closure test (anomaly field built ONCE per step), LATITUDE-
-    GRADED: poleward of ``subtrop_lat`` a center must show a stronger, more compact
-    closed warm core (``subtrop_*``) - this rejects broad subtropical/hybrid lows
-    while keeping compact recurving TCs.
+    AND-gates run first - |lat| > max_lat, high-terrain, then a DEEP-INLAND gate
+    (drop centers > ``inland_max_km`` from the coast): a continental heat / monsoon
+    low is genuinely warm-core by thickness, so the thermal test alone cannot reject
+    it; distance inland does. Survivors face the thickness-anomaly closure test
+    (anomaly field built ONCE per step), LATITUDE-GRADED about ``subtrop_lat``:
+    poleward, a center must show a stronger, more compact closed warm core
+    (``subtrop_*``) AND a more symmetric one (``hart_b_max_subtrop_m``); equatorward
+    the tests are lenient (catch weak / forming TCs) with a looser symmetry ceiling
+    (``hart_b_max_trop_m``). The Hart-B symmetry test is what separates a compact
+    recurving TC from the broad frontal / hybrid / subtropical lows that otherwise
+    pass the geometry alone.
 
     FALLBACK when ``thk`` is None (gh/thickness unavailable for this step): do NOT
-    pass the full storm track. Apply only the cheap lat+terrain gates, so the
-    >max_lat storm-track band is still dropped (a STRICT lossy fallback, not the old
-    fail-open that splattered extratropical noise). The caller logs how often this
-    fires (see pipeline.process_member / build_one_cycle)."""
+    pass the full storm track. Apply only the cheap lat+terrain+inland gates, so the
+    >max_lat storm-track band AND the continental interior are still dropped (a STRICT
+    lossy fallback, not the old fail-open that splattered extratropical noise). The
+    caller logs how often this fires (see pipeline.process_member / build_one_cycle)."""
     if not centers:
         return centers
+
+    def _geo_ok(c):
+        if abs(c["lat"]) > max_lat:
+            return False
+        if terrain_max_m is not None and elevation_at(c["lat"], c["lon"]) > terrain_max_m:
+            return False
+        if inland_max_km is not None and inland_km(c["lat"], c["lon"]) > inland_max_km:
+            return False
+        return True
+
     if thk is None:
-        return [c for c in centers
-                if abs(c["lat"]) <= max_lat
-                and not (terrain_max_m is not None and elevation_at(c["lat"], c["lon"]) > terrain_max_m)]
+        return [c for c in centers if _geo_ok(c)]
     dlat = abs(float(lats[1] - lats[0]))
     dlon = abs(float(lons[1] - lons[0]))
     anom = thickness_anomaly(thk, dlat, dlon, bg_box_deg)
     kept = []
     for ctr in centers:
+        if not _geo_ok(ctr):
+            continue
         lat, lon = ctr["lat"], ctr["lon"]
-        if abs(lat) > max_lat:
-            continue
-        if terrain_max_m is not None and elevation_at(lat, lon) > terrain_max_m:
-            continue
-        if abs(lat) > subtrop_lat:      # subtropics/midlatitudes: strict compact core
-            wa, cd, cr = subtrop_warm_anom_min_m, subtrop_closed_drop_m, subtrop_closed_radius_deg
+        if abs(lat) > subtrop_lat:      # subtropics/midlatitudes: strict compact + symmetric core
+            wa, cd, cr, hb = (subtrop_warm_anom_min_m, subtrop_closed_drop_m,
+                              subtrop_closed_radius_deg, hart_b_max_subtrop_m)
         else:                           # deep tropics: lenient (catch weak/forming TCs)
-            wa, cd, cr = warm_anom_min_m, closed_drop_m, closed_radius_deg
+            wa, cd, cr, hb = (warm_anom_min_m, closed_drop_m, closed_radius_deg,
+                              hart_b_max_trop_m)
         if not is_warm_core(lat, lon, anom, lats, lons,
                             search_max_deg=search_max_deg, warm_anom_min_m=wa,
                             closed_drop_m=cd, closed_radius_deg=cr,
-                            n_azimuth=n_azimuth, n_radial=n_radial):
+                            n_azimuth=n_azimuth, n_radial=n_radial,
+                            hart_b_max_m=hb, hart_b_radius_deg=hart_b_radius_deg):
             continue
         kept.append(ctr)
     return kept

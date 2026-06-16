@@ -105,6 +105,13 @@ class DetectParams:
 class WarmCoreParams:
     max_lat: float = 50.0
     terrain_max_m: Optional[float] = 1000.0
+    # DEEP-INLAND gate: drop centers more than this far from the coast. A continental
+    # heat / monsoon low (interior Mexico, the Sichuan basin, inland Pakistan, the
+    # US plains) is genuinely warm-core by thickness, so the thermal test cannot
+    # reject it - distance inland does, while ocean and coastal TCs (~0 km) are
+    # untouched. Verified on live ECMWF ENS 12z: the inland heat-low clusters vanish,
+    # tropical-ocean systems 100% preserved.
+    inland_max_km: Optional[float] = 250.0
     bg_box_deg: float = 10.0          # boxcar half-width for the background mean (anomaly)
     warm_anom_min_m: float = 6.0      # minimum core thickness ANOMALY (warm-core amplitude)
     search_max_deg: float = 1.0
@@ -112,21 +119,33 @@ class WarmCoreParams:
     closed_radius_deg: float = 6.5
     n_azimuth: int = 16
     n_radial: int = 12
-    # LATITUDE-GRADED strictness. The deep tropics (|lat| <= subtrop_lat) keep the
-    # lenient core test above (catch weak/forming TCs); poleward of it a center must
-    # show a STRONGER, more COMPACT closed warm core to count - this is what
-    # separates a recurving TC (compact, intense core) from the broad subtropical /
-    # hybrid warm-anomaly lows that otherwise splatter the 30-50 deg band. Verified
-    # on live AIFS 12z: deep-tropical kept intact, 35-50 deg residuals cut ~85%.
-    subtrop_lat: float = 30.0
+    # LATITUDE-GRADED strictness about subtrop_lat. The deep tropics (|lat| <=
+    # subtrop_lat) keep the lenient core test (catch weak/forming TCs); poleward of it
+    # a center must show a STRONGER, more COMPACT closed warm core AND a more SYMMETRIC
+    # one to count - this is what separates a recurving TC (compact, intense, symmetric
+    # core) from the broad frontal / subtropical / hybrid warm-anomaly lows that
+    # otherwise splatter the 25-50 deg band. Boundary lowered 30 -> 25 (the classic
+    # tropics/subtropics line; real TC genesis is overwhelmingly < 22 deg).
+    subtrop_lat: float = 25.0
     subtrop_warm_anom_min_m: float = 12.0
     subtrop_closed_drop_m: float = 12.0
     subtrop_closed_radius_deg: float = 4.5
+    # Hart-B thermal-symmetry ceiling (gpm), latitude-graded. A symmetric TC warm core
+    # gives B ~ a few m; a frontal / baroclinic / hybrid low is strongly one-sided
+    # (large B). Real tropical-ocean TCs measured B p90 ~ 8.6 m, so the deep-tropics
+    # ceiling stays generous (14) to never clip a genuine TC, while the subtropical /
+    # midlatitude ceiling (9) cuts the storm-track + subtropical band the geometry
+    # alone lets through. Verified live: ~84% of the 30-50 deg slop removed, 100% of
+    # tropical-ocean centers kept.
+    hart_b_radius_deg: float = 3.0
+    hart_b_max_trop_m: Optional[float] = 14.0
+    hart_b_max_subtrop_m: Optional[float] = 9.0
 
     def as_kwargs(self) -> dict:
         return {
             "max_lat": self.max_lat,
             "terrain_max_m": self.terrain_max_m,
+            "inland_max_km": self.inland_max_km,
             "bg_box_deg": self.bg_box_deg,
             "warm_anom_min_m": self.warm_anom_min_m,
             "search_max_deg": self.search_max_deg,
@@ -138,6 +157,9 @@ class WarmCoreParams:
             "subtrop_warm_anom_min_m": self.subtrop_warm_anom_min_m,
             "subtrop_closed_drop_m": self.subtrop_closed_drop_m,
             "subtrop_closed_radius_deg": self.subtrop_closed_radius_deg,
+            "hart_b_radius_deg": self.hart_b_radius_deg,
+            "hart_b_max_trop_m": self.hart_b_max_trop_m,
+            "hart_b_max_subtrop_m": self.hart_b_max_subtrop_m,
         }
 
 

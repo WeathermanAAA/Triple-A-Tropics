@@ -541,30 +541,73 @@ def _by_lead(member_tracks: Dict[str, List[list]]) -> Dict[int, List[list]]:
     return out
 
 
+# --- ensemble-mean-track quality knobs (Stage C) ---------------------------
+# The mean line must read as ONE clean system path, not per-step jitter that whips
+# to an outlier wherever a cluster's members have fanned out or dissipated to a
+# handful. Two defences, applied to the robust per-lead geometric medians:
+#   * SUPPORT TRIM: keep only the contiguous span where the per-lead member backing
+#     stays >= floor, so the sparse genesis ramp and the divergent long-range tail
+#     (a 1-2 member "median" = a single outlier) are dropped, not drawn.
+#   * SMOOTHING: a light [1,2,1]/4 pass (x2) on the kept lat / unwrapped-lon series.
+MEAN_SUPPORT_MIN_ABS = 4          # never anchor a mean point on < this many members
+MEAN_SUPPORT_PEAK_FRAC = 0.25     # ...or on < this fraction of the cluster's PEAK support
+
+
+def _smooth_series(vals: Sequence[float], passes: int = 2) -> List[float]:
+    """Light [1,2,1]/4 smoothing with clamped ends, applied ``passes`` times.
+    Preserves the track shape while removing per-step jitter; a no-op for < 3
+    points (a 2-point line is already straight)."""
+    v = [float(x) for x in vals]
+    n = len(v)
+    if n < 3:
+        return v
+    for _ in range(passes):
+        out = v[:]
+        for i in range(1, n - 1):
+            out[i] = 0.25 * v[i - 1] + 0.5 * v[i] + 0.25 * v[i + 1]
+        v = out
+    return v
+
+
 def mean_track(member_tracks: Dict[str, List[list]]) -> List[list]:
     """Robust spherical ensemble-mean track: per lead time present, the geometric
-    median of the member positions, with the supporting member count. Display lons
-    are unwrapped to a continuous sequence."""
-    leads = sorted(_by_lead(member_tracks))
+    median of the member positions (outlier-resistant), restricted to the contiguous
+    well-supported span and lightly smoothed so the line never whips to a thin-support
+    outlier. Each point carries its supporting member count. Display lons are unwrapped
+    to a continuous sequence (smoothing runs on the unwrapped lons, dateline-safe)."""
     bl = _by_lead(member_tracks)
-    pts = []
-    for s in leads:
+    raw = []
+    for s in sorted(bl):
         rows = bl[s]
         la, lo = geometric_median([(r[1], r[2]) for r in rows])
-        pts.append([s, round(la, 3), lo, len(rows)])
-    ulons = unwrap_lons([p[2] for p in pts])
-    for p, lo in zip(pts, ulons):
-        p[2] = round(lo, 3)
-    return pts
+        raw.append([s, la, lo, len(rows)])
+    if not raw:
+        return []
+    # support trim: keep the contiguous run between the first and last lead whose
+    # member backing clears the floor (interior dips stay - a system's support is
+    # unimodal in lead, so this only trims the sparse ends, never punches holes).
+    peak = max(p[3] for p in raw)
+    floor = max(MEAN_SUPPORT_MIN_ABS, int(round(MEAN_SUPPORT_PEAK_FRAC * peak)))
+    idx = [i for i, p in enumerate(raw) if p[3] >= floor]
+    kept = raw[idx[0]:idx[-1] + 1] if idx else raw   # all-thin cluster: keep as-is
+    ulons = unwrap_lons([p[2] for p in kept])
+    lat_s = _smooth_series([p[1] for p in kept])
+    lon_s = _smooth_series(ulons)
+    return [[p[0], round(la, 3), round(lo, 3), p[3]]
+            for p, la, lo in zip(kept, lat_s, lon_s)]
 
 
 _PCTS = [10, 25, 50, 75, 90]
+MIN_PLUME_SUPPORT = 3             # drop leads backed by < this many members (the 1-2
+                                  # member tail whose min/max/percentiles are pure noise)
 
 
 def intensity_plume(member_tracks: Dict[str, List[list]]) -> dict:
-    """p10/p25/p50/p75/p90 + min/max of Vmax AND MSLP (separately) by lead."""
+    """p10/p25/p50/p75/p90 + min/max of Vmax AND MSLP (separately) by lead. Leads with
+    fewer than ``MIN_PLUME_SUPPORT`` members are dropped so the spread band and the
+    min/max bounds don't spike on a 1-2 member tail (matches the mean-track trim)."""
     bl = _by_lead(member_tracks)
-    leads = sorted(bl)
+    leads = [s for s in sorted(bl) if len(bl[s]) >= MIN_PLUME_SUPPORT]
 
     def series(col: int) -> dict:
         out = {"lead": [], "p10": [], "p25": [], "p50": [], "p75": [], "p90": [],
@@ -719,15 +762,22 @@ def assemble_tracks_doc(per_member_tracks: Dict[str, List[List[list]]], *,
         member_count = len(member_ids)
         population = len(idx)                       # tracks in the cluster
         nominal = max(2, round(MIN_CLUSTER_FRAC * max(1, n_members)))
+        # PEAK simultaneous support: the most members agreeing on this system at ANY
+        # one lead. member_count (cumulative, members come and go) overstates a noisy
+        # scatter cluster that never actually consensus-formed; peak_support is the
+        # honest "how many members ever agreed at once" - so a cluster that many
+        # members merely brushed is now correctly de-emphasised as low-confidence.
+        peak_support = max((len(r) for r in _by_lead(mt).values()), default=0)
         gla, glo, gstep = _genesis(min((flat[i]["fixes"] for i in idx),
                                        key=lambda f: f[0][0]))
         clusters_out.append({
             "id": ci,
             "members": member_ids,
             "member_count": member_count,
+            "peak_support": peak_support,
             "coverage_fraction": round(member_count / max(1, n_members), 3),
             "population": population,
-            "low_confidence": member_count < nominal,
+            "low_confidence": member_count < nominal or peak_support < nominal,
             "genesis": {"lat": round(gla, 2), "lon": round(glo, 2), "step": int(gstep)},
             "mean_track": mean_track(mt),
             "plume": intensity_plume(mt),
