@@ -266,10 +266,12 @@ class TestGlobalMarkerRender(unittest.TestCase):
 
     def test_label_length_cannot_shift_x_global(self):
         def geometry(m):
-            # Strip the designation text + per-marker filter ids; what
-            # remains is the marker's geometry and must be identical.
+            # Strip the designation text + per-marker filter ids + the per-storm
+            # CycloLab href (none are geometry); what remains is the marker's
+            # geometry and must be identical regardless of label width.
             h = re.sub(r'(text-anchor="start">)[^<]*(</text>)',
                        r"\1\2", m["html"])
+            h = re.sub(r'href="/cyclolab/[^"]*"', 'href="/cyclolab/N"', h)
             return re.sub(r"invest-red-glow-\d+", "invest-red-glow-N", h)
         self.assertEqual(geometry(self.by_name["92E"]),
                          geometry(self.by_name["INVEST-LONGLABEL"]),
