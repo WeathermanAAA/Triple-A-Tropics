@@ -99,6 +99,12 @@ STATUS_TO_NATURE: dict[str, str] = {
 
 _PLACEHOLDER_NAMES = {"", "UNNAMED", "INVEST", "NAMELESS"}
 
+# ATCF "SPAWNINVEST, alNN<year> to alMM<year>" trailing tag (any basin). The
+# DESTINATION (group 1, the MM digits) is the 90-99 invest the designated
+# system spawned — parse_bdeck records it per storm for the PTC->invest handoff.
+_SPAWNINVEST_RE = re.compile(
+    r"SPAWNINVEST,\s*[A-Za-z]{2}\d{6}\s+to\s+[A-Za-z]{2}(\d{2})\d{4}")
+
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -340,6 +346,13 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
 
     rows = []
     name_by_storm: dict[int, str] = {}
+    # storm_num -> the 90-99 invest number this designated system SPAWNED,
+    # parsed from the ATCF "SPAWNINVEST, alNN<yr> to alMM<yr>" trailing tag
+    # (MM = the invest). When a Potential Tropical Cyclone (e.g. AL01) is the
+    # same system as a live invest (AL90), this is the authoritative link that
+    # lets merge_and_extract_storms RETIRE the invest marker so we never show
+    # both 01L-X and 90L-X for one system. Storm-level (mirrors name_by_storm).
+    spawn_by_storm: dict[int, int] = {}
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 11:
@@ -354,6 +367,9 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             continue
         if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
             name_by_storm[storm_num] = name_col
+        m_spawn = _SPAWNINVEST_RE.search(line)
+        if m_spawn:
+            spawn_by_storm[storm_num] = int(m_spawn.group(1))
 
     # (storm_num, tstamp) -> index of that fix's record in ``rows``, so the
     # 50/64 kt (and a duplicate 34 kt) rows of the SAME observation merge their
@@ -435,6 +451,8 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             "ace_nature": nature,
             "source": f"live-{basin_cfg['agency_name']}",
             "storm_num": storm_num,
+            # 90-99 invest this designated system spawned (None unless tagged).
+            "spawn_invest": spawn_by_storm.get(storm_num),
         }
         # Radii columns default to None (threshold absent for this fix); the
         # first row's own threshold (if any) is recorded immediately.
@@ -568,12 +586,46 @@ _NHC_SID_RE = re.compile(r"^(?:[A-Z]+_)?((AL|EP|CP)(\d{2})\d{4})$")
 
 CURRENT_STORMS_URL = "https://www.nhc.noaa.gov/CurrentStorms.json"
 
+# A Potential Tropical Cyclone (PTC) is a DESIGNATED system (number 01-49,
+# NOT a 90-99 invest) that NHC is actively advising on while it is still a
+# pre-genesis disturbance. Its b-deck dev-level is DB/LO, which STATUS_TO_NATURE
+# maps to the non-tropical "DS" — so the normal is_active "tropical" gate hides
+# it even though NHC has issued a full forecast/advisory + cone + watches. These
+# two sets let merge_and_extract_storms recognise the PTC case so it can ACTIVATE
+# such a system (PTC ACTIVATION, the mirror of the final-advisory RETIREMENT).
+#   * PTC_NATURES   — b-deck-derived natures that read as "not yet a TC".
+#   * PTC_CLASSIFICATIONS — CurrentStorms.json `classification` codes for a
+#     disturbance / potential TC (the field fetch_nhc_active_sids now returns),
+#     so a PTC is distinguishable from a genuine tropical depression (whose
+#     nature is the tropical "TS" and which therefore activates the normal way).
+PTC_NATURES = {"DB", "DS"}
+# CurrentStorms `classification` codes for a pre-genesis disturbance NHC is
+# advising on. Disturbance-only ON PURPOSE: a genuine TC carries TD/TS/HU/STD/
+# STS/EX, NONE of which appear here, so this can never reclassify a real
+# tropical/subtropical/post-tropical system as a PTC. The b-deck NATURE ("DS")
+# is the primary PTC signal observed in the wild (dev-level DB/LO -> DS); this
+# set is the secondary disambiguator (e.g. a provisional blank-NATURE fix that
+# NHC nonetheless calls a disturbance). Observed in the wild: NHC CurrentStorms
+# tags a Potential Tropical Cyclone with classification "PC" (AL012026 "One",
+# 2026-06-16); "DB"/"PTC" are kept as defensive synonyms.
+PTC_CLASSIFICATIONS = {"PC", "PTC", "DB", "LO", "WV", "MD", "DISTURBANCE"}
+
 
 def fetch_nhc_active_sids(timeout: float = 20.0,
-                          retries: int = 2) -> "set[str] | None":
-    """ATCF ids (e.g. {"EP032026"}) of currently-NHC-active named storms per
-    CurrentStorms.json, or None when the fetch fails — callers MUST treat
-    None as "no information" (never retire anything on a failed fetch).
+                          retries: int = 2) -> "dict[str, str] | None":
+    """ATCF id -> NHC `classification` code (e.g. {"AL012026": "DB"}) for every
+    currently-NHC-active storm per CurrentStorms.json, or None when the fetch
+    fails — callers MUST treat None as "no information" (never RETIRE or
+    ACTIVATE anything on a failed fetch).
+
+    Was ``set[str] | None`` through ace-core-v0.7.1; widened to a mapping here.
+    This is a SUPERSET of the old contract — every consumer only does ``sid in
+    result`` (membership), which tests dict KEYS, so a set caller and a dict
+    caller behave identically for retirement. The added value (the classification
+    code) lets a caller tell a Potential Tropical Cyclone / disturbance ("DB")
+    apart from a tropical depression ("TD"): a PTC's b-deck nature is the
+    non-tropical "DS", so without this signal the activation could not name it.
+
     stdlib urllib on purpose: ace_core stays pandas/numpy-only, and the cron
     generators' minimal installs ship no requests (0.7.0's lazy `import
     requests` crashed the update-ace tracks regen at call time)."""
@@ -591,11 +643,11 @@ def fetch_nhc_active_sids(timeout: float = 20.0,
                 if resp.status != 200:
                     raise OSError(f"HTTP {resp.status}")
                 data = _json.loads(resp.read().decode("utf-8"))
-            out: set[str] = set()
+            out: dict[str, str] = {}
             for s in (data.get("activeStorms") or []):
                 sid = str(s.get("id") or "").strip().upper()
                 if re.fullmatch(r"(?:AL|EP|CP)\d{6}", sid):
-                    out.add(sid)
+                    out[sid] = str(s.get("classification") or "").strip().upper()
             return out
         except Exception as exc:  # noqa: BLE001 - any failure -> None
             last_exc = exc
@@ -1015,7 +1067,8 @@ def _serialize_point(p: dict) -> dict:
 
 def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                              basin_cfg: dict,
-                             nhc_active_sids: "set[str] | None" = None,
+                             nhc_active_sids: "dict[str, str] | set[str] | None"
+                             = None,
                              ) -> list[dict]:
     """Merge IBTrACS + live. For each named storm in BOTH sources, we keep
     whichever source has more observations for that storm — live tends
@@ -1025,11 +1078,20 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     storm dissipates). One source per storm, so no duplicate cards in
     the sidebar.
 
-    ``nhc_active_sids`` (from fetch_nhc_active_sids) enables the prompt
-    final-advisory retirement of is_active — see NHC_RETIRE_GRACE_H. It is
-    STATUS ONLY: tracks, points, ACE, and every season total are computed
-    identically either way. None (fetch failed / caller offline) applies
-    no retirement; passing it never changes which storms exist."""
+    ``nhc_active_sids`` (from fetch_nhc_active_sids) is the authoritative
+    NHC-advising membership and drives TWO mirror behaviors, both STATUS ONLY
+    (tracks, points, ACE, and every season total are computed identically
+    regardless): (1) the final-advisory RETIREMENT of is_active — see
+    NHC_RETIRE_GRACE_H; (2) the PTC ACTIVATION — a designated DB/DS system
+    NHC lists is promoted to is_active + is_ptc (a Potential Tropical Cyclone),
+    which the nature gate would otherwise hide. Accepts a dict[sid->NHC
+    classification] (current contract — the classification distinguishes a PTC
+    from a TD) OR a bare set[sid] (legacy callers); membership works on both.
+    None (fetch failed / caller offline) applies NEITHER and never changes
+    which storms exist. This function also performs the PTC->invest HANDOFF: an
+    invest superseded by an active designated storm (b-deck SPAWNINVEST link or
+    coincident latest position) is dropped, so one system is never shown as both
+    its invest (90L) and its designation (01L)."""
 
     # Shared IBTrACS-vs-live merge (ace_core): keep the source with more 6-hourly
     # obs per named storm. SAME function + same inputs as the ACE feed, so both
@@ -1054,6 +1116,19 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
 
     basin_short = basin_cfg["short"]
     storms: list[dict] = []
+    # PTC->invest HANDOFF accumulators (filled in the loop, applied after it).
+    # superseding_invest_nums: the 90-99 invest numbers that ACTIVE DESIGNATED
+    # storms SPAWNED (b-deck SPAWNINVEST tag); invest_candidates: every invest's
+    # (sid, number). An invest is dropped iff its number is one a live
+    # designation spawned — see the dedup below. (A coincident-position fallback
+    # was considered and REJECTED: it cannot tell a real same-system pair, whose
+    # invest + designation share an identical track, apart from two unrelated
+    # storms that merely overlap — the invest-ACE-guard fixtures are exactly
+    # that pathological coincidence. The SPAWNINVEST link is authoritative and,
+    # because it dedups by NUMBER, works even when the invest was sourced
+    # outside parse_bdeck, e.g. the poller's knackwx invests.)
+    superseding_invest_nums: set[int] = set()
+    invest_candidates: list[tuple[str, "int | None"]] = []
     for sid, group in df.groupby("SID"):
         points = group.to_dict("records")
         # ACE + peak wind come from ace_core (the single authority), so they are
@@ -1115,6 +1190,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         recent_obs = (len(points) > 0
                       and points[-1]["time"] >= active_cutoff)
         is_active = False
+        is_ptc = False
         if len(points) > 0:
             last = points[-1]
             has_wind = pd.notna(last["wind_kt"]) and last["wind_kt"] > 0
@@ -1136,6 +1212,38 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                     and points[-1]["time"] <
                     now - dt.timedelta(hours=NHC_RETIRE_GRACE_H)):
                 is_active = False
+        # PTC RECOGNITION + ACTIVATION (status only) — the MIRROR of the
+        # retirement above. A Potential Tropical Cyclone is a DESIGNATED AL/EP/CP
+        # system (number 01-49, NOT a 90-99 invest) that NHC is actively
+        # advising on while it is still a pre-genesis disturbance: its latest
+        # b-deck dev-level is DB/LO -> the non-tropical "DS" nature, so the
+        # `tropical` gate above leaves is_active=False even though NHC has issued
+        # a full forecast/advisory + cone + watches. We RECOGNISE it on the
+        # authoritative NHC-advising signal (membership in a CLEANLY-FETCHED
+        # CurrentStorms list — the same source the retirement trusts) for a
+        # designated number with a fresh fix + valid wind whose b-deck NATURE is
+        # DB/DS OR whose NHC `classification` is a disturbance code, and:
+        #   * set is_ptc=True (the marker + page then wear the INVEST visual
+        #     identity — grey + red X — under the system's REAL designation), and
+        #   * ACTIVATE it (is_active=True) when the nature gate had hidden it.
+        # This NEVER touches invests (90-99 are never in CurrentStorms) and never
+        # promotes a normal TC: a TD/TS/HU is neither DB/DS-natured nor
+        # disturbance-classified, so is_ptc stays False and is_active is whatever
+        # the normal gate already decided. Track + ACE untouched: a PTC accrues
+        # no ACE (its DS fixes fail nature-eligibility) and counts as no category.
+        if (recent_obs and len(points) > 0 and nhc_active_sids is not None):
+            last = points[-1]
+            has_wind = pd.notna(last["wind_kt"]) and last["wind_kt"] > 0
+            m = _NHC_SID_RE.match(str(sid).strip().upper())
+            if (m and int(m.group(3)) < 90 and has_wind
+                    and m.group(1) in nhc_active_sids):
+                last_nat = (last["nature"] or "").upper()
+                nhc_cls = (nhc_active_sids.get(m.group(1))
+                           if isinstance(nhc_active_sids, dict) else "") or ""
+                if (last_nat in PTC_NATURES
+                        or nhc_cls.upper() in PTC_CLASSIFICATIONS):
+                    is_ptc = True
+                    is_active = True
         # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
         # from any row in the group; IBTrACS rows have NaN and are ignored
         # since IBTrACS doesn't archive invests.
@@ -1155,6 +1263,11 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         atcf_id = None
         if is_invest and nums:
             atcf_id = f"{int(nums[0])}{basin_cfg.get('invest_letter', '')}"
+        elif is_ptc and nums:
+            # A PTC wears its REAL designation ("01L"): a designated number
+            # (small, so zero-pad to 2 digits to keep the leading zero), NOT a
+            # 90-99 invest. Drives the invest-X label + the /cyclolab/{sid}/ id.
+            atcf_id = f"{int(nums[0]):02d}{basin_cfg.get('invest_letter', '')}"
         # Current intensity = SSHWS of the most recent observation
         last_wind = points[-1]["wind_kt"] if points else float("nan")
         current_cls = sshs_class(last_wind)
@@ -1163,6 +1276,19 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         names = [p["NAME"] for p in points if p["NAME"]
                  and p["NAME"] not in {"UNNAMED", "INVEST", "NAMELESS"}]
         name = names[0] if names else (points[0]["NAME"] if points else "UNNAMED")
+
+        # PTC->invest handoff bookkeeping (applied after the loop). An ACTIVE
+        # DESIGNATED storm contributes the invest numbers it spawned (b-deck
+        # SPAWNINVEST tag -> point["spawn_invest"]); every invest registers its
+        # number so the dedup can drop a superseded invest.
+        if is_active and not is_invest:
+            for p in points:
+                sp = p.get("spawn_invest")
+                if sp is not None and not (isinstance(sp, float)
+                                           and math.isnan(sp)):
+                    superseding_invest_nums.add(int(sp))
+        if is_invest:
+            invest_candidates.append((sid, int(nums[0]) if nums else None))
 
         storms.append({
             "sid": sid,
@@ -1180,10 +1306,26 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             "current_category": current_cls,
             "is_active": bool(is_active),
             "is_invest": bool(is_invest),
+            # A Potential Tropical Cyclone: designated + NHC-advised + still a
+            # DB/DS disturbance. Drives the invest visual identity on the marker
+            # and the PTC branch on the CycloLab page. Never true for invests.
+            "is_ptc": bool(is_ptc),
             "recent_invest": bool(recent_invest),
             "atcf_id": atcf_id,
             "points": [_serialize_point(p) for p in points],
         })
+    # PTC->invest HANDOFF (the 90L<-01L dedup). When a designated system is
+    # active, the live invest it manifested as (same track, b-deck SPAWNINVEST
+    # link) must NOT also show — else the map paints both 01L-X and 90L-X for
+    # one system. Drop an invest iff its number is one an ACTIVE DESIGNATED
+    # storm spawned. Only ever drops an invest in favour of an active designated
+    # system; never touches designated-vs-designated. Basin-scoped (per basin).
+    if superseding_invest_nums:
+        drop_invest_sids = {
+            sid_i for sid_i, num_i in invest_candidates
+            if num_i is not None and num_i in superseding_invest_nums}
+        if drop_invest_sids:
+            storms = [s for s in storms if s["sid"] not in drop_invest_sids]
     # Drop stale invest cards. Numbered TCs (01-89) keep showing past
     # cards as part of the season summary; only invests need this
     # filter, because JTWC/NHC cycle 90-99 numbers continuously.
@@ -1198,12 +1340,15 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
 
 
 def compute_header_stats(storms: list[dict]) -> dict:
-    # Designated TCs only - invests (ATCF 90-99, is_invest) never count
-    # toward the named/category tallies or the season ACE, even if a fix
-    # reached TS strength while still invest-numbered. Their per-storm ace
-    # is already 0.0 by construction (storm_ace's invest guard); filtering
-    # here makes the COUNT rule just as explicit.
-    tcs = [s for s in storms if not s.get("is_invest")]
+    # Designated TCs only - invests (ATCF 90-99, is_invest) AND Potential
+    # Tropical Cyclones (is_ptc — designated but still a DB/DS disturbance NHC
+    # is advising on) never count toward the named/category tallies or the
+    # season ACE, even if a fix reached TS strength while still pre-genesis.
+    # Their per-storm ace is already 0.0 by construction (storm_ace's invest
+    # guard / DS nature-ineligibility); filtering here makes the COUNT rule just
+    # as explicit, so a windy PTC can never inflate the named/category counts.
+    tcs = [s for s in storms
+           if not s.get("is_invest") and not s.get("is_ptc")]
     named = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 1)  # TS+
     cat1plus = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 2)  # C1+
     cat3plus = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 4)  # C3+
@@ -1294,6 +1439,7 @@ def build_global_geojson(storms: list[dict]) -> dict:
         peak_kt = storm.get("peak_wind_kt")
         is_active = bool(storm.get("is_active"))
         is_invest = bool(storm.get("is_invest"))
+        is_ptc = bool(storm.get("is_ptc"))
         designation = storm.get("atcf_id") or ""
         max_cls = storm.get("max_category") or "TD"
         points = storm.get("points") or []
@@ -1314,6 +1460,9 @@ def build_global_geojson(storms: list[dict]) -> dict:
                         "peak_kt": peak_kt,
                         "is_active": is_active,
                         "is_invest": is_invest,
+                        # A PTC's track wears the invest visual identity (the
+                        # MapLibre layer filters group it with invest tracks).
+                        "is_ptc": is_ptc,
                         "designation": designation,
                     },
                 })
@@ -1367,11 +1516,19 @@ def build_global_geojson(storms: list[dict]) -> dict:
         #     AMANDA-glyph vs TWO-E-ring inconsistency). Renderers keep a
         #     legacy fold (td_circle -> glyph) for geojson written by a
         #     pre-0.5.0 ace_core during the poller repin gap.
+        #   * A POTENTIAL TROPICAL CYCLONE (is_ptc) is a designated system NHC
+        #     is advising on while still a DB/DS disturbance. It is NOT an
+        #     invest (number 01-49), but it wears the SAME invest_x glyph —
+        #     labeled with its REAL designation (atcf_id "01L", not the 90L it
+        #     spawned from). So it routes to invest_x exactly like an invest;
+        #     the ONLY difference is on its CycloLab page (which keeps the cone
+        #     + advisories + Models a pure invest hides). is_invest and is_ptc
+        #     are mutually exclusive, so this never double-classifies.
         # All live under kind="active_marker" so the JS marker iteration
         # loop picks them up uniformly; marker_type drives the rendered
         # shape.
         marker_type = None
-        if is_invest:
+        if is_invest or is_ptc:
             marker_type = "invest_x"
         elif is_active:
             marker_type = "hurricane"
@@ -1398,6 +1555,9 @@ def build_global_geojson(storms: list[dict]) -> dict:
                     # the popup omits the Pressure row rather than show "0 mb".
                     "current_mslp_mb": _clean_mslp(last.get("pressure_mb")),
                     "marker_type": marker_type,
+                    # PTC vs invest are both invest_x; this lets a consumer
+                    # (e.g. the popup) name a PTC by its real designation.
+                    "is_ptc": is_ptc,
                     # Timestamp of the most recent observation, surfaced as
                     # "Last fix" in the active-marker hover/click popup.
                     "last_fix": last.get("t"),
