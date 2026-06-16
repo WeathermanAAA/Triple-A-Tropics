@@ -1803,6 +1803,14 @@ HTML_TEMPLATE = """<!doctype html>
   .storm-invest {{ font-size: 10px; color: var(--td); font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.6px; margin-left: 6px; }}
   .storm-invest::before {{ content: "◌ "; }}
+  /* PTC card — the grey identity the marker + page wear (html[data-ptc]): no
+     amber active-tint, NO TD category chip (a PTC is not a depression), a grey
+     PTC tag. Named storms + invests are untouched. */
+  .storm-card.ptc {{ background: rgba(154,166,182,0.09); }}
+  .storm-card.ptc .storm-cat {{ display: none; }}
+  .storm-ptc {{ font-size: 10px; color: #9aa6b6; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px; margin-left: 6px; }}
+  .storm-ptc::before {{ content: "◌ "; }}
 
   /* SSHS color-bar legend (right of map) */
   .legend {{ position: absolute; top: 70px; right: 12px;
@@ -2420,8 +2428,11 @@ LIVE_BASIN_JS = r"""
     var label = String(cat).replace(/C/g, "Cat ");
     var isActive = storm.is_active;
     var isInvest = storm.is_invest;
+    var isPtc = storm.is_ptc;
     var activeTag;
-    if (isActive) {
+    if (isPtc) {
+      activeTag = '<span class="storm-ptc">PTC</span>';
+    } else if (isActive) {
       activeTag = '<span class="storm-active">Active</span>';
     } else if (isInvest) {
       activeTag = '<span class="storm-invest">Invest</span>';
@@ -2429,7 +2440,8 @@ LIVE_BASIN_JS = r"""
       activeTag = '';
     }
     var classes = "storm-card clickable";
-    if (isActive) classes += " active";
+    if (isPtc) classes += " ptc";
+    else if (isActive) classes += " active";
     if (isInvest) classes += " invest";
     var peakWind = storm.peak_wind_kt;
     var peakPres = storm.peak_pressure_mb;
@@ -3486,12 +3498,17 @@ def render_storm_card(storm: dict) -> str:
     color, label = _cat_style(cat)
     is_active = storm.get("is_active")
     is_invest = storm.get("is_invest")
+    is_ptc = storm.get("is_ptc")
+    # A PTC wears the grey identity (checked FIRST — it is is_active too): a
+    # "PTC" tag, not "Active", and the grey 'ptc' card class hides the TD chip.
     # Active TCs get the "Active" tag (also gets the spinning map icon);
     # invests that aren't active TCs get an "INVEST" tag instead. The
     # two are mutually exclusive — an invest that briefly hit 34 kt would
     # show "Active", which is correct since the b-deck would still call
     # it 91W until JTWC/NHC numbers it.
-    if is_active:
+    if is_ptc:
+        active_tag = '<span class="storm-ptc">PTC</span>'
+    elif is_active:
         active_tag = '<span class="storm-active">Active</span>'
     elif is_invest:
         active_tag = '<span class="storm-invest">Invest</span>'
@@ -3500,7 +3517,9 @@ def render_storm_card(storm: dict) -> str:
     # Every card is clickable — active cards open the pinned live placard
     # at the top; inactive cards expand an inline peak-intensity placard.
     classes = "storm-card clickable"
-    if is_active:
+    if is_ptc:
+        classes += " ptc"
+    elif is_active:
         classes += " active"
     if is_invest:
         classes += " invest"
