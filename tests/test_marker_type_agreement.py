@@ -47,10 +47,12 @@ _BASE_POINTS = [
 ]
 
 
-def _storm(sid, *, is_active, is_invest, peak_wind_kt):
+def _storm(sid, *, is_active, is_invest, peak_wind_kt, is_ptc=False):
     return {
-        "sid": sid, "name": sid, "atcf_id": "90E" if is_invest else None,
+        "sid": sid, "name": sid,
+        "atcf_id": "90E" if is_invest else ("01E" if is_ptc else None),
         "basin": "ep", "is_active": is_active, "is_invest": is_invest,
+        "is_ptc": is_ptc,
         "peak_wind_kt": peak_wind_kt, "peak_pressure_mb": 1004.0,
         "max_category": "TD", "current_category": "TD",
         "ace": 0.0, "start": "2026-06-01T00:00:00",
@@ -80,6 +82,12 @@ CASES = [
     # plays no part in classification anymore. JS must agree.
     (_storm("ACTIVE_NO_PEAK", is_active=True, is_invest=False,
             peak_wind_kt=None), "hurricane"),
+    # A Potential Tropical Cyclone wears the invest X (NOT the glyph), under
+    # its REAL designation — regardless of active state, exactly like an invest.
+    (_storm("ACTIVE_PTC", is_active=True, is_invest=False, is_ptc=True,
+            peak_wind_kt=20.0), "invest_x"),
+    (_storm("INACTIVE_PTC", is_active=False, is_invest=False, is_ptc=True,
+            peak_wind_kt=20.0), "invest_x"),
 ]
 
 
@@ -234,6 +242,75 @@ class TestSameStageSameMarker(unittest.TestCase):
         self.assertEqual(js_a, js_b,
                          "peak intensity leaked into the JS-rendered marker")
         self.assertEqual(js_a, py_a, "JS/Python marker parity broke")
+
+
+class TestEveryPTCGetsTheX(unittest.TestCase):
+    """The PTC rule through the REAL pipeline: a DESIGNATED (01-49) DB/DS
+    system NHC lists in CurrentStorms is activated as a Potential Tropical
+    Cyclone (is_ptc), and — like an invest — wears the invest_x marker under
+    its REAL designation (atcf_id "01L"), NOT the spinning glyph. A regression
+    that routed a PTC to "hurricane" (the active-non-invest default) fails
+    here."""
+
+    def _rows(self, num):
+        import datetime as dt
+        now = dt.datetime.utcnow()
+        anchor = now.replace(hour=(now.hour // 6) * 6, minute=0,
+                             second=0, microsecond=0)
+        return [{
+            "SID": f"NHC_AL{num:02d}2026", "NAME": "ONE", "season": 2026,
+            "time": anchor - dt.timedelta(hours=6 * (1 - i)),
+            "lat": 26.0 + i, "lon": -97.0 - i,
+            "wind_kt": 20.0, "pressure_mb": 1007.0,
+            "nature": "DS", "ace_nature": "DS",   # DB/LO dev-level -> DS
+            "source": "live-NHC", "storm_num": num,
+        } for i in range(2)]
+
+    def test_designated_db_in_currentstorms_is_invest_x(self):
+        import pandas as pd
+        from ace_core import merge_and_extract_storms
+        cfg = {"short": "al", "agency_name": "NHC", "invest_letter": "L"}
+        for num in (1, 5, 23, 49):
+            with self.subTest(storm_num=num):
+                storms = merge_and_extract_storms(
+                    pd.DataFrame(), pd.DataFrame(self._rows(num)), cfg,
+                    nhc_active_sids={f"AL{num:02d}2026": "DB"})
+                s = next(st for st in storms
+                         if st["sid"] == f"NHC_AL{num:02d}2026")
+                self.assertTrue(s["is_ptc"])
+                self.assertFalse(s["is_invest"])
+                self.assertEqual(s["atcf_id"], f"{num:02d}L")
+                self.assertEqual(ace_core_marker_type(s), "invest_x",
+                                 f"{num:02d}L (PTC) must wear the X")
+
+    @unittest.skipIf(NODE is None, "node not on PATH")
+    def test_ptc_marker_parity_python_js(self):
+        # The rendered marker for a PTC must be byte-identical across the
+        # Python renderer and the JS mirror (the per-basin live overlay).
+        s = _storm("PTC_PARITY", is_active=True, is_invest=False,
+                   is_ptc=True, peak_wind_kt=20.0)
+        s = json.loads(json.dumps(s))
+        payload = {
+            "year": 2026,
+            "header": {"named": 0, "cat1plus": 0, "cat3plus": 0, "cat5": 0,
+                       "total_ace": 0.0},
+            "vocab": gtp.BASINS["ep"]["vocab"],
+        }
+        # render_active_icons must NOT paint a PTC (it carries the X from
+        # render_tracks_svg's invest pass) — so it returns no glyph for it.
+        py_active = gtp.render_active_icons([s], gtp.BASINS["ep"]["extent"])
+        self.assertNotIn("active-icon", py_active,
+                         "a PTC must not get the spinning glyph")
+        js = run_harness("ep", dict(payload, storms=[s]))
+        self.assertEqual(js["active"], py_active,
+                         "PTC active-layer parity broke (Python vs JS)")
+        self.assertEqual(js["marker_types"][0], "invest_x")
+        # The PTC's red X + its real designation label must appear in the
+        # tracks layer, identical on both sides.
+        py_tracks = gtp.render_tracks_svg([s], gtp.BASINS["ep"]["extent"])
+        self.assertIn("01E", py_tracks)          # the designation label
+        self.assertEqual(js["tracks"], py_tracks,
+                         "PTC tracks-layer parity broke (Python vs JS)")
 
 
 @unittest.skipIf(NODE is None, "node not on PATH")
