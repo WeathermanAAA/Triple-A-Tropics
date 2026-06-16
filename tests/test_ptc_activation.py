@@ -177,9 +177,13 @@ class PTCInvestHandoffTests(unittest.TestCase):
         al01 = _rows("NHC_AL", 1, nature="DS", name="ONE", spawn=90)
         al90 = _rows("NHC_AL", 90, nature="DS", name="INVEST")
         storms = _one(al01 + al90, AL_CFG, {"AL012026": "DB"})
-        self.assertIsNotNone(_by_sid(storms, "NHC_AL012026"))
+        ptc = _by_sid(storms, "NHC_AL012026")
+        self.assertIsNotNone(ptc)
         self.assertIsNone(_by_sid(storms, "NHC_AL902026"),
                           "the spawned invest must be dropped (handoff)")
+        # The PTC carries its spawning invest's sid so the page can read that
+        # invest's formation.json (the NHC TWO odds live under the invest).
+        self.assertEqual(ptc["spawn_sid"], "NHC_AL902026")
 
     def test_unlinked_invest_kept(self):
         # An invest with NO spawn link is kept even if its track coincides — the
