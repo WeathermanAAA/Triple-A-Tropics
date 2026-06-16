@@ -294,5 +294,42 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertFalse(s["fail_threw"])
 
 
+DEFAULT_MODEL_HARNESS = (Path(__file__).resolve().parent
+                         / "enscenters_default_model.cjs")
+
+
+@unittest.skipIf(NODE is None, "node not on PATH")
+@unittest.skipUnless(jsdom_available(), "jsdom not resolvable")
+class TestDefaultModelSelection(unittest.TestCase):
+    """The viewer opens on the FRESHEST model, not the hard default_model
+    (ECMWF ENS disseminates ~1h late, so for a window each 00/12Z it is one
+    cycle behind its peers - the user must not land on the laggard)."""
+
+    def _run(self):
+        proc = subprocess.run([NODE, str(DEFAULT_MODEL_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_default_model_selection(self):
+        s = self._run()
+        # mixed freshness -> the freshest model wins, even though the laggard
+        # (ecens) is the manifest default_model.
+        self.assertEqual(s["mixed"], "aifs")
+        self.assertEqual(s["defaultBehindStillBeatsLaggard"], "fnv3")
+        # all tied on the newest cycle -> preferred order (default_model) wins.
+        self.assertEqual(s["allEqualPrefersDefault"], "ecens")
+        # tied with no default match -> manifest order.
+        self.assertEqual(s["tieNoDefaultKeepsOrder"], "gefs")
+        # no model has a cycle yet -> fall back to the default_model.
+        self.assertEqual(s["noCyclesFallsBackToDefault"], "ecens")
+        # the full viewer opens on the freshest model on load...
+        self.assertEqual(s["loadSelectedModel"], "aifs")
+        # ...respects an explicit user model choice...
+        self.assertEqual(s["afterUserClick"], "ecens")
+        # ...and a subsequent poll NEVER overrides it (sticky).
+        self.assertEqual(s["afterPoll"], "ecens")
+
+
 if __name__ == "__main__":
     unittest.main()

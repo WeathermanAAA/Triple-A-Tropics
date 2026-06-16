@@ -372,11 +372,38 @@
     if (!models.length) { this._status(''); this._showEmpty(true); return; }
     this._showEmpty(false);
     var defs = models.map(function (x) { return { slug: x.slug, label: x.label }; });
-    var active = m.default_model && models.some(function (x) { return x.slug === m.default_model; })
-      ? m.default_model : models[0].slug;
+    // Open on the FRESHEST model, not the hard default. ECMWF ENS (ecens)
+    // disseminates ~1h after the AI models, so for a ~1-2h window each 00/12Z
+    // cycle the default_model is legitimately one cycle behind its peers -
+    // landing the user on a stale view. Pick the model with the newest latest
+    // cycle; among models tied on that cycle, honor the preferred order
+    // (default_model first). _onManifest runs ONCE on load; the poll never
+    // re-selects the model, so a user's later click is never overridden.
+    var active = this._freshestModel(models);
     this._buildToggle(this.dom.models, defs, active, this._selectModel.bind(this));
     this._selectModel(active);
     this._schedulePoll();
+  };
+
+  // The slug to open on: the model whose ``latest`` cycle is newest (cycle ids
+  // are fixed-width YYYYMMDDHH, so string compare == chronological). Ties go to
+  // the preferred model (manifest default_model), else manifest order. Models
+  // with no cycle can't lead. Falls back to default_model / models[0] when none
+  // has a cycle yet.
+  EnsCentersViewer.prototype._freshestModel = function (models) {
+    var pref = (this.manifest && this.manifest.default_model) || null;
+    var best = null;
+    for (var i = 0; i < models.length; i++) {
+      var x = models[i];
+      if (!x.latest) continue;
+      if (best === null) { best = x; }
+      else if (x.latest > best.latest) { best = x; }
+      else if (x.latest === best.latest &&
+               x.slug === pref && best.slug !== pref) { best = x; }
+    }
+    if (best) return best.slug;
+    if (pref && models.some(function (z) { return z.slug === pref; })) return pref;
+    return models[0].slug;
   };
 
   EnsCentersViewer.prototype._modelEntry = function (slug) {
