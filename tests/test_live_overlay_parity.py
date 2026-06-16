@@ -101,6 +101,23 @@ def make_fixture_storms(extent) -> list[dict]:
                 _pt("2026-05-28T06:00:00", A(0.16), L(0.71), 20.0, 1010.0, "TD", "DS"),
             ],
         },
+        # 3b: active Potential Tropical Cyclone (designated, DB/DS nature,
+        #    NHC-advised) -> wears the INVEST identity: dashed track + past
+        #    triangles + red glowing X + its REAL designation label, and
+        #    NOTHING in active icons (no spinning glyph). is_ptc, NOT is_invest.
+        {
+            "sid": "TEST_015", "name": "ONE", "atcf_id": "01X",
+            "is_active": True, "is_invest": False, "is_ptc": True,
+            "peak_wind_kt": 20.0, "peak_pressure_mb": 1009.0,
+            "max_category": "TD", "current_category": "TD",
+            "ace": 0.0, "start": "2026-06-04T00:00:00",
+            "end": "2026-06-04T12:00:00",
+            "points": [
+                _pt("2026-06-04T00:00:00", A(0.50), L(0.40), 15.0, 1011.0, "TD", "DS"),
+                _pt("2026-06-04T06:00:00", A(0.52), L(0.42), 20.0, 1010.0, "TD", "DS"),
+                _pt("2026-06-04T12:00:00", A(0.54), L(0.44), 20.0, 1009.0, "TD", "DS"),
+            ],
+        },
         # 4: active numbered TD (not an invest) -> spinning glyph with a
         #    blue "D" (the peak-keyed hollow ring is retired; current
         #    stage picks the letter - see test_marker_type_agreement).
