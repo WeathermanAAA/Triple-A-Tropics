@@ -207,7 +207,7 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-06-16 12:34 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-16 17:08 UTC</div>
       </div>
       <div class="stats">
         <b>8</b> named storms &middot; <b>2</b> category 1+ storms &middot;
@@ -371,14 +371,18 @@
 
     // Two line layers because MapLibre's line-dasharray paint property
     // doesn't support data-driven feature expressions — only zoom-based.
-    // Splitting by is_invest in the layer filter is the standard fix.
+    // Splitting by is_invest in the layer filter is the standard fix. A PTC
+    // (is_ptc) wears the invest identity, so it joins the dashed layer and is
+    // excluded from the solid layer — the same uncertain/pre-genesis grouping
+    // as the per-basin dash_attr fork.
     map.addLayer({
       id: "tracks-line-solid",
       type: "line",
       source: "storms",
       filter: ["all",
         ["==", ["geometry-type"], "LineString"],
-        ["!=", ["get", "is_invest"], true]
+        ["!=", ["get", "is_invest"], true],
+        ["!=", ["get", "is_ptc"], true]
       ],
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
@@ -393,7 +397,10 @@
       source: "storms",
       filter: ["all",
         ["==", ["geometry-type"], "LineString"],
-        ["==", ["get", "is_invest"], true]
+        ["any",
+          ["==", ["get", "is_invest"], true],
+          ["==", ["get", "is_ptc"], true]
+        ]
       ],
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
