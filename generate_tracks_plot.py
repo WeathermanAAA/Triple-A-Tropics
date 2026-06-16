@@ -993,6 +993,13 @@ def render_tracks_svg(storms: list[dict], extent,
             f'data-wind="{wind_attr}" data-pres="{pres_attr}" '
             f'data-cls="{cls}" data-phase="invest"'
         )
+        # Launchable: wrap the X group + its label sibling in a /cyclolab/{sid}/
+        # new-tab anchor (Stage C - invests now have a grey/red-X CycloLab page),
+        # exactly like the active-hurricane glyph. The X path stays centred on the
+        # group origin and the label stays an offset sibling, so the anchoring
+        # invariant (test_invest_x_anchor) is untouched.
+        parts.append(
+            f'<a href="/cyclolab/{sid}/" target="_blank" rel="noopener">')
         parts.append(
             f'<g class="invest-current" '
             f'transform="translate({x:.1f},{y:.1f})" '
@@ -1009,6 +1016,7 @@ def render_tracks_svg(storms: list[dict], extent,
             f'x="{x + 11:.1f}" y="{y + 4:.1f}" '
             f'text-anchor="start">{atcf_id}</text>'
         )
+        parts.append('</a>')
     parts.append('</g>')
     return "\n".join(parts)
 
@@ -2311,6 +2319,9 @@ LIVE_BASIN_JS = r"""
         'data-sid="' + sid3 + '" data-name="' + sname3 + '" data-t="' + t3 + '" ' +
         'data-wind="' + windAttr3 + '" data-pres="' + presAttr3 + '" ' +
         'data-cls="' + cls3 + '" data-phase="invest"';
+      // Launchable: /cyclolab/{sid}/ new-tab anchor wrapping the X + label
+      // (byte-identical to render_tracks_svg's Python pass).
+      parts.push('<a href="/cyclolab/' + sid3 + '/" target="_blank" rel="noopener">');
       parts.push('<g class="invest-current" ' +
                  'transform="translate(' + fmt1(ix) + ',' + fmt1(iy) + ')" ' +
                  'filter="url(#invest-red-glow)">' +
@@ -2323,6 +2334,7 @@ LIVE_BASIN_JS = r"""
       parts.push('<text class="invest-label" ' +
                  'x="' + fmt1(ix + 11) + '" y="' + fmt1(iy + 4) + '" ' +
                  'text-anchor="start">' + atcfId + '</text>');
+      parts.push('</a>');
     }
     parts.push('</g>');
     return parts.join("\n");
@@ -2414,10 +2426,11 @@ LIVE_BASIN_JS = r"""
     var sid = storm.sid || "";
     var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
     var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
-    // SYNC: CycloLab entry link - active designated storms only. The
-    // data-name/data-accent feed the pre-launch settings dialog (FG-R3
-    // #3); the href is the no-JS / modified-click fallback.
-    var cyclolabBtn = (isActive && !isInvest && sid)
+    // SYNC: CycloLab entry link - active designated storms AND invests (Stage C:
+    // invests have a grey/red-X CycloLab page). The data-name/data-accent feed the
+    // pre-launch settings dialog (FG-R3 #3); the href is the no-JS / modified-click
+    // fallback.
+    var cyclolabBtn = (isActive && sid)
       ? '<a class="cyclolab-link" target="_blank" rel="noopener" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
       : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
@@ -3238,6 +3251,8 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         // the viewBox (the old "-22 -16 92 32") shifted the X 24px west
         // of the fix by exactly half the label allowance.
         el.innerHTML =
+          '<a href="/cyclolab/' + encodeURIComponent(props.storm_id) +
+            '/" target="_blank" rel="noopener">' +
           '<svg viewBox="-16 -16 32 32" xmlns="http://www.w3.org/2000/svg">' +
             '<defs><filter id="' + fid + '" ' +
               'x="-200%" y="-200%" width="500%" height="500%">' +
@@ -3258,7 +3273,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
             '</g>' +
             '<text class="invest-label" x="11" y="4" ' +
               'text-anchor="start">' + escapeHtml(designation) + '</text>' +
-          '</svg>';
+          '</svg></a>';
       } else {
         // EVERY active designated storm — spinning hurricane glyph;
         // current_category picks the letter/color (a current TD wears a
@@ -3321,10 +3336,10 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
         map.getCanvas().style.cursor = "";
         if (!pinned && mPopup) { mPopup.remove(); mPopup = null; }
       });
-      // Click is the native <a target="_blank"> wrapping the glyph (opens
-      // CycloLab in a new tab, no JS) - so NO click handler here. Hover shows
-      // the INFO-ONLY popup; nothing interactive lives in it (no hover-race).
-      // Invests carry no anchor, so a click on an invest X does nothing.
+      // Click is the native <a target="_blank"> wrapping the glyph AND the
+      // invest X (Stage C: invests now launch their grey/red-X CycloLab page) -
+      // so NO click handler here. Hover shows the INFO-ONLY popup; nothing
+      // interactive lives in it (no hover-race).
     });
   }
 
@@ -3477,15 +3492,15 @@ def render_storm_card(storm: dict) -> str:
     sid = storm.get("sid") or ""
     hint_text = "Click for wind history" if is_active else "Click for peak intensity"
     click_hint = f'<div class="click-hint">▸ {hint_text}</div>'
-    # CycloLab entry (Stage 5): ACTIVE, DESIGNATED storms only (invests
-    # have no per-storm page in V1). A REAL link - it works even where
-    # card click handlers are absent, and the card handler skips <a>
-    # clicks so the placard toggle never swallows navigation.
+    # CycloLab entry (Stage 5): ACTIVE designated storms AND invests (Stage C:
+    # invests now have a grey/red-X CycloLab page). A REAL link - it works even
+    # where card click handlers are absent, and the card handler skips <a> clicks
+    # so the placard toggle never swallows navigation.
     cyclolab_btn = (f'<a class="cyclolab-link" target="_blank" rel="noopener" '
                     f'href="/cyclolab/{sid}/" '
                     f'data-name="{storm.get("name") or "UNNAMED"}" '
                     f'data-accent="{color}">Open in CycloLab ▸</a>'
-                    if (is_active and not is_invest and sid) else '')
+                    if (is_active and sid) else '')
     placard_slot = f'<div class="storm-placard" id="placard-{sid}" hidden></div>'
     return f"""
 <div class="{classes}" id="card-{sid}" data-sid="{sid}">
