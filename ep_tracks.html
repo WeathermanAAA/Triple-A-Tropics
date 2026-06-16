@@ -249,7 +249,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-16 12:34 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-16 17:08 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>3</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">3.68 ACE</span></div>
     </div>
@@ -2599,7 +2599,9 @@
     // THE single client-side source of the marker classification.
     // Mirrors ace_core.build_global_geojson's marker_type fork
     // (ace_core/ace_core/__init__.py, the "Two flavors" block):
-    //   invest (active or not) -> "invest_x"   (NHC invest-area X)
+    //   invest OR PTC (active or not) -> "invest_x"  (NHC invest-area X; a
+    //                                          PTC wears the invest identity
+    //                                          under its REAL designation)
     //   active (designated)    -> "hurricane"  (glyph; current_category
     //                                           picks the letter/color)
     //   otherwise              -> null (no current-position marker)
@@ -2609,7 +2611,7 @@
     // stage different markers. Stage now only picks the glyph letter.)
     // tests/test_marker_type_agreement.py asserts the two implementations
     // agree on every case - keep them in lockstep.
-    if (storm.is_invest) return "invest_x";
+    if (storm.is_invest || storm.is_ptc) return "invest_x";
     if (storm.is_active) return "hurricane";
     return null;
   }
@@ -2650,14 +2652,14 @@
           prevX = xy[j][0];
         }
         var d = dParts.join(" ");
-        var dashAttr = storm.is_invest ? ' stroke-dasharray="4 3"' : "";
+        var dashAttr = (storm.is_invest || storm.is_ptc) ? ' stroke-dasharray="4 3"' : "";
         parts.push('<path d="' + d + '" fill="none" stroke="#ffffff" ' +
                    'stroke-width="1.2" stroke-opacity="0.5" ' +
                    'stroke-linejoin="round" stroke-linecap="round"' +
                    dashAttr + '/>');
       }
 
-      if (storm.is_invest) {
+      if (storm.is_invest || storm.is_ptc) {
         var lastIdx = xy.length - 1;
         for (var k = 0; k < xy.length; k++) {
           var x = xy[k][0], y = xy[k][1];
