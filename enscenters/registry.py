@@ -130,16 +130,22 @@ class WarmCoreParams:
     subtrop_warm_anom_min_m: float = 12.0
     subtrop_closed_drop_m: float = 12.0
     subtrop_closed_radius_deg: float = 4.5
-    # Hart-B thermal-symmetry ceiling (gpm), latitude-graded. A symmetric TC warm core
-    # gives B ~ a few m; a frontal / baroclinic / hybrid low is strongly one-sided
-    # (large B). Real tropical-ocean TCs measured B p90 ~ 8.6 m, so the deep-tropics
-    # ceiling stays generous (14) to never clip a genuine TC, while the subtropical /
-    # midlatitude ceiling (9) cuts the storm-track + subtropical band the geometry
-    # alone lets through. Verified live: ~84% of the 30-50 deg slop removed, 100% of
-    # tropical-ocean centers kept.
+    # Hart-B thermal-symmetry ceiling (gpm), THREE-TIER latitude-graded. A symmetric TC
+    # warm core gives B ~ a few m; a frontal / baroclinic / hybrid low is strongly
+    # one-sided (large B). Real tropical-ocean TCs measured B p90 ~ 8.6 m, so the deep
+    # tropics (|lat| <= hart_b_lat1) stay generous (14) to never clip a genuine TC; the
+    # subtropics (hart_b_lat1..hart_b_lat2) tighten (10) and the midlatitudes (> lat2)
+    # tighten hardest (8) - that progression cuts the SH-winter / NW-Atlantic / East-
+    # China-Sea subtropical + storm-track lows the closed geometry alone lets through.
+    # Verified live across ecens/ecaie/gefs: continental heat-lows -100%, 30-50 deg
+    # band cut hard, SH-winter subtropical residual cut a further ~25%, real TC
+    # clusters preserved on all three (NH tropical-ocean centers ~99% kept).
     hart_b_radius_deg: float = 3.0
-    hart_b_max_trop_m: Optional[float] = 14.0
-    hart_b_max_subtrop_m: Optional[float] = 9.0
+    hart_b_lat1: float = 20.0          # deep-tropics / subtropics boundary
+    hart_b_lat2: float = 28.0          # subtropics / midlatitude boundary
+    hart_b_max_trop_m: Optional[float] = 14.0     # |lat| <= lat1
+    hart_b_max_mid_m: Optional[float] = 10.0      # lat1 < |lat| <= lat2
+    hart_b_max_subtrop_m: Optional[float] = 8.0   # |lat| > lat2
 
     def as_kwargs(self) -> dict:
         return {
@@ -158,7 +164,10 @@ class WarmCoreParams:
             "subtrop_closed_drop_m": self.subtrop_closed_drop_m,
             "subtrop_closed_radius_deg": self.subtrop_closed_radius_deg,
             "hart_b_radius_deg": self.hart_b_radius_deg,
+            "hart_b_lat1": self.hart_b_lat1,
+            "hart_b_lat2": self.hart_b_lat2,
             "hart_b_max_trop_m": self.hart_b_max_trop_m,
+            "hart_b_max_mid_m": self.hart_b_max_mid_m,
             "hart_b_max_subtrop_m": self.hart_b_max_subtrop_m,
         }
 

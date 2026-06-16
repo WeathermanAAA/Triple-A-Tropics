@@ -254,8 +254,11 @@ def filter_centers(
     subtrop_closed_drop_m: float = 12.0,
     subtrop_closed_radius_deg: float = 4.5,
     hart_b_radius_deg: float = 3.0,
+    hart_b_lat1: float = 20.0,
+    hart_b_lat2: float = 28.0,
     hart_b_max_trop_m: Optional[float] = 14.0,
-    hart_b_max_subtrop_m: Optional[float] = 9.0,
+    hart_b_max_mid_m: Optional[float] = 10.0,
+    hart_b_max_subtrop_m: Optional[float] = 8.0,
 ) -> List[dict]:
     """Keep only warm-core tropical centers from ``detect_centers`` output. Cheap
     AND-gates run first - |lat| > max_lat, high-terrain, then a DEEP-INLAND gate
@@ -264,11 +267,12 @@ def filter_centers(
     it; distance inland does. Survivors face the thickness-anomaly closure test
     (anomaly field built ONCE per step), LATITUDE-GRADED about ``subtrop_lat``:
     poleward, a center must show a stronger, more compact closed warm core
-    (``subtrop_*``) AND a more symmetric one (``hart_b_max_subtrop_m``); equatorward
-    the tests are lenient (catch weak / forming TCs) with a looser symmetry ceiling
-    (``hart_b_max_trop_m``). The Hart-B symmetry test is what separates a compact
-    recurving TC from the broad frontal / hybrid / subtropical lows that otherwise
-    pass the geometry alone.
+    (``subtrop_*``). The Hart-B symmetry ceiling is graded in THREE latitude tiers
+    (``hart_b_max_trop_m`` for |lat| <= ``hart_b_lat1``, ``hart_b_max_mid_m`` up to
+    ``hart_b_lat2``, ``hart_b_max_subtrop_m`` beyond) - lenient in the deep tropics so
+    a genuine / forming TC is never clipped, tightening poleward to cut the broad
+    frontal / hybrid / subtropical (incl. SH-winter, NW-Atlantic, East-China-Sea)
+    lows that pass the closed geometry alone.
 
     FALLBACK when ``thk`` is None (gh/thickness unavailable for this step): do NOT
     pass the full storm track. Apply only the cheap lat+terrain+inland gates, so the
@@ -297,12 +301,16 @@ def filter_centers(
         if not _geo_ok(ctr):
             continue
         lat, lon = ctr["lat"], ctr["lon"]
-        if abs(lat) > subtrop_lat:      # subtropics/midlatitudes: strict compact + symmetric core
-            wa, cd, cr, hb = (subtrop_warm_anom_min_m, subtrop_closed_drop_m,
-                              subtrop_closed_radius_deg, hart_b_max_subtrop_m)
+        alat = abs(lat)
+        # closed-core strictness: two-tier about subtrop_lat
+        if alat > subtrop_lat:          # subtropics/midlatitudes: strict compact core
+            wa, cd, cr = subtrop_warm_anom_min_m, subtrop_closed_drop_m, subtrop_closed_radius_deg
         else:                           # deep tropics: lenient (catch weak/forming TCs)
-            wa, cd, cr, hb = (warm_anom_min_m, closed_drop_m, closed_radius_deg,
-                              hart_b_max_trop_m)
+            wa, cd, cr = warm_anom_min_m, closed_drop_m, closed_radius_deg
+        # symmetry ceiling: three-tier (lenient deep tropics -> strict midlatitudes)
+        hb = (hart_b_max_trop_m if alat <= hart_b_lat1
+              else hart_b_max_mid_m if alat <= hart_b_lat2
+              else hart_b_max_subtrop_m)
         if not is_warm_core(lat, lon, anom, lats, lons,
                             search_max_deg=search_max_deg, warm_anom_min_m=wa,
                             closed_drop_m=cd, closed_radius_deg=cr,
