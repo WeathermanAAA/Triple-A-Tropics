@@ -1281,14 +1281,22 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # DESIGNATED storm contributes the invest numbers it spawned (b-deck
         # SPAWNINVEST tag -> point["spawn_invest"]); every invest registers its
         # number so the dedup can drop a superseded invest.
-        if is_active and not is_invest:
-            for p in points:
-                sp = p.get("spawn_invest")
-                if sp is not None and not (isinstance(sp, float)
-                                           and math.isnan(sp)):
-                    superseding_invest_nums.add(int(sp))
+        spawn_num = next((int(p["spawn_invest"]) for p in points
+                          if p.get("spawn_invest") is not None
+                          and not (isinstance(p["spawn_invest"], float)
+                                   and math.isnan(p["spawn_invest"]))), None)
+        if is_active and not is_invest and spawn_num is not None:
+            superseding_invest_nums.add(spawn_num)
         if is_invest:
             invest_candidates.append((sid, int(nums[0]) if nums else None))
+        # The sid of the invest this designated system spawned (e.g. AL01 ->
+        # "NHC_AL902026"). Surfaced so the PTC's CycloLab page can fall back to
+        # its spawning invest's formation.json (the NHC TWO odds live under the
+        # invest area, not the designation). Same SID format as parse_bdeck.
+        spawn_sid = (
+            f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
+            f"{spawn_num:02d}{int(points[0]['season'])}"
+            if spawn_num is not None else None)
 
         storms.append({
             "sid": sid,
@@ -1310,6 +1318,9 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
             # DB/DS disturbance. Drives the invest visual identity on the marker
             # and the PTC branch on the CycloLab page. Never true for invests.
             "is_ptc": bool(is_ptc),
+            # The spawning invest's sid (None unless a SPAWNINVEST tag linked
+            # one) - the PTC page reads its formation.json for the chance pill.
+            "spawn_sid": spawn_sid,
             "recent_invest": bool(recent_invest),
             "atcf_id": atcf_id,
             "points": [_serialize_point(p) for p in points],
