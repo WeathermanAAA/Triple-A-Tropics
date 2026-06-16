@@ -249,7 +249,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-16 06:13 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-16 06:43 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>0</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">0.00 ACE</span></div>
     </div>
@@ -3252,8 +3252,10 @@
 <text x="10" y="85.8" text-anchor="start">50°N</text>
 </g>
         <g class="tracks">
+<a href="/cyclolab/NHC_AL902026/" target="_blank" rel="noopener">
 <g class="invest-current" transform="translate(9.8,459.8)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_AL902026" data-name="90L" data-t="2026-06-16T06:00:00" data-wind="20.0" data-pres="1009.0" data-cls="TD" data-phase="invest"/></g>
 <text class="invest-label" x="20.8" y="463.8" text-anchor="start">90L</text>
+</a>
 </g>
         <g class="active-storms">
 </g>
@@ -3584,6 +3586,9 @@
         'data-sid="' + sid3 + '" data-name="' + sname3 + '" data-t="' + t3 + '" ' +
         'data-wind="' + windAttr3 + '" data-pres="' + presAttr3 + '" ' +
         'data-cls="' + cls3 + '" data-phase="invest"';
+      // Launchable: /cyclolab/{sid}/ new-tab anchor wrapping the X + label
+      // (byte-identical to render_tracks_svg's Python pass).
+      parts.push('<a href="/cyclolab/' + sid3 + '/" target="_blank" rel="noopener">');
       parts.push('<g class="invest-current" ' +
                  'transform="translate(' + fmt1(ix) + ',' + fmt1(iy) + ')" ' +
                  'filter="url(#invest-red-glow)">' +
@@ -3596,6 +3601,7 @@
       parts.push('<text class="invest-label" ' +
                  'x="' + fmt1(ix + 11) + '" y="' + fmt1(iy + 4) + '" ' +
                  'text-anchor="start">' + atcfId + '</text>');
+      parts.push('</a>');
     }
     parts.push('</g>');
     return parts.join("\n");
@@ -3687,10 +3693,11 @@
     var sid = storm.sid || "";
     var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
     var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
-    // SYNC: CycloLab entry link - active designated storms only. The
-    // data-name/data-accent feed the pre-launch settings dialog (FG-R3
-    // #3); the href is the no-JS / modified-click fallback.
-    var cyclolabBtn = (isActive && !isInvest && sid)
+    // SYNC: CycloLab entry link - active designated storms AND invests (Stage C:
+    // invests have a grey/red-X CycloLab page). The data-name/data-accent feed the
+    // pre-launch settings dialog (FG-R3 #3); the href is the no-JS / modified-click
+    // fallback.
+    var cyclolabBtn = (isActive && sid)
       ? '<a class="cyclolab-link" target="_blank" rel="noopener" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
       : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';

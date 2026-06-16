@@ -207,7 +207,7 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-06-16 06:13 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-16 06:43 UTC</div>
       </div>
       <div class="stats">
         <b>8</b> named storms &middot; <b>2</b> category 1+ storms &middot;
@@ -644,6 +644,8 @@
         // the viewBox (the old "-22 -16 92 32") shifted the X 24px west
         // of the fix by exactly half the label allowance.
         el.innerHTML =
+          '<a href="/cyclolab/' + encodeURIComponent(props.storm_id) +
+            '/" target="_blank" rel="noopener">' +
           '<svg viewBox="-16 -16 32 32" xmlns="http://www.w3.org/2000/svg">' +
             '<defs><filter id="' + fid + '" ' +
               'x="-200%" y="-200%" width="500%" height="500%">' +
@@ -664,7 +666,7 @@
             '</g>' +
             '<text class="invest-label" x="11" y="4" ' +
               'text-anchor="start">' + escapeHtml(designation) + '</text>' +
-          '</svg>';
+          '</svg></a>';
       } else {
         // EVERY active designated storm — spinning hurricane glyph;
         // current_category picks the letter/color (a current TD wears a
@@ -727,10 +729,10 @@
         map.getCanvas().style.cursor = "";
         if (!pinned && mPopup) { mPopup.remove(); mPopup = null; }
       });
-      // Click is the native <a target="_blank"> wrapping the glyph (opens
-      // CycloLab in a new tab, no JS) - so NO click handler here. Hover shows
-      // the INFO-ONLY popup; nothing interactive lives in it (no hover-race).
-      // Invests carry no anchor, so a click on an invest X does nothing.
+      // Click is the native <a target="_blank"> wrapping the glyph AND the
+      // invest X (Stage C: invests now launch their grey/red-X CycloLab page) -
+      // so NO click handler here. Hover shows the INFO-ONLY popup; nothing
+      // interactive lives in it (no hover-race).
     });
   }
 

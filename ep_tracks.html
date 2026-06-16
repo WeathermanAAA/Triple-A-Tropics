@@ -249,7 +249,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-06-16 06:13 UTC</div>
+        <div class="sub" id="as-of">As of 2026-06-16 06:43 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>3</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">3.68 ACE</span></div>
     </div>
@@ -2364,8 +2364,10 @@
 <circle class="track-dot" cx="1143.8" cy="544.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP022026" data-name="BORIS" data-t="2026-06-09T00:00:00" data-wind="40.0" data-pres="1001.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="1143.8" cy="535.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP022026" data-name="BORIS" data-t="2026-06-09T06:00:00" data-wind="35.0" data-pres="1003.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="1139.6" cy="524.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP022026" data-name="BORIS" data-t="2026-06-09T12:00:00" data-wind="30.0" data-pres="1003.0" data-cls="TD" data-phase="tc"/>
+<a href="/cyclolab/NHC_EP932026/" target="_blank" rel="noopener">
 <g class="invest-current" transform="translate(653.8,679.5)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_EP932026" data-name="93E" data-t="2026-06-16T06:00:00" data-wind="25.0" data-pres="1008.0" data-cls="TD" data-phase="invest"/></g>
 <text class="invest-label" x="664.8" y="683.5" text-anchor="start">93E</text>
+</a>
 </g>
         <g class="active-storms">
 </g>
@@ -2747,6 +2749,9 @@
         'data-sid="' + sid3 + '" data-name="' + sname3 + '" data-t="' + t3 + '" ' +
         'data-wind="' + windAttr3 + '" data-pres="' + presAttr3 + '" ' +
         'data-cls="' + cls3 + '" data-phase="invest"';
+      // Launchable: /cyclolab/{sid}/ new-tab anchor wrapping the X + label
+      // (byte-identical to render_tracks_svg's Python pass).
+      parts.push('<a href="/cyclolab/' + sid3 + '/" target="_blank" rel="noopener">');
       parts.push('<g class="invest-current" ' +
                  'transform="translate(' + fmt1(ix) + ',' + fmt1(iy) + ')" ' +
                  'filter="url(#invest-red-glow)">' +
@@ -2759,6 +2764,7 @@
       parts.push('<text class="invest-label" ' +
                  'x="' + fmt1(ix + 11) + '" y="' + fmt1(iy + 4) + '" ' +
                  'text-anchor="start">' + atcfId + '</text>');
+      parts.push('</a>');
     }
     parts.push('</g>');
     return parts.join("\n");
@@ -2850,10 +2856,11 @@
     var sid = storm.sid || "";
     var hintText = isActive ? "Click for wind history" : "Click for peak intensity";
     var clickHint = '<div class="click-hint">▸ ' + hintText + '</div>';
-    // SYNC: CycloLab entry link - active designated storms only. The
-    // data-name/data-accent feed the pre-launch settings dialog (FG-R3
-    // #3); the href is the no-JS / modified-click fallback.
-    var cyclolabBtn = (isActive && !isInvest && sid)
+    // SYNC: CycloLab entry link - active designated storms AND invests (Stage C:
+    // invests have a grey/red-X CycloLab page). The data-name/data-accent feed the
+    // pre-launch settings dialog (FG-R3 #3); the href is the no-JS / modified-click
+    // fallback.
+    var cyclolabBtn = (isActive && sid)
       ? '<a class="cyclolab-link" target="_blank" rel="noopener" href="/cyclolab/' + sid + '/" data-name="' + (storm.name || "UNNAMED") + '" data-accent="' + color + '">Open in CycloLab ▸</a>'
       : '';
     var placardSlot = '<div class="storm-placard" id="placard-' + sid + '" hidden></div>';
