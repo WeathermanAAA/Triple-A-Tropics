@@ -224,6 +224,28 @@ class TestOverlayParity(unittest.TestCase):
             with self.subTest(basin=basin):
                 self.assert_parity(basin, make_payload(basin, []))
 
+    def test_ptc_card_wears_grey_identity(self):
+        # The PTC sidebar card: grey 'ptc' class (not the amber 'active'
+        # tint), a "PTC" tag (not "Active"/"Invest"), and the CSS-hidden TD
+        # chip — consistent with the marker + page. Named/invest cards
+        # unchanged. (Parity Python==JS is covered by the fixture sweep.)
+        storms = make_fixture_storms(gtp.BASINS["al"]["extent"])
+        ptc = next(s for s in storms if s.get("is_ptc"))
+        card = gtp.render_storm_card(ptc)
+        self.assertIn('class="storm-card clickable ptc"', card)
+        self.assertIn('<span class="storm-ptc">PTC</span>', card)
+        self.assertNotIn("storm-active", card)
+        # the grey-card CSS that hides the TD chip is baked into every page.
+        css = gtp.HTML_TEMPLATE
+        self.assertIn(".storm-card.ptc .storm-cat", css)
+        # a normal active TC is untouched.
+        tc = next(s for s in storms
+                  if s.get("is_active") and not s.get("is_ptc")
+                  and not s.get("is_invest"))
+        tc_card = gtp.render_storm_card(tc)
+        self.assertIn("storm-active", tc_card)
+        self.assertNotIn("storm-ptc", tc_card)
+
 
 @unittest.skipIf(NODE is None, "node not on PATH")
 @unittest.skipUnless(os.environ.get("LIVE_FEED_PARITY") == "1",
