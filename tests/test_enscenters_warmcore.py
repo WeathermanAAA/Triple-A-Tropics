@@ -95,6 +95,46 @@ class TestWarmCore(unittest.TestCase):
         self.assertGreater(wc.elevation_at(31.0, 88.0), 4000.0)   # Tibet
         self.assertLess(abs(wc.elevation_at(0.0, -150.0)), 50.0)  # open ocean
 
+    def test_inland_distance_field(self):
+        # ocean ~0; a deep continental interior is hundreds of km inland
+        self.assertLess(wc.inland_km(15.0, 150.0), 50.0)          # open Pacific
+        self.assertGreater(wc.inland_km(38.0, -101.0), 600.0)     # Kansas interior
+        self.assertGreater(wc.inland_km(29.0, 105.3), 400.0)      # Sichuan basin
+
+    def test_inland_gate_drops_continental_warm_low(self):
+        # A genuine WARM, SYMMETRIC core (passes thickness + closure + symmetry) over
+        # the continental interior is a heat/monsoon low, NOT a TC - the inland gate
+        # drops it; the SAME core over open ocean is kept. This is the discriminator
+        # the thermal test alone cannot make.
+        kansas = wc.filter_centers([_center(38.0, -101.0, 990.0)],
+                                   _with_bump(38.0, -101.0, 30.0), LATS, LONS)
+        ocean = wc.filter_centers([_center(38.0, 150.0, 990.0)],
+                                  _with_bump(38.0, 150.0, 30.0), LATS, LONS)
+        self.assertEqual(kansas, [])             # deep inland -> dropped
+        self.assertEqual(len(ocean), 1)          # open ocean, same core -> kept
+
+    def test_hart_b_symmetric_vs_asymmetric(self):
+        # the Hart-B asymmetry metric: ~0 for a symmetric core, large for a one-sided
+        # (frontal) thermal field at the storm scale.
+        sym = _with_bump(20.0, 150.0, 30.0) - BASE              # symmetric anomaly
+        self.assertLess(wc.hart_b_asymmetry(20.0, 150.0, sym, LATS, LONS), 6.0)
+        # storm-scale dipole: warm core + a cold companion 3 deg to the west. A clear
+        # frontal asymmetry lands well ABOVE the subtropical ceiling (9), a symmetric
+        # core well below it - the metric brackets the production threshold.
+        dip = (_with_bump(20.0, 150.0, 30.0, width=1.5)
+               - _with_bump(20.0, 147.0, 30.0, width=1.5) - BASE)
+        self.assertGreater(wc.hart_b_asymmetry(20.0, 150.0, dip, LATS, LONS), 11.0)
+
+    def test_asymmetric_subtropical_low_dropped(self):
+        # a strongly ASYMMETRIC (frontal/hybrid) warm low at 35 N over ocean: the
+        # closed-anomaly geometry passes but the symmetry test rejects it. The
+        # symmetric core at the same spot is kept.
+        dip = (_with_bump(35.0, 150.0, 34.0, width=1.5)
+               - _with_bump(35.0, 147.0, 34.0, width=1.5))
+        self.assertEqual(wc.filter_centers([_center(35.0, 150.0, 980.0)], dip, LATS, LONS), [])
+        sym = _with_bump(35.0, 150.0, 34.0, width=1.5)
+        self.assertEqual(len(wc.filter_centers([_center(35.0, 150.0, 980.0)], sym, LATS, LONS)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

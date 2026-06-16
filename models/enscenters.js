@@ -697,19 +697,24 @@
     var uptoStep = this.steps[Math.min(idx, this.steps.length - 1)];
     var ext = this.extent, mw = this.map.w, mh = this.map.h, JUMP = mw * 0.5;
     var r = window.TATRegions ? TATRegions.get(this.region) : null;
+    // dated MSLP labels go on the HEADLINE system only (the same dominant cluster
+    // the plume describes), so secondary tracks don't crowd the field with text.
+    var dom = this._dominantCluster();
     var items = [];
     for (var i = 0; i < this.tracks.clusters.length; i++) {
       var c = this.tracks.clusters[i];
       if ((c.member_count || 0) < MEAN_MIN_MEMBERS) continue;     // hide tiny clusters
+      // Only CONFIDENT, populous clusters get a mean line - the low-confidence ones
+      // were the jagged faint tangle. The single exception is the region's dominant
+      // system: drawn faint so a lone marginal system still shows ONE clean line
+      // (and its plume) rather than an empty field.
+      if (c.low_confidence && c !== dom) continue;
       var mt = c.mean_track || [], vis = !r;
       for (var k = 0; k < mt.length && !vis; k++) if (TATRegions.inRegion(wrap180(mt[k][2]), mt[k][1], r)) vis = true;
       if (vis) items.push(c);
     }
     // draw de-emphasized (low_confidence) first so bold consensus sits on top
     items.sort(function (a, b) { return (a.low_confidence ? 0 : 1) - (b.low_confidence ? 0 : 1); });
-    // dated MSLP labels go on the HEADLINE system only (the same dominant cluster
-    // the plume describes), so secondary tracks don't crowd the field with text.
-    var dom = this._dominantCluster();
     for (var it = 0; it < items.length; it++) {
       this._drawMeanTrack(g, items[it], uptoStep, ext, mw, mh, JUMP,
         !!items[it].low_confidence, items[it] === dom);
@@ -869,9 +874,15 @@
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.strokeStyle = C.border; g.lineWidth = 1;
     roundRectPath(g, x, y, w, h, 5); g.fill(); g.stroke();
     g.fillStyle = C.fg; g.font = '700 10px ' + FONT; g.textBaseline = 'top'; g.textAlign = 'left';
-    g.fillText('Vmax plume  ·  ' + dom.member_count + ' members', x + 8, y + 6);
+    g.fillText('Vmax plume  ·  this system', x + 8, y + 5);
+    // The plume describes the HEADLINE system, whose member support is a SUBSET of the
+    // full ensemble. Spell it out as "N of M members" so it never reads as a broken
+    // mismatch against the header's total ensemble count (51).
+    var nTot = (this.tracks && this.tracks.n_members) || 0;
+    g.fillStyle = C.muted; g.font = '600 9px ' + FONT;
+    g.fillText(dom.member_count + ' of ' + nTot + ' members', x + 8, y + 16);
     // plot area; right gutter reserved for the Max/Median/Min labels
-    var cx = x + 8, cy = y + 24, gutter = 36, cw = w - 16 - gutter, ch = h - 34;
+    var cx = x + 8, cy = y + 28, gutter = 36, cw = w - 16 - gutter, ch = h - 38;
     var lmin = leads[0], lmax = leads[leads.length - 1], lspan = Math.max(1, lmax - lmin);
     var vlo = Infinity, vhi = -Infinity;
     for (var k = 0; k < leads.length; k++) { if (sMin[k] < vlo) vlo = sMin[k]; if (sMax[k] > vhi) vhi = sMax[k]; }
