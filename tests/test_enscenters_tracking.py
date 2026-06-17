@@ -130,6 +130,21 @@ class TestLinkage(unittest.TestCase):
         tracks = T.link_tracks([[0, 10, -50, 1005, 25], [6, 10.3, -50.6, 1004, 27]], 6.0)
         self.assertEqual(tracks, [])
 
+    def test_min_duration_is_spacing_aware(self):
+        # The duration floor is 4 STEP INTERVALS, so it scales with cadence: a
+        # 6-hourly model keeps the ~24 h wall, while ECMWF ENS's 3-hourly cadence
+        # does NOT shred weak, finely-sampled systems on an 8-fix/24 h wall (the
+        # Arthur regression). The track drifts >2 deg so the unchanged path gate
+        # never decides the outcome — only the duration floor does.
+        def mk(sp, end):
+            return [[s, 10.0, -50.0 - s * 0.3, 1005.0, 25.0] for s in range(0, end + 1, sp)]
+        # 3 h spacing: a 12 h / 5-fix track is KEPT (floor 12 h = 4 x 3 h)
+        self.assertEqual(len(T.link_tracks(mk(3, 12), 3.0)), 1)
+        # 6 h spacing: the SAME 12 h span (3 fixes) is DROPPED (floor 24 h, unchanged)
+        self.assertEqual(T.link_tracks(mk(6, 12), 6.0), [])
+        # 6 h spacing: a 24 h / 5-fix track is KEPT (floor 24 h)
+        self.assertEqual(len(T.link_tracks(mk(6, 24), 6.0)), 1)
+
     def test_two_distinct_lows_split(self):
         rng = np.random.default_rng(2)
         steps = list(range(0, 73, 6))
