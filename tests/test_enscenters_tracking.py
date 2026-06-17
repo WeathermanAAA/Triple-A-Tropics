@@ -145,6 +145,26 @@ class TestLinkage(unittest.TestCase):
         # 6 h spacing: a 24 h / 5-fix track is KEPT (floor 24 h)
         self.assertEqual(len(T.link_tracks(mk(6, 24), 6.0)), 1)
 
+    def test_link_gates_speed_and_bridge_are_spacing_aware(self):
+        # Fix A: the 6-hourly link must allow the SAME storm SPEED (range = speed x
+        # spacing -> 6 deg @ 6 h, not the old 5) and BRIDGE a 2-step detection miss
+        # (maxgap 3 @ 6 h, not 1), so a moving / intermittently-detected system (the
+        # AIFS-ENS Arthur regression) links into ONE track instead of fragmenting.
+        # ECMWF ENS's 3-hourly gates are unchanged (range 3.0, maxgap 2).
+        # (a) SPEED: ~1 deg/h track = ~5.8 deg gc per 6 h step -> links @ 6 h (broke
+        #     at the old 5.0-deg range).
+        fast6 = [[s, 15.0, -50.0 - (s / 6.0) * 6.0, 1000.0, 30.0] for s in range(0, 31, 6)]
+        self.assertEqual(len(T.link_tracks(fast6, 6.0)), 1)
+        # (b) BRIDGE: a 2-step (12 h) detection miss is spanned @ 6 h (maxgap 3); the
+        #     same gap broke into sub-floor fragments at the old maxgap 1.
+        gappy6 = [[0, 15, -50, 1004, 25], [6, 15, -53, 1003, 27],
+                  [24, 15, -62, 1002, 28], [30, 15, -65, 1001, 30]]  # 12 h + 18 h missing
+        self.assertEqual(len(T.link_tracks(gappy6, 6.0)), 1)
+        # (c) ECMWF 3-hourly UNCHANGED: range stays 3.0, so a ~3.4-deg/step jump still
+        #     splits (does not form one track).
+        jump3 = [[s, 15.0, -50.0 - (s / 3.0) * 3.5, 1000.0, 30.0] for s in range(0, 25, 3)]
+        self.assertNotEqual(len(T.link_tracks(jump3, 3.0)), 1)
+
     def test_two_distinct_lows_split(self):
         rng = np.random.default_rng(2)
         steps = list(range(0, 73, 6))

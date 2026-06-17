@@ -46,8 +46,21 @@ DEG_PER_KM_LAT = 1.0 / 110.574          # ~1 deg lat
 _BIG = 1.0e6                             # "no overlap" track-track distance sentinel
 
 # --- Stage A linkage defaults (scaled to the actual step spacing at runtime) ---
-LINK_RANGE_DEG_6H = 5.0                  # max great-circle step at 6 h spacing
-LINK_RANGE_DEG_3H = 3.0                  # ... at 3 h spacing
+# Linkage search radius as a storm SPEED (deg/h) x the step spacing, so the SAME
+# maximum storm speed is allowed at every cadence. The old fixed pair (5 deg @ 6 h,
+# 3 deg @ 6 h) inverted this: it allowed 0.83 deg/h at 6 h vs 1.0 deg/h at 3 h, so
+# the 6-hourly link permitted LESS storm speed than the 3-hourly one and a moving /
+# recurving track broke. 1.0 deg/h reproduces 3.0 deg @ 3 h EXACTLY (ECMWF ENS
+# byte-identical) and gives 6.0 deg @ 6 h (AIFS-ENS).
+LINK_SPEED_DEG_PER_H = 1.0
+# Skippable steps before a track goes stale. COARSER cadence needs MORE bridged
+# steps, not fewer: a weak, intermittently-detected system drops off more
+# consecutive coarse steps before re-detection, and each missed step is a longer
+# unobserved window. 2 @ 3 h (== prior; ECMWF unchanged), 3 @ 6 h (was 1, which
+# fragmented AIFS-ENS Arthur on any 2-step detection miss). Spacing-keyed so a new
+# cadence picks a value by rule, not by accident.
+LINK_MAXGAP_6H = 3
+LINK_MAXGAP_3H = 2
 W_POS = 1.0                              # position weight in the match cost
 W_INT = 0.5                              # intensity-continuity tie-break weight
 DMSLP_NORM = 30.0                        # hPa normaliser for the intensity term
@@ -216,9 +229,11 @@ def link_tracks(centers: Sequence[Sequence], spacing_h: float, *,
     spurious centers). Returns a list of tracks, each a list of center rows.
     """
     if range_deg is None:
-        range_deg = LINK_RANGE_DEG_6H if spacing_h >= 6 else LINK_RANGE_DEG_3H
+        # Speed x spacing: same max storm speed at every cadence (3 h -> 3.0 deg,
+        # unchanged; 6 h -> 6.0 deg, was 5.0 and too slow for a recurving track).
+        range_deg = LINK_SPEED_DEG_PER_H * spacing_h
     if maxgap is None:
-        maxgap = 1 if spacing_h >= 6 else 2
+        maxgap = LINK_MAXGAP_6H if spacing_h >= 6 else LINK_MAXGAP_3H
     if min_duration_h is None:
         # Spacing-aware: 4 step-intervals -> 24 h @ 6 h spacing (unchanged), 12 h @
         # 3 h spacing (recovers weak finely-sampled systems like Arthur that the
