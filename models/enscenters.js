@@ -1104,7 +1104,7 @@
   // (their latest observation fix). Everything else (historical fixes, inactive
   // tracks) is ignored - this is purely a read of observed reality.
   EnsCentersViewer.prototype._extractActiveObs = function (gj) {
-    var feats = (gj && gj.features) || [], out = [], latest = {};
+    var feats = (gj && gj.features) || [], out = [], latest = {}, seen = {};
     for (var i = 0; i < feats.length; i++) {
       var p = feats[i].properties || {}, g = feats[i].geometry || {};
       if (p.kind === 'observation' && g.type === 'Point') {
@@ -1115,14 +1115,20 @@
     for (var j = 0; j < feats.length; j++) {
       var p2 = feats[j].properties || {}, g2 = feats[j].geometry || {};
       if (p2.kind === 'active_marker' && g2.type === 'Point') {
+        // marker_type drives the glyph: 'invest_x' -> one red X; anything else
+        // (a NAMED storm's 'hurricane' marker) -> one green category glyph. Record
+        // the id so the is_active track loop below doesn't re-add the SAME named
+        // storm a second time (Arthur was drawing both a red X and a green glyph).
         out.push({ id: p2.storm_id, name: p2.name || p2.designation || p2.storm_id,
           lat: g2.coordinates[1], lon: g2.coordinates[0], kt: p2.current_intensity_kt, mslp: p2.current_mslp_mb,
-          timeMs: Date.parse(p2.last_fix || '') || 0, kind: 'invest' });
+          timeMs: Date.parse(p2.last_fix || '') || 0,
+          kind: (p2.marker_type === 'invest_x') ? 'invest' : 'storm' });
+        seen[p2.storm_id] = true;
       }
     }
     for (var k = 0; k < feats.length; k++) {
       var p3 = feats[k].properties || {};
-      if (p3.kind === 'track' && p3.is_active === true) {
+      if (p3.kind === 'track' && p3.is_active === true && !seen[p3.storm_id]) {
         var lf = latest[p3.storm_id];
         if (lf) out.push({ id: p3.storm_id, name: p3.name || p3.designation || p3.storm_id,
           lat: lf.lat, lon: lf.lon, kt: lf.kt, mslp: lf.mslp, timeMs: lf.t, kind: 'storm' });
