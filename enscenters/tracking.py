@@ -52,7 +52,17 @@ W_POS = 1.0                              # position weight in the match cost
 W_INT = 0.5                              # intensity-continuity tie-break weight
 DMSLP_NORM = 30.0                        # hPa normaliser for the intensity term
 MAX_DMSLP_PER_6H = 28.0                  # cap implausible jumps (cross-system guard)
-MIN_DURATION_H = 24.0                    # drop tracks shorter than this
+# Minimum track length, expressed in STEP INTERVALS so the floor scales with the
+# model's cadence instead of being a fixed wall in hours. The old flat 24 h was
+# tuned for 6-hourly models (~4 intervals); on ECMWF ENS's 3-hourly cadence the
+# same 24 h is an 8-fix wall that shredded weak, intermittently-detected
+# early-season systems (e.g. Arthur: hundreds of dense in-region centers, yet
+# each member's track fragments below 24 h) so NO in-region member-tracks survived
+# to cluster -> "No system in this region" + a near-empty Lines view. 4 intervals
+# keeps the 24 h floor at 6 h spacing (byte-identical there) and gives the
+# equivalent 12 h floor at 3 h spacing. link_tracks resolves it from spacing_h.
+MIN_TRACK_INTERVALS = 4
+MIN_DURATION_H = 24.0                    # legacy absolute floor (== 4 intervals @ 6 h); explicit-override default
 MIN_PATH_DEG = 2.0                       # drop near-stationary spurious centers (~222 km)
 
 # --- Stage B clustering defaults ---
@@ -192,7 +202,7 @@ def link_tracks(centers: Sequence[Sequence], spacing_h: float, *,
                 range_deg: Optional[float] = None, maxgap: Optional[int] = None,
                 w_pos: float = W_POS, w_int: float = W_INT,
                 dmslp_norm: float = DMSLP_NORM, max_dmslp_per_6h: float = MAX_DMSLP_PER_6H,
-                min_duration_h: float = MIN_DURATION_H,
+                min_duration_h: Optional[float] = None,
                 min_path_deg: float = MIN_PATH_DEG) -> List[List[list]]:
     """Greedy great-circle nearest-neighbour stitcher for ONE member's per-step
     centers ``[step_h, lat, lon, mslp, vmax]``.
@@ -209,6 +219,11 @@ def link_tracks(centers: Sequence[Sequence], spacing_h: float, *,
         range_deg = LINK_RANGE_DEG_6H if spacing_h >= 6 else LINK_RANGE_DEG_3H
     if maxgap is None:
         maxgap = 1 if spacing_h >= 6 else 2
+    if min_duration_h is None:
+        # Spacing-aware: 4 step-intervals -> 24 h @ 6 h spacing (unchanged), 12 h @
+        # 3 h spacing (recovers weak finely-sampled systems like Arthur that the
+        # flat 8-fix/24 h wall fragmented out of every cluster).
+        min_duration_h = MIN_TRACK_INTERVALS * spacing_h
     gap_h = (maxgap + 1) * spacing_h
 
     by_step: Dict[int, List[list]] = {}
