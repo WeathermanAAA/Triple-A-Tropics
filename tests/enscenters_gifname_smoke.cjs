@@ -32,7 +32,8 @@ function cycleFor(slug) {
 }
 
 const GIFHTML = `<button id="enscenters-gif"></button><div id="enscenters-gifmodal"></div>
-<input id="enscenters-gifn" value=""><input id="enscenters-giffps" value="10">
+<select id="enscenters-gifstart"></select><select id="enscenters-gifend"></select>
+<input id="enscenters-giffps" value="10">
 <input id="enscenters-gifskip" value="0"><button id="enscenters-gifmake"></button>
 <div id="enscenters-gifstatus"></div><button id="enscenters-gifx"></button>`;
 const HTML = `<!doctype html><html><body>
@@ -98,6 +99,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
     curSlug = slug;
     V._selectModel(slug);
     for (let i = 0; i < 4; i++) await flush();
+    V._openGif();              // populate the Start/End hour selects (full range)
     lastDownload = null;
     V._makeGif();
     for (let i = 0; i < 2; i++) await flush();

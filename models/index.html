@@ -555,8 +555,10 @@
         <option value="balanced">Balanced</option>
         <option value="discord">Discord (&le;10&nbsp;MB)</option>
       </select></div>
-    <div class="row"><label for="enscenters-gifn">Number of frames</label>
-      <input type="number" id="enscenters-gifn" min="2" value="30"></div>
+    <div class="row"><label for="enscenters-gifstart">Start hour</label>
+      <select id="enscenters-gifstart" title="First forecast hour to include"></select></div>
+    <div class="row"><label for="enscenters-gifend">End hour</label>
+      <select id="enscenters-gifend" title="Last forecast hour to include"></select></div>
     <div class="row"><label for="enscenters-giffps">Frames per second</label>
       <input type="number" id="enscenters-giffps" min="1" max="30" value="10"></div>
     <div class="row"><label for="enscenters-gifskip">Skip every</label>
@@ -571,6 +573,6 @@
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/hafs.js?v=b274bd2a02"></script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/models/enscenters.js?v=1ccb7bc20f"></script>
+<script src="/models/enscenters.js?v=8560259f84"></script>
 </body>
 </html>

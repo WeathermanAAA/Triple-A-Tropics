@@ -253,7 +253,8 @@
       obs: el('enscenters-obs'),
       gif: el('enscenters-gif'),
       gifmodal: el('enscenters-gifmodal'),
-      gifn: el('enscenters-gifn'),
+      gifstart: el('enscenters-gifstart'),
+      gifend: el('enscenters-gifend'),
       giffps: el('enscenters-giffps'),
       gifskip: el('enscenters-gifskip'),
       gifpreset: el('enscenters-gifpreset'),
@@ -499,6 +500,10 @@
     this._syncToolkitButtons();
     this._ensureTracks();
     this._ensureObs();
+    // keep the GIF-maker hour dropdowns in step with the loaded run (a new
+    // model/cycle can have a different hour set + max fhr); selection persists
+    // if still valid, else clamps. Harmless when the modal is closed.
+    this._populateGifHours();
   };
 
   // Model-aware caption: a model whose per-cycle JSON carries its own `caption`
@@ -1822,14 +1827,32 @@
     return GIF_PRESET_W[p] ? p : 'full';
   };
 
+  // Fill the Start/End hour <select>s from the LOADED run's real forecast hours
+  // (this.steps, e.g. 0, 6, 12 … the model's max), labelled F000-style. The
+  // prior selection PERSISTS when still a valid hour in the new run; otherwise
+  // it clamps (start -> first, end -> last). With nothing valid yet (first open,
+  // or a different hour set) the default is the FULL forecast: first -> last.
+  EnsCentersViewer.prototype._populateGifHours = function () {
+    var sSel = this.dom.gifstart, eSel = this.dom.gifend, steps = this.steps;
+    if (!sSel || !eSel || !steps.length) return;
+    var prevS = parseInt(sSel.value, 10), prevE = parseInt(eSel.value, 10);
+    var opts = '';
+    for (var i = 0; i < steps.length; i++) {
+      opts += '<option value="' + steps[i] + '">F' +
+        String(steps[i]).padStart(3, '0') + '</option>';
+    }
+    sSel.innerHTML = opts; eSel.innerHTML = opts;
+    var first = steps[0], last = steps[steps.length - 1];
+    var s = (steps.indexOf(prevS) !== -1) ? prevS : first;   // persist or clamp
+    var e = (steps.indexOf(prevE) !== -1) ? prevE : last;
+    if (e < s) { var t = s; s = e; e = t; }                  // keep end >= start
+    sSel.value = String(s); eSel.value = String(e);
+  };
+
   EnsCentersViewer.prototype._openGif = function () {
     if (!this.steps.length) return;
-    var nIn = this.dom.gifn;
-    nIn.max = this.steps.length;
-    if (!parseInt(nIn.value, 10) || parseInt(nIn.value, 10) > this.steps.length) {
-      nIn.value = Math.min(this.steps.length, 30);
-    }
-    if (this.dom.gifpreset) {                      // reflect the persisted preset
+    this._populateGifHours();                      // reflect the loaded run's hours
+    if (this.dom.gifpreset) {                       // reflect the persisted preset
       var saved = null; try { saved = localStorage.getItem(LS_GIFPRESET); } catch (e) {}
       if (saved && GIF_PRESET_W[saved]) this.dom.gifpreset.value = saved;
     }
@@ -1843,34 +1866,64 @@
     this.encoding = false;
   };
 
-  // The forecast steps to capture: the full run thinned by "skip every", then
-  // evenly sampled down to N, always ending on the last step (the full cloud).
-  EnsCentersViewer.prototype._pickSteps = function (total, n, skip) {
-    var base = [];
-    for (var i = 0; i < total; i++) if (skip <= 0 || i % (skip + 1) === 0) base.push(i);
-    if (base[base.length - 1] !== total - 1) base.push(total - 1);
-    if (base.length <= n) return base;
+  // The forecast-step INDICES to capture: those whose forecast hour falls in
+  // [startH, endH] inclusive, thinned by "skip every" WITHIN that range, always
+  // keeping the final in-range step so the loop still ends on endH.
+  EnsCentersViewer.prototype._rangeSteps = function (startH, endH, skip) {
+    var steps = this.steps, inRange = [];
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i] >= startH && steps[i] <= endH) inRange.push(i);
+    }
+    if (!inRange.length) return [];
+    var stride = (skip > 0) ? (skip + 1) : 1, out = [];
+    for (var k = 0; k < inRange.length; k += stride) out.push(inRange[k]);
+    var lastIdx = inRange[inRange.length - 1];
+    if (out[out.length - 1] !== lastIdx) out.push(lastIdx);
+    return out;
+  };
+
+  // Evenly sample a frame-index list down to n, keeping the endpoints. The
+  // Discord preset uses this to TRIM WITHIN the chosen hour range (not a raw
+  // frame count) so the GIF still spans start->end, just with fewer in-betweens.
+  EnsCentersViewer.prototype._decimate = function (list, n) {
+    if (n < 2 || list.length <= n) return list.slice();
     var out = [], seen = {};
     for (var k = 0; k < n; k++) {
-      var st = base[Math.round(k * (base.length - 1) / (n - 1))];
-      if (!seen[st]) { seen[st] = 1; out.push(st); }
+      var v = list[Math.round(k * (list.length - 1) / (n - 1))];
+      if (!seen[v]) { seen[v] = 1; out.push(v); }
     }
     return out;
   };
 
   EnsCentersViewer.prototype._makeGif = function () {
     if (typeof window.GIF === 'undefined') { alert('GIF library still loading, try again in a second.'); return; }
-    var total = this.steps.length;
+    var steps = this.steps, total = steps.length;
     if (total < 2) return;
-    var n = Math.max(2, Math.min(total, parseInt(this.dom.gifn.value, 10) || total));
+    var first = steps[0], last = steps[steps.length - 1];
+    // The user picks a forecast-HOUR range (Start/End). Read it, defaulting a
+    // missing/garbage value to the full forecast, and clamp/swap so end >= start.
+    var startH = parseInt(this.dom.gifstart && this.dom.gifstart.value, 10);
+    var endH = parseInt(this.dom.gifend && this.dom.gifend.value, 10);
+    if (isNaN(startH)) startH = first;
+    if (isNaN(endH)) endH = last;
+    if (endH < startH) { var t = startH; startH = endH; endH = t; }
     var fps = Math.max(1, Math.min(30, parseInt(this.dom.giffps.value, 10) || 10));
     var skip = Math.max(0, parseInt(this.dom.gifskip.value, 10) || 0);
     var preset = this._gifPreset();
     // The preset's only effect: the export WIDTH cap (color fidelity is fixed -
-    // quality:1, no dither, in _gifRun). Discord additionally auto-trims FRAME COUNT
-    // to land under the size budget. Width is capped at the source device width cw.
+    // quality:1, no dither, in _gifRun). Discord additionally auto-trims frames
+    // WITHIN the chosen range. Width is capped at the source device width cw.
     var W = Math.min(this.dom.canvas.width, GIF_PRESET_W[preset] || GIF_MAX_W);
     var status = this.dom.gifstatus, mk = this.dom.gifmake, self = this;
+    // Frame set = the steps inside [startH, endH], skip-thinned, in order.
+    var baseSel = this._rangeSteps(startH, endH, skip);
+    if (baseSel.length < 2) {
+      status.style.display = '';
+      status.textContent = (startH === endH)
+        ? 'Pick an End hour after the Start hour — a GIF needs at least 2 frames.'
+        : 'That hour range and “Skip every” leave fewer than 2 frames — lower “Skip every”.';
+      return;
+    }
     status.style.display = ''; status.textContent = 'Encoding… 0%'; mk.disabled = true;
     this.encoding = true;
     this._pause();
@@ -1890,37 +1943,38 @@
       requestAnimationFrame(function () { URL.revokeObjectURL(u); });
       self.encoding = false; mk.disabled = false;
       if (over) {
-        status.textContent = 'Saved — ' + mb + ' MB  ⚠ over Discord’s 10 MB; try the Discord preset, fewer frames, or a lower FPS.';
+        status.textContent = 'Saved — ' + mb + ' MB  ⚠ over Discord’s 10 MB; try the Discord preset, a narrower hour range, or a lower FPS.';
       } else {
         status.textContent = 'Saved — ' + mb + ' MB';
         setTimeout(function () { self._closeGif(); }, 1400);
       }
     }
-    function attempt(nFrames, tryNo) {
-      self._gifRun(nFrames, fps, skip, W, function (blob) {
-        // Discord: under-target? deliver. Over? trim frame count proportionally
-        // (size ~ linear in frames; quality/colors untouched) and re-encode.
-        if (preset === 'discord' && blob.size > GIF_DISCORD_TARGET && tryNo < maxTry && nFrames > GIF_FLOOR_FRAMES) {
-          var next = Math.floor(nFrames * (GIF_DISCORD_TARGET / blob.size) * 0.92);
-          next = Math.max(GIF_FLOOR_FRAMES, Math.min(next, nFrames - 2));   // always make progress
+    function attempt(sel, tryNo) {
+      self._gifRun(sel, fps, W, function (blob) {
+        // Discord: under-target? deliver. Over? evenly TRIM the frame set WITHIN
+        // the chosen hour range (size ~ linear in frames; quality/colors + the
+        // start->end span untouched) and re-encode.
+        if (preset === 'discord' && blob.size > GIF_DISCORD_TARGET && tryNo < maxTry && sel.length > GIF_FLOOR_FRAMES) {
+          var next = Math.floor(sel.length * (GIF_DISCORD_TARGET / blob.size) * 0.92);
+          next = Math.max(GIF_FLOOR_FRAMES, Math.min(next, sel.length - 2));   // always make progress
           status.textContent = 'Trimming to fit Discord (' + (blob.size / 1048576).toFixed(1) + ' MB)…';
-          attempt(next, tryNo + 1);
+          attempt(self._decimate(sel, next), tryNo + 1);
         } else {
           deliver(blob);
         }
       }, fail);
     }
-    attempt(n, 1);
+    attempt(baseSel, 1);
   };
 
-  // One encode pass at width W with `n` frames (skip-thinned). quality:1 + no dither
-  // (color fidelity); builds the burned-in-header frames off the live canvas. Calls
-  // onBlob(blob) on success, onFail(msg) on any error/timeout. Re-callable (Discord
-  // auto-fit re-runs it with fewer frames).
-  EnsCentersViewer.prototype._gifRun = function (n, fps, skip, W, onBlob, onFail) {
+  // One encode pass at width W over the explicit frame-index list `sel` (already
+  // range-filtered + skip-thinned by _makeGif). quality:1 + no dither (color
+  // fidelity); builds the burned-in-header frames off the live canvas. Calls
+  // onBlob(blob) on success, onFail(msg) on any error/timeout. Re-callable (the
+  // Discord auto-fit re-runs it with a decimated list).
+  EnsCentersViewer.prototype._gifRun = function (sel, fps, W, onBlob, onFail) {
     var self = this, total = this.steps.length;
-    var sel = this._pickSteps(total, n, skip);
-    if (sel.length < 2) { onFail('Not enough frames for a GIF; lower "Skip every".'); return; }
+    if (!sel || sel.length < 2) { onFail('Not enough frames for a GIF; lower "Skip every".'); return; }
     var selSet = {}; for (var s = 0; s < sel.length; s++) selSet[sel[s]] = 1;
     var lastSel = sel[sel.length - 1], delay = Math.round(1000 / fps);
     var cw = this.dom.canvas.width, ch = this.dom.canvas.height;
