@@ -176,6 +176,22 @@ class TestEnsCentersViewer(unittest.TestCase):
         # filename still carries the active model slug + region + cycle
         for r in (fn, fo, dt, df):
             self.assertEqual(r["download"], "fnv3_wpac_2026061412.gif")
+        # HOUR RANGE: the base frame set is the chosen hour window, not a raw
+        # count. With 31 hours available the 0->126h window selects exactly 22.
+        self.assertEqual(fn["baseN"], 22)
+
+    def test_gif_hour_range_selection(self):
+        # The GIF spans a forecast-HOUR range: 0->72h on a 0,6,…,180h run yields
+        # ONLY F000..F072 (13 frames); reversed input auto-swaps; "Skip every"
+        # thins within the range but still ends on the chosen end hour.
+        proc = subprocess.run([NODE, str(GIFSIZE_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"gifsize harness failed:\n{proc.stderr}")
+        s = json.loads(proc.stdout)
+        full = list(range(0, 73, 6))                       # F000..F072
+        self.assertEqual(s["range_0_72"], full)            # only the in-range hours
+        self.assertEqual(s["range_swapped"], full)         # end<start auto-swaps
+        self.assertEqual(s["range_skip1"], [0, 12, 24, 36, 48, 60, 72])  # thinned, ends on 72
 
     def test_burned_in_header_has_fhour_and_valid_per_frame(self):
         # ITEM 1 hard rule: the burned-in canvas header (what travels in a copied

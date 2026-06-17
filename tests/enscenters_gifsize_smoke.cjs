@@ -24,7 +24,8 @@ const MB = 1048576;
 const GIFHTML = `<button id="enscenters-gif"></button><div id="enscenters-gifmodal"></div>
 <select id="enscenters-gifpreset"><option value="full">Full</option>
 <option value="balanced">Balanced</option><option value="discord">Discord</option></select>
-<input id="enscenters-gifn" value="22"><input id="enscenters-giffps" value="10">
+<select id="enscenters-gifstart"></select><select id="enscenters-gifend"></select>
+<input id="enscenters-giffps" value="10">
 <input id="enscenters-gifskip" value="0"><button id="enscenters-gifmake"></button>
 <div id="enscenters-gifstatus"></div><button id="enscenters-gifx"></button>`;
 const HTML = `<!doctype html><html><body>
@@ -78,22 +79,47 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
   // model (bytes per frame * frames). Discord's auto-fit re-runs this with fewer frames.
   let attempts = [];
   let sizeOf = function () { return 0; };
-  V._gifRun = function (n, fps, skip, W, onBlob, onFail) {
-    attempts.push({ n: n, W: W });
-    onBlob({ size: sizeOf(n, W) });
+  // _gifRun now takes the explicit frame-index list; record its length + the list.
+  V._gifRun = function (sel, fps, W, onBlob, onFail) {
+    attempts.push({ n: sel.length, W: W, sel: sel.slice() });
+    onBlob({ size: sizeOf(sel.length, W) });
   };
 
-  function scenario(label, preset, steps, perFrameMB) {
+  // Range-selection probe (no encode-size pressure): 31 hourly-6 steps (0..180h).
+  // Picking 0->endH (optionally skip-thinned) must yield ONLY the in-range hours.
+  function rangeProbe(startH, endH, skip) {
+    attempts = [];
+    sizeOf = function () { return 1; };                      // tiny -> never trims
+    V.steps = []; for (let i = 0; i < 31; i++) V.steps.push(i * 6);
+    V._populateGifHours();
+    V.dom.gifstart.value = String(startH);
+    V.dom.gifend.value = String(endH);
+    V.dom.gifskip.value = String(skip || 0);
+    V.dom.gifpreset.value = "full";
+    V._makeGif();
+    V.dom.gifskip.value = "0";                               // reset for later scenarios
+    const sel = attempts.length ? attempts[0].sel : [];
+    return sel.map((i) => V.steps[i]);                       // -> the forecast hours
+  }
+
+  // The model exposes `nSteps` forecast hours (0,6,12 …); the user picks an HOUR
+  // range covering the first `rangeFrames` of them, so the base frame set is
+  // `rangeFrames` (mirrors the old "request N frames" calibration of 22). Discord
+  // then auto-trims WITHIN that range.
+  function scenario(label, preset, nSteps, perFrameMB, rangeFrames) {
     attempts = [];
     lastDownload = null;
     sizeOf = function (n) { return Math.round(n * perFrameMB * MB); };
-    V.steps = new Array(steps).fill(0);                       // total available frames
-    V.dom.gifn.value = "22";                                  // request 22 frames
+    V.steps = []; for (let i = 0; i < nSteps; i++) V.steps.push(i * 6);   // 0,6,…
+    V._populateGifHours();                                   // build the F-hour options
+    V.dom.gifstart.value = "0";
+    V.dom.gifend.value = String((rangeFrames - 1) * 6);      // in-range = rangeFrames steps
     V.dom.gifpreset.value = preset;
-    V._makeGif();                                             // synchronous (mock fires onBlob inline)
+    V._makeGif();                                            // synchronous (mock fires onBlob inline)
     const status = V.dom.gifstatus.textContent;
     return { label, preset, attempts: attempts.slice(),
       finalN: attempts.length ? attempts[attempts.length - 1].n : null,
+      baseN: attempts.length ? attempts[0].n : null,
       W: attempts.length ? attempts[0].W : null,
       status, warned: /over/i.test(status) && /10\s*MB/i.test(status),
       download: lastDownload };
@@ -101,13 +127,20 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
   const out = {
     // Full, normal size: one pass at width 1600, plain "Saved" readout, no warning.
-    fullNormal: scenario("full-normal", "full", 31, 0.30),
+    // 31 hours available, range covers the first 22 -> base 22 frames.
+    fullNormal: scenario("full-normal", "full", 31, 0.30, 22),
     // Full, too big: still one pass (Full never trims) but the warning fires.
-    fullOver: scenario("full-over", "full", 31, 0.60),
+    fullOver: scenario("full-over", "full", 31, 0.60, 22),
     // Discord, over budget: auto-trims frames once and lands under 9.5 MB, no warning.
-    discordTrim: scenario("discord-trim", "discord", 31, 0.55),
+    discordTrim: scenario("discord-trim", "discord", 31, 0.55, 22),
     // Discord, impossible: trims to the floor, still over 10 MB -> warning.
-    discordFloor: scenario("discord-floor", "discord", 31, 2.0),
+    discordFloor: scenario("discord-floor", "discord", 31, 2.0, 22),
+    // Range selection: 0->72h captures ONLY F000..F072 (13 frames of the 31).
+    range_0_72: rangeProbe(0, 72, 0),
+    // Reversed input auto-swaps to the same range (end >= start guard).
+    range_swapped: rangeProbe(72, 0, 0),
+    // Skip-every-1 thins WITHIN the range but keeps the end (F072).
+    range_skip1: rangeProbe(0, 72, 1),
   };
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
