@@ -308,6 +308,14 @@ class TestEnsCentersViewer(unittest.TestCase):
         # obs feed fetch fails -> empty, clean no-op, no error
         self.assertEqual(s["fail_obs_len"], 0)
         self.assertFalse(s["fail_threw"])
+        # #3 regression: a named storm with BOTH an active_marker ('hurricane') AND
+        # an is_active track draws ONCE (green 'storm' glyph), not a storm+invest
+        # dupe; the invest still draws one red 'invest' X.
+        self.assertEqual(s["dup_total"], 2)
+        self.assertEqual(s["dup_arthur_count"], 1)
+        self.assertEqual(s["dup_arthur_kind"], "storm")
+        self.assertEqual(s["dup_invC_count"], 1)
+        self.assertEqual(s["dup_invC_kind"], "invest")
 
 
 DEFAULT_MODEL_HARNESS = (Path(__file__).resolve().parent

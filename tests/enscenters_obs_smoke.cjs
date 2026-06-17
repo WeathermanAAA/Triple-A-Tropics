@@ -171,6 +171,23 @@ const vis = (b) => b && b.style.display !== "none";
   } catch (e) { threw2 = true; out.fail_err = String(e); }
   out.fail_threw = threw2;
 
+  // REGRESSION (#3 obs marker doubling): a NAMED storm now carries BOTH an
+  // active_marker ('hurricane' marker_type) AND an is_active track. It must yield
+  // exactly ONE 'storm' entry (green glyph), not a storm+invest dupe; an invest
+  // still yields exactly one 'invest' entry (red X).
+  const dupFeed = { type: "FeatureCollection", features: [
+    { type: "Point", geometry: { type: "Point", coordinates: [-60, 25] }, properties: { kind: "active_marker", marker_type: "hurricane", storm_id: "AL012026", name: "ARTHUR", current_intensity_kt: 45, last_fix: "2026-06-15T00:00:00" } },
+    { type: "Feature", geometry: { type: "LineString", coordinates: [[-61, 24], [-60, 25]] }, properties: { kind: "track", is_active: true, is_invest: false, storm_id: "AL012026", name: "ARTHUR" } },
+    { type: "Point", geometry: { type: "Point", coordinates: [-60, 25] }, properties: { kind: "observation", storm_id: "AL012026", storm_name: "ARTHUR", intensity_kt: 45, time_iso: "2026-06-15T00:00:00" } },
+    { type: "Point", geometry: { type: "Point", coordinates: [-55, 20] }, properties: { kind: "active_marker", marker_type: "invest_x", storm_id: "INV_C", name: "92L", current_intensity_kt: 25, last_fix: "2026-06-15T00:00:00" } },
+  ] };
+  const dup = V._extractActiveObs(dupFeed);
+  out.dup_total = dup.length;                                                // 2 (no duplicate)
+  out.dup_arthur_count = dup.filter((o) => o.id === "AL012026").length;      // 1
+  out.dup_arthur_kind = (dup.find((o) => o.id === "AL012026") || {}).kind;   // 'storm'
+  out.dup_invC_count = dup.filter((o) => o.id === "INV_C").length;           // 1
+  out.dup_invC_kind = (dup.find((o) => o.id === "INV_C") || {}).kind;        // 'invest'
+
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
 })().catch((e) => { process.stderr.write(String((e && e.stack) || e)); process.exit(1); });
