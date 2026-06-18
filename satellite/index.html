@@ -714,6 +714,8 @@
                 title="Next frame (&#8594;)">&#9654;</button>
         <div id="sat-speed" class="hafs-seg-group" role="group"
              aria-label="Playback speed"></div>
+        <div id="sat-loop" class="hafs-seg-group" role="group"
+             aria-label="Loop window"></div>
         <button id="sat-gif" class="hafs-btn sat-gif" type="button"
                 title="Export the loaded frames as a GIF">&#8681; GIF</button>
         <div class="hafs-readout"><span id="sat-time">&#8212;</span>
@@ -751,6 +753,8 @@
                 title="Next frame (&#8594;)">&#9654;</button>
         <div id="meso-speed" class="hafs-seg-group" role="group"
              aria-label="Playback speed"></div>
+        <div id="meso-loop" class="hafs-seg-group" role="group"
+             aria-label="Loop window"></div>
         <button id="meso-gif" class="hafs-btn sat-gif" type="button"
                 title="Export the loaded frames as a GIF">&#8681; GIF</button>
         <div class="hafs-readout"><span id="meso-time">&#8212;</span>
@@ -1374,7 +1378,7 @@ function makeSatViewer(idPrefix, opts) {
   var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
               raf: null, lastTick: 0, shown: false, followNew: false,
               pendingPlay: false, buildToken: 0, encoding: false, speed: 1,
-              pollTimer: null, inactive: false,
+              loopHours: 0, pollTimer: null, inactive: false,
               boxRefW: 0, boxRefH: 0, bandLabelBase: "" };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
@@ -1384,6 +1388,11 @@ function makeSatViewer(idPrefix, opts) {
   var SAT_LAST_FRAME_DWELL = 6;     // hold the newest frame Nx longer before wrap
   var SAT_FETCH_TIMEOUT_MS = 15000; // a stalled manifest fetch must not brick the panel
   var SAT_SPEEDS = [0.5, 1, 2, 4];
+  // Loop-window presets: "All" (the whole loaded set) vs a fixed trailing
+  // span. `hours` 0 means no clamp; >0 loops only frames within that many
+  // hours of the newest frame's time (clamped to what the manifest holds —
+  // if fewer than `hours` of frames exist, the window is just everything).
+  var SAT_LOOP_OPTS = [{ hours: 0, label: "All" }, { hours: 6, label: "Last 6h" }];
 
   function fetchJson(url) {
     if (typeof fetch !== "function") return Promise.resolve(null);
@@ -1597,12 +1606,40 @@ function makeSatViewer(idPrefix, opts) {
     }
     return ms;
   }
+  // Lowest frame index inside the active loop window. In "All" mode (loopHours
+  // 0) that's 0 — the whole loaded set. In a trailing-span mode it's the first
+  // frame whose time is within `loopHours` of the NEWEST frame's time; if fewer
+  // than that span exists it falls through to 0, so the loop plays everything
+  // available ("clamped to what the manifest window actually contains").
+  function satWinStart() {
+    var n = sat.frames.length;
+    if (!n || !sat.loopHours) return 0;
+    var newestT = new Date(sat.frames[n - 1].t).getTime();
+    if (!isFinite(newestT)) return 0;
+    var cutoff = newestT - sat.loopHours * 3600000;
+    for (var i = 0; i < n; i++) {
+      if (new Date(sat.frames[i].t).getTime() >= cutoff) return i;
+    }
+    return 0;
+  }
+  // The scrubber spans the active window: thumb values are absolute frame
+  // indices, so min rides up to the window start while max stays the newest.
+  function satApplyScrubRange() {
+    var sc = satEl("scrub");
+    if (!sc) return;
+    var lo = satWinStart();
+    sc.min = String(lo);
+    sc.max = String(Math.max(lo, sat.frames.length - 1));
+    if (Number(sc.value) < lo) sc.value = String(lo);
+  }
   function satAdvance() {
     var n = sat.frames.length;
     if (!n) return;
-    var j = sat.idx;
+    var lo = satWinStart();
+    // Re-enter the window if a shrink (mode switch / poll) left us below it.
+    var j = sat.idx < lo ? lo - 1 : sat.idx;
     for (var s = 0; s < n; s++) {
-      j = (j + 1) % n;
+      j = (j >= n - 1) ? lo : j + 1;     // wrap within [lo, n-1], not [0, n-1]
       if (sat.frames[j].ok) { satShow(j); return; }
     }
   }
@@ -1640,10 +1677,10 @@ function makeSatViewer(idPrefix, opts) {
   function satTogglePlay() { if (sat.playing) satPause(); else satPlay(); }
   function satStep(d) {
     satPause();
-    var n = sat.frames.length, j = sat.idx;
+    var n = sat.frames.length, lo = satWinStart(), j = sat.idx;
     for (var s = 0; s < n; s++) {
       j += d;
-      if (j < 0 || j >= n) return;       // no wrap on manual stepping
+      if (j < lo || j >= n) return;      // no wrap; clamp to the active window
       if (sat.frames[j].ok) { satShow(j); return; }
     }
   }
@@ -1684,6 +1721,40 @@ function makeSatViewer(idPrefix, opts) {
     if (i < 0) i = 1;
     satSetSpeed(SAT_SPEEDS[Math.max(0,
       Math.min(SAT_SPEEDS.length - 1, i + dir))]);
+  }
+
+  // ---- loop window (All vs a trailing span) ----------------------------------
+  function satSetLoop(hours) {
+    sat.loopHours = hours;
+    var host = satEl("loop");
+    if (host) {
+      for (var i = 0; i < host.children.length; i++) {
+        var b = host.children[i];
+        b.classList.toggle("active",
+          parseFloat(b.getAttribute("data-hours")) === hours);
+      }
+    }
+    satApplyScrubRange();
+    var lo = satWinStart();
+    if (sat.frames.length && sat.idx < lo) satShow(lo);  // pull playhead in-window
+    if (sat.playing) sat.lastTick = 0;                   // re-pace next tick
+  }
+  function satBuildLoop() {
+    var host = satEl("loop");
+    if (!host) return;
+    host.innerHTML = "";
+    SAT_LOOP_OPTS.forEach(function (opt) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "hafs-seg";
+      b.setAttribute("data-hours", String(opt.hours));
+      b.textContent = opt.label;
+      b.addEventListener("click", function () {
+        satSetLoop(parseFloat(this.getAttribute("data-hours")));
+      });
+      host.appendChild(b);
+    });
+    satSetLoop(0);   // default: loop the whole loaded set (today's behavior)
   }
 
   // ---- client-side GIF export (gif.js) ---------------------------------------
@@ -1929,7 +2000,7 @@ function makeSatViewer(idPrefix, opts) {
     var curT = sat.frames[sat.idx] ? sat.frames[sat.idx].t : null;
     sat.frames = satSubsample(sat.frames.concat(toAdd.map(mkFrame)),
                               SAT_FRAME_CAP);
-    satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
+    satApplyScrubRange();   // rolls the trailing-window min as new frames land
     var ni = -1;
     if (curT) {
       for (var qi = 0; qi < sat.frames.length; qi++) {
@@ -1974,7 +2045,7 @@ function makeSatViewer(idPrefix, opts) {
     var b = (sat.man && sat.man.bands && sat.man.bands[slug]) || null;
     var raw = satSubsample(satSortDedupe(b && b.frames), SAT_FRAME_CAP);
     sat.frames = raw.map(mkFrame);
-    satEl("scrub").max = String(Math.max(0, sat.frames.length - 1));
+    satApplyScrubRange();
     sat.bandLabelBase = b ? (b.label || slug) : "";
     satEl("band-label").textContent = sat.bandLabelBase;
     satEl("empty").style.display = sat.frames.length ? "none" : "block";
@@ -2003,6 +2074,7 @@ function makeSatViewer(idPrefix, opts) {
     if (fr) fr.crossOrigin = "anonymous";   // share the preloads' CORS cache entries
     window.addEventListener("resize", satApplyFrameBox);   // keep the locked box fitted
     satBuildSpeed();
+    satBuildLoop();
     satEl("step-back").addEventListener("click", function () { satStep(-1); });
     satEl("step-fwd").addEventListener("click", function () { satStep(1); });
     satEl("play").addEventListener("click", satTogglePlay);
@@ -2118,6 +2190,7 @@ function makeSatViewer(idPrefix, opts) {
     state: function () {
       return { band: sat.band, idx: sat.idx, frames: sat.frames.length,
                playing: sat.playing, speed: sat.speed,
+               loopHours: sat.loopHours, winStart: satWinStart(),
                decoded: satDecoded(), shown: sat.shown,
                inactive: sat.inactive, polling: !!sat.pollTimer };
     },
