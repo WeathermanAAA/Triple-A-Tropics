@@ -37,6 +37,7 @@ import datetime as dt
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -422,7 +423,16 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
             storm_num = int(atcf_id[:-1])
         except (ValueError, IndexError):
             continue
-        if not (90 <= storm_num <= 99):
+        is_jtwc = (basin_cfg.get("agency_name") or "").strip().upper() == "JTWC"
+        is_invest_num = 90 <= storm_num <= 99
+        # JTWC has no CurrentStorms equivalent, so a JUST-designated JTWC TD
+        # (the former invest, before its b-deck BEST file is written) falls
+        # through both the b-deck sweep (file absent) and the 90-99 invest
+        # filter. Treat knackwx as the JTWC live-DESIGNATION source: accept
+        # designated numbers 1..49 too. NHC basins keep CurrentStorms
+        # authoritative, so this branch is a no-op there (is_jtwc False).
+        is_designated = is_jtwc and (1 <= storm_num <= 49)
+        if not (is_invest_num or is_designated):
             continue
         ts = it.get("analysis_time")
         if not ts:
@@ -464,6 +474,27 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
             name = name_raw
         else:
             name = f"{storm_num}{letter}"
+        # 92W->07W carry. knackwx gives the prior invest as transitioned_from
+        # ("92W"). Feed its NUMBER as spawn_invest so ace_core's existing
+        # number-keyed superseding-invest dedup (merge_and_extract_storms)
+        # retires the prior invest the cycle this designation appears.
+        # FRAME-COINCIDENT (recycle-safe, stateless): only carry while the
+        # SAME knackwx payload STILL lists that 9x invest -- mirrors the
+        # floater's "drop the invest the cycle the link appears". Once knackwx
+        # stops listing 92W there is nothing to suppress, and a future RECYCLED
+        # 92W (a different system) is never silently dropped.
+        spawn_invest = None
+        if is_designated:
+            tf = (it.get("transitioned_from") or "").strip().upper()
+            mtf = re.fullmatch(r"(\d{1,2})[A-Z]", tf)
+            if mtf:
+                tf_num = int(mtf.group(1))
+                tf_letter = tf[-1] if tf[-1:].isalpha() else ""
+                if 90 <= tf_num <= 99 and tf_letter == letter and any(
+                    (str((d.get("atcf_id") or "")).strip().upper())
+                        == f"{tf_num:02d}{letter}"
+                    for d in data):
+                    spawn_invest = tf_num
         rows.append({
             # SID matches the b-deck path's SID format so a future
             # promotion to a numbered TC (with a real b-deck) doesn't
@@ -478,8 +509,9 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
             "wind_kt": vmax,
             "pressure_mb": pres,
             "nature": nature,
-            "source": "live-knackwx",
+            "source": "live-knackwx-designated" if is_designated else "live-knackwx",
             "storm_num": storm_num,
+            "spawn_invest": spawn_invest,
         })
     out = pd.DataFrame(rows)
     if not out.empty:
@@ -541,6 +573,17 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
     if not frames:
         return pd.DataFrame()
     out = pd.concat(frames, ignore_index=True)
+    # b-deck PRIMARY: where the per-storm b-deck sweep already produced a
+    # designated SID, prefer it (richer 6-hourly track). knackwx-designated
+    # rows only FILL designated systems the b-deck has not yet written, so drop
+    # any knackwx-designated row whose SID the b-deck already carries.
+    if "source" in out.columns:
+        bdeck_sids = set(
+            out.loc[out["source"] == f"live-{basin_cfg['agency_name']}", "SID"])
+        drop = ((out["source"] == "live-knackwx-designated")
+                & out["SID"].isin(bdeck_sids))
+        if drop.any():
+            out = out[~drop].reset_index(drop=True)
     print(f"{log_prefix}   live fetch: {len(out)} points from "
           f"{out['SID'].nunique()} storm(s)")
     return out
@@ -3764,6 +3807,22 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     storms = merge_and_extract_storms(ibtracs_frame, live_frame, basin_cfg,
                                       nhc_active_sids=nhc_active_sids)
+    # Hardening: a system present in a LIVE source (knackwx / b-deck) but absent
+    # from the published feed = the next discovery crack. Log it loudly. A
+    # handoff legitimately retires the prior 9x invest once its designation
+    # appears (spawn_invest), so suppress those to avoid a false WARN.
+    if not live_frame.empty and "SID" in live_frame.columns:
+        feed_sids = {s.get("sid") for s in storms}
+        superseded = set()
+        if "spawn_invest" in live_frame.columns:
+            for n in live_frame["spawn_invest"].dropna().unique():
+                superseded.add(f"{basin_cfg['agency_name']}_"
+                               f"{basin_cfg['short'].upper()}{int(n):02d}{year}")
+        missing = (set(live_frame["SID"]) - feed_sids) - superseded
+        if missing:
+            print(f"{log} WARN: {len(missing)} system(s) present in a live "
+                  f"source but absent from the published feed: "
+                  f"{sorted(missing)}", file=sys.stderr)
     header = compute_header_stats(storms)
 
     # Observability: separate the BUILD time from DATA freshness.

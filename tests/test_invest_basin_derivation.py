@@ -22,6 +22,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import generate_tracks_plot as gtp  # noqa: E402
@@ -95,6 +97,64 @@ class InvestBasinDerivationTest(unittest.TestCase):
     def test_al_has_no_invests_in_this_sample(self):
         df = self._fetch("al")
         self.assertTrue(df.empty, "no AL (letter 'L') invest in the sample")
+
+    def test_wp_designated_07w_read_with_transition_carry(self):
+        # The bug: a just-designated JTWC TD (07W, former 92W) was dropped by
+        # the 90-99 invest filter. It must now be read as a designated system,
+        # with the 92W->07W carry firing because 92W is co-listed this cycle.
+        import urllib.request
+        sample = [
+            {"atcf_id": "07W", "origin_basin": "W", "storm_name": "SEVEN",
+             "cyclone_nature": "TD", "latitude": 12.2, "longitude": 145.1,
+             "winds": 30, "pressure": 1004, "transitioned_from": "92W",
+             "analysis_time": "2026-06-18T18:00:00.000Z"},
+            {"atcf_id": "92W", "origin_basin": "W", "storm_name": "INVEST",
+             "cyclone_nature": "DB", "latitude": 12.0, "longitude": 145.3,
+             "winds": 25, "pressure": 1006,
+             "analysis_time": "2026-06-18T12:00:00.000Z"},
+        ]
+        urllib.request.urlopen = lambda *a, **k: _FakeResp(sample)
+        df = gtp.fetch_live_invests(2026, gtp.BASINS["wp"], "[wp-test]")
+        d07 = df[df["storm_num"] == 7]
+        self.assertFalse(d07.empty, "07W designated row was dropped")
+        self.assertEqual(d07.iloc[0]["SID"], "JTWC_WP072026")
+        self.assertEqual(d07.iloc[0]["source"], "live-knackwx-designated")
+        self.assertEqual(int(d07.iloc[0]["spawn_invest"]), 92)
+        d92 = df[df["storm_num"] == 92]
+        self.assertFalse(d92.empty)
+        self.assertEqual(d92.iloc[0]["source"], "live-knackwx")
+
+    def test_wp_designated_07w_no_carry_when_invest_absent(self):
+        # Recycle-safe: 92W no longer in the payload -> NO spawn carry.
+        import urllib.request
+        sample = [
+            {"atcf_id": "07W", "origin_basin": "W", "storm_name": "SEVEN",
+             "cyclone_nature": "TD", "latitude": 12.2, "longitude": 145.1,
+             "winds": 30, "pressure": 1004, "transitioned_from": "92W",
+             "analysis_time": "2026-06-18T18:00:00.000Z"},
+        ]
+        urllib.request.urlopen = lambda *a, **k: _FakeResp(sample)
+        df = gtp.fetch_live_invests(2026, gtp.BASINS["wp"], "[wp-test]")
+        d07 = df[df["storm_num"] == 7]
+        self.assertFalse(d07.empty)
+        self.assertTrue(pd.isna(d07.iloc[0]["spawn_invest"])
+                        or d07.iloc[0]["spawn_invest"] is None)
+
+    def test_nhc_designated_numbers_still_excluded(self):
+        # NHC no-op invariant: a designated NHC number must NOT leak via knackwx
+        # (AL/EP/CP stay b-deck/CurrentStorms-authoritative).
+        import urllib.request
+        sample = [
+            {"atcf_id": "05L", "origin_basin": "L", "storm_name": "EDOUARD",
+             "cyclone_nature": "TS", "latitude": 20.0, "longitude": -60.0,
+             "winds": 45, "pressure": 1000, "transitioned_from": "95L",
+             "analysis_time": "2026-06-18T18:00:00.000Z"},
+        ]
+        urllib.request.urlopen = lambda *a, **k: _FakeResp(sample)
+        df = gtp.fetch_live_invests(2026, gtp.BASINS["al"], "[al-test]")
+        self.assertTrue(df.empty,
+                        "NHC designated number leaked via knackwx (must stay "
+                        "b-deck/CurrentStorms-only)")
 
 
 if __name__ == "__main__":
