@@ -997,11 +997,14 @@ CBAR_TICKS_KT = [34, 64, 83, 96, 113, 137]
 # both land near this count and stay readable.
 BARB_TARGET = 17
 
-# Degrees to crop off EACH side of the data extent before plotting, so the storm
-# fills more of the frame (larger data, lower on-screen isobar density). Clamped
-# per-side to a fraction of the span so small domains are never over-cropped.
-# Applies to the STORM NEST only; the parent uses a fixed storm-centered window.
-BBOX_TRIM_DEG = 1.5
+# Storm-nest framing: instead of the old data-centered per-side trim (which left
+# the storm off-center "in a sea of blue" once it had moved within its nest), the
+# STORM NEST is cropped to a FIXED square window of NEST_VIEW_DEG degrees CENTERED
+# ON THE STORM (the same track fix the L marker / stats / parent crop use), clamped
+# to the nest data extent so the box never opens a NaN gutter at the nest edge.
+# ~5.5 deg frames the inner core + primary bands like cyclonicwx. One tunable knob;
+# storm.atm ONLY (the parent keeps its own PARENT_HALF_DEG window).
+NEST_VIEW_DEG = 5.5
 
 # Parent-domain framing: the parent (~6 km) covers a huge, frame-to-frame
 # variable area, so instead of plotting its full extent we crop every parent
@@ -1289,19 +1292,28 @@ def render_frame(frame: HafsFrame, out_path: str,
                                          min(d_lat_max, 90.0))
         lon_min, lon_max = _clamp_window(lon_min, lon_max, d_lon_min, d_lon_max)
     else:
-        # Nest: crop the view in by BBOX_TRIM_DEG per side (clamped to at most 15%
-        # of the span so small domains keep their storm) to enlarge the data on
-        # the plot. The fill, barbs, contours, and coastlines are still drawn on
-        # the full grid and simply clipped to these limits, so nothing at the new
-        # edge is missing.
-        tlon = min(BBOX_TRIM_DEG, 0.15 * (lon_max - lon_min))
-        tlat = min(BBOX_TRIM_DEG, 0.15 * (lat_max - lat_min))
-        lon_min, lon_max = lon_min + tlon, lon_max - tlon
-        lat_min, lat_max = lat_min + tlat, lat_max - tlat
+        # Nest: a FIXED NEST_VIEW_DEG square centered on the STORM (the same center
+        # the L marker / stats / parent crop use), clamped to the nest data extent.
+        # Mirrors the parent's storm-centered crop at the nest scale, replacing the
+        # old data-centered per-side trim that left the storm off-center once it had
+        # moved within its nest. The fill, barbs, contours, and coastlines are still
+        # drawn on the full grid and clipped to these limits (set_extent is a VIEW
+        # crop, not a data change), so nothing inside the view is missing and the
+        # headline stats / L marker / chrome are byte-identical.
+        clat, clon = _parent_storm_center(frame, cen_lat, cen_lon,
+                                          anchor_lat, anchor_lon)
+        half = 0.5 * NEST_VIEW_DEG
+        lon_min, lon_max = clon - half, clon + half
+        lat_min, lat_max = clat - half, clat + half
+        lat_min, lat_max = _clamp_window(lat_min, lat_max, d_lat_min, d_lat_max)
+        lon_min, lon_max = _clamp_window(lon_min, lon_max, d_lon_min, d_lon_max)
     # Extent the coastline/border features are clipped against: the cropped view
     # for the parent (so far-away land is rejected), the data extent for the nest
     # (unchanged behavior). Axes clipping trims whatever crosses the edge.
-    feat_extent = (lon_min, lon_max, lat_min, lat_max) if is_parent else frame.extent
+    # Coastline/border clip extent = the cropped view for BOTH domains now (the
+    # nest is storm-centered/cropped like the parent), so far-away land is rejected
+    # before the axes clip; features inside the view are unchanged.
+    feat_extent = (lon_min, lon_max, lat_min, lat_max)
     mean_lat = 0.5 * (lat_min + lat_max)
     # PlateCarree aspect: 1 deg lon is cos(lat)x shorter than 1 deg lat.
     geo_aspect = 1.0 / max(np.cos(np.deg2rad(mean_lat)), 0.1)
@@ -1373,8 +1385,19 @@ def render_frame(frame: HafsFrame, out_path: str,
     # default, a pressure level / layer-mean for the upper-air products).
     if spec.draw_barbs:
         nlat, nlon = bspd_kt.shape
-        si = max(1, int(round(nlat / BARB_TARGET)))
-        sj = max(1, int(round(nlon / BARB_TARGET)))
+        # Stride targets ~BARB_TARGET barbs across the VISIBLE axis. The parent keeps
+        # the full-grid stride (unchanged); the storm nest derives it from the cells
+        # INSIDE the cropped NEST_VIEW_DEG view so the tighter zoom keeps a
+        # consistent barb count instead of inheriting the sparser full-grid stride.
+        if is_parent:
+            vlat, vlon = nlat, nlon
+        else:
+            vlat = int(np.count_nonzero((frame.lat >= lat_min) &
+                                        (frame.lat <= lat_max))) or nlat
+            vlon = int(np.count_nonzero((frame.lon >= lon_min) &
+                                        (frame.lon <= lon_max))) or nlon
+        si = max(1, int(round(vlat / BARB_TARGET)))
+        sj = max(1, int(round(vlon / BARB_TARGET)))
         u = np.ma.masked_invalid(bu_kt)
         v = np.ma.masked_invalid(bv_kt)
         barbs = ax.barbs(
