@@ -90,7 +90,14 @@ jobs:
         # any other value keeps the cron rendering (the default, and the instant
         # rollback: clear the variable / set it back to true). The render AND the
         # R2 upload are gated together so a disabled cron never half-publishes.
-        if: vars.RENDER_HAFS_ON_CRON != 'false'
+        #
+        # RECOVERY OVERRIDE: a workflow_dispatch ALWAYS renders, even when the
+        # scheduled cron is gated off (RENDER_HAFS_ON_CRON=false while the Railway
+        # worker is primary). This is the independent backstop the HAFS freshness
+        # watchdog (tat-satellite-render ens_watchdog.py) fires when the worker
+        # falls behind, and the manual unwedge path - it does NOT re-enable the
+        # scheduled cron (which stays governed by RENDER_HAFS_ON_CRON).
+        if: github.event_name == 'workflow_dispatch' || vars.RENDER_HAFS_ON_CRON != 'false'
         # Resolves the newest cycle whose storm nest reached f126, enumerates
         # its storms from the public bucket, and renders all frames into
         # models/hafs/ with a manifest.json. Off-season (no storms) it writes
@@ -107,8 +114,9 @@ jobs:
       - name: Upload HAFS plots to R2 (cdn.triple-a-tropics.com/models/hafs/)
         # Gated with the render step (see RENDER_HAFS_ON_CRON above): when the
         # cron render is disabled there is nothing to upload, and skipping the
-        # sync leaves the worker's live frames untouched.
-        if: vars.RENDER_HAFS_ON_CRON != 'false'
+        # sync leaves the worker's live frames untouched. (workflow_dispatch
+        # always renders + uploads - the recovery override; see the render step.)
+        if: github.event_name == 'workflow_dispatch' || vars.RENDER_HAFS_ON_CRON != 'false'
         # Three passes with EXPLICIT content-types (image/png frames,
         # application/json manifest - the manifest is fetched cross-origin and
         # needs the right type). NO --size-only: each cycle's f###.png reuses
