@@ -508,31 +508,94 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
-def _manifest_skeleton(models: Sequence[str], domains: Sequence[str],
-                       products: Sequence[str], fxx_step: int,
-                       cycle: Optional[str], storms: list) -> dict:
-    """The manifest shape, in ONE place, so the off-season/empty path in main()
-    can't drift from build_cycle's output.
+def _iso_now() -> str:
+    return (dt.datetime.now(dt.timezone.utc)
+            .replace(microsecond=0).isoformat().replace("+00:00", "Z"))
 
-    Each storm's ``frames`` is nested model -> domain -> product -> [fxx]; the
-    ``path_template`` carries the ``{product}`` segment. ``product`` (singular)
-    is retained pointing at the default product so a reader of the prior schema
-    still resolves a sensible default.
-    """
+
+def _frame_out_path(out_dir: Path, cycle: str, model: str, storm: str,
+                    dom_slug: str, product: str, fxx: int, *,
+                    cycle_scoped: bool) -> str:
+    """Where a rendered frame PNG is written. cycle_scoped=True (the cron) nests
+    under {cycle}/ so a direct out_dir->R2 upload lands at the v2
+    path_template_cycles {cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png;
+    default flat is the worker's layout (it prepends {cycle} at upload)."""
+    base = (out_dir / cycle / model / storm / dom_slug / product if cycle_scoped
+            else out_dir / model / storm / dom_slug / product)
+    return str(base / f"f{fxx:03d}.png")
+
+
+def _count_frames(storms: list) -> int:
+    """Total rendered frames across a cycle's storms (model->domain->product->[fxx])."""
+    return sum(len(prods[p])
+              for s in storms for m in s.get("frames", {}).values()
+              for prods in m.values() for p in prods)
+
+
+def _cycle_entry(cycle: str, storms: list, *, started_utc: str,
+                 in_progress: bool = False) -> dict:
+    """ONE cycle's v2 entry, byte-shape-identical to the render worker's. The
+    cron renders a COMPLETE cycle (in_progress=False), so frames_done ==
+    frames_expected (the count it actually rendered)."""
+    n = _count_frames(storms)
     return {
-        "generated_at": dt.datetime.now(dt.timezone.utc)
-                          .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "cycle": cycle,
+        "in_progress": in_progress,
+        "frames_done": n,
+        "frames_expected": n,
+        "started_utc": started_utc,
+        "storms": storms,
+    }
+
+
+def _compose_manifest_v2(entries: list, models: Sequence[str],
+                         domains: Sequence[str], products: Sequence[str],
+                         fxx_step: int, *, now_iso: Optional[str] = None,
+                         fxx_end: int = TERMINAL_FXX, fxx_pad: int = 3) -> dict:
+    """The PUBLISHED manifest, ONE schema shared verbatim with the Railway render
+    worker's ``compose_manifest_v2`` so the two writers on
+    ``models/hafs/manifest.json`` never clobber each other with incompatible
+    shapes. ``entries`` is newest-first cycle entries. Legacy single-cycle fields
+    mirror the newest COMPLETE cycle (deploy-skew zero-blink) and bake its cycle
+    into ``path_template`` so an old frontend resolves the cycle-scoped keys."""
+    legacy = next((e for e in entries if not e.get("in_progress")), None)
+    if legacy is None:
+        legacy = next((e for e in entries if e.get("storms")), None)
+    return {
+        "generated_at": now_iso or _iso_now(),
         "product": PRODUCTS[products[0]],
         "products": [PRODUCTS[p] for p in products],
         "models": [{"slug": m, "label": MODEL_LABEL[m]} for m in models],
         "domains": [{"slug": DOMAINS[d][0], "label": DOMAINS[d][1], "raw": d}
                     for d in domains],
         "fxx_step": fxx_step,
-        "fxx_pad": 3,
-        "path_template": "{model}/{storm}/{domain}/{product}/f{fxx}.png",
-        "cycle": cycle,
-        "storms": storms,
+        "fxx_pad": fxx_pad,
+        "fxx_end": fxx_end,
+        "path_template_cycles":
+            "{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+        "cycles": entries,
+        # legacy single-cycle view (old frontend), cycle baked into the template:
+        "cycle": legacy["cycle"] if legacy else None,
+        "storms": legacy["storms"] if legacy else [],
+        "path_template": (
+            f"{legacy['cycle']}/{{model}}/{{storm}}/{{domain}}/{{product}}/f{{fxx}}.png"
+            if legacy else "{model}/{storm}/{domain}/{product}/f{fxx}.png"),
     }
+
+
+def _manifest_skeleton(models: Sequence[str], domains: Sequence[str],
+                       products: Sequence[str], fxx_step: int,
+                       cycle: Optional[str], storms: list,
+                       *, started_utc: Optional[str] = None) -> dict:
+    """v2 manifest for the cron's single rendered cycle (or an empty off-season
+    manifest when ``cycle``/``storms`` are falsy). In ONE place so build_cycle and
+    main()'s off-season path can't drift. Frames are cycle-scoped under
+    ``{cycle}/`` (matching the worker) so ``path_template_cycles`` resolves."""
+    now_iso = _iso_now()
+    entries = ([_cycle_entry(cycle, storms, started_utc=started_utc or now_iso)]
+               if cycle and storms else [])
+    return _compose_manifest_v2(entries, models, domains, products, fxx_step,
+                                now_iso=now_iso)
 
 
 def build_cycle(date: str, hh: str, out_dir: Path, *,
@@ -543,6 +606,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                 max_fxx: int = TERMINAL_FXX, fxx_step: int = 3,
                 jobs: int = 4, ingest_width: Optional[int] = None,
                 only_fxx: Optional[set] = None,
+                cycle_scoped: bool = False,
                 save_dir: str = "/tmp/herbie_data"
                 ) -> tuple[dict, int, int, int]:
     """Render every frame for one cycle.
@@ -569,6 +633,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     session = requests.Session()
     cycle = f"{date}{hh}"
     cycle_dt = dt.datetime.strptime(cycle, "%Y%m%d%H")
+    build_started = _iso_now()   # this cycle entry's started_utc (v2 manifest)
 
     # Storms come from HAFS-A's listing (the storm set is shared across models);
     # any per-model gap is handled later by list_fxx returning [] for that pair.
@@ -693,8 +758,9 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     # One render per product, each reading the SAME cache entry
                     # into its own path segment (.../<dom_slug>/<product>/f###.png).
                     for product in products:
-                        out_path = str(out_dir / model / storm / dom_slug
-                                       / product / f"f{fxx:03d}.png")
+                        out_path = _frame_out_path(
+                            out_dir, cycle, model, storm, dom_slug, product, fxx,
+                            cycle_scoped=cycle_scoped)
                         render_jobs.append(RenderJob(
                             model=model, storm=storm, domain=domain,
                             product=product, fxx=fxx, cache_path=cpath,
@@ -797,7 +863,8 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     log.info("rendered %d ok, %d failed in %.0fs", n_ok, n_fail, time.time() - t0)
 
     manifest = _manifest_skeleton(models, domains, products, fxx_step,
-                                  cycle if storms_out else None, storms_out)
+                                  cycle if storms_out else None, storms_out,
+                                  started_utc=build_started)
     return manifest, len(storms), n_ok, n_fail
 
 
@@ -822,6 +889,11 @@ def main() -> int:
     ap.add_argument("--basins", help="restrict to basin slugs (al,ep,wp,…; comma list)")
     ap.add_argument("--max-fxx", type=int, default=TERMINAL_FXX)
     ap.add_argument("--fxx-step", type=int, default=3)
+    ap.add_argument("--cycle-scoped", action="store_true",
+                    help="render frames under out_dir/{cycle}/... (the cron's "
+                         "direct-upload layout, matching the v2 manifest's "
+                         "path_template_cycles). Default OFF = flat layout (the "
+                         "render worker, which prepends {cycle} at upload)")
     ap.add_argument("--only-fxx", default=None,
                     help="render ONLY these forecast hours (comma list, e.g. "
                          "0,3,6) and bypass the per-pair terminal gate - the "
@@ -887,6 +959,7 @@ def main() -> int:
         basins_filter=(args.basins.split(",") if args.basins else None),
         max_fxx=args.max_fxx, fxx_step=args.fxx_step,
         jobs=args.jobs, ingest_width=args.ingest_jobs, only_fxx=only_fxx,
+        cycle_scoped=args.cycle_scoped,
         save_dir=args.save_dir,
     )
 
