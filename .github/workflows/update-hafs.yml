@@ -105,11 +105,11 @@ jobs:
         env:
           HERBIE_DATA: ${{ runner.temp }}/herbie_data
         run: |
-          python generate_hafs_plots.py --jobs 4
-          echo "---- rendered frames ----"
+          python generate_hafs_plots.py --jobs 4 --cycle-scoped
+          echo "---- rendered frames (cycle-scoped) ----"
           find models/hafs -name '*.png' | wc -l
-          echo "---- manifest ----"
-          python -c "import json; m=json.load(open('models/hafs/manifest.json')); print('cycle', m['cycle'], '| storms', [s['id'] for s in m['storms']])"
+          echo "---- manifest (v2) ----"
+          python -c "import json; m=json.load(open('models/hafs/manifest.json')); print('shape', 'v2' if 'cycles' in m else 'LEGACY', '| cycles', [c['cycle'] for c in m.get('cycles',[])], '| legacy cycle', m.get('cycle'), '| storms', [s['id'] for s in m.get('storms',[])])"
 
       - name: Upload HAFS plots to R2 (cdn.triple-a-tropics.com/models/hafs/)
         # Gated with the render step (see RENDER_HAFS_ON_CRON above): when the
@@ -117,26 +117,21 @@ jobs:
         # sync leaves the worker's live frames untouched. (workflow_dispatch
         # always renders + uploads - the recovery override; see the render step.)
         if: github.event_name == 'workflow_dispatch' || vars.RENDER_HAFS_ON_CRON != 'false'
-        # Three passes with EXPLICIT content-types (image/png frames,
-        # application/json manifest - the manifest is fetched cross-origin and
-        # needs the right type). NO --size-only: each cycle's f###.png reuses
-        # the same key with new content, so a coincidental same-size frame must
-        # NOT be skipped (default size+mtime re-uploads the fresh files).
-        #
-        # Ordering matters for consistency:
-        #   1. Upload new PNG frames WITHOUT --delete (old frames stay live).
-        #   2. Upload the manifest - it now references this cycle's frames,
-        #      which are all present from step 1 → no 404 window.
-        #   3. Prune orphan PNGs with --delete (frames from storms no longer in
-        #      the manifest). The filter scopes --delete to *.png, so it never
-        #      touches the manifest; and because it runs AFTER the manifest is
-        #      live, the deleted frames are already unreferenced → no 404.
-        #
-        # Off-season the generator writes an empty manifest (storms:[]) and the
-        # prune wipes all remote PNGs - correct, nothing is active. A TOTAL
-        # render failure does NOT reach here: the generator exits non-zero when
-        # storms were found but nothing rendered, so this step never runs and
-        # the prior cycle stays live.
+        # DUAL-WRITER SAFE. The Railway render worker co-writes models/hafs/ in
+        # the SAME v2 layout (cycle-scoped frames {cycle}/... + a v2 manifest with
+        # cycles[]). So this cron must NOT clobber it:
+        #   1. Frames for THIS cycle only, into models/hafs/{cycle}/, with
+        #      --delete SCOPED to that cycle's prefix (prunes within-cycle orphans;
+        #      never touches another cycle or the worker's building cycle). NO
+        #      --size-only: a cycle's f###.png can reuse a key with new content.
+        #   2. Manifest via hafs_render.publish_manifest: read R2 -> never-regress
+        #      MERGE the cron's complete cycle into the existing cycles[] -> atomic
+        #      If-Match PUT (re-read+retry on a concurrent worker write). An empty
+        #      render is a NO-OP (won't clobber the live manifest).
+        # No global --delete anywhere. Off-season clearing is the worker's
+        # quiescence gate, not this cron. A TOTAL render failure does NOT reach
+        # here: the generator exits non-zero when storms were found but nothing
+        # rendered, so this step never runs and the prior cycle stays live.
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -150,15 +145,18 @@ jobs:
           fi
           CC="public, max-age=300"
           DST=s3://triple-a-tropics-media/models/hafs/
-          # 1. new frames (no delete)
-          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "$CC" --content-type "image/png" \
-            --exclude "*" --include "*.png" --only-show-errors
-          # 2. manifest (now references only frames that exist)
-          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "$CC" --content-type "application/json" \
-            --exclude "*" --include "*.json" --only-show-errors
-          # 3. prune orphan frames (scoped to *.png so the manifest is untouched)
-          aws s3 sync "$SRC" "$DST" --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "$CC" --content-type "image/png" \
-            --exclude "*" --include "*.png" --delete --only-show-errors
+          CYCLE=$(python -c "import json;print(json.load(open('$SRC/manifest.json')).get('cycle') or '')")
+          # 1. Frames for THIS cycle only; --delete scoped to the cycle's prefix.
+          if [ -n "$CYCLE" ] && [ -d "$SRC/$CYCLE" ]; then
+            aws s3 sync "$SRC/$CYCLE/" "${DST}${CYCLE}/" --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "$CC" --content-type "image/png" \
+              --exclude "*" --include "*.png" --delete --only-show-errors
+          else
+            echo "No cycle frames to sync (off-season or empty render)."
+          fi
+          # 2. Manifest: never-regress MERGE + atomic If-Match PUT (the worker
+          #    co-writes this key). Empty render -> no-op (won't clobber).
+          python -m hafs_render.publish_manifest \
+            --manifest "$SRC/manifest.json" \
+            --bucket triple-a-tropics-media \
+            --key models/hafs/manifest.json
