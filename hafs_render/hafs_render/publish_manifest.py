@@ -151,7 +151,17 @@ def publish(manifest_path: str, *, bucket: str, key: str,
                 print(f"publish: conditional PUT lost the race (attempt {i + 1}/"
                       f"{attempts}) -- re-reading + re-merging")
                 continue
-            raise
+            # The endpoint rejected the conditional write (not a precondition
+            # failure -- e.g. If-Match unsupported on this S3-compatible store).
+            # Fall back to an UNCONDITIONAL PUT of the freshly-merged result: the
+            # merge already read the latest state this iteration, so it is still
+            # never-regress; only the atomicity guard against a same-instant
+            # concurrent write is lost (rare -- the cron runs mostly when the
+            # worker is wedged). A genuine error (auth/etc.) re-raises here.
+            print(f"publish: conditional PUT rejected ({code}) -- falling back "
+                  f"to an unconditional PUT (atomicity guard degraded)",
+                  file=sys.stderr)
+            _put(client, bucket, key, merged)
         print(f"publish: wrote v2 manifest -> cycles="
               f"{[c['cycle'] for c in merged['cycles']]} "
               f"(legacy cycle={merged.get('cycle')})")
