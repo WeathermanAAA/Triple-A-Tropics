@@ -581,6 +581,25 @@ def _by_lead(member_tracks: Dict[str, List[list]]) -> Dict[int, List[list]]:
 #   * SMOOTHING: a light [1,2,1]/4 pass (x2) on the kept lat / unwrapped-lon series.
 MEAN_SUPPORT_MIN_ABS = 4          # never anchor a mean point on < this many members
 MEAN_SUPPORT_PEAK_FRAC = 0.25     # ...or on < this fraction of the cluster's PEAK support
+# CLUSTER-AWARE mean (the bifurcation fix). A single Stage-B cluster can still
+# contain a forecast BIFURCATION: members agree early then split into 2+ groups at
+# long range (clustering keeps them as one cluster because they share the early
+# trunk, and the mean track-separation that decides clustering is diluted by that
+# agreement). A plain per-lead geometric median of ALL members then whips across the
+# empty gap and can settle BETWEEN the groups or inside the MINORITY one. Defence: at
+# every lead split the member positions into spatial MODES (single-linkage on a
+# great-circle gap - a broad-but-continuous spread chains into one mode; only a real
+# empty corridor splits) and draw the mean from ONE mode:
+#   * seed the first lead with the DOMINANT (largest) mode,
+#   * then follow that lineage forward, each lead taking the largest mode whose
+#     center is within a no-teleport GATE of the previous mean point (so the line
+#     never hops across the gap into the other branch); if the followed lineage
+#     vanishes (no mode within the gate) the mean STOPS rather than teleport.
+# A unimodal cluster (the overwhelming common case) has one mode at every lead, so
+# the result is byte-identical to the old all-member geometric median - zero visual
+# change except on a genuinely bifurcated cluster, which is exactly the bug.
+MEAN_MODE_LINK_DEG = 4.0          # single-linkage gap (deg) that splits per-lead modes
+MEAN_STEP_GATE_DEG = 8.0          # max mean displacement between leads (no cross-gap hop)
 
 
 def _smooth_series(vals: Sequence[float], passes: int = 2) -> List[float]:
@@ -599,23 +618,74 @@ def _smooth_series(vals: Sequence[float], passes: int = 2) -> List[float]:
     return v
 
 
+def _lead_modes(positions: Sequence[Tuple[float, float]],
+                link_deg: float = MEAN_MODE_LINK_DEG) -> List[List[int]]:
+    """Single-linkage connected components of ONE lead's member positions under a
+    great-circle gap (deg), largest component first. A broad-but-continuous cloud
+    chains into one component; only a genuine empty corridor (> ``link_deg`` with no
+    member bridging it) splits it - the forecast-bifurcation signature. Dateline-safe
+    (haversine distance, never a raw lon compare)."""
+    n = len(positions)
+    if n <= 1:
+        return [list(range(n))]
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if gc_deg(positions[i][0], positions[i][1],
+                      positions[j][0], positions[j][1]) <= link_deg:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+    comp: Dict[int, List[int]] = {}
+    for i in range(n):
+        comp.setdefault(find(i), []).append(i)
+    return sorted(comp.values(), key=len, reverse=True)
+
+
 def mean_track(member_tracks: Dict[str, List[list]]) -> List[list]:
-    """Robust spherical ensemble-mean track: per lead time present, the geometric
-    median of the member positions (outlier-resistant), restricted to the contiguous
-    well-supported span and lightly smoothed so the line never whips to a thin-support
-    outlier. Each point carries its supporting member count. Display lons are unwrapped
-    to a continuous sequence (smoothing runs on the unwrapped lons, dateline-safe)."""
+    """Robust, CLUSTER-AWARE spherical ensemble-mean track. Per lead time present,
+    split the member positions into spatial modes and take the geometric median of
+    ONE mode - the dominant lineage, followed forward through a no-teleport gate (see
+    the MEAN_MODE_* notes) - so the line never crosses the empty gap of a forecast
+    bifurcation or settles into a minority branch at any lead. Restricted to the
+    contiguous well-supported span and lightly smoothed. Each point carries its
+    supporting member count (the chosen mode's size). Display lons are unwrapped to a
+    continuous sequence (smoothing runs on the unwrapped lons, dateline-safe).
+
+    A unimodal cluster yields exactly one mode per lead, so this reduces to the plain
+    per-lead geometric median over all members - identical to the prior behaviour."""
     bl = _by_lead(member_tracks)
-    raw = []
+    raw: List[list] = []
+    anchor: Optional[Tuple[float, float]] = None
     for s in sorted(bl):
-        rows = bl[s]
-        la, lo = geometric_median([(r[1], r[2]) for r in rows])
-        raw.append([s, la, lo, len(rows)])
+        pos = [(r[1], r[2]) for r in bl[s]]
+        # geometric median of each spatial mode (precomputed once per mode)
+        cand = [(m, geometric_median([pos[i] for i in m])) for m in _lead_modes(pos)]
+        if anchor is None:
+            chosen, gm = cand[0]                       # dominant (largest) seed
+        else:
+            reach = [(m, g) for (m, g) in cand
+                     if gc_deg(anchor[0], anchor[1], g[0], g[1]) <= MEAN_STEP_GATE_DEG]
+            if not reach:
+                break                                  # lineage died: stop, never teleport
+            # dominant among the reachable modes; tie -> the one nearest the anchor
+            chosen, gm = min(reach, key=lambda mg: (-len(mg[0]),
+                                                    gc_deg(anchor[0], anchor[1],
+                                                           mg[1][0], mg[1][1])))
+        anchor = gm
+        raw.append([s, gm[0], gm[1], len(chosen)])
     if not raw:
         return []
     # support trim: keep the contiguous run between the first and last lead whose
-    # member backing clears the floor (interior dips stay - a system's support is
-    # unimodal in lead, so this only trims the sparse ends, never punches holes).
+    # (chosen-mode) member backing clears the floor (trims the sparse genesis ramp and
+    # any thin tail left once a lineage withers; interior dips stay).
     peak = max(p[3] for p in raw)
     floor = max(MEAN_SUPPORT_MIN_ABS, int(round(MEAN_SUPPORT_PEAK_FRAC * peak)))
     idx = [i for i, p in enumerate(raw) if p[3] >= floor]

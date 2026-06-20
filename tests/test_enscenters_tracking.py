@@ -293,6 +293,80 @@ class TestDateline(unittest.TestCase):
         self.assertTrue(max(wrapped) > 170 or min(wrapped) < -170)
 
 
+class TestBifurcatedMeanIsClusterAware(unittest.TestCase):
+    """A single cluster that BIFURCATES: members ride a shared trunk, then fork into
+    two well-separated groups at long range. The plain all-member geometric median
+    lands in the EMPTY GAP between the groups; mean_track must instead follow ONE real
+    branch - never the gap, never a thin-air point - at every lead."""
+
+    @staticmethod
+    def _bimodal_member_tracks():
+        steps = list(range(0, 121, 6))
+        split = 54                                   # leads >= this fork into two groups
+        mt = {}
+        for i in range(12):
+            north = (i % 2 == 0)                     # even split: 6 north, 6 east
+            fixes = []
+            for s in steps:
+                la = 15.0 + 0.05 * s                 # shared trunk
+                lo = -140.0 - 0.05 * s
+                if s >= split:                       # clean N vs E fork, gap grows with lead
+                    d = s - split
+                    la += (0.20 * d) if north else (0.02 * d)
+                    lo += (-0.02 * d) if north else (0.22 * d)
+                # tiny deterministic per-member jitter (each branch a tight blob, well
+                # under the 4 deg mode-link gap) with NO rng - keeps the test hermetic
+                la += 0.15 * ((i % 3) - 1)
+                lo += 0.15 * (((i // 2) % 3) - 1)
+                fixes.append([s, round(la, 3), round(lo, 3),
+                              1000.0 - 0.25 * s, 25.0 + 0.25 * s])
+            mt[f"M{i:02d}"] = fixes
+        return mt, steps
+
+    def test_scenario_is_genuinely_bimodal(self):
+        mt, steps = self._bimodal_member_tracks()
+        bl = T._by_lead(mt)
+        pos = [(r[1], r[2]) for r in bl[max(steps)]]
+        modes = T._lead_modes(pos)
+        self.assertEqual(len(modes), 2, "last lead should split into exactly two modes")
+        self.assertTrue(all(len(m) >= 4 for m in modes), "both branches well-populated")
+        a = T.geometric_median([pos[i] for i in modes[0]])
+        b = T.geometric_median([pos[i] for i in modes[1]])
+        self.assertGreater(T.gc_deg(a[0], a[1], b[0], b[1]), 8.0, "branches well separated")
+
+    def test_naive_all_member_mean_would_land_in_the_gap(self):
+        # the bug we are fixing: a plain geometric median over ALL members sits in the
+        # empty corridor between the two branches (far from every actual member).
+        mt, steps = self._bimodal_member_tracks()
+        pos = [(r[1], r[2]) for r in T._by_lead(mt)[max(steps)]]
+        naive = T.geometric_median(pos)
+        self.assertGreater(min(T.gc_deg(naive[0], naive[1], la, lo) for la, lo in pos),
+                           3.0, "naive mean must be in the gap for the test to be meaningful")
+
+    def test_mean_track_follows_one_real_branch(self):
+        mt, steps = self._bimodal_member_tracks()
+        bl = T._by_lead(mt)
+        track = T.mean_track(mt)
+        self.assertTrue(track, "mean track should not be empty")
+        # 1) every mean point sits INSIDE a real member group at its lead (never the gap)
+        for s, la, lo, n in track:
+            members = [(r[1], r[2]) for r in bl[int(s)]]
+            self.assertLess(min(T.gc_deg(la, lo, mla, mlo) for mla, mlo in members),
+                            T.MEAN_MODE_LINK_DEG + 2.0,
+                            f"mean point at lead {s} is in empty space")
+            self.assertGreaterEqual(n, T.MEAN_SUPPORT_MIN_ABS)
+        # 2) no cross-gap teleport between consecutive leads
+        for (s0, la0, lo0, _), (s1, la1, lo1, _) in zip(track, track[1:]):
+            self.assertLess(T.gc_deg(la0, lo0, la1, lo1),
+                            T.MEAN_STEP_GATE_DEG + 2.0,
+                            f"mean teleported between leads {s0} and {s1}")
+        # 3) at the final lead the cluster-aware mean differs from the naive one (the
+        #    naive one is in the gap; ours is on a branch)
+        last = track[-1]
+        naive = T.geometric_median([(r[1], r[2]) for r in bl[int(last[0])]])
+        self.assertGreater(T.gc_deg(last[1], last[2], naive[0], naive[1]), 2.0)
+
+
 class TestNativeSkipStageA(unittest.TestCase):
     def test_native_member_tracks_cluster_without_linkage(self):
         # native input: per-member tracks already separated by track_id
