@@ -1322,12 +1322,17 @@ def render_frame(frame: HafsFrame, out_path: str,
 
     # Inch-based layout (no tight bbox) so the full-width header band, the map,
     # the right colorbar, and the credit footer all land at exact positions.
-    base = 10.5  # ~longest map axis, inches
-    if lon_span >= lat_span:
-        map_w, map_h = base, base * lat_span / lon_span
-    else:
-        map_w, map_h = base * lon_span / lat_span, base
-    map_h = max(map_h, 4.2)
+    # FIXED square map box so EVERY frame of a run renders an IDENTICAL figure, i.e.
+    # identical output pixels, regardless of storm latitude (geo_aspect grows as the
+    # storm recurves poleward) or any _clamp_window data-span fallback - those used
+    # to drive map_w/map_h here and made the PNG physically grow/shrink per F-hour.
+    # The geography is still framed by set_xlim/set_ylim + set_aspect(geo_aspect) on
+    # the axes below (a VIEW crop), so the geographic framing is UNCHANGED; only the
+    # canvas size is pinned. A non-square view simply letterboxes (BAND_BG) inside the
+    # constant box; set_anchor('W') keeps the map left-justified so the lat labels
+    # stay put and any slack sits between the map and the colorbar.
+    base = 10.5  # map box, inches (square; pinned so the figure never resizes)
+    map_w = map_h = base
     left_in, cbar_in = 0.62, 1.55     # lat-label gutter / right colorbar gutter
     band_in, foot_in, botpad_in = 0.74, 0.40, 0.06
     fig_w = left_in + map_w + cbar_in
@@ -1588,6 +1593,11 @@ def render_frame(frame: HafsFrame, out_path: str,
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
     ax.set_aspect(geo_aspect)
+    # Pinned square figure (see the map-box note above): a non-square view letterboxes
+    # inside the constant box. Anchor the shrunk axes to the WEST so the lat labels
+    # stay at the fixed left gutter and the BAND_BG slack falls between the map and
+    # the right colorbar, instead of splitting symmetrically around a centered map.
+    ax.set_anchor("W")
     ax.xaxis.set_major_locator(mticker.MaxNLocator(6, steps=[1, 2, 2.5, 5, 10]))
     ax.yaxis.set_major_locator(mticker.MaxNLocator(6, steps=[1, 2, 2.5, 5, 10]))
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(_lon_label))
