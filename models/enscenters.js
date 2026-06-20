@@ -103,12 +103,17 @@
   var WATERMARK = '@WeathermanAAA_';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
 
-  // Pressure-bin colors (Andrew's reference, FINAL), keyed by manifest bin key.
+  // Pressure-bin colors (Andrew's reference ramp), keyed by manifest bin key. The
+  // sub-950 end is split into 930-950 / 910-930 / <910 so intense systems read
+  // distinctly instead of saturating one "<950" color; the deep end continues the
+  // ramp pink -> violet -> indigo (deeper = stronger), high-contrast on the navy
+  // ocean without going neon.
   var PRESSURE_BIN_COLORS = {
     gt1000: '#dfe8ff', p990_1000: '#1f9bff', p970_990: '#ffd21a',
-    p950_970: '#ff1f47', lt950: '#ff3d9a'
+    p950_970: '#ff1f47', p930_950: '#ff3d9a', p910_930: '#cf4dff', lt910: '#8b5cff'
   };
-  var BIN_ORDER = ['gt1000', 'p990_1000', 'p970_990', 'p950_970', 'lt950'];
+  var BIN_ORDER = ['gt1000', 'p990_1000', 'p970_990', 'p950_970',
+                   'p930_950', 'p910_930', 'lt910'];
   // SSHWS wind-category palette for the Vmax plume ONLY. The plume is a WIND
   // product, so a Saffir-Simpson ramp is a genuinely different, meaningful
   // encoding from the pressure-bin centers (and reads "warmer = stronger" at a
@@ -187,7 +192,9 @@
   }
 
   function binKey(p) {
-    if (p < 950) return 'lt950';
+    if (p < 910) return 'lt910';
+    if (p < 930) return 'p910_930';
+    if (p < 950) return 'p930_950';
     if (p < 970) return 'p950_970';
     if (p < 990) return 'p970_990';
     if (p < 1000) return 'p990_1000';

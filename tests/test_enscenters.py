@@ -139,9 +139,15 @@ class TestRegistry(unittest.TestCase):
 
     def test_pressure_bins(self):
         bins = reg.pressure_bins_json()
-        self.assertEqual(len(bins), 5)
+        self.assertEqual(len(bins), 7)               # sub-950 split into 3 distinct bins
         self.assertEqual(bins[0]["key"], "gt1000")
-        self.assertEqual(bins[-1]["key"], "lt950")
+        self.assertEqual(bins[-1]["key"], "lt910")
+        keys = [b["key"] for b in bins]
+        self.assertEqual(keys, ["gt1000", "p990_1000", "p970_990", "p950_970",
+                                "p930_950", "p910_930", "lt910"])
+        # bins must tile the line with no gaps/overlaps (each lo == prev hi)
+        for prev, cur in zip(bins, bins[1:]):
+            self.assertEqual(cur["hi"], prev["lo"])
         # labels carry no em-dash (house on-screen-text rule)
         for b in bins:
             self.assertNotIn("—", b["label"])

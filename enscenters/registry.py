@@ -58,7 +58,12 @@ PRESSURE_BINS: Tuple[PressureBin, ...] = (
     PressureBin("p990_1000", "990 to 1000 hPa", 990.0, 1000.0),
     PressureBin("p970_990", "970 to 990 hPa", 970.0, 990.0),
     PressureBin("p950_970", "950 to 970 hPa", 950.0, 970.0),
-    PressureBin("lt950", "<950 hPa", None, 950.0),
+    # Below 950 is split into distinct bins (was a single "<950") so intense systems
+    # are not flattened into one color: a Cat-4/5 at 905 hPa now reads differently
+    # from a 945 hPa storm.
+    PressureBin("p930_950", "930 to 950 hPa", 930.0, 950.0),
+    PressureBin("p910_930", "910 to 930 hPa", 910.0, 930.0),
+    PressureBin("lt910", "<910 hPa", None, 910.0),
 )
 
 
