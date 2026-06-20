@@ -644,6 +644,27 @@
         </div>
 
         <div class="sat-field">
+          <label for="sat-quality">Resolution</label>
+          <select id="sat-quality">
+            <option value="default" selected>Default — ~1500 px (balanced)</option>
+            <option value="high">High-res — ~4000 px (cleaner, slower)</option>
+            <option value="low">Low-res — ~500 px (compressed, fastest)</option>
+          </select>
+        </div>
+
+        <div class="sat-field">
+          <label>Map overlays</label>
+          <label class="sat-checkbox">
+            <input type="checkbox" id="sat-gridlines" checked>
+            Lat/lon lines
+          </label>
+          <label class="sat-checkbox" style="margin-top:6px">
+            <input type="checkbox" id="sat-coastlines" checked>
+            Coastlines &amp; borders
+          </label>
+        </div>
+
+        <div class="sat-field">
           <label>Bounding box (drag on map)</label>
           <div id="sat-bbox" class="sat-bbox-display">no rectangle drawn</div>
         </div>
@@ -653,7 +674,7 @@
         </div>
 
         <div class="sat-help">
-          <b>How it works:</b> draw any rectangle over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop, auto-downsampling huge bboxes to stay within a 16M-pixel budget. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
+          <b>How it works:</b> draw any rectangle over the area you want. The backend picks the smallest GOES product that covers it (Mesoscale → CONUS → Full Disk) and renders just that crop. <b>Resolution</b> sets the output size: Default ≈ 1500 px (balanced), High-res ≈ 4000 px (cleaner, slower to render + load), Low-res ≈ 500 px (compressed WebP, fastest); a small or coarse-band crop may come out smaller than the cap (it is never upscaled). Toggle the <b>lat/lon lines</b> and <b>coastlines</b> off for clean imagery. IR ≈ 3 s, Visible ≈ 15 s. Rate-limited to 10 renders/min/IP.
         </div>
       </aside>
     </div>
@@ -1152,12 +1173,15 @@
   function buildRequestBody() {
     const channel = document.getElementById('sat-channel').value;  // generic name
     const enhancement = document.getElementById('sat-enh').value;
+    const quality = document.getElementById('sat-quality').value;
+    const gridlines = document.getElementById('sat-gridlines').checked;
+    const coastlines = document.getElementById('sat-coastlines').checked;
     let time = 'latest';
     if (!latestCheckbox.checked && timeInput.value) {
       // datetime-local has no timezone; treat as UTC by appending Z.
       time = timeInput.value + ':00Z';
     }
-    return { bbox: currentBbox, time, channel, enhancement };
+    return { bbox: currentBbox, time, channel, enhancement, quality, gridlines, coastlines };
   }
 
   async function doRender() {
@@ -1210,20 +1234,45 @@
       const satFamilyHdr = resp.headers.get('X-Satellite-Family');
       const sensorHdr = resp.headers.get('X-Sensor');
 
+      // Output extension tracks the response codec: the "low" tier returns
+      // compressed WebP, default/high return PNG.
+      const ext = (blob.type === 'image/webp') ? '.webp' : '.png';
+      // Header-only: an OLD backend (pre-resolution-tiers) omits X-Quality and
+      // ignores the new params, so we must NOT claim a tier it didn't honor.
+      const qualityHdr = resp.headers.get('X-Quality');
+      const QUALITY_LABEL = {
+        low: 'Low-res (~500px, compressed)',
+        default: 'Default (~1500px)',
+        high: 'High-res (~4000px)',
+      };
       const url = URL.createObjectURL(blob);
-      document.getElementById('sat-result-img').src = url;
+      const resultImg = document.getElementById('sat-result-img');
+      resultImg.src = url;
       document.getElementById('sat-download').href = url;
       // Filename uses the satellite name from the header when present
       // (e.g. goes19 / goes16 — auto-tracks the time-based picker).
       const satSlug = satHdr ? satHdr.toLowerCase().replace('-', '') : 'sat';
       const fname = satSlug + '_' + body.channel + '_' + body.enhancement + '_' +
-        body.bbox.map(v => v.toFixed(1)).join('_') + '.png';
+        body.bbox.map(v => v.toFixed(1)).join('_') + ext;
       document.getElementById('sat-download').download = fname;
       let metaText = productHdr + ' · ' + cacheHdr + ' · ' +
         (renderMs/1000).toFixed(2) + 's render · ' + elapsed + 's total';
-      if (downsampleN > 1) {
+      const qLabel = qualityHdr ? QUALITY_LABEL[qualityHdr] : null;
+      if (qLabel) metaText += ' · ' + qLabel;
+      // The "auto-downsampled N×" note only makes sense at High-res (or on a
+      // legacy backend with no tier), where N>1 means the bbox genuinely exceeded
+      // the full-resolution budget. For the Default/Low tiers the smaller size IS
+      // the chosen tier, not a warning, so the badge is suppressed there.
+      if ((qualityHdr === 'high' || !qualityHdr) && downsampleN > 1) {
         metaText += ' · auto-downsampled ' + downsampleN + '×';
       }
+      // Append the actual rendered dimensions once the image decodes.
+      resultImg.onload = function () {
+        if (resultImg.naturalWidth) {
+          document.getElementById('sat-result-meta').textContent =
+            metaText + ' · ' + resultImg.naturalWidth + '×' + resultImg.naturalHeight + 'px';
+        }
+      };
       if (satHdr) {
         let satLine = 'Satellite: ' + satHdr;
         if (sensorHdr) satLine += ' (' + sensorHdr + ')';
@@ -1239,6 +1288,11 @@
       params.set('time', body.time);
       params.set('channel', String(body.channel));
       params.set('enhance', body.enhancement);
+      // Resolution + overlay state, encoded only when non-default so a plain
+      // render keeps the short, familiar share URL.
+      if (body.quality && body.quality !== 'default') params.set('res', body.quality);
+      if (body.gridlines === false) params.set('grid', '0');
+      if (body.coastlines === false) params.set('coast', '0');
       window.history.replaceState({}, '', '/satellite/?' + params.toString());
     } catch (e) {
       showToast('Render failed: ' + e.message);
@@ -1293,6 +1347,13 @@
     // it's valid for that channel's domain (else it falls back to default).
     const enh = p.get('enhance');
     populateEnhForChannel(enh || undefined);
+    // Resolution tier + overlay toggles (default when the param is absent).
+    const res = p.get('res');
+    if (res && ['low', 'default', 'high'].includes(res)) {
+      document.getElementById('sat-quality').value = res;
+    }
+    document.getElementById('sat-gridlines').checked = (p.get('grid') !== '0');
+    document.getElementById('sat-coastlines').checked = (p.get('coast') !== '0');
     const time = p.get('time');
     if (time && time !== 'latest') {
       latestCheckbox.checked = false;
