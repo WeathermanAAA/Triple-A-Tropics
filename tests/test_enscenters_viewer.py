@@ -44,7 +44,9 @@ def _fixture():
         {"key": "p990_1000", "label": "990 to 1000 hPa", "lo": 990, "hi": 1000},
         {"key": "p970_990", "label": "970 to 990 hPa", "lo": 970, "hi": 990},
         {"key": "p950_970", "label": "950 to 970 hPa", "lo": 950, "hi": 970},
-        {"key": "lt950", "label": "<950 hPa", "lo": None, "hi": 950},
+        {"key": "p930_950", "label": "930 to 950 hPa", "lo": 930, "hi": 950},
+        {"key": "p910_930", "label": "910 to 930 hPa", "lo": 910, "hi": 930},
+        {"key": "lt910", "label": "<910 hPa", "lo": None, "hi": 910},
     ]
     cycle = {
         "schema_version": 1, "model": "ecens", "model_label": "ECMWF ENS",

@@ -28,7 +28,9 @@ function cycleDoc(model) {
       { key: "p990_1000", label: "990 to 1000 hPa", lo: 990, hi: 1000 },
       { key: "p970_990", label: "970 to 990 hPa", lo: 970, hi: 990 },
       { key: "p950_970", label: "950 to 970 hPa", lo: 950, hi: 970 },
-      { key: "lt950", label: "<950 hPa", lo: null, hi: 950 },
+      { key: "p930_950", label: "930 to 950 hPa", lo: 930, hi: 950 },
+      { key: "p910_930", label: "910 to 930 hPa", lo: 910, hi: 930 },
+      { key: "lt910", label: "<910 hPa", lo: null, hi: 910 },
     ],
     members: [
       { id: "CTL", label: "Control", peak: { mslp_hpa: 970, vmax_kt: 60, lat: -20, lon: 178, step_h: 96 }, n_centers: 5, centers: centers(-20, 178) },
