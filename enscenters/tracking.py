@@ -101,6 +101,23 @@ SAME_SYSTEM_DEG = 6.0                    # mean great-circle track sep of one sy
 MERGE_FACTOR = 1.5                       # ...or this multiple of a cluster's own spread
 MERGE_FLOOR_DEG = 1.0                    # min spread scale (deg)
 
+# --- Stage B0: b-deck ANCHOR association defaults -------------------------
+# An OPTIONAL pre-pass (see enscenters.anchors + docs/enscenters_clustering.md) that
+# runs BEFORE the spatial density method when live anchors are supplied. Each known
+# system (official designation / invest) is a MOVING anchor; a member track is
+# associated to the anchor it best matches, so one real system stays ONE cluster as
+# it kinks/recurves (no over-split) and two close systems stay TWO (no under-merge).
+# The gate is a WIDENING cone around the moving anchor (anchor-projection error grows
+# with lead); nearest-anchor assignment - not gate width - decides WHICH system a
+# track joins, so the gate can be generous without merging neighbours.
+ASSOC_GATE0_DEG = 5.0                    # match radius at lead 0 (== genesis radius)
+ASSOC_GATE_GROW_DEG_PER_H = 0.04         # + this per forecast hour (~+4.8 deg @ 120 h)
+ASSOC_MIN_FRAC = 0.35                    # >= this fraction of a track's overlapping
+                                         # fixes must fall inside the moving gate
+ASSOC_MIN_MEMBERS = 2                    # anchored cluster needs >= this many members
+                                         # (else its tracks fall back to the density
+                                         # pass; an anchor never DELETES a track)
+
 SCHEMA_VERSION = 1
 
 
@@ -508,43 +525,141 @@ def _refine_seed(D: np.ndarray, labels: np.ndarray) -> List[List[int]]:
     return [sorted(c) for c in clusters]
 
 
-def cluster_tracks(tracks: List[dict], n_members: int, *,
-                   genesis_radius_deg: float = GENESIS_RADIUS_DEG,
-                   min_cluster_frac: float = MIN_CLUSTER_FRAC,
-                   min_samples: int = MIN_SAMPLES) -> List[List[int]]:
-    """Group member tracks into per-system clusters. ``tracks`` is a flat list of
-    ``{"member": id, "fixes": [...]}``. Returns a list of clusters, each a list of
-    indices into ``tracks``. Distinct systems separate (genesis seeds + HDBSCAN);
-    spurious one-off / far-outlier tracks land in noise and are omitted; a coherent
-    system stays one cluster (post-HDBSCAN merge + noise re-absorption). Clusters
-    are ordered most-populated first.
-    """
-    if not tracks:
+def _density_cluster(tracks: List[dict], n_members: int, idx_subset, *,
+                     genesis_radius_deg: float = GENESIS_RADIUS_DEG,
+                     min_cluster_frac: float = MIN_CLUSTER_FRAC,
+                     min_samples: int = MIN_SAMPLES) -> List[List[int]]:
+    """The spatial density method (genesis seeds + HDBSCAN + scale-adaptive refine)
+    on a SUBSET of ``tracks``. ``idx_subset`` is the GLOBAL track indices to consider;
+    each returned cluster is a list of those global indices, most-populated first.
+    Distinct systems separate; spurious one-off / far-outlier tracks land in noise and
+    are omitted; a coherent system stays one cluster (post-HDBSCAN merge + noise
+    re-absorption). With ``idx_subset == range(len(tracks))`` the output is identical
+    to the original all-tracks clustering (the no-anchor path)."""
+    sub_idx = list(idx_subset)
+    sub = [tracks[i] for i in sub_idx]
+    if not sub:
         return []
     nominal = max(2, round(min_cluster_frac * max(1, n_members)))
     clusters: List[List[int]] = []
-    for seed in _seed_groups(tracks, genesis_radius_deg):
+    for seed in _seed_groups(sub, genesis_radius_deg):
         m = len(seed)
         if m < 2:
             continue                                # lone track -> spurious, drop
         D = np.zeros((m, m), dtype=float)
         for a in range(m):
             for b in range(a + 1, m):
-                d = _track_distance(tracks[seed[a]]["fixes"], tracks[seed[b]]["fixes"])
+                d = _track_distance(sub[seed[a]]["fixes"], sub[seed[b]]["fixes"])
                 D[a, b] = D[b, a] = d
         labels = _hdbscan_labels(D, nominal, min_samples)
         if any(l >= 0 for l in labels):
             for local in _refine_seed(D, labels):
-                clusters.append([seed[i] for i in local])
+                clusters.append([sub_idx[seed[i]] for i in local])
         else:
             # HDBSCAN found no core cluster. Rescue a small-but-coherent seed (a
             # real system supported by few members) as one low-confidence cluster;
             # an incoherent seed is genuinely spurious and stays dropped.
             finite = D[np.isfinite(D) & (D < _BIG)]
             if m >= 3 and finite.size and float(np.median(finite)) <= 1.5 * genesis_radius_deg:
-                clusters.append(list(seed))
+                clusters.append([sub_idx[i] for i in seed])
     clusters.sort(key=lambda idx: len({tracks[i]["member"] for i in idx}), reverse=True)
     return clusters
+
+
+def _associate_to_anchors(tracks: List[dict], anchors: List[dict], *,
+                          gate0_deg: float = ASSOC_GATE0_DEG,
+                          gate_grow_deg_per_h: float = ASSOC_GATE_GROW_DEG_PER_H,
+                          min_frac: float = ASSOC_MIN_FRAC,
+                          min_members: int = ASSOC_MIN_MEMBERS
+                          ) -> Tuple[List[Tuple[dict, List[int]]], List[int]]:
+    """Assign each member track to the b-deck anchor it best matches. ``anchors`` is a
+    list of ``{"sid","name","is_invest","pos"}`` where ``pos`` maps a lead step to the
+    anchor's (lat,lon) AT that lead (the MOVING anchor). A track matches an anchor when
+    >= ``min_frac`` of its fixes that OVERLAP the anchor's leads fall inside the
+    widening gate ``gate0_deg + gate_grow_deg_per_h * lead``; among the anchors it
+    matches it joins the NEAREST one (smallest mean great-circle separation over the
+    matched leads) - so one system's full spread collapses onto its own anchor (no
+    over-split) and a member between two systems goes to the closer (no under-merge).
+
+    Returns ``(anchored, leftover)``: ``anchored`` = ``[(info, [global idx...])]`` for
+    buckets with >= ``min_members`` DISTINCT members; ``leftover`` = global indices not
+    anchored, INCLUDING under-supported buckets (they fall through to the density pass -
+    an anchor never deletes a track that density might still cluster)."""
+    buckets: Dict[int, List[int]] = {ai: [] for ai in range(len(anchors))}
+    leftover: List[int] = []
+    for ti, t in enumerate(tracks):
+        best: Optional[Tuple[float, int]] = None     # (mean_sep_deg, anchor_idx)
+        for ai, anc in enumerate(anchors):
+            pos = anc["pos"]
+            total = matched = 0
+            sep_sum = 0.0
+            for r in t["fixes"]:
+                ap = pos.get(int(r[0]))
+                if ap is None:
+                    continue
+                total += 1
+                d = gc_deg(r[1], r[2], ap[0], ap[1])
+                if d <= gate0_deg + gate_grow_deg_per_h * float(r[0]):
+                    matched += 1
+                    sep_sum += d
+            if total and matched and matched / total >= min_frac:
+                mean_sep = sep_sum / matched
+                if best is None or mean_sep < best[0]:
+                    best = (mean_sep, ai)
+        (leftover.append(ti) if best is None else buckets[best[1]].append(ti))
+
+    anchored: List[Tuple[dict, List[int]]] = []
+    for ai, idx in buckets.items():
+        if len({tracks[i]["member"] for i in idx}) >= min_members:
+            anchored.append(({"sid": anchors[ai]["sid"], "name": anchors[ai]["name"],
+                              "is_invest": bool(anchors[ai].get("is_invest"))},
+                             sorted(idx)))
+        else:
+            leftover.extend(idx)                     # under-supported -> density may use
+    return anchored, sorted(leftover)
+
+
+def cluster_with_anchors(tracks: List[dict], n_members: int,
+                         anchors: Optional[List[dict]] = None, *,
+                         genesis_radius_deg: float = GENESIS_RADIUS_DEG,
+                         min_cluster_frac: float = MIN_CLUSTER_FRAC,
+                         min_samples: int = MIN_SAMPLES
+                         ) -> List[Tuple[List[int], Optional[dict]]]:
+    """Per-system clustering with an OPTIONAL b-deck anchor pre-pass. Returns a list of
+    ``(cluster_idx, anchor_info_or_None)`` tuples, most-populated first.
+
+    ``anchors`` None/empty -> pure spatial density (identical to the original
+    ``cluster_tracks``). Otherwise anchored systems take PRIORITY: each official system
+    claims the member tracks that ride its moving anchor (so a recurving system stays
+    ONE cluster and two nearby systems stay TWO), then the LEFTOVER tracks - genesis /
+    new invests near no anchor - are clustered by the SAME density method, so a new
+    system is never lost."""
+    if not tracks:
+        return []
+    dk = dict(genesis_radius_deg=genesis_radius_deg, min_cluster_frac=min_cluster_frac,
+              min_samples=min_samples)
+    if not anchors:
+        return [(c, None) for c in _density_cluster(tracks, n_members,
+                                                    range(len(tracks)), **dk)]
+    anchored, leftover = _associate_to_anchors(tracks, anchors)
+    out: List[Tuple[List[int], Optional[dict]]] = [(idx, info) for info, idx in anchored]
+    out += [(c, None) for c in _density_cluster(tracks, n_members, leftover, **dk)]
+    out.sort(key=lambda ci: len({tracks[i]["member"] for i in ci[0]}), reverse=True)
+    return out
+
+
+def cluster_tracks(tracks: List[dict], n_members: int, *,
+                   anchors: Optional[List[dict]] = None,
+                   genesis_radius_deg: float = GENESIS_RADIUS_DEG,
+                   min_cluster_frac: float = MIN_CLUSTER_FRAC,
+                   min_samples: int = MIN_SAMPLES) -> List[List[int]]:
+    """Group member tracks into per-system clusters (index lists into ``tracks``),
+    most-populated first. Thin wrapper over ``cluster_with_anchors`` that drops the
+    per-cluster anchor label. With ``anchors`` None this is the original spatial
+    density clustering, unchanged."""
+    return [idx for idx, _info in cluster_with_anchors(
+        tracks, n_members, anchors, genesis_radius_deg=genesis_radius_deg,
+        min_cluster_frac=min_cluster_frac, min_samples=min_samples)]
 
 
 # ===========================================================================
@@ -840,11 +955,18 @@ def _display_track(fixes: Sequence[Sequence]) -> List[list]:
 
 def assemble_tracks_doc(per_member_tracks: Dict[str, List[List[list]]], *,
                         spec, cycle: dt.datetime, n_members: int, spacing_h: float,
-                        source_kind: str) -> dict:
+                        source_kind: str,
+                        anchors: Optional[List[dict]] = None) -> dict:
     """Stage B + C + D assembly: cluster the per-member tracks, derive products, and
     return the enriched-JSON dict. ``per_member_tracks`` maps member id -> list of
     that member's tracks (each a list of center rows), already linked (Stage A for
-    self-detected, native track_id for fnv3/genc)."""
+    self-detected, native track_id for fnv3/genc).
+
+    ``anchors`` (optional) is the b-deck moving-anchor payload from
+    :func:`enscenters.anchors.build_anchor_payload`; when present, official systems
+    are clustered by association first (no over-split / under-merge) and the cluster
+    carries an ``"anchor"`` label. When None the spatial density clustering is used,
+    unchanged."""
     flat: List[dict] = []
     members_out = []
     for mid in sorted(per_member_tracks):
@@ -854,9 +976,9 @@ def assemble_tracks_doc(per_member_tracks: Dict[str, List[List[list]]], *,
             if len(t) >= 2:
                 flat.append({"member": mid, "fixes": [list(r) for r in t]})
 
-    cluster_idx = cluster_tracks(flat, n_members)
+    labeled = cluster_with_anchors(flat, n_members, anchors)
     clusters_out = []
-    for ci, idx in enumerate(cluster_idx):
+    for ci, (idx, anchor_info) in enumerate(labeled):
         mt = _cluster_member_tracks(flat, idx)
         member_ids = sorted(mt)
         member_count = len(member_ids)
@@ -870,7 +992,7 @@ def assemble_tracks_doc(per_member_tracks: Dict[str, List[List[list]]], *,
         peak_support = max((len(r) for r in _by_lead(mt).values()), default=0)
         gla, glo, gstep = _genesis(min((flat[i]["fixes"] for i in idx),
                                        key=lambda f: f[0][0]))
-        clusters_out.append({
+        cluster = {
             "id": ci,
             "members": member_ids,
             "member_count": member_count,
@@ -882,7 +1004,13 @@ def assemble_tracks_doc(per_member_tracks: Dict[str, List[List[list]]], *,
             "mean_track": mean_track(mt),
             "plume": intensity_plume(mt),
             "envelope": track_envelope(mt),
-        })
+        }
+        # An anchored cluster carries the official system identity (designation /
+        # invest id) it was seeded from; a density (genesis) cluster has no anchor.
+        # Additive field - the current viewer ignores unknown keys.
+        if anchor_info is not None:
+            cluster["anchor"] = anchor_info
+        clusters_out.append(cluster)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -912,14 +1040,45 @@ def per_member_tracks_from_centers(centers_doc: dict) -> Tuple[Dict[str, List[Li
     return out, spacing
 
 
+def _anchor_payload_for_cycle(cycle: dt.datetime, pmt: Dict[str, List[List[list]]],
+                              *, progress=print) -> Optional[List[dict]]:
+    """Fetch the live b-deck anchors (the home map's global feed) and materialise them
+    onto this cycle's forecast leads, or None to fall back to density-only clustering.
+
+    Gated by ``ENSCENTERS_ANCHORS`` (set to 0/false/no/off to disable). NEVER raises
+    and NEVER returns an empty-but-non-None payload: any failure, a disabled flag, or
+    no active systems -> None, so the publish is never blocked and the clustering
+    reverts to today's spatial method."""
+    if os.environ.get("ENSCENTERS_ANCHORS", "1").strip().lower() in ("0", "false", "no", "off"):
+        return None
+    try:
+        from . import anchors as _anchors
+        anc = _anchors.fetch_global_anchors(cycle, progress=progress)
+        if not anc:
+            return None
+        leads = sorted({int(r[0]) for ts in pmt.values() for t in ts for r in t})
+        if not leads:
+            return None
+        return _anchors.build_anchor_payload(anc, leads)
+    except Exception as e:  # noqa: BLE001 - additive; any failure -> density-only
+        progress(f"[anchors] WARN: payload build failed ({e}); density-only")
+        return None
+
+
 def build_tracks_for_cycle(spec, cycle: dt.datetime, out_dir: str, *,
                            cycle_path: Optional[str] = None,
                            native_member_tracks: Optional[Dict[str, List[List[list]]]] = None,
+                           anchors: Optional[List[dict]] = None,
                            progress=print) -> dict:
     """Build + write ``{slug}/{cycle}.tracks.json`` for ONE cycle and return a small
     summary (incl. ``generated_at`` for the manifest cache-bust token). Self-detected
     models run Stage A from the just-written centers JSON; native models skip Stage A
-    and use the handed-in per-member ``track_id`` grouping."""
+    and use the handed-in per-member ``track_id`` grouping.
+
+    ``anchors`` is the b-deck moving-anchor payload; when None it is fetched from the
+    live global feed (graceful, gated by ``ENSCENTERS_ANCHORS``). Pass an explicit
+    payload to use it directly, or ``[]`` to SKIP the fetch and force density-only
+    (e.g. tests). None means "fetch"; [] means "density-only"."""
     source_kind = getattr(spec, "source_kind", "self_detect")
     if native_member_tracks is not None:
         pmt = native_member_tracks
@@ -934,8 +1093,11 @@ def build_tracks_for_cycle(spec, cycle: dt.datetime, out_dir: str, *,
         pmt, spacing = per_member_tracks_from_centers(centers_doc)
         n_members = int(centers_doc.get("n_members") or len(pmt))
 
+    if anchors is None:
+        anchors = _anchor_payload_for_cycle(cycle, pmt, progress=progress)
     doc = assemble_tracks_doc(pmt, spec=spec, cycle=cycle, n_members=n_members,
-                              spacing_h=spacing, source_kind=source_kind)
+                              spacing_h=spacing, source_kind=source_kind,
+                              anchors=anchors)
 
     model_dir = os.path.join(out_dir, spec.slug)
     os.makedirs(model_dir, exist_ok=True)
