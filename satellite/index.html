@@ -1446,7 +1446,7 @@ function makeSatViewer(idPrefix, opts) {
   // settled either way; `ok` only when it decoded — the loop skips !ok frames.
   var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
               raf: null, lastTick: 0, shown: false, followNew: false,
-              pendingPlay: false, buildToken: 0, encoding: false, speed: 1,
+              pendingPlay: false, buildToken: 0, encoding: false, speed: 2,
               loopHours: 0, pollTimer: null, inactive: false,
               boxRefW: 0, boxRefH: 0, bandLabelBase: "",
               // decode-gate: don't start MOTION until the active window is fully
@@ -1828,7 +1828,7 @@ function makeSatViewer(idPrefix, opts) {
       });
       host.appendChild(b);
     });
-    satSetSpeed(1);
+    satSetSpeed(2);   // default playback speed: 2x (the loops feel sluggish at 1x)
   }
   function satNudgeSpeed(dir) {
     var i = SAT_SPEEDS.indexOf(sat.speed);
