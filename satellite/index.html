@@ -795,8 +795,11 @@
      floater-loop widget: user-selectable frame count, FPS, and skip-every. -->
 <div class="sat-gifmodal" id="sat-gifmodal">
   <div class="sat-gifdialog">
-    <h3>GIF Maker <button class="sat-gifx" id="sat-gifx" type="button"
+    <h3>Export Loop <button class="sat-gifx" id="sat-gifx" type="button"
         aria-label="Close">&times;</button></h3>
+    <div class="row"><label for="sat-giffmt">Format</label>
+      <select id="sat-giffmt"><option value="mp4">MP4 (smooth)</option>
+        <option value="gif">GIF</option></select></div>
     <div class="row"><label for="sat-gifn">Number of frames</label>
       <input type="number" id="sat-gifn" min="2" value="20"></div>
     <div class="row"><label for="sat-giffps">Frames per second</label>
@@ -804,15 +807,18 @@
     <div class="row"><label for="sat-gifskip">Skip every</label>
       <input type="number" id="sat-gifskip" min="0" value="0"></div>
     <div class="row" style="justify-content:flex-end">
-      <button class="mk" id="sat-gifmake" type="button">MAKE GIF</button></div>
+      <button class="mk" id="sat-gifmake" type="button">EXPORT</button></div>
     <div class="row" id="sat-gifstatus"
          style="display:none;color:var(--accent-2);justify-content:flex-end"></div>
   </div>
 </div>
 <div class="sat-gifmodal" id="meso-gifmodal">
   <div class="sat-gifdialog">
-    <h3>GIF Maker <button class="sat-gifx" id="meso-gifx" type="button"
+    <h3>Export Loop <button class="sat-gifx" id="meso-gifx" type="button"
         aria-label="Close">&times;</button></h3>
+    <div class="row"><label for="meso-giffmt">Format</label>
+      <select id="meso-giffmt"><option value="mp4">MP4 (smooth)</option>
+        <option value="gif">GIF</option></select></div>
     <div class="row"><label for="meso-gifn">Number of frames</label>
       <input type="number" id="meso-gifn" min="2" value="20"></div>
     <div class="row"><label for="meso-giffps">Frames per second</label>
@@ -820,7 +826,7 @@
     <div class="row"><label for="meso-gifskip">Skip every</label>
       <input type="number" id="meso-gifskip" min="0" value="0"></div>
     <div class="row" style="justify-content:flex-end">
-      <button class="mk" id="meso-gifmake" type="button">MAKE GIF</button></div>
+      <button class="mk" id="meso-gifmake" type="button">EXPORT</button></div>
     <div class="row" id="meso-gifstatus"
          style="display:none;color:var(--accent-2);justify-content:flex-end"></div>
   </div>
@@ -1440,13 +1446,18 @@ function makeSatViewer(idPrefix, opts) {
               raf: null, lastTick: 0, shown: false, followNew: false,
               pendingPlay: false, buildToken: 0, encoding: false, speed: 1,
               loopHours: 0, pollTimer: null, inactive: false,
-              boxRefW: 0, boxRefH: 0, bandLabelBase: "" };
+              boxRefW: 0, boxRefH: 0, bandLabelBase: "",
+              // decode-gate: don't start MOTION until the active window is fully
+              // decoded (gateForced flips after the safety timeout). nearestOkInPlay
+              // is an instrumentation counter -- it must stay 0 during steady play.
+              gateForced: false, gateTimer: null, nearestOkInPlay: 0 };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
   var SAT_STALE_MIN = 40;
   var SAT_BASE_MS = 200;            // per-frame at 1x
   var SAT_FRAME_CAP = 90;           // max frames preloaded per loop (memory bound)
   var SAT_LAST_FRAME_DWELL = 6;     // hold the newest frame Nx longer before wrap
+  var SAT_READY_TIMEOUT_MS = 10000; // play anyway if the window isn't decoded by now
   var SAT_FETCH_TIMEOUT_MS = 15000; // a stalled manifest fetch must not brick the panel
   var SAT_SPEEDS = [0.5, 1, 2, 4];
   // Loop-window presets: "All" (the whole loaded set) vs a fixed trailing
@@ -1495,6 +1506,10 @@ function makeSatViewer(idPrefix, opts) {
     return -1;
   }
   function satNearestOk(i) {
+    // Instrumentation: with the decode-gate, the active window is fully settled
+    // before motion starts, so satAdvance only ever lands on .ok frames and this
+    // must NOT be reached during steady play. Count any violation for the check.
+    if (sat.playing) sat.nearestOkInPlay++;
     var n = sat.frames.length;
     for (var d = 0; d < n; d++) {
       if (i - d >= 0 && sat.frames[i - d].ok) return i - d;
@@ -1568,6 +1583,17 @@ function makeSatViewer(idPrefix, opts) {
   // contiguously from the start of the loop.
   function satLoadFrames() {
     var token = sat.buildToken;
+    // (Re)arm the decode-gate safety timeout: if the window isn't decoded within
+    // SAT_READY_TIMEOUT_MS, play with whatever decoded (the old behavior) so a
+    // slow/broken frame can't hang the loop. A running loop is unaffected (the
+    // retry no-ops while playing); a re-prime re-arms it for the new tail.
+    sat.gateForced = false;
+    if (sat.gateTimer) clearTimeout(sat.gateTimer);
+    sat.gateTimer = setTimeout(function () {
+      if (token !== sat.buildToken) return;   // superseded by a band/sector switch
+      sat.gateForced = true;
+      satTryStartMotion();
+    }, SAT_READY_TIMEOUT_MS);
     var newest = sat.frames.length - 1;
     var order = [];
     for (var i = 0; i < sat.frames.length; i++) {
@@ -1603,25 +1629,41 @@ function makeSatViewer(idPrefix, opts) {
     }
     return true;
   }
+  // Decode-gate: every frame in the ACTIVE loop window [winStart, newest] has
+  // settled (.done = decoded ok or permanently failed). Motion only starts once
+  // this is true (or the safety timeout fired), so the loop never animates into
+  // still-decoding frames -- the streaming jitter. Frames OUTSIDE the window
+  // (older than the trailing span) don't gate motion.
+  function satWindowReady() {
+    var n = sat.frames.length;
+    if (!n) return false;
+    for (var i = satWinStart(); i < n; i++) {
+      if (!sat.frames[i].done) return false;
+    }
+    return true;
+  }
+  function satCanStartMotion() {
+    return (satWindowReady() || sat.gateForced) && satDecoded() >= 2;
+  }
+  // Start (or arm) the loop respecting the gate: autoplay (floater) takes the
+  // idle loop slot; a deferred user play resumes. satPlay holds (pendingPlay)
+  // until the window is decoded, then this -- driven by each frame settle + the
+  // safety timeout -- flips it into motion.
+  function satTryStartMotion() {
+    if (sat.playing) return;
+    if (opts.autoplay && !sat.pendingPlay && !SAT_LOOP_TOKEN.holder &&
+        satDecoded() >= 2) {
+      satPlay();   // claims the slot + starts now if ready, else arms pendingPlay
+    } else if (sat.pendingPlay && SAT_LOOP_TOKEN.holder === idPrefix &&
+               satDecoded() >= 2) {
+      satPlay();   // window is ready now -> begins the rAF loop
+    }
+  }
   function satFrameSettled(f) {
     satEl("play").disabled = satDecoded() < 2;
-    // Load autoplay (floater only): start the page's ONE loop the moment this
-    // panel becomes playable -- but never steal the token once ANY panel
-    // holds it (the holder only ever changes on engagement, so a user who
-    // hovered/played meso before the floater finished loading keeps meso).
-    if (opts.autoplay && !sat.playing && !SAT_LOOP_TOKEN.holder &&
-        satDecoded() >= 2) {
-      satPlay();
-    }
-    // Deferred hover-play: the user engaged this panel before it was playable
-    // (satPlay refused at < 2 decoded). Honor that intent now, but only while
-    // this panel still holds the token -- engagement elsewhere supersedes it,
-    // and satPause (any explicit pause) clears it.
-    if (sat.pendingPlay && !sat.playing &&
-        SAT_LOOP_TOKEN.holder === idPrefix && satDecoded() >= 2) {
-      sat.pendingPlay = false;
-      satPlay();
-    }
+    // Gate MOTION on a fully-decoded window (autoplay + deferred user play both
+    // flow through satPlay, which holds until satCanStartMotion()).
+    satTryStartMotion();
     // Quiet progress note in the band label while the window streams in, so a
     // growing loop reads as "loading" rather than "short".
     var lbl = satEl("band-label");
@@ -1713,6 +1755,15 @@ function makeSatViewer(idPrefix, opts) {
   function satPlay() {
     if (sat.playing || satDecoded() < 2) return;
     satClaimLoop(idPrefix);   // the other viewer yields BEFORE our loop starts
+    if (!satCanStartMotion()) {
+      // The active window isn't fully decoded yet: hold the newest still frame +
+      // the "loading N/total" note, and ARM to start the instant it's ready (or
+      // the 10 s safety timeout). No rAF, so the loop never skips a decoding
+      // frame mid-play. satFrameSettled / the timeout retry via satTryStartMotion.
+      sat.pendingPlay = true;
+      return;
+    }
+    sat.pendingPlay = false;
     sat.playing = true;
     sat.followNew = false;
     satEl("play").innerHTML = "&#10074;&#10074; Pause";
@@ -1853,7 +1904,61 @@ function makeSatViewer(idPrefix, opts) {
     var g = satEl("gif");
     if (g) { try { g.focus({ preventScroll: true }); } catch (e) { try { g.focus(); } catch (e2) {} } }
   }
+  // ---- server-side loop export (POST /export) --------------------------------
+  // The render service encodes a smooth mp4 (libx264, one continuous stream =
+  // no inter-frame color shimmer) or a single-global-palette gif from the loop's
+  // already-rendered CDN frames. Primary path; on ANY failure (endpoint down,
+  // network, non-2xx) we fall back to the client-side gif.js encoder below so
+  // the button never breaks. Keeps the existing frames/fps/skip controls; adds a
+  // Format select (mp4 default, gif optional).
+  var EXPORT_API = "https://web-production-b88d.up.railway.app/export";  // render svc /export
   function satMakeGif() {
+    var total = sat.frames.length;
+    if (!total) return;
+    var n = parseInt(satEl("gifn").value, 10) || total;
+    n = Math.max(2, Math.min(total, n));
+    var fps = Math.max(1, Math.min(30, parseInt(satEl("giffps").value, 10) || 10));
+    var skip = Math.max(0, parseInt(satEl("gifskip").value, 10) || 0);
+    var fmtEl = satEl("giffmt");
+    var fmt = (fmtEl && fmtEl.value === "gif") ? "gif" : "mp4";
+    // Last N decoded frames, in play order; the server applies `skip` itself.
+    var sel = sat.frames.slice(total - n).filter(function (f) { return f.ok && f.key; });
+    if (sel.length < 2) {
+      alert("Not enough loaded frames to export; let it preload, or lower \"Skip every\".");
+      return;
+    }
+    var urls = sel.map(function (f) { return CDN + "/" + f.key; });  // clean CDN URLs
+    var status = satEl("gifstatus"), mk = satEl("gifmake");
+    status.style.display = ""; status.textContent = "Encoding " + fmt.toUpperCase() + "…";
+    mk.disabled = true;
+    sat.encoding = true;            // pause auto-refresh so frames don't change mid-encode
+    fetch(EXPORT_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ frames: urls, fps: fps, skip: skip, format: fmt })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("export HTTP " + r.status);
+      return r.blob();
+    }).then(function (blob) {
+      if (!blob || !blob.size) throw new Error("empty export");
+      var u = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      var subSlug = (SAT_SOURCES[0] && SAT_SOURCES[0].subSlug) || idPrefix;
+      a.href = u;
+      a.download = subSlug + "_" + (sat.band || "sat") + "." + fmt;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      requestAnimationFrame(function () { URL.revokeObjectURL(u); });
+      status.textContent = "Done!"; mk.disabled = false; sat.encoding = false;
+      setTimeout(satCloseGifDialog, 700);
+    }).catch(function () {
+      // Server export unavailable -> never break the button: client gif.js path.
+      status.textContent = "Server busy — encoding GIF locally…";
+      sat.encoding = false;
+      mk.disabled = false;   // re-enable so a gif.js-not-loaded fallback still leaves a usable button
+      satMakeGifClient();
+    });
+  }
+  function satMakeGifClient() {
     if (typeof window.GIF === "undefined") {
       alert("GIF library still loading, try again in a second."); return;
     }
@@ -2253,7 +2358,12 @@ function makeSatViewer(idPrefix, opts) {
                playing: sat.playing, speed: sat.speed,
                loopHours: sat.loopHours, winStart: satWinStart(),
                decoded: satDecoded(), shown: sat.shown,
-               inactive: sat.inactive, polling: !!sat.pollTimer };
+               inactive: sat.inactive, polling: !!sat.pollTimer,
+               // decode-gate instrumentation: windowReady, whether motion is
+               // armed-but-held (pendingPlay), and the steady-play invariant
+               // counter (must remain 0 while playing).
+               pendingPlay: sat.pendingPlay, windowReady: satWindowReady(),
+               nearestOkInPlay: sat.nearestOkInPlay };
     },
     pollNow: function () {
       var token = sat.buildToken;
