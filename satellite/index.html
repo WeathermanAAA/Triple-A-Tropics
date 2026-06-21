@@ -774,8 +774,10 @@
                 title="Next frame (&#8594;)">&#9654;</button>
         <div id="meso-speed" class="hafs-seg-group" role="group"
              aria-label="Playback speed"></div>
-        <div id="meso-loop" class="hafs-seg-group" role="group"
-             aria-label="Loop window"></div>
+        <!-- No loop-window control on the meso viewer: the loop is the rolling
+             90-frame native-cadence window (satSubsample keeps the most recent
+             SAT_FRAME_CAP frames). satBuildLoop no-ops when #meso-loop is absent,
+             leaving loopHours=0 = the whole loaded set. -->
         <button id="meso-gif" class="hafs-btn sat-gif" type="button"
                 title="Export the loaded frames as a GIF">&#8681; GIF</button>
         <div class="hafs-readout"><span id="meso-time">&#8212;</span>
