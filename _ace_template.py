@@ -7,7 +7,7 @@ must be doubled (`{{` and `}}`); Python format placeholders are single-braced.
 
 Format placeholders consumed by render_html:
   {basin_full_name} {basin_short_label} {current_year}
-  {climo_start} {climo_end} {updated} {live_note} {payload}
+  {climo_start} {climo_end} {updated} {live_note} {payload} {sshs_colors}
 """
 
 HTML_TEMPLATE = """<!doctype html>
@@ -111,7 +111,6 @@ HTML_TEMPLATE = """<!doctype html>
   ul.rank-list .rank-head .col-rank {{ flex: 0 0 36px; text-align: left; }}
   ul.rank-list .rank-head .col-year {{ flex: 0 0 60px; text-align: left; }}
   ul.rank-list .rank-head .col-ytd {{ flex: 1 1 auto; text-align: right; }}
-  ul.rank-list .rank-head .col-tot {{ flex: 0 0 60px; text-align: right; }}
   ul.rank-list li.row {{
     display: flex; align-items: center; padding: 7px 10px;
     border-bottom: 1px solid var(--border); color: #d0d6df;
@@ -128,8 +127,6 @@ HTML_TEMPLATE = """<!doctype html>
   ul.rank-list li.row .col-year {{ flex: 0 0 60px; font-weight: 700; }}
   ul.rank-list li.row .col-ytd {{ flex: 1 1 auto; text-align: right;
     font-variant-numeric: tabular-nums; }}
-  ul.rank-list li.row .col-tot {{ flex: 0 0 60px; text-align: right;
-    font-variant-numeric: tabular-nums; color: var(--muted); }}
   ul.rank-list li.row.is-current .col-year {{
     border-bottom: 2px solid var(--accent);
     padding-bottom: 1px;
@@ -249,8 +246,7 @@ HTML_TEMPLATE = """<!doctype html>
           <li class="rank-head" aria-hidden="true">
             <span class="col-rank">#</span>
             <span class="col-year">Year</span>
-            <span class="col-ytd">ACE</span>
-            <span class="col-tot">Total</span>
+            <span class="col-ytd">ACE (YTD)</span>
           </li>
         </ul>
       </div>
@@ -269,22 +265,31 @@ const BASIN_SHORT = "{basin_short_label}";
 const CURRENT_YEAR = parseInt(DATA.current.label, 10);
 const NS = "http://www.w3.org/2000/svg";
 
-// Storm SSHWS palette: (ceiling_kt, label, fill).
+// Every season in the rankings must be selectable + plottable. The builder omits
+// a zero-ACE (or pre-record) season from all_years; synthesize a flat-zero
+// cumulative curve for any such year so the cumulative / rank / daily panels and
+// the year selector treat EVERY year uniformly — no "year unavailable" gap. A
+// zero season never out-ranks a real one, so the rank trajectory is unchanged.
+(DATA.rankings || []).forEach((r) => {{
+  if (DATA.all_years && !DATA.all_years[r.year])
+    DATA.all_years[r.year] = new Array(DATA.doy.length).fill(0);
+}});
+
+// Storm SSHWS palette — colors are the SINGLE SOURCE OF TRUTH from
+// ace_core.SSHS_COLORS (injected), never invented here: TD blue, TS green,
+// C1 yellow, C2 orange, C3 red, C4 magenta, C5 purple. We only own the
+// kt thresholds (1-min sustained) that map a peak wind to a category.
+const SSHS_COLORS = {sshs_colors};
 const SSHWS = [
-  [33,  "TD", "#fff5cc"],
-  [63,  "TS", "#4ade80"],
-  [82,  "C1", "#5dd3ff"],
-  [95,  "C2", "#ffb83a"],
-  [112, "C3", "#ec4899"],
-  [136, "C4", "#ef4444"],
-  [9999,"C5", "#c084fc"],
-];
+  [33, "TD"], [63, "TS"], [82, "C1"], [95, "C2"],
+  [112, "C3"], [136, "C4"], [9999, "C5"],
+].map(([c, lab]) => [c, lab, SSHS_COLORS[lab]]);
 function sshwsColor(kt) {{
-  if (kt == null || isNaN(kt)) return ["?", "#4ade80"];
+  if (kt == null || isNaN(kt)) return ["TS", SSHS_COLORS.TS];
   for (const [c, lab, col] of SSHWS) {{
     if (kt <= c) return [lab, col];
   }}
-  return ["C5", "#c084fc"];
+  return ["C5", SSHS_COLORS.C5];
 }}
 function lighten(hex, amt) {{
   // amt 0..1; lighten the hex color toward white by amt fraction.
@@ -314,6 +319,23 @@ function el(tag, attrs, parent) {{
   return e;
 }}
 function clear(node) {{ while (node.firstChild) node.removeChild(node.firstChild); }}
+// Centered moving-average smoothing for the climatology percentile curves. The
+// per-DOY percentiles are computed independently across seasons, so every
+// historical season's cumulative STEPS bleed through as a jagged staircase. A
+// light MA (win = half-window in days) reads them as clean nested envelopes.
+// It is a convex combination of neighbours, so the band ORDER (min ≤ p10 ≤ …
+// ≤ max) is preserved pointwise — the ribbons never cross. Applied to the
+// PLOTTED band/edge/mean paths only; the raw climo still backs every number.
+function smoothCurve(arr, win) {{
+  const n = arr.length, out = new Array(n);
+  for (let i = 0; i < n; i++) {{
+    let s = 0, c = 0;
+    const lo = Math.max(0, i - win), hi = Math.min(n - 1, i + win);
+    for (let j = lo; j <= hi; j++) {{ s += arr[j]; c++; }}
+    out[i] = s / c;
+  }}
+  return out;
+}}
 function niceStep(x) {{
   if (!isFinite(x) || x <= 0) return 1;
   const pow = Math.pow(10, Math.floor(Math.log10(x)));
@@ -402,6 +424,17 @@ const aceY = (v) => ACE_M.t + ACE_PH - (v / aceYMax) * ACE_PH;
     y1: ACE_M.t + ACE_PH, y2: ACE_M.t + ACE_PH,
     stroke: "var(--border)", "stroke-width": 1 }}, aceSvg);
 
+  // Smoothed copies of the climo percentile curves — used for the band fills,
+  // band-edge lines, and the mean line so they read as clean envelopes instead
+  // of a staircase. The raw DATA.climo still backs every numeric readout.
+  const SM = 5;
+  const climoS = {{
+    min: smoothCurve(DATA.climo.min, SM), p10: smoothCurve(DATA.climo.p10, SM),
+    p25: smoothCurve(DATA.climo.p25, SM), mean: smoothCurve(DATA.climo.mean, SM),
+    p75: smoothCurve(DATA.climo.p75, SM), p90: smoothCurve(DATA.climo.p90, SM),
+    max: smoothCurve(DATA.climo.max, SM),
+  }};
+
   // Climo bands, light → dark
   function band(upper, lower, fill) {{
     let d = "";
@@ -412,9 +445,9 @@ const aceY = (v) => ACE_M.t + ACE_PH - (v / aceYMax) * ACE_PH;
     d += "Z";
     el("path", {{ d, fill, stroke: "none" }}, aceSvg);
   }}
-  band(DATA.climo.max, DATA.climo.min, "rgba(70,140,200,0.10)");
-  band(DATA.climo.p90, DATA.climo.p10, "rgba(70,180,220,0.18)");
-  band(DATA.climo.p75, DATA.climo.p25, "rgba(80,210,240,0.28)");
+  band(climoS.max, climoS.min, "rgba(70,140,200,0.10)");
+  band(climoS.p90, climoS.p10, "rgba(70,180,220,0.18)");
+  band(climoS.p75, climoS.p25, "rgba(80,210,240,0.28)");
 
   function linePath(xa, ya, stroke, width, dash, opacity) {{
     let d = "";
@@ -426,16 +459,16 @@ const aceY = (v) => ACE_M.t + ACE_PH - (v / aceYMax) * ACE_PH;
     if (opacity != null) a["stroke-opacity"] = opacity;
     el("path", a, aceSvg);
   }}
-  // Climo band edges
-  linePath(DATA.doy, DATA.climo.min, "#2e6a96", 1.5, null, 0.6);
-  linePath(DATA.doy, DATA.climo.max, "#2e6a96", 1.5, null, 0.6);
-  linePath(DATA.doy, DATA.climo.p10, "#3aa2cf", 1.5, null, 0.75);
-  linePath(DATA.doy, DATA.climo.p90, "#3aa2cf", 1.5, null, 0.75);
-  linePath(DATA.doy, DATA.climo.p25, "#5dd3ff", 1.7, null, 0.85);
-  linePath(DATA.doy, DATA.climo.p75, "#5dd3ff", 1.7, null, 0.85);
+  // Climo band edges (smoothed, matching the fills)
+  linePath(DATA.doy, climoS.min, "#2e6a96", 1.5, null, 0.6);
+  linePath(DATA.doy, climoS.max, "#2e6a96", 1.5, null, 0.6);
+  linePath(DATA.doy, climoS.p10, "#3aa2cf", 1.5, null, 0.75);
+  linePath(DATA.doy, climoS.p90, "#3aa2cf", 1.5, null, 0.75);
+  linePath(DATA.doy, climoS.p25, "#5dd3ff", 1.7, null, 0.85);
+  linePath(DATA.doy, climoS.p75, "#5dd3ff", 1.7, null, 0.85);
 
   // Climo mean (dashed cyan), prior-year (solid violet)
-  linePath(DATA.doy, DATA.climo.mean, "var(--accent-2)", 2.2, "6 4");
+  linePath(DATA.doy, climoS.mean, "var(--accent-2)", 2.2, "6 4");
   if (DATA.prior_year && DATA.prior_year.values)
     linePath(DATA.doy, DATA.prior_year.values, "var(--accent-3)", 2.2);
 
@@ -451,12 +484,8 @@ const aceY = (v) => ACE_M.t + ACE_PH - (v / aceYMax) * ACE_PH;
 
   // Selected-year overlay group (populated by setOverlay)
   el("g", {{ id: "selGroup" }}, aceSvg);
-
-  // Watermark
-  el("text", {{ x: M_L + PW - 10, y: ACE_M.t + 30,
-    "text-anchor": "end", "font-size": 28, "font-weight": 700,
-    fill: "var(--fg)", "fill-opacity": 0.18, "letter-spacing": 0.5 }}, aceSvg)
-    .textContent = "@WeathermanAAA_";
+  // No in-chart watermark over the data: attribution lives in the small,
+  // low-emphasis header credit line ("@WeathermanAAA_ · Triple-A-Tropics").
 }})();
 
 let selectedYear = CURRENT_YEAR;
@@ -629,7 +658,7 @@ function renderDailyPanel(year) {{
   if (peakDoy > 0) {{
     el("text", {{ x: M_L + 6, y: DAILY_M.t - 4, "font-size": 13,
       "font-weight": 700, fill: "var(--fg)" }}, dailySvg).textContent =
-      `Max daily ACE: ${{peak.toFixed(4)}} on ${{doyToDate(peakDoy, year)}}`;
+      `Max daily ACE ${{peak.toFixed(1)}} on ${{doyToDate(peakDoy, year)}}`;
   }} else {{
     el("text", {{ x: M_L + 6, y: DAILY_M.t - 4, "font-size": 13,
       "font-weight": 700, fill: "var(--muted)" }}, dailySvg).textContent =
@@ -637,21 +666,37 @@ function renderDailyPanel(year) {{
   }}
 }}
 
-// ===== Panel 4: Storm Gantt — Wikipedia style, 1 storm per row, blocks of 8
+// ===== Panel 4: Storm Activity Gantt — Wikipedia-style fixed-row timeline.
+// Storms in CHRONOLOGICAL order (by formation) fill 8 fixed rows: storm i
+// (0-based) sits on row (i mod 8). So storms 1–8 fill rows 1–8 top→bottom; the
+// 9th wraps back to row 1 (same Y as storm 1), the 17th wraps again — one shared
+// timeline, NOT three stacked sub-timelines. Continuous vertical month gridlines
+// run through ALL rows and there is ONE month-label axis at the bottom.
 const ganttSvg = document.getElementById("chartGantt");
 const ganttSubEl = document.getElementById("ganttSub");
-const STORMS_PER_BLOCK = 8;
+const GANTT_ROWS = 8;      // fixed row count; storm i -> row (i % GANTT_ROWS)
 const ROW_H = 24;          // viewBox units per storm row (~33px @ 1400 wide)
-const PILL_H = 16;         // viewBox units (pill is centered in row)
-const AXIS_H = 24;         // axis area below each block
-const BLOCK_GAP = 20;      // viewBox units between blocks
+const PILL_H = 16;         // viewBox units (bar is centered in its row)
+const GANTT_AXIS_H = 24;   // single month-label axis below all rows
 const GANTT_TOP = 8;
 
-let persistentGanttKey = null;  // "block-i" of the click-locked pill, or null
+let persistentGanttKey = null;  // key of the click-locked bar, or null
+
+// Approx width (viewBox units) of a Gantt label, measured in a real browser
+// (getComputedTextLength) and char-estimated under jsdom/tests, so the
+// right-edge overflow flip works live and never throws headless.
+function ganttLabelWidth(textEl, str) {{
+  let w = 0;
+  if (textEl && typeof textEl.getComputedTextLength === "function") {{
+    try {{ w = textEl.getComputedTextLength(); }} catch (e) {{ w = 0; }}
+  }}
+  return w > 0 ? w : str.length * 7.2;
+}}
 
 function renderGanttPanel(year) {{
   clear(ganttSvg);
   hideGanttTip(true);
+  persistentGanttKey = null;
   const storms = (DATA.storms_by_year && DATA.storms_by_year[year]) || [];
   const sorted = storms.filter(s => s.formation && s.dissipation)
     .map(s => ({{
@@ -672,27 +717,23 @@ function renderGanttPanel(year) {{
     : "";
 
   if (sorted.length === 0) {{
-    const totalH = GANTT_TOP + 30 + AXIS_H;
+    const totalH = GANTT_TOP + 30 + GANTT_AXIS_H;
     ganttSvg.setAttribute("viewBox", `0 0 ${{W}} ${{totalH}}`);
     el("text", {{ x: W / 2, y: totalH / 2,
       "text-anchor": "middle", "font-size": 14, "font-weight": 700,
       fill: "var(--muted)" }}, ganttSvg).textContent =
-      "No named storms this season";
+      "No storm-by-storm data for this season";
     return;
   }}
 
   const seasonAceTotal = sorted.reduce((acc, s) => acc + (s.ace || 0), 0);
-  const blocks = [];
-  for (let i = 0; i < sorted.length; i += STORMS_PER_BLOCK) {{
-    blocks.push(sorted.slice(i, i + STORMS_PER_BLOCK));
-  }}
-
-  // Total height
-  let totalH = GANTT_TOP;
-  for (let bi = 0; bi < blocks.length; bi++) {{
-    totalH += blocks[bi].length * ROW_H + AXIS_H;
-    if (bi < blocks.length - 1) totalH += BLOCK_GAP;
-  }}
+  // Rows actually used: a partial season fills only the rows it has (≤ 8); a
+  // full season uses all 8 and wraps. Height tracks rowsUsed so a quiet year
+  // isn't padded to a full 8-row block.
+  const rowsUsed = Math.min(GANTT_ROWS, sorted.length);
+  const gridTop = GANTT_TOP;
+  const gridBottom = GANTT_TOP + rowsUsed * ROW_H;
+  const totalH = gridBottom + GANTT_AXIS_H;
   ganttSvg.setAttribute("viewBox", `0 0 ${{W}} ${{totalH}}`);
 
   // Drop-shadow filter (defined once)
@@ -702,79 +743,74 @@ function renderGanttPanel(year) {{
   el("feDropShadow", {{ dx: 0, dy: 1, "stdDeviation": 1,
     "flood-color": "#000", "flood-opacity": 0.45 }}, filt);
 
-  let yCursor = GANTT_TOP;
-  blocks.forEach((block, bi) => {{
-    const blockTop = yCursor;
-    const blockH = block.length * ROW_H;
-    // Vertical month dividers
-    MONTH_STARTS.forEach((d) => {{
-      el("line", {{ x1: xs(d), x2: xs(d), y1: blockTop,
-        y2: blockTop + blockH, stroke: "var(--border)", "stroke-width": 0.8,
-        "stroke-opacity": 0.5, "stroke-dasharray": "3 3" }}, ganttSvg);
+  // CONTINUOUS vertical month gridlines through every row (one timeline).
+  MONTH_STARTS.forEach((d) => {{
+    el("line", {{ x1: xs(d), x2: xs(d), y1: gridTop, y2: gridBottom,
+      stroke: "var(--border)", "stroke-width": 0.8, "stroke-opacity": 0.5,
+      "stroke-dasharray": "3 3" }}, ganttSvg);
+  }});
+  // Single bottom rule under all rows.
+  el("line", {{ x1: M_L, x2: M_L + PW, y1: gridBottom, y2: gridBottom,
+    stroke: "var(--border)", "stroke-width": 1 }}, ganttSvg);
+
+  // Storm duration bars: row = i % 8, X = formation→dissipation.
+  sorted.forEach((s, i) => {{
+    const row = i % GANTT_ROWS;
+    const yCenter = gridTop + row * ROW_H + ROW_H / 2;
+    const x0 = xs(s.d0);
+    const x1 = xs(s.d1);
+    const w = Math.max(3, x1 - x0);
+    const [cat, color] = sshwsColor(s.pk);
+    const key = `pill-${{i}}`;
+    const labelStr = `${{s.name}} ${{cat}}`;
+    const g = el("g", {{ "data-pill": key, style: "cursor: pointer;" }}, ganttSvg);
+    const rect = el("rect", {{
+      x: x0, y: yCenter - PILL_H / 2, width: w, height: PILL_H,
+      rx: 8, ry: 8, fill: color, filter: "url(#ganttDrop)",
+      "data-base-color": color
+    }}, g);
+    // Label to the RIGHT of the bar; flip to the LEFT if it would overflow the
+    // right plot edge.
+    const lbl = el("text", {{ x: x1 + 6, y: yCenter + 4,
+      "font-size": 13, "font-weight": 700, fill: "var(--fg)" }}, g);
+    lbl.textContent = labelStr;
+    const lw = ganttLabelWidth(lbl, labelStr);
+    if (x1 + 6 + lw > M_L + PW) {{
+      lbl.setAttribute("x", x0 - 6);
+      lbl.setAttribute("text-anchor", "end");
+    }}
+    // Hover/click handlers
+    g.addEventListener("mouseenter", (evt) => {{
+      rect.setAttribute("fill", lighten(color, 0.10));
+      if (persistentGanttKey === null) showGanttTip(s, seasonAceTotal, evt);
     }});
-    // Bottom rule
-    el("line", {{ x1: M_L, x2: M_L + PW,
-      y1: blockTop + blockH, y2: blockTop + blockH,
-      stroke: "var(--border)", "stroke-width": 1 }}, ganttSvg);
-    // Storm pills
-    block.forEach((s, ri) => {{
-      const yCenter = blockTop + ri * ROW_H + ROW_H / 2;
-      const x0 = xs(s.d0);
-      const x1 = xs(s.d1);
-      const w = Math.max(3, x1 - x0);
-      const [cat, color] = sshwsColor(s.pk);
-      const key = `pill-${{bi}}-${{ri}}`;
-      const g = el("g", {{ "data-pill": key,
-        style: "cursor: pointer;" }}, ganttSvg);
-      const rect = el("rect", {{
-        x: x0, y: yCenter - PILL_H / 2, width: w, height: PILL_H,
-        rx: 8, ry: 8, fill: color,
-        filter: "url(#ganttDrop)",
-        "data-base-color": color
-      }}, g);
-      const lbl = el("text", {{ x: x1 + 6, y: yCenter + 4,
-        "font-size": 13, "font-weight": 700, fill: "var(--fg)" }}, g);
-      lbl.textContent = `${{s.name}} (${{cat}})`;
-      // Hover/click handlers
-      g.addEventListener("mouseenter", (evt) => {{
-        rect.setAttribute("fill", lighten(color, 0.10));
-        if (persistentGanttKey === null) {{
-          showGanttTip(s, seasonAceTotal, evt);
-        }}
-      }});
-      g.addEventListener("mousemove", (evt) => {{
-        if (persistentGanttKey === null) {{
-          positionGanttTip(evt);
-        }}
-      }});
-      g.addEventListener("mouseleave", () => {{
-        rect.setAttribute("fill", color);
-        if (persistentGanttKey === null) {{
-          hideGanttTip();
-        }}
-      }});
-      g.addEventListener("click", (evt) => {{
-        evt.stopPropagation();
-        if (persistentGanttKey === key) {{
-          persistentGanttKey = null;
-          hideGanttTip();
-        }} else {{
-          persistentGanttKey = key;
-          showGanttTip(s, seasonAceTotal, evt);
-          positionGanttTip(evt);
-          tipGantt.classList.add("persistent");
-        }}
-      }});
+    g.addEventListener("mousemove", (evt) => {{
+      if (persistentGanttKey === null) positionGanttTip(evt);
     }});
-    // Per-block axis (month labels)
-    const axisY = blockTop + blockH + AXIS_H - 8;
-    MONTH_STARTS.forEach((d, i) => {{
-      el("text", {{ x: xs(d + 15), y: axisY,
-        "text-anchor": "middle", "font-size": 12,
-        fill: "var(--muted)" }}, ganttSvg).textContent = MONTH_LABELS[i];
+    g.addEventListener("mouseleave", () => {{
+      rect.setAttribute("fill", color);
+      if (persistentGanttKey === null) hideGanttTip();
     }});
-    yCursor += blockH + AXIS_H;
-    if (bi < blocks.length - 1) yCursor += BLOCK_GAP;
+    g.addEventListener("click", (evt) => {{
+      evt.stopPropagation();
+      if (persistentGanttKey === key) {{
+        persistentGanttKey = null;
+        hideGanttTip();
+      }} else {{
+        persistentGanttKey = key;
+        showGanttTip(s, seasonAceTotal, evt);
+        positionGanttTip(evt);
+        tipGantt.classList.add("persistent");
+      }}
+    }});
+  }});
+
+  // ONE month-label axis at the bottom (not per-block).
+  const axisY = gridBottom + GANTT_AXIS_H - 8;
+  MONTH_STARTS.forEach((d, i) => {{
+    el("text", {{ x: xs(d + 15), y: axisY,
+      "text-anchor": "middle", "font-size": 12,
+      fill: "var(--muted)" }}, ganttSvg).textContent = MONTH_LABELS[i];
   }});
 }}
 
@@ -991,12 +1027,12 @@ function renderHeader(year) {{
   titleEl.innerHTML =
     '<span class="basin">' + year + ' ' + BASIN_SHORT + '</span>' +
     '<span class="sep">·</span>' +
-    'ACE: <span class="ace-val">' + fmtNum(totalAce, 1) + '</span>' +
+    'ACE <span class="ace-val">' + fmtNum(totalAce, 1) + '</span>' +
     (deltaAce != null
       ? '<span class="' + deltaCls + '"> (' + sign + fmtNum(Math.abs(deltaAce), 1) + ' vs avg' + suffix + ')</span>'
       : '') +
     '<span class="sep">·</span>' +
-    'Rank: <span class="rank-val">' + (rankShow != null ? rankShow : '-') +
+    'Rank <span class="rank-val">' + (rankShow != null ? rankShow : '-') +
     '/' + (DATA.total_seasons || '-') + '</span>';
 }}
 
@@ -1046,55 +1082,41 @@ window.WPAceChart = {{
 
 // ===== Rank list (with search, keyboard nav) =====
 (function initRankList() {{
-  const rankings = DATA.rankings || [];
-  // Historical years sorted by total desc; current year inserted at its
-  // YTD-rank position. The displayed "#" is the row index after insertion.
-  const historical = rankings.filter(r => r.year !== CURRENT_YEAR)
-    .sort((a, b) => (b.total - a.total) || (a.year - b.year));
-  const currentRow = rankings.find(r => r.year === CURRENT_YEAR);
-  const insertAt = (DATA.current_rank != null
-    ? DATA.current_rank - 1
-    : historical.length);
-  const finalList = historical.slice();
-  if (currentRow) {{
-    const at = Math.max(0, Math.min(insertAt, historical.length));
-    finalList.splice(at, 0, currentRow);
-  }}
+  // The builder already sorts `rankings` by YTD ACE (cumulative through the
+  // current day-of-year) with rank assigned — apples-to-apples, so "Rank 17/82"
+  // is meaningful. We render that order verbatim: one ACE column (the YTD value
+  // we ranked by), no redundant Total column. EVERY year is selectable —
+  // synthesize-zero (above) guarantees a plottable cumulative curve for each, so
+  // even an ACE-less or storm-less season loads (its Gantt just reads empty).
+  const rankings = (DATA.rankings || []).slice();
 
-  finalList.forEach((r, i) => {{
+  rankings.forEach((r) => {{
     const li = document.createElement("li");
     li.className = "row";
     li.setAttribute("role", "option");
     li.setAttribute("data-year", r.year);
-    const hasGantt = !!(DATA.storms_by_year && DATA.storms_by_year[r.year]);
-    const hasCum = !!(DATA.all_years && DATA.all_years[r.year]);
-    const clickable = hasCum && (r.year === CURRENT_YEAR || hasGantt);
-    if (!clickable) li.classList.add("is-disabled");
-    if (r.year === CURRENT_YEAR) {{
+    const isCur = r.year === CURRENT_YEAR;
+    if (isCur) {{
       li.classList.add("is-current");
-      li.title = "Live current season: YTD";
       li.setAttribute("aria-current", "true");
     }}
-    const isCur = r.year === CURRENT_YEAR;
-    const aceShown = isCur ? r.ytd : r.total;
-    const aceCellClass = isCur ? "col-ytd" : "col-ytd";
-    const totCell = isCur
-      ? '<span class="col-tot">YTD</span>'
-      : ('<span class="col-tot">' + r.total.toFixed(1) + '</span>');
+    // YTD = cumulative ACE through the current day-of-year (the ranked metric);
+    // full-season total shown on hover for completed years.
+    const ytd = (r.ytd != null ? r.ytd : 0);
+    li.title = isCur
+      ? "Live current season · YTD ACE " + ytd.toFixed(1)
+      : (r.year + " · YTD ACE " + ytd.toFixed(1) +
+         " · full season " + (r.total != null ? r.total.toFixed(1) : "-"));
     li.innerHTML =
-      '<span class="col-rank">' + (i + 1) + '</span>' +
+      '<span class="col-rank">' + r.rank + '</span>' +
       '<span class="col-year">' + r.year + '</span>' +
-      '<span class="' + aceCellClass + '">ACE: ' + aceShown.toFixed(2) + '</span>' +
-      totCell;
-    if (clickable) {{
-      li.addEventListener("click", () => {{
-        // ripple
-        li.classList.remove("ripple");
-        void li.offsetWidth;  // force reflow to restart animation
-        li.classList.add("ripple");
-        setSelectedYear(r.year);
-      }});
-    }}
+      '<span class="col-ytd">' + ytd.toFixed(1) + '</span>';
+    li.addEventListener("click", () => {{
+      li.classList.remove("ripple");
+      void li.offsetWidth;  // force reflow to restart the ripple animation
+      li.classList.add("ripple");
+      setSelectedYear(r.year);
+    }});
     rankList.appendChild(li);
   }});
 
