@@ -2076,15 +2076,17 @@ function makeSatViewer(idPrefix, opts) {
     }
     return out;
   }
-  // Uniform subsample of `arr` down to at most `cap`, keeping first + last.
-  // Bounds how many frames we preload + retain.
+  // Keep the most-recent `cap` frames at their NATIVE cadence. A uniform thin
+  // across the WHOLE 24 h manifest diluted a 540-frame/60 s GOES (or 358-frame/
+  // 150 s Himawari) loop down to ~16 min/frame on screen -- the loop looked like
+  // it updated every 10-15 min even though the poller stores native frames. The
+  // loop is now a rolling window of the last `cap` frames: GOES ~1.5 h @ 60 s,
+  // Himawari ~3.75 h @ 150 s -- smooth native motion. Same preload/memory bound
+  // (still <= cap decoded Images); the dropped older frames are the manifest's
+  // thinned 5-min tail we never animated usefully. (frames sorted oldest->newest
+  // by satSortDedupe, so the tail is the newest.)
   function satSubsample(arr, cap) {
-    if (arr.length <= cap) return arr.slice();
-    var out = [];
-    for (var i = 0; i < cap; i++) {
-      out.push(arr[Math.round(i * (arr.length - 1) / (cap - 1))]);
-    }
-    return out;
+    return arr.length <= cap ? arr.slice() : arr.slice(arr.length - cap);
   }
   function satNearest(t) {
     var best = sat.frames.length - 1, dBest = Infinity;
