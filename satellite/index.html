@@ -1446,6 +1446,14 @@ function makeSatViewer(idPrefix, opts) {
   // settled either way; `ok` only when it decoded — the loop skips !ok frames.
   var sat = { man: null, band: null, frames: [], idx: 0, playing: false,
               raf: null, lastTick: 0, shown: false, followNew: false,
+              // userPaused latches an EXPLICIT user pause (Pause button / scrub /
+              // step). While set, NOTHING auto-resumes this panel -- not the
+              // engagement autoplay (pointerenter) nor the decode-gate. Only an
+              // explicit Play (or a fresh sector/storm init) clears it. This is
+              // what makes "seeking never resumes playback" hold: a scrub that
+              // lands on the last frame drags the pointer to the card edge and
+              // re-fires pointerenter, which used to satPlay() the loop back on.
+              userPaused: false,
               pendingPlay: false, buildToken: 0, encoding: false, speed: 2,
               loopHours: 0, pollTimer: null, inactive: false,
               boxRefW: 0, boxRefH: 0, bandLabelBase: "",
@@ -1653,6 +1661,7 @@ function makeSatViewer(idPrefix, opts) {
   // safety timeout -- flips it into motion.
   function satTryStartMotion() {
     if (sat.playing) return;
+    if (sat.userPaused) return;   // an explicit pause/seek is never auto-resumed
     if (opts.autoplay && !sat.pendingPlay && !SAT_LOOP_TOKEN.holder &&
         satDecoded() >= 2) {
       satPlay();   // claims the slot + starts now if ready, else arms pendingPlay
@@ -1756,6 +1765,7 @@ function makeSatViewer(idPrefix, opts) {
   }
   function satPlay() {
     if (sat.playing || satDecoded() < 2) return;
+    sat.userPaused = false;   // reaching here is an explicit/allowed play -> unlatch
     satClaimLoop(idPrefix);   // the other viewer yields BEFORE our loop starts
     if (!satCanStartMotion()) {
       // The active window isn't fully decoded yet: hold the newest still frame +
@@ -1788,9 +1798,12 @@ function makeSatViewer(idPrefix, opts) {
     sat.followNew = true;
   }
   SAT_LOOP_TOKEN.yields[idPrefix] = satYieldLoop;
-  function satTogglePlay() { if (sat.playing) satPause(); else satPlay(); }
+  function satTogglePlay() {
+    if (sat.playing) { satPause(); sat.userPaused = true; }   // explicit pause latches
+    else satPlay();                                           // explicit play unlatches
+  }
   function satStep(d) {
-    satPause();
+    satPause(); sat.userPaused = true;   // stepping is a manual seek -> stay paused
     var n = sat.frames.length, lo = satWinStart(), j = sat.idx;
     for (var s = 0; s < n; s++) {
       j += d;
@@ -2255,16 +2268,31 @@ function makeSatViewer(idPrefix, opts) {
       if (e.target === satEl("gifmodal")) satCloseGifDialog();
     });
     satEl("scrub").addEventListener("input", function () {
-      satPause(); satShow(Number(this.value));
+      // Seeking must NEVER resume playback. satPause stops the loop; the
+      // userPaused latch then blocks the engagement autoplay (pointerenter) from
+      // re-starting it when the drag lands on the last frame and the pointer
+      // re-enters the card. Only Play resumes from here.
+      satPause(); sat.userPaused = true; satShow(Number(this.value));
     });
     satEl("bands").addEventListener("change", function () {   // band <select>
-      satPause(); satSelectBand(this.value, true);
+      // A band switch is a fresh content selection (like a sector/storm re-init,
+      // which clears userPaused in initSatellite) -- NOT a seek. Clear the latch
+      // so the new band is hover/autoplay eligible again, matching pre-latch
+      // behavior. Can't reintroduce the scrub-resume bug: a band switch never
+      // routes through the scrubber, and satTryStartMotion still won't autoplay
+      // (the loop token is held, no pendingPlay) -- only hover-resume is restored.
+      satPause(); sat.userPaused = false; satSelectBand(this.value, true);
     });
     // Engagement hands this panel the play token (and resumes its loop): the
     // hovered / touched panel animates, the other parks. pointerenter covers
     // mouse hover; pointerdown (capture) covers touch taps on any control --
     // either way the OTHER panel's rAF is cancelled before ours matters.
     satEl("card").addEventListener("pointerenter", function () {
+      // Engagement autoplay must not override an explicit user pause/seek: a
+      // panel the user paused stays paused on hover (only Play resumes). Bail
+      // BEFORE claiming the loop token -- claiming it would park the OTHER panel
+      // while this one won't play, freezing the whole page.
+      if (sat.userPaused) return;
       satClaimLoop(idPrefix);
       satPlay();
       // Not yet playable (< 2 frames decoded): remember the intent and start
@@ -2300,6 +2328,7 @@ function makeSatViewer(idPrefix, opts) {
     satPause();
     sat.man = null; sat.band = null; sat.frames = []; sat.idx = 0;
     sat.buildToken++; sat.encoding = false;
+    sat.userPaused = false;   // a fresh storm/sector starts clean (autoplay eligible)
     sat.shown = false; sat.followNew = false; sat.inactive = false;
     sat.boxRefW = 0; sat.boxRefH = 0; sat.bandLabelBase = "";
     satFrameClear();
