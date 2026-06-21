@@ -375,6 +375,9 @@ def render_html(payload: dict, basin_cfg: dict, current_year: int,
         climo_end=climo_end,
         updated=build_now.strftime("%Y-%m-%d %H:%M UTC"),
         live_note=live_note,
+        # Single source of truth for SSHWS category colors (TD blue … C1 yellow …
+        # C5 purple). The chart never invents a palette.
+        sshs_colors=json.dumps(ac.SSHS_COLORS, separators=(",", ":")),
     )
 
 
