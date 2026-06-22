@@ -1,0 +1,77 @@
+name: update-recon
+
+# Aircraft-recon observations product (HDOB/VDM/dropsonde + CARCAH TCPOD).
+# Self-contained + isolated: decodes NHC recon bulletins to JSON and syncs them
+# to R2 under recon/. Touches NOTHING in the track/ACE/climatology pipeline.
+#
+# Cadence: every 10 minutes on a staggered (non-round) minute so GitHub does
+# not drop the run in its high-load :00/:30 windows. HDOB blocks post on a
+# ~10-min cadence; the /recon/ viewer re-polls R2 on top, so the current
+# mission stays near-live. (A Railway poller is the fast-follow for sub-minute.)
+
+on:
+  schedule:
+    - cron: "3,13,23,33,43,53 * * * *"
+  workflow_dispatch:
+    inputs:
+      window_days:
+        description: "Rolling rebuild window (days)"
+        default: "3"
+      backfill_year:
+        description: "Backfill a whole season (e.g. 2024); blank = incremental"
+        default: ""
+
+permissions:
+  contents: read            # R2-only product; commits nothing to main
+
+concurrency:
+  group: update-recon
+  cancel-in-progress: false
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install deps (decoders only - no cartopy/matplotlib)
+        run: pip install --no-cache-dir pandas numpy
+      - name: Build recon JSON
+        env:
+          RECON_ENABLED: ${{ vars.RECON_ENABLED || '1' }}
+          RECON_WINDOW_DAYS: ${{ github.event.inputs.window_days || '3' }}
+          RECON_BACKFILL_YEAR: ${{ github.event.inputs.backfill_year || '' }}
+        run: |
+          set -euo pipefail
+          ARGS="--out-dir ./recon_build --window-days ${RECON_WINDOW_DAYS}"
+          if [ -n "${RECON_BACKFILL_YEAR}" ]; then
+            ARGS="$ARGS --backfill-year ${RECON_BACKFILL_YEAR}"
+          fi
+          python generate_recon.py $ARGS
+      - name: Sync to R2
+        # Guard: only sync when the build wrote a manifest (kill switch or a
+        # total failure leaves recon_build/ without one -> last-known-good R2
+        # stays live). manifests get a short TTL; the viewer also ?t=-busts.
+        if: ${{ vars.RECON_ENABLED != 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./recon_build/manifest.json ]; then
+            echo "recon: no manifest written - skipping R2 sync (last-known-good stays live)"
+            exit 0
+          fi
+          # No --size-only: a manifest/current whose byte-size is unchanged but
+          # whose timestamps moved must still re-upload. recon_build holds only
+          # this run's in-window storms (fresh checkout), and we omit --delete,
+          # so out-of-window storms stay live on R2 and are not re-uploaded.
+          aws s3 sync ./recon_build "s3://triple-a-tropics-media/recon" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --no-progress \
+            --content-type "application/json" \
+            --cache-control "public, max-age=30"
