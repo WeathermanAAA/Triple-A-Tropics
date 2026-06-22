@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Aircraft Recon · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Hurricane Hunter aircraft reconnaissance: the NHC Tropical Cyclone Plan of the Day plus per-mission flight tracks colored by SFMR surface wind, VDM center fixes, dropsondes, and a surface-pressure vs wind time series.">
+<meta name="description" content="Hurricane Hunter aircraft reconnaissance: the NHC Tropical Cyclone Plan of the Day plus per-mission flight tracks drawn as wind barbs colored by tropical-cyclone wind, VDM center fixes, dropsondes, and a multi-panel pressure, wind, rain, temperature and altitude time series.">
 <meta property="og:title" content="Aircraft Recon · Triple-A-Tropics">
-<meta property="og:description" content="Hurricane Hunter recon: Plan of the Day, flight tracks colored by SFMR surface wind, VDM center fixes and dropsondes, with a surface-pressure / wind time series. Shareable PNG.">
+<meta property="og:description" content="Hurricane Hunter recon: Plan of the Day, flight tracks as wind barbs colored by TC wind, VDM center fixes and dropsondes, with a multi-panel time series and a flight-level / SFMR toggle. Shareable PNG.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
@@ -186,7 +186,7 @@
 
 <header class="page-head">
   <h1>Aircraft Recon</h1>
-  <p>Hurricane Hunter reconnaissance, straight from the data. The <b>Current Mission</b> tab leads with the National Hurricane Center <b>Plan of the Day</b> (which aircraft are tasked, where, and when) and spotlights the active or most recent pass. The <b>Storms</b> tab plots any mission: a flight track colored by <b>SFMR surface wind</b> (falling back to flight-level wind where SFMR is missing), VDM center fixes labeled with sea-level pressure, dropsondes, and a surface-pressure vs wind time series along the pass. Every figure is one canvas, so you can right-click to save or use the Download PNG button to share exactly what you see.</p>
+  <p>Hurricane Hunter reconnaissance, straight from the data. The <b>Current Mission</b> tab leads with the National Hurricane Center <b>Plan of the Day</b> (which aircraft are tasked, where, and when) and spotlights the active or most recent pass, with a <b>Last 10 min</b> and a <b>Full Mission</b> view. The <b>Storms</b> tab plots any mission: a flight track drawn as standard <b>wind barbs</b> colored by peak flight-level wind on a tropical-cyclone scale, VDM center fixes labeled with sea-level pressure, dropsondes, and a stacked multi-panel time series (sea-level pressure and wind, SFMR and rain, temperature and dewpoint, static pressure and altitude). A <b>Wind</b> toggle switches the barbs and color between flight-level and SFMR surface wind. Every figure is one canvas, so you can right-click to save or use the Download PNG button to share exactly what you see.</p>
 </header>
 
 <section class="chart-section">
@@ -215,6 +215,20 @@
           <div id="recon-mission-wrap" class="recon-group">
             <label for="recon-mission">Mission</label>
             <select id="recon-mission"></select>
+          </div>
+          <div class="recon-group">
+            <label for="recon-wind">Wind</label>
+            <select id="recon-wind">
+              <option value="fl">Flight-level</option>
+              <option value="sfmr">SFMR surface</option>
+            </select>
+          </div>
+          <div class="recon-group">
+            <label for="recon-scope">View</label>
+            <select id="recon-scope">
+              <option value="full">Full mission</option>
+              <option value="last10">Last 10 min</option>
+            </select>
           </div>
           <div class="recon-group recon-style-wrap">
             <label for="recon-style">Style</label>
@@ -274,6 +288,6 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/recon/recon.js?v=364f7b4d43"></script>
+<script src="/recon/recon.js?v=05cefe9d04"></script>
 </body>
 </html>
