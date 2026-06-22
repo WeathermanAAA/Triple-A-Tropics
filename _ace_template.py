@@ -759,14 +759,18 @@ function renderGanttPanel(year) {{
     const yCenter = gridTop + row * ROW_H + ROW_H / 2;
     const x0 = xs(s.d0);
     const x1 = xs(s.d1);
-    const w = Math.max(3, x1 - x0);
+    const w = Math.max(8, x1 - x0);   // min width keeps even 1-fix storms a visible bar (flat edges, not a capsule)
     const [cat, color] = sshwsColor(s.pk);
     const key = `pill-${{i}}`;
     const labelStr = `${{s.name}} ${{cat}}`;
     const g = el("g", {{ "data-pill": key, style: "cursor: pointer;" }}, ganttSvg);
+    // Duration bars are rounded RECTANGLES, never pills: cap the corner radius to
+    // a small value AND to half the bar's smaller dimension, so even a single-fix
+    // (narrow) storm reads as a tiny rounded-rect bar instead of an ellipse/circle.
+    const rCorner = Math.min(3, w / 2, PILL_H / 2);
     const rect = el("rect", {{
       x: x0, y: yCenter - PILL_H / 2, width: w, height: PILL_H,
-      rx: 8, ry: 8, fill: color, filter: "url(#ganttDrop)",
+      rx: rCorner, ry: rCorner, fill: color, filter: "url(#ganttDrop)",
       "data-base-color": color
     }}, g);
     // Label to the RIGHT of the bar; flip to the LEFT if it would overflow the

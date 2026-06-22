@@ -1212,7 +1212,7 @@ TRACKS_JS = r"""
 (function() {
   var SSHS_COLORS = {
     "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
-    "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
+    "C2": "#ff9a2f", "C3": "#f5333c", "C4": "#e33ad4", "C5": "#b03bff"
   };
   var CAT_LABELS = {
     "TD": "Depression", "TS": "Tropical Storm",
@@ -1775,7 +1775,7 @@ HTML_TEMPLATE = """<!doctype html>
     --bg: #07101c; --panel: #0f1a2a; --border: #1a2840;
     --fg: #e5edf6; --muted: #8ea2bd;
     --td: #3fa4ff; --ts: #46c56a;
-    --c1: #ffe14d; --c2: #ff9a2f; --c3: #ff4d3b;
+    --c1: #ffe14d; --c2: #ff9a2f; --c3: #f5333c;
     --c4: #e33ad4; --c5: #b03bff;
   }}
   * {{ box-sizing: border-box; }}
@@ -1818,16 +1818,20 @@ HTML_TEMPLATE = """<!doctype html>
     dominant-baseline: middle; }}
 
   /* Sidebar */
-  .side {{ flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; }}
+  .side {{ flex: 1 1 520px; min-width: 320px; display: flex; flex-direction: column; gap: 8px; }}
   .panel-title {{ color: var(--muted); font-size: 12px; margin: 2px 2px 0;
     text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; }}
   .storm-list {{ background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; overflow: hidden; max-height: 820px; overflow-y: auto;
-    scrollbar-color: #2a3e5c transparent; }}
+    border-radius: 10px; max-height: 820px; overflow-y: auto;
+    scrollbar-color: #2a3e5c transparent;
+    /* Responsive grid: cards flow in rows AND columns, auto-filling the panel
+       width (one column on narrow phones, two+ on wide screens). */
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+    gap: 8px; padding: 8px; align-items: start; align-content: start; }}
   .storm-list::-webkit-scrollbar {{ width: 8px; }}
   .storm-list::-webkit-scrollbar-thumb {{ background: #2a3e5c; border-radius: 4px; }}
-  .storm-card {{ padding: 10px 12px; border-bottom: 1px solid var(--border); }}
-  .storm-card:last-child {{ border-bottom: 0; }}
+  .storm-card {{ padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--panel); }}
   .storm-card.active {{ background: rgba(255,184,58,0.08); }}
   .storm-top {{ display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-bottom: 4px; }}
@@ -1948,12 +1952,12 @@ HTML_TEMPLATE = """<!doctype html>
     border-radius: 999px; font-size: 10px; font-weight: 700;
     color: #07101c; margin-top: 2px; }}
 
-  /* Clickable storm cards. Same body.interactive gate as the dots —
-     per-basin static maps have no toggle handler, so the card stays
-     visually inert. */
-  body.interactive .storm-card.clickable {{ cursor: pointer; transition: background 0.15s; }}
-  body.interactive .storm-card.clickable:hover {{ background: rgba(255,255,255,0.04); }}
-  body.interactive .storm-card.clickable.active:hover {{ background: rgba(255,184,58,0.14); }}
+  /* Clickable storm cards. The live overlay (LIVE_BASIN_JS) wires a delegated
+     click handler on #storms on every per-basin page, so the cards are always
+     interactive — pointer + hover, no body.interactive gate needed. */
+  .storm-card.clickable {{ cursor: pointer; transition: background 0.15s; }}
+  .storm-card.clickable:hover {{ background: rgba(255,255,255,0.04); }}
+  .storm-card.clickable.active:hover {{ background: rgba(255,184,58,0.14); }}
   .click-hint {{ font-size: 10px; color: var(--muted); margin-top: 4px;
     text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
     opacity: 0.6; }}
@@ -2566,6 +2570,245 @@ LIVE_BASIN_JS = r"""
     }
   }
 
+  // ---- Storm-card placard interactivity (click a card -> inline peak / active
+  // wind-history chart). These live in the overlay (not the baked page) so they
+  // survive applyLive()'s card redraw, and they read the live feed's storms (which
+  // carry per-fix `points`) via LIVE_STORMS, keyed by sid. The click is EVENT-
+  // DELEGATED on the stable #storms container, so one listener outlives every
+  // innerHTML swap (the regression was per-card listeners wiped by the redraw). ----
+  var LIVE_STORMS = {};
+  var PLACARD_CAT_LABELS = {
+    "TD": "Depression", "TS": "Tropical Storm", "C1": "Category 1",
+    "C2": "Category 2", "C3": "Category 3", "C4": "Category 4", "C5": "Category 5"
+  };
+  function ktToMph(k) { return Math.round(k * 1.15077945); }
+  function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
+  function ktToKmh(k) { return Math.round(k * 1.852); }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function plFmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var hh = String(d.getUTCHours()).padStart(2, "0");
+    var mm = String(d.getUTCMinutes()).padStart(2, "0");
+    return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  function plFmtLatLon(lat, lon) {
+    while (lon > 180) lon -= 360;
+    while (lon < -180) lon += 360;
+    var la = Math.abs(lat).toFixed(1) + "° " + (lat >= 0 ? "N" : "S");
+    var lo = Math.abs(lon).toFixed(1) + "° " + (lon >= 0 ? "E" : "W");
+    return la + "   " + lo;
+  }
+  function plCompass(b) {
+    var dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return dirs[Math.round(b / 22.5) % 16];
+  }
+  function plSshsLabel(cls) {
+    if (cls === "TD") return "D";
+    if (cls === "TS") return "S";
+    return (cls || "").replace("C", "") || "D";
+  }
+  function plSpinner(color, cls) {
+    var label = plSshsLabel(cls);
+    return '<div class="placard-spinner">' +
+      '<svg viewBox="-34 -34 68 68">' +
+        '<g>' +
+          '<path d="__LIVE_HURRICANE_PATH__" fill="' + color + '" ' +
+            'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/>' +
+          '<animateTransform attributeName="transform" attributeType="XML" ' +
+            'type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>' +
+        '</g>' +
+        '<text x="0" y="0" text-anchor="middle" dominant-baseline="central" ' +
+          'font-size="22" font-weight="900" fill="#ffffff" ' +
+          'paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="2" ' +
+          'stroke-linejoin="round">' + label + '</text>' +
+      '</svg>' +
+    '</div>';
+  }
+  function plMovement(pts) {
+    for (var i = pts.length - 2; i >= 0; i--) {
+      var a = pts[i], b = pts[pts.length - 1];
+      var ta = new Date(a.t).getTime(), tb = new Date(b.t).getTime();
+      var dtH = (tb - ta) / 3600000;
+      if (dtH < 1) continue;
+      var latm = (b.lat - a.lat) * 60;
+      var lonm = (b.lon - a.lon) * 60 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+      var distNm = Math.sqrt(latm * latm + lonm * lonm);
+      if (distNm < 0.5) return "Nearly stationary";
+      var speedKt = distNm / dtH;
+      var bearing = (Math.atan2(lonm, latm) * 180 / Math.PI + 360) % 360;
+      return plCompass(bearing) + " at " + ktToMph(speedKt) + " mph";
+    }
+    return "-";
+  }
+  function plBannerTextColor(cls) {
+    return (cls === "TS" || cls === "C1" || cls === "C2") ? "#0a1324" : "#ffffff";
+  }
+  function renderWindChart(pts) {
+    if (!pts.length) return '<div class="chart-empty">No wind observations yet.</div>';
+    var W = 320, H = 190;
+    var padL = 34, padR = 8, padT = 8, padB = 26;
+    var plotW = W - padL - padR;
+    var plotH = H - padT - padB;
+    var times = pts.map(function(p) { return new Date(p.t).getTime(); });
+    var tMin = Math.min.apply(null, times);
+    var tMax = Math.max.apply(null, times);
+    var maxWind = Math.max(160, Math.max.apply(null, pts.map(function(p) { return p.wind_kt || 0; })));
+    function yScale(w) { return padT + plotH - (w / maxWind) * plotH; }
+    function xScale(t) {
+      if (tMax === tMin) return padL + plotW / 2;
+      return padL + (t - tMin) / (tMax - tMin) * plotW;
+    }
+    var bands = [
+      [0, 34, CFG.colors.TD], [34, 64, CFG.colors.TS], [64, 83, CFG.colors.C1],
+      [83, 96, CFG.colors.C2], [96, 113, CFG.colors.C3], [113, 137, CFG.colors.C4],
+      [137, maxWind, CFG.colors.C5]
+    ];
+    var bandRects = bands.map(function(b) {
+      var lo = b[0], hi = b[1], c = b[2];
+      var y1 = yScale(Math.min(hi, maxWind));
+      var y2 = yScale(lo);
+      return '<rect x="' + padL + '" y="' + y1 + '" width="' + plotW +
+             '" height="' + (y2 - y1) + '" fill="' + c + '" fill-opacity="0.38"/>';
+    }).join("");
+    var pathD = "M " + pts.map(function(p) {
+      return xScale(new Date(p.t).getTime()).toFixed(1) + "," + yScale(p.wind_kt || 0).toFixed(1);
+    }).join(" L ");
+    var dotsSvg = pts.map(function(p) {
+      var x = xScale(new Date(p.t).getTime()).toFixed(1);
+      var y = yScale(p.wind_kt || 0).toFixed(1);
+      return '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#0a1324" stroke="#ffffff" stroke-width="1.3"/>';
+    }).join("");
+    var ticks = [0, 35, 65, 85, 100, 115, 140, 160];
+    var yLabels = ticks.filter(function(v) { return v <= maxWind; }).map(function(v) {
+      var y = yScale(v);
+      return '<g><line x1="' + (padL - 3) + '" y1="' + y + '" x2="' + padL +
+             '" y2="' + y + '" stroke="#3a4d6e" stroke-width="0.6"/>' +
+             '<text x="' + (padL - 6) + '" y="' + (y + 3) +
+             '" text-anchor="end" font-size="9" fill="#8ea2bd">' + v + '</text></g>';
+    }).join("");
+    var nTicks = 3;
+    var xLabels = "";
+    for (var i = 0; i < nTicks; i++) {
+      var t = tMin + (i * (tMax - tMin) / (nTicks - 1 || 1));
+      var x = xScale(t);
+      var d = new Date(t);
+      var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      var label = m[d.getUTCMonth()] + " " + d.getUTCDate();
+      xLabels += '<text x="' + x + '" y="' + (H - padB + 13) +
+                 '" text-anchor="middle" font-size="9" fill="#8ea2bd">' + label + '</text>';
+    }
+    return (
+      '<svg class="wind-chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet">' +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH + '" fill="#07101c"/>' +
+        bandRects + yLabels + xLabels +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH + '" fill="none" stroke="#243452"/>' +
+        '<path d="' + pathD + '" fill="none" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        dotsSvg +
+      '</svg>'
+    );
+  }
+  function renderPeakPlacard(storm) {
+    if (!storm) return '<div class="chart-empty">No data.</div>';
+    var pts = (storm.points || []).slice();
+    var validPts = pts.filter(function(p) { return p.wind_kt != null; });
+    if (!validPts.length) return '<div class="chart-empty">No wind observations.</div>';
+    var peak = validPts[0];
+    for (var i = 1; i < validPts.length; i++) {
+      if (validPts[i].wind_kt > peak.wind_kt) peak = validPts[i];
+    }
+    var minPres = null;
+    validPts.forEach(function(p) {
+      if (p.pressure_mb != null && (minPres == null || p.pressure_mb < minPres)) minPres = p.pressure_mb;
+    });
+    var cls = peak.cls || "TD";
+    var color = CFG.colors[cls] || "#888";
+    var catLabel = PLACARD_CAT_LABELS[cls] || cls;
+    var windKt = peak.wind_kt;
+    var loc = plFmtLatLon(peak.lat, peak.lon);
+    var chart = renderWindChart(validPts);
+    var txtColor = plBannerTextColor(cls);
+    return (
+      '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        plSpinner(color, cls) +
+        '<div class="pl-row1"><span class="pl-cat">PEAK · ' + catLabel + '</span><b>' +
+          escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
+        '<div class="pl-intensity">' +
+          '<div class="pl-big">' + ktToMph5(windKt) + '</div>' +
+          '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
+        '</div>' +
+        '<div class="pl-deets">' +
+          '<div><span>Reached</span><b>' + plFmtTime(peak.t) + '</b></div>' +
+          '<div><span>Location</span><b>' + loc + '</b></div>' +
+          '<div><span>Min pressure</span><b>' + (minPres ? Math.round(minPres) + " mb" : "-") + '</b></div>' +
+          '<div><span>ACE</span><b>' + (storm.ace != null ? storm.ace.toFixed(2) : "-") + '</b></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="placard-chart-label">Wind history</div>' +
+      chart
+    );
+  }
+  function renderActiveInline(storm) {
+    var pts = (storm.points || []).filter(function(p) { return p.wind_kt != null; });
+    return '<div class="placard-chart-label">Wind history</div>' + renderWindChart(pts);
+  }
+  function openInline(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    var s = LIVE_STORMS[sid];
+    if (!el || !s) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = s.is_active ? renderActiveInline(s) : renderPeakPlacard(s);
+      el.dataset.rendered = "1";
+    }
+    el.hidden = false;
+    if (card) {
+      card.classList.add("open");
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  function toggleInline(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    var s = LIVE_STORMS[sid];
+    if (!el || !s) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = s.is_active ? renderActiveInline(s) : renderPeakPlacard(s);
+      el.dataset.rendered = "1";
+    }
+    var nowOpen = el.hidden;
+    el.hidden = !el.hidden;
+    if (card) card.classList.toggle("open", nowOpen);
+    if (nowOpen && card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  // ONE delegated listener on the stable #storms container survives every
+  // applyLive() innerHTML swap; the active-icon listener is delegated on document
+  // because the active SVG layer is replaced wholesale on each redraw.
+  function wireCardInteractivity() {
+    if (typeof document === "undefined") return;
+    var host = document.getElementById("storms");
+    if (host && !host.dataset.clickWired) {
+      host.dataset.clickWired = "1";
+      host.addEventListener("click", function(ev) {
+        if (ev.target.closest("a")) return;          // CycloLab link still navigates
+        var card = ev.target.closest(".storm-card.clickable");
+        if (card && card.dataset.sid) toggleInline(card.dataset.sid);
+      });
+    }
+    if (document.body && !document.body.dataset.iconWired) {
+      document.body.dataset.iconWired = "1";
+      document.addEventListener("click", function(e) {
+        var g = e.target.closest(".active-icon");
+        if (g && g.dataset.sid) { e.stopPropagation(); openInline(g.dataset.sid); }
+      });
+    }
+  }
+
   function applyLive(data) {
     var tracksEl = document.querySelector("#chart > g.tracks");
     var activeEl = document.querySelector("#chart > g.active-storms");
@@ -2575,6 +2818,10 @@ LIVE_BASIN_JS = r"""
     if (!tracksEl || !activeEl || !statsEl || !titleEl || !listEl) {
       throw new Error("expected page elements missing");
     }
+    // Re-index the live storms (with per-fix points) so a card click expands the
+    // CURRENT intensity/peak, not a stale baked copy.
+    LIVE_STORMS = {};
+    (data.storms || []).forEach(function(s) { if (s && s.sid) LIVE_STORMS[s.sid] = s; });
     // Build + parse EVERYTHING before touching the DOM so a failure
     // anywhere leaves the baked render fully intact (atomic swap).
     var freshTracks = parseSvgGroup(buildTracksSvg(data.storms));
@@ -2599,6 +2846,9 @@ LIVE_BASIN_JS = r"""
   }
 
   if (typeof window !== "undefined" && typeof document !== "undefined") {
+    // Wire the (delegated) card-click handler immediately on the baked DOM so
+    // clicks work the moment the cards exist; LIVE_STORMS fills in on first fetch.
+    wireCardInteractivity();
     try {
       // Same fetch discipline as active-banner.js: cache-bust + no-store
       // so a freshly poller-written R2 object is always picked up.
@@ -2684,7 +2934,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     --bg: #07101c; --panel: #0f1a2a; --border: #1a2840;
     --fg: #e5edf6; --muted: #8ea2bd;
     --td: #3fa4ff; --ts: #46c56a;
-    --c1: #ffe14d; --c2: #ff9a2f; --c3: #ff4d3b;
+    --c1: #ffe14d; --c2: #ff9a2f; --c3: #f5333c;
     --c4: #e33ad4; --c5: #b03bff;
   }
   * { box-sizing: border-box; }
@@ -2913,7 +3163,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 (function () {
   var SSHS_COLORS = {
     "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
-    "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
+    "C2": "#ff9a2f", "C3": "#f5333c", "C4": "#e33ad4", "C5": "#b03bff"
   };
   var CAT_LABELS = {
     "TD": "Depression", "TS": "Tropical Storm",
@@ -3097,7 +3347,7 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       34,  "#46c56a",  // 34-63: TS
       64,  "#ffe14d",  // 64-82: C1
       83,  "#ff9a2f",  // 83-95: C2
-      96,  "#ff4d3b",  // 96-112: C3
+      96,  "#f5333c",  // 96-112: C3
       113, "#e33ad4",  // 113-136: C4
       137, "#b03bff"   // ≥137: C5
     ];
