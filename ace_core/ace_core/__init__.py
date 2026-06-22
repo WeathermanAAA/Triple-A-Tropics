@@ -665,7 +665,7 @@ SSHS_COLORS = {
     "TS": "#46c56a",    # tropical storm - green
     "C1": "#ffe14d",    # cat 1 - yellow
     "C2": "#ff9a2f",    # cat 2 - orange
-    "C3": "#ff4d3b",    # cat 3 - red
+    "C3": "#f5333c",    # cat 3 - clean red (distinct from C2 orange; was #ff4d3b which read orange)
     "C4": "#e33ad4",    # cat 4 - magenta/pink
     "C5": "#b03bff",    # cat 5 - purple
 }
