@@ -89,3 +89,6 @@ _debug/
 node_modules/
 package-lock.json
 .claude/
+
+# recon ingest output (R2-only, like models/enscenters)
+recon_build/
