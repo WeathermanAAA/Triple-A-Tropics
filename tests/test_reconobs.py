@@ -146,5 +146,94 @@ class TestTcpod(unittest.TestCase):
         self.assertTrue(t["basins"]["pacific"]["negative"])
 
 
+HDOB_2013 = """000
+URNT15 KNHC 060900
+NOAA3 0301A ANDREA             HDOB 01 20130606
+090000 2752N 08214W 8745 01319 0164 +215 +068 215040 044 048 002 00
+090030 2750N 08212W 8759 01307 0168 +211 +073 231045 047 050 003 00
+$$
+"""
+
+
+class TestBackfillMergesWithoutRegressingLive(unittest.TestCase):
+    """A backfill run must EXTEND the manifest (add historical storms) and
+    leave the live current-season data untouched: current.json/tcpod.json not
+    written, current_slug/has_active/tcpod_number preserved from the prior
+    manifest. The manifest is the growing union."""
+
+    def setUp(self):
+        import json
+        import tempfile
+        from reconobs.build import build as run_build
+        self.run_build = run_build
+        self.tmp = tempfile.mkdtemp()
+        # a prior manifest representing the live current-season state
+        self.prior = self.tmp + "/prior.json"
+        with open(self.prior, "w") as f:
+            json.dump({"schema_version": 1, "storms": [
+                {"slug": "al012026", "name": "Arthur", "basin": "AL",
+                 "year": 2026, "atcf": "al012026", "is_invest": False,
+                 "mission_count": 2, "last_ob_utc": "2026-06-17T21:54:00Z",
+                 "peak_sfmr_kt": 42, "min_p_sfc_hpa": 995.4}],
+                "current_slug": "al012026", "has_active_recon": False,
+                "tcpod_number": "26-022"}, f)
+
+    def test_backfill_extends_and_preserves(self):
+        import json
+        import os
+        from unittest import mock
+        from reconobs import ingest
+        bag = {"basins": {"AL": {"hdob": [HDOB_2013], "vdm": [], "sonde": []}},
+               "dropped": 0}
+        with mock.patch.object(ingest, "gather_window", return_value=bag), \
+                mock.patch.object(ingest, "gather_live_hdob",
+                                  return_value=[]), \
+                mock.patch.object(ingest, "gather_tcpod",
+                                  return_value=None):
+            summary = self.run_build(self.tmp, backfill_year=2013,
+                                   backfill_month=6, basins=("AL",),
+                                   prior_manifest_url=self.prior)
+        self.assertEqual(summary["mode"], "backfill")
+        man = json.load(open(self.tmp + "/manifest.json"))
+        slugs = {s["slug"] for s in man["storms"]}
+        # union: the live storm preserved + the backfilled 2013 storm added
+        self.assertIn("al012026", slugs)
+        self.assertIn("al_andrea_2013", slugs)
+        # live "current" fields preserved (NOT recomputed to a 2013 mission)
+        self.assertEqual(man["current_slug"], "al012026")
+        self.assertEqual(man["has_active_recon"], False)
+        self.assertEqual(man["tcpod_number"], "26-022")
+        # a backfill writes NEITHER current.json NOR tcpod.json
+        self.assertFalse(os.path.exists(self.tmp + "/current.json"))
+        self.assertFalse(os.path.exists(self.tmp + "/tcpod.json"))
+        # the historical storm's per-storm JSON is written
+        self.assertTrue(os.path.exists(self.tmp + "/al_andrea_2013/recon.json"))
+
+    def test_incremental_merges_into_prior_union(self):
+        # An incremental run must KEEP prior historical storms (upsert), not
+        # drop them - else a cron run after backfill would erase the archive.
+        import json
+        from unittest import mock
+        from reconobs import ingest
+        # prior already has a historical 2013 storm
+        with open(self.prior, "w") as f:
+            json.dump({"schema_version": 1, "storms": [
+                {"slug": "al_andrea_2013", "name": "Andrea", "basin": "AL",
+                 "year": 2013, "atcf": None, "is_invest": False,
+                 "mission_count": 1, "last_ob_utc": "2013-06-06T09:00:30Z"}],
+                "current_slug": None, "has_active_recon": False}, f)
+        bag = {"basins": {"AL": {"hdob": [], "vdm": [], "sonde": []}},
+               "dropped": 0}
+        with mock.patch.object(ingest, "gather_window", return_value=bag), \
+                mock.patch.object(ingest, "gather_live_hdob",
+                                  return_value=[HDOB_2013]), \
+                mock.patch.object(ingest, "gather_tcpod", return_value=None):
+            self.run_build(self.tmp, window_days=7, basins=("AL",),
+                         prior_manifest_url=self.prior)
+        man = json.load(open(self.tmp + "/manifest.json"))
+        slugs = {s["slug"] for s in man["storms"]}
+        self.assertIn("al_andrea_2013", slugs)   # prior historical preserved
+
+
 if __name__ == "__main__":
     unittest.main()

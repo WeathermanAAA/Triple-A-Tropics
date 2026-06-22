@@ -20,10 +20,16 @@ on:
       backfill_year:
         description: "Backfill a whole season (e.g. 2024); blank = incremental"
         default: ""
+      backfill_month:
+        description: "Sub-chunk a busy backfill year by month (1-12); blank = whole year"
+        default: ""
 
 permissions:
   contents: read            # R2-only product; commits nothing to main
 
+# Serialized: only one run at a time, so the manifest read-merge-write (the
+# growing union) never races. Backfill dispatches must therefore be issued
+# SEQUENTIALLY (wait for each before the next), not fanned out.
 concurrency:
   group: update-recon
   cancel-in-progress: false
@@ -31,7 +37,9 @@ concurrency:
 jobs:
   recon:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Generous for a heavy backfill year (thousands of staggered archive
+    # fetches); incremental runs finish in a few minutes well under this.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -44,11 +52,18 @@ jobs:
           RECON_ENABLED: ${{ vars.RECON_ENABLED || '1' }}
           RECON_WINDOW_DAYS: ${{ github.event.inputs.window_days || '7' }}
           RECON_BACKFILL_YEAR: ${{ github.event.inputs.backfill_year || '' }}
+          RECON_BACKFILL_MONTH: ${{ github.event.inputs.backfill_month || '' }}
         run: |
           set -euo pipefail
           ARGS="--out-dir ./recon_build --window-days ${RECON_WINDOW_DAYS}"
           if [ -n "${RECON_BACKFILL_YEAR}" ]; then
-            ARGS="$ARGS --backfill-year ${RECON_BACKFILL_YEAR}"
+            # Backfill MERGES into the live manifest (the build reads the prior
+            # one from the CDN by default) and leaves current.json/tcpod.json
+            # untouched; stagger to be polite to the NHC archive.
+            ARGS="$ARGS --backfill-year ${RECON_BACKFILL_YEAR} --stagger 0.1"
+            if [ -n "${RECON_BACKFILL_MONTH}" ]; then
+              ARGS="$ARGS --backfill-month ${RECON_BACKFILL_MONTH}"
+            fi
           fi
           python generate_recon.py $ARGS
       - name: Sync to R2
