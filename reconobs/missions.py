@@ -13,8 +13,6 @@ import re
 
 from .decode import decode_hdob, decode_vdm, decode_dropsonde
 
-# variables that get nulled when their name appears in the HDOB row `flag`
-_FLAGGABLE = ("p_sfc", "temp", "dwpt", "wdir", "wspd", "pkwnd", "sfmr", "rain")
 _INVEST_NAMES = ("INVEST", "GENESIS", "AREA", "SUSPECT", "DISTURB")
 # 2nd-token / name markers for NON-tropical sorties (research, training,
 # ferry, air-quality + field campaigns, generic placeholders) - excluded from
@@ -89,8 +87,16 @@ def is_tropical_mission(name: str, flight: str) -> bool:
     return True
 
 
+# Flagged vars that are NULLED (not plotted). SFMR + rain are the exception:
+# V2 keeps their raw value and flags it `sfmr_suspect` so the time-series can
+# mark suspect points rather than silently drop them (the SFMR caveat is shown
+# on the panel). The flight-level + thermo vars still null on flag.
+_NULL_ON_FLAG = ("p_sfc", "temp", "dwpt", "wdir", "wspd", "pkwnd")
+
+
 def _row_records(df) -> list[dict]:
-    """DataFrame -> JSON-safe track points, nulling QC-flagged variables."""
+    """DataFrame -> JSON-safe track points. Flagged flight-level/thermo vars
+    are nulled; SFMR + rain keep their raw value but carry ``sfmr_suspect``."""
     out = []
     for _, r in df.iterrows():
         flag = list(r.get("flag") or [])
@@ -101,10 +107,11 @@ def _row_records(df) -> list[dict]:
             "p_sfc": _clean(r.get("p_sfc")),
             "wspd": _clean(r.get("wspd")), "wdir": _clean(r.get("wdir")),
             "pkwnd": _clean(r.get("pkwnd")), "sfmr": _clean(r.get("sfmr")),
+            "rain": _clean(r.get("rain")),
             "temp": _clean(r.get("temp")), "dwpt": _clean(r.get("dwpt")),
+            "sfmr_suspect": ("sfmr" in flag) or ("rain" in flag),
         }
-        # null any flagged plotted variable (spec: drop before min/max/color)
-        for var in _FLAGGABLE:
+        for var in _NULL_ON_FLAG:
             if var in flag and var in rec:
                 rec[var] = None
         if rec["lat"] is None or rec["lon"] is None:
@@ -139,7 +146,8 @@ def build_missions(hdob_contents: list[str]) -> dict[str, dict]:
         m["n_obs"] = len(pts)
         m["valid_start"] = pts[0]["t"] if pts else None
         m["valid_end"] = pts[-1]["t"] if pts else None
-        sfmr = [p["sfmr"] for p in pts if p["sfmr"] is not None]
+        sfmr = [p["sfmr"] for p in pts
+                if p["sfmr"] is not None and not p.get("sfmr_suspect")]
         wspd = [p["wspd"] for p in pts if p["wspd"] is not None]
         psfc = [p["p_sfc"] for p in pts if p["p_sfc"] is not None]
         m["peak_sfmr_kt"] = max(sfmr) if sfmr else None
