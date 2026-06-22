@@ -23,7 +23,14 @@ def main(argv=None) -> int:
     p.add_argument("--out-dir", default="./recon_build")
     p.add_argument("--window-days", type=int, default=4)
     p.add_argument("--backfill-year", type=int, default=None)
+    p.add_argument("--backfill-month", type=int, default=None,
+                   help="1-12; sub-chunk a busy backfill year by month")
     p.add_argument("--basins", default="AL,EP")
+    p.add_argument("--stagger", type=float, default=0.0,
+                   help="seconds between archive fetches (backfill politeness)")
+    p.add_argument("--manifest-url",
+                   default="https://cdn.triple-a-tropics.com/recon/manifest.json",
+                   help="prior manifest to MERGE into (the growing union)")
     p.add_argument("--disabled", action="store_true")
     args = p.parse_args(argv)
 
@@ -38,7 +45,10 @@ def main(argv=None) -> int:
     os.makedirs(args.out_dir, exist_ok=True)
     try:
         run_build(args.out_dir, window_days=args.window_days,
-                  backfill_year=args.backfill_year, basins=basins)
+                  backfill_year=args.backfill_year,
+                  backfill_month=args.backfill_month, basins=basins,
+                  stagger_s=args.stagger,
+                  prior_manifest_url=(args.manifest_url or None))
     except Exception as e:                       # noqa: BLE001
         # Never leave a half-written tree that the sync would push: fail loud
         # but non-destructively (the workflow guards the sync on exit code).
