@@ -16,7 +16,7 @@ on:
     inputs:
       window_days:
         description: "Rolling rebuild window (days)"
-        default: "3"
+        default: "7"
       backfill_year:
         description: "Backfill a whole season (e.g. 2024); blank = incremental"
         default: ""
@@ -42,7 +42,7 @@ jobs:
       - name: Build recon JSON
         env:
           RECON_ENABLED: ${{ vars.RECON_ENABLED || '1' }}
-          RECON_WINDOW_DAYS: ${{ github.event.inputs.window_days || '3' }}
+          RECON_WINDOW_DAYS: ${{ github.event.inputs.window_days || '7' }}
           RECON_BACKFILL_YEAR: ${{ github.event.inputs.backfill_year || '' }}
         run: |
           set -euo pipefail
