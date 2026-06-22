@@ -17,9 +17,13 @@ from .decode import decode_hdob, decode_vdm, decode_dropsonde
 _FLAGGABLE = ("p_sfc", "temp", "dwpt", "wdir", "wspd", "pkwnd", "sfmr", "rain")
 _INVEST_NAMES = ("INVEST", "GENESIS", "AREA", "SUSPECT", "DISTURB")
 # 2nd-token / name markers for NON-tropical sorties (research, training,
-# ferry, air-quality campaigns) - excluded from the storm list.
+# ferry, air-quality + field campaigns, generic placeholders) - excluded from
+# the storm list. HS3/GRIP/IFEX/NAMMA/HS-series are NASA/NOAA research
+# campaigns; CYCLONE/STORM/SYSTEM are generic non-name placeholders.
 _NON_TC = ("TRAIN", "SURVEY", "TEST", "FERRY", "LOGISTIC", "RESEARCH",
-           "TEXAQS", "CALVAL", "CALIB", "AEROSE", "OWLES", "SHOUT")
+           "TEXAQS", "CALVAL", "CALIB", "AEROSE", "OWLES", "SHOUT",
+           "HS3", "HS2", "GRIP", "IFEX", "NAMMA", "GLOBAL", "HAWK", "AVAPS",
+           "CYCLONE", "SYSTEM")
 _VDM_LATLON = re.compile(r"([\d.]+)\s*deg\s*([NS])\s+([\d.]+)\s*deg\s*([EW])")
 # MSLP is the D. line (EXTRAP/DROP ... mb), NOT the C. standard-level height.
 _VDM_MSLP = re.compile(r"^\s*[DK]\.\s*[A-Z ]*?(\d{3,4})\s*mb", re.I | re.M)
