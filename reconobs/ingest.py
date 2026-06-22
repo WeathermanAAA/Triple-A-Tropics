@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import time as _time
 
 from . import fetch
 
@@ -42,11 +43,13 @@ def file_ts(name: str) -> _dt.datetime | None:
 
 
 def _recent_files(year: int, pil: str, since: _dt.datetime,
-                  cap: int = 1200) -> list[str]:
-    """Archive .txt filenames for one PIL/year newer than ``since`` (capped,
-    newest-first truncation guarded with a log-able count)."""
+                  until: _dt.datetime | None = None,
+                  cap: int = 4000) -> tuple[list[str], int]:
+    """Archive .txt filenames for one PIL/year with timestamp in [since, until)
+    (until=None means open-ended). Capped newest-first; returns (names, dropped)."""
     names = fetch.list_dir_txt(ARCHIVE.format(year=year, pil=pil))
-    keep = [n for n in names if (ts := file_ts(n)) and ts >= since]
+    keep = [n for n in names if (ts := file_ts(n)) and ts >= since
+            and (until is None or ts < until)]
     keep.sort(key=lambda n: file_ts(n) or _dt.datetime.min.replace(
         tzinfo=_dt.timezone.utc))
     dropped = max(0, len(keep) - cap)
@@ -54,9 +57,11 @@ def _recent_files(year: int, pil: str, since: _dt.datetime,
 
 
 def gather_window(year: int, since: _dt.datetime,
-                  basins=("AL", "EP")) -> dict:
-    """Fetch all HDOB/VDM/sonde bulletins in [since, now] for the given
-    basins/year. Returns {basin: {"hdob":[...], "vdm":[...], "sonde":[...]}}
+                  until: _dt.datetime | None = None,
+                  basins=("AL", "EP"), stagger_s: float = 0.0) -> dict:
+    """Fetch all HDOB/VDM/sonde bulletins with timestamp in [since, until) for
+    the given basins/year. ``stagger_s`` sleeps between file fetches (backfill
+    politeness). Returns {basin: {"hdob":[...], "vdm":[...], "sonde":[...]}}
     plus a flat ``dropped`` count for logging."""
     out: dict = {"basins": {}, "dropped": 0}
     for b in basins:
@@ -66,12 +71,14 @@ def gather_window(year: int, since: _dt.datetime,
         bag = {"hdob": [], "vdm": [], "sonde": []}
         for key, pil in (("hdob", hdob_pil), ("vdm", vdm_pil),
                          ("sonde", sonde_pil)):
-            files, dropped = _recent_files(year, pil, since)
+            files, dropped = _recent_files(year, pil, since, until)
             out["dropped"] += dropped
             for name in files:
                 txt = fetch.get(ARCHIVE.format(year=year, pil=pil) + name)
                 if txt:
                     bag[key].append(txt)
+                if stagger_s:
+                    _time.sleep(stagger_s)
         out["basins"][b] = bag
     return out
 
