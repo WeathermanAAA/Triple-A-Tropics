@@ -148,6 +148,64 @@
     g.closePath();
   }
 
+  // The DOM scaffold the viewer wires to. The main /recon/ page ships it in
+  // index.html; when the component is embedded WITHOUT it (the CycloLab tab
+  // passes only a bare root + no els), the constructor injects this so the
+  // by-id lookups below resolve - making ReconViewer truly self-contained.
+  var RECON_SCAFFOLD =
+    '<div id="recon-tabs" class="recon-tabs" role="tablist">' +
+      '<button id="recon-tab-current" class="recon-tab active" type="button" role="tab">Current Mission</button>' +
+      '<button id="recon-tab-storms" class="recon-tab" type="button" role="tab">Storms</button>' +
+    '</div>' +
+    '<div id="recon-view-current">' +
+      '<div id="recon-tcpod" class="recon-tcpod"></div>' +
+      '<div id="recon-spotlight" class="recon-spotlight"></div>' +
+    '</div>' +
+    '<div id="recon-view-storms" style="display:none">' +
+      '<div class="recon-controls">' +
+        '<div id="recon-storm-wrap" class="recon-group"><label for="recon-storm">Storm</label><select id="recon-storm"></select></div>' +
+        '<div id="recon-mission-wrap" class="recon-group"><label for="recon-mission">Mission</label><select id="recon-mission"></select></div>' +
+        '<div class="recon-group"><label for="recon-wind">Wind</label><select id="recon-wind"><option value="fl">Flight-level</option><option value="sfmr">SFMR surface</option></select></div>' +
+        '<div class="recon-group"><label for="recon-scope">View</label><select id="recon-scope"><option value="full">Full mission</option><option value="last10">Last 10 min</option></select></div>' +
+        '<div class="recon-group recon-style-wrap"><label for="recon-style">Style</label><select id="recon-style"></select></div>' +
+      '</div>' +
+      '<div id="recon-mapframe" class="recon-mapframe">' +
+        '<canvas id="recon-canvas" width="900" height="640" aria-label="Aircraft reconnaissance flight track and time series figure"></canvas>' +
+        '<div id="recon-tooltip"></div>' +
+        '<div id="recon-status" class="recon-status"><div class="recon-spinner"></div><span>Loading…</span></div>' +
+      '</div>' +
+      '<div class="recon-actions">' +
+        '<button id="recon-download" class="recon-btn" type="button" title="Download this figure as a PNG">⬇ Download PNG</button>' +
+        '<button id="recon-copy" class="recon-btn" type="button" title="Copy this figure to the clipboard">Copy</button>' +
+      '</div>' +
+      '<div id="recon-stats" class="recon-stats"></div>' +
+    '</div>' +
+    '<div id="recon-empty" class="recon-empty"><h2>No reconnaissance data right now</h2>' +
+      '<p>The Plan of the Day and aircraft missions appear here when the Hurricane Hunters are flying tropical systems. This view refreshes automatically as new missions and Plans of the Day are issued.</p></div>';
+
+  // Compact chrome CSS injected only when self-building (the CycloLab embed);
+  // the canvas figure draws itself, so this just dresses the controls/buttons
+  // to the dark theme. /recon/ ships its own fuller stylesheet.
+  var RECON_EMBED_CSS =
+    '#recon-tabs{display:flex;gap:6px;margin-bottom:10px}' +
+    '.recon-tab{background:#0e1a30;color:#aebdd4;border:1px solid #1d2c44;border-radius:7px;padding:6px 14px;font:600 13px/1 inherit;cursor:pointer}' +
+    '.recon-tab.active{background:#16365e;color:#eaf2ff;border-color:#2b6cb0}' +
+    '.recon-controls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;margin-bottom:10px}' +
+    '.recon-group{display:flex;flex-direction:column;gap:3px}' +
+    '.recon-group label{font:600 10px/1 inherit;letter-spacing:.04em;text-transform:uppercase;color:#8ea2bd}' +
+    '.recon-controls select{background:#0e1a30;color:#e5edf6;border:1px solid #1d2c44;border-radius:6px;padding:6px 8px;font:13px/1 inherit;min-width:120px}' +
+    '.recon-mapframe{position:relative;width:100%}' +
+    '#recon-canvas{display:block;width:100%;height:auto;border-radius:8px}' +
+    '.recon-status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;color:#aebdd4;background:rgba(7,16,28,.6)}' +
+    '.recon-spinner{width:16px;height:16px;border:2px solid #2b6cb0;border-top-color:transparent;border-radius:50%;animation:reconspin 1s linear infinite}' +
+    '@keyframes reconspin{to{transform:rotate(360deg)}}' +
+    '.recon-actions{display:flex;gap:8px;margin:10px 0}' +
+    '.recon-btn{background:#0e1a30;color:#cfe0f5;border:1px solid #1d2c44;border-radius:7px;padding:7px 13px;font:600 13px/1 inherit;cursor:pointer}' +
+    '.recon-btn:hover{border-color:#2b6cb0}' +
+    '.recon-stats{display:flex;flex-wrap:wrap;gap:8px 18px;color:#cdd9ea;font:13px/1.3 inherit}' +
+    '.recon-tcpod,.recon-spotlight{margin-bottom:12px;color:#cdd9ea}' +
+    '.recon-empty{color:#8ea2bd;padding:18px 4px}.recon-tooltip{display:none}';
+
   // ========================================================================
   function ReconViewer(root, opts) {
     opts = opts || {};
@@ -158,6 +216,19 @@
 
     // Self-scope chrome accent to the shared blue without leaking to the site.
     if (root && root.style) root.style.setProperty('--recon-accent', C.accent);
+
+    // Self-contained: build the scaffold + a compact chrome stylesheet into the
+    // page when absent (embedded without index.html's markup/CSS, e.g. the
+    // CycloLab tab); no-op on /recon/ which already ships both.
+    if (!opts.els && root && !el('recon-canvas')) {
+      if (!document.getElementById('recon-embed-css')) {
+        var ecss = document.createElement('style');
+        ecss.id = 'recon-embed-css';
+        ecss.textContent = RECON_EMBED_CSS;
+        document.head.appendChild(ecss);
+      }
+      root.innerHTML = RECON_SCAFFOLD;
+    }
 
     this.dom = (opts.els) || {
       root: root,
