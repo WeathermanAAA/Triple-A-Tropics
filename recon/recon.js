@@ -81,7 +81,7 @@
     sshws: {
       label: 'Classic SSHWS',
       scale: KT_SCALE,
-      bg: '#07101c', ocean: '#08131f', land: 'rgba(70,92,124,0.10)',
+      bg: '#07101c', ocean: '#08131f', land: '#172a44',
       coast: 'rgba(176,196,222,0.78)', coastLw: 0.9,
       country: 'rgba(150,175,205,0.42)', countryLw: 0.6,
       state: 'rgba(150,175,205,0.20)', stateLw: 0.5,
@@ -91,7 +91,7 @@
     highcontrast: {
       label: 'High contrast',
       scale: KT_SCALE_HC,
-      bg: '#04080e', ocean: '#050b14', land: 'rgba(70,92,124,0.07)',
+      bg: '#04080e', ocean: '#050b14', land: '#101e33',
       coast: 'rgba(214,228,245,0.95)', coastLw: 1.1,
       country: 'rgba(180,205,235,0.55)', countryLw: 0.75,
       state: 'rgba(180,205,235,0.28)', stateLw: 0.55,
@@ -860,6 +860,27 @@
     return [mnx - padL, mxx + padL, mny - padT, mxy + padT];
   };
 
+  // Aspect-correct an extent for a W x H px rect. TATRegions.project maps lon/lat
+  // LINEARLY (no cos-lat), so a raw bbox squashes the map (1 deg lon !== 1 deg lat
+  // on the ground). Expand the extent (never crop) so on-screen degrees are
+  // proportional: px/lon-deg == cos(midLat) * px/lat-deg. Florida looks correct.
+  ReconViewer.prototype._aspectExtent = function (ext, W, H) {
+    var w = ext[0], e = ext[1], s = ext[2], n = ext[3];
+    var midLat = (s + n) / 2;
+    var cosl = Math.max(0.12, Math.cos(midLat * Math.PI / 180));
+    var lonSpan = e - w, latSpan = n - s;
+    var target = (W / H) / cosl;          // desired lonSpan / latSpan
+    var cur = lonSpan / latSpan;
+    if (cur < target) {                   // too tall -> widen longitude
+      var nl = latSpan * target, cx = (w + e) / 2;
+      w = cx - nl / 2; e = cx + nl / 2;
+    } else {                              // too wide -> heighten latitude
+      var nh = lonSpan / target, cy = (s + n) / 2;
+      s = cy - nh / 2; n = cy + nh / 2;
+    }
+    return [w, e, s, n];
+  };
+
   ReconViewer.prototype._layoutAndDraw = function () {
     this._layout();
     this._draw();
@@ -962,7 +983,7 @@
   ReconViewer.prototype._drawMap = function (g) {
     var L = this.layout.map, m = this.mission, S = this._S();
     var track = this._scopedTrack();
-    var ext = this._trackExtent(track);
+    var ext = this._aspectExtent(this._trackExtent(track), L.w, L.h);
     this._ext = ext;
     var proj = (window.TATRegions && TATRegions.project)
       ? function (lo, la) { return TATRegions.project(lo, la, ext, L.w, L.h); }
@@ -982,10 +1003,12 @@
     if (this._sat && this._sat.img && this._sat.ext) {
       this._drawSatBackdrop(g, proj, L.w, L.h);
     } else {
-      // barely-there land tint under the coastlines (no hard land fill)
-      if (S.land && window.TATRegions && TATRegions.drawBasemapFill && this.geo && this.geo.countries) {
+      // OPAQUE land fill over the opaque ocean. drawBasemapFill clearRects the
+      // rect then fills its `ocean` color, so it MUST be the opaque ocean (a
+      // transparent ocean here erased the rect and let the page show through).
+      if (window.TATRegions && TATRegions.drawBasemapFill && this.geo && this.geo.countries) {
         TATRegions.drawBasemapFill(g, ext, { countries: this.geo.countries }, L.w, L.h,
-          { ocean: 'rgba(0,0,0,0)', land: S.land });
+          { ocean: S.ocean, land: S.land });
       }
     }
 
@@ -1021,7 +1044,7 @@
     // cache projected pts for hover (map-local coords)
     this._pts = pts;
 
-    // ---- 6) wind barbs, sub-sampled so they never overlap (~36 px spacing)
+    // ---- 6) wind barbs, dense along-track sampling (~16 px spacing, TT-style)
     this._drawBarbs(g, pts, S);
 
     // ---- 7) dropsondes: small diamond
@@ -1075,10 +1098,11 @@
   };
 
   // ---- standard meteorological wind barbs ----
-  // Sub-sample the track to one barb per ~step px of along-track distance, so
-  // barbs never overlap (the track is ~1000 obs but the map shows ~30-60 barbs).
+  // Sub-sample the track to one barb per ~step px of along-track distance for a
+  // dense, Tropical-Tidbits-style comb (the track is ~1000 obs; this yields a
+  // tight evenly-spaced barb field without raw-resolution clutter).
   ReconViewer.prototype._drawBarbs = function (g, pts, S) {
-    var step = 36;                       // min spacing (px) between barb roots
+    var step = 16;                       // min spacing (px) between barb roots
     var step2 = step * step;
     var lastX = null, lastY = null;
     g.save();
@@ -1106,7 +1130,7 @@
   // deg). half-barb=5kt, full-barb=10kt, pennant=50kt. A calm (<5kt) ob is a
   // small open ring. Suspect SFMR obs are drawn dashed + hollow-rooted.
   ReconViewer.prototype._barb = function (g, x, y, kt, dirFrom, color, suspect) {
-    var SHAFT = 19, BARB = 7, PEN = 8, SP = 4.2;   // px geometry
+    var SHAFT = 14, BARB = 6, PEN = 7, SP = 3.6;   // px geometry
     // shaft unit vector points toward the source of the wind (FROM)
     var a = (dirFrom) * Math.PI / 180;
     var ux = Math.sin(a), uy = -Math.cos(a);        // 0deg=N -> up
@@ -1243,28 +1267,56 @@
   // discrete TC kt-scale legend (bottom-left of the map) + glyph key
   ReconViewer.prototype._drawLegend = function (g) {
     var L = this.layout.map;
-    var sw = 16, gap = 2, lh = 24, pad = 8;
-    var n = LEGEND_BANDS.length;
-    var barW = n * (sw + gap) - gap;
-    var w = barW + pad * 2;
-    var h = pad * 2 + 14 + lh;          // title row + swatch row
-    var x = L.x + 8, y = L.y + L.h - h - 8;
+    // Horizontal discrete kt color bar (reference-style): equal-width segments
+    // between the 15 scale breakpoints, kt values labeled beneath, triangle
+    // ends for off-scale, caption below. No category labels.
+    var scale = this._S().scale;        // [[minKt,color],...] 15 bins
+    var nseg = scale.length - 1;        // 14 segments between 15 breakpoints
+    var pad = 8, tri = 9, barH = 11;
+    var barW = Math.min(L.w - 84, 452);
+    var segW = (barW - 2 * tri) / nseg;
+    var labH = 11, capH = 12;
+    var boxW = barW + pad * 2;
+    var boxH = pad * 2 + barH + 4 + labH + 5 + capH;
+    var x = L.x + 10, y = L.y + L.h - boxH - 9;
     g.save();
-    roundRectPath(g, x, y, w, h, 5);
-    g.fillStyle = 'rgba(7,16,28,0.82)'; g.fill();
+    roundRectPath(g, x, y, boxW, boxH, 6);
+    g.fillStyle = 'rgba(7,16,28,0.86)'; g.fill();
     g.strokeStyle = C.border; g.lineWidth = 1; g.stroke();
-    g.fillStyle = C.fg; g.font = '700 10px ' + FONT; g.textAlign = 'left'; g.textBaseline = 'middle';
-    var title = (this.windMode === 'sfmr') ? 'SFMR surface wind (kt)' : 'Peak flight-level wind (kt)';
-    g.fillText(title, x + pad, y + pad + 5);
-    var sy = y + pad + 16, sx = x + pad;
-    g.font = '600 8.5px ' + FONT; g.textAlign = 'center';
-    for (var i = 0; i < n; i++) {
-      var col = this._windColor(LEGEND_BANDS[i].kt);
-      g.fillStyle = col; g.fillRect(sx, sy, sw, 9);
-      g.fillStyle = C.muted; g.textBaseline = 'top';
-      g.fillText(LEGEND_BANDS[i].lab, sx + sw / 2, sy + 11);
-      sx += sw + gap;
+
+    var bx = x + pad, by = y + pad, mid = by + barH / 2;
+    // left triangle: off-scale low (lowest bin color)
+    g.fillStyle = scale[0][1];
+    g.beginPath(); g.moveTo(bx + tri, by); g.lineTo(bx + tri, by + barH); g.lineTo(bx, mid); g.closePath(); g.fill();
+    // equal-width color segments
+    for (var i = 0; i < nseg; i++) {
+      g.fillStyle = scale[i][1];
+      g.fillRect(bx + tri + i * segW, by, segW + 0.6, barH);
     }
+    // right triangle: off-scale high (top bin color, >= last breakpoint)
+    var rx = bx + tri + nseg * segW;
+    g.fillStyle = scale[nseg][1];
+    g.beginPath(); g.moveTo(rx, by); g.lineTo(rx, by + barH); g.lineTo(rx + tri, mid); g.closePath(); g.fill();
+    // hairline frame around the rectangular part
+    g.strokeStyle = 'rgba(220,232,246,0.30)'; g.lineWidth = 0.8;
+    g.strokeRect(bx + tri + 0.5, by + 0.5, nseg * segW - 1, barH - 1);
+
+    // kt breakpoint labels + ticks at every segment boundary
+    var ly = by + barH + 4;
+    g.font = '600 8px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'top';
+    for (i = 0; i < scale.length; i++) {
+      var tx = bx + tri + i * segW;
+      g.strokeStyle = 'rgba(220,232,246,0.42)'; g.lineWidth = 0.8;
+      g.beginPath(); g.moveTo(tx, by + barH); g.lineTo(tx, by + barH + 2.5); g.stroke();
+      g.fillStyle = C.fg;
+      g.fillText(String(scale[i][0]), tx, ly);
+    }
+    // caption
+    g.fillStyle = C.muted; g.font = '600 9px ' + FONT; g.textAlign = 'left';
+    var cap = (this.windMode === 'sfmr')
+      ? 'Peak 10-second Average SFMR Surface Wind Speed (kt)'
+      : 'Peak 10-second Average Flight-level Wind Speed (kt)';
+    g.fillText(cap, bx, ly + labH + 5);
     g.restore();
 
     // glyph key (top-left): barb spec + VDM + sonde + suspect note
@@ -1776,7 +1828,7 @@
   if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('DOMContentLoaded', function () {
       var r = el('recon-viewer');
-      if (r) new ReconViewer(r);
+      if (r) r.__reconView = new ReconViewer(r);
     });
   }
   if (typeof window !== 'undefined') window.ReconViewer = ReconViewer;
