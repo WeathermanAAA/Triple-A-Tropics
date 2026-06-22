@@ -22,11 +22,30 @@ import json
 import os
 import re
 
-from . import ingest, missions as _m
+from . import ingest, missions as _m, fetch
 from .tcpod import parse_tcpod
 
 SCHEMA_VERSION = 1
 _now = lambda: _dt.datetime.now(_dt.timezone.utc)   # noqa: E731
+
+
+def _fetch_prior_manifest(url: str | None) -> dict | None:
+    """Read the existing manifest (the growing union) so this run can merge
+    into it rather than replace it. http(s) URL -> cache-busted GET; a local
+    path -> read it; None/missing/parse-fail -> None (start fresh)."""
+    if not url:
+        return None
+    try:
+        if url.startswith("http"):
+            sep = "&" if "?" in url else "?"
+            body = fetch.get(f"{url}{sep}t={int(_now().timestamp())}",
+                             timeout=20)
+        else:
+            body = open(url, encoding="utf-8").read() \
+                if os.path.exists(url) else None
+        return json.loads(body) if body else None
+    except Exception:                            # noqa: BLE001
+        return None
 
 
 def _slugify(s: str) -> str:
@@ -85,29 +104,60 @@ def _group_missions(all_missions: list[dict], year: int) -> dict[str, dict]:
     return storms
 
 
+def _month_bounds(year: int, month: int):
+    since = _dt.datetime(year, month, 1, tzinfo=_dt.timezone.utc)
+    nm_y, nm_m = (year + 1, 1) if month == 12 else (year, month + 1)
+    return since, _dt.datetime(nm_y, nm_m, 1, tzinfo=_dt.timezone.utc)
+
+
 def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
          basins=("AL", "EP"), backfill_year: int | None = None,
-         log=print) -> dict:
-    """Run one ingest+assemble cycle. Returns a small summary dict."""
+         backfill_month: int | None = None,
+         prior_manifest_url: str | None = None,
+         stagger_s: float = 0.0, log=print) -> dict:
+    """Run one ingest+assemble cycle. Returns a small summary dict.
+
+    Incremental (default) owns the live "current" data + rolling-window
+    storms. ``backfill_year`` (optionally + ``backfill_month`` to bound a
+    busy year by month) ADDS historical storms: it merges them into the
+    existing manifest and leaves current.json / tcpod.json / the manifest's
+    current_slug+tcpod_number untouched, so a backfill never regresses the
+    live current-season viewer. Either way the manifest is the growing UNION
+    (read the prior one from ``prior_manifest_url`` and upsert by slug), so
+    backfilled storms survive subsequent incremental runs."""
     now = _now()
+    is_backfill = bool(backfill_year)
     year = backfill_year or year or now.year
-    if backfill_year:
-        since = _dt.datetime(backfill_year, 1, 1, tzinfo=_dt.timezone.utc)
+    until = None
+    if is_backfill:
+        if backfill_month:
+            since, until = _month_bounds(backfill_year, backfill_month)
+        else:
+            since, until = _month_bounds(backfill_year, 1)
+            until = _dt.datetime(backfill_year + 1, 1, 1,
+                                 tzinfo=_dt.timezone.utc)
     else:
         since = now - _dt.timedelta(days=window_days)
 
-    # ---- TCPOD (always, cheap) ----
-    tcpod_raw = ingest.gather_tcpod()
-    tcpod = parse_tcpod(tcpod_raw) if tcpod_raw else {"pil": "REPRPD",
-                                                      "raw": "", "basins": {}}
-    tcpod["fetched_utc"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    _write(out_dir, "tcpod.json", tcpod)
+    # ---- prior manifest (the growing union; merged into below) ----
+    prior = _fetch_prior_manifest(prior_manifest_url)
+
+    # ---- TCPOD (incremental only; a backfill leaves the live one) ----
+    tcpod = None
+    if not is_backfill:
+        tcpod_raw = ingest.gather_tcpod()
+        tcpod = parse_tcpod(tcpod_raw) if tcpod_raw else {"pil": "REPRPD",
+                                                          "raw": "",
+                                                          "basins": {}}
+        tcpod["fetched_utc"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        _write(out_dir, "tcpod.json", tcpod)
 
     # ---- gather bulletins ----
-    win = ingest.gather_window(year, since, basins=basins)
+    win = ingest.gather_window(year, since, until=until, basins=basins,
+                               stagger_s=stagger_s)
     if win["dropped"]:
         log(f"recon: capped {win['dropped']} over-window archive files")
-    live_blocks = ingest.gather_live_hdob(basins=basins) if not backfill_year \
+    live_blocks = ingest.gather_live_hdob(basins=basins) if not is_backfill \
         else []
 
     # ---- decode + group per basin (basin tag travels with the mission) ----
@@ -178,36 +228,48 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
             "min_p_sfc_hpa": min((m["min_p_sfc_hpa"] for m in index_missions
                                   if m["min_p_sfc_hpa"]), default=None)})
 
-    # ---- current spotlight (most-recent mission within 24h) ----
-    current = {"generated_utc": stamp, "has_active": False, "mission": None,
-               "storm_slug": None,
-               "tcpod_number": tcpod.get("tcpod_number")}
-    if latest_mission:
-        end, slug, full = latest_mission
-        active = (now - _m._iso(end)).total_seconds() < 24 * 3600
-        current.update({"has_active": active, "mission": full,
-                        "storm_slug": slug})
-    _write(out_dir, "current.json", current)
+    # ---- current spotlight: incremental OWNS it; a backfill PRESERVES the
+    # live one (its "latest" mission would be historical). ----
+    if is_backfill:
+        cur_slug = (prior or {}).get("current_slug")
+        cur_active = (prior or {}).get("has_active_recon", False)
+        cur_tcpod = (prior or {}).get("tcpod_number")
+    else:
+        current = {"generated_utc": stamp, "has_active": False,
+                   "mission": None, "storm_slug": None,
+                   "tcpod_number": tcpod.get("tcpod_number")}
+        if latest_mission:
+            end, slug, full = latest_mission
+            active = (now - _m._iso(end)).total_seconds() < 24 * 3600
+            current.update({"has_active": active, "mission": full,
+                            "storm_slug": slug})
+        _write(out_dir, "current.json", current)
+        cur_slug, cur_active = current["storm_slug"], current["has_active"]
+        cur_tcpod = tcpod.get("tcpod_number")
+
+    # ---- merge this run's storms into the prior manifest (the GROWING UNION,
+    # so backfilled storms survive later incremental runs + vice versa) ----
+    by_slug = {s["slug"]: s for s in (prior or {}).get("storms", [])}
+    for s in manifest_storms:
+        by_slug[s["slug"]] = s                   # upsert; this run's data wins
+    union = sorted(by_slug.values(),
+                   key=lambda s: s.get("last_ob_utc") or "", reverse=True)
 
     manifest = {
         "schema_version": SCHEMA_VERSION, "generated_utc": stamp,
         "source": "NHC recon (HDOB/VDM/dropsonde) + CARCAH TCPOD",
-        "window_days": (None if backfill_year else window_days),
-        "year": year, "storms": sorted(
-            manifest_storms, key=lambda s: s["last_ob_utc"] or "",
-            reverse=True),
-        "current_slug": current["storm_slug"],
-        "has_active_recon": current["has_active"],
-        "tcpod_number": tcpod.get("tcpod_number"),
+        "year": now.year, "storms": union,
+        "current_slug": cur_slug, "has_active_recon": cur_active,
+        "tcpod_number": cur_tcpod,
         "disclosure": ("SFMR surface winds are unreliable in heavy rain and "
                        "at very high wind speeds; all obs are point-in-time "
                        "aircraft measurements."),
     }
     _write(out_dir, "manifest.json", manifest)
 
-    summary = {"storms": len(storms), "missions": len(all_missions),
-               "current": current["storm_slug"],
-               "has_active": current["has_active"],
-               "tcpod_active": tcpod.get("has_active_missions")}
+    summary = {"mode": "backfill" if is_backfill else "incremental",
+               "year": year, "month": backfill_month,
+               "storms_this_run": len(storms), "storms_total": len(union),
+               "missions_this_run": len(all_missions), "current": cur_slug}
     log(f"recon: {summary}")
     return summary
