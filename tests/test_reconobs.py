@@ -89,12 +89,16 @@ class TestHdobDecodeAndFlags(unittest.TestCase):
         self.assertFalse(m["is_invest"])
         self.assertEqual(m["n_obs"], 2)
         t = m["track"]
-        # row 1 flag '03' -> sfmr nulled; row 2 flag '00' -> sfmr kept (48)
-        self.assertIsNone(t[0]["sfmr"])
+        # row 1 flag '03' -> SFMR/rain QC-flagged: value KEPT (raw) but marked
+        # suspect; row 2 flag '00' -> clean.
+        self.assertEqual(t[0]["sfmr"], 35.0)
+        self.assertTrue(t[0]["sfmr_suspect"])
+        self.assertIsNotNone(t[0]["rain"])
         self.assertEqual(t[1]["sfmr"], 48.0)
-        # flight-level wind always present (fallback when sfmr flagged)
+        self.assertFalse(t[1]["sfmr_suspect"])
+        # flight-level wind always present (not in the SFMR flag group)
         self.assertEqual(t[0]["wspd"], 15.0)
-        # peak SFMR uses only the kept value
+        # peak SFMR EXCLUDES suspect points -> only row 2's clean 48
         self.assertEqual(m["peak_sfmr_kt"], 48.0)
 
     def test_vdm_attaches_with_surface_mslp_and_atcf(self):
