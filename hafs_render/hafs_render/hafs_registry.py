@@ -446,6 +446,25 @@ _SPECS = (
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("wv")),
     ),
     ProductSpec(
+        # Simulated 89 GHz H-pol microwave (SSMIS-F17, 91.7 GHz) -- the HAFS .sat
+        # GRIB2 already carries it (UPP/CRTM) at parameterNumber 63, decoded to °C
+        # exactly like clean_ir/water_vapor. Single channel (NOT a PCT), the
+        # cyclonicwx/Boreham "Simulated 89H" product. Ice-scattering enhancement
+        # (palette domain "mw"): cold = deep convective ice scattering.
+        key="sim_89h", slug="sim_89h",
+        label="Simulated 89H (from HAFS)", short="89H", order=3.5,
+        grib="sat", sat_parm=63, field_attr="bt_c", requires_attr="bt_c",
+        default_enhancement="ice89h", channel="89H (91.7 GHz, SSMIS-F17 H-pol)",
+        make_colors=_bt_colors,
+        fill_method=FillMethod.PCOLORMESH, make_colorbar=_bt_colorbar,
+        draw_barbs=False,
+        # No MSLP overlay (see clean_ir): BT fill + black coasts only.
+        draw_mslp_isobars=False, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_bt_stat,
+        selectable_enhancements=tuple(tp.list_enhancements_for_domain("mw")),
+    ),
+    ProductSpec(
         key="mslp_pwat", slug="mslp_pwat", label="MSLP & PWAT",
         short="PWAT", order=4,
         grib="atm", sat_parm=None, field_attr="pwat", requires_attr="pwat",
