@@ -827,10 +827,42 @@
   // FIGURE: header + barb map + multi-panel time series, all on one canvas.
   // ====================================================================
 
+  // Drop obs whose timestamp year is implausible (a corrupt HDOB decode can stamp
+  // future years like 2095 -- see the decoder sanity guard). A handful of bad
+  // points would otherwise blow up the time-series x-domain (squashing the real
+  // data to the edge) and scatter stray barbs. Never returns empty: if EVERY ob
+  // is implausible (whole-mission decode failure) the raw track is kept so the
+  // map still shows something.
+  ReconViewer.prototype._saneTrack = function (track) {
+    var yMax = (new Date()).getUTCFullYear() + 1, out = [];
+    for (var i = 0; i < track.length; i++) {
+      var ts = Date.parse(track[i].t || '');
+      if (isNaN(ts)) { out.push(track[i]); continue; }   // undated: time-series skips it
+      var y = (new Date(ts)).getUTCFullYear();
+      if (y >= 2006 && y <= yMax) out.push(track[i]);
+    }
+    return out.length ? out : track;
+  };
+
+  // Sane [start,end] ISO from the sane full track (ignores corrupt-year obs), for
+  // the header valid window. Nulls if the track has no usable times.
+  ReconViewer.prototype._saneTimeBounds = function () {
+    var tr = this._saneTrack((this.mission && this.mission.track) || []);
+    var lo = null, hi = null;
+    for (var i = 0; i < tr.length; i++) {
+      var ts = Date.parse(tr[i].t || '');
+      if (isNaN(ts)) continue;
+      if (lo == null || ts < lo) lo = ts;
+      if (hi == null || ts > hi) hi = ts;
+    }
+    return { start: lo != null ? new Date(lo).toISOString() : null,
+             end: hi != null ? new Date(hi).toISOString() : null };
+  };
+
   // Which track points belong to the current scope (full mission vs last 10 min).
   ReconViewer.prototype._scopedTrack = function () {
     var m = this.mission;
-    var track = (m && m.track) || [];
+    var track = this._saneTrack((m && m.track) || []);
     if (this.scope !== 'last10' || !track.length) return track;
     var maxT = null;
     for (var i = 0; i < track.length; i++) {
@@ -957,10 +989,14 @@
     var title = (name ? (name + '  ·  ') : '') + 'Aircraft Recon' + scopeTag;
     g.fillText(title, h.x, h.y + 18);
     g.fillStyle = C.muted; g.font = '600 12.5px ' + FONT;
+    // valid window from the SANE track (the mission-level valid_start/valid_end
+    // can carry a corrupt-decode year like 2095 -> "to Jan 20"); fall back to the
+    // mission metadata only when the track has no usable times.
+    var tb = this._saneTimeBounds();
+    var vs = tb.start || m.valid_start, ve = tb.end || m.valid_end;
     var sub = (m.mission_id || '') +
       (m.aircraft ? ('  ·  ' + m.aircraft) : '') +
-      (m.valid_start ? ('  ·  ' + fmtZ(m.valid_start) + ' to ' +
-        (m.valid_end ? fmtZ(m.valid_end) : '?')) : '');
+      (vs ? ('  ·  ' + fmtZ(vs) + ' to ' + (ve ? fmtZ(ve) : '?')) : '');
     g.fillText(sub, h.x, h.y + 38);
     // wind-mode chip (right side of the header)
     var chip = (this.windMode === 'sfmr') ? 'SFMR surface wind' : 'Flight-level wind';
