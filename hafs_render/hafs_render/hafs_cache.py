@@ -195,7 +195,8 @@ def _read_cache(path: Path) -> dict:
 
 def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
                want_upper: bool = False,
-               sat_parm: Optional[int] = None) -> hp.HafsFrame:
+               sat_parm: Optional[int] = None,
+               sat_pct: "tuple | None" = None) -> hp.HafsFrame:
     """RENDER STAGE: read a frame's field cache entry and reconstruct the exact
     HafsFrame the given product needs - NO GRIB fetch. ``want_refl`` /
     ``want_pwat`` / ``want_upper`` / ``sat_parm`` pick the optional fields (the
@@ -205,12 +206,15 @@ def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
     per-product skip - never fatal to the rest of the frame.
     """
     raw = _read_cache(path)
-    if sat_parm is not None and int(sat_parm) not in raw["bt"]:
-        raise KeyError(
-            f"BT channel parm={sat_parm} not in cache {path.name}")
+    # PCT products need BOTH V/H channels cached; single-channel products need one.
+    need_parms = list(sat_pct) if sat_pct is not None else (
+        [sat_parm] if sat_parm is not None else [])
+    for p in need_parms:
+        if int(p) not in raw["bt"]:
+            raise KeyError(f"BT channel parm={p} not in cache {path.name}")
     if want_pwat and raw.get("pwat") is None:
         raise KeyError(f"PWAT field not in cache {path.name}")
     if want_upper and raw.get("upper") is None:
         raise KeyError(f"upper-air fields not in cache {path.name}")
     return hp._pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
-                          want_upper=want_upper, sat_parm=sat_parm)
+                          want_upper=want_upper, sat_parm=sat_parm, sat_pct=sat_pct)
