@@ -88,5 +88,19 @@ jobs:
           aws s3 sync ./recon_build "s3://triple-a-tropics-media/recon" \
             --endpoint-url "$R2_ENDPOINT" \
             --no-progress \
+            --exclude "_pruned_slugs.json" \
             --content-type "application/json" \
             --cache-control "public, max-age=30"
+          # Reap superseded slug trees the manifest prune removed (wrong-year
+          # year-twin ghosts like al_melissa_2026, and garbled-year clamps like
+          # the 2095 al_norbert_2014). Targeted rm of each pruned prefix ONLY --
+          # never a blanket --delete (recon_build holds just in-window storms).
+          if [ -f ./recon_build/_pruned_slugs.json ]; then
+            python -c "import json;print('\n'.join(json.load(open('./recon_build/_pruned_slugs.json'))))" \
+            | while read -r slug; do
+                [ -z "$slug" ] && continue
+                echo "recon: reaping superseded R2 tree recon/$slug/"
+                aws s3 rm "s3://triple-a-tropics-media/recon/$slug" \
+                  --recursive --endpoint-url "$R2_ENDPOINT" --no-progress
+              done
+          fi
