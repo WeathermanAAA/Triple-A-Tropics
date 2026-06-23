@@ -37,6 +37,9 @@
   // thresholds (34 green, 64/83/96 reds, 113 magenta, 137 purple), vivid on
   // dark. Each entry is [minKt, color]; a speed picks the LAST bin whose
   // minKt it meets. Shared by barbs, the legend, and the time-series traces.
+  // RED STARTS AT 64 kt (hurricane threshold): cool -> green -> yellow -> orange
+  // BELOW 64, a clean RED at 64, then deeper red -> magenta -> purple -> pink for
+  // 83/96/113/137. (64 is the canonical TAT red #f5333c, promoted from 83.)
   var KT_SCALE = [
     [0,   '#3563d4'],
     [10,  '#2f93e8'],
@@ -46,10 +49,10 @@
     [40,  '#7fd038'],
     [45,  '#c3df3a'],
     [50,  '#ffe534'],
-    [55,  '#ffc024'],
-    [60,  '#ff921f'],
-    [64,  '#ff5a1f'],
-    [83,  '#f5333c'],
+    [55,  '#ffb91f'],
+    [60,  '#ff8a1f'],
+    [64,  '#f5333c'],
+    [83,  '#c81f4a'],
     [96,  '#d61f6a'],
     [113, '#b23bff'],
     [137, '#e6a8ff']
@@ -67,8 +70,8 @@
     [50,  '#fff23a'],
     [55,  '#ffc91f'],
     [60,  '#ff9a14'],
-    [64,  '#ff5414'],
-    [83,  '#ff2630'],
+    [64,  '#ff2f3a'],
+    [83,  '#e0143f'],
     [96,  '#ff2a86'],
     [113, '#c45bff'],
     [137, '#f0c2ff']
@@ -81,20 +84,20 @@
     sshws: {
       label: 'Classic SSHWS',
       scale: KT_SCALE,
-      bg: '#07101c', ocean: '#08131f', land: '#172a44',
-      coast: 'rgba(176,196,222,0.78)', coastLw: 0.9,
+      bg: '#07101c', ocean: '#0a1626', land: '#19314e',
+      coast: 'rgba(201,219,242,0.95)', coastLw: 1.0,
       country: 'rgba(150,175,205,0.42)', countryLw: 0.6,
-      state: 'rgba(150,175,205,0.20)', stateLw: 0.5,
+      state: 'rgba(150,175,205,0.16)', stateLw: 0.5,
       grid: 'rgba(176,196,222,0.10)', gridLab: 'rgba(176,196,222,0.5)',
       spine: 'rgba(190,205,225,0.34)', barbLw: 1.25
     },
     highcontrast: {
       label: 'High contrast',
       scale: KT_SCALE_HC,
-      bg: '#04080e', ocean: '#050b14', land: '#101e33',
-      coast: 'rgba(214,228,245,0.95)', coastLw: 1.1,
+      bg: '#04080e', ocean: '#07101e', land: '#13243c',
+      coast: 'rgba(224,236,250,1.0)', coastLw: 1.15,
       country: 'rgba(180,205,235,0.55)', countryLw: 0.75,
-      state: 'rgba(180,205,235,0.28)', stateLw: 0.55,
+      state: 'rgba(180,205,235,0.20)', stateLw: 0.55,
       grid: 'rgba(214,228,245,0.14)', gridLab: 'rgba(214,228,245,0.62)',
       spine: 'rgba(214,228,245,0.45)', barbLw: 1.5
     }
@@ -895,9 +898,11 @@
     var figW = Math.max(availW, 760);     // legible PNG floor; scales down on mobile
     var pad = 16, headerH = 58, gap = 14;
     var mapH = Math.round(figW * 0.5);
-    // four stacked time-series panels (shared x). Sized off the figure width.
+    // stacked time-series panels (shared x). Sized off the figure width. Only the
+    // panels that actually carry data are shown (empty ones are hidden), so the
+    // figure height collapses to the surviving panel count.
     var panelH = Math.round(figW * 0.16);
-    var nPanels = 4;
+    var nPanels = Math.max(1, this._activePanels().length);
     var tsGap = 8;
     var tsH = panelH * nPanels + tsGap * (nPanels - 1);
     var footerH = 24;
@@ -1015,11 +1020,15 @@
     // ---- 3) faint graticule (drawn UNDER the coastlines)
     this._drawGraticule(g, ext, L.w, L.h);
 
-    // ---- 4) basemap lines: coast (crisp) -> country -> state, all one pass
+    // ---- 4) basemap lines: a SINGLE crisp coastline stroke. We deliberately do
+    //         NOT stroke admin_0 country borders here -- that polygon set retraces
+    //         the same coast as the coastline layer and the two together produced
+    //         the doubled / fuzzy translucent-blue coast outline. Faint inland
+    //         state/province borders give orientation without re-tracing the coast
+    //         enough to read as a double at their low alpha.
     if (window.TATRegions && TATRegions.drawBasemapLines) {
       TATRegions.drawBasemapLines(g, ext, this.geo, L.w, L.h, {
         coast: S.coast, coastLw: S.coastLw,
-        country: S.country, countryLw: S.countryLw,
         state: S.state, stateLw: S.stateLw
       });
     }
@@ -1102,7 +1111,7 @@
   // dense, Tropical-Tidbits-style comb (the track is ~1000 obs; this yields a
   // tight evenly-spaced barb field without raw-resolution clutter).
   ReconViewer.prototype._drawBarbs = function (g, pts, S) {
-    var step = 16;                       // min spacing (px) between barb roots
+    var step = 10;                       // min spacing (px) between barb roots (dense TT-style comb)
     var step2 = step * step;
     var lastX = null, lastY = null;
     g.save();
@@ -1351,11 +1360,15 @@
     g.restore();
   };
 
+  // Watermark in the map's top-right corner, clear of the bottom-left colorbar,
+  // the bottom lon labels and the left lat labels. A soft dark halo keeps it
+  // legible over bright land/cloud without competing with the data.
   ReconViewer.prototype._drawWatermark = function (g, L) {
     g.save();
-    g.font = '700 12px ' + FONT; g.textAlign = 'right'; g.textBaseline = 'bottom';
-    g.fillStyle = 'rgba(233,241,250,0.42)';
-    g.fillText(WATERMARK, L.x + L.w - 9, L.y + L.h - 7);
+    g.font = '700 12px ' + FONT; g.textAlign = 'right'; g.textBaseline = 'top';
+    g.shadowColor = 'rgba(4,9,16,0.85)'; g.shadowBlur = 3;
+    g.fillStyle = 'rgba(233,241,250,0.5)';
+    g.fillText(WATERMARK, L.x + L.w - 10, L.y + 9);
     g.restore();
   };
 
@@ -1366,6 +1379,21 @@
   //  (c) temperature (temp) + dewpoint (dwpt)
   //  (d) static pressure (plane_p) + pressure-altitude (twin)
   // ====================================================================
+  // Which time-series panels have data for the current scope. Empty panels (e.g.
+  // SFMR on a mission that carried no SFMR) are HIDDEN so the figure never shows a
+  // blank axis box; the layout (panel count) and this draw pass both read this.
+  ReconViewer.prototype._activePanels = function () {
+    var track = this._scopedTrack();
+    function any(key) { for (var i = 0; i < track.length; i++) if (num(track[i][key]) != null) return true; return false; }
+    var hasRain = any('rain');
+    var defs = [];
+    if (any('p_sfc') || any('wspd')) defs.push({ kind: 'mslp_wind', title: 'Sea-level pressure + flight-level wind' });
+    if (any('sfmr')) defs.push({ kind: 'sfmr_rain', title: hasRain ? 'SFMR surface wind + rain rate' : 'SFMR surface wind' });
+    if (any('temp') || any('dwpt')) defs.push({ kind: 'temp_dwpt', title: 'Temperature + dewpoint' });
+    if (any('plane_p')) defs.push({ kind: 'pres_alt', title: 'Aircraft static pressure + altitude' });
+    return defs;
+  };
+
   ReconViewer.prototype._drawTimeSeries = function (g) {
     var L = this.layout.ts, m = this.mission;
     var track = this._scopedTrack();
@@ -1389,13 +1417,17 @@
     }
     var tspan = t1 - t0;
 
-    var hasRain = track.some(function (p) { return num(p.rain) != null; });
-    var panels = [
-      { kind: 'mslp_wind', title: 'Sea-level pressure + flight-level wind' },
-      { kind: 'sfmr_rain', title: hasRain ? 'SFMR surface wind + rain rate' : 'SFMR surface wind' },
-      { kind: 'temp_dwpt', title: 'Temperature + dewpoint' },
-      { kind: 'pres_alt',  title: 'Aircraft static pressure + altitude' }
-    ];
+    // only the panels with data (empty SFMR/temp/etc. panels are hidden)
+    var panels = this._activePanels();
+    if (!panels.length) {
+      g.save();
+      g.fillStyle = 'rgba(10,19,36,0.7)'; g.fillRect(L.x, L.y, L.w, L.h);
+      g.strokeStyle = C.border; g.lineWidth = 1; g.strokeRect(L.x + 0.5, L.y + 0.5, L.w - 1, L.h - 1);
+      g.fillStyle = C.muted; g.font = '600 12px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('No time-series data for this pass.', L.x + L.w / 2, L.y + L.h / 2);
+      g.restore();
+      return;
+    }
 
     for (var pi = 0; pi < panels.length; pi++) {
       var py = L.y + pi * (L.panelH + L.gap);
