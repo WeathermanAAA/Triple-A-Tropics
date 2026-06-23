@@ -239,5 +239,95 @@ class TestBackfillMergesWithoutRegressingLive(unittest.TestCase):
         self.assertIn("al_andrea_2013", slugs)   # prior historical preserved
 
 
+class TestHdobArchivePathRouting(unittest.TestCase):
+    """HDOB URLs must route to the PIL dir for 2012+ and to the per-agency
+    pre-2012 subtree for 2007-2011, while VDM/sonde keep the PIL dir always.
+    A pre-2007 year emits a skip-and-log and gathers no HDOB (but still VDM)."""
+
+    def setUp(self):
+        from reconobs import ingest
+        self.ingest = ingest
+        self.since = __import__("datetime").datetime(
+            2000, 1, 1, tzinfo=__import__("datetime").timezone.utc)
+
+    def test_year_ge_2012_uses_pil_dir(self):
+        dirs = self.ingest.hdob_dirs(2016, "AL")
+        self.assertEqual(dirs, [(self.ingest.ARCHIVE.format(
+            year=2016, pil="AHONT1"), None)])
+        # EP twin
+        self.assertEqual(self.ingest.hdob_dirs(2018, "EP")[0][0],
+                         self.ingest.ARCHIVE.format(year=2018, pil="AHOPN1"))
+
+    def test_2008_2011_use_per_agency_subdir(self):
+        dirs = self.ingest.hdob_dirs(2010, "AL")
+        urls = [u for u, _ in dirs]
+        self.assertEqual(urls, [
+            "https://www.nhc.noaa.gov/archive/recon/2010/HDOB/USAF/URNT15/",
+            "https://www.nhc.noaa.gov/archive/recon/2010/HDOB/NOAA/URNT15/"])
+        self.assertTrue(all(p is None for _, p in dirs))  # subdir is pure
+        # EP -> URPN15
+        self.assertIn("URPN15", self.ingest.hdob_dirs(2009, "EP")[0][0])
+
+    def test_2007_uses_flat_dir_with_prefix_filter(self):
+        dirs = self.ingest.hdob_dirs(2007, "AL")
+        self.assertEqual(dirs, [
+            ("https://www.nhc.noaa.gov/archive/recon/2007/HDOB/USAF/",
+             "URNT15"),
+            ("https://www.nhc.noaa.gov/archive/recon/2007/HDOB/NOAA/",
+             "URNT15")])
+
+    def test_pre_2007_returns_no_dirs(self):
+        self.assertEqual(self.ingest.hdob_dirs(2006, "AL"), [])
+        self.assertEqual(self.ingest.hdob_dirs(2005, "EP"), [])
+
+    def test_recent_hdob_merges_agencies_and_filters_flat_dir(self):
+        from unittest import mock
+        # 2007 flat dirs mix basins -> only URNT15 (AL) names must survive,
+        # merged across both agencies, each fetched from its own dir URL.
+        def fake_list(url):
+            if "USAF" in url:
+                return ["URNT15-KNHC.200708011648.txt",
+                        "URPN15-KBIX.200708121953.txt"]  # EP noise, drop
+            return ["URNT15-KWBC.200708151200.txt"]
+        with mock.patch.object(self.ingest.fetch, "list_dir_txt",
+                               side_effect=fake_list):
+            pairs, _ = self.ingest._recent_hdob(2007, "AL", self.since)
+        urls = {u for u, _ in pairs}
+        names = {n for _, n in pairs}
+        self.assertEqual(names, {"URNT15-KNHC.200708011648.txt",
+                                 "URNT15-KWBC.200708151200.txt"})
+        self.assertIn("/HDOB/USAF/URNT15-KNHC.200708011648.txt",
+                      next(u for u in urls if "USAF" in u))
+        self.assertTrue(any("/HDOB/NOAA/" in u for u in urls))
+
+    def test_gather_window_routes_hdob_vs_vdm_and_logs_legacy(self):
+        from unittest import mock
+        seen = []
+
+        def fake_list(url):
+            seen.append(url)
+            return []
+        # 2010: HDOB hits the alt subtree, VDM/sonde hit the PIL dir.
+        with mock.patch.object(self.ingest.fetch, "list_dir_txt",
+                               side_effect=fake_list):
+            self.ingest.gather_window(2010, self.since, basins=("AL",),
+                                      log=lambda *a: None)
+        self.assertTrue(any("/HDOB/USAF/URNT15/" in u for u in seen))
+        self.assertTrue(any(u.endswith("/REPNT2/") for u in seen))   # VDM PIL
+        self.assertFalse(any("/AHONT1/" in u for u in seen))         # no PIL HDOB
+        # 2005: legacy -> skip-and-log, no HDOB listing, VDM still listed.
+        seen.clear()
+        logs = []
+        with mock.patch.object(self.ingest.fetch, "list_dir_txt",
+                               side_effect=fake_list):
+            self.ingest.gather_window(2005, self.since, basins=("AL",),
+                                      log=lambda *a: logs.append(
+                                          " ".join(map(str, a))))
+        self.assertFalse(any("/HDOB/" in u for u in seen))
+        self.assertTrue(any(u.endswith("/REPNT2/") for u in seen))
+        self.assertTrue(any("predates the modern HDOB archive" in m
+                            for m in logs))
+
+
 if __name__ == "__main__":
     unittest.main()

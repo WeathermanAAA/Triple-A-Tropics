@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Sequential 2011->now recon archive backfill driver.
+# Sequential 2007->now recon archive backfill driver. (2007 is the modern-HDOB
+# floor; the decoder + ingest.hdob_dirs handle 2007-2011 via the per-agency
+# archive subtree, and <2007 is skip-and-logged as legacy storm-name format.)
 #
 # The update-recon workflow is serialized by its `concurrency` group (so the
 # manifest read-merge-write - the growing union - never races), therefore
@@ -18,7 +20,7 @@ WF="update-recon.yml"
 LOG="${RECON_BACKFILL_LOG:-/tmp/recon_backfill.log}"
 STATE="${RECON_BACKFILL_STATE:-/tmp/recon_backfill_done.log}"
 MONTHS="${RECON_BACKFILL_MONTHS:-5 6 7 8 9 10 11}"
-START="${1:-2011}"; END="${2:-2026}"
+START="${1:-2007}"; END="${2:-2026}"
 export GH_TOKEN="${GH_TOKEN:-$GH_PUSH_TOKEN}"
 touch "$STATE"
 
