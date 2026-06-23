@@ -83,6 +83,22 @@ def storm_from_mission_id(mid: str) -> tuple[str, str, str]:
     return aircraft, flight, name.strip().upper()
 
 
+# Old-format (pre-2012) HDOB bulletins suffix the storm-name token with a
+# varying storm-number ("IKE"/"IKE1"/"IKE2"/"IKE4" all = Ike 2008) -- the digit
+# even flips WITHIN one mission, so a single flight gets split across IKE1/2/4.
+# Stripping a trailing digit-run from an otherwise-alphabetic name (>=3 letters)
+# collapses the fragments to the canonical storm. Leaves clean names, INVEST and
+# short/numeric/coded designations untouched (so it cannot mangle modern data or
+# the live current season).
+_NAME_NUM_SUFFIX = re.compile(r"^([A-Z]{3,})\d+$")
+
+
+def canonical_storm_name(name: str) -> str:
+    up = (name or "").strip().upper()
+    m = _NAME_NUM_SUFFIX.match(up)
+    return m.group(1) if m else up
+
+
 def is_invest_name(name: str) -> bool:
     up = (name or "").upper()
     return (not up) or any(k in up for k in _INVEST_NAMES) or up.isdigit()
@@ -145,12 +161,17 @@ def build_missions(hdob_contents: list[str]) -> dict[str, dict]:
         df = decode_hdob_message(content)
         if df is None:
             continue
-        mid = str(df["mission_id"].iloc[0])
-        aircraft, flight, name = storm_from_mission_id(mid)
+        mid_raw = str(df["mission_id"].iloc[0])
+        aircraft, flight, name = storm_from_mission_id(mid_raw)
+        # Collapse the old-format storm-number suffix (IKE1/IKE2/IKE4 -> IKE) at
+        # the KEY, so a flight split across those variants merges into one
+        # mission (points dedup by timestamp below) under the canonical name.
+        cname = canonical_storm_name(name)
+        mid = mid_raw if cname == name else f"{mid_raw.rsplit('-', 1)[0]}-{cname}"
         m = missions.setdefault(mid, {
             "mission_id": mid, "aircraft": aircraft, "flight": flight,
-            "storm_name": name, "is_invest": is_invest_name(name),
-            "is_tropical": is_tropical_mission(name, flight),
+            "storm_name": cname, "is_invest": is_invest_name(cname),
+            "is_tropical": is_tropical_mission(cname, flight),
             "atcf": None, "_points": {},
         })
         for rec in _row_records(df):

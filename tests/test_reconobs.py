@@ -329,5 +329,53 @@ class TestHdobArchivePathRouting(unittest.TestCase):
                             for m in logs))
 
 
+class TestStormNameConsolidation(unittest.TestCase):
+    """Old-format HDOBs suffix the storm name with a varying storm-number
+    (IKE/IKE1/IKE2/IKE4 = one Ike), fragmenting it across slugs. The fix
+    canonicalizes the name + collapses the stale manifest fragments."""
+
+    def test_canonical_storm_name_strips_digit_suffix(self):
+        from reconobs.missions import canonical_storm_name as c
+        # named storms with a trailing storm-number fragment -> canonical
+        self.assertEqual(c("IKE1"), "IKE")
+        self.assertEqual(c("IKE4"), "IKE")
+        self.assertEqual(c("Hanna2"), "HANNA")
+        self.assertEqual(c("ike2"), "IKE")
+        # clean names + invests + short/numeric codes untouched (no mangling)
+        for n in ("IKE", "GUSTAV", "INVEST", "LOW", "WAVE", "90L", "TD", "AL"):
+            self.assertEqual(c(n), n.upper())
+        self.assertEqual(c(""), "")
+
+    def test_drop_fragment_entries_collapses_and_preserves(self):
+        from reconobs.build import _drop_fragment_entries
+        def e(slug, name, year=2008, atcf=None):
+            return {"slug": slug, "name": name, "basin": "AL",
+                    "year": year, "atcf": atcf}
+        union = [
+            e("al_ike_2008", "Ike"), e("al_ike1_2008", "Ike1"),
+            e("al_ike2_2008", "Ike2"), e("al_ike4_2008", "Ike4"),
+            e("al_hanna_2008", "Hanna"), e("al_hanna2_2008", "Hanna2"),
+            e("al_invest_2008", "Invest"),
+            e("al012026", "Andrea", 2026, "al012026"),
+        ]
+        kept = [s["slug"] for s in _drop_fragment_entries(union, "al012026")]
+        # fragments dropped; canonical + invest + current-season kept
+        self.assertEqual(kept, ["al_ike_2008", "al_hanna_2008",
+                                "al_invest_2008", "al012026"])
+        # idempotent
+        again = _drop_fragment_entries(
+            [s for s in union if s["slug"] in kept], "al012026")
+        self.assertEqual([s["slug"] for s in again], kept)
+        # a fragment with NO canonical sibling present is kept (no data loss)
+        orphan = [e("al_fay1_2008", "Fay1")]
+        self.assertEqual(
+            [s["slug"] for s in _drop_fragment_entries(orphan, None)],
+            ["al_fay1_2008"])
+        # never drop the live current-season storm even if it looked like a frag
+        cur = [e("al_ike_2008", "Ike"), e("al_ike1_2008", "Ike1")]
+        self.assertIn("al_ike1_2008",
+                      [s["slug"] for s in _drop_fragment_entries(cur, "al_ike1_2008")])
+
+
 if __name__ == "__main__":
     unittest.main()
