@@ -58,6 +58,26 @@ def _storm_slug(basin: str, name: str, year: int, atcf: str | None) -> str:
     return f"{basin.lower()}_{_slugify(name) or 'unknown'}_{year}"
 
 
+def _drop_fragment_entries(union: list[dict], current_slug: str | None) -> list[dict]:
+    """Drop stale digit-suffix fragment entries (e.g. al_ike1_2008) from the
+    manifest union when their canonical sibling (al_ike_2008) is present -- the
+    old-format storm-number artifact. build_missions already merges the
+    fragments' missions under the canonical slug, so the canonical entry carries
+    the union; the fragment entry is pure leftover from a pre-fix run. atcf-keyed
+    (modern) entries and the live current-season storm are never dropped.
+    Idempotent: with no fragments present it is a no-op."""
+    present = {s["slug"] for s in union}
+    out = []
+    for s in union:
+        canon = (s["slug"] if s.get("atcf") else
+                 _storm_slug(s["basin"], _m.canonical_storm_name(s.get("name", "")),
+                             s["year"], None))
+        if canon != s["slug"] and canon in present and s["slug"] != current_slug:
+            continue   # stale fragment; the canonical sibling holds the missions
+        out.append(s)
+    return out
+
+
 def _write(out_dir: str, key: str, obj) -> None:
     path = os.path.join(out_dir, key)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -154,7 +174,7 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
 
     # ---- gather bulletins ----
     win = ingest.gather_window(year, since, until=until, basins=basins,
-                               stagger_s=stagger_s)
+                               stagger_s=stagger_s, log=log)
     if win["dropped"]:
         log(f"recon: capped {win['dropped']} over-window archive files")
     live_blocks = ingest.gather_live_hdob(basins=basins) if not is_backfill \
@@ -254,6 +274,10 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
         by_slug[s["slug"]] = s                   # upsert; this run's data wins
     union = sorted(by_slug.values(),
                    key=lambda s: s.get("last_ob_utc") or "", reverse=True)
+    # Consolidate old-format storm-number fragments (al_ike1_2008 -> al_ike_2008)
+    # whose canonical sibling already carries the merged missions. Never touches
+    # the live current-season storm.
+    union = _drop_fragment_entries(union, cur_slug)
 
     manifest = {
         "schema_version": SCHEMA_VERSION, "generated_utc": stamp,
