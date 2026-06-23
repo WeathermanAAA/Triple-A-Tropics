@@ -356,21 +356,27 @@ _WV_TICKS = [0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
 # Anchors coldest-first (°C, r, g, b in 0..1) so position 0 = coldest. The white
 # floor anchor is pegged at the PCT physical clip (-168 °C / 105 K); deeper values
 # clip there. Tuned on real HAFS-A 89 PCT storm nests.
+# Cold end (white/black/dark-red ice scattering) is correct -- DO NOT change it.
+# Mids (green/yellow/orange/red) are SATURATED for cyclonicwx punch (same hues,
+# same temps, higher chroma). Warm end (ambient ocean ~270-285 K) is deepened
+# to NAVY (same blue hue, lower lightness) so it doesn't read bright-medium-blue.
 _ICE89H_ANCHORS = [
     (-168, 1.000, 1.000, 1.000),  # deepest ice scattering -> white (PCT floor 105 K)
     (-140, 0.000, 0.000, 0.000),  # black
     (-118, 0.000, 0.000, 0.000),  # black band (heavy scattering)
-    (-98,  0.561, 0.102, 0.102),  # dark red
-    (-82,  0.906, 0.286, 0.180),  # red
-    (-68,  0.953, 0.655, 0.227),  # orange
-    (-55,  0.851, 0.886, 0.290),  # yellow
-    (-42,  0.298, 0.753, 0.416),  # green (ocean background)
-    (-25,  0.263, 0.702, 0.812),  # cyan
-    (-5,   0.184, 0.498, 0.816),  # blue
-    (15,   0.141, 0.227, 0.576),  # warm emission (land/clear) -> deep blue
+    (-98,  0.561, 0.102, 0.102),  # dark red (cold-end transition -> black)
+    (-82,  0.906, 0.148, 0.018),  # red (saturated)
+    (-68,  0.953, 0.570, 0.019),  # orange (saturated)
+    (-55,  0.835, 0.886, 0.018),  # yellow (saturated)
+    (-42,  0.093, 0.753, 0.264),  # green (saturated)
+    (-25,  0.263, 0.702, 0.812),  # cyan (unchanged)
+    (-5,   0.063, 0.242, 0.424),  # ocean -> deep navy
+    (15,   0.041, 0.081, 0.242),  # warmest (land/clear ocean) -> deepest navy
 ]
 ICE89H_CMAP = _seg_cmap("ice89h", _ICE89H_ANCHORS)
-_ICE89H_TICKS = [15, 0, -25, -50, -75, -100, -125, -150]
+# Ticks in KELVIN (89 PCT reads out in K, mirroring Boreham); the colorbar places
+# them at their degC positions on the degC norm. Span the [105, 290] K clip.
+_ICE89H_TICKS = [105, 125, 145, 165, 185, 205, 225, 245, 265, 285]
 
 _CBAR_LABEL_BT = "Brightness Temperature (°C)"
 
@@ -411,7 +417,10 @@ ENHANCEMENTS = {
     "ice89h": {
         "label": "89 PCT Ice Scattering", "cmap": ICE89H_CMAP,
         "vmin_c": -168.0, "vmax_c": 15.0, "ticks": _ICE89H_TICKS,
-        "domains": ("mw",), "kind": "mw", "cbar_label": _CBAR_LABEL_BT,
+        "domains": ("mw",), "kind": "mw",
+        # 89 PCT displays in KELVIN (label + ticks + MIN-BT readout); the data /
+        # norm / clip stay in degC. "units" is read by _bt_colorbar and _bt_stat.
+        "units": "K", "cbar_label": "Brightness Temperature (K)",
     },
 }
 
