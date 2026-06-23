@@ -50,12 +50,28 @@ def _norm(content: str) -> str:
 
 
 def decode_hdob_message(content: str):
-    """Decode one HDOB bulletin -> DataFrame, or None on failure."""
+    """Decode one HDOB bulletin -> DataFrame, or None on failure.
+
+    Sanity-guards the decoded timestamps: the vendored HDOB decoder trusts a date
+    token in the bulletin header, and a malformed/garbled header can stamp obs
+    with an impossible year (observed: 2095 on a 2014 backfill bulletin), which
+    poisons the per-storm date range, the manifest sort and the viewer's time
+    axis. Rows whose year falls outside [2006, now+1] are dropped; a bulletin
+    that decodes to NOTHING sane is treated as a failed decode (None)."""
     try:
         df = decode_hdob(_norm(content), mission_row=2)
-        return df if len(df) else None
     except Exception:                            # noqa: BLE001 - malformed msg
         return None
+    if df is None or not len(df):
+        return None
+    try:
+        import datetime as _dt
+        y_max = _dt.datetime.utcnow().year + 1
+        years = df["time"].map(lambda t: getattr(t, "year", None))
+        df = df[years.between(2006, y_max)]
+    except Exception:                            # noqa: BLE001 - never break on guard
+        pass
+    return df if len(df) else None
 
 
 def storm_from_mission_id(mid: str) -> tuple[str, str, str]:
