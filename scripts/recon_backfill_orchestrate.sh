@@ -41,8 +41,11 @@ run_chunk(){  # $1=year $2=month -> echoes conclusion
   gh run view "$rid" --repo "$REPO" --json conclusion -q '.conclusion' 2>/dev/null
 }
 
-log "BACKFILL START years ${START}..${END} months [${MONTHS}]"
-for y in $(seq "$START" "$END"); do
+# YEARS override (space-separated, explicit order) lets us front-load the
+# spot-check targets; default is sequential START..END.
+YEARS="${RECON_BACKFILL_YEARS:-$(seq "$START" "$END")}"
+log "BACKFILL START years [${YEARS}] months [${MONTHS}]"
+for y in $YEARS; do
   for m in $MONTHS; do
     key="${y}-$(printf %02d "$m")"
     if grep -qx "$key" "$STATE" 2>/dev/null; then log "  $key: already done (skip)"; continue; fi
