@@ -78,6 +78,47 @@ def _drop_fragment_entries(union: list[dict], current_slug: str | None) -> list[
     return out
 
 
+def _drop_year_twin_ghosts(union: list[dict], live_slugs: set[str],
+                           current_slug: str | None) -> tuple[list[dict], list[str]]:
+    """Drop superseded year-twin GHOSTS. When the obs-year fix re-files a storm
+    under a corrected slug (al_melissa_2025), the prior run's wrong-year slug
+    (al_melissa_2026) survives the slug-keyed manifest upsert as a stale twin.
+    For each (basin, canonical-name) group of NON-atcf entries with >1 slug, keep
+    the slug THIS run actually wrote (``live_slugs``) and drop a sibling ONLY when
+    it is a true GHOST: its last_ob_utc year equals the kept entry's (obs) year --
+    i.e. the SAME season, just stamped under the wrong year. A genuinely different
+    season of the same name (e.g. a real al_melissa_2013 alongside a 2025 re-file)
+    has a different last_ob year and is preserved. The live_slugs guard is the
+    other safety: a ghost is dropped ONLY on the run that re-emitted the corrected
+    twin. Never drops an atcf-keyed entry or the live current-season storm.
+    Idempotent. Returns (kept_union, dropped_slugs)."""
+    def _lob_year(s: dict) -> int | None:
+        lob = s.get("last_ob_utc")
+        try:
+            return int(lob[:4]) if lob else None
+        except (ValueError, TypeError):
+            return None
+    groups: dict[tuple, list[dict]] = {}
+    for s in union:
+        if s.get("atcf"):
+            continue
+        k = (s["basin"], _m.canonical_storm_name(s.get("name", "")))
+        groups.setdefault(k, []).append(s)
+    drop: set[str] = set()
+    for members in groups.values():
+        if len({m["slug"] for m in members}) < 2:
+            continue                              # no twin
+        keep = next((m for m in members if m["slug"] in live_slugs), None)
+        if keep is None:
+            continue                              # this run didn't re-file it
+        for m in members:
+            if m["slug"] in (keep["slug"], current_slug):
+                continue
+            if _lob_year(m) is not None and _lob_year(m) == keep.get("year"):
+                drop.add(m["slug"])               # same-season ghost, wrong year stamp
+    return [s for s in union if s["slug"] not in drop], sorted(drop)
+
+
 def _write(out_dir: str, key: str, obj) -> None:
     path = os.path.join(out_dir, key)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -98,29 +139,44 @@ def _best_name(missions: list[dict]) -> str:
 def _group_missions(all_missions: list[dict], year: int) -> dict[str, dict]:
     """Group missions into storms keyed by a stable slug. atcf (from a VDM) is
     authoritative and unifies a storm's invest-stage + named sorties; absent an
-    atcf, group by (basin, name)."""
-    # resolve a slug per mission: atcf if the mission (or a same name+basin
-    # sibling) carries one, else basin_name_year.
+    atcf, group by (basin, name). The storm's season YEAR (slug + "year" field)
+    is derived from ITS OWN missions' observation timestamps (earliest
+    valid_start), NOT the run year -- so an off-season storm a live incremental
+    run happens to catch (e.g. Melissa, obs 2025-10-30, swept up by a 2026 run)
+    files under its real obs year, correct for both live and backfill. ``year``
+    is only the fallback when no mission carries a valid_start."""
+    # resolve an atcf per (basin, name) so a storm's invest-stage + named sorties
+    # unify, and a VDM atcf on any one mission tags the whole group.
     atcf_by_key: dict[tuple, str] = {}
     for mm in all_missions:
         a = mm.get("atcf") or next((c["atcf"] for c in mm.get("vdm_centers", [])
                                     if c.get("atcf")), None)
         if a:
             atcf_by_key.setdefault((mm["basin"], mm["storm_name"]), a)
-    storms: dict[str, dict] = {}
+    # Pass 1: bucket by a YEAR-AGNOSTIC identity key (atcf, else basin+name).
+    buckets: dict[tuple, dict] = {}
     for mm in all_missions:
         atcf = mm.get("atcf") or atcf_by_key.get((mm["basin"],
                                                   mm["storm_name"]))
-        slug = _storm_slug(mm["basin"], mm["storm_name"], year, atcf)
-        st = storms.setdefault(slug, {
-            "slug": slug, "basin": mm["basin"], "year": year,
-            "atcf": atcf, "missions": []})
+        key = (atcf,) if atcf else (mm["basin"], mm["storm_name"])
+        st = buckets.setdefault(key, {
+            "basin": mm["basin"], "atcf": atcf, "missions": []})
         st["missions"].append(mm)
         if atcf and not st["atcf"]:
             st["atcf"] = atcf
-    for st in storms.values():
+    # Pass 2: derive the OBS year per storm from valid_start, then build the FINAL
+    # slug + "year" from it (name must be resolved first -- the non-atcf slug
+    # uses it). valid_start is ISO so its [:4] year is lexically sortable; the
+    # decode guard (missions.py [2006, now+1]) keeps a garbled timestamp out of vs.
+    storms: dict[str, dict] = {}
+    for st in buckets.values():
         st["name"] = _best_name(st["missions"])
         st["is_invest"] = all(m["is_invest"] for m in st["missions"])
+        vs = [m["valid_start"][:4] for m in st["missions"] if m.get("valid_start")]
+        obs_year = int(min(vs)) if vs else year
+        st["year"] = obs_year
+        st["slug"] = _storm_slug(st["basin"], st["name"], obs_year, st["atcf"])
+        storms[st["slug"]] = st
     return storms
 
 
@@ -272,12 +328,39 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
     by_slug = {s["slug"]: s for s in (prior or {}).get("storms", [])}
     for s in manifest_storms:
         by_slug[s["slug"]] = s                   # upsert; this run's data wins
+    # CLAMP: drop carried-forward entries whose season "year" OR last_ob_utc year
+    # is impossible -- garbled-header residue (the 2095 Norbert ghosts) that
+    # poisons the newest-first sort. The decode guard (missions.py [2006, now+1])
+    # catches FRESH decodes; this catches STALE union entries that no in-window
+    # run re-decodes, self-healing them on the next run. Same bound on both sides.
+    _ymax = now.year + 1
+    def _sane(s: dict) -> bool:
+        y = s.get("year")
+        if not (isinstance(y, int) and 2006 <= y <= _ymax):
+            return False
+        lob = s.get("last_ob_utc")
+        if lob:
+            try:
+                if not (2006 <= int(lob[:4]) <= _ymax):
+                    return False
+            except (ValueError, TypeError):
+                return False
+        return True
+    clamped_slugs = sorted(k for k, v in by_slug.items() if not _sane(v))
+    by_slug = {k: v for k, v in by_slug.items() if _sane(v)}
     union = sorted(by_slug.values(),
                    key=lambda s: s.get("last_ob_utc") or "", reverse=True)
     # Consolidate old-format storm-number fragments (al_ike1_2008 -> al_ike_2008)
     # whose canonical sibling already carries the merged missions. Never touches
     # the live current-season storm.
     union = _drop_fragment_entries(union, cur_slug)
+    # Drop superseded year-twin ghosts (al_melissa_2026 once al_melissa_2025 is
+    # re-filed by the obs-year fix), only for slugs THIS run re-emitted.
+    live_slugs = {s["slug"] for s in manifest_storms}
+    union, twin_slugs = _drop_year_twin_ghosts(union, live_slugs, cur_slug)
+    # All slugs whose R2 tree the workflow should reap (sidecar for a targeted rm).
+    pruned_slugs = sorted(set(clamped_slugs) | set(twin_slugs))
+    _write(out_dir, "_pruned_slugs.json", pruned_slugs)
 
     manifest = {
         "schema_version": SCHEMA_VERSION, "generated_utc": stamp,
@@ -294,6 +377,7 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
     summary = {"mode": "backfill" if is_backfill else "incremental",
                "year": year, "month": backfill_month,
                "storms_this_run": len(storms), "storms_total": len(union),
-               "missions_this_run": len(all_missions), "current": cur_slug}
+               "missions_this_run": len(all_missions), "current": cur_slug,
+               "pruned_slugs": pruned_slugs}
     log(f"recon: {summary}")
     return summary
