@@ -239,5 +239,143 @@ class TestBackfillMergesWithoutRegressingLive(unittest.TestCase):
         self.assertIn("al_andrea_2013", slugs)   # prior historical preserved
 
 
+class TestHdobArchivePathRouting(unittest.TestCase):
+    """HDOB URLs must route to the PIL dir for 2012+ and to the per-agency
+    pre-2012 subtree for 2007-2011, while VDM/sonde keep the PIL dir always.
+    A pre-2007 year emits a skip-and-log and gathers no HDOB (but still VDM)."""
+
+    def setUp(self):
+        from reconobs import ingest
+        self.ingest = ingest
+        self.since = __import__("datetime").datetime(
+            2000, 1, 1, tzinfo=__import__("datetime").timezone.utc)
+
+    def test_year_ge_2012_uses_pil_dir(self):
+        dirs = self.ingest.hdob_dirs(2016, "AL")
+        self.assertEqual(dirs, [(self.ingest.ARCHIVE.format(
+            year=2016, pil="AHONT1"), None)])
+        # EP twin
+        self.assertEqual(self.ingest.hdob_dirs(2018, "EP")[0][0],
+                         self.ingest.ARCHIVE.format(year=2018, pil="AHOPN1"))
+
+    def test_2008_2011_use_per_agency_subdir(self):
+        dirs = self.ingest.hdob_dirs(2010, "AL")
+        urls = [u for u, _ in dirs]
+        self.assertEqual(urls, [
+            "https://www.nhc.noaa.gov/archive/recon/2010/HDOB/USAF/URNT15/",
+            "https://www.nhc.noaa.gov/archive/recon/2010/HDOB/NOAA/URNT15/"])
+        self.assertTrue(all(p is None for _, p in dirs))  # subdir is pure
+        # EP -> URPN15
+        self.assertIn("URPN15", self.ingest.hdob_dirs(2009, "EP")[0][0])
+
+    def test_2007_uses_flat_dir_with_prefix_filter(self):
+        dirs = self.ingest.hdob_dirs(2007, "AL")
+        self.assertEqual(dirs, [
+            ("https://www.nhc.noaa.gov/archive/recon/2007/HDOB/USAF/",
+             "URNT15"),
+            ("https://www.nhc.noaa.gov/archive/recon/2007/HDOB/NOAA/",
+             "URNT15")])
+
+    def test_pre_2007_returns_no_dirs(self):
+        self.assertEqual(self.ingest.hdob_dirs(2006, "AL"), [])
+        self.assertEqual(self.ingest.hdob_dirs(2005, "EP"), [])
+
+    def test_recent_hdob_merges_agencies_and_filters_flat_dir(self):
+        from unittest import mock
+        # 2007 flat dirs mix basins -> only URNT15 (AL) names must survive,
+        # merged across both agencies, each fetched from its own dir URL.
+        def fake_list(url):
+            if "USAF" in url:
+                return ["URNT15-KNHC.200708011648.txt",
+                        "URPN15-KBIX.200708121953.txt"]  # EP noise, drop
+            return ["URNT15-KWBC.200708151200.txt"]
+        with mock.patch.object(self.ingest.fetch, "list_dir_txt",
+                               side_effect=fake_list):
+            pairs, _ = self.ingest._recent_hdob(2007, "AL", self.since)
+        urls = {u for u, _ in pairs}
+        names = {n for _, n in pairs}
+        self.assertEqual(names, {"URNT15-KNHC.200708011648.txt",
+                                 "URNT15-KWBC.200708151200.txt"})
+        self.assertIn("/HDOB/USAF/URNT15-KNHC.200708011648.txt",
+                      next(u for u in urls if "USAF" in u))
+        self.assertTrue(any("/HDOB/NOAA/" in u for u in urls))
+
+    def test_gather_window_routes_hdob_vs_vdm_and_logs_legacy(self):
+        from unittest import mock
+        seen = []
+
+        def fake_list(url):
+            seen.append(url)
+            return []
+        # 2010: HDOB hits the alt subtree, VDM/sonde hit the PIL dir.
+        with mock.patch.object(self.ingest.fetch, "list_dir_txt",
+                               side_effect=fake_list):
+            self.ingest.gather_window(2010, self.since, basins=("AL",),
+                                      log=lambda *a: None)
+        self.assertTrue(any("/HDOB/USAF/URNT15/" in u for u in seen))
+        self.assertTrue(any(u.endswith("/REPNT2/") for u in seen))   # VDM PIL
+        self.assertFalse(any("/AHONT1/" in u for u in seen))         # no PIL HDOB
+        # 2005: legacy -> skip-and-log, no HDOB listing, VDM still listed.
+        seen.clear()
+        logs = []
+        with mock.patch.object(self.ingest.fetch, "list_dir_txt",
+                               side_effect=fake_list):
+            self.ingest.gather_window(2005, self.since, basins=("AL",),
+                                      log=lambda *a: logs.append(
+                                          " ".join(map(str, a))))
+        self.assertFalse(any("/HDOB/" in u for u in seen))
+        self.assertTrue(any(u.endswith("/REPNT2/") for u in seen))
+        self.assertTrue(any("predates the modern HDOB archive" in m
+                            for m in logs))
+
+
+class TestStormNameConsolidation(unittest.TestCase):
+    """Old-format HDOBs suffix the storm name with a varying storm-number
+    (IKE/IKE1/IKE2/IKE4 = one Ike), fragmenting it across slugs. The fix
+    canonicalizes the name + collapses the stale manifest fragments."""
+
+    def test_canonical_storm_name_strips_digit_suffix(self):
+        from reconobs.missions import canonical_storm_name as c
+        # named storms with a trailing storm-number fragment -> canonical
+        self.assertEqual(c("IKE1"), "IKE")
+        self.assertEqual(c("IKE4"), "IKE")
+        self.assertEqual(c("Hanna2"), "HANNA")
+        self.assertEqual(c("ike2"), "IKE")
+        # clean names + invests + short/numeric codes untouched (no mangling)
+        for n in ("IKE", "GUSTAV", "INVEST", "LOW", "WAVE", "90L", "TD", "AL"):
+            self.assertEqual(c(n), n.upper())
+        self.assertEqual(c(""), "")
+
+    def test_drop_fragment_entries_collapses_and_preserves(self):
+        from reconobs.build import _drop_fragment_entries
+        def e(slug, name, year=2008, atcf=None):
+            return {"slug": slug, "name": name, "basin": "AL",
+                    "year": year, "atcf": atcf}
+        union = [
+            e("al_ike_2008", "Ike"), e("al_ike1_2008", "Ike1"),
+            e("al_ike2_2008", "Ike2"), e("al_ike4_2008", "Ike4"),
+            e("al_hanna_2008", "Hanna"), e("al_hanna2_2008", "Hanna2"),
+            e("al_invest_2008", "Invest"),
+            e("al012026", "Andrea", 2026, "al012026"),
+        ]
+        kept = [s["slug"] for s in _drop_fragment_entries(union, "al012026")]
+        # fragments dropped; canonical + invest + current-season kept
+        self.assertEqual(kept, ["al_ike_2008", "al_hanna_2008",
+                                "al_invest_2008", "al012026"])
+        # idempotent
+        again = _drop_fragment_entries(
+            [s for s in union if s["slug"] in kept], "al012026")
+        self.assertEqual([s["slug"] for s in again], kept)
+        # a fragment with NO canonical sibling present is kept (no data loss)
+        orphan = [e("al_fay1_2008", "Fay1")]
+        self.assertEqual(
+            [s["slug"] for s in _drop_fragment_entries(orphan, None)],
+            ["al_fay1_2008"])
+        # never drop the live current-season storm even if it looked like a frag
+        cur = [e("al_ike_2008", "Ike"), e("al_ike1_2008", "Ike1")]
+        self.assertIn("al_ike1_2008",
+                      [s["slug"] for s in _drop_fragment_entries(cur, "al_ike1_2008")])
+
+
 if __name__ == "__main__":
     unittest.main()

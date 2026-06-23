@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Sequential 2011->now recon archive backfill driver.
+# Sequential 2007->now recon archive backfill driver. (2007 is the modern-HDOB
+# floor; the decoder + ingest.hdob_dirs handle 2007-2011 via the per-agency
+# archive subtree, and <2007 is skip-and-logged as legacy storm-name format.)
 #
 # The update-recon workflow is serialized by its `concurrency` group (so the
 # manifest read-merge-write - the growing union - never races), therefore
@@ -18,7 +20,10 @@ WF="update-recon.yml"
 LOG="${RECON_BACKFILL_LOG:-/tmp/recon_backfill.log}"
 STATE="${RECON_BACKFILL_STATE:-/tmp/recon_backfill_done.log}"
 MONTHS="${RECON_BACKFILL_MONTHS:-5 6 7 8 9 10 11}"
-START="${1:-2011}"; END="${2:-2026}"
+START="${1:-2007}"; END="${2:-2026}"
+# Dispatch from a non-default branch (the pre-2012 HDOB ingest lives on a feature
+# branch until merged) by setting RECON_BACKFILL_REF=<branch>; empty = default.
+REF="${RECON_BACKFILL_REF:-}"; REFARG=(); [ -n "$REF" ] && REFARG=(--ref "$REF")
 export GH_TOKEN="${GH_TOKEN:-$GH_PUSH_TOKEN}"
 touch "$STATE"
 
@@ -29,7 +34,7 @@ latest_id(){ gh run list --repo "$REPO" --workflow="$WF" \
 run_chunk(){  # $1=year $2=month -> echoes conclusion
   local year="$1" month="$2" before rid i
   before="$(latest_id)"
-  gh workflow run "$WF" --repo "$REPO" \
+  gh workflow run "$WF" --repo "$REPO" "${REFARG[@]}" \
     -f "backfill_year=$year" -f "backfill_month=$month" >/dev/null 2>&1
   rid=""
   for i in $(seq 1 24); do
@@ -41,8 +46,11 @@ run_chunk(){  # $1=year $2=month -> echoes conclusion
   gh run view "$rid" --repo "$REPO" --json conclusion -q '.conclusion' 2>/dev/null
 }
 
-log "BACKFILL START years ${START}..${END} months [${MONTHS}]"
-for y in $(seq "$START" "$END"); do
+# YEARS override (space-separated, explicit order) lets us front-load the
+# spot-check targets; default is sequential START..END.
+YEARS="${RECON_BACKFILL_YEARS:-$(seq "$START" "$END")}"
+log "BACKFILL START years [${YEARS}] months [${MONTHS}]"
+for y in $YEARS; do
   for m in $MONTHS; do
     key="${y}-$(printf %02d "$m")"
     if grep -qx "$key" "$STATE" 2>/dev/null; then log "  $key: already done (skip)"; continue; fi
