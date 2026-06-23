@@ -347,6 +347,31 @@ _IR_TICKS = [30, 20, 10, 0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
 _BD_TICKS = [30, 9, 0, -30, -41, -53, -63, -69, -75, -80, -85]
 _WV_TICKS = [0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
 
+# 89 GHz (91.7) H-pol microwave ice-scattering enhancement (HAFS simulated SSMIS
+# F17 H-pol Tb, in °C). NOT an IR ramp: at H-pol the warm OCEAN reads cool
+# (~ -40 °C, low emissivity) and convective ICE SCATTERING drives Tb colder
+# still, so the recognizable scale runs WARM->COLD as
+#   blue -> cyan -> green -> yellow -> orange -> red -> black -> white,
+# the white being the deepest scattering (the a-reference-site/Boreham 89H look).
+# Anchors coldest-first (°C, r, g, b in 0..1) so position 0 = coldest. The data
+# floor is ~ -196 °C; everything below -160 clips to white (deep ice). Tuned on
+# real HAFS-A parm-63 storm nests.
+_ICE89H_ANCHORS = [
+    (-160, 1.000, 1.000, 1.000),  # deepest ice scattering -> white
+    (-140, 0.000, 0.000, 0.000),  # black
+    (-118, 0.000, 0.000, 0.000),  # black band (heavy scattering)
+    (-98,  0.561, 0.102, 0.102),  # dark red
+    (-82,  0.906, 0.286, 0.180),  # red
+    (-68,  0.953, 0.655, 0.227),  # orange
+    (-55,  0.851, 0.886, 0.290),  # yellow
+    (-42,  0.298, 0.753, 0.416),  # green (ocean background)
+    (-25,  0.263, 0.702, 0.812),  # cyan
+    (-5,   0.184, 0.498, 0.816),  # blue
+    (15,   0.141, 0.227, 0.576),  # warm emission (land/clear) -> deep blue
+]
+ICE89H_CMAP = _seg_cmap("ice89h", _ICE89H_ANCHORS)
+_ICE89H_TICKS = [15, 0, -25, -50, -75, -100, -125, -150]
+
 _CBAR_LABEL_BT = "Brightness Temperature (°C)"
 
 
@@ -380,6 +405,13 @@ ENHANCEMENTS = {
         "label": "Grayscale IR", "cmap": IR_GRAY_CMAP,
         "vmin_c": -90.0, "vmax_c": 30.0, "ticks": _IR_TICKS,
         "domains": ("ir", "wv"), "kind": "gray", "cbar_label": _CBAR_LABEL_BT,
+    },
+    # Microwave (89 GHz H-pol). Own domain "mw" so it does NOT leak into the
+    # IR/WV enhancement dropdowns; the brief's °C label via _CBAR_LABEL_BT.
+    "ice89h": {
+        "label": "89H Ice Scattering", "cmap": ICE89H_CMAP,
+        "vmin_c": -160.0, "vmax_c": 15.0, "ticks": _ICE89H_TICKS,
+        "domains": ("mw",), "kind": "mw", "cbar_label": _CBAR_LABEL_BT,
     },
 }
 
