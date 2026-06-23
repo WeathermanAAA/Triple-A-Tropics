@@ -126,6 +126,13 @@ class ProductSpec:
     # --- color enhancement set (BT only; informational, not enforced) ---
     selectable_enhancements: tuple = ()
 
+    # --- derived polarization-corrected channel (89 PCT) ---
+    # (V_parm, H_parm): when set, the product's BT field is the POLARIZATION-
+    # CORRECTED temperature PCT85 = 1.818*V - 0.818*H computed from these two .sat
+    # channels (V warmer over clear ocean), instead of a single sat_parm channel.
+    # The cycle then decodes BOTH parms; sat_parm stays None for such a product.
+    sat_pct: Optional[tuple] = None
+
     # --- overlay: thin black UNLABELED contour lines of the FILL field ---
     # Drawn on top of the fill in the SAME style as the wind product's category
     # contours, SEPARATE from the white MSLP isobars. Each value is a level in the
@@ -446,15 +453,19 @@ _SPECS = (
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("wv")),
     ),
     ProductSpec(
-        # Simulated 89 GHz H-pol microwave (SSMIS-F17, 91.7 GHz) -- the HAFS .sat
-        # GRIB2 already carries it (UPP/CRTM) at parameterNumber 63, decoded to °C
-        # exactly like clean_ir/water_vapor. Single channel (NOT a PCT), the
-        # cyclonicwx/Boreham "Simulated 89H" product. Ice-scattering enhancement
-        # (palette domain "mw"): cold = deep convective ice scattering.
+        # Simulated 89 GHz microwave (SSMIS-F17, 91.7 GHz) -- the canonical
+        # NRL/CIMSS "89 GHz color" (cyclonicwx/Boreham blue-ocean look) is the
+        # POLARIZATION-CORRECTED temperature PCT85 = 1.818*V - 0.818*H, NOT a
+        # single channel. The raw H-pol channel alone reads a green ocean (low
+        # H-pol emissivity); PCT removes that so clear ocean is ~ -5 degC (blue)
+        # while ice-scattering cores stay cold. V=parm63, H=parm62 (both in every
+        # storm+parent .sat). Decoded to degC, fill-masked, clipped [105,290] K.
         key="sim_89h", slug="sim_89h",
-        label="Simulated 89H (from HAFS)", short="89H", order=3.5,
-        grib="sat", sat_parm=63, field_attr="bt_c", requires_attr="bt_c",
-        default_enhancement="ice89h", channel="89H (91.7 GHz, SSMIS-F17 H-pol)",
+        label="Simulated 89 PCT (from HAFS)", short="89H", order=3.5,
+        grib="sat", sat_parm=None, sat_pct=(63, 62),
+        field_attr="bt_c", requires_attr="bt_c",
+        default_enhancement="ice89h",
+        channel="89 PCT (91.7 GHz, SSMIS-F17 pol-corrected)",
         make_colors=_bt_colors,
         fill_method=FillMethod.PCOLORMESH, make_colorbar=_bt_colorbar,
         draw_barbs=False,
@@ -617,3 +628,20 @@ def sat_parm(key: str) -> Optional[int]:
     products / unknown keys."""
     s = REGISTRY.get(key)
     return s.sat_parm if s else None
+
+
+def sat_pct(key: str) -> Optional[tuple]:
+    """(V_parm, H_parm) for a polarization-corrected (PCT) product, else None."""
+    s = REGISTRY.get(key)
+    return s.sat_pct if s else None
+
+
+def grib_parms(key: str) -> tuple:
+    """ALL .sat GRIB2 parameterNumbers a product needs decoded: the two PCT
+    channels for a PCT product, the single channel otherwise, () for .atm."""
+    s = REGISTRY.get(key)
+    if not s:
+        return ()
+    if s.sat_pct:
+        return tuple(int(p) for p in s.sat_pct)
+    return (int(s.sat_parm),) if s.sat_parm is not None else ()

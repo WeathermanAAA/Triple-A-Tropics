@@ -580,7 +580,14 @@ def _read_raw_fields(
             if isinstance(ds_s, list):
                 ds_s = ds_s[0]
             svar = list(ds_s.data_vars)[0]
-            bt[int(parm)] = ds_s[svar].values.astype(float) - 273.15  # K -> degC
+            vals = ds_s[svar].values.astype(float)
+            # MASK FILL before anything: the GRIB missingValue (9999) marks the
+            # ~56% of the storm-nest grid that is off-nest fill. cfgrib usually
+            # pre-masks it to NaN, but mask >=9990 defensively so fill never
+            # enters stats / PCT / colorize on any decode path. Applied to ALL
+            # bt channels (each parm here).
+            vals[vals >= 9990.0] = np.nan
+            bt[int(parm)] = vals - 273.15  # K -> degC
 
     # Pressure-level (upper-air) fields from the SAME .atm file. Native-grid 2-D
     # arrays incl. the transient ABSV levels; relative vorticity is derived below
@@ -652,9 +659,51 @@ def _read_raw_fields(
     }
 
 
+# --- 89 GHz Polarization-Corrected Temperature (PCT85) ---------------------
+# The RAW 91.7 GHz H-pol channel reads a GREEN ocean: the low-emissivity H-pol
+# OCEAN depression sits near 227 K (-45 degC). The canonical NRL/CIMSS "89 GHz
+# color" (the cyclonicwx/Boreham blue-ocean look) is the POLARIZATION-CORRECTED
+# temperature, NOT a single channel: PCT = 1.818*V - 0.818*H, where V/H are the
+# two SSMIS-F17 91.7 GHz channels (parm 63 = V warmer-over-ocean, parm 62 = H).
+# It removes the ocean polarization signal (clear ocean -> ~270-281 K / blue)
+# while ice-scattering cores stay cold and pop. The coefficients sum to 1, so
+# PCT_degC = 1.818*V_degC - 0.818*H_degC exactly (compute directly in degC).
+PCT_V_COEF = 1.818
+PCT_H_COEF = 0.818
+PCT_CLEAR_OCEAN_C = -23.15   # Tb > 250 K (both channels) -> a clear-ocean pixel
+PCT_CLIP_LO_C = -168.15      # 105 K NRL/Boreham scattering floor (CRTM single-pixel overshoots)
+PCT_CLIP_HI_C = 16.85        # 290 K warm ceiling
+
+
+def compute_pct89(bt: dict, v_parm: int, h_parm: int):
+    """Polarization-corrected 89 GHz brightness temperature (PCT85), in degC,
+    from the decoded V/H channels in ``bt`` (a {parm: degC array} dict).
+
+    PCT = 1.818*V - 0.818*H, where V is the channel WARMER over clear ocean (the
+    SSMIS V-pol; parm 63 on HAFS .sat, H=parm 62). A SELF-CHECK enforces that
+    orientation directly from the clear-ocean medians and swaps V/H if the data
+    labels them the other way, so the result is robust either way. (NB: a
+    median-of-PCT sanity check does NOT work here -- over clear ocean V ~= H, so
+    PCT ~= 280 K for EITHER assignment; the damage of a flip shows only over
+    convection, so the warmer-channel test is what actually catches it.) The
+    result is CLIPPED to the NRL physical range [105, 290] K so single-pixel CRTM
+    scattering overshoots don't blow past the colorbar / MIN-BT readout. NaN-safe
+    (fill stays NaN). Returns None if either channel is absent."""
+    V = bt.get(int(v_parm))
+    H = bt.get(int(h_parm))
+    if V is None or H is None:
+        return None
+    clear = (V > PCT_CLEAR_OCEAN_C) & (H > PCT_CLEAR_OCEAN_C)
+    if clear.any() and np.nanmedian(H[clear]) > np.nanmedian(V[clear]):
+        V, H = H, V          # V must be the warmer-over-clear-ocean channel
+    pct = PCT_V_COEF * V - PCT_H_COEF * H
+    return np.clip(pct, PCT_CLIP_LO_C, PCT_CLIP_HI_C)
+
+
 def _pack_frame(raw: dict, *, want_refl: bool = False,
                 want_pwat: bool = False, want_upper: bool = False,
-                sat_parm: Optional[int] = None) -> HafsFrame:
+                sat_parm: Optional[int] = None,
+                sat_pct: "tuple | None" = None) -> HafsFrame:
     """RENDER-side core: trim a raw field grid (from ``_read_raw_fields`` or the
     field cache) to its finite extent and return the HafsFrame ``render_frame``
     consumes. Pure CPU - no network. Identical math whether ``raw`` is a freshly
@@ -672,7 +721,13 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     refl = raw["refl_dbz"] if want_refl else None
     pwat = raw.get("pwat") if want_pwat else None
     upper = raw.get("upper") if want_upper else None
-    bt = raw["bt"].get(int(sat_parm)) if sat_parm is not None else None
+    # ``sat_pct`` (V,H parms) -> a derived POLARIZATION-CORRECTED channel computed
+    # from two cached BT channels; otherwise a single channel by sat_parm. Either
+    # way the result is the degC field this product colorizes (frame.bt_c).
+    if sat_pct is not None:
+        bt = compute_pct89(raw["bt"], sat_pct[0], sat_pct[1])
+    else:
+        bt = raw["bt"].get(int(sat_parm)) if sat_parm is not None else None
 
     # Trim NaN padding: the nest is a sub-rectangle embedded in a NaN-filled
     # regular grid. Keep rows/cols that carry any finite data. The mask is built
@@ -737,6 +792,7 @@ def fetch_hafs_frame(
     want_pwat: bool = False,
     want_upper: bool = False,
     sat_parm: Optional[int] = None,
+    sat_pct: "tuple | None" = None,
 ) -> HafsFrame:
     """Fetch + decode + trim one HAFS frame for ONE product into a HafsFrame.
 
@@ -750,14 +806,15 @@ def fetch_hafs_frame(
     xarray (the builder sets it so hundreds of frames don't fill the runner disk;
     the standalone slice keeps them for inspection).
     """
+    parms = tuple(sat_pct) if sat_pct is not None else (
+        (sat_parm,) if sat_parm is not None else ())
     raw = _read_raw_fields(
         model, storm, product, date, fxx, save_dir,
         remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
-        want_upper=want_upper,
-        sat_parms=(sat_parm,) if sat_parm is not None else (),
+        want_upper=want_upper, sat_parms=parms,
     )
     return _pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
-                       want_upper=want_upper, sat_parm=sat_parm)
+                       want_upper=want_upper, sat_parm=sat_parm, sat_pct=sat_pct)
 
 
 # ---------------------------------------------------------------------------

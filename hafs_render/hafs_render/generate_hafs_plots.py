@@ -431,12 +431,14 @@ def _render_one(job: RenderJob) -> dict:
     # registry guard), so the render reconstructs frame.upper from the cache.
     want_upper = reg.get_spec(job.product).requires_attr == "upper"
     # Sim-sat products read their BT channel by GRIB2 parameterNumber from the
-    # product's registry spec (None for wind/refl/pwat/upper).
+    # product's registry spec (None for wind/refl/pwat/upper); a PCT product
+    # (sat_pct set) derives its field from two channels instead.
     sat_parm = reg.sat_parm(job.product)
+    sat_pct = reg.sat_pct(job.product)
     try:
         frame = fc.load_frame(Path(job.cache_path), want_refl=want_refl,
                               want_pwat=want_pwat, want_upper=want_upper,
-                              sat_parm=sat_parm)
+                              sat_parm=sat_parm, sat_pct=sat_pct)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
         hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST, states=_STATES,
                         product=job.product,
@@ -653,8 +655,11 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     cycle_want_refl = "refl" in products
     cycle_want_pwat = "mslp_pwat" in products
     cycle_want_upper = INGEST_UPPER_AIR
-    cycle_sat_parms = tuple(sorted({reg.sat_parm(p) for p in products
-                                    if reg.sat_parm(p) is not None}))
+    # Union of EVERY .sat parm any product needs decoded -- the single channel
+    # for clean_ir/water_vapor AND both V/H channels for a PCT product (89 PCT),
+    # so the per-frame cache carries them all for one shared ingest.
+    cycle_sat_parms = tuple(sorted({p for prod in products
+                                    for p in reg.grib_parms(prod)}))
 
     # Plan two stages up front: one INGEST task per (model, storm, domain, fxx)
     # frame, and one RENDER task per (product, frame). Ingest writes the field
