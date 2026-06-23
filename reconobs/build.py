@@ -154,7 +154,7 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
 
     # ---- gather bulletins ----
     win = ingest.gather_window(year, since, until=until, basins=basins,
-                               stagger_s=stagger_s)
+                               stagger_s=stagger_s, log=log)
     if win["dropped"]:
         log(f"recon: capped {win['dropped']} over-window archive files")
     live_blocks = ingest.gather_live_hdob(basins=basins) if not is_backfill \
