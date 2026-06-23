@@ -284,11 +284,46 @@ def add_vdm(missions: dict[str, dict], vdm_contents: list[str]) -> None:
             _attach_nearest(missions, c, "vdm_centers")
 
 
+_SONDE_HDR_TS = re.compile(r"^[A-Z]{4}\d{2}\s+\w{4}\s+(\d{2})(\d{2})(\d{2})",
+                           re.M)
+
+
 def add_sondes(missions: dict[str, dict], sonde_contents: list[str]) -> None:
-    """Decode dropsonde surface fixes -> markers on the nearest mission."""
+    """Decode dropsonde surface fixes -> markers on the nearest mission.
+
+    The vendored ``decode_dropsonde`` returns ``(missionname, data)`` (a tuple,
+    not a dict) and derives the release time from the bulletin RELATIVE to a
+    reference ``date`` (it only knows the time-of-day, not the day/month/year).
+    We seed that reference from the bulletin's own WMO header DDHHMM combined
+    with a mission's year/month (all missions in a run share the ingest window),
+    so ``TOPtime`` resolves to a real datetime; without it every sonde decodes
+    with ``TOPtime=None`` and is silently dropped at the nearest-mission step."""
+    if not missions:
+        return
+    # a year/month/day reference for the run (sondes share the ingest window)
+    ref = None
+    for mm in missions.values():
+        if mm.get("track"):
+            ref = _iso(mm["track"][len(mm["track"]) // 2]["t"])
+            break
+    if ref is None:
+        return
     for content in sonde_contents:
+        norm = _norm(content)
+        # reference date for this bulletin: run year/month + header day/HHMM
+        date = ref
+        mh = _SONDE_HDR_TS.search(norm)
+        if mh:
+            try:
+                date = ref.replace(day=int(mh.group(1)),
+                                   hour=int(mh.group(2)),
+                                   minute=int(mh.group(3)),
+                                   second=0, microsecond=0)
+            except ValueError:
+                date = ref
+        date = date.replace(tzinfo=None)         # decoder uses naive datetimes
         try:
-            d = decode_dropsonde(_norm(content), None)
+            _name, d = decode_dropsonde(norm, date)
         except Exception:                        # noqa: BLE001
             continue
         if not isinstance(d, dict):
@@ -299,21 +334,27 @@ def add_sondes(missions: dict[str, dict], sonde_contents: list[str]) -> None:
                      else d.get("lon"))
         if lat is None or lon is None:
             continue
-        t = d.get("time")
-        sonde = {"t": t.strftime("%Y-%m-%dT%H:%M:%SZ")
-                 if hasattr(t, "strftime") else None,
+        t = d.get("TOPtime")
+        sonde = {"t": (t.strftime("%Y-%m-%dT%H:%M:%SZ")
+                       if hasattr(t, "strftime") else None),
                  "lat": lat, "lon": lon,
-                 "sfc_wind_kt": _clean(d.get("sfc_wnd_spd"))}
-        # nearest-in-time mission
+                 "sfc_wind_kt": _clean(d.get("WL150spd"))}
+        # nearest-in-time mission; fall back to the first mission with a track
+        # so a sonde whose time can't be stamped is NOT silently dropped.
         best, best_dt = None, None
-        for mm in missions.values():
-            if not mm["track"] or not sonde["t"]:
-                continue
-            mid_t = mm["track"][len(mm["track"]) // 2]["t"]
-            gap = abs((_iso(mid_t) - _iso(sonde["t"])).total_seconds())
-            if best_dt is None or gap < best_dt:
-                best, best_dt = mm, gap
-        if best is not None and (best_dt is None or best_dt < 12 * 3600):
+        if sonde["t"] is not None:
+            for mm in missions.values():
+                if not mm["track"]:
+                    continue
+                mid_t = mm["track"][len(mm["track"]) // 2]["t"]
+                gap = abs((_iso(mid_t) - _iso(sonde["t"])).total_seconds())
+                if best_dt is None or gap < best_dt:
+                    best, best_dt = mm, gap
+            if best is not None and best_dt is not None and best_dt >= 12 * 3600:
+                best = None                      # too far in time; fall through
+        if best is None:
+            best = next((mm for mm in missions.values() if mm["track"]), None)
+        if best is not None:
             best["sondes"].append(sonde)
 
 

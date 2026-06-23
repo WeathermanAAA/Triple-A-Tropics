@@ -17,6 +17,7 @@ decode_dropsonde(content, date)  -> dict (sounding profile + surface fix)
 
 Upstream: https://github.com/tropycal/tropycal (MIT). Tracking tag v1.4.
 """
+import copy
 import numpy as np
 import pandas as pd
 from datetime import datetime as dt, timedelta
@@ -668,8 +669,16 @@ def decode_dropsonde(content, date):
             return anew
         df = pd.concat([standard, sigtemp, sigwind], ignore_index=True,
                        sort=False).sort_values('pres', ascending=False)
-        data['levels'] = pd.DataFrame(np.vstack(df.groupby('pres', sort=False)
-                                                .apply(lambda gp: _justify(gp.to_numpy()))), columns=df.columns)
+        # pandas>=2.2/3.0 excludes the grouping column from the per-group frame
+        # passed to .apply (and removed include_groups), so operating on the raw
+        # group would drop 'pres' and mis-shape the result vs df.columns. Keep
+        # 'pres' a regular column by grouping on a separate level so each group's
+        # to_numpy() spans all df.columns (cross-version safe).
+        cols = list(df.columns)
+        df = df.reset_index(drop=True)
+        rows = [_justify(df.loc[idx, cols].to_numpy())
+                for _, idx in df.groupby('pres', sort=False).groups.items()]
+        data['levels'] = pd.DataFrame(np.vstack(rows), columns=cols)
 
         data['top'] = np.nanmin(data['levels']['pres'])
 
