@@ -96,14 +96,44 @@ def test_pack_frame_builds_pct_into_bt_c():
     assert float(np.nanmin(frame.bt_c)) >= hp.PCT_CLIP_LO_C - 1e-6
 
 
-def test_ice89h_ocean_is_blue():
-    """The ice89h enhancement maps the ~ -5 degC PCT ocean to a BLUE color
-    (blue channel dominates) and the cold scattering end away from blue."""
+def test_ice89h_kelvin_units():
+    """89 PCT (ice89h) displays in KELVIN; data/norm/clip stay degC. The unit flag
+    lives on the enhancement and resolves to K for sim_89h, C for the IR/WV BTs."""
     enh = tp.get_enhancement("ice89h")
-    assert enh["vmin_c"] == -168.0 and enh["vmax_c"] == 15.0
-    norm = tp.norm_for("ice89h") if hasattr(tp, "norm_for") else None
-    cmap = enh["cmap"]
-    # position of -5 degC ocean on [vmin,vmax]
-    pos = (-5.0 - enh["vmin_c"]) / (enh["vmax_c"] - enh["vmin_c"])
-    r, g, b, _ = cmap(pos)
-    assert b > r and b > g, f"ocean PCT not blue-dominant: {(r,g,b)}"
+    assert enh["vmin_c"] == -168.0 and enh["vmax_c"] == 15.0   # norm still degC
+    assert enh["units"] == "K"
+    assert enh["cbar_label"] == "Brightness Temperature (K)"
+    assert all(t >= 100 for t in enh["ticks"])                # ticks are Kelvin
+    # IR / WV stay degC
+    for k in ("rainbow_ir", "wv_tat"):
+        assert tp.get_enhancement(k).get("units", "C") == "C"
+        assert "°C" in tp.get_enhancement(k)["cbar_label"]
+    # _bt_units resolves off the product's default enhancement
+    assert reg._bt_units(reg.REGISTRY["sim_89h"]) == "K"
+    assert reg._bt_units(reg.REGISTRY["clean_ir"]) == "C"
+    assert reg._bt_units(reg.REGISTRY["water_vapor"]) == "C"
+
+
+def test_ice89h_anchors_navy_ocean_vivid_mids():
+    """The polished ramp: ambient ocean (~ -5 degC) is DEEP NAVY (blue-dominant
+    AND dark), and the mid-ramp green is VIVID (saturated, not pastel)."""
+    enh = tp.get_enhancement("ice89h"); cmap = enh["cmap"]
+    def at(t): return cmap((t - enh["vmin_c"]) / (enh["vmax_c"] - enh["vmin_c"]))
+    r, g, b, _ = at(-5.0)                       # ocean
+    assert b > r and b > g, f"ocean not blue: {(r,g,b)}"
+    assert max(r, g, b) < 0.5, f"ocean not deep navy (too bright): {(r,g,b)}"
+    gr, gg, gb, _ = at(-42.0)                   # green mid
+    sat = (max(gr, gg, gb) - min(gr, gg, gb)) / max(gr, gg, gb)
+    assert gg > gr and gg > gb and sat > 0.7, f"green mid not vivid: {(gr,gg,gb)}"
+
+
+def test_bt_stat_kelvin_vs_celsius():
+    """_bt_stat prints MIN BT in Kelvin for 89 PCT, degC for the IR/WV products,
+    both from the SAME raw bt_c field (K = degC + 273.15)."""
+    import types
+    frame = types.SimpleNamespace(bt_c=np.array([[-100.0, -5.0]], dtype=float))
+    scope = hp.StatScope(mask=None, tracked=False, label="")
+    _, rs_k = reg._bt_stat(reg.REGISTRY["sim_89h"], frame, "Storm nest", 0.0, 1000.0, scope)
+    assert "MIN BT 173.1 K" in rs_k and "°C" not in rs_k, rs_k   # -100 + 273.15
+    _, rs_c = reg._bt_stat(reg.REGISTRY["clean_ir"], frame, "Storm nest", 0.0, 1000.0, scope)
+    assert "MIN BT -100.0°C" in rs_c and " K " not in rs_c, rs_c
