@@ -1425,6 +1425,17 @@ def render_frame(frame: HafsFrame, out_path: str,
         levels = list(norm.boundaries)        # the .pal step edges
         cf = ax.contourf(Lon, Lat, fill, levels=levels, cmap=cmap, norm=norm,
                          extend="max", antialiased=True, zorder=2)
+    elif spec.grib == "sat":
+        # Simulated-satellite BT/PCT products (clean IR / WV / 89 PCT): the nest
+        # is a REGULAR lat/lon grid, so imshow with bilinear interpolation gives
+        # the smooth cyclonicwx look (pcolormesh shading="nearest" shows pixel
+        # blocks). DISPLAY ONLY -- the interpolation never touches frame.bt_c, so
+        # MIN BT / stats downstream stay exact on the raw field. aspect="auto"
+        # fills the axes box exactly like pcolormesh did (no reshaping).
+        cf = ax.imshow(fill, origin="lower", cmap=cmap, norm=norm,
+                       extent=[float(frame.lon.min()), float(frame.lon.max()),
+                               float(frame.lat.min()), float(frame.lat.max())],
+                       interpolation="bilinear", aspect="auto", zorder=2)
     else:
         cf = ax.pcolormesh(Lon, Lat, fill, cmap=cmap, norm=norm,
                            shading="nearest", zorder=2)

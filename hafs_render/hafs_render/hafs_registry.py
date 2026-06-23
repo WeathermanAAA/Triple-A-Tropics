@@ -310,9 +310,25 @@ def _refl_colorbar(fig, cax, cf, colors: FillColors):
 
 def _bt_colorbar(fig, cax, cf, colors: FillColors):
     enh = colors.enh
-    cb = fig.colorbar(cf, cax=cax, ticks=enh["ticks"])
+    # Units flag (default degC; "K" only for the 89 PCT / ice89h enhancement).
+    # The norm is ALWAYS in degC, so for Kelvin we place the ticks at their degC
+    # positions (K-273.15) but LABEL them in Kelvin -- the data/clip are untouched.
+    if enh.get("units") == "K":
+        cb = fig.colorbar(cf, cax=cax, ticks=[k - 273.15 for k in enh["ticks"]])
+        cb.set_ticklabels([f"{k:g}" for k in enh["ticks"]])
+    else:
+        cb = fig.colorbar(cf, cax=cax, ticks=enh["ticks"])
     cb.set_label(enh["cbar_label"], color=hp.TEXT_COLOR, fontsize=10)
     return cb
+
+
+def _bt_units(spec: ProductSpec) -> str:
+    """Display units for a BT product's stat readout: degC unless its default
+    enhancement carries units='K' (the 89 PCT). Single source = the enhancement,
+    so the colorbar (enh-driven) and the stat (spec-driven) never disagree."""
+    if spec.default_enhancement:
+        return tp.get_enhancement(spec.default_enhancement).get("units", "C")
+    return "C"
 
 
 def _pwat_colorbar(fig, cax, cf, colors: FillColors):
@@ -346,11 +362,16 @@ def _refl_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
 def _bt_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
     # The STORM's coldest cloud top (scope-reduced), not the domain's - on the
     # parent the domain minimum is routinely unrelated land convection.
-    btmin = hp.scope_min(frame.bt_c, scope)
+    btmin = hp.scope_min(frame.bt_c, scope)   # always computed on the RAW degC field
     # Sat carries no MSLP overlay now, so the subtitle drops "& MSLP (mb)".
     # The right-stat keeps the MSLP {pmin} value as an informational readout.
+    # 89 PCT reads out in Kelvin (units='K'); all other BT products stay degC.
     subtitle = f"Simulated Satellite - {spec.channel}  /  {domain_label}"
-    right_stat = f"MIN BT {btmin:.1f}°C   /   MSLP {pmin:.1f} mb{scope.label}"
+    if _bt_units(spec) == "K":
+        bt = f"MIN BT {btmin + 273.15:.1f} K"
+    else:
+        bt = f"MIN BT {btmin:.1f}°C"
+    right_stat = f"{bt}   /   MSLP {pmin:.1f} mb{scope.label}"
     return subtitle, right_stat
 
 
