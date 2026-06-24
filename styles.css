@@ -60,6 +60,7 @@
   --accent: #ffb83a;   /* amber */
   --accent-2: #5dd3ff; /* cyan */
   --accent-3: #c084fc; /* violet */
+  --grid-dim: #232730; /* faint chart gridline (dimmer than --border) */
 }
 * { box-sizing: border-box; }
 html, body {
@@ -862,6 +863,162 @@ footer {
   border-radius: 10px;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* ---- Interactive SST climatology widget (#sstClimatology) ---- */
+/* The inline-SVG curve chart + the YEAR multi-select + the fixed-aspect
+   anomaly inset. Distinct `.swc-` prefix so nothing here clobbers the
+   static widget's `.sw-*`. Reuses --grid-dim / --border / --muted / the
+   accent vars so the chart matches the ACE iframe's vocabulary. */
+#sstClimatology svg.swc-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: pan-y;       /* let vertical scroll pass through on mobile */
+}
+.swc-card { padding: 10px 12px 12px; }
+.swc-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+}
+.swc-chart-wrap {
+  position: relative;          /* tooltip anchor */
+  flex: 1 1 560px;
+  min-width: 0;                /* allow the SVG to shrink in the flex row */
+}
+.swc-inset {
+  flex: 0 1 300px;
+  min-width: 200px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.swc-inset-img {
+  width: 100%;
+  height: auto;                /* fixed aspect — never stretch */
+  display: block;
+  background: #07101c;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.swc-inset-cap {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  letter-spacing: 0.2px;
+}
+.swc-caption {
+  margin-top: 10px;
+  text-align: left;
+  font-weight: 600;
+}
+
+/* Year multi-select control (a .sw-ctrl variant that holds a scrollable
+   themed checkbox list + quick-action chips). */
+.swc-years-ctrl {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.swc-years {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.swc-years-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.swc-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.swc-chip:hover { color: var(--fg); border-color: var(--accent-2); }
+.swc-chip:active { background: var(--panel); }
+.swc-years-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 2px 10px;
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 4px 6px 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.swc-year {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+.swc-year:hover { color: var(--fg); }
+.swc-year input[type="checkbox"] {
+  accent-color: var(--accent-2);
+  margin: 0;
+  flex: 0 0 auto;
+}
+.swc-swatch {
+  width: 12px; height: 3px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+.swc-year-lab { font-variant-numeric: tabular-nums; }
+
+/* Hover tooltip over the chart. */
+.swc-tip {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.08s ease;
+  background: rgba(19, 21, 25, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.45;
+  white-space: nowrap;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 5;
+  max-width: 220px;
+}
+.swc-tip-head {
+  font-weight: 700;
+  margin-bottom: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.swc-tip-doy { color: var(--muted); font-weight: 500; }
+.swc-tip-sw {
+  display: inline-block;
+  width: 10px; height: 3px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+@media (max-width: 720px) {
+  .swc-row { flex-direction: column; }
+  .swc-inset { flex: 1 1 auto; width: 100%; max-width: 420px; align-self: center; }
+  .swc-years-list { max-height: 132px; }
 }
 /* ---- Product MP4 animator widget (sst/, subsurface/, armor3d/) ---- */
 .product-animator {

@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import datetime as dt
+import json
 import sys
 import time
 from pathlib import Path
@@ -356,6 +357,153 @@ def _render_inset(ax, slug: str, anom: np.ndarray, lat: np.ndarray,
                  fontweight="bold", pad=3)
 
 
+def _inset_figsize(extent: tuple, base: float = 0.052,
+                   long_side_min: float = 3.2, long_side_max: float = 6.0
+                   ) -> tuple[float, float]:
+    """Figure size (inches) matching the region's *geographic* aspect.
+
+    With ``ax.set_aspect("equal")`` the data box is forced square-per-degree,
+    so to fill the figure without letterbox padding the figure itself must
+    carry the lon/lat span ratio. We scale degrees → inches by ``base`` and a
+    ``cos(mean_lat)`` longitude foreshortening (Plate-Carrée-ish), giving a
+    figure whose W:H equals the region's true geographic aspect. Only the
+    aspect matters (the SVG/CSS sizes the PNG by width), but we clamp the
+    LONGER side into ``[long_side_min, long_side_max]`` — scaling both axes
+    together so the aspect is preserved — to keep coastline DPI consistent
+    and the file a sane size across the 18 wildly different extents."""
+    lon_min, lon_max, lat_min, lat_max = extent
+    lon_span = max(1.0, float(lon_max - lon_min))
+    lat_span = max(1.0, float(lat_max - lat_min))
+    mean_lat = (lat_min + lat_max) / 2.0
+    coslat = max(0.25, float(np.cos(np.radians(mean_lat))))
+    w = lon_span * coslat * base
+    h = lat_span * base
+    # Clamp the long side, scaling both dimensions by the same factor so the
+    # true geographic aspect ratio is never distorted by the clamp itself.
+    long_side = max(w, h)
+    target = float(np.clip(long_side, long_side_min, long_side_max))
+    scale = target / long_side
+    return w * scale, h * scale
+
+
+def render_anom_inset(slug: str, anom_grid, countries, coast,
+                      out_path: Path) -> bool:
+    """Standalone, fixed-aspect SST-anomaly map for one region.
+
+    This is the inset used by the interactive widget, drawn *beside* the
+    curves rather than over them. Unlike the combined-PNG inset it sets
+    ``ax.set_aspect("equal")`` and sizes the figure to the region's
+    geographic aspect (see ``_inset_figsize``), so coastlines are
+    undistorted. Same RdBu_r −3…+3 °C palette, dashed muted frame, with a
+    tiny in-corner −3…+3 scale label instead of a colorbar."""
+    if anom_grid is None:
+        return False
+    extent = REGIONS[slug]["extent"]
+    fig = plt.figure(figsize=_inset_figsize(extent), facecolor=BG)
+    ax = fig.add_axes([0.02, 0.02, 0.96, 0.90])
+    _render_inset(ax, slug, anom_grid[0], anom_grid[1], anom_grid[2],
+                  countries, coast)
+    # The shared colorbar lives on the combined PNG; here a tiny corner
+    # label documents the −3…+3 °C RdBu_r scale so the standalone map is
+    # self-explanatory beside the curves.
+    ax.set_aspect("equal")
+    # set_aspect("equal") letterboxes wide/tall regions, so the corner label can
+    # land in a dark margin bar; a semi-opaque chip keeps it readable everywhere.
+    ax.text(0.015, 0.03, "anomaly −3…+3 °C", transform=ax.transAxes,
+            color=FG, fontsize=6.5, ha="left", va="bottom", fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.25", facecolor=BG, alpha=0.72,
+                      edgecolor="none"))
+    fig.savefig(out_path, dpi=150, facecolor=BG)
+    plt.close(fig)
+    return True
+
+
+def _round_or_none(v: float) -> float | None:
+    return None if (v is None or not np.isfinite(v)) else round(float(v), 2)
+
+
+def write_region_json(slug: str, records: dict[dt.date, np.ndarray],
+                      region_idx: int, out_path: Path) -> bool:
+    """Emit the per-region curve payload the interactive widget draws.
+
+    Mirrors exactly the arrays the PNG plots: every year's daily region
+    mean (gray spaghetti), the 1991–2020 daily mean (clim), the y-limits,
+    and the highlight defaults/colours. Each series is a length-366 array
+    indexed by day-of-year position 1..366 (array index i → doy i+1), with
+    `null` on NCEI gap days so the JS can break the line. SST rounded to
+    2 dp. Returns False if the region has no usable data."""
+    series = region_series(records, region_idx)
+    if not series:
+        return False
+    clim = climatology_curve(records, region_idx)
+    cur = dt.datetime.utcnow().date().year
+    highlight = highlight_spec(slug, cur)
+
+    years = sorted(series)
+
+    # series[year] → length-366 list (doy pos 1..366) with null on gaps.
+    series_out: dict[str, list] = {}
+    for y in years:
+        pos, val = series[y]
+        arr: list = [None] * 366
+        for p, v in zip(pos.tolist(), val.tolist()):
+            if 1 <= p <= 366:
+                arr[p - 1] = _round_or_none(v)
+        series_out[str(y)] = arr
+
+    clim_out = [_round_or_none(float(clim[p])) for p in range(1, 367)]
+
+    # Latest available current-year point (end-dot + "now" line in the SVG).
+    latest = None
+    if cur in series:
+        pos, val = series[cur]
+        if pos.size:
+            latest = {"doy": int(pos[-1]), "val": _round_or_none(float(val[-1]))}
+
+    # y-limits matching the PNG's auto-limit logic (incl. the headroom pad
+    # the PNG applies) so the SVG y-domain agrees with the baked image.
+    allvals = np.concatenate([v for _, v in series.values()])
+    finite = allvals[np.isfinite(allvals)]
+    if finite.size:
+        ymin = round(float(np.min(finite)) - 0.3, 2)
+        ymax = round(float(np.max(finite)) + 0.5, 2)
+    else:
+        ymin, ymax = 0.0, 1.0
+
+    present = set(years)
+    # Default the interactive view to exactly the years the baked PNG highlights
+    # (current + the region-configured HIGHLIGHT_YEARS, else the previous two),
+    # newest-first — so a region like east-pacific surfaces its curated El Niño
+    # comparison years (2015/2018) by default instead of hiding them behind a
+    # toggle, and the SVG default matches the no-JS PNG fallback.
+    default_years = [y for y in sorted(highlight, reverse=True) if y in present]
+
+    # Highlight colours: current → cyan, configured/default past years take
+    # the same palette slots the PNG uses (newest-first). highlight_spec is
+    # the single source of truth so the SVG matches the PNG legend.
+    highlight_colors = {str(y): col for y, (col, _lw, _lab) in highlight.items()
+                        if y in present}
+
+    payload = {
+        "slug": slug,
+        "label": REGIONS[slug]["label"],
+        "cur": cur,
+        "years": years,
+        "series": series_out,
+        "clim": clim_out,
+        "latest": latest,
+        "ymin": ymin,
+        "ymax": ymax,
+        "default_years": default_years,
+        "highlight_colors": highlight_colors,
+        "units": "°C",
+        "climo_label": "1991–2020 mean",
+    }
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    return True
+
+
 def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
                       region_idx: int, latest_date: dt.date,
                       anom_grid: tuple[np.ndarray, np.ndarray, np.ndarray] | None,
@@ -371,7 +519,10 @@ def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
     cur = dt.datetime.utcnow().date().year
     highlight = highlight_spec(slug, cur)
 
-    fig = plt.figure(figsize=(11.0, 7.0), facecolor=BG)
+    # Widened from 11→13 in so the anomaly inset + colorbar live in a
+    # dedicated right-hand gutter (B1): the curves fill the left axes
+    # edge-to-edge, so any inset overlaid on the plot would cover them.
+    fig = plt.figure(figsize=(13.0, 7.0), facecolor=BG)
 
     # --- Header bar -----------------------------------------------------
     hax = fig.add_axes([0.0, 0.915, 1.0, 0.085])
@@ -391,7 +542,10 @@ def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
              color=MUTED, fontsize=11, va="center", ha="right")
 
     # --- Main plot ------------------------------------------------------
-    ax = fig.add_axes([0.07, 0.16, 0.80, 0.70])
+    # Curves occupy the left ~62% of the figure; the right ~32% is a gutter
+    # holding the (now fixed-aspect) anomaly inset and the colorbar, so no
+    # plotted line is ever covered (B1).
+    ax = fig.add_axes([0.06, 0.16, 0.595, 0.70])
     ax.set_facecolor(BG)
 
     # Gray spaghetti — every historical year except the highlighted ones
@@ -450,34 +604,39 @@ def plot_region_curve(slug: str, records: dict[dt.date, np.ndarray],
     ax.grid(True, color=BORDER, linewidth=0.5, alpha=0.55)
     ax.set_axisbelow(True)
 
-    # --- Inset anomaly map (top-left) -----------------------------------
+    # --- Inset anomaly map (right gutter, fixed aspect) -----------------
+    # Placed in the right-hand gutter (outside the curve axes) so it never
+    # overlaps a plotted line (B1), with set_aspect("equal") so coastlines
+    # are undistorted (B2). The axes box is generous; "equal" letterboxes
+    # the data inside it to the region's true geographic aspect.
     if anom_grid is not None:
-        iax = fig.add_axes([0.105, 0.585, 0.255, 0.245])
+        iax = fig.add_axes([0.71, 0.46, 0.265, 0.40])
         _render_inset(iax, slug, anom_grid[0], anom_grid[1], anom_grid[2],
                       countries, coast)
+        iax.set_aspect("equal")
 
-    # --- Shared anomaly colorbar (right margin, off-plot, centered) -----
-    cax = fig.add_axes([0.905, 0.30, 0.018, 0.40])
+    # --- Shared anomaly colorbar (right gutter, below the inset) --------
+    cax = fig.add_axes([0.74, 0.20, 0.20, 0.022])
     sm = plt.cm.ScalarMappable(cmap="RdBu_r",
                                norm=mcolors.Normalize(-3.0, 3.0))
     sm.set_array([])
-    cbar = fig.colorbar(sm, cax=cax, extend="both")
+    cbar = fig.colorbar(sm, cax=cax, extend="both", orientation="horizontal")
     cbar.set_label("SST anomaly (°C)", color=MUTED, fontsize=9)
     cbar.set_ticks(np.arange(-3, 4, 1))
-    cbar.ax.yaxis.set_tick_params(color=MUTED, labelcolor=MUTED, labelsize=8)
+    cbar.ax.xaxis.set_tick_params(color=MUTED, labelcolor=MUTED, labelsize=8)
     cbar.outline.set_edgecolor(BORDER)
 
-    # --- Legend — frameless, single row, centered below the plot --------
+    # --- Legend — frameless, single row, centered below the curve axes --
     handles, labels = ax.get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center",
-               bbox_to_anchor=(0.47, 0.045), ncol=len(labels),
+               bbox_to_anchor=(0.357, 0.045), ncol=len(labels),
                frameon=False, fontsize=10, labelcolor=FG,
                handlelength=1.8, columnspacing=1.6)
 
     # --- Footer ---------------------------------------------------------
-    fig.text(0.07, 0.018, "source: NOAA OISST", color=MUTED, fontsize=9,
+    fig.text(0.06, 0.018, "source: NOAA OISST", color=MUTED, fontsize=9,
              ha="left", va="bottom")
-    fig.text(0.872, 0.018, WATERMARK, color=MUTED, fontsize=9,
+    fig.text(0.975, 0.018, WATERMARK, color=MUTED, fontsize=9,
              ha="right", va="bottom", fontweight="bold")
 
     fig.savefig(out_path, dpi=150, facecolor=BG)
@@ -500,6 +659,15 @@ def render_all(records: dict[dt.date, np.ndarray], latest_date: dt.date,
                              countries, coast, out_path):
             print(f"{LOG} wrote {out_path}")
             n += 1
+            # Per-region interactive payload (rides the same sst/ → R2
+            # dir-sync as the PNG).
+            json_path = SST_DIR / f"{slug}_climatology.json"
+            if write_region_json(slug, records, idx, json_path):
+                print(f"{LOG} wrote {json_path}")
+            # Standalone fixed-aspect anomaly inset (beside the SVG curves).
+            inset_path = SST_DIR / f"{slug}_anom_inset.png"
+            if render_anom_inset(slug, anom_grid, countries, coast, inset_path):
+                print(f"{LOG} wrote {inset_path}")
     print(f"{LOG} rendered {n}/{len(slugs)} region curve(s)")
     return n
 
