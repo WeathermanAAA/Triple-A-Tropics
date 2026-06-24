@@ -106,8 +106,10 @@ def build_ace_base(basin: str) -> dict:
 
     # Historical ACE points (every season EXCEPT the current calendar year). The
     # current-year curve column is the poller's job; the base carries the
-    # IBTrACS canon for it to merge live onto.
-    points = ag.compute_ace_timeseries(df, cfg, log_prefix=log)
+    # IBTrACS canon for it to merge live onto. compute_ace_timeseries returns
+    # (ace_points, trop_points); the archive base only needs the ACE-eligible
+    # frame (the trop frame is Storm-Activity-Gantt-only).
+    points, _trop = ag.compute_ace_timeseries(df, cfg, log_prefix=log)
     hist = points[points["season"] != year].copy()
     if hist.empty:
         cum_hist = pd.DataFrame(index=range(1, 367))

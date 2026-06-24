@@ -30,8 +30,19 @@ _mp4_build/
 sst/*.png
 subsurface/*.png
 armor3d/*.png
+# SST climatology: per-region curve data (SVG hydration) + the standalone
+# anomaly inset are build output synced to cdn.triple-a-tropics.com/sst/ by
+# update-sst.yml. The tracked index is sst/climatology_manifest.json (does NOT
+# match *_climatology.json), so it stays committed.
+sst/*_climatology.json
+.sst_cache/
 gibs/*.jpg
 gibs/manifest.json
+# Observed passive-microwave (TC-PRIMED): PNG + JSON rendered each run and
+# synced to cdn.triple-a-tropics.com/microwave/ by update-tcprimed.yml; the
+# viewer (microwave/index.html, microwave/microwave.js, both tracked) reads
+# them cross-origin. Nothing here is committed.
+tcprimed_build/
 # HAFS model plots: PNG frames + manifest are rendered each cycle and synced
 # to cdn.triple-a-tropics.com/models/hafs/ by update-hafs.yml — the frontend
 # (models/index.html, models/hafs.js, both tracked) reads them cross-origin.

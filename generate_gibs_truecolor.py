@@ -78,6 +78,32 @@ LAYER_PRIORITY: list[tuple[str, str, int]] = [
     ("MODIS_Terra_CorrectedReflectance_TrueColor", "MODIS Terra", 250),
 ]
 
+# Sensor-set variants the frontend can toggle. The contiguous VIIRS-then-MODIS
+# ordering of LAYER_PRIORITY makes each variant a plain slice: "both" is the
+# full gap-fill chain, "viirs" the two VIIRS birds, "modis" the two MODIS birds.
+# Every run bakes all three (one JPG each) so the frontend switches instantly.
+LAYER_VARIANTS: list[tuple[str, str]] = [
+    ("both", "Both"),
+    ("viirs", "VIIRS"),
+    ("modis", "MODIS"),
+]
+DEFAULT_LAYER_VARIANT = "both"
+
+
+def select_layers(choice: str):
+    """Slice LAYER_PRIORITY down to the sensors a variant uses.
+
+    "viirs" -> the two VIIRS birds, "modis" -> the two MODIS birds, anything
+    else ("both", default) -> the full priority chain. fetch_region consumes
+    the returned list generically, so no other code changes by sensor set.
+    """
+    c = (choice or "both").lower()
+    if c == "viirs":
+        return LAYER_PRIORITY[0:2]
+    if c == "modis":
+        return LAYER_PRIORITY[2:4]
+    return LAYER_PRIORITY  # both
+
 # Native true-color GSD we target before capping. 250 m ≈ 0.00225°/px at the
 # equator. We cap the long axis at MAX_PX so wide basins become daily-mosaic
 # overviews instead of absurd 40k-px tiles, while small TC-scale regions keep
@@ -252,6 +278,8 @@ def fetch_region(
     lookback_days: int,
     layers: list[tuple[str, str, int]],
     date_override: Optional[dt.date],
+    file_name: Optional[str] = None,
+    crop_cache: Optional[dict] = None,
 ) -> Optional[tuple[np.ndarray, RegionResult]]:
     """Fetch the best gap-filled RGB crop for a region.
 
@@ -263,6 +291,12 @@ def fetch_region(
     sensors: start with the highest-priority crop, then fill still-black pixels
     from each next sensor, stopping early once coverage passes STOP_FILL. The
     freshest date whose composite reaches min_fill wins.
+
+    ``file_name`` overrides the RegionResult.file (so per-variant runs write
+    distinct JPEGs). ``crop_cache`` is an optional per-region dict memoizing
+    fetched layer crops keyed by ``(layer, date)`` — pass the SAME dict across
+    the "both"/"viirs"/"modis" runs of one region so a (layer,date) crop the
+    "both" run already pulled is reused instead of re-fetched over WMS.
     """
     lon_min, lon_max, lat_min, lat_max = cfg["extent"]
     lon_span = (lon_max - lon_min)
@@ -279,13 +313,24 @@ def fetch_region(
         sub_widths.append(max(16, int(round(width * frac))))
 
     def _fetch_layer(layer: str, date: dt.date) -> Optional[np.ndarray]:
+        # Reuse a (layer, date) crop already fetched for another variant of the
+        # same region. None is a legitimate cached result (the layer had no
+        # imagery on that date), so distinguish "miss" via the key's presence.
+        cache_key = (layer, date)
+        if crop_cache is not None and cache_key in crop_cache:
+            return crop_cache[cache_key]
         parts: list[np.ndarray] = []
         for sb, sw in zip(subboxes, sub_widths):
             arr = _wms_getmap(session, layer, sb, sw, height, date)
             if arr is None:
+                if crop_cache is not None:
+                    crop_cache[cache_key] = None
                 return None
             parts.append(arr)
-        return parts[0] if len(parts) == 1 else np.hstack(parts)
+        out = parts[0] if len(parts) == 1 else np.hstack(parts)
+        if crop_cache is not None:
+            crop_cache[cache_key] = out
+        return out
 
     if date_override is not None:
         candidate_dates = [date_override]
@@ -324,7 +369,7 @@ def fetch_region(
         result = RegionResult(
             slug=slug,
             label=cfg["label"],
-            file=f"{slug}_truecolor.jpg",
+            file=file_name or f"{slug}_truecolor.jpg",
             layer=primary_layer,
             sensor=sensor_label,
             contributors=contributors,
@@ -428,6 +473,9 @@ def main() -> int:
     ap.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS,
                     help="how many days back (incl. today) to search for a filled composite")
     ap.add_argument("--date", default="", help="force a specific YYYY-MM-DD (skips the lookback search)")
+    ap.add_argument("--layers", choices=["both", "viirs", "modis", "all"], default="all",
+                    help="sensor variant to bake: 'all' (default) renders both+viirs+modis per "
+                         "region; the specific choices render just one (debugging)")
     args = ap.parse_args()
 
     if args.regions.strip():
@@ -439,41 +487,105 @@ def main() -> int:
     else:
         slugs = list(REGIONS.keys())
 
+    if args.layers == "all":
+        variants = [v[0] for v in LAYER_VARIANTS]
+    else:
+        variants = [args.layers]
+
     date_override = dt.date.fromisoformat(args.date) if args.date.strip() else None
 
     os.makedirs(args.outdir, exist_ok=True)
     session = _make_session()
 
-    results: list[RegionResult] = []
+    # One manifest entry per region. The region's top-level fields mirror the
+    # DEFAULT_LAYER_VARIANT ("both") for back-compat with the current frontend
+    # (which reads r.file / r.sensor / r.date / r.native_res_m); the per-variant
+    # detail lives under r["variants"][<id>].
+    region_entries: dict[str, dict] = {}
     failures: list[str] = []
+    n_regions = 0
     for slug in slugs:
         log.info("region %s …", slug)
-        got = fetch_region(
-            session, slug, REGIONS[slug],
-            max_px=args.max_px, min_fill=args.min_fill,
-            lookback_days=args.lookback_days, layers=LAYER_PRIORITY,
-            date_override=date_override,
-        )
-        if got is None:
+        # Shared across this region's variants so a (layer,date) crop fetched
+        # for "both" is reused by "viirs"/"modis" instead of re-pulled. Order
+        # the variants so the gap-fill superset ("both") fetches first.
+        crop_cache: dict = {}
+        ordered = [v for v in ("both", "viirs", "modis") if v in variants]
+        region_variants: dict[str, dict] = {}
+        for variant in ordered:
+            file_name = f"{slug}_truecolor_{variant}.jpg"
+            got = fetch_region(
+                session, slug, REGIONS[slug],
+                max_px=args.max_px, min_fill=args.min_fill,
+                lookback_days=args.lookback_days, layers=select_layers(variant),
+                date_override=date_override,
+                file_name=file_name, crop_cache=crop_cache,
+            )
+            if got is None:
+                log.warning("  %s/%s: no imagery for this variant", slug, variant)
+                continue
+            rgb, res = got
+            out_path = os.path.join(args.outdir, file_name)
+            render_jpeg(rgb, res, out_path)
+            region_variants[variant] = {
+                "file": res.file,
+                "sensor": res.sensor,
+                "contributors": res.contributors,
+                "date": res.date,
+                "native_res_m": res.native_res_m,
+                "fill": res.fill,
+            }
+            log.info("  wrote %s", out_path)
+            # Back-compat: also write {slug}_truecolor.jpg (== "both") so the
+            # legacy r.file path keeps resolving for any cached frontend.
+            if variant == DEFAULT_LAYER_VARIANT:
+                legacy_res = RegionResult(**{**asdict(res), "file": f"{slug}_truecolor.jpg"})
+                legacy_path = os.path.join(args.outdir, legacy_res.file)
+                render_jpeg(rgb, legacy_res, legacy_path)
+                log.info("  wrote %s", legacy_path)
+
+        if not region_variants:
             failures.append(slug)
             continue
-        rgb, res = got
-        out_path = os.path.join(args.outdir, res.file)
-        render_jpeg(rgb, res, out_path)
-        results.append(res)
-        log.info("  wrote %s", out_path)
+
+        # The region's top-level fields come from the default variant if it
+        # rendered, else the best available one (so a region missing "both"
+        # still shows something).
+        base_id = DEFAULT_LAYER_VARIANT if DEFAULT_LAYER_VARIANT in region_variants \
+            else next(iter(region_variants))
+        base = region_variants[base_id]
+        region_entries[slug] = {
+            "slug": slug,
+            "label": REGIONS[slug]["label"],
+            # Legacy {slug}_truecolor.jpg only exists when "both" was baked;
+            # otherwise point r.file at the available default variant's file.
+            "file": f"{slug}_truecolor.jpg" if DEFAULT_LAYER_VARIANT in region_variants
+                    else base["file"],
+            "sensor": base["sensor"],
+            "contributors": base["contributors"],
+            "date": base["date"],
+            "native_res_m": base["native_res_m"],
+            "fill": base["fill"],
+            "default_variant": base_id,
+            "variants": region_variants,
+        }
+        n_regions += 1
 
     manifest = {
         "generated_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "kind": "gibs-truecolor",
         "source": "NASA GIBS CorrectedReflectance_TrueColor (daily composite)",
-        "regions": [asdict(r) for r in results],
+        "layers": [{"id": vid, "label": vlabel} for vid, vlabel in LAYER_VARIANTS],
+        "default_layer": DEFAULT_LAYER_VARIANT,
+        "file_template": "{slug}_truecolor_{layer}.jpg",
+        "regions": [region_entries[s] for s in slugs if s in region_entries],
     }
     manifest_path = os.path.join(args.outdir, "manifest.json")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    log.info("wrote %s (%d region(s))", manifest_path, len(results))
+    log.info("wrote %s (%d region(s))", manifest_path, n_regions)
 
+    results = manifest["regions"]
     if failures:
         log.warning("FAILED regions (no imagery): %s", ", ".join(failures))
     # Succeed as long as we got at least one region; a single transient GIBS
