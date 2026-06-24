@@ -1,7 +1,9 @@
 {
-  "_comment": "Manifest for sst/climatology_widget.js — the kouya-style daily-SST climatology curves. One PNG per region ({region}_climatology.png on R2), rendered by generate_sst_climatology.py and published by update-sst.yml. region_labels + region_groups mirror static_manifest.json; keep them in sync if a region is added/removed.",
-  "subtitle": "Region-mean SST through the calendar year. Every year since 1982 is drawn in gray; the dashed line is the 1991–2020 daily mean; the three most recent years are highlighted, with the current year in cyan through the latest available day. Inset: the region's current SST-anomaly map.",
+  "_comment": "Manifest for sst/climatology_widget.js — the kouya-style daily-SST climatology curves. The widget now draws an INTERACTIVE inline SVG from per-region data JSON ({region}_climatology.json on R2) with year toggles; data_path_template points at that JSON and inset_path_template at the standalone fixed-aspect anomaly map ({region}_anom_inset.png). Both, plus the combined-PNG fallback ({region}_climatology.png), are rendered by generate_sst_climatology.py and published by update-sst.yml (sst/ dir-sync to R2). path_template (the combined PNG) is the no-JS / fetch-fail fallback. region_labels + region_groups mirror static_manifest.json; keep them in sync if a region is added/removed.",
+  "subtitle": "Region-mean SST through the calendar year. Every season since 1982 is drawn in gray, the dashed line is the 1991–2020 daily mean, and the most recent years are highlighted with the current year in cyan. Use the Years control to toggle any individual season on or off; the map beside the chart is the region's current SST-anomaly field.",
   "path_template": "https://cdn.triple-a-tropics.com/sst/{region}_climatology.png",
+  "data_path_template": "https://cdn.triple-a-tropics.com/sst/{region}_climatology.json",
+  "inset_path_template": "https://cdn.triple-a-tropics.com/sst/{region}_anom_inset.png",
   "meta_url": "/sst/sst_meta.json",
   "region_labels": {
     "global":              "Global",
