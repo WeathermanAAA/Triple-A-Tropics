@@ -51,6 +51,7 @@ from ace_core import (
     cumulative_by_doy,
     current_year_storms,
     eligible_points_from_canon,
+    extract_gantt_storms_by_year,
     extract_storms_by_year,
 )
 
@@ -151,10 +152,16 @@ SIX_HOURLY = {0, 6, 12, 18}
 # ---------------------------------------------------------------------------
 
 def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
-                           log_prefix: str = "") -> pd.DataFrame:
-    """Return a dataframe with columns [season, doy, ace_increment, SID, NAME]
-    at 6-hourly resolution for one basin. Logs per-step row counts so we can
-    see which filter drops everything if something goes wrong."""
+                           log_prefix: str = "") -> tuple:
+    """Return ``(points, trop)``:
+    - ``points``: the ACE-eligible (>=34 kt, tropical/subtropical NATURE)
+      6-hourly frame [season, doy, ace_increment, SID, NAME, ISO_TIME, WIND_KT]
+      that feeds every ACE number (unchanged behavior).
+    - ``trop``: the TD-inclusive tropical frame (same NATURE filter, ANY wind)
+      [season, doy, SID, NAME, ISO_TIME, WIND_KT, ATCF] that feeds the
+      Storm-Activity Gantt so TD-strength systems get a bar.
+    Logs per-step row counts so we can see which filter drops everything if
+    something goes wrong."""
     def step(label: str, d: pd.DataFrame) -> pd.DataFrame:
         print(f"{log_prefix}   after {label}: {len(d):,} rows")
         return d
@@ -206,16 +213,26 @@ def compute_ace_timeseries(df: pd.DataFrame, basin_cfg: dict,
         (d["TRACK_TYPE"] == "PROVISIONAL") & d["NATURE"].isin(ace_natures | {"NR"})
     )
     d = step(f"NATURE in {sorted(ace_natures)} (+NR on provisional)", d[is_tropical])
-    d = step("WIND_KT >= 34", d[d["WIND_KT"] >= 34])
 
-    d["ACE"] = (d["WIND_KT"] ** 2) / 10_000.0
+    # TD-inclusive tropical frame (this is the post-NATURE, pre-34kt cut). Used
+    # only for the Storm-Activity Gantt so TD-strength systems get a bar; it does
+    # NOT touch any ACE number. Carry USA_ATCF_ID through (for unnamed-but-
+    # designated labeling) and dedup once on (SID, ISO_TIME) like the ACE frame.
     d["doy"] = d["ISO_TIME"].dt.dayofyear
     d["season"] = d["SEASON"].astype(int)
     d = d.drop_duplicates(subset=["SID", "ISO_TIME"])
+    if "USA_ATCF_ID" not in d.columns:
+        d["USA_ATCF_ID"] = pd.NA
+    trop = d[["season", "doy", "SID", "NAME", "ISO_TIME", "WIND_KT",
+              "USA_ATCF_ID"]].rename(columns={"USA_ATCF_ID": "ATCF"})
 
-    return d[["season", "doy", "ACE", "SID", "NAME", "ISO_TIME", "WIND_KT"]].rename(
-        columns={"ACE": "ace_increment"}
-    )
+    # ACE-eligible frame: apply the 34 kt cut to a SEPARATE copy so the ACE math
+    # is byte-identical to before.
+    pe = step("WIND_KT >= 34", d[d["WIND_KT"] >= 34].copy())
+    pe["ACE"] = (pe["WIND_KT"] ** 2) / 10_000.0
+    points = pe[["season", "doy", "ACE", "SID", "NAME", "ISO_TIME",
+                 "WIND_KT"]].rename(columns={"ACE": "ace_increment"})
+    return points, trop
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +429,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     df = pd.read_csv(csv_path, skiprows=[1], low_memory=False, na_values=[" ", ""])
     print(f"{log} {len(df):,} rows")
 
-    points = compute_ace_timeseries(df, basin_cfg, log_prefix=log)
+    points, trop_points = compute_ace_timeseries(df, basin_cfg, log_prefix=log)
     if points.empty:
         print(f"{log} ERROR: no ACE-eligible points found after filtering.", file=sys.stderr)
         return 3
@@ -492,9 +509,11 @@ def main(argv: Iterable[str] | None = None) -> int:
                         exclude_years={current_year})
 
     last_obs_doy = points.groupby("season")["doy"].max().to_dict()
-    # Past-year gantt from the shared filtered points; the current-year gantt is
-    # the canonical ace_core set (peak via canonical_peak_wind, ACE via storm_ace).
-    storms_by_year = extract_storms_by_year(points, min_year=1970)
+    # Past-year Storm-Activity Gantt from the TD-inclusive tropical frame (so
+    # depressions get a bar; ACE is unchanged - only >=34 kt rows score). The
+    # current-year gantt is the canonical ace_core set (peak via
+    # canonical_peak_wind, ACE via storm_ace), which overwrites the current year.
+    storms_by_year = extract_gantt_storms_by_year(trop_points, min_year=1970)
     if cur_storms:
         storms_by_year[current_year] = cur_storms
     else:
