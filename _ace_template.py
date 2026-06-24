@@ -301,12 +301,18 @@ function lighten(hex, amt) {{
     v.toString(16).padStart(2, "0")).join("");
 }}
 
-// Shared X scale (DOY 1..366 → SVG x in viewBox units).
+// Shared X scale (DOY 1..366 → SVG x in viewBox units), with ~3 weeks of
+// symmetric domain padding so both charts get blank margins before Jan and
+// after Dec while staying horizontally aligned (they share xs()).
 const W = 1000, M_L = 60, M_R = 18;
 const PW = W - M_L - M_R;
-const xs = (doy) => M_L + (doy - 1) / 365 * PW;
+const DOY_PAD = 21;                  // ~3 weeks symmetric domain padding
+const DOY_MIN = 1 - DOY_PAD;         // -20
+const DOY_MAX = 366 + DOY_PAD;       // 387
+const DOY_SPAN = DOY_MAX - DOY_MIN;  // 408
+const xs = (doy) => M_L + (doy - DOY_MIN) / DOY_SPAN * PW;
 const xToDoy = (x) => Math.max(1, Math.min(366,
-  Math.round(1 + (x - M_L) / PW * 365)));
+  Math.round(DOY_MIN + (x - M_L) / PW * DOY_SPAN)));
 
 const MONTH_STARTS = [1,32,60,91,121,152,182,213,244,274,305,335];
 const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul",
@@ -645,7 +651,7 @@ function renderDailyPanel(year) {{
       fill: "var(--muted)" }}, dailySvg).textContent = MONTH_LABELS[i];
   }});
   // Bars (slightly wider than 1 DOY-slot, less gap between bars)
-  const barW = (PW / 365) * 1.15;
+  const barW = (PW / DOY_SPAN) * 1.15;
   for (let i = 0; i < drawDoyMax; i++) {{
     const v = daily[i];
     if (v <= 0) continue;

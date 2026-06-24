@@ -28,6 +28,11 @@ concurrency:
 jobs:
   regenerate:
     runs-on: ubuntu-latest
+    # Default --layers all bakes 3 sensor variants + 1 legacy JPEG per region
+    # (~4x the renders; the crop_cache reuses WMS fetches across variants but the
+    # per-variant date search + JPEG encode are not cached). Fail fast on a slow
+    # GIBS day instead of drifting toward the 6h hard cap.
+    timeout-minutes: 90
 
     steps:
       - name: Check out repo

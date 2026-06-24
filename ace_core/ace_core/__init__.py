@@ -99,6 +99,63 @@ STATUS_TO_NATURE: dict[str, str] = {
 
 _PLACEHOLDER_NAMES = {"", "UNNAMED", "INVEST", "NAMELESS"}
 
+
+def _is_real_name(value) -> bool:
+    """True if ``value`` is a genuine storm name (not a blank/placeholder).
+    Also rejects parse_bdeck's "#NN" designation-without-name fallback so the
+    Gantt derives an ATCF-id label instead of showing "#04"."""
+    n = str(value or "").strip()
+    if not n or n.upper() in _PLACEHOLDER_NAMES:
+        return False
+    if n.startswith("#") and n[1:].isdigit():
+        return False
+    return True
+
+
+# ATCF basin prefix (USA_ATCF_ID first two letters) -> the trailing storm-id
+# letter used on the climatology Gantt (e.g. "EP" -> "E", so EP012023 -> 01E).
+_ATCF_BASIN_LETTER = {
+    "AL": "L", "EP": "E", "CP": "C", "WP": "W", "IO": "I", "SH": "S",
+}
+
+
+def atcf_short_id(usa_atcf_id) -> Optional[str]:
+    """'EP012023' -> '01E'; None if unparseable / invest (>=90) / 00."""
+    s = str(usa_atcf_id or "").strip().upper()
+    if len(s) < 8:
+        return None
+    pre, num = s[:2], s[2:4]
+    if pre not in _ATCF_BASIN_LETTER or not num.isdigit():
+        return None
+    n = int(num)
+    if n <= 0 or n >= 90:
+        return None
+    return f"{n:02d}{_ATCF_BASIN_LETTER[pre]}"
+
+
+def short_id_from_storm_num(storm_num, basin_short) -> Optional[str]:
+    """Live-feed analogue of ``atcf_short_id``: (4, 'ep') -> '04E'. None for
+    invests (>=90), 0, or an unknown basin."""
+    letter = {"al": "L", "ep": "E", "wp": "W", "cp": "C"}.get(basin_short)
+    try:
+        n = int(storm_num)
+    except (TypeError, ValueError):
+        return None
+    if letter is None or n <= 0 or n >= 90:
+        return None
+    return f"{n:02d}{letter}"
+
+
+def designation_label(short_id, peak_wind_kt) -> str:
+    """'01E', 95 -> 'HU 01E'; stage from peak (TD<34<=TS<64<=HU)."""
+    try:
+        pk = float(peak_wind_kt)
+    except (TypeError, ValueError):
+        pk = 0.0
+    stage = "TD" if pk < 34 else ("TS" if pk < 64 else "HU")
+    return f"{stage} {short_id}"
+
+
 # ATCF "SPAWNINVEST, alNN<year> to alMM<year>" trailing tag (any basin). The
 # DESTINATION (group 1, the MM digits) is the 90-99 invest the designated
 # system spawned — parse_bdeck records it per storm for the PTC->invest handoff.
@@ -782,6 +839,83 @@ def extract_storms_by_year(points: pd.DataFrame, min_year: int = 1970) -> dict:
     return out
 
 
+def extract_gantt_storms_by_year(points: pd.DataFrame,
+                                 min_year: int = 1970) -> dict:
+    """Per-storm Storm-Activity-Gantt summaries — the TD-inclusive sibling of
+    ``extract_storms_by_year``. Operates on a tropical-all-intensity frame
+    (NATURE-tropical at ANY wind, including peak<=33 kt depressions) with
+    columns: season, doy, SID, NAME, ISO_TIME, WIND_KT, ATCF. Each storm's bar
+    spans its full tropical life (TD genesis through dissipation); ACE stays
+    identical because ``ace_total`` only sums rows >= 34 kt (TD-only -> 0).
+
+    Name: real NAME if any; else an ATCF-id designation label (e.g. "TD 04E")
+    derived from the group's USA_ATCF_ID; else the storm is SKIPPED (this kills
+    the phantom "UNNAMED"). Pre-``min_year`` seasons are excluded.
+    """
+    if points.empty or "ISO_TIME" not in points.columns:
+        return {}
+    out: dict[int, list[dict]] = {}
+    grp = points.groupby(["season", "SID"], sort=False)
+    for (season, sid), rows in grp:
+        season_int = int(season)
+        if season_int < min_year:
+            continue
+        if "ISO_TIME" not in rows.columns:
+            continue
+        formation = rows["ISO_TIME"].min()
+        dissipation = rows["ISO_TIME"].max()
+        if pd.isna(formation) or pd.isna(dissipation):
+            continue
+        peak_time = None
+        peak_w = None
+        if "WIND_KT" in rows.columns and rows["WIND_KT"].notna().any():
+            peak_idx = rows["WIND_KT"].idxmax()
+            peak_w = float(rows.loc[peak_idx, "WIND_KT"])
+            pt = rows.loc[peak_idx, "ISO_TIME"]
+            if pd.notna(pt):
+                peak_time = pt
+        # ACE is byte-identical to the eligible-points path: only >= 34 kt
+        # rows contribute, so a TD-only system scores 0.
+        ace_total = 0.0
+        if "WIND_KT" in rows.columns:
+            w = pd.to_numeric(rows["WIND_KT"], errors="coerce")
+            elig_w = w[w >= 34]
+            if not elig_w.empty:
+                ace_total = float((elig_w ** 2 / 10_000.0).sum())
+        # Name: real NAME first; else an ATCF-id designation label; else skip.
+        name = ""
+        for n in rows["NAME"].fillna("").astype(str):
+            if _is_real_name(n):
+                name = n.strip().upper()
+                break
+        if not name:
+            short_id = None
+            if "ATCF" in rows.columns:
+                for a in rows["ATCF"]:
+                    short_id = atcf_short_id(a)
+                    if short_id:
+                        break
+            if not short_id:
+                continue  # no real name and no derivable id -> phantom, drop
+            name = designation_label(short_id, peak_w)
+        record = {
+            "name": name,
+            "formation": formation.isoformat() if hasattr(formation, "isoformat")
+                         else str(formation),
+            "dissipation": dissipation.isoformat() if hasattr(dissipation, "isoformat")
+                           else str(dissipation),
+            "peak_wind_kt": peak_w,
+            "peak_wind_time": peak_time.isoformat()
+                              if peak_time is not None and hasattr(peak_time, "isoformat")
+                              else None,
+            "ace_total": round(ace_total, 3),
+        }
+        out.setdefault(season_int, []).append(record)
+    for year in out:
+        out[year].sort(key=lambda s: s["formation"] or "")
+    return out
+
+
 def climatology(cum: pd.DataFrame, start: int, end: int,
                 exclude_years: set[int] | None = None) -> pd.DataFrame:
     """Percentile bands + mean come from the climatology window (1991-2020,
@@ -844,27 +978,32 @@ def current_year_storms(canon: pd.DataFrame, basin_cfg: dict,
     """Per-storm gantt records for the current year, built from the merged
     canonical set so the homepage, climo page, and tracks feed agree on every
     storm. ACE via storm_ace (the single rounding policy), peak wind via
-    canonical_peak_wind (the single peak definition). Only storms that
-    produced ACE appear (same as extract_storms_by_year for past years)."""
+    canonical_peak_wind (the single peak definition). Every DESIGNATED tropical
+    system appears (including TD-strength systems with ace_total 0); invests and
+    nameless/id-less phantoms are dropped (mirrors extract_gantt_storms_by_year
+    for past years)."""
     if canon.empty:
         return []
     short = basin_cfg["short"]
     out: list[dict] = []
     for _sid, group in canon.groupby("SID", sort=False):
         pts = group.sort_values("time").to_dict("records")
-        # Invests never appear in the season's ACE storm list. storm_ace
-        # would return 0.0 for them anyway (invest guard) - the explicit
-        # skip keeps the rule visible rather than riding the <=0 drop.
+        # Invests never appear in the season's storm list (grey/red-X glyph
+        # elsewhere). storm_ace would return 0.0 for them anyway - the explicit
+        # skip keeps the rule visible.
         if storm_is_invest(pts):
             continue
-        ace_total = storm_ace(pts, short)
-        if ace_total <= 0:
+        # TD-inclusive Storm-Activity Gantt: keep any DESIGNATED tropical system
+        # (reached at least TD), not just the ACE-eligible (>=34 kt) ones. The
+        # bar spans the full designated tropical life. Pure DB/LO disturbances
+        # that never reached TD never produce a tropical-eligible fix -> dropped.
+        trop_fixes = [p for p in pts
+                      if is_six_hourly(p["time"])
+                      and nature_eligible(p.get("ace_nature", p.get("nature")),
+                                          short, provisional=True)]
+        if not trop_fixes:
             continue
-        elig = [p for p in pts
-                if fix_ace_eligible(p["time"], p["wind_kt"],
-                                       p.get("ace_nature", p.get("nature")), short)]
-        if not elig:
-            continue
+        ace_total = storm_ace(pts, short)  # 0 for TD-only systems (unchanged)
         peak_w = canonical_peak_wind(pts)
         peak_time = None
         if not math.isnan(peak_w):
@@ -875,18 +1014,27 @@ def current_year_storms(canon: pd.DataFrame, basin_cfg: dict,
                         and float(w) == peak_w):
                     peak_time = p["time"]
                     break
+        # Name: real NAME first; else an ATCF-id designation label derived from
+        # the live storm_num (<90); else skip (phantom, no real name or id).
         name = ""
         for p in pts:
-            n = str(p.get("NAME") or "").strip()
-            if n and n.upper() not in ("UNNAMED", "NAMELESS", "INVEST"):
-                name = n.upper()
+            if _is_real_name(p.get("NAME")):
+                name = str(p.get("NAME")).strip().upper()
                 break
         if not name:
-            name = "UNNAMED"
+            short_id = None
+            for p in pts:
+                short_id = short_id_from_storm_num(p.get("storm_num"), short)
+                if short_id:
+                    break
+            if not short_id:
+                continue
+            name = designation_label(short_id,
+                                     None if math.isnan(peak_w) else peak_w)
         out.append({
             "name": name,
-            "formation": elig[0]["time"].isoformat(),
-            "dissipation": elig[-1]["time"].isoformat(),
+            "formation": trop_fixes[0]["time"].isoformat(),
+            "dissipation": trop_fixes[-1]["time"].isoformat(),
             "peak_wind_kt": None if math.isnan(peak_w) else round(peak_w, 1),
             "peak_wind_time": peak_time.isoformat() if peak_time else None,
             "ace_total": ace_total,
