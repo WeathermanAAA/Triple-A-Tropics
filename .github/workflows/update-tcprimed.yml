@@ -1,0 +1,110 @@
+name: update-tcprimed
+
+# Observed passive-microwave imagery for tropical cyclones (89 GHz PCT + 37 GHz
+# color) from NOAA/CIRA TC-PRIMED. Self-contained + isolated: lists the public
+# (anonymous / UNSIGNED) NOAA TC-PRIMED S3 bucket, renders storm-centered PNGs
+# per overpass, and syncs them to R2 under microwave/. Touches NOTHING in the
+# track/ACE/climatology pipeline.
+#
+# This is an ARCHIVE / RECENT-STORM product: TC-PRIMED is research-tiered (final
+# post-season, preliminary lags hours-to-days), so a low cadence is plenty. Cron
+# runs every ~3 h on a staggered (non-round) minute so GitHub does not drop the
+# run in its high-load :00/:30 windows, with a backup 30 min later.
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+    - cron: "47 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Single calendar year (blank = current)"
+        default: ""
+      years:
+        description: "Backfill range, e.g. 2018-2024 (blank = single year)"
+        default: ""
+      basins:
+        description: "Comma-separated basins"
+        default: "AL,EP,WP,IO,SH"
+      storm:
+        description: "Single ATCFID (e.g. AL092024) for a targeted run"
+        default: ""
+      tier:
+        description: "final | preliminary | both"
+        default: "both"
+
+permissions:
+  contents: read            # R2-only product; commits nothing to main
+
+# Serialized: only one run at a time, so the manifest read-merge-write (the
+# growing union) never races. Backfill dispatches must be issued SEQUENTIALLY.
+concurrency:
+  group: update-tcprimed
+  cancel-in-progress: false
+
+jobs:
+  tcprimed:
+    runs-on: ubuntu-latest
+    # Generous for a backfill year (many overpasses x 2 renders each);
+    # incremental current-season runs finish well under this.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        # boto3 (anonymous S3 read + R2 write), netCDF4 (read overpasses),
+        # numpy (math), matplotlib (native-swath pcolormesh render). The local
+        # packages give compute_pct89 (hafs_render) and the ice89h palette
+        # (palette). The ne_50m_*.geojson basemaps are committed at the repo root
+        # (checked out above), so the renderer finds them without a download.
+        run: |
+          python -m pip install --upgrade pip
+          pip install boto3 netCDF4 numpy matplotlib ./hafs_render ./palette
+      - name: Build observed passive-MW PNGs + manifest
+        env:
+          TCPRIMED_ENABLED: ${{ vars.TCPRIMED_ENABLED || '1' }}
+          TCPRIMED_YEAR: ${{ github.event.inputs.year || '' }}
+          TCPRIMED_YEARS: ${{ github.event.inputs.years || '' }}
+          TCPRIMED_BASINS: ${{ github.event.inputs.basins || 'AL,EP,WP,IO,SH' }}
+          TCPRIMED_STORM: ${{ github.event.inputs.storm || '' }}
+          TCPRIMED_TIER: ${{ github.event.inputs.tier || 'both' }}
+        run: |
+          set -euo pipefail
+          ARGS="--out-dir ./tcprimed_build --basins ${TCPRIMED_BASINS} --tier ${TCPRIMED_TIER}"
+          if [ -n "${TCPRIMED_YEARS}" ]; then
+            ARGS="$ARGS --years ${TCPRIMED_YEARS}"
+          elif [ -n "${TCPRIMED_YEAR}" ]; then
+            ARGS="$ARGS --year ${TCPRIMED_YEAR}"
+          fi
+          if [ -n "${TCPRIMED_STORM}" ]; then
+            ARGS="$ARGS --storm ${TCPRIMED_STORM}"
+          fi
+          python generate_tcprimed.py $ARGS
+      - name: Sync to R2 (cdn.triple-a-tropics.com/microwave/)
+        # Guard: only sync when the build wrote a manifest (kill switch or a
+        # total failure leaves tcprimed_build/ without one -> last-known-good R2
+        # stays live). Two passes by extension so PNG and JSON get the right
+        # Content-Type (the manifest is fetched cross-origin -> needs the JSON
+        # type + CORS). NO --delete: the growing-union manifest references prior
+        # storms still on R2; tcprimed_build holds only this run's renders.
+        if: ${{ vars.TCPRIMED_ENABLED != 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./tcprimed_build/manifest.json ]; then
+            echo "tcprimed: no manifest written - skipping R2 sync (last-known-good stays live)"
+            exit 0
+          fi
+          CC="public, max-age=300"
+          DST=s3://triple-a-tropics-media/microwave/
+          aws s3 sync ./tcprimed_build "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --no-progress --cache-control "$CC" --content-type "image/png" \
+            --exclude "*" --include "*.png" --only-show-errors
+          aws s3 sync ./tcprimed_build "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --no-progress --cache-control "$CC" --content-type "application/json" \
+            --exclude "*" --include "*.json" --only-show-errors
