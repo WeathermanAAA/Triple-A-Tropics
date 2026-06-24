@@ -843,6 +843,8 @@
         <div class="sat-result-meta" id="gibs-meta">Loading latest true-color pass…</div>
       </div>
       <div class="sat-result-actions">
+        <label for="gibs-layer" class="sr-only" style="position:absolute;left:-9999px;">Sensor</label>
+        <select id="gibs-layer" class="gibs-region-select" aria-label="Sensor"></select>
         <label for="gibs-region" class="sr-only" style="position:absolute;left:-9999px;">Region</label>
         <select id="gibs-region" class="gibs-region-select" aria-label="Region"></select>
         <a id="gibs-download" class="sat-action-btn" download href="#">Download</a>
@@ -2567,29 +2569,76 @@ function makeSatViewer(idPrefix, opts) {
 (function() {
   const CDN = 'https://cdn.triple-a-tropics.com/gibs';
   const sel = document.getElementById('gibs-region');
+  const laySel = document.getElementById('gibs-layer');
   const img = document.getElementById('gibs-img');
   const meta = document.getElementById('gibs-meta');
   const dl = document.getElementById('gibs-download');
   const section = document.getElementById('gibs-section');
   let manifest = null;
+  // Sensor variants the manifest exposes; falls back to the canonical three so
+  // an older manifest (no `layers` field) still drives the selector.
+  const DEFAULT_LAYERS = [
+    { id: 'both', label: 'Both' },
+    { id: 'viirs', label: 'VIIRS' },
+    { id: 'modis', label: 'MODIS' },
+  ];
 
   function cacheBust() {
     return manifest && manifest.generated_utc
       ? '?v=' + encodeURIComponent(manifest.generated_utc) : '';
   }
 
-  function show(slug) {
+  function layerList() {
+    return (manifest && Array.isArray(manifest.layers) && manifest.layers.length)
+      ? manifest.layers : DEFAULT_LAYERS;
+  }
+  function defaultLayer() {
+    return (manifest && manifest.default_layer) || 'both';
+  }
+  function fileTemplate() {
+    return (manifest && manifest.file_template) || '{slug}_truecolor_{layer}.jpg';
+  }
+
+  // Resolve a (region, layer) pair to its variant detail + file, gracefully
+  // falling back to the region's default variant, then "both", then the legacy
+  // per-region fields, so a region missing a variant never 404s.
+  function resolveVariant(r, layer) {
+    const vmap = r.variants || {};
+    if (vmap[layer]) return { v: vmap[layer], layer: layer };
+    const def = r.default_variant || defaultLayer();
+    if (vmap[def]) return { v: vmap[def], layer: def };
+    if (vmap.both) return { v: vmap.both, layer: 'both' };
+    // No variants block (legacy manifest): synthesize from the region fields.
+    return {
+      v: { file: r.file, sensor: r.sensor, date: r.date, native_res_m: r.native_res_m },
+      layer: def,
+    };
+  }
+
+  function fileFor(r, sel) {
+    if (sel.v && sel.v.file) return sel.v.file;
+    return fileTemplate().replace('{slug}', r.slug).replace('{layer}', sel.layer);
+  }
+
+  function show(slug, layer) {
     const r = manifest.regions.find(x => x.slug === slug) || manifest.regions[0];
     if (!r) return;
-    const url = CDN + '/' + r.file + cacheBust();
+    const sel2 = resolveVariant(r, layer || laySel.value || defaultLayer());
+    // If the requested variant wasn't available for this region and we fell back,
+    // sync the dropdown so the control reflects what's actually shown.
+    if (laySel.value !== sel2.layer) laySel.value = sel2.layer;
+    const v = sel2.v;
+    const file = fileFor(r, sel2);
+    const url = CDN + '/' + file + cacheBust();
     img.src = url;
-    img.alt = r.label + ' true color, ' + r.sensor + ' ' + r.date;
+    img.alt = r.label + ' true color, ' + v.sensor + ' ' + v.date;
     dl.href = url;
-    dl.download = r.file;
-    meta.textContent = r.sensor + ' · ' + r.date + ' · ~' + r.native_res_m + ' m · ' + r.label;
-    // Reflect the choice in the URL so a region is shareable/bookmarkable.
+    dl.download = file;
+    meta.textContent = v.sensor + ' · ' + v.date + ' · ~' + v.native_res_m + ' m · ' + r.label;
+    // Reflect both choices in the URL so a region+sensor is shareable.
     const p = new URLSearchParams(window.location.search);
     p.set('gibs', r.slug);
+    p.set('gibslayer', sel2.layer);
     window.history.replaceState({}, '', window.location.pathname + '?' + p.toString());
   }
 
@@ -2608,14 +2657,27 @@ function makeSatViewer(idPrefix, opts) {
         o.textContent = r.label;
         sel.appendChild(o);
       });
-      // Default: deep-link ?gibs=slug, else western-atlantic, else first.
-      const want = new URLSearchParams(window.location.search).get('gibs');
+      // Populate the sensor selector from the manifest's layer list.
+      laySel.innerHTML = '';
+      layerList().forEach(l => {
+        const o = document.createElement('option');
+        o.value = l.id;
+        o.textContent = l.label;
+        laySel.appendChild(o);
+      });
+      const params = new URLSearchParams(window.location.search);
+      // Default region: deep-link ?gibs=slug, else western-atlantic, else first.
+      const want = params.get('gibs');
       const has = (s) => m.regions.some(r => r.slug === s);
       const def = (want && has(want)) ? want
                 : has('western-atlantic') ? 'western-atlantic'
                 : m.regions[0].slug;
       sel.value = def;
-      show(def);
+      // Default sensor: deep-link ?gibslayer=, else manifest default.
+      const wantLayer = params.get('gibslayer');
+      const layerOk = (s) => layerList().some(l => l.id === s);
+      laySel.value = (wantLayer && layerOk(wantLayer)) ? wantLayer : defaultLayer();
+      show(def, laySel.value);
     })
     .catch(e => {
       // Hide the whole section if the manifest isn't on R2 yet — better than
@@ -2625,7 +2687,8 @@ function makeSatViewer(idPrefix, opts) {
       if (section) section.style.display = 'none';
     });
 
-  sel.addEventListener('change', () => show(sel.value));
+  sel.addEventListener('change', () => show(sel.value, laySel.value));
+  laySel.addEventListener('change', () => show(sel.value, laySel.value));
 })();
 </script>
 
