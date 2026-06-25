@@ -21,9 +21,11 @@ import tempfile
 import urllib.request
 from typing import Optional
 
-from . import SCHEMA_VERSION, SOURCE, DISCLOSURE, IMAGER_SENSORS
+from . import SCHEMA_VERSION, SOURCE, SOURCE_LIVE, DISCLOSURE, IMAGER_SENSORS
 from . import fetch as fx
 from . import render as rnd
+from . import pps
+from . import storms as st
 
 
 def _now_iso() -> str:
@@ -141,10 +143,17 @@ def build(out_dir: str, *, tiers=("final", "preliminary"),
                                    client=client, force=force)
                     rendered_any = True
 
-    # Build the manifest (growing union, newest-first by latest_overpass_utc).
+    return _write_manifest(out_dir, union, prior_ok, rendered_any)
+
+
+def _write_manifest(out_dir, union, prior_ok, rendered_any) -> dict:
+    """Build the growing-union manifest (newest-first by latest_overpass_utc) and
+    write it -- UNLESS the union is empty AND the prior was unreadable, in which
+    case skip the write so the workflow's "no manifest -> last-known-good stays
+    live" guard engages (never clobber a populated live manifest with an empty
+    one)."""
     storms = list(union.values())
-    storms.sort(key=lambda s: s.get("latest_overpass_utc") or "",
-                reverse=True)
+    storms.sort(key=lambda s: s.get("latest_overpass_utc") or "", reverse=True)
     default_slug = storms[0]["slug"] if storms else None
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -154,11 +163,6 @@ def build(out_dir: str, *, tiers=("final", "preliminary"),
         "storms": storms,
         "default_slug": default_slug,
     }
-    # Never clobber a populated live manifest with an empty one: if the union is
-    # empty AND we couldn't read the prior (transient CDN error / first bootstrap
-    # blip), skip the write so the workflow's "no manifest -> last-known-good
-    # stays live" guard engages. A genuinely empty union with a reachable prior
-    # (true off-season / fresh local build) writes normally.
     if not storms and not prior_ok:
         print("tcprimed: empty union AND prior manifest unavailable - NOT "
               "writing manifest (workflow keeps last-known-good live)",
@@ -234,31 +238,176 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
             print(f"tcprimed: rendered {atcf} {oid} ({tier}) "
                   f"[{'+'.join(sorted(products))}]")
 
+    _finalize_storm(out_dir, slug, atcf, basin, year, existing, union)
+
+
+def _finalize_storm(out_dir, slug, atcf, basin, year, existing, union, *,
+                    name=None):
+    """Write {slug}/overpasses.json (sorted) + upsert the manifest union entry.
+    Shared by the archive (_process_storm) and live (build_live) paths. ``name``
+    overrides the display name (live has the real storm name; archive uses the
+    ATCF short id). peak_intensity + sensors come from the FINAL merged set."""
     overpasses = sorted(existing.values(), key=lambda o: o.get("valid_utc", ""))
     if not overpasses:
         return
-
-    # Derive peak intensity + sensor list from the FINAL merged overpass set, not
-    # this run's (possibly --max-overpasses-sliced) `ops`, so carried-forward
-    # passes outside the slice still count toward the manifest summary.
     peak_kt = max((int(o.get("intensity_kt") or 0) for o in overpasses),
                   default=0)
     sensors = sorted({o["sensor"] for o in overpasses if o.get("sensor")})
-
-    name = rnd.storm_short_name(atcf)
+    disp_name = name or rnd.storm_short_name(atcf)
     latest = overpasses[-1]["valid_utc"]
-    per_storm = {
-        "slug": slug, "name": name, "atcf": atcf, "basin": basin,
+    _write(out_dir, f"{slug}/overpasses.json", {
+        "slug": slug, "name": disp_name, "atcf": atcf, "basin": basin,
         "year": int(year), "updated_utc": _now_iso(),
         "overpasses": overpasses,
-    }
-    _write(out_dir, f"{slug}/overpasses.json", per_storm)
-
+    })
     union[slug] = {
-        "slug": slug, "name": name, "atcf": atcf, "basin": basin,
+        "slug": slug, "name": disp_name, "atcf": atcf, "basin": basin,
         "year": int(year),
         "overpass_count": len(overpasses),
         "sensors": sensors,
         "latest_overpass_utc": latest,
         "peak_intensity_kt": int(peak_kt),
     }
+
+
+# ---------------------------------------------------------------------------
+# LIVE (near-real-time) tier: PPS NRT GPM-constellation 1C over active storms
+# ---------------------------------------------------------------------------
+def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
+               cdn_base=None, include_invests=True, max_granules=None,
+               pad=8.0, force=False) -> dict:
+    """Render NRT passive-MW overpasses for CURRENTLY-ACTIVE storms and merge them
+    into the same `microwave/` manifest as the archive (so live storms sort to the
+    top by recency and share a slug with a future archived version).
+
+    Flow: read the live active-storm feed -> list recent NRT 1C granules -> for
+    each granule, download once, and for every active storm it covers, crop the
+    global swath to the storm box and render (reusing tcprimed.render). No PPS
+    credential (env PPS_EMAIL / ~/.pps_email) -> the live tier is a graceful no-op
+    (prior manifest kept). Never raises into the workflow on a per-granule error.
+    """
+    import datetime as dt
+
+    prior, prior_ok = _fetch_prior_manifest(prior_manifest_url)
+    union = {s["slug"]: s for s in prior.get("storms", [])
+             if isinstance(s, dict) and s.get("slug")}
+
+    email = pps.pps_credential()
+    if not email:
+        print("tcprimed live: no PPS credential (PPS_EMAIL / ~/.pps_email); "
+              "live tier skipped", file=sys.stderr)
+        return _write_manifest(out_dir, union, prior_ok, False)
+
+    active = st.active_storms(include_invests=include_invests)
+    print(f"tcprimed live: {len(active)} active system(s): "
+          f"{[s['slug'] for s in active]}")
+    if not active:
+        return _write_manifest(out_dir, union, prior_ok, False)
+
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=window_hours)
+    try:
+        granules = pps.recent_granule_urls(email, since)
+    except Exception as e:  # noqa: BLE001
+        print(f"tcprimed live: NRT listing failed: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return _write_manifest(out_dir, union, prior_ok, False)
+    if max_granules:
+        granules = granules[-int(max_granules):]
+    print(f"tcprimed live: {len(granules)} candidate NRT granule(s) since "
+          f"{since:%Y-%m-%d %H:%MZ}")
+
+    # Per-active-storm existing overpasses (local build dir, then live CDN) so a
+    # re-run does not re-render already-published passes.
+    existing_by_slug: dict[str, dict] = {}
+    for s in active:
+        slug = s["slug"]
+        doc = {}
+        local = os.path.join(out_dir, slug, "overpasses.json")
+        if os.path.exists(local):
+            try:
+                with open(local, "r", encoding="utf-8") as f:
+                    doc = json.load(f)
+            except Exception:  # noqa: BLE001
+                doc = {}
+        if not doc:
+            doc = _fetch_prior_overpasses(cdn_base, slug)
+        existing_by_slug[slug] = {o["id"]: o for o in doc.get("overpasses", [])
+                                  if isinstance(o, dict) and o.get("id")}
+
+    touched: set[str] = set()
+    with tempfile.TemporaryDirectory(prefix="tcprimed_live_") as tmp:
+        for g in granules:
+            sensor, platform = g["sensor"], g["platform"]
+            stamp = g["start"].strftime("%Y%m%d%H%M%S")
+            oid = f"{sensor}_{platform}_{stamp}"
+            # Cheap pre-check: any active storm still NEEDING this pass?
+            need = [s for s in active if force or
+                    not existing_by_slug[s["slug"]].get(oid, {}).get("products")]
+            if not need:
+                continue
+            try:
+                local = pps.download(g["url"], email, tmp)
+                data = pps.read_1c(local, sensor, platform)
+            except Exception as e:  # noqa: BLE001
+                print(f"tcprimed live: {g['file']} failed: "
+                      f"{type(e).__name__}: {e}", file=sys.stderr)
+                continue
+            for s in need:
+                slug = s["slug"]
+                cov89 = st.storm_covers(s, data["lat89"], data["lon89"],
+                                        half_deg=pad)
+                cov37 = st.storm_covers(s, data["lat37"], data["lon37"],
+                                        half_deg=pad)
+                if not (cov89 or cov37):
+                    continue
+                # Pin the valid time to the storm's along-track scan (the granule
+                # mid-time can be ~45 min off for full-orbit AMSR2/SSMIS).
+                tband = ("lat89", "lon89") if cov89 else ("lat37", "lon37")
+                valid = pps.overpass_time(data[tband[0]], data[tband[1]],
+                                          s["lat"], s["lon"],
+                                          g["start"], g["end"])
+                meta = {
+                    "sensor": sensor, "platform": platform, "atcf": s["atcf"],
+                    "basin": s["basin"], "year": s["year"], "valid": valid,
+                    "intensity_kt": int(s.get("intensity_kt") or 0),
+                    "min_p_hpa": s.get("mslp"),
+                    "dev_level": s.get("category") or "",
+                    "clat": s["lat"], "clon": s["lon"],
+                    "source_label": SOURCE_LIVE,
+                }
+                c89 = pps.crop_swath(data["lat89"], data["lon89"],
+                                     data["tb89v"], data["tb89h"],
+                                     s["lat"], s["lon"], pad) if cov89 else None
+                c37 = pps.crop_swath(data["lat37"], data["lon37"],
+                                     data["tb37v"], data["tb37h"],
+                                     s["lat"], s["lon"], pad) if cov37 else None
+                if c89:
+                    (meta["lat89"], meta["lon89"],
+                     meta["tb89v"], meta["tb89h"]) = c89
+                if c37:
+                    (meta["lat37"], meta["lon37"],
+                     meta["tb37v"], meta["tb37h"]) = c37
+                try:
+                    products = rnd.render_overpass(
+                        meta, os.path.join(out_dir, slug), oid)
+                except Exception as e:  # noqa: BLE001
+                    print(f"tcprimed live: render {slug} {oid} failed: "
+                          f"{type(e).__name__}: {e}", file=sys.stderr)
+                    continue
+                existing_by_slug[slug][oid] = {
+                    "id": oid, "sensor": sensor, "platform": platform,
+                    "valid_utc": _iso(meta["valid"]),
+                    "intensity_kt": int(meta["intensity_kt"]),
+                    "dev_level": meta["dev_level"],
+                    "products": {k: f"{slug}/{v}" for k, v in products.items()},
+                    "source": "live",
+                }
+                touched.add(slug)
+                print(f"tcprimed live: rendered {slug} {oid} "
+                      f"[{'+'.join(sorted(products))}]")
+
+    for slug in touched:
+        s = next(x for x in active if x["slug"] == slug)
+        _finalize_storm(out_dir, slug, s["atcf"], s["basin"], s["year"],
+                        existing_by_slug[slug], union, name=s["name"])
+    return _write_manifest(out_dir, union, prior_ok, bool(touched))

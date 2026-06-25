@@ -1,0 +1,94 @@
+name: update-tcprimed-live
+
+# LIVE / near-real-time tier of the observed passive-microwave product. Pulls the
+# whole GPM constellation (GMI, SSMIS F16/F17/F18, AMSR2) Level-1C straight from
+# NASA PPS NRT (~1-3 h latency), crops each granule to the currently-active TCs
+# (from the home map's global_storms.geojson), renders the same 89 PCT / 37 color
+# products as the archive (tcprimed.render), and merges them into the SAME
+# microwave/ manifest so current storms sort to the top.
+#
+# Needs the free PPS NRT credential as secret PPS_EMAIL (the registered email,
+# used as both HTTP-basic user and password). No credential -> graceful no-op.
+# Higher cadence than the archive; bandwidth-heavy (lists + downloads recent
+# global granules to test storm coverage).
+
+on:
+  schedule:
+    # Every 2 h on a staggered minute. Single cron (no backup): each run uses a
+    # 6 h lookback window, so a dropped scheduled run is self-healed by the next.
+    # Bandwidth-heavy (lists + downloads recent global granules to test coverage),
+    # so we don't double the cadence.
+    - cron: "23 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      window_hours:
+        description: "NRT lookback window (hours)"
+        default: "6"
+      force:
+        description: "Re-render even already-published live passes"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read            # R2-only product; commits nothing to main
+
+# SHARE the archive's concurrency group so the two tiers never race on the
+# growing-union manifest read-merge-write (concurrency groups are repo-wide).
+concurrency:
+  group: update-tcprimed
+  cancel-in-progress: false
+
+jobs:
+  tcprimed-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        # h5py reads the PPS 1C .RT-NC granules; scipy does the swath regrid;
+        # boto3 writes R2; the local packages give compute_pct89 + the ice89h
+        # palette. The ne_50m_*.geojson basemaps are committed at the repo root.
+        run: |
+          python -m pip install --upgrade pip
+          pip install boto3 h5py netCDF4 numpy scipy matplotlib ./hafs_render ./palette
+      - name: Build LIVE passive-MW PNGs + manifest
+        env:
+          TCPRIMED_ENABLED: ${{ vars.TCPRIMED_ENABLED || '1' }}
+          PPS_EMAIL: ${{ secrets.PPS_EMAIL }}
+          TCPRIMED_WINDOW: ${{ github.event.inputs.window_hours || '6' }}
+          TCPRIMED_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PPS_EMAIL:-}" ]; then
+            echo "tcprimed-live: PPS_EMAIL secret not set - skipping (last-known-good R2 stays live)."
+            exit 0
+          fi
+          ARGS="--live --out-dir ./tcprimed_build --window-hours ${TCPRIMED_WINDOW}"
+          if [ -n "${TCPRIMED_FORCE}" ]; then ARGS="$ARGS --force"; fi
+          python generate_tcprimed.py $ARGS
+      - name: Sync to R2 (cdn.triple-a-tropics.com/microwave/)
+        # Same guarded two-pass sync as the archive (PNG image/png + JSON
+        # application/json, NO --delete; the growing union references prior
+        # storms still on R2). No manifest written -> last-known-good stays live.
+        if: ${{ vars.TCPRIMED_ENABLED != 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./tcprimed_build/manifest.json ]; then
+            echo "tcprimed-live: no manifest written - skipping R2 sync (last-known-good stays live)"
+            exit 0
+          fi
+          CC="public, max-age=300"
+          DST=s3://triple-a-tropics-media/microwave/
+          aws s3 sync ./tcprimed_build "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --no-progress --cache-control "$CC" --content-type "image/png" \
+            --exclude "*" --include "*.png" --only-show-errors
+          aws s3 sync ./tcprimed_build "$DST" --endpoint-url "$R2_ENDPOINT" \
+            --no-progress --cache-control "$CC" --content-type "application/json" \
+            --exclude "*" --include "*.json" --only-show-errors
