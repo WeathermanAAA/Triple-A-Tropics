@@ -79,7 +79,7 @@ def build(out_dir: str, *, tiers=("final", "preliminary"),
           basins=("AL", "EP", "WP", "IO", "SH"),
           storm: Optional[str] = None, max_overpasses: Optional[int] = None,
           prior_manifest_url: Optional[str] = None,
-          cdn_base: Optional[str] = None) -> dict:
+          cdn_base: Optional[str] = None, force: bool = False) -> dict:
     """Render observed passive-MW overpasses and write the build tree.
 
     tiers: process in order, preferring `final` when a storm exists in both
@@ -138,7 +138,7 @@ def build(out_dir: str, *, tiers=("final", "preliminary"),
                     _process_storm(out_dir, slug, atcf, basin, yr, tier, ops,
                                    union, prior_manifest_base=cdn_base,
                                    max_overpasses=max_overpasses,
-                                   client=client)
+                                   client=client, force=force)
                     rendered_any = True
 
     # Build the manifest (growing union, newest-first by latest_overpass_utc).
@@ -171,7 +171,7 @@ def build(out_dir: str, *, tiers=("final", "preliminary"),
 
 
 def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
-                   prior_manifest_base, max_overpasses, client):
+                   prior_manifest_base, max_overpasses, client, force=False):
     """Render new overpasses for one storm, merge into its overpasses.json, and
     upsert the manifest entry."""
     # Prior overpasses (local build dir first, then the live CDN) so a re-run or
@@ -199,11 +199,12 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
         for op in ops:
             oid = op["id"]
             prev = existing.get(oid)
-            # Skip render if this id is already published. A pass with a genuine
+            # Skip render if this id is already published (unless --force, used to
+            # refresh R2 after a render-code change). A pass with a genuine
             # one-channel data gap publishes only the available product, and that
             # gap won't fill on a re-run, so any non-empty products record counts
             # as done (re-render only when nothing was published).
-            if prev and prev.get("products"):
+            if not force and prev and prev.get("products"):
                 continue
             try:
                 local = fx.download(op["key"], tmp, client=client)

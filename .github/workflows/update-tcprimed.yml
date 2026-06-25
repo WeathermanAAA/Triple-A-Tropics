@@ -6,10 +6,12 @@ name: update-tcprimed
 # per overpass, and syncs them to R2 under microwave/. Touches NOTHING in the
 # track/ACE/climatology pipeline.
 #
-# This is an ARCHIVE / RECENT-STORM product: TC-PRIMED is research-tiered (final
-# post-season, preliminary lags hours-to-days), so a low cadence is plenty. Cron
-# runs every ~3 h on a staggered (non-round) minute so GitHub does not drop the
-# run in its high-load :00/:30 windows, with a backup 30 min later.
+# This is an ARCHIVE product, NOT real-time: TC-PRIMED is research-tiered and its
+# newest preliminary data observed in practice lags ~months (final is post-season),
+# so a low cadence is plenty. Genuinely-current storms would need a live tier
+# (GPM GMI via PPS NRT + AMSR2 via JAXA G-Portal) - not wired here. Cron runs every
+# ~3 h on a staggered (non-round) minute so GitHub does not drop the run in its
+# high-load :00/:30 windows, with a backup 30 min later.
 
 on:
   schedule:
@@ -32,6 +34,10 @@ on:
       tier:
         description: "final | preliminary | both"
         default: "both"
+      force:
+        description: "Re-render all overpasses (use after a render-code change)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read            # R2-only product; commits nothing to main
@@ -55,13 +61,13 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         # boto3 (anonymous S3 read + R2 write), netCDF4 (read overpasses),
-        # numpy (math), matplotlib (native-swath pcolormesh render). The local
-        # packages give compute_pct89 (hafs_render) and the ice89h palette
+        # numpy + scipy (linear-interp swath regrid), matplotlib (render). The
+        # local packages give compute_pct89 (hafs_render) and the ice89h palette
         # (palette). The ne_50m_*.geojson basemaps are committed at the repo root
         # (checked out above), so the renderer finds them without a download.
         run: |
           python -m pip install --upgrade pip
-          pip install boto3 netCDF4 numpy matplotlib ./hafs_render ./palette
+          pip install boto3 netCDF4 numpy scipy matplotlib ./hafs_render ./palette
       - name: Build observed passive-MW PNGs + manifest
         env:
           TCPRIMED_ENABLED: ${{ vars.TCPRIMED_ENABLED || '1' }}
@@ -70,6 +76,7 @@ jobs:
           TCPRIMED_BASINS: ${{ github.event.inputs.basins || 'AL,EP,WP,IO,SH' }}
           TCPRIMED_STORM: ${{ github.event.inputs.storm || '' }}
           TCPRIMED_TIER: ${{ github.event.inputs.tier || 'both' }}
+          TCPRIMED_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '' }}
         run: |
           set -euo pipefail
           ARGS="--out-dir ./tcprimed_build --basins ${TCPRIMED_BASINS} --tier ${TCPRIMED_TIER}"
@@ -80,6 +87,9 @@ jobs:
           fi
           if [ -n "${TCPRIMED_STORM}" ]; then
             ARGS="$ARGS --storm ${TCPRIMED_STORM}"
+          fi
+          if [ -n "${TCPRIMED_FORCE}" ]; then
+            ARGS="$ARGS --force"
           fi
           python generate_tcprimed.py $ARGS
       - name: Sync to R2 (cdn.triple-a-tropics.com/microwave/)
