@@ -20,7 +20,6 @@ import json
 import math
 import os
 import sys
-import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +31,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
 
 import netCDF4 as nc  # noqa: E402
+from scipy.interpolate import griddata  # noqa: E402
 
 import tat_palettes as tp  # noqa: E402
 from hafs_render.hafs_plot import compute_pct89  # noqa: E402
@@ -49,6 +49,7 @@ TICK_COLOR = "#6b7a8d"
 WATERMARK = "@WeathermanAAA_"
 
 HALF_DEG = 5.0               # half-width of the square map, degrees
+GRID_STEP = 0.02             # smooth-resample grid resolution (deg) -> ~500 px
 FILL_THRESHOLD_K = 50.0      # Tb below this -> fill / bad pixel
 
 _HERE = Path(__file__).resolve().parent
@@ -172,38 +173,54 @@ def _lat_label(y: float) -> str:
 # ---------------------------------------------------------------------------
 # Native-swath mesh draw (pcolormesh, gap-free)
 # ---------------------------------------------------------------------------
-# Swath lat/lon are curved (not monotone), so pcolormesh logs a benign
-# 'cell centers ... not monotonically increasing' UserWarning every call. The
-# output is correct (verified visually); silence it so CI logs stay clean.
-_MONOTONE_WARN = ".*monotonically.*"
+# ---------------------------------------------------------------------------
+# Smooth swath -> regular grid resample (linear interpolation, gap-free)
+# ---------------------------------------------------------------------------
+def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
+    """Resample swath ``fields`` (a list of 2-D arrays sharing lat/lon) onto a
+    regular lat/lon grid centered on (clat, clon), via LINEAR interpolation in a
+    center-unwrapped longitude frame. Returns (extent, [grid fields]) with
+    extent = [clon-half, clon+half, clat-half, clat+half].
+
+    Linear (Delaunay) interpolation smooths the coarse imager footprints into the
+    continuous cyclonicwx/NRL look (vs. blocky native quads) AND fills solid with
+    NO inter-scanline gaps, because every interior target cell is interpolated
+    from the surrounding pixels. Cells outside the swath's convex hull come back
+    NaN, giving a clean swath edge (transparent) without a hand-tuned distance
+    mask. A pixel is a valid source only where EVERY field it feeds is finite."""
+    lon_u = _unwrap(lon, clon)
+    valid = np.isfinite(lat) & np.isfinite(lon_u)
+    for f in fields:
+        valid &= np.isfinite(f)
+    if valid.sum() < 3:
+        raise ValueError("too few valid swath pixels to interpolate")
+
+    pts = np.column_stack([lon_u[valid], lat[valid]])
+    n = int(round(2.0 * half / step)) + 1
+    gx = np.linspace(clon - half, clon + half, n)
+    gy = np.linspace(clat - half, clat + half, n)
+    GX, GY = np.meshgrid(gx, gy)
+    out = []
+    for f in fields:
+        g = griddata(pts, f[valid], (GX, GY), method="linear")
+        out.append(g)
+    extent = [clon - half, clon + half, clat - half, clat + half]
+    return extent, out
 
 
-def _draw_scalar_mesh(ax, lon_u, lat, field, cmap, norm, zorder):
-    """pcolormesh a scalar field on its native 2-D swath grid (center-unwrapped
-    lon). ``shading='nearest'`` paints one filled quad per footprint, so the swath
-    fills solid with no inter-scanline gaps; NaN footprints are masked away
-    (transparent). Returns the QuadMesh (a ScalarMappable, for the colorbar)."""
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=_MONOTONE_WARN,
-                                category=UserWarning)
-        return ax.pcolormesh(lon_u, lat, np.ma.masked_invalid(field),
-                             cmap=cmap, norm=norm, shading="nearest",
-                             zorder=zorder)
+def _draw_scalar_image(ax, extent, grid, cmap, norm, zorder):
+    """imshow a regular-grid scalar with bilinear smoothing; NaN -> transparent.
+    Returns the AxesImage (a ScalarMappable, for the colorbar)."""
+    return ax.imshow(np.ma.masked_invalid(grid), origin="lower", extent=extent,
+                     cmap=cmap, norm=norm, interpolation="bilinear",
+                     aspect="auto", zorder=zorder)
 
 
-def _draw_rgba_mesh(ax, lon_u, lat, rgba, zorder):
-    """pcolormesh a per-footprint RGBA array on the native 2-D swath grid. One
-    quad per (scan, pixel); transparent (alpha 0) where a channel was fill, so the
-    swath fills solid with no striping. ``rgba`` is (M, N, 4) in the same C-order
-    as the grid, so ``reshape(-1, 4)`` maps quad-for-quad."""
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=_MONOTONE_WARN,
-                                category=UserWarning)
-        qm = ax.pcolormesh(lon_u, lat, np.zeros(lat.shape),
-                           shading="nearest", zorder=zorder)
-    qm.set_array(None)
-    qm.set_facecolor(rgba.reshape(-1, 4))
-    return qm
+def _draw_rgba_image(ax, extent, rgba, zorder):
+    """imshow a regular-grid RGBA composite with bilinear smoothing (alpha 0 where
+    a channel was fill -> transparent outside the swath)."""
+    ax.imshow(rgba, origin="lower", extent=extent, interpolation="bilinear",
+              aspect="auto", zorder=zorder)
 
 
 # ---------------------------------------------------------------------------
@@ -424,18 +441,23 @@ def _decorate_axes(ax, clon, extent):
 
 def render_89pct(meta: dict, out_path: str) -> str:
     """Render the 89 GHz PCT product. Returns out_path."""
-    lon_u = _unwrap(meta["lon89"], meta["clon"])
-    lat = meta["lat89"]
     v_c = meta["tb89v"] - 273.15
     h_c = meta["tb89h"] - 273.15
     pct_c = compute_pct89({0: v_c, 1: h_c}, 0, 1)   # degC, clipped [105,290] K
     if pct_c is None or not np.isfinite(pct_c).any():
         raise ValueError("no valid 89 GHz pixels")
+    # Smooth-resample the PCT onto a regular grid (cyclonicwx look, gap-free).
+    extent, (pct_g,) = _regrid(meta["lat89"], meta["lon89"], [pct_c],
+                               meta["clat"], meta["clon"])
+    if not np.isfinite(pct_g).any():
+        raise ValueError("89 GHz swath does not cover the storm-centered box")
 
     enh = tp.get_enhancement("ice89h")
     cmap = enh["cmap"].with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
     norm = tp.enhancement_norm("ice89h")
 
+    # MIN BT from the RAW swath (the true coldest pixel); the smoothed grid warms
+    # extremes via interpolation, so it would under-report the scattering minimum.
     btmin_k = float(np.nanmin(pct_c)) + 273.15
     right_stat = f"MIN BT {btmin_k:.1f} K"
 
@@ -443,7 +465,7 @@ def render_89pct(meta: dict, out_path: str) -> str:
         meta, "89 GHz PCT (polarization-corrected)",
         f"NOAA/CIRA TC-PRIMED · {meta['platform']}", right_stat)
 
-    cf = _draw_scalar_mesh(ax, lon_u, lat, pct_c, cmap, norm, zorder=2)
+    cf = _draw_scalar_image(ax, extent, pct_g, cmap, norm, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)
 
     # Kelvin-labelled colorbar (ticks placed at K-273.15 on the degC norm).
@@ -464,17 +486,21 @@ def render_89pct(meta: dict, out_path: str) -> str:
 
 def render_37color(meta: dict, out_path: str) -> str:
     """Render the 37 GHz color product. Returns out_path."""
-    lon_u = _unwrap(meta["lon37"], meta["clon"])
-    lat = meta["lat37"]
-    rgba = _color37_rgba(meta["tb37v"], meta["tb37h"])
-    if not np.any(rgba[..., 3] > 0):
+    if not (np.isfinite(meta["tb37v"]).any() and np.isfinite(meta["tb37h"]).any()):
         raise ValueError("no valid 37 GHz pixels")
+    # Smooth-resample each channel, THEN build the RGB so the color is continuous.
+    extent, (v37_g, h37_g) = _regrid(meta["lat37"], meta["lon37"],
+                                     [meta["tb37v"], meta["tb37h"]],
+                                     meta["clat"], meta["clon"])
+    rgba = _color37_rgba(v37_g, h37_g)
+    if not np.any(rgba[..., 3] > 0):
+        raise ValueError("37 GHz swath does not cover the storm-centered box")
 
     fig, ax, extent, geom = _common_figure(
         meta, "37 GHz Color",
         f"NOAA/CIRA TC-PRIMED · {meta['platform']}", "")
 
-    _draw_rgba_mesh(ax, lon_u, lat, rgba, zorder=2)
+    _draw_rgba_image(ax, extent, rgba, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)
 
     fig.savefig(out_path, dpi=150, facecolor=BAND_BG)
