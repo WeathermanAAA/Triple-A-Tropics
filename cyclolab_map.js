@@ -41,6 +41,65 @@
     "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
     "C4": "Category 4", "C5": "Category 5"
   };
+  // SSHWS category from 1-min Vmax (kt) -> the canonical breakpoints (mirrors the
+  // track-dot COLOR_STEP). Used to color the timeline ticks by intensity even when
+  // a fix has no precomputed `cls` field.
+  function ktToCat(kt) {
+    kt = +kt || 0;
+    return kt >= 137 ? "C5" : kt >= 113 ? "C4" : kt >= 96 ? "C3"
+      : kt >= 83 ? "C2" : kt >= 64 ? "C1" : kt >= 34 ? "TS" : "TD";
+  }
+  // SSHWS hue for a track fix: prefer an explicit valid `cls`, else derive from
+  // wind_kt so the tick reads as the intensity history (the reported bug: fixes
+  // lacking `cls` all defaulted to TD-blue).
+  function fixCatColor(p) {
+    if (p && p.cls && SSHS_COLORS[p.cls]) return SSHS_COLORS[p.cls];
+    return SSHS_COLORS[ktToCat(p && p.wind_kt)] || "#3fa4ff";
+  }
+  function _lsGet(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
+  function _lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  // Draw preset swatches (Andrew's palette).
+  var DRAW_SWATCHES = ["#e24b4a", "#ef9f27", "#ffd400", "#46c46a",
+                       "#5dd3ff", "#378add", "#cf4fd6", "#ffffff"];
+  var DRAW_SHAPES = [
+    { id: "select", label: "Select / move", icon: "✥" },
+    { id: "dot", label: "Dot", icon: "●" },
+    { id: "circle", label: "Circle", icon: "◯" },
+    { id: "square", label: "Square", icon: "■" },
+    { id: "triangle", label: "Triangle", icon: "▲" },
+    { id: "x", label: "X", icon: "✕" },
+    { id: "arrow", label: "Arrow", icon: "➤" },
+    { id: "freehand", label: "Freehand", icon: "〜" }
+  ];
+  // Shape geometry generators (placement-relative size in degrees).
+  function _sqCoords(lng, lat, s) {
+    return [[lng - s, lat - s], [lng + s, lat - s], [lng + s, lat + s],
+            [lng - s, lat + s], [lng - s, lat - s]];
+  }
+  function _triCoords(lng, lat, s) {
+    return [[lng, lat + s], [lng + s * 0.92, lat - s * 0.7],
+            [lng - s * 0.92, lat - s * 0.7], [lng, lat + s]];
+  }
+  function _xCoords(lng, lat, s) {
+    return [[[lng - s, lat - s], [lng + s, lat + s]],
+            [[lng - s, lat + s], [lng + s, lat - s]]];
+  }
+  function _arrowCoords(a, b) {     // a=tail, b=head -> shaft + V head as one line
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var ang = Math.atan2(dy, dx), len = Math.hypot(dx, dy);
+    var hl = Math.max(0.06, len * 0.24), wa = 0.5;
+    var l = [b[0] - hl * Math.cos(ang - wa), b[1] - hl * Math.sin(ang - wa)];
+    var r = [b[0] - hl * Math.cos(ang + wa), b[1] - hl * Math.sin(ang + wa)];
+    return [a, b, l, b, r];
+  }
+  // Translate any draw geometry by (dLng, dLat) for the move-drag.
+  function _translateGeom(g, dx, dy) {
+    function tp(c) { return [c[0] + dx, c[1] + dy]; }
+    if (g.type === "Point") g.coordinates = tp(g.coordinates);
+    else if (g.type === "LineString") g.coordinates = g.coordinates.map(tp);
+    else if (g.type === "MultiLineString") g.coordinates = g.coordinates.map(function (l) { return l.map(tp); });
+    else if (g.type === "Polygon") g.coordinates = g.coordinates.map(function (r) { return r.map(tp); });
+  }
   // Verbatim from active-banner.js / global_tracks.html - the spinning glyph path.
   var HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z";
 
@@ -298,6 +357,15 @@
     ".clm-tp-color{width:18px;height:18px;border-radius:50%;cursor:pointer;",
       "border:2px solid transparent;box-shadow:0 0 0 1px var(--border,#232a36);}",
     ".clm-tp-color.on{border-color:#fff;}",
+    ".clm-shapes{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px;}",
+    ".clm-shape{width:30px;height:28px;display:flex;align-items:center;justify-content:center;",
+      "background:var(--panel,#11161f);color:var(--fg,#e8eef5);border:1px solid var(--border,#232a36);",
+      "border-radius:7px;cursor:pointer;font-size:14px;line-height:1;}",
+    ".clm-shape.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-colorrow{display:flex;align-items:center;gap:8px;margin:2px 0;}",
+    ".clm-colorpick{width:30px;height:26px;padding:0;border:1px solid var(--border,#232a36);",
+      "border-radius:6px;background:none;cursor:pointer;flex:0 0 auto;}",
+    ".clm-tp-btnrow{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}",
     ".clm-rail-foot{margin-top:auto;padding:8px 11px;border-top:1px solid var(--border,#232a36);",
       "color:var(--muted,#8ea2bd);font-size:10px;line-height:1.45;}",
     // mobile rail drawer
@@ -318,6 +386,9 @@
     ".clm-ticks{position:relative;height:6px;margin-top:-2px;}",
     ".clm-ticks i{position:absolute;top:0;width:2px;height:6px;border-radius:1px;transform:translateX(-1px);}",
     ".clm-ticks i.clm-tick-r{top:2px;height:4px;width:3px;opacity:.8;}",
+    ".clm-cover{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:3;",
+      "background:rgba(10,16,24,.78);color:var(--muted,#8ea2bd);font-size:11px;",
+      "padding:4px 10px;border-radius:7px;pointer-events:none;border:1px solid var(--border,#232a36);}",
     ".clm-valid{flex:0 0 auto;font-size:11px;font-variant-numeric:tabular-nums;",
       "color:var(--fg,#e8eef5);min-width:118px;text-align:right;}",
     ".clm-valid small{color:var(--muted,#8ea2bd);}",
@@ -524,7 +595,10 @@
     this._applySaved(trackLayer);
     this.layers.push(trackLayer);
     this.tool = null;            // active tool: inspect | distance | draw | null
-    this._drawColor = "#ffd400";
+    this._drawColor = _lsGet("clm.drawColor", "#ffd400");   // remembered last color
+    this._drawMode = "dot";      // dot|circle|square|triangle|x|arrow|freehand|select
+    this._drawFeats = [];
+    this._drawId = 0;
     this._distPts = [];
     this._buildRail();
     this._buildTime();
@@ -667,10 +741,10 @@
   };
 
   P._wireObsPopups = function () {
-    var map = this.map, popup = null;
+    var map = this.map, popup = null, self = this;
     var OBS = ["observations-tropical", "observations-subtropical", "observations-nontropical"];
     function enter(e) {
-      map.getCanvas().style.cursor = "pointer";
+      if (!self.tool) map.getCanvas().style.cursor = "pointer";   // don't clobber a tool crosshair
       var f = e.features[0], props = f.properties || {};
       var coords = f.geometry.coordinates.slice();
       while (e.lngLat.lng - coords[0] > 180) coords[0] += 360;
@@ -699,7 +773,7 @@
       popup.setLngLat(coords);
     }
     function leave() {
-      map.getCanvas().style.cursor = "";
+      map.getCanvas().style.cursor = self.tool ? "crosshair" : "";   // restore the tool cursor
       if (popup) { popup.remove(); popup = null; }
     }
     OBS.forEach(function (id) {
@@ -928,6 +1002,10 @@
   P._applyVisibility = function (L) {
     if (!this.map) return;
     var vis = L.visible ? "visible" : "none";
+    // Coverage gate (sparse rasters, e.g. microwave): hidden when the nearest
+    // overpass is outside the hold window, even if the user toggled it on -
+    // _rasterToTime sets L._covered and re-applies as the scrubber moves.
+    if (L.type === "raster" && L._covered === false) vis = "none";
     var ids = (L.type === "track")
       ? ["tracks-line-solid", "tracks-line-invest", "observations-tropical",
          "observations-subtropical", "observations-nontropical"]
@@ -1268,8 +1346,8 @@
     (this.storm.points || []).forEach(function (p) {
       if (!p.t) return;
       var pct = ((+new Date(p.t) - t0) / span) * 100;
-      html += '<i style="left:' + pct.toFixed(2) + '%;background:' +
-        (SSHS_COLORS[p.cls || "TD"] || "#3fa4ff") + '"></i>';
+      html += '<i class="clm-tick-fix" style="left:' + pct.toFixed(2) + '%;background:' +
+        fixCatColor(p) + '"></i>';
     });
     this.layers.forEach(function (L) {
       if (L.type !== "raster") return;
@@ -1314,6 +1392,35 @@
     this._trackToTime(t);
     var self = this;
     this.layers.forEach(function (L) { if (L.type === "raster") self._rasterToTime(L, t); });
+    this._updateCoverageHint(t);
+  };
+
+  // Sparse-raster coverage window: HOLD the nearest overpass within +/-3 h so the
+  // layer doesn't blink on/off between passes; beyond that there genuinely is no
+  // pass (the live MW tier only carries recent overpasses) -> hide + a quiet hint.
+  var RASTER_HOLD_MS = 3 * 3600 * 1000;
+  // Per-frame honest hint when the ACTIVE raster has no pass near the scrub time.
+  P._updateCoverageHint = function (t) {
+    // Hint for the active raster if it's out of coverage, else any VISIBLE raster
+    // that has frames but none near this time (user toggled it on into a gap).
+    var aL = this._layer(this.activeLayerId), L = null;
+    if (aL && aL.type === "raster" && aL.visible) L = aL;
+    if (!L || L._covered !== false) {
+      var vis = this.layers.filter(function (x) {
+        return x.type === "raster" && x.visible && x._covered === false && (x.frames || []).length;
+      });
+      L = vis.length ? vis[0] : L;
+    }
+    var msg = null;
+    if (L && L.type === "raster" && L.visible && L._covered === false && (L.frames || []).length) {
+      msg = "No " + (L.label || "imagery").replace(/\s*\(.*\)$/, "") + " pass near this time";
+    }
+    var el = this.dom && this.dom.coverHint;
+    if (!el && this.dom && this.dom.mapWrap) {
+      el = document.createElement("div"); el.className = "clm-cover";
+      this.dom.mapWrap.appendChild(el); this.dom.coverHint = el;
+    }
+    if (el) { el.textContent = msg || ""; el.style.display = msg ? "" : "none"; }
   };
   P._trackToTime = function (t) {
     var pts = this.storm.points || [];
@@ -1339,6 +1446,11 @@
       if (d < bd) { bd = d; best = i; }
     }
     if (best !== L.activeFrame) this.setActiveFrame(L.id, best);
+    // HOLD the nearest pass within the window; beyond it, hide (no blink) - the
+    // coverage gate in _applyVisibility honors this + the user's toggle.
+    var covered = bd <= RASTER_HOLD_MS;
+    if (covered !== (L._covered !== false)) { L._covered = covered; this._applyVisibility(L); }
+    else { L._covered = covered; }
   };
 
   // Synced (default) vs independent per-layer time. Persisted by the caller (the
@@ -1355,20 +1467,40 @@
     if (!this.map || !window.maplibregl) return;
     var pts = this.storm.points || [];
     var p = pts[idx]; if (!p || p.lat == null || p.lon == null) return;
-    var glyphStorm = {
-      name: this.storm.name, is_invest: this.storm.is_invest, is_ptc: this.storm.is_ptc,
-      current_category: p.cls || "TD"
-    };
-    var el = buildActiveMarkerEl(glyphStorm);
-    if (this._reduced) {
-      var sp = el.querySelector(".spinning"); if (sp) sp.classList.remove("spinning");
+    var isInvest = !!(this.storm.is_invest || this.storm.is_ptc);
+    var cls = p.cls || ktToCat(p.wind_kt);
+    // PRESERVE the rotating glyph node across scrubber steps. Recreating the SVG
+    // every frame re-armed the CSS spin -> choppy (same repaint lesson as the
+    // cone-reveal). Build once; afterwards MOVE it + update color/label in place
+    // (the .spinning <g> is never re-created, so the rotation is continuous).
+    if (!this.activeMarker || this._glyphInvest !== isInvest) {
+      var el = buildActiveMarkerEl({
+        name: this.storm.name, is_invest: this.storm.is_invest,
+        is_ptc: this.storm.is_ptc, current_category: cls });
+      if (this._reduced) {
+        var sp = el.querySelector(".spinning"); if (sp) sp.classList.remove("spinning");
+      }
+      if (this.activeMarker) this.activeMarker.remove();
+      this.activeMarker = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat([p.lon, p.lat]).addTo(this.map);
+      this._glyphInvest = isInvest; this._glyphCls = cls;
+    } else {
+      this.activeMarker.setLngLat([p.lon, p.lat]);     // move only -> spin continues
+      if (!isInvest && cls !== this._glyphCls) {        // category changed: recolor in place
+        var elx = this.activeMarker.getElement();
+        var color = SSHS_COLORS[cls] || "#888";
+        elx.style.color = color;
+        var path = elx.querySelector(".spinning path"); if (path) path.setAttribute("fill", color);
+        var lbl = elx.querySelector(".hurricane-label"); if (lbl) lbl.textContent = sshsLabel(cls);
+        this._glyphCls = cls;
+      }
     }
-    if (this.activeMarker) this.activeMarker.remove();
-    this.activeMarker = new maplibregl.Marker({ element: el, anchor: "center" })
-      .setLngLat([p.lon, p.lat]).addTo(this.map);
     // honor the track layer's visibility/opacity on the marker
     var tl = this._layer("track");
-    if (tl) { el.style.display = tl.visible ? "" : "none"; el.style.opacity = tl.opacity; }
+    if (tl) {
+      var e2 = this.activeMarker.getElement();
+      e2.style.display = tl.visible ? "" : "none"; e2.style.opacity = tl.opacity;
+    }
   };
 
   // ---- transport ----
@@ -1466,36 +1598,58 @@
         self._distPts = []; self._refreshDistance();
       });
     } else if (this.tool === "draw") {
-      var COLORS = ["#ffd400", "#ff4d3b", "#3fa4ff", "#46c56a", "#ffffff", "#07101c"];
       pan.innerHTML = '<div class="clm-tp-h">Draw</div>' +
-        '<div class="clm-tp-modes">' +
-          '<button class="clm-tp-btn" data-mode="freehand">Freehand</button>' +
-          '<button class="clm-tp-btn" data-mode="point">Point</button></div>' +
-        '<div class="clm-tp-colors">' + COLORS.map(function (c) {
-          return '<span class="clm-tp-color" data-color="' + c + '" style="background:' + c + '"></span>';
+        '<div class="clm-shapes">' + DRAW_SHAPES.map(function (s) {
+          return '<button class="clm-shape" type="button" data-mode="' + s.id +
+            '" title="' + s.label + '">' + s.icon + '</button>';
         }).join("") + '</div>' +
-        '<button class="clm-tp-btn" data-act="undo">Undo</button>' +
-        '<button class="clm-tp-btn" data-act="drawclear">Clear all</button>';
-      this._drawMode = this._drawMode || "freehand";
+        '<div class="clm-colorrow">' +
+          '<input type="color" class="clm-colorpick" value="' + self._drawColor + '" title="Pick a color">' +
+          '<div class="clm-tp-colors">' + DRAW_SWATCHES.map(function (c) {
+            return '<span class="clm-tp-color" data-color="' + c + '" style="background:' + c + '"></span>';
+          }).join("") + '</div></div>' +
+        '<div class="clm-tp-note" data-act="drawhint">Tap the map to place.</div>' +
+        '<div class="clm-tp-btnrow">' +
+          '<button class="clm-tp-btn" data-act="delsel">Delete sel</button>' +
+          '<button class="clm-tp-btn" data-act="undo">Undo</button>' +
+          '<button class="clm-tp-btn" data-act="drawclear">Clear all</button></div>';
+      var setColor = function (c) {
+        self._drawColor = c; _lsSet("clm.drawColor", c);
+        pan.querySelectorAll("[data-color]").forEach(function (x) {
+          x.classList.toggle("on", x.getAttribute("data-color") === c);
+        });
+        var cp = pan.querySelector(".clm-colorpick"); if (cp && cp.value !== c) cp.value = c;
+        if (self._drawSel != null) {                 // recolor the selected shape live
+          var f = (self._drawFeats || []).filter(function (x) { return x.properties.id === self._drawSel; })[0];
+          if (f) { f.properties.color = c; self._drawRender(); }
+        }
+      };
       var syncMode = function () {
         pan.querySelectorAll("[data-mode]").forEach(function (m) {
           m.classList.toggle("on", m.getAttribute("data-mode") === self._drawMode);
         });
       };
       pan.querySelectorAll("[data-mode]").forEach(function (m) {
-        m.addEventListener("click", function () { self._drawMode = m.getAttribute("data-mode"); syncMode(); });
-      });
-      pan.querySelectorAll("[data-color]").forEach(function (c) {
-        c.classList.toggle("on", c.getAttribute("data-color") === self._drawColor);
-        c.addEventListener("click", function () {
-          self._drawColor = c.getAttribute("data-color");
-          pan.querySelectorAll("[data-color]").forEach(function (x) {
-            x.classList.toggle("on", x === c);
-          });
+        m.addEventListener("click", function () {
+          self._drawMode = m.getAttribute("data-mode"); self._arrowTail = null;
+          if (self._drawMode !== "select") self._drawSelect(null);
+          self._drawHint(self._drawMode === "arrow" ? "Tap the arrow tail, then the head."
+            : self._drawMode === "select" ? "Tap a shape to select; drag to move."
+            : self._drawMode === "freehand" ? "Drag to draw." : "Tap the map to place.");
+          syncMode();
         });
       });
+      pan.querySelectorAll("[data-color]").forEach(function (c) {
+        c.addEventListener("click", function () { setColor(c.getAttribute("data-color")); });
+      });
+      var cp = pan.querySelector(".clm-colorpick");
+      if (cp) cp.addEventListener("input", function () { setColor(cp.value); });
+      pan.querySelector('[data-act="delsel"]').addEventListener("click", function () { self._drawDeleteSel(); });
       pan.querySelector('[data-act="undo"]').addEventListener("click", function () { self._drawUndo(); });
       pan.querySelector('[data-act="drawclear"]').addEventListener("click", function () { self._drawClear(); });
+      pan.querySelectorAll("[data-color]").forEach(function (x) {
+        x.classList.toggle("on", x.getAttribute("data-color") === self._drawColor);
+      });
       syncMode();
     } else {
       pan.innerHTML = "";
@@ -1516,23 +1670,34 @@
           "circle-stroke-color": "#07101c", "circle-stroke-width": 1.5 } });
     }
     if (!map.getSource("clm-draw")) {
+      var cc = ["coalesce", ["get", "color"], "#ffd400"];
+      var sel = ["==", ["get", "sel"], true];
       map.addSource("clm-draw", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({ id: "clm-draw-fill", type: "fill", source: "clm-draw",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": cc, "fill-opacity": 0.22 } });
       map.addLayer({ id: "clm-draw-line", type: "line", source: "clm-draw",
-        filter: ["==", ["geometry-type"], "LineString"],
+        filter: ["match", ["geometry-type"], ["LineString", "MultiLineString", "Polygon"], true, false],
         layout: { "line-join": "round", "line-cap": "round" },
-        paint: { "line-color": ["coalesce", ["get", "color"], "#ffd400"], "line-width": 3 } });
+        paint: { "line-color": cc, "line-width": ["case", sel, 5, 3] } });
       map.addLayer({ id: "clm-draw-pt", type: "circle", source: "clm-draw",
         filter: ["==", ["geometry-type"], "Point"],
-        paint: { "circle-radius": 5, "circle-color": ["coalesce", ["get", "color"], "#ffd400"],
-          "circle-stroke-color": "#07101c", "circle-stroke-width": 1.5 } });
+        paint: {
+          "circle-radius": ["case", ["==", ["get", "shape"], "circle"], 12, ["case", sel, 8, 6]],
+          "circle-color": cc,
+          "circle-opacity": ["case", ["==", ["get", "shape"], "circle"], 0, 0.95],
+          "circle-stroke-color": ["case", sel, "#ffffff", cc],
+          "circle-stroke-width": ["case", ["==", ["get", "shape"], "circle"], 3, ["case", sel, 2.5, 1.4]]
+        } });
     }
     this._drawFeats = this._drawFeats || [];
+    this._drawLayers = ["clm-draw-fill", "clm-draw-line", "clm-draw-pt"];
     // Map interactions for the active tool.
     var self = this;
     map.on("click", function (e) {
       if (self.tool === "inspect") self._onInspectClick(e);
       else if (self.tool === "distance") self._onDistClick(e);
-      else if (self.tool === "draw" && self._drawMode === "point") self._drawAddPoint(e);
+      else if (self.tool === "draw") self._drawClick(e);
     });
   };
 
@@ -1553,17 +1718,32 @@
     }
     if (best >= 0) {
       var p = pts[best];
-      bits.push('Fix ' + fmtTime(p.t) + ' &middot; ' +
-        (p.wind_kt != null ? Math.round(p.wind_kt) + ' kt' : '&mdash;') + ' ' + sshsLabel(p.cls || "TD") +
-        (p.pressure_mb != null ? ' &middot; ' + Math.round(p.pressure_mb) + ' mb' : ''));
+      // Honest about ALIGNMENT: the nearest fix is rarely AT the click, so report
+      // how far away it is (great-circle) rather than implying it's the value here.
+      var awayKm = this._haversineKm([lng, lat], [p.lon, p.lat]);
+      bits.push('Nearest fix ' + fmtTime(p.t) + ' &middot; ' +
+        (p.wind_kt != null ? Math.round(p.wind_kt) + ' kt' : '&mdash;') + ' ' +
+        sshsLabel(p.cls || ktToCat(p.wind_kt)) +
+        (p.pressure_mb != null ? ' &middot; ' + Math.round(p.pressure_mb) + ' mb' : '') +
+        ' <small>(' + Math.round(awayKm) + ' km away)</small>');
     }
-    // active raster value (only if the layer exposes a sampler)
+    // Active imagery layer: report the layer + the frame currently shown (the
+    // tiles are rendered images, not a value grid, so report the honest frame
+    // time/coverage rather than a fabricated pixel value).
     var aL = this._layer(this.activeLayerId);
-    if (aL && aL.type === "raster" && typeof aL.sampleValue === "function") {
-      try {
-        var v = aL.sampleValue(lng, lat, aL.frames[aL.activeFrame]);
-        if (v != null) bits.push(escapeHtml(aL.label) + ': <b>' + escapeHtml(String(v)) + '</b>');
-      } catch (e2) {}
+    if (aL && aL.type === "raster") {
+      if (aL.unavailable) {
+        bits.push(escapeHtml(aL.label) + ': <small>unavailable for archived storms</small>');
+      } else if (aL._covered === false) {
+        bits.push(escapeHtml(aL.label) + ': <small>no pass near this time</small>');
+      } else {
+        var fr = (aL.frames || [])[aL.activeFrame];
+        if (typeof aL.sampleValue === "function" && fr) {
+          try { var v = aL.sampleValue(lng, lat, fr); if (v != null) bits.push(escapeHtml(aL.label) + ': <b>' + escapeHtml(String(v)) + '</b>'); } catch (e2) {}
+        } else if (fr && fr.time) {
+          bits.push(escapeHtml(aL.label) + ' &middot; <small>' + fmtTime(fr.time) + '</small>');
+        }
+      }
     }
     out.innerHTML = bits.join("<br>");
   };
@@ -1620,46 +1800,119 @@
     if (on && !this._drawWired) {
       this._drawWired = true;
       var canvas = this.map.getCanvasContainer();
+      function px(ev) { return [ev.offsetX != null ? ev.offsetX : ev.layerX,
+                                ev.offsetY != null ? ev.offsetY : ev.layerY]; }
       this._drawDown = function (ev) {
-        if (self.tool !== "draw" || self._drawMode !== "freehand") return;
-        ev.preventDefault();
-        self.map.dragPan.disable();
+        if (self.tool !== "draw") return;
+        // SELECT mode: grab the shape under the cursor + drag to move it.
+        if (self._drawMode === "select") {
+          var id = self._drawHitId(px(ev));
+          self._drawSelect(id);
+          if (id == null) return;
+          ev.preventDefault(); self.map.dragPan.disable();
+          var f = self._drawFeats.filter(function (x) { return x.properties.id === id; })[0];
+          var last = self.map.unproject(px(ev));
+          var mv = function (m2) {
+            var ll = self.map.unproject(px(m2));
+            _translateGeom(f.geometry, ll.lng - last.lng, ll.lat - last.lat);
+            last = ll; self._drawRender();
+          };
+          var up = function () {
+            canvas.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
+            self.map.dragPan.enable();
+          };
+          canvas.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
+          return;
+        }
+        // FREEHAND mode: drag a stroke.
+        if (self._drawMode !== "freehand") return;
+        ev.preventDefault(); self.map.dragPan.disable();
         self._stroke = { type: "Feature",
           geometry: { type: "LineString", coordinates: [] },
-          properties: { color: self._drawColor } };
-        var move = function (mv) {
-          var ll = self.map.unproject([mv.offsetX != null ? mv.offsetX : mv.layerX,
-                                        mv.offsetY != null ? mv.offsetY : mv.layerY]);
+          properties: { shape: "freehand", color: self._drawColor } };
+        var move = function (m2) {
+          var ll = self.map.unproject(px(m2));
           self._stroke.geometry.coordinates.push([ll.lng, ll.lat]);
           self._drawRender(true);
         };
-        var up = function () {
-          canvas.removeEventListener("mousemove", move);
-          document.removeEventListener("mouseup", up);
+        var fup = function () {
+          canvas.removeEventListener("mousemove", move); document.removeEventListener("mouseup", fup);
           self.map.dragPan.enable();
-          if (self._stroke.geometry.coordinates.length > 1) self._drawFeats.push(self._stroke);
+          if (self._stroke.geometry.coordinates.length > 1) {
+            self._stroke.properties.id = "d" + (++self._drawId);
+            self._drawFeats.push(self._stroke);
+          }
           self._stroke = null; self._drawRender();
         };
-        canvas.addEventListener("mousemove", move);
-        document.addEventListener("mouseup", up);
+        canvas.addEventListener("mousemove", move); document.addEventListener("mouseup", fup);
       };
       canvas.addEventListener("mousedown", this._drawDown);
     }
   };
-  P._drawAddPoint = function (e) {
-    this._drawFeats.push({ type: "Feature",
-      geometry: { type: "Point", coordinates: [e.lngLat.lng, e.lngLat.lat] },
-      properties: { color: this._drawColor } });
-    this._drawRender();
+  // Click router for the draw tool: select (hit-test) vs place a shape.
+  P._drawClick = function (e) {
+    if (this._drawMode === "select") { this._drawSelect(this._drawHitId(e.point)); return; }
+    if (this._drawMode === "freehand") return;     // freehand is a drag, not a click
+    this._drawPlace(e);
+  };
+  // Placement-relative shape half-size in degrees (so a shape is a sensible
+  // on-screen size at the zoom it was placed; it then scales with the map).
+  P._drawSize = function () {
+    if (!this.map) return 0.5;
+    var b = this.map.getBounds();
+    return Math.max(0.12, (b.getEast() - b.getWest()) * 0.028);
+  };
+  P._drawPlace = function (e) {
+    var lng = e.lngLat.lng, lat = e.lngLat.lat, s = this._drawSize();
+    var c = this._drawColor, m = this._drawMode, id = "d" + (++this._drawId), f;
+    function feat(geom) { return { type: "Feature", properties: { shape: m, color: c, id: id }, geometry: geom }; }
+    if (m === "arrow") {
+      if (!this._arrowTail) { this._arrowTail = [lng, lat]; this._drawHint("Tap the arrow head…"); return; }
+      f = feat({ type: "LineString", coordinates: _arrowCoords(this._arrowTail, [lng, lat]) });
+      this._arrowTail = null; this._drawHint("Tap the arrow tail, then the head.");
+    } else if (m === "dot" || m === "circle") {
+      f = feat({ type: "Point", coordinates: [lng, lat] });
+    } else if (m === "square") {
+      f = feat({ type: "Polygon", coordinates: [_sqCoords(lng, lat, s)] });
+    } else if (m === "triangle") {
+      f = feat({ type: "Polygon", coordinates: [_triCoords(lng, lat, s)] });
+    } else if (m === "x") {
+      f = feat({ type: "MultiLineString", coordinates: _xCoords(lng, lat, s) });
+    } else { return; }
+    this._drawFeats.push(f); this._drawRender();
+  };
+  P._drawHitId = function (point) {
+    if (!this.map) return null;
+    var fs = this.map.queryRenderedFeatures(point, { layers: this._drawLayers || [] });
+    for (var i = 0; i < fs.length; i++) {
+      var id = fs[i].properties && fs[i].properties.id; if (id != null) return id;
+    }
+    return null;
+  };
+  P._drawSelect = function (id) { this._drawSel = (id != null) ? id : null; this._drawRender(); };
+  P._drawDeleteSel = function () {
+    if (this._drawSel == null) return;
+    var sel = this._drawSel;
+    this._drawFeats = (this._drawFeats || []).filter(function (x) { return x.properties.id !== sel; });
+    this._drawSel = null; this._drawRender();
+  };
+  P._drawHint = function (txt) {
+    var el = this.dom.toolpanel && this.dom.toolpanel.querySelector('[data-act="drawhint"]');
+    if (el) el.textContent = txt || "";
   };
   P._drawRender = function (withStroke) {
     if (!this.map || !this.map.getSource("clm-draw")) return;
-    var feats = (this._drawFeats || []).slice();
+    var sel = this._drawSel;
+    var feats = (this._drawFeats || []).map(function (f) {
+      f.properties.sel = (f.properties.id === sel); return f;
+    });
     if (withStroke && this._stroke) feats.push(this._stroke);
     this.map.getSource("clm-draw").setData({ type: "FeatureCollection", features: feats });
   };
-  P._drawUndo = function () { (this._drawFeats || []).pop(); this._drawRender(); };
-  P._drawClear = function () { this._drawFeats = []; this._drawRender(); };
+  P._drawUndo = function () { (this._drawFeats || []).pop(); this._drawSel = null; this._drawRender(); };
+  P._drawClear = function () {
+    this._drawFeats = []; this._drawSel = null; this._arrowTail = null; this._drawRender();
+  };
 
   // ---- EXPORT (GL canvas + html2canvas overlay -> downloaded PNG) ----
   P.exportPng = function () {
