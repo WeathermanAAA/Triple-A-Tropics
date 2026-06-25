@@ -251,6 +251,31 @@
     ".clm-leg-bar{height:10px;border-radius:3px;border:1px solid var(--border,#232a36);}",
     ".clm-leg-ends{display:flex;justify-content:space-between;font-size:10px;",
       "color:var(--muted,#8ea2bd);margin-top:3px;}",
+    // tools right rail
+    ".clm-tools{flex:0 0 auto;display:flex;flex-direction:column;width:132px;",
+      "background:var(--bg,#0b0e13);border-left:1px solid var(--border,#232a36);overflow:auto;}",
+    ".clm-toolbtns{display:flex;flex-direction:column;gap:4px;padding:8px;}",
+    ".clm-toolb{display:flex;align-items:center;gap:7px;background:var(--panel,#11161f);",
+      "color:var(--fg,#e8eef5);border:1px solid var(--border,#232a36);border-radius:8px;",
+      "padding:8px 9px;font-size:12px;font-weight:600;cursor:pointer;text-align:left;}",
+    ".clm-toolb:hover{border-color:var(--cat-accent,#3fa4ff);}",
+    ".clm-toolb.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-toolb .clm-ti{font-size:14px;line-height:1;}",
+    ".clm-toolpanel{padding:0 8px 10px;font-size:11px;color:var(--fg,#e8eef5);}",
+    ".clm-tp-h{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;",
+      "color:var(--muted,#8ea2bd);margin:6px 0 5px;}",
+    ".clm-tp-note{color:var(--muted,#8ea2bd);font-size:10.5px;line-height:1.4;margin-bottom:6px;}",
+    ".clm-readout{background:var(--panel,#11161f);border:1px solid var(--border,#232a36);",
+      "border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.5;min-height:18px;}",
+    ".clm-tp-btn{display:inline-block;margin:6px 4px 0 0;background:var(--panel,#11161f);",
+      "color:var(--fg,#e8eef5);border:1px solid var(--border,#232a36);border-radius:7px;",
+      "padding:5px 9px;font-size:11px;cursor:pointer;}",
+    ".clm-tp-btn.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-tp-modes{display:flex;gap:5px;}",
+    ".clm-tp-colors{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px;}",
+    ".clm-tp-color{width:18px;height:18px;border-radius:50%;cursor:pointer;",
+      "border:2px solid transparent;box-shadow:0 0 0 1px var(--border,#232a36);}",
+    ".clm-tp-color.on{border-color:#fff;}",
     ".clm-rail-foot{margin-top:auto;padding:8px 11px;border-top:1px solid var(--border,#232a36);",
       "color:var(--muted,#8ea2bd);font-size:10px;line-height:1.45;}",
     // mobile rail drawer
@@ -310,6 +335,9 @@
       ".clm-railbtn{display:block;}",
       ".clm-valid{min-width:0;}",
       ".clm-speed{display:none;}",
+      ".clm-tools{position:absolute;top:8px;right:8px;z-index:6;width:118px;",
+        "max-height:calc(100% - 16px);border:1px solid var(--border,#232a36);",
+        "border-radius:10px;background:rgba(11,14,19,.94);}",
     "}",
     "@media (prefers-reduced-motion: reduce){.clm .active-marker .spinning{animation:none;}}"
   ].join("\n");
@@ -346,6 +374,26 @@
     s.onerror = function () {
       _mlState = 0;
       _mlWaiters.splice(0).forEach(function (f) { try { f(); } catch (e) {} });
+    };
+    document.head.appendChild(s);
+  }
+
+  // Generic one-shot lazy-loader for an external UMD lib (exposes `globalName`).
+  // Used for the tool libs (turf for geodesic distance, html2canvas for export).
+  // Always invokes cb (even on load failure) so callers degrade gracefully.
+  var _libState = {};
+  function _ensureLib(url, globalName, cb) {
+    if (window[globalName]) { cb(); return; }
+    var st = _libState[globalName] || (_libState[globalName] = { loading: false, waiters: [] });
+    st.waiters.push(cb);
+    if (st.loading) return;
+    st.loading = true;
+    var s = document.createElement("script");
+    s.src = url;
+    s.onload = function () { st.waiters.splice(0).forEach(function (f) { try { f(); } catch (e) {} }); };
+    s.onerror = function () {
+      st.loading = false;
+      st.waiters.splice(0).forEach(function (f) { try { f(); } catch (e) {} });
     };
     document.head.appendChild(s);
   }
@@ -434,13 +482,15 @@
     var self = this;
     railBtn.addEventListener("click", function () { r.classList.toggle("rail-open"); });
     body.appendChild(rail); body.appendChild(mapWrap); mapWrap.appendChild(railBtn);
+    var tools = document.createElement("div"); tools.className = "clm-tools";
+    body.appendChild(tools);
     r.appendChild(body);
 
     var time = document.createElement("div"); time.className = "clm-time";
     r.appendChild(time);
 
     this.dom.body = body; this.dom.rail = rail; this.dom.mapWrap = mapWrap;
-    this.dom.time = time;
+    this.dom.tools = tools; this.dom.time = time;
 
     // The track layer is the always-present base layer (Tracks group, active).
     var trackLayer = {
@@ -449,8 +499,12 @@
     };
     this._applySaved(trackLayer);
     this.layers.push(trackLayer);
+    this.tool = null;            // active tool: inspect | distance | draw | null
+    this._drawColor = "#ffd400";
+    this._distPts = [];
     this._buildRail();
     this._buildTime();
+    this._buildTools();
   };
 
   // ---- MapLibre init (ported engine) ----
@@ -481,7 +535,7 @@
     });
     this.map.addControl(new maplibregl.NavigationControl({
       visualizePitch: false, showCompass: false
-    }), "top-right");
+    }), "bottom-right");
     this.map.dragRotate.disable();
     this.map.touchZoomRotate.disableRotation();
 
@@ -501,6 +555,8 @@
         self._applyVisibility(L);
         if (L.opacity !== 1) self.setLayerOpacity(L.id, L.opacity);
       });
+      // Tool layers (distance + draw) sit ABOVE the track + markers.
+      self._setupToolLayers();
     });
   };
 
@@ -1129,6 +1185,305 @@
     if (this.dom.playBtn) { this.dom.playBtn.textContent = "▶"; this.dom.playBtn.classList.remove("on"); }
   };
   P.step = function (d) { this.pause(); this._setPlayhead(this.playhead + d); };
+
+  // ===================================================================
+  // TOOLS (right rail): inspect / distance / draw / export
+  // ===================================================================
+  P._buildTools = function () {
+    var t = this.dom.tools; if (!t) return;
+    var self = this;
+    var BTNS = [
+      { id: "inspect", label: "Inspect", icon: "&#9678;", title: "Inspect values" },
+      { id: "distance", label: "Distance", icon: "&#8596;", title: "Measure distance + bearing" },
+      { id: "draw", label: "Draw", icon: "&#9998;", title: "Draw annotations" },
+      { id: "export", label: "Export", icon: "&#8615;", title: "Export PNG" }
+    ];
+    var html = '<div class="clm-toolbtns">';
+    BTNS.forEach(function (b) {
+      html += '<button class="clm-toolb" type="button" data-tool="' + b.id + '" title="' +
+        b.title + '"><span class="clm-ti">' + b.icon + '</span>' + b.label + '</button>';
+    });
+    html += '</div><div class="clm-toolpanel" id="clm-toolpanel"></div>';
+    t.innerHTML = html;
+    t.querySelectorAll("[data-tool]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var id = btn.getAttribute("data-tool");
+        if (id === "export") { self.exportPng(); return; }
+        self._setTool(self.tool === id ? null : id);
+      });
+    });
+    this.dom.toolpanel = t.querySelector("#clm-toolpanel");
+  };
+
+  P._setTool = function (name) {
+    this.tool = name;
+    var btns = this.dom.tools ? this.dom.tools.querySelectorAll(".clm-toolb") : [];
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle("on", btns[i].getAttribute("data-tool") === name);
+    }
+    // distance resets its in-progress points when (re)entered or left
+    this._distPts = [];
+    this._refreshDistance();
+    if (name === "distance") {
+      _ensureLib("https://unpkg.com/@turf/turf@7/turf.min.js", "turf", function () {});
+    }
+    if (this.map) this.map.getCanvas().style.cursor = name ? "crosshair" : "";
+    this._drawSetEnabled(name === "draw");
+    this._renderToolPanel();
+  };
+
+  P._renderToolPanel = function () {
+    var pan = this.dom.toolpanel; if (!pan) return;
+    var self = this;
+    if (this.tool === "inspect") {
+      pan.innerHTML = '<div class="clm-tp-h">Inspect</div>' +
+        '<div class="clm-tp-note">Tap the map to read the nearest fix (and the ' +
+        'active layer\'s value where available).</div>' +
+        '<div class="clm-readout" id="clm-readout">&mdash;</div>';
+    } else if (this.tool === "distance") {
+      pan.innerHTML = '<div class="clm-tp-h">Distance</div>' +
+        '<div class="clm-tp-note">Tap two points for great-circle distance + bearing.</div>' +
+        '<div class="clm-readout" id="clm-distout">&mdash;</div>' +
+        '<button class="clm-tp-btn" data-act="distclear">Clear</button>';
+      pan.querySelector('[data-act="distclear"]').addEventListener("click", function () {
+        self._distPts = []; self._refreshDistance();
+      });
+    } else if (this.tool === "draw") {
+      var COLORS = ["#ffd400", "#ff4d3b", "#3fa4ff", "#46c56a", "#ffffff", "#07101c"];
+      pan.innerHTML = '<div class="clm-tp-h">Draw</div>' +
+        '<div class="clm-tp-modes">' +
+          '<button class="clm-tp-btn" data-mode="freehand">Freehand</button>' +
+          '<button class="clm-tp-btn" data-mode="point">Point</button></div>' +
+        '<div class="clm-tp-colors">' + COLORS.map(function (c) {
+          return '<span class="clm-tp-color" data-color="' + c + '" style="background:' + c + '"></span>';
+        }).join("") + '</div>' +
+        '<button class="clm-tp-btn" data-act="undo">Undo</button>' +
+        '<button class="clm-tp-btn" data-act="drawclear">Clear all</button>';
+      this._drawMode = this._drawMode || "freehand";
+      var syncMode = function () {
+        pan.querySelectorAll("[data-mode]").forEach(function (m) {
+          m.classList.toggle("on", m.getAttribute("data-mode") === self._drawMode);
+        });
+      };
+      pan.querySelectorAll("[data-mode]").forEach(function (m) {
+        m.addEventListener("click", function () { self._drawMode = m.getAttribute("data-mode"); syncMode(); });
+      });
+      pan.querySelectorAll("[data-color]").forEach(function (c) {
+        c.classList.toggle("on", c.getAttribute("data-color") === self._drawColor);
+        c.addEventListener("click", function () {
+          self._drawColor = c.getAttribute("data-color");
+          pan.querySelectorAll("[data-color]").forEach(function (x) {
+            x.classList.toggle("on", x === c);
+          });
+        });
+      });
+      pan.querySelector('[data-act="undo"]').addEventListener("click", function () { self._drawUndo(); });
+      pan.querySelector('[data-act="drawclear"]').addEventListener("click", function () { self._drawClear(); });
+      syncMode();
+    } else {
+      pan.innerHTML = "";
+    }
+  };
+
+  // ---- tool map layers (distance + draw); called on map load ----
+  P._setupToolLayers = function () {
+    var map = this.map; if (!map) return;
+    if (!map.getSource("clm-dist")) {
+      map.addSource("clm-dist", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({ id: "clm-dist-line", type: "line", source: "clm-dist",
+        filter: ["==", ["geometry-type"], "LineString"],
+        paint: { "line-color": "#ffd400", "line-width": 2, "line-dasharray": [2, 1.5] } });
+      map.addLayer({ id: "clm-dist-pt", type: "circle", source: "clm-dist",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": 4, "circle-color": "#ffd400",
+          "circle-stroke-color": "#07101c", "circle-stroke-width": 1.5 } });
+    }
+    if (!map.getSource("clm-draw")) {
+      map.addSource("clm-draw", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({ id: "clm-draw-line", type: "line", source: "clm-draw",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": ["coalesce", ["get", "color"], "#ffd400"], "line-width": 3 } });
+      map.addLayer({ id: "clm-draw-pt", type: "circle", source: "clm-draw",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": 5, "circle-color": ["coalesce", ["get", "color"], "#ffd400"],
+          "circle-stroke-color": "#07101c", "circle-stroke-width": 1.5 } });
+    }
+    this._drawFeats = this._drawFeats || [];
+    // Map interactions for the active tool.
+    var self = this;
+    map.on("click", function (e) {
+      if (self.tool === "inspect") self._onInspectClick(e);
+      else if (self.tool === "distance") self._onDistClick(e);
+      else if (self.tool === "draw" && self._drawMode === "point") self._drawAddPoint(e);
+    });
+  };
+
+  // ---- INSPECT (map-native: nearest fix + active raster value where exposed) ----
+  P._onInspectClick = function (e) {
+    var out = this.dom.toolpanel && this.dom.toolpanel.querySelector("#clm-readout");
+    if (!out) return;
+    var lng = e.lngLat.lng, lat = e.lngLat.lat;
+    var bits = ['<b>' + lat.toFixed(2) + '&deg;, ' + lng.toFixed(2) + '&deg;</b>'];
+    // nearest track fix
+    var pts = this.storm.points || [];
+    var best = -1, bd = 1e9;
+    for (var i = 0; i < pts.length; i++) {
+      if (pts[i].lat == null) continue;
+      var dx = (pts[i].lon - lng) * Math.cos(lat * Math.PI / 180), dy = pts[i].lat - lat;
+      var d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best >= 0) {
+      var p = pts[best];
+      bits.push('Fix ' + fmtTime(p.t) + ' &middot; ' +
+        (p.wind_kt != null ? Math.round(p.wind_kt) + ' kt' : '&mdash;') + ' ' + sshsLabel(p.cls || "TD") +
+        (p.pressure_mb != null ? ' &middot; ' + Math.round(p.pressure_mb) + ' mb' : ''));
+    }
+    // active raster value (only if the layer exposes a sampler)
+    var aL = this._layer(this.activeLayerId);
+    if (aL && aL.type === "raster" && typeof aL.sampleValue === "function") {
+      try {
+        var v = aL.sampleValue(lng, lat, aL.frames[aL.activeFrame]);
+        if (v != null) bits.push(escapeHtml(aL.label) + ': <b>' + escapeHtml(String(v)) + '</b>');
+      } catch (e2) {}
+    }
+    out.innerHTML = bits.join("<br>");
+  };
+
+  // ---- DISTANCE (great-circle via turf if available, else haversine) ----
+  P._onDistClick = function (e) {
+    this._distPts.push([e.lngLat.lng, e.lngLat.lat]);
+    if (this._distPts.length > 2) this._distPts = [[e.lngLat.lng, e.lngLat.lat]];
+    this._refreshDistance();
+  };
+  P._refreshDistance = function () {
+    if (!this.map || !this.map.getSource("clm-dist")) return;
+    var pts = this._distPts || [];
+    var feats = pts.map(function (c) {
+      return { type: "Feature", geometry: { type: "Point", coordinates: c }, properties: {} };
+    });
+    var out = this.dom.toolpanel && this.dom.toolpanel.querySelector("#clm-distout");
+    if (pts.length === 2) {
+      var a = pts[0], b = pts[1];
+      var line = (window.turf && window.turf.greatCircle)
+        ? window.turf.greatCircle(a, b, { npoints: 64 })
+        : { type: "Feature", geometry: { type: "LineString", coordinates: [a, b] }, properties: {} };
+      feats.push(line);
+      var km = this._haversineKm(a, b), brg = this._bearing(a, b);
+      if (window.turf && window.turf.distance) {
+        try { km = window.turf.distance(a, b, { units: "kilometers" }); } catch (e) {}
+      }
+      if (out) out.innerHTML = '<b>' + km.toFixed(0) + ' km</b> &middot; ' +
+        (km * 0.539957).toFixed(0) + ' nmi<br>bearing ' + brg.toFixed(0) + '&deg;';
+    } else if (out) {
+      out.innerHTML = pts.length === 1 ? 'Tap a second point&hellip;' : '&mdash;';
+    }
+    this.map.getSource("clm-dist").setData({ type: "FeatureCollection", features: feats });
+  };
+  P._haversineKm = function (a, b) {
+    var R = 6371, toR = Math.PI / 180;
+    var dLat = (b[1] - a[1]) * toR, dLon = (b[0] - a[0]) * toR;
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(a[1] * toR) * Math.cos(b[1] * toR) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  };
+  P._bearing = function (a, b) {
+    var toR = Math.PI / 180, toD = 180 / Math.PI;
+    var y = Math.sin((b[0] - a[0]) * toR) * Math.cos(b[1] * toR);
+    var x = Math.cos(a[1] * toR) * Math.sin(b[1] * toR) -
+      Math.sin(a[1] * toR) * Math.cos(b[1] * toR) * Math.cos((b[0] - a[0]) * toR);
+    return (Math.atan2(y, x) * toD + 360) % 360;
+  };
+
+  // ---- DRAW (native: freehand strokes + points, color, undo, clear) ----
+  P._drawSetEnabled = function (on) {
+    if (!this.map) return;
+    var self = this;
+    if (on && !this._drawWired) {
+      this._drawWired = true;
+      var canvas = this.map.getCanvasContainer();
+      this._drawDown = function (ev) {
+        if (self.tool !== "draw" || self._drawMode !== "freehand") return;
+        ev.preventDefault();
+        self.map.dragPan.disable();
+        self._stroke = { type: "Feature",
+          geometry: { type: "LineString", coordinates: [] },
+          properties: { color: self._drawColor } };
+        var move = function (mv) {
+          var ll = self.map.unproject([mv.offsetX != null ? mv.offsetX : mv.layerX,
+                                        mv.offsetY != null ? mv.offsetY : mv.layerY]);
+          self._stroke.geometry.coordinates.push([ll.lng, ll.lat]);
+          self._drawRender(true);
+        };
+        var up = function () {
+          canvas.removeEventListener("mousemove", move);
+          document.removeEventListener("mouseup", up);
+          self.map.dragPan.enable();
+          if (self._stroke.geometry.coordinates.length > 1) self._drawFeats.push(self._stroke);
+          self._stroke = null; self._drawRender();
+        };
+        canvas.addEventListener("mousemove", move);
+        document.addEventListener("mouseup", up);
+      };
+      canvas.addEventListener("mousedown", this._drawDown);
+    }
+  };
+  P._drawAddPoint = function (e) {
+    this._drawFeats.push({ type: "Feature",
+      geometry: { type: "Point", coordinates: [e.lngLat.lng, e.lngLat.lat] },
+      properties: { color: this._drawColor } });
+    this._drawRender();
+  };
+  P._drawRender = function (withStroke) {
+    if (!this.map || !this.map.getSource("clm-draw")) return;
+    var feats = (this._drawFeats || []).slice();
+    if (withStroke && this._stroke) feats.push(this._stroke);
+    this.map.getSource("clm-draw").setData({ type: "FeatureCollection", features: feats });
+  };
+  P._drawUndo = function () { (this._drawFeats || []).pop(); this._drawRender(); };
+  P._drawClear = function () { this._drawFeats = []; this._drawRender(); };
+
+  // ---- EXPORT (GL canvas + html2canvas overlay -> downloaded PNG) ----
+  P.exportPng = function () {
+    var self = this;
+    if (!this.map) return;
+    var glUrl;
+    try { glUrl = this.map.getCanvas().toDataURL("image/png"); }
+    catch (e) { return; }
+    var w = this.map.getCanvas().width, h = this.map.getCanvas().height;
+    function download(dataUrl) {
+      var a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = "cyclolab-" + (self.storm.sid || self.storm.name || "map") + ".png";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+    function composite(overlayCanvas) {
+      var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+      var ctx = cv.getContext("2d");
+      var gl = new Image();
+      gl.onload = function () {
+        ctx.drawImage(gl, 0, 0, w, h);
+        if (overlayCanvas) {
+          try { ctx.drawImage(overlayCanvas, 0, 0, w, h); } catch (e) {}
+        }
+        download(cv.toDataURL("image/png"));
+      };
+      gl.src = glUrl;
+    }
+    // html2canvas captures the HTML overlays (glyph markers, controls); skip the
+    // GL canvas (already captured) so it isn't drawn blank over the basemap.
+    _ensureLib("https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
+      "html2canvas", function () {
+        if (!window.html2canvas) { composite(null); return; }
+        window.html2canvas(self.dom.mapWrap, {
+          backgroundColor: null, logging: false, scale: w / self.dom.mapWrap.clientWidth,
+          ignoreElements: function (el) {
+            return el.classList && el.classList.contains("maplibregl-canvas");
+          }
+        }).then(composite).catch(function () { composite(null); });
+      });
+  };
 
   // ---- lifecycle (paused on tab hide; CycloLab calls these) ----
   P._pause = function () { this._wasPlaying = this.playing; this.pause(); };
