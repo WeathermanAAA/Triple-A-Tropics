@@ -1,16 +1,20 @@
 """tcprimed - OBSERVED passive-microwave imagery for tropical cyclones.
 
 Renders 89 GHz PCT (polarization-corrected) and 37 GHz color composites for
-tropical-cyclone overpasses from NOAA/CIRA TC-PRIMED (the anonymous public S3
-bucket noaa-nesdis-tcprimed-pds), writes a per-storm manifest + per-overpass
-index + PNGs into a build dir, and the workflow syncs that tree to R2 under
-microwave/. Mirrors the reconobs build pattern (growing-union manifest, kill
-switch, fail-loud-but-non-destructive) and the HAFS sim-MW render (compute_pct89
-in degC + the ice89h palette).
+tropical-cyclone overpasses, writes a per-storm manifest + per-overpass index +
+PNGs into a build dir, and the workflow syncs that tree to R2 under microwave/.
+Both products use the canonical NRL passive-MW recipes (89 PCT on the NRL ice-
+scattering colormap; 37 GHz true-color RGB) -- see tcprimed.render. PCT math
+reuses hafs_render.compute_pct89. Mirrors the reconobs build pattern (growing-
+union manifest, kill switch, fail-loud-but-non-destructive).
 
-This is an ARCHIVE / RECENT-STORM product: TC-PRIMED is research-tiered, with
-`final` published post-season and `preliminary` lagging hours-to-days. It is NOT
-real-time; the viewer says so.
+Two data tiers merge into the one microwave/ manifest:
+  * ARCHIVE: NOAA/CIRA TC-PRIMED (anonymous public S3 bucket
+    noaa-nesdis-tcprimed-pds) -- research-tiered (`final` post-season,
+    `preliminary` lagging hours-to-days). See tcprimed.fetch / build.build.
+  * LIVE/NRT: NASA GPM / PPS near-real-time GPM-constellation 1C (~1-3 h
+    latency) for currently-active storms. See tcprimed.pps / build.build_live.
+The viewer's disclosure describes both tiers.
 """
 
 SCHEMA_VERSION = 1

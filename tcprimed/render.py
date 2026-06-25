@@ -1,17 +1,27 @@
 """tcprimed.render - storm-centered equirectangular PNGs for a TC overpass.
 
-Two products per overpass:
-  * 89 GHz PCT  (polarization-corrected Tb, ice89h palette, displayed in K)
-  * 37 GHz color (NRL 2-channel RGB: R=37H, G=37V, B=37V, each scaled 180->280 K)
+Two products per overpass, both rendered with the canonical NRL passive-microwave
+recipes (the ones the operational TC analysis community use; refs below):
 
-The swath is drawn on its NATIVE 2-D lat/lon grid with ``pcolormesh`` (one filled
-quad per footprint) in a CENTER-RELATIVE (unwrapped) longitude frame, then the
-axes is cropped to a storm-centered square. Native quads fill solid with no
-inter-scanline gaps even for the coarse imagers (SSMIS 37 GHz), so there is no
-"venetian-blind" striping; the axes crop handles the swath edge. Self-contained:
-no cartopy; the coastline/border drawer reads the repo's ne_50m_*.geojson and
-breaks each ring at large longitude jumps. PCT math is hafs_render.compute_pct89
-(degC); the palette is tat_palettes ice89h.
+  * 89 GHz PCT   polarization-corrected Tb, PCT = 1.818*Tb_89V - 0.818*Tb_89H
+                 (Spencer et al. 1989; the 85/89 GHz scattering channel), colored
+                 with the continuous NRL 89 GHz ice-scattering table over
+                 Normalize(105 K, 305 K) and displayed in KELVIN: deep ice
+                 scattering reads dark-gray -> maroon -> red; warm clear ocean
+                 reads light blue. (Kieper & Jiang 2012; Lee et al. 2002.)
+  * 37 GHz color NRL 37 GHz true-color RGB from the 37 V/H pair (no colormap):
+                 R = ice scattering (low pct37 = 2.181*Tb_37V - 1.181*Tb_37H),
+                 G = 37V warmth, B = 37H emission. Green = clear ocean, cyan =
+                 warm rain, magenta = deep convection, red = ice scattering.
+                 (Grody 1993; the warm-rain / scattering 37 GHz signal.)
+
+The swath is resampled onto a regular storm-centered grid by LINEAR (Delaunay)
+interpolation in a CENTER-RELATIVE (unwrapped) longitude frame, then drawn with a
+bilinear ``imshow`` -- the continuous cyclonicwx/NRL look, gap-free even for the
+coarse imagers (SSMIS), with a clean swath edge (cells outside the data convex
+hull stay transparent). Self-contained: no cartopy; the coastline/border drawer
+reads the repo's ne_50m_*.geojson and breaks each ring at large longitude jumps.
+PCT math is hafs_render.compute_pct89 (degC, converted to K for display).
 """
 from __future__ import annotations
 
@@ -28,12 +38,12 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap, Normalize  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
 
 import netCDF4 as nc  # noqa: E402
 from scipy.interpolate import griddata  # noqa: E402
 
-import tat_palettes as tp  # noqa: E402
 from hafs_render.hafs_plot import compute_pct89  # noqa: E402
 
 from . import PMW_CHANNELS, SOURCE_ARCHIVE
@@ -55,6 +65,36 @@ FILL_THRESHOLD_K = 50.0      # Tb below this -> fill / bad pixel
 _HERE = Path(__file__).resolve().parent
 # The ne_50m geojsons live at the repo root (one level up from this package).
 _REPO_ROOT = _HERE.parent
+
+
+# ---------------------------------------------------------------------------
+# 89 GHz PCT colormap (canonical NRL 89 GHz ice-scattering color table)
+# ---------------------------------------------------------------------------
+# The 89 PCT (PCT = 1.818*Tb_89V - 0.818*Tb_89H; compute_pct89) is colored on the
+# operational NRL/CIMSS 89 GHz table: a continuous LinearSegmentedColormap over
+# Normalize(105 K, 305 K), each anchor placed at position (K - 105) / 200. Deep ice
+# scattering (cold PCT) reads dark-gray -> gray -> maroon -> red; the mids run
+# orange -> gold -> green; warm clear ocean (high PCT) reads blue -> light blue.
+# This is the real passive-MW look (NOT an IR ramp). Kept LOCAL to this product so
+# the HAFS sim-MW ``ice89h`` palette (tuned separately) is untouched.
+_NRL89_VMIN_K, _NRL89_VMAX_K = 105.0, 305.0
+_NRL89_ANCHORS_K = [
+    (105, "#303030"), (125, "#606060"), (150, "#800000"), (180, "#FF0000"),
+    (205, "#FF8C00"), (212, "#FFD700"), (228, "#ADFF2F"), (245, "#00CC44"),
+    (254, "#00DDCC"), (270, "#0066FF"), (280, "#0000CC"), (305, "#8888FF"),
+]
+_NRL89_CMAP = LinearSegmentedColormap.from_list(
+    "nrl89pct",
+    [((k - _NRL89_VMIN_K) / (_NRL89_VMAX_K - _NRL89_VMIN_K), c)
+     for k, c in _NRL89_ANCHORS_K],
+).with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
+# Colorbar ticks (K): an evenly-spaced span of the 105-305 K range.
+_NRL89_TICKS_K = [105, 130, 155, 180, 205, 230, 255, 280, 305]
+
+
+def nrl89_norm() -> Normalize:
+    """Fresh Normalize over the 89 PCT 105-305 K domain (per-call, not shared)."""
+    return Normalize(vmin=_NRL89_VMIN_K, vmax=_NRL89_VMAX_K)
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +211,6 @@ def _lat_label(y: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Native-swath mesh draw (pcolormesh, gap-free)
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Smooth swath -> regular grid resample (linear interpolation, gap-free)
 # ---------------------------------------------------------------------------
 def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
@@ -284,15 +321,22 @@ def _draw_coast(ax, features, clon, extent, color, lw, zorder):
 # 37 GHz color recipe (NRL 2-channel)
 # ---------------------------------------------------------------------------
 def _color37_rgba(tb37v: np.ndarray, tb37h: np.ndarray) -> np.ndarray:
-    """R=37H, G=37V, B=37V, each scaled clip((Tb-180)/100, 0, 1). Alpha 0 where
-    either channel is fill -> transparent. Cyan/green ocean, magenta/pink heavy
-    convection, white cold ice."""
-    def s(x):
-        return np.clip((x - 180.0) / (280.0 - 180.0), 0.0, 1.0)
-    r = s(tb37h)
-    g = s(tb37v)
-    b = s(tb37v)
-    good = np.isfinite(tb37v) & np.isfinite(tb37h)
+    """Canonical NRL 37 GHz true-color RGB from the 37 V/H pair (no colormap).
+
+        pct37 = 2.181*Tb_37V - 1.181*Tb_37H
+        R = clip((280 - pct37) / 20, 0, 1)   # ice scattering (low pct37 -> red)
+        G = clip((Tb_37V - 180) / 120, 0, 1) # 37V warmth
+        B = clip((Tb_37H - 160) / 140, 0, 1) # 37H emission
+
+    Scene: green = clear ocean, cyan = warm rain, magenta = deep convection,
+    red = ice scattering. Alpha 0 (transparent) where either channel is invalid
+    (non-finite or Tb <= 0), so the swath edge and data gaps drop out cleanly."""
+    pct37 = 2.181 * tb37v - 1.181 * tb37h
+    r = np.clip((280.0 - pct37) / 20.0, 0.0, 1.0)
+    g = np.clip((tb37v - 180.0) / 120.0, 0.0, 1.0)
+    b = np.clip((tb37h - 160.0) / 140.0, 0.0, 1.0)
+    good = (np.isfinite(tb37v) & np.isfinite(tb37h)
+            & (tb37v > 0.0) & (tb37h > 0.0))
     rgba = np.zeros(tb37v.shape + (4,), dtype=float)
     rgba[..., 0] = np.where(good, r, 0.0)
     rgba[..., 1] = np.where(good, g, 0.0)
@@ -442,42 +486,58 @@ def _decorate_axes(ax, clon, extent):
 
 
 def render_89pct(meta: dict, out_path: str) -> str:
-    """Render the 89 GHz PCT product. Returns out_path."""
+    """Render the 89 GHz PCT product (canonical NRL ice-scattering colormap,
+    displayed in Kelvin). Returns out_path.
+
+    Falls back to 89 GHz V-pol alone as a PCT proxy when the 89H channel is
+    entirely fill (some SSMIS-F17 / partial passes carry only one usable 89
+    polarization): over clear ocean PCT ~= V, and ice scattering still depresses
+    V, so the pass publishes a usable 89 product instead of being dropped."""
     v_c = meta["tb89v"] - 273.15
     h_c = meta["tb89h"] - 273.15
     pct_c = compute_pct89({0: v_c, 1: h_c}, 0, 1)   # degC, clipped [105,290] K
-    if pct_c is None or not np.isfinite(pct_c).any():
+    proxy = False
+    if pct_c is not None and np.isfinite(pct_c).any():
+        # PCT coefficients sum to 1, so degC->K is the exact +273.15 offset.
+        pct_k = pct_c + 273.15
+    elif np.isfinite(meta["tb89v"]).any():
+        pct_k = np.clip(np.asarray(meta["tb89v"], dtype=float),
+                        _NRL89_VMIN_K, _NRL89_VMAX_K)
+        proxy = True
+    else:
         raise ValueError("no valid 89 GHz pixels")
-    # Smooth-resample the PCT onto a regular grid (cyclonicwx look, gap-free).
-    extent, (pct_g,) = _regrid(meta["lat89"], meta["lon89"], [pct_c],
+
+    # Smooth-resample the PCT (in K) onto a regular grid (cyclonicwx look, gap-free).
+    extent, (pct_g,) = _regrid(meta["lat89"], meta["lon89"], [pct_k],
                                meta["clat"], meta["clon"])
     if not np.isfinite(pct_g).any():
         raise ValueError("89 GHz swath does not cover the storm-centered box")
 
-    enh = tp.get_enhancement("ice89h")
-    cmap = enh["cmap"].with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
-    norm = tp.enhancement_norm("ice89h")
+    cmap = _NRL89_CMAP
+    norm = nrl89_norm()
 
     # MIN BT from the RAW swath (the true coldest pixel); the smoothed grid warms
     # extremes via interpolation, so it would under-report the scattering minimum.
-    btmin_k = float(np.nanmin(pct_c)) + 273.15
+    btmin_k = float(np.nanmin(pct_k))
     right_stat = f"MIN BT {btmin_k:.1f} K"
 
+    product_label = ("89 GHz PCT (polarization-corrected)" if not proxy
+                     else "89 GHz V-pol (PCT proxy)")
     fig, ax, extent, geom = _common_figure(
-        meta, "89 GHz PCT (polarization-corrected)",
+        meta, product_label,
         f"{meta.get('source_label', SOURCE_ARCHIVE)} · {meta['platform']}",
         right_stat)
 
     cf = _draw_scalar_image(ax, extent, pct_g, cmap, norm, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)
 
-    # Kelvin-labelled colorbar (ticks placed at K-273.15 on the degC norm).
+    # Kelvin colorbar (the norm and the data are both in Kelvin).
     (fig_w, fig_h, left_in, right_in, map_bottom, map_h, map_w,
      botpad_in, foot_in) = geom
     cax = fig.add_axes([(left_in + map_w + 0.18) / fig_w, map_bottom / fig_h,
                         0.18 / fig_w, map_h / fig_h])
-    cb = fig.colorbar(cf, cax=cax, ticks=[k - 273.15 for k in enh["ticks"]])
-    cb.set_ticklabels([f"{k:g}" for k in enh["ticks"]])
+    cb = fig.colorbar(cf, cax=cax, ticks=_NRL89_TICKS_K)
+    cb.set_ticklabels([f"{k:g}" for k in _NRL89_TICKS_K])
     cb.set_label("Brightness Temperature (K)", color=TEXT_COLOR, fontsize=9.5)
     cb.ax.tick_params(colors=MUTED_COLOR, labelsize=8)
     cb.outline.set_edgecolor(TICK_COLOR)
