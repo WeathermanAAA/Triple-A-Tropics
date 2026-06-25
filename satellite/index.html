@@ -1540,7 +1540,7 @@
 
 <script>
 // ---- Componentized satellite viewer (factory) -----------------------------
-// THE DUMB PLAYER (the cyclonicwx / TC-ATLAS approach). One visible <img> per
+// THE DUMB PLAYER (the cyclonicwx single-visible-frame approach). One visible <img> per
 // viewer. Every frame is preloaded as its own decoded Image held in a JS
 // array; advancing a frame = setting the visible <img>'s src to the next
 // frame's already-cached URL — no network, no decode work on the tick. Pacing
@@ -1916,7 +1916,7 @@ function makeSatViewer(idPrefix, opts) {
       if (sat.frames[j].ok) { satShow(j); return; }
     }
   }
-  // The whole pacing engine (the TC-ATLAS pattern). Don't "improve" it.
+  // The whole pacing engine (the dumb-player pattern). Don't "improve" it.
   function satTick(ts) {
     if (!sat.playing) return;
     if (ts - sat.lastTick >= satStepMs()) { sat.lastTick = ts; satAdvance(); }

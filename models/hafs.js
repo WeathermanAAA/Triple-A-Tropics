@@ -936,7 +936,7 @@
     }
   };
 
-  // The whole pacing engine (the satellite sat-simple / TC-ATLAS pattern):
+  // The whole pacing engine (the satellite sat-simple dumb-player pattern):
   // one rAF loop, advance when enough wall-clock has elapsed. Don't reintroduce
   // setInterval — it drifts off vsync and stutters under load.
   HafsViewer.prototype._tick = function (ts) {
