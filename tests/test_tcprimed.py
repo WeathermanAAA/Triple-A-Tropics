@@ -132,31 +132,81 @@ class TestPCT(unittest.TestCase):
 
 
 class TestColor37(unittest.TestCase):
+    """Canonical NRL 37 GHz true-color RGB (no colormap):
+        pct37 = 2.181*V - 1.181*H
+        R = clip((280 - pct37)/20)   G = clip((V-180)/120)   B = clip((H-160)/140)
+    Scene: green=clear ocean, cyan=warm rain, magenta=deep convection, red=ice."""
+
     def setUp(self):
         from tcprimed.render import _color37_rgba
         self.color = _color37_rgba
 
-    def test_scaling_and_alpha(self):
-        # 180 K -> 0, 280 K -> 1; fill -> transparent.
-        v = np.array([[180.0, 280.0, np.nan]])
-        h = np.array([[180.0, 280.0, 200.0]])
-        rgba = self.color(v, h)
-        # cold-cold pixel: all channels ~0, opaque
-        self.assertAlmostEqual(rgba[0, 0, 1], 0.0, places=5)  # G = 37V
-        self.assertEqual(rgba[0, 0, 3], 1.0)
-        # warm-warm pixel: all channels ~1
-        self.assertAlmostEqual(rgba[0, 1, 1], 1.0, places=5)
-        self.assertEqual(rgba[0, 1, 3], 1.0)
-        # fill in V -> transparent
-        self.assertEqual(rgba[0, 2, 3], 0.0)
+    @staticmethod
+    def _expect(v, h):
+        pct37 = 2.181 * v - 1.181 * h
+        return (max(0.0, min(1.0, (280.0 - pct37) / 20.0)),
+                max(0.0, min(1.0, (v - 180.0) / 120.0)),
+                max(0.0, min(1.0, (h - 160.0) / 140.0)))
 
-    def test_channel_assignment(self):
-        # R=37H, G=37V, B=37V. Make H>V so R differs from G/B.
-        v = np.array([[200.0]])
-        h = np.array([[260.0]])
+    def test_recipe_arithmetic(self):
+        # Spot-check the exact per-channel arithmetic at a mid scene point.
+        v, h = 240.0, 200.0
+        rgba = self.color(np.array([[v]]), np.array([[h]]))
+        er, eg, eb = self._expect(v, h)
+        self.assertAlmostEqual(rgba[0, 0, 0], er, places=5)
+        self.assertAlmostEqual(rgba[0, 0, 1], eg, places=5)
+        self.assertAlmostEqual(rgba[0, 0, 2], eb, places=5)
+        self.assertEqual(rgba[0, 0, 3], 1.0)
+
+    def test_ice_scattering_reads_red(self):
+        # Deep convection depresses both 37 channels -> low pct37 -> R saturates,
+        # G/B fall to ~0: the scene reads RED.
+        rgba = self.color(np.array([[180.0]]), np.array([[160.0]]))
+        self.assertAlmostEqual(rgba[0, 0, 0], 1.0, places=5)   # R ice
+        self.assertAlmostEqual(rgba[0, 0, 1], 0.0, places=5)   # G
+        self.assertAlmostEqual(rgba[0, 0, 2], 0.0, places=5)   # B
+        self.assertEqual(rgba[0, 0, 3], 1.0)
+
+    def test_clear_ocean_reads_green(self):
+        # Warm 37V over a lower 37H (clear ocean) -> high pct37 (no ice, R=0) and
+        # G the dominant channel.
+        rgba = self.color(np.array([[250.0]]), np.array([[190.0]]))
+        self.assertAlmostEqual(rgba[0, 0, 0], 0.0, places=5)   # no ice -> no red
+        self.assertGreater(rgba[0, 0, 1], rgba[0, 0, 2])       # G > B -> green
+        self.assertEqual(rgba[0, 0, 3], 1.0)
+
+    def test_alpha_invalid_transparent(self):
+        # invalid / non-finite / Tb <= 0 in either channel -> transparent.
+        v = np.array([[250.0, np.nan, -5.0, 250.0]])
+        h = np.array([[190.0, 190.0, 190.0, 0.0]])
         rgba = self.color(v, h)
-        self.assertGreater(rgba[0, 0, 0], rgba[0, 0, 1])  # R(H) > G(V)
-        self.assertAlmostEqual(rgba[0, 0, 1], rgba[0, 0, 2], places=6)  # G==B
+        self.assertEqual(rgba[0, 0, 3], 1.0)   # both valid -> opaque
+        self.assertEqual(rgba[0, 1, 3], 0.0)   # NaN V -> transparent
+        self.assertEqual(rgba[0, 2, 3], 0.0)   # V <= 0 -> transparent
+        self.assertEqual(rgba[0, 3, 3], 0.0)   # H <= 0 -> transparent
+
+
+class TestNRL89Colormap(unittest.TestCase):
+    """The 89 PCT uses the canonical NRL table over Normalize(105, 305) K."""
+
+    def test_norm_range(self):
+        from tcprimed.render import nrl89_norm
+        n = nrl89_norm()
+        self.assertEqual((n.vmin, n.vmax), (105.0, 305.0))
+
+    def test_anchor_endpoints_and_monotonic_positions(self):
+        from tcprimed.render import _NRL89_ANCHORS_K, _NRL89_CMAP
+        ks = [k for k, _ in _NRL89_ANCHORS_K]
+        # 12 anchors spanning exactly the norm endpoints, strictly increasing.
+        self.assertEqual(len(_NRL89_ANCHORS_K), 12)
+        self.assertEqual((ks[0], ks[-1]), (105, 305))
+        self.assertTrue(all(b > a for a, b in zip(ks, ks[1:])))
+        # Cold end (deep ice scattering) is dark; warm end (clear ocean) is light
+        # blue -- the real-MW look, not an IR ramp.
+        cold = _NRL89_CMAP(0.0)
+        warm = _NRL89_CMAP(1.0)
+        self.assertLess(sum(cold[:3]), 0.8)        # dark gray at 105 K
+        self.assertGreater(warm[2], warm[0])       # blue-dominant at 305 K
 
 
 class TestStormId(unittest.TestCase):
@@ -227,6 +277,29 @@ class TestNativeRender(unittest.TestCase):
             render_37color(meta, p37)
             self.assertGreater(os.path.getsize(p89), 2000)
             self.assertGreater(os.path.getsize(p37), 2000)
+
+    def test_89pct_v_only_proxy(self):
+        # When the 89 H channel is entirely fill (some SSMIS-F17 passes), the 89
+        # product still renders from V-pol alone as a PCT proxy rather than failing.
+        import tempfile
+        from tcprimed.render import render_89pct
+        meta = self._synthetic_meta()
+        meta["tb89h"] = np.full_like(meta["tb89h"], np.nan)
+        with tempfile.TemporaryDirectory() as d:
+            p89 = os.path.join(d, "proxy_89pct.png")
+            render_89pct(meta, p89)
+            self.assertGreater(os.path.getsize(p89), 2000)
+
+    def test_89pct_no_valid_pixels_raises(self):
+        # No usable 89 data at all -> ValueError (caller skips the product).
+        import tempfile
+        from tcprimed.render import render_89pct
+        meta = self._synthetic_meta()
+        meta["tb89v"] = np.full_like(meta["tb89v"], np.nan)
+        meta["tb89h"] = np.full_like(meta["tb89h"], np.nan)
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                render_89pct(meta, os.path.join(d, "x.png"))
 
 
 class TestLiveTier(unittest.TestCase):
