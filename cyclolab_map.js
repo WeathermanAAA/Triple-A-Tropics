@@ -235,6 +235,22 @@
     ".clm-op{padding:0 11px 8px 41px;}",
     ".clm-op input[type=range]{width:100%;accent-color:var(--cat-accent,#3fa4ff);height:3px;}",
     ".clm-empty{padding:4px 11px 8px 11px;color:var(--muted,#8ea2bd);font-size:11px;font-style:italic;}",
+    ".clm-drag{flex:0 0 auto;cursor:grab;color:var(--muted,#8ea2bd);font-size:11px;",
+      "letter-spacing:-2px;touch-action:none;user-select:none;}",
+    ".clm-row.clm-drop{box-shadow:inset 0 2px 0 var(--cat-accent,#3fa4ff);}",
+    ".clm-subp{padding:0 11px 6px 41px;}",
+    ".clm-subp select{width:100%;background:var(--panel,#11161f);color:var(--fg,#e8eef5);",
+      "border:1px solid var(--border,#232a36);border-radius:6px;font-size:11px;padding:4px 6px;}",
+    ".clm-legend{padding:8px 11px;border-top:1px solid var(--border,#232a36);}",
+    ".clm-leg-t{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;",
+      "color:var(--muted,#8ea2bd);margin-bottom:5px;}",
+    ".clm-leg-note{font-size:11px;color:var(--muted,#8ea2bd);font-style:italic;}",
+    ".clm-leg-sshs{display:flex;flex-wrap:wrap;gap:3px 8px;font-size:10px;color:var(--muted,#8ea2bd);}",
+    ".clm-leg-sshs span{display:inline-flex;align-items:center;gap:4px;}",
+    ".clm-leg-sshs i{width:10px;height:10px;border-radius:2px;display:inline-block;}",
+    ".clm-leg-bar{height:10px;border-radius:3px;border:1px solid var(--border,#232a36);}",
+    ".clm-leg-ends{display:flex;justify-content:space-between;font-size:10px;",
+      "color:var(--muted,#8ea2bd);margin-top:3px;}",
     ".clm-rail-foot{margin-top:auto;padding:8px 11px;border-top:1px solid var(--border,#232a36);",
       "color:var(--muted,#8ea2bd);font-size:10px;line-height:1.45;}",
     // mobile rail drawer
@@ -427,10 +443,12 @@
     this.dom.time = time;
 
     // The track layer is the always-present base layer (Tracks group, active).
-    this.layers.push({
+    var trackLayer = {
       id: "track", group: "tracks", label: "Storm track",
       type: "track", visible: true, opacity: 1, swatch: "#ffffff"
-    });
+    };
+    this._applySaved(trackLayer);
+    this.layers.push(trackLayer);
     this._buildRail();
     this._buildTime();
   };
@@ -456,7 +474,10 @@
       minZoom: 1, maxZoom: 14,
       renderWorldCopies: true,
       attributionControl: false,
-      cooperativeGestures: true
+      cooperativeGestures: true,
+      // EXPORT (P2): keep the GL drawing buffer so getCanvas().toDataURL() can
+      // composite the visible stack into a PNG.
+      preserveDrawingBuffer: true
     });
     this.map.addControl(new maplibregl.NavigationControl({
       visualizePitch: false, showCompass: false
@@ -473,6 +494,12 @@
       // Re-apply any raster layers requested before load (deferred-safe).
       self.layers.forEach(function (L) {
         if (L.type === "raster" && !L._added) self._mountRaster(L);
+      });
+      self._restack();
+      // Push persisted visibility/opacity onto the freshly-created map layers.
+      self.layers.forEach(function (L) {
+        self._applyVisibility(L);
+        if (L.opacity !== 1) self.setLayerOpacity(L.id, L.opacity);
       });
     });
   };
@@ -633,12 +660,34 @@
       label: def.label || def.id, type: "raster",
       visible: def.visible !== false, opacity: (def.opacity != null ? def.opacity : 1),
       frames: def.frames || [], activeFrame: 0, swatch: def.swatch || "#5dd3ff",
-      subProducts: def.subProducts || null, _added: false
+      subProducts: def.subProducts || null, activeSub: def.activeSub || null,
+      onSubProduct: def.onSubProduct || null, legendStops: def.legendStops || null,
+      legendHtml: def.legendHtml || null, legendLabel: def.legendLabel || null,
+      _added: false
     };
+    this._applySaved(L);
     this.layers.push(L);
-    if (this.ready && this.map) this._mountRaster(L);
+    this._applySavedOrder();
+    if (this.ready && this.map) { this._mountRaster(L); this._restack(); }
     this._buildRail();
+    this._buildTime();        // a raster layer extends the master timeline
+    this._persist();
     return L;
+  };
+  // Reorder the raster layers to a previously-saved order (best-effort; rasters
+  // not in the saved order keep their relative position at the end).
+  P._applySavedOrder = function () {
+    var sv = this._savedState();
+    if (!sv || !sv.order || !sv.order.length) return;
+    var rank = {}; sv.order.forEach(function (id, i) { rank[id] = i; });
+    var rasters = this._rasterOrder().slice();
+    rasters.sort(function (a, b) {
+      return (rank[a.id] == null ? 1e9 : rank[a.id]) - (rank[b.id] == null ? 1e9 : rank[b.id]);
+    });
+    var ri = 0;
+    this.layers = this.layers.map(function (L) {
+      return L.type === "raster" ? rasters[ri++] : L;
+    });
   };
 
   P._mountRaster = function (L) {
@@ -678,6 +727,7 @@
     L.visible = (on == null) ? !L.visible : !!on;
     this._applyVisibility(L);
     this._buildRail();
+    this._persist();
   };
   P._applyVisibility = function (L) {
     if (!this.map) return;
@@ -713,11 +763,127 @@
       var lid2 = "clm-raster-" + L.id + "-layer";
       if (this.map.getLayer(lid2)) this.map.setPaintProperty(lid2, "raster-opacity", L.opacity);
     }
+    this._persist();
   };
   P.setActiveLayer = function (id) {
     if (!this._layer(id)) return;
     this.activeLayerId = id;
     this._buildRail();
+    this._persist();
+  };
+
+  // ===================================================================
+  // Layer-state PERSISTENCE (order + visibility + opacity + sub-product)
+  // ===================================================================
+  P._persistKey = function () {
+    return "clm:" + (this.storm.sid || this.storm.atcf_id || this.storm.name || "default");
+  };
+  P._persist = function () {
+    try {
+      var st = {};
+      this.layers.forEach(function (L) {
+        st[L.id] = { v: L.visible, o: L.opacity, s: L.activeSub || null };
+      });
+      var order = this._rasterOrder().map(function (L) { return L.id; });
+      window.localStorage.setItem(this._persistKey(),
+        JSON.stringify({ order: order, state: st }));
+    } catch (e) {}
+  };
+  P._savedState = function () {
+    if (this._saved !== undefined) return this._saved;
+    try { this._saved = JSON.parse(window.localStorage.getItem(this._persistKey()) || "null"); }
+    catch (e) { this._saved = null; }
+    return this._saved;
+  };
+  // Apply saved visibility/opacity/sub-product to a layer as it is added.
+  P._applySaved = function (L) {
+    var sv = this._savedState();
+    if (!sv || !sv.state || !sv.state[L.id]) return;
+    var e = sv.state[L.id];
+    if (typeof e.v === "boolean") L.visible = e.v;
+    if (typeof e.o === "number") L.opacity = e.o;
+    if (e.s) L.activeSub = e.s;
+  };
+
+  // ===================================================================
+  // Z-ORDER (rail TOP = stack TOP; rasters always below track + markers)
+  // ===================================================================
+  P._rasterOrder = function () {
+    return this.layers.filter(function (L) { return L.type === "raster"; });
+  };
+  // Reorder raster `id` by delta among rasters (delta<0 = up = toward stack top).
+  P.moveLayer = function (id, delta) {
+    var ras = this._rasterOrder();
+    var idx = -1, i;
+    for (i = 0; i < ras.length; i++) if (ras[i].id === id) idx = i;
+    if (idx < 0) return;
+    var to = Math.max(0, Math.min(ras.length - 1, idx + delta));
+    if (to === idx) return;
+    var L = ras[idx];
+    this.layers.splice(this.layers.indexOf(L), 1);
+    var target = ras[to];
+    var gTo = this.layers.indexOf(target);
+    this.layers.splice(delta > 0 ? gTo + 1 : gTo, 0, L);
+    this._restack(); this._buildRail(); this._persist();
+  };
+  // Drop raster `id` to land just before raster `beforeId` (or end). Used by drag.
+  P.reorderBefore = function (id, beforeId) {
+    var L = this._layer(id); if (!L || L.type !== "raster") return;
+    this.layers.splice(this.layers.indexOf(L), 1);
+    if (beforeId) {
+      var b = this._layer(beforeId);
+      this.layers.splice(b ? this.layers.indexOf(b) : this.layers.length, 0, L);
+    } else {
+      this.layers.push(L);
+    }
+    this._restack(); this._buildRail(); this._persist();
+  };
+  // Apply the raster list order to the map. Rail TOP = stack TOP, so the FIRST
+  // raster in list order must be highest; move each (bottom->top of list) to just
+  // below the track so the first list item ends up topmost among rasters.
+  P._restack = function () {
+    if (!this.map) return;
+    var ras = this._rasterOrder();
+    var before = this.map.getLayer(TRACKS_BEFORE) ? TRACKS_BEFORE : undefined;
+    for (var i = ras.length - 1; i >= 0; i--) {
+      var lid = "clm-raster-" + ras[i].id + "-layer";
+      if (this.map.getLayer(lid)) { try { this.map.moveLayer(lid, before); } catch (e) {} }
+    }
+  };
+
+  // ---- sub-product selection (Satellite IR/true-color/band; MW 89/37; ...) ----
+  P.setSubProduct = function (id, sub) {
+    var L = this._layer(id); if (!L || !L.subProducts) return;
+    L.activeSub = sub;
+    // Producer hook: swap this layer's frame set for the chosen sub-product.
+    if (typeof L.onSubProduct === "function") {
+      try { L.onSubProduct(sub, this); } catch (e) {}
+    }
+    this._buildRail(); this._persist();
+  };
+
+  // ---- legend for the ACTIVE layer ----
+  P._legendHtml = function (L) {
+    if (!L) return "";
+    if (L.type === "track") {
+      var rows = [["TD", "<34"], ["TS", "34-63"], ["C1", "64-82"], ["C2", "83-95"],
+                  ["C3", "96-112"], ["C4", "113-136"], ["C5", "≥137"]];
+      return '<div class="clm-leg-t">SSHWS (kt)</div><div class="clm-leg-sshs">' +
+        rows.map(function (r) {
+          return '<span><i style="background:' + SSHS_COLORS[r[0]] + '"></i>' + r[1] + '</span>';
+        }).join("") + '</div>';
+    }
+    if (L.legendHtml) return L.legendHtml;
+    if (L.legendStops && L.legendStops.length) {
+      var grad = L.legendStops.map(function (s) { return s.color; }).join(",");
+      var lo = L.legendStops[0], hi = L.legendStops[L.legendStops.length - 1];
+      return '<div class="clm-leg-t">' + escapeHtml(L.legendLabel || L.label) + '</div>' +
+        '<div class="clm-leg-bar" style="background:linear-gradient(90deg,' + grad + ')"></div>' +
+        '<div class="clm-leg-ends"><span>' + escapeHtml(String(lo.label != null ? lo.label : "")) +
+        '</span><span>' + escapeHtml(String(hi.label != null ? hi.label : "")) + '</span></div>';
+    }
+    return '<div class="clm-leg-t">' + escapeHtml(L.label) + '</div>' +
+      '<div class="clm-leg-note">Legend appears when this layer publishes a palette.</div>';
   };
 
   // ---- explorer rail render ----
@@ -750,33 +916,84 @@
       }
       rows.forEach(function (L) {
         var active = (L.id === self.activeLayerId);
+        var drag = (L.type === "raster")
+          ? '<span class="clm-drag" data-drag="' + L.id + '" title="Drag to reorder">⋮⋮</span>' : '';
         html += '<div class="clm-row' + (L.visible ? " on" : "") + (active ? " active" : "") +
-          '" data-id="' + L.id + '">' +
+          '" data-id="' + L.id + '" data-type="' + L.type + '">' + drag +
           '<span class="clm-eye" data-act="toggle" data-id="' + L.id + '"></span>' +
           '<span class="clm-sw" style="background:' + (L.swatch || "#5dd3ff") + '"></span>' +
           '<span class="clm-name">' + escapeHtml(L.label) + '</span></div>';
+        if (L.subProducts && L.subProducts.length) {
+          var cur = L.activeSub || (typeof L.subProducts[0] === "string"
+            ? L.subProducts[0] : L.subProducts[0].value);
+          html += '<div class="clm-subp"><select data-act="subp" data-id="' + L.id + '">' +
+            L.subProducts.map(function (sp) {
+              var val = (typeof sp === "string") ? sp : sp.value;
+              var lab = (typeof sp === "string") ? sp : (sp.label || sp.value);
+              return '<option value="' + escapeHtml(val) + '"' +
+                (val === cur ? ' selected' : '') + '>' + escapeHtml(lab) + '</option>';
+            }).join("") + '</select></div>';
+        }
         html += '<div class="clm-op"><input type="range" min="0" max="100" value="' +
           Math.round(L.opacity * 100) + '" data-act="opacity" data-id="' + L.id + '"></div>';
       });
       html += '</div>';
     });
+    // Active-layer legend (drives the readout/legend panel per the brief).
+    var actL = this._layer(this.activeLayerId) || this._layer("track");
+    html += '<div class="clm-legend">' + this._legendHtml(actL) + '</div>';
     html += '<div class="clm-rail-foot">Drag map to pan · Ctrl/⌘+scroll to zoom. ' +
       'Imagery & model layers stack here when published.</div>';
     rail.innerHTML = html;
 
-    // wire rows
     rail.querySelectorAll('[data-act="toggle"]').forEach(function (eye) {
       eye.addEventListener("click", function (ev) {
         ev.stopPropagation(); self.toggleLayer(eye.getAttribute("data-id"));
       });
     });
     rail.querySelectorAll('[data-act="opacity"]').forEach(function (sl) {
-      sl.addEventListener("input", function () {
+      sl.addEventListener("input", function (ev) {
+        ev.stopPropagation();
         self.setLayerOpacity(sl.getAttribute("data-id"), parseInt(sl.value, 10) / 100);
+      });
+    });
+    rail.querySelectorAll('[data-act="subp"]').forEach(function (se) {
+      se.addEventListener("change", function (ev) {
+        ev.stopPropagation(); self.setSubProduct(se.getAttribute("data-id"), se.value);
       });
     });
     rail.querySelectorAll('.clm-row').forEach(function (row) {
       row.addEventListener("click", function () { self.setActiveLayer(row.getAttribute("data-id")); });
+    });
+    this._wireDrag(rail);
+  };
+
+  // Pointer-drag reorder of raster rows (drop -> reorderBefore). Mobile-friendly.
+  P._wireDrag = function (rail) {
+    var self = this;
+    rail.querySelectorAll('[data-drag]').forEach(function (h) {
+      h.addEventListener("pointerdown", function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        var id = h.getAttribute("data-drag");
+        function over(e) {
+          var el = document.elementFromPoint(e.clientX, e.clientY);
+          var row = el && el.closest ? el.closest('.clm-row[data-type="raster"]') : null;
+          rail.querySelectorAll('.clm-row').forEach(function (r) { r.classList.remove("clm-drop"); });
+          if (row && row.getAttribute("data-id") !== id) row.classList.add("clm-drop");
+        }
+        function up(e) {
+          document.removeEventListener("pointermove", over);
+          document.removeEventListener("pointerup", up);
+          var el = document.elementFromPoint(e.clientX, e.clientY);
+          var row = el && el.closest ? el.closest('.clm-row[data-type="raster"]') : null;
+          if (row) {
+            var beforeId = row.getAttribute("data-id");
+            if (beforeId !== id) self.reorderBefore(id, beforeId);
+          }
+        }
+        document.addEventListener("pointermove", over);
+        document.addEventListener("pointerup", up);
+      });
     });
   };
 
