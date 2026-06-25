@@ -295,6 +295,7 @@
     ".clm-scrub input[type=range]{width:100%;accent-color:var(--cat-accent,#3fa4ff);}",
     ".clm-ticks{position:relative;height:6px;margin-top:-2px;}",
     ".clm-ticks i{position:absolute;top:0;width:2px;height:6px;border-radius:1px;transform:translateX(-1px);}",
+    ".clm-ticks i.clm-tick-r{top:2px;height:4px;width:3px;opacity:.8;}",
     ".clm-valid{flex:0 0 auto;font-size:11px;font-variant-numeric:tabular-nums;",
       "color:var(--fg,#e8eef5);min-width:118px;text-align:right;}",
     ".clm-valid small{color:var(--muted,#8ea2bd);}",
@@ -457,6 +458,7 @@
     this._lastStep = 0;
     this.speedMs = 700;
     this.loop = true;
+    this.timeMode = (opts.timeMode === "independent") ? "independent" : "synced";
     this.layers = [];           // [{id,group,label,type,visible,opacity,...}]
     this.activeLayerId = "track";
     this._reduced = prefersReducedMotion();
@@ -1056,10 +1058,26 @@
   // ===================================================================
   // TIME control (master timeline over track fixes)
   // ===================================================================
+  // Master timeline = sorted unique union of every layer's frame/fix times (ms).
+  // Track-only -> this is just the fix times, so the per-fix behavior is
+  // unchanged. With raster layers it spans their frame times too, and each layer
+  // renders its NEAREST-in-time frame to the playhead.
+  P._allStops = function () {
+    var set = {};
+    function add(t) { var ms = +new Date(t); if (!isNaN(ms)) set[ms] = 1; }
+    (this.storm.points || []).forEach(function (p) { if (p.t) add(p.t); });
+    this.layers.forEach(function (L) {
+      if (L.type === "raster") (L.frames || []).forEach(function (f) { if (f.time) add(f.time); });
+    });
+    return Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+  };
+
   P._buildTime = function () {
     var t = this.dom.time; if (!t) return;
     var self = this;
-    var n = (this.storm.points || []).length;
+    this._stops = this._allStops();
+    var n = this._stops.length;
+    var keepPos = (this.dom.scrub && n) ? Math.min(this.playhead || (n - 1), n - 1) : (n - 1);
     t.innerHTML =
       '<div class="clm-tbtns">' +
         '<button class="clm-tb" data-act="step-" title="Step back">◀</button>' +
@@ -1068,11 +1086,11 @@
         '<button class="clm-tb" data-act="loop" title="Loop">↻</button>' +
       '</div>' +
       '<div class="clm-scrub"><input type="range" min="0" max="' + Math.max(0, n - 1) +
-        '" value="' + Math.max(0, n - 1) + '" data-act="scrub">' +
+        '" value="' + Math.max(0, keepPos) + '" data-act="scrub">' +
         '<div class="clm-ticks"></div></div>' +
       '<select class="clm-speed" data-act="speed">' +
         '<option value="1200">0.5×</option>' +
-        '<option value="700" selected>1×</option>' +
+        '<option value="700">1×</option>' +
         '<option value="380">2×</option>' +
         '<option value="180">4×</option></select>' +
       '<div class="clm-valid"><span data-act="valid">—</span></div>';
@@ -1081,6 +1099,8 @@
     this.dom.playBtn = t.querySelector('[data-act="play"]');
     this.dom.loopBtn = t.querySelector('[data-act="loop"]');
     if (this.loop) this.dom.loopBtn.classList.add("on");
+    var spd = t.querySelector('[data-act="speed"]');
+    spd.value = String(this.speedMs || 700);
     this._buildTicks();
 
     t.querySelector('[data-act="step-"]').addEventListener("click", function () { self.step(-1); });
@@ -1092,44 +1112,103 @@
     this.dom.scrub.addEventListener("input", function () {
       self.pause(); self._setPlayhead(parseInt(self.dom.scrub.value, 10));
     });
-    t.querySelector('[data-act="speed"]').addEventListener("change", function (e) {
+    spd.addEventListener("change", function (e) {
       self.speedMs = parseInt(e.target.value, 10) || 700;
     });
   };
 
+  // Per-layer color-coded ticks positioned by TIME across the master span. Track
+  // ticks are colored by SSHWS category; raster ticks by the layer swatch (on a
+  // lower row so overlapping sources stay legible).
   P._buildTicks = function () {
     var box = this.dom.time.querySelector(".clm-ticks");
     if (!box) return;
-    var pts = this.storm.points || [];
-    var n = pts.length; if (n < 2) { box.innerHTML = ""; return; }
+    var stops = this._stops || this._allStops();
+    if (stops.length < 2) { box.innerHTML = ""; return; }
+    var t0 = stops[0], t1 = stops[stops.length - 1], span = (t1 - t0) || 1;
     var html = "";
-    for (var i = 0; i < n; i++) {
-      var p = pts[i];
-      var color = SSHS_COLORS[p.cls || "TD"] || "#3fa4ff";
-      var pct = (i / (n - 1)) * 100;
-      html += '<i style="left:' + pct.toFixed(2) + '%;background:' + color + '"></i>';
-    }
+    (this.storm.points || []).forEach(function (p) {
+      if (!p.t) return;
+      var pct = ((+new Date(p.t) - t0) / span) * 100;
+      html += '<i style="left:' + pct.toFixed(2) + '%;background:' +
+        (SSHS_COLORS[p.cls || "TD"] || "#3fa4ff") + '"></i>';
+    });
+    this.layers.forEach(function (L) {
+      if (L.type !== "raster") return;
+      (L.frames || []).forEach(function (f) {
+        if (!f.time) return;
+        var pct = ((+new Date(f.time) - t0) / span) * 100;
+        html += '<i class="clm-tick-r" style="left:' + pct.toFixed(2) + '%;background:' +
+          (L.swatch || "#5dd3ff") + '"></i>';
+      });
+    });
     box.innerHTML = html;
   };
 
-  P._setPlayhead = function (idx, silent) {
-    var pts = this.storm.points || [];
-    var n = pts.length; if (!n) return;
-    idx = Math.max(0, Math.min(n - 1, idx));
+  // Move the playhead to master-stop `idx`; apply that TIME to the layers
+  // (source-adaptive: each layer renders its nearest frame). Synced = all layers
+  // follow; independent = only the ACTIVE layer follows, others hold.
+  P._setPlayhead = function (idx) {
+    var stops = this._stops && this._stops.length ? this._stops : (this._stops = this._allStops());
+    if (!stops.length) return;
+    idx = Math.max(0, Math.min(stops.length - 1, idx));
     this.playhead = idx;
-    if (this.map && this.map.getSource("storms")) {
-      this.map.getSource("storms").setData(stormToGeoJSON(this.storm, idx));
-    }
-    this._placeActiveGlyph(idx);
-    if (this.dom.scrub && !silent) this.dom.scrub.value = String(idx);
-    if (this.dom.scrub && silent) this.dom.scrub.value = String(idx);
-    var p = pts[idx] || {};
+    var t = stops[idx];
+    this._applyTimeToLayers(t);
+    if (this.dom.scrub) this.dom.scrub.value = String(idx);
     if (this.dom.validEl) {
-      var cls = p.cls || "TD";
-      this.dom.validEl.innerHTML = fmtTime(p.t) +
+      var p = (this.storm.points || [])[this._trackIdx] || {};
+      this.dom.validEl.innerHTML = fmtTime(new Date(t).toISOString()) +
         ' <small>· ' + (p.wind_kt != null ? Math.round(p.wind_kt) + " kt" : "—") +
-        ' ' + sshsLabel(cls) + '</small>';
+        ' ' + sshsLabel(p.cls || "TD") +
+        (this.timeMode === "independent" ? ' · indep' : '') + '</small>';
     }
+  };
+
+  P._applyTimeToLayers = function (t) {
+    var mode = this.timeMode || "synced";
+    if (mode === "independent") {
+      var aL = this._layer(this.activeLayerId);
+      if (aL && aL.type === "raster") this._rasterToTime(aL, t);
+      else this._trackToTime(t);    // active track (or default)
+      return;
+    }
+    this._trackToTime(t);
+    var self = this;
+    this.layers.forEach(function (L) { if (L.type === "raster") self._rasterToTime(L, t); });
+  };
+  P._trackToTime = function (t) {
+    var pts = this.storm.points || [];
+    if (!pts.length) return;
+    var best = 0, bd = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      if (!pts[i].t) continue;
+      var d = Math.abs(+new Date(pts[i].t) - t);
+      if (d < bd) { bd = d; best = i; }
+    }
+    this._trackIdx = best;
+    if (this.map && this.map.getSource("storms")) {
+      this.map.getSource("storms").setData(stormToGeoJSON(this.storm, best));
+    }
+    this._placeActiveGlyph(best);
+  };
+  P._rasterToTime = function (L, t) {
+    if (!L.frames || !L.frames.length) return;
+    var best = 0, bd = Infinity;
+    for (var i = 0; i < L.frames.length; i++) {
+      if (!L.frames[i].time) { if (bd === Infinity) best = i; continue; }
+      var d = Math.abs(+new Date(L.frames[i].time) - t);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best !== L.activeFrame) this.setActiveFrame(L.id, best);
+  };
+
+  // Synced (default) vs independent per-layer time. Persisted by the caller (the
+  // CycloLab Settings modal); exposed so that toggle can drive it.
+  P.setTimeMode = function (mode) {
+    this.timeMode = (mode === "independent") ? "independent" : "synced";
+    var stops = this._stops || this._allStops();
+    if (stops.length) this._setPlayhead(this.playhead != null ? this.playhead : stops.length - 1);
   };
 
   // Place / move the spinning glyph (or invest X) at the playhead fix. The glyph
@@ -1157,7 +1236,7 @@
   // ---- transport ----
   P.toggle = function () { this.playing ? this.pause() : this.play(); };
   P.play = function () {
-    var n = (this.storm.points || []).length; if (n < 2) return;
+    var n = (this._stops || this._allStops()).length; if (n < 2) return;
     if (this.playhead >= n - 1) this._setPlayhead(0);
     this.playing = true;
     if (this.dom.playBtn) { this.dom.playBtn.textContent = "⎉"; this.dom.playBtn.classList.add("on"); }
@@ -1167,7 +1246,7 @@
       if (!self._lastStep) self._lastStep = ts;
       if (ts - self._lastStep >= self.speedMs) {
         self._lastStep = ts;
-        var n2 = (self.storm.points || []).length;
+        var n2 = (self._stops || self._allStops()).length;
         if (self.playhead >= n2 - 1) {
           if (self.loop) self._setPlayhead(0);
           else { self.pause(); return; }
