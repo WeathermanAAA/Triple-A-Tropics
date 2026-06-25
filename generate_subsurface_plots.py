@@ -26,10 +26,8 @@ variables `Tropical_Cyclone_Heat_Potential` and `D26`. Resolution is
 0.25° global; coverage begins 2022-01-01 and updates daily with ~1-day
 latency.
 
-This is the same data source used by Sohum Patel's GoldStandardBot
-(https://cwcgom.aoml.noaa.gov/thredds/dodsC/TCHP/TCHP.nc), which in
-turn is the most commonly cited TCHP source in operational TC
-discussions.
+This AOML TCHP_D26 dataset is the most commonly cited TCHP source in
+operational TC discussions.
 
 Regions + outputs
 -----------------

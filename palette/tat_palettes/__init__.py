@@ -352,7 +352,7 @@ _WV_TICKS = [0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
 # near -5 °C and reads BLUE; convective ICE SCATTERING drives PCT colder, so the
 # recognizable scale runs WARM->COLD as
 #   blue -> cyan -> green -> yellow -> orange -> red -> black -> white,
-# the white being the deepest scattering (the Boreham 89 look).
+# the white being the deepest scattering (the NRL 89 look).
 # Anchors coldest-first (°C, r, g, b in 0..1) so position 0 = coldest. The white
 # floor anchor is pegged at the PCT physical clip (-168 °C / 105 K); deeper values
 # clip there. Tuned on real HAFS-A 89 PCT storm nests.
@@ -374,7 +374,7 @@ _ICE89H_ANCHORS = [
     (15,   0.041, 0.081, 0.242),  # warmest (land/clear ocean) -> deepest navy
 ]
 ICE89H_CMAP = _seg_cmap("ice89h", _ICE89H_ANCHORS)
-# Ticks in KELVIN (89 PCT reads out in K, mirroring Boreham); the colorbar places
+# Ticks in KELVIN (89 PCT reads out in K, the operational convention); the colorbar places
 # them at their degC positions on the degC norm. Span the [105, 290] K clip.
 _ICE89H_TICKS = [105, 125, 145, 165, 185, 205, 225, 245, 265, 285]
 

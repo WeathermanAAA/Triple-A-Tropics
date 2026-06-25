@@ -662,7 +662,7 @@ def _read_raw_fields(
 # --- 89 GHz Polarization-Corrected Temperature (PCT85) ---------------------
 # The RAW 91.7 GHz H-pol channel reads a GREEN ocean: the low-emissivity H-pol
 # OCEAN depression sits near 227 K (-45 degC). The canonical NRL/CIMSS "89 GHz
-# color" (the Boreham blue-ocean look) is the POLARIZATION-CORRECTED
+# color" (the blue-ocean look) is the POLARIZATION-CORRECTED
 # temperature, NOT a single channel: PCT = 1.818*V - 0.818*H, where V/H are the
 # two SSMIS-F17 91.7 GHz channels (parm 63 = V warmer-over-ocean, parm 62 = H).
 # It removes the ocean polarization signal (clear ocean -> ~270-281 K / blue)
@@ -671,7 +671,7 @@ def _read_raw_fields(
 PCT_V_COEF = 1.818
 PCT_H_COEF = 0.818
 PCT_CLEAR_OCEAN_C = -23.15   # Tb > 250 K (both channels) -> a clear-ocean pixel
-PCT_CLIP_LO_C = -168.15      # 105 K NRL/Boreham scattering floor (CRTM single-pixel overshoots)
+PCT_CLIP_LO_C = -168.15      # 105 K NRL scattering floor (CRTM single-pixel overshoots)
 PCT_CLIP_HI_C = 16.85        # 290 K warm ceiling
 
 

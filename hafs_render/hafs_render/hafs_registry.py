@@ -475,7 +475,7 @@ _SPECS = (
     ),
     ProductSpec(
         # Simulated 89 GHz microwave (SSMIS-F17, 91.7 GHz) -- the canonical
-        # NRL/CIMSS "89 GHz color" (Boreham blue-ocean look) is the
+        # NRL/CIMSS "89 GHz color" (blue-ocean look) is the
         # POLARIZATION-CORRECTED temperature PCT85 = 1.818*V - 0.818*H, NOT a
         # single channel. The raw H-pol channel alone reads a green ocean (low
         # H-pol emissivity); PCT removes that so clear ocean is ~ -5 degC (blue)
