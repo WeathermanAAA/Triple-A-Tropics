@@ -5,7 +5,7 @@ name: Update ARMOR3D
 # valid date is always about a week ago (altimetry ingest + 7-10 day
 # assimilation window). So running daily does give us a new map every
 # morning; the valid date just creeps forward one day at a time,
-# always ~week-old. This matches a-reference-site's cadence.
+# always ~week-old. This matches the standard operational cadence.
 #
 # We fire at 14:43 UTC every day with a 15:13 UTC backup for the
 # occasional CMEMS hiccup on the first attempt. Those times are well

@@ -177,7 +177,7 @@ def fetch_day_versioned(d: dt.date, log_prefix: str = "[sst]",
     animated SST/SSTA wherever the prelim/final boundary falls inside
     the rolling window. Prelim is the consistent operational pipeline
     and is the only version available across the entire 90-day window
-    once the workflow has been running daily. Cyclonicwx uses the same
+    once the workflow has been running daily. Operational sites use the same
     strategy.
 
     Resolution order:

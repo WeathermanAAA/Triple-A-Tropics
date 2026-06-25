@@ -17,7 +17,7 @@ recipes (the ones the operational TC analysis community use; refs below):
 
 The swath is resampled onto a regular storm-centered grid by LINEAR (Delaunay)
 interpolation in a CENTER-RELATIVE (unwrapped) longitude frame, then drawn with a
-bilinear ``imshow`` -- the continuous a-reference-site/NRL look, gap-free even for the
+bilinear ``imshow`` -- the continuous NRL look, gap-free even for the
 coarse imagers (SSMIS), with a clean swath edge (cells outside the data convex
 hull stay transparent). Self-contained: no cartopy; the coastline/border drawer
 reads the repo's ne_50m_*.geojson and breaks each ring at large longitude jumps.
@@ -220,7 +220,7 @@ def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
     extent = [clon-half, clon+half, clat-half, clat+half].
 
     Linear (Delaunay) interpolation smooths the coarse imager footprints into the
-    continuous a-reference-site/NRL look (vs. blocky native quads) AND fills solid with
+    continuous NRL look (vs. blocky native quads) AND fills solid with
     NO inter-scanline gaps, because every interior target cell is interpolated
     from the surrounding pixels. Cells outside the swath's convex hull come back
     NaN, giving a clean swath edge (transparent) without a hand-tuned distance
@@ -507,7 +507,7 @@ def render_89pct(meta: dict, out_path: str) -> str:
     else:
         raise ValueError("no valid 89 GHz pixels")
 
-    # Smooth-resample the PCT (in K) onto a regular grid (a-reference-site look, gap-free).
+    # Smooth-resample the PCT (in K) onto a regular grid (smooth look, gap-free).
     extent, (pct_g,) = _regrid(meta["lat89"], meta["lon89"], [pct_k],
                                meta["clat"], meta["clon"])
     if not np.isfinite(pct_g).any():

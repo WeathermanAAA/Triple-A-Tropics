@@ -178,7 +178,7 @@ CROSSSECTION_REGIONS = {
 # --- Colormap for TCHP anomaly -----------------------------------------
 
 # Symmetric diverging: deep blue (-60) -> white (0) -> deep red (+60)
-# kJ/cm². Matches the palette used on a-reference-site.com for TCHP anomaly.
+# kJ/cm². Matches the standard operational palette for TCHP anomaly.
 TCHP_ANOM_VMAX = 60.0
 TCHP_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "tchp_anom",
@@ -202,7 +202,7 @@ TCHP_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
 TCHP_ANOM_CMAP.set_bad(color=gss.OCEAN_COLOR, alpha=1.0)
 
 # Cross-section temperature-anomaly colormap — matches the magenta/red/
-# blue style of the a-reference-site.com reference image.
+# blue style of the operational reference image.
 CS_ANOM_VMAX = 6.0
 CS_ANOM_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "cs_anom",

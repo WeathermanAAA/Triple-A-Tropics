@@ -28,7 +28,7 @@
 
   // Bounding boxes: lon -180..180, S/N deg. w > e => crosses the dateline.
   // Grouped by BASIN, the way a TC forecaster reads it (Atlantic -> Pacific ->
-  // Indian -> Continents -> Global), NOT a-reference-site's tropics/US/land/hemi split.
+  // Indian -> Continents -> Global), NOT a tropics/US/land/hemi split.
   var GROUPS = [
     { key: 'atlantic', label: 'Atlantic', regions: [
       { key: 'atlantic', label: 'Atlantic',          w: -100, e: -5,   s: 0,   n: 55 },
@@ -345,7 +345,7 @@
     document.head.appendChild(s);
   }
 
-  // ---- the picker (a-reference-site-style grouped thumbnail modal) ----
+  // ---- the picker (grouped thumbnail modal) ----
   function RegionPicker(opts) {
     _injectCss();
     this.geo = null;   // loaded lazily at THUMB_RES on first open

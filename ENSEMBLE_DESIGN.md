@@ -312,7 +312,7 @@ em-dashes in on-screen text; no AI-disclosure on the page.
 
 ## 8. Shared Model Regions layer
 
-`models/regions.js` is a SHARED layer (a a-reference-site-style "Model Regions"
+`models/regions.js` is a SHARED layer (an operational-style "Model Regions"
 picker) reused unchanged by every non-storm-nest model viewer: ECMWF ENS centers
 now, AIFS-ENS / GEFS / GDM-FNV3 / GDM-GenCast and any future synoptic ensemble or
 global product later. **Storm-NEST viewers (HAFS, which auto-centers on a storm)

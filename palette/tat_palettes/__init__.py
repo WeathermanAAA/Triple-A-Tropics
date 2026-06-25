@@ -352,12 +352,12 @@ _WV_TICKS = [0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
 # near -5 °C and reads BLUE; convective ICE SCATTERING drives PCT colder, so the
 # recognizable scale runs WARM->COLD as
 #   blue -> cyan -> green -> yellow -> orange -> red -> black -> white,
-# the white being the deepest scattering (the a-reference-site/Boreham 89 look).
+# the white being the deepest scattering (the Boreham 89 look).
 # Anchors coldest-first (°C, r, g, b in 0..1) so position 0 = coldest. The white
 # floor anchor is pegged at the PCT physical clip (-168 °C / 105 K); deeper values
 # clip there. Tuned on real HAFS-A 89 PCT storm nests.
 # Cold end (white/black/dark-red ice scattering) is correct -- DO NOT change it.
-# Mids (green/yellow/orange/red) are SATURATED for a-reference-site punch (same hues,
+# Mids (green/yellow/orange/red) are SATURATED for extra punch (same hues,
 # same temps, higher chroma). Warm end (ambient ocean ~270-285 K) is deepened
 # to NAVY (same blue hue, lower lightness) so it doesn't read bright-medium-blue.
 _ICE89H_ANCHORS = [

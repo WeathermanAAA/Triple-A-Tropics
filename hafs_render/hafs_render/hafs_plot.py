@@ -662,7 +662,7 @@ def _read_raw_fields(
 # --- 89 GHz Polarization-Corrected Temperature (PCT85) ---------------------
 # The RAW 91.7 GHz H-pol channel reads a GREEN ocean: the low-emissivity H-pol
 # OCEAN depression sits near 227 K (-45 degC). The canonical NRL/CIMSS "89 GHz
-# color" (the a-reference-site/Boreham blue-ocean look) is the POLARIZATION-CORRECTED
+# color" (the Boreham blue-ocean look) is the POLARIZATION-CORRECTED
 # temperature, NOT a single channel: PCT = 1.818*V - 0.818*H, where V/H are the
 # two SSMIS-F17 91.7 GHz channels (parm 63 = V warmer-over-ocean, parm 62 = H).
 # It removes the ocean polarization signal (clear ocean -> ~270-281 K / blue)
@@ -1059,7 +1059,7 @@ BARB_TARGET = 17
 # STORM NEST is cropped to a FIXED square window of NEST_VIEW_DEG degrees CENTERED
 # ON THE STORM (the same track fix the L marker / stats / parent crop use), clamped
 # to the nest data extent so the box never opens a NaN gutter at the nest edge.
-# ~5.5 deg frames the inner core + primary bands like a-reference-site. One tunable knob;
+# ~5.5 deg frames the inner core + primary bands like the operational reference products. One tunable knob;
 # storm.atm ONLY (the parent keeps its own PARENT_HALF_DEG window).
 NEST_VIEW_DEG = 5.5
 
@@ -1428,7 +1428,7 @@ def render_frame(frame: HafsFrame, out_path: str,
     elif spec.grib == "sat":
         # Simulated-satellite BT/PCT products (clean IR / WV / 89 PCT): the nest
         # is a REGULAR lat/lon grid, so imshow with bilinear interpolation gives
-        # the smooth a-reference-site look (pcolormesh shading="nearest" shows pixel
+        # the smooth continuous look (pcolormesh shading="nearest" shows pixel
         # blocks). DISPLAY ONLY -- the interpolation never touches frame.bt_c, so
         # MIN BT / stats downstream stay exact on the raw field. aspect="auto"
         # fills the axes box exactly like pcolormesh did (no reshaping).
