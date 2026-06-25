@@ -14,10 +14,16 @@ real-time; the viewer says so.
 """
 
 SCHEMA_VERSION = 1
-SOURCE = "NOAA/CIRA TC-PRIMED"
+# Per-render credit: live overpasses come straight from NASA GPM/PPS NRT; the
+# archive overpasses are the inter-calibrated NOAA/CIRA TC-PRIMED L1C.
+SOURCE_ARCHIVE = "NOAA/CIRA TC-PRIMED"
+SOURCE_LIVE = "NASA GPM / PPS"
+# Manifest-level credit (the manifest merges both tiers).
+SOURCE = "NASA GPM/PPS (live) + NOAA/CIRA TC-PRIMED (archive)"
 DISCLOSURE = (
-    "Observed passive microwave from NOAA/CIRA TC-PRIMED (research-tiered: "
-    "final post-season, preliminary lags hours-to-days)."
+    "Observed passive microwave for tropical cyclones. Recent storms: live from "
+    "NASA GPM / PPS near-real-time (~1-3 h latency). Archive: NOAA/CIRA TC-PRIMED "
+    "(research-tiered, post-season; its data lags ~months)."
 )
 
 # Sensors carrying an 89/37 V/H imager pair (group, V channel, H channel).
@@ -36,6 +42,6 @@ PMW_CHANNELS = {
 IMAGER_SENSORS = tuple(PMW_CHANNELS.keys())
 
 __all__ = [
-    "SCHEMA_VERSION", "SOURCE", "DISCLOSURE",
+    "SCHEMA_VERSION", "SOURCE", "SOURCE_ARCHIVE", "SOURCE_LIVE", "DISCLOSURE",
     "PMW_CHANNELS", "IMAGER_SENSORS",
 ]

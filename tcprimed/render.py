@@ -36,7 +36,7 @@ from scipy.interpolate import griddata  # noqa: E402
 import tat_palettes as tp  # noqa: E402
 from hafs_render.hafs_plot import compute_pct89  # noqa: E402
 
-from . import PMW_CHANNELS, SOURCE
+from . import PMW_CHANNELS, SOURCE_ARCHIVE
 
 # ---- look + layout (sober scientific aesthetic, matches the HAFS sim-MW frame)
 BAND_BG = "#0b0e13"          # figure + header band background (dark navy-black)
@@ -393,10 +393,12 @@ def _common_figure(meta: dict, product_label: str, sub_label: str,
     band.text(rx, y_bot, f"Valid {valid_str}", ha="right", va="center",
               color=MUTED_COLOR, fontsize=10.5, transform=band.transAxes)
 
-    # Footer credit (bottom-left watermark, bottom-right source).
+    # Footer credit (bottom-left watermark, bottom-right source). The source is
+    # the actual provider: NASA GPM/PPS for live overpasses, TC-PRIMED for archive.
+    src = meta.get("source_label", SOURCE_ARCHIVE)
     fig.text(left_in / fig_w + 0.004, (botpad_in * 0.4) / fig_h, WATERMARK,
              ha="left", va="bottom", color=MUTED_COLOR, fontsize=9)
-    fig.text(1.0 - right_in / fig_w - 0.004, (botpad_in * 0.4) / fig_h, SOURCE,
+    fig.text(1.0 - right_in / fig_w - 0.004, (botpad_in * 0.4) / fig_h, src,
              ha="right", va="bottom", color=MUTED_COLOR, fontsize=9)
 
     return fig, ax, extent, (fig_w, fig_h, left_in, right_in, map_bottom,
@@ -463,7 +465,8 @@ def render_89pct(meta: dict, out_path: str) -> str:
 
     fig, ax, extent, geom = _common_figure(
         meta, "89 GHz PCT (polarization-corrected)",
-        f"NOAA/CIRA TC-PRIMED · {meta['platform']}", right_stat)
+        f"{meta.get('source_label', SOURCE_ARCHIVE)} · {meta['platform']}",
+        right_stat)
 
     cf = _draw_scalar_image(ax, extent, pct_g, cmap, norm, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)
@@ -498,7 +501,7 @@ def render_37color(meta: dict, out_path: str) -> str:
 
     fig, ax, extent, geom = _common_figure(
         meta, "37 GHz Color",
-        f"NOAA/CIRA TC-PRIMED · {meta['platform']}", "")
+        f"{meta.get('source_label', SOURCE_ARCHIVE)} · {meta['platform']}", "")
 
     _draw_rgba_image(ax, extent, rgba, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)

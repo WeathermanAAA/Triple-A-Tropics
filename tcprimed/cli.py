@@ -61,6 +61,12 @@ def main(argv=None) -> int:
                    help="re-render every overpass even if already published "
                         "(use after a render-code change to refresh R2). Also "
                         "via TCPRIMED_FORCE=1.")
+    p.add_argument("--live", action="store_true",
+                   help="LIVE/NRT tier: render currently-active storms from PPS "
+                        "NRT GPM 1C (needs PPS_EMAIL) instead of the TC-PRIMED "
+                        "archive. Merges into the same microwave/ manifest.")
+    p.add_argument("--window-hours", type=int, default=6,
+                   help="live tier: NRT lookback window (default 6)")
     p.add_argument("--manifest-url", default=DEFAULT_MANIFEST_URL,
                    help="prior manifest to MERGE into (the growing union)")
     p.add_argument("--cdn-base", default=DEFAULT_CDN_BASE,
@@ -84,14 +90,22 @@ def main(argv=None) -> int:
 
     force = args.force or (os.environ.get("TCPRIMED_FORCE", "") or "").lower() \
         in ("1", "true", "yes")
+    live = args.live or (os.environ.get("TCPRIMED_LIVE", "") or "").lower() \
+        in ("1", "true", "yes")
 
     os.makedirs(args.out_dir, exist_ok=True)
     try:
-        run_build(args.out_dir, tiers=tiers, year=year, years=years,
-                  basins=basins, storm=args.storm,
-                  max_overpasses=args.max_overpasses,
-                  prior_manifest_url=(args.manifest_url or None),
-                  cdn_base=(args.cdn_base or None), force=force)
+        if live:
+            from .build import build_live
+            build_live(args.out_dir, window_hours=args.window_hours,
+                       prior_manifest_url=(args.manifest_url or None),
+                       cdn_base=(args.cdn_base or None), force=force)
+        else:
+            run_build(args.out_dir, tiers=tiers, year=year, years=years,
+                      basins=basins, storm=args.storm,
+                      max_overpasses=args.max_overpasses,
+                      prior_manifest_url=(args.manifest_url or None),
+                      cdn_base=(args.cdn_base or None), force=force)
     except Exception as e:  # noqa: BLE001
         # Never leave a half-written tree that the sync would push: fail loud
         # but non-destructively (the workflow guards the sync on exit code).
