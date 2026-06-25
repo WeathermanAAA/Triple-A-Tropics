@@ -257,6 +257,8 @@
     ".clm-op{padding:0 11px 8px 41px;}",
     ".clm-op input[type=range]{width:100%;accent-color:var(--cat-accent,#3fa4ff);height:3px;}",
     ".clm-empty{padding:4px 11px 8px 11px;color:var(--muted,#8ea2bd);font-size:11px;font-style:italic;}",
+    ".clm-row.unavailable{opacity:.5;cursor:default;}",
+    ".clm-row.unavailable .clm-na{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8ea2bd);}",
     ".clm-drag{flex:0 0 auto;cursor:grab;color:var(--muted,#8ea2bd);font-size:11px;",
       "letter-spacing:-2px;touch-action:none;user-select:none;}",
     ".clm-row.clm-drop{box-shadow:inset 0 2px 0 var(--cat-accent,#3fa4ff);}",
@@ -481,6 +483,10 @@
     this.speedMs = 700;
     this.loop = true;
     this.timeMode = (opts.timeMode === "independent") ? "independent" : "synced";
+    // Archive mode (a historical storm): track + recon are the live layers;
+    // Satellite/Microwave imagery is current-only -> shown greyed/unavailable
+    // (no broken fetches). Opt-in: live mounts never pass it -> behave as today.
+    this.archive = !!opts.archive;
     this.layers = [];           // [{id,group,label,type,visible,opacity,...}]
     this.activeLayerId = "track";
     this._reduced = prefersReducedMotion();
@@ -807,6 +813,20 @@
   // ===================================================================
   P._loadImageryLayers = function () {
     var self = this, s = this.storm || {};
+    // Archive (historical) storm: no current floater/MW exists, so don't fetch -
+    // register Satellite + Microwave as explicit greyed/unavailable rows (an
+    // honest note, not a broken/silent layer). Track + recon stay the live layers.
+    if (this.archive) {
+      var note = " imagery is current-only - unavailable for archived storms.";
+      this.layers.push({ id: "sat", group: "imagery", label: "Satellite",
+        type: "raster", unavailable: true, visible: false, frames: [],
+        swatch: "#5dd3ff", note: "Satellite" + note });
+      this.layers.push({ id: "mw", group: "imagery", label: "Microwave",
+        type: "raster", unavailable: true, visible: false, frames: [],
+        swatch: "#b06cff", note: "Microwave" + note });
+      this._buildRail();
+      return;
+    }
     // Derive the microwave slug + floater slug from the storm id. sid is the
     // canonical id (NHC bare "al012026"; JTWC "JTWC_WP072026"); atcf_long is the
     // shell's pre-stripped form when present. MW slug = lowercase atcf (wp072026);
@@ -1112,6 +1132,17 @@
       }
       rows.forEach(function (L) {
         var active = (L.id === self.activeLayerId);
+        // Archive: a current-only layer with no data -> greyed, no eye/opacity/
+        // sub-product, with an honest note. Never reaches _mountRaster.
+        if (L.unavailable) {
+          html += '<div class="clm-row unavailable" data-id="' + L.id +
+            '" data-type="' + L.type + '" aria-disabled="true">' +
+            '<span class="clm-sw" style="background:' + (L.swatch || "#5dd3ff") + '"></span>' +
+            '<span class="clm-name">' + escapeHtml(L.label) + '</span>' +
+            '<span class="clm-na">unavailable</span></div>';
+          if (L.note) html += '<div class="clm-empty">' + escapeHtml(L.note) + '</div>';
+          return;
+        }
         var drag = (L.type === "raster")
           ? '<span class="clm-drag" data-drag="' + L.id + '" title="Drag to reorder">⋮⋮</span>' : '';
         html += '<div class="clm-row' + (L.visible ? " on" : "") + (active ? " active" : "") +
