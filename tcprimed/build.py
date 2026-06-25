@@ -43,6 +43,23 @@ def _write(out_dir: str, rel: str, obj) -> None:
         json.dump(obj, f, separators=(",", ":"), allow_nan=False)
 
 
+# Cloudflare (in front of the R2 CDN) 403s the default "Python-urllib/x.y"
+# User-Agent from datacenter IPs, so a bare urlopen of the public manifest fails
+# with HTTPError 403 on GitHub Actions even though the file is reachable. A
+# browser-like UA passes. This is load-bearing: without it the cross-tier union
+# never merges (each tier reads an empty prior and clobbers the other's storms),
+# so the live (current-storm) and archive tiers can't coexist in one manifest.
+_HTTP_UA = "Mozilla/5.0 (compatible; TripleATropics-tcprimed/1.0)"
+
+
+def _http_get_json(url: str, timeout: int = 20):
+    """GET + parse JSON with a non-bot User-Agent (see _HTTP_UA). Raises on any
+    HTTP/network/parse error - callers decide how to degrade."""
+    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+        return json.loads(r.read().decode("utf-8"))
+
+
 def _fetch_prior_manifest(url: Optional[str]) -> tuple[dict, bool]:
     """Return (manifest, ok). ok is False ONLY when a fetch was attempted and
     failed (transient CDN error). A missing url is not a failure (ok=True) — it
@@ -52,8 +69,7 @@ def _fetch_prior_manifest(url: Optional[str]) -> tuple[dict, bool]:
     if not url:
         return {}, True
     try:
-        with urllib.request.urlopen(url, timeout=20) as r:  # noqa: S310
-            return json.loads(r.read().decode("utf-8")), True
+        return _http_get_json(url), True
     except Exception as e:  # noqa: BLE001
         print(f"tcprimed: prior manifest unavailable ({type(e).__name__}); "
               f"starting fresh union", file=sys.stderr)
@@ -66,8 +82,7 @@ def _fetch_prior_overpasses(base_url: Optional[str], slug: str) -> dict:
         return {}
     url = base_url.rstrip("/") + f"/{slug}/overpasses.json"
     try:
-        with urllib.request.urlopen(url, timeout=20) as r:  # noqa: S310
-            return json.loads(r.read().decode("utf-8"))
+        return _http_get_json(url)
     except Exception:  # noqa: BLE001
         return {}
 
@@ -146,12 +161,17 @@ def build(out_dir: str, *, tiers=("final", "preliminary"),
     return _write_manifest(out_dir, union, prior_ok, rendered_any)
 
 
-def _write_manifest(out_dir, union, prior_ok, rendered_any) -> dict:
+def _write_manifest(out_dir, union, prior_ok, rendered_any, *, live=False) -> dict:
     """Build the growing-union manifest (newest-first by latest_overpass_utc) and
-    write it -- UNLESS the union is empty AND the prior was unreadable, in which
-    case skip the write so the workflow's "no manifest -> last-known-good stays
-    live" guard engages (never clobber a populated live manifest with an empty
-    one)."""
+    write it -- UNLESS doing so would clobber a populated live manifest we could
+    not read to merge onto. Two skip cases (both leave the workflow's "no manifest
+    -> last-known-good stays live" guard engaged):
+      * union empty AND prior unreadable (any tier), or
+      * the LIVE tier when the prior was unreadable: its union holds only the
+        current active storms, so writing it would drop the entire archive (the
+        live tier never re-enumerates the archive - it relies on the prior). The
+        archive tier is exempt because it re-enumerates every season storm, so a
+        fresh union there IS the full set."""
     storms = list(union.values())
     storms.sort(key=lambda s: s.get("latest_overpass_utc") or "", reverse=True)
     default_slug = storms[0]["slug"] if storms else None
@@ -167,6 +187,11 @@ def _write_manifest(out_dir, union, prior_ok, rendered_any) -> dict:
         print("tcprimed: empty union AND prior manifest unavailable - NOT "
               "writing manifest (workflow keeps last-known-good live)",
               file=sys.stderr)
+        return manifest
+    if storms and live and not prior_ok:
+        print("tcprimed live: prior manifest unreadable - NOT writing a "
+              "live-only manifest (would drop the archive); keeping "
+              "last-known-good live", file=sys.stderr)
         return manifest
     _write(out_dir, "manifest.json", manifest)
     print(f"tcprimed: wrote manifest with {len(storms)} storm(s), "
@@ -296,13 +321,13 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
     if not email:
         print("tcprimed live: no PPS credential (PPS_EMAIL / ~/.pps_email); "
               "live tier skipped", file=sys.stderr)
-        return _write_manifest(out_dir, union, prior_ok, False)
+        return _write_manifest(out_dir, union, prior_ok, False, live=True)
 
     active = st.active_storms(include_invests=include_invests)
     print(f"tcprimed live: {len(active)} active system(s): "
           f"{[s['slug'] for s in active]}")
     if not active:
-        return _write_manifest(out_dir, union, prior_ok, False)
+        return _write_manifest(out_dir, union, prior_ok, False, live=True)
 
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=window_hours)
     try:
@@ -310,7 +335,7 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
     except Exception as e:  # noqa: BLE001
         print(f"tcprimed live: NRT listing failed: {type(e).__name__}: {e}",
               file=sys.stderr)
-        return _write_manifest(out_dir, union, prior_ok, False)
+        return _write_manifest(out_dir, union, prior_ok, False, live=True)
     if max_granules:
         granules = granules[-int(max_granules):]
     print(f"tcprimed live: {len(granules)} candidate NRT granule(s) since "
@@ -410,4 +435,4 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
         s = next(x for x in active if x["slug"] == slug)
         _finalize_storm(out_dir, slug, s["atcf"], s["basin"], s["year"],
                         existing_by_slug[slug], union, name=s["name"])
-    return _write_manifest(out_dir, union, prior_ok, bool(touched))
+    return _write_manifest(out_dir, union, prior_ok, bool(touched), live=True)
