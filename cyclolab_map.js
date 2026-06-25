@@ -105,11 +105,33 @@
     0, 0.20, 4, 0.28, 8, 0.36, 12, 0.45];
 
   var TRACKS_BEFORE = "tracks-line-solid";   // rasters insert below this id
+  var IMAGERY_CDN = "https://cdn.triple-a-tropics.com";  // floater + microwave R2 origin
 
   // ===================================================================
   // Helpers (verbatim from global_tracks.html)
   // ===================================================================
   function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
+
+  // Best-effort JSON GET (a missing/blocked manifest -> null, never throws, so a
+  // storm with no floater/MW simply gets no imagery layer).
+  function fetchJSON(url) {
+    return fetch(url, { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+  }
+
+  // WGS84 [W,S,E,N] -> MapLibre image-source corner quad [TL,TR,BR,BL] (each
+  // [lng,lat]). The producers store axis-aligned equirectangular bounds in their
+  // native frame; this is the ONE site that unwraps an antimeridian crossing
+  // (E<=W, e.g. a WP floater straddling 180 deg), letting lng exceed 180 so
+  // MapLibre wraps it continuously instead of spanning the globe backwards.
+  function boundsToCorners(b) {
+    if (!b || b.length < 4) return null;
+    var W = +b[0], S = +b[1], E = +b[2], N = +b[3];
+    if (!(isFinite(W) && isFinite(S) && isFinite(E) && isFinite(N))) return null;
+    if (E <= W) E += 360;
+    return [[W, N], [E, N], [E, S], [W, S]];
+  }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -559,6 +581,9 @@
       });
       // Tool layers (distance + draw) sit ABOVE the track + markers.
       self._setupToolLayers();
+      // First real raster layers: satellite floater + microwave (additive,
+      // best-effort fetch of the per-storm tiles + bounds).
+      self._loadImageryLayers();
     });
   };
 
@@ -771,6 +796,119 @@
     var fr = L.frames[idx]; if (!fr || !this.map) return;
     var src = this.map.getSource("clm-raster-" + L.id);
     if (src && src.updateImage) src.updateImage({ url: fr.url, coordinates: fr.corners });
+  };
+
+  // ===================================================================
+  // Imagery layers (Satellite floater + Microwave) — the first REAL raster
+  // layers. Reads the chrome-free georeferenced tiles + WGS84 bounds the
+  // producers now emit; everything below (mount, scrubber, legend) is the
+  // existing raster framework. Best-effort + additive: a storm with no floater
+  // or no MW simply gets no layer. Called once, after the map is ready.
+  // ===================================================================
+  P._loadImageryLayers = function () {
+    var self = this, s = this.storm || {};
+    // Derive the microwave slug + floater slug from the storm id. sid is the
+    // canonical id (NHC bare "al012026"; JTWC "JTWC_WP072026"); atcf_long is the
+    // shell's pre-stripped form when present. MW slug = lowercase atcf (wp072026);
+    // floater slug = drop the trailing 4-digit year (wp07).
+    var atcf = String(s.atcf_long || s.atcf_id || s.sid || "")
+      .replace(/^[A-Za-z]+_/, "").toLowerCase();
+    if (!atcf) return;
+    var floaterSlug = atcf.replace(/\d{4}$/, "");
+
+    // ---- Microwave (sparse overpasses) ----
+    fetchJSON(IMAGERY_CDN + "/microwave/manifest.json").then(function (man) {
+      if (!man) return;
+      var ent = (man.storms || []).filter(function (e) {
+        return String(e.slug || "").toLowerCase() === atcf;
+      })[0];
+      if (!ent) return;
+      var legends = man.legends || {};
+      var leg = function (p) { return legends[p] || {}; };
+      fetchJSON(IMAGERY_CDN + "/microwave/" + atcf + "/overpasses.json").then(function (doc) {
+        if (!doc) return;
+        var framesFor = function (prod) {
+          return (doc.overpasses || [])
+            .filter(function (o) { return o.tiles && o.tiles[prod] && o.bounds_wgs84; })
+            .map(function (o) {
+              return { url: IMAGERY_CDN + "/microwave/" + o.tiles[prod],
+                       corners: boundsToCorners(o.bounds_wgs84), time: o.valid_utc };
+            })
+            .filter(function (fr) { return fr.corners; });
+        };
+        if (!framesFor("89pct").length && !framesFor("37color").length) return;
+        var g0 = leg("89pct");
+        self.addRasterLayer({
+          id: "mw", group: "imagery", label: "Microwave (89 PCT)", swatch: "#b06cff",
+          visible: false, frames: framesFor("89pct"),
+          subProducts: [{ value: "89pct", label: "89 PCT" }, { value: "37color", label: "37 Color" }],
+          activeSub: "89pct",
+          legendStops: g0.stops || null, legendHtml: g0.legendHtml || null, legendLabel: g0.label || null,
+          onSubProduct: function (sub, host) {
+            var L = host._layer("mw"); if (!L) return;
+            var g = leg(sub);
+            L.frames = framesFor(sub); L.activeFrame = 0;
+            L.legendStops = g.stops || null; L.legendHtml = g.legendHtml || null;
+            L.legendLabel = g.label || null;
+            L.label = sub === "37color" ? "Microwave (37 Color)" : "Microwave (89 PCT)";
+            host._buildTime();
+            if (host.ready) host.setActiveFrame("mw", 0);
+          }
+        });
+      });
+    });
+
+    // ---- Satellite floater (dense frames) ----
+    fetchJSON(IMAGERY_CDN + "/floaters/manifest.json").then(function (top) {
+      if (!top) return;
+      var ent = (top.storms || []).filter(function (e) {
+        var id = String(e.id || "").toLowerCase();
+        return id === atcf || id.replace(/^[a-z]+_/, "") === atcf
+            || String(e.slug || "").toLowerCase() === floaterSlug;
+      })[0];
+      if (!ent || !ent.manifest) return;
+      fetchJSON(IMAGERY_CDN + "/" + String(ent.manifest).replace(/^\//, "")).then(function (man) {
+        if (!man || !man.bands) return;
+        var bandKeys = Object.keys(man.bands);
+        var framesFor = function (bk) {
+          var b = man.bands[bk] || {};
+          return (b.frames || [])
+            .filter(function (f) { return f.tile_key && f.bounds; })
+            .map(function (f) {
+              return { url: IMAGERY_CDN + "/" + String(f.tile_key).replace(/^\//, ""),
+                       corners: boundsToCorners(f.bounds), time: f.t };
+            })
+            .filter(function (fr) { return fr.corners; });
+        };
+        var first = null;
+        for (var i = 0; i < bandKeys.length; i++) {
+          if (framesFor(bandKeys[i]).length) { first = bandKeys[i]; break; }
+        }
+        if (!first) return;
+        var b0 = man.bands[first];
+        var bandLabel = function (k) { return (man.bands[k] && man.bands[k].label) || k; };
+        self.addRasterLayer({
+          id: "sat", group: "imagery", label: "Satellite (" + bandLabel(first) + ")",
+          swatch: "#5dd3ff", frames: framesFor(first),
+          subProducts: bandKeys.map(function (k) { return { value: k, label: bandLabel(k) }; }),
+          activeSub: first,
+          legendStops: (b0.legend || {}).stops || null,
+          legendHtml: (b0.legend || {}).legendHtml || null,
+          legendLabel: (b0.legend || {}).label || null,
+          onSubProduct: function (sub, host) {
+            var L = host._layer("sat"); if (!L) return;
+            var b = man.bands[sub] || {};
+            L.frames = framesFor(sub); L.activeFrame = 0;
+            L.legendStops = (b.legend || {}).stops || null;
+            L.legendHtml = (b.legend || {}).legendHtml || null;
+            L.legendLabel = (b.legend || {}).label || null;
+            L.label = "Satellite (" + bandLabel(sub) + ")";
+            host._buildTime();
+            if (host.ready) host.setActiveFrame("sat", 0);
+          }
+        });
+      });
+    });
   };
 
   // ===================================================================
