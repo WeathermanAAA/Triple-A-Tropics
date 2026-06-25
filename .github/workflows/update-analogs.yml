@@ -1,0 +1,87 @@
+name: update-analogs
+
+# CycloLab "most resembles" analog engine. tropycal loads the best-track archive
+# (HURDAT2 for AL/EP/CP, IBTrACS jtwc for WP); WE compute the TSAI point-separation
+# ranking (cyclolab_analogs.py) and write cyclolab/{CANONICAL_SID}/analogs.json +
+# the archive picker index/track to R2. ace_core is untouched. R2-only: commits
+# nothing to main; last-known-good stays live on any failure.
+
+on:
+  schedule:
+    # Active storms (lead-time mode) refreshed a few times a day; staggered
+    # non-round minutes + a backup, per the repo's scheduled-workflow convention.
+    - cron: "37 */6 * * *"
+    - cron: "7 */6 * * *"     # backup +30 min
+  workflow_dispatch:
+    inputs:
+      storm:
+        description: "Specific storm_id(s), space-separated (e.g. AL032009 NHC_AL042007)"
+        default: ""
+      archive:
+        description: "Basin to backfill once (AL/EP/CP/WP)"
+        default: ""
+      years:
+        description: "Season range for --archive, e.g. '2007 2024'"
+        default: ""
+
+permissions:
+  contents: read            # R2-only product; commits nothing to main
+
+concurrency:
+  group: update-analogs     # serialize the growing-union index write
+  cancel-in-progress: false
+
+jobs:
+  analogs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        # tropycal is the track/intensity data engine (pulls pandas/numpy/scipy/
+        # matplotlib). setuptools<81 restores pkg_resources, which tropycal's
+        # version probe imports (removed in newer setuptools) - without it the
+        # import fails on the runner.
+        run: |
+          python -m pip install --upgrade pip
+          pip install "setuptools<81" tropycal
+      - name: Build analogs
+        env:
+          ANALOGS_ENABLED: ${{ vars.ANALOGS_ENABLED || '1' }}
+          ANALOGS_STORM: ${{ github.event.inputs.storm }}
+          ANALOGS_ARCHIVE: ${{ github.event.inputs.archive }}
+          ANALOGS_YEARS: ${{ github.event.inputs.years }}
+        run: |
+          set -euo pipefail
+          ARGS="--out-dir ./analogs_build"
+          # Default (scheduled) run = active storms in lead-time mode. A dispatch
+          # with --storm/--archive runs that instead (backfill / one-off).
+          if [ -z "${ANALOGS_STORM}" ] && [ -z "${ANALOGS_ARCHIVE}" ]; then
+            ARGS="$ARGS --active"
+          fi
+          if [ -n "${ANALOGS_STORM}" ];   then ARGS="$ARGS --storm ${ANALOGS_STORM}"; fi
+          if [ -n "${ANALOGS_ARCHIVE}" ]; then ARGS="$ARGS --archive ${ANALOGS_ARCHIVE}"; fi
+          if [ -n "${ANALOGS_YEARS}" ];   then ARGS="$ARGS --years ${ANALOGS_YEARS}"; fi
+          python generate_analogs.py $ARGS
+      - name: Sync to R2 (cdn.triple-a-tropics.com/cyclolab/)
+        # Growing union: NO --delete (prior storms' analogs.json / archive tracks
+        # stay live). Sentinel manifest.json gates the sync; no manifest -> skip,
+        # last-known-good stays live.
+        if: ${{ vars.ANALOGS_ENABLED != 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./analogs_build/manifest.json ]; then
+            echo "analogs: no manifest written - skipping R2 sync (last-known-good stays live)"
+            exit 0
+          fi
+          aws s3 sync ./analogs_build "s3://triple-a-tropics-media/cyclolab" \
+            --endpoint-url "$R2_ENDPOINT" --no-progress \
+            --content-type "application/json" --cache-control "public, max-age=300" \
+            --only-show-errors
