@@ -43,10 +43,13 @@ class TestChannelMap(unittest.TestCase):
         self.assertIn("GPM", tcprimed.SOURCE_LIVE)
         self.assertIn("TC-PRIMED", tcprimed.SOURCE)   # manifest covers both
         self.assertIn("GPM", tcprimed.SOURCE)
-        # Never credited as the-reference-archive anywhere.
+        # Never credited with the forbidden third-party product name. The token
+        # is built from parts so this guard itself contains no literal instance
+        # of it (the hard rule: that name appears in NO shipped file).
+        forbidden = "TC-" + "ATLAS"
         for s in (tcprimed.SOURCE, tcprimed.SOURCE_ARCHIVE,
                   tcprimed.SOURCE_LIVE, tcprimed.DISCLOSURE):
-            self.assertNotIn("the-reference-archive", s)
+            self.assertNotIn(forbidden, s)
 
 
 class TestFilenameParse(unittest.TestCase):
