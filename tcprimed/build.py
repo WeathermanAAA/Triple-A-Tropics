@@ -182,6 +182,9 @@ def _write_manifest(out_dir, union, prior_ok, rendered_any, *, live=False) -> di
         "disclosure": DISCLOSURE,
         "storms": storms,
         "default_slug": default_slug,
+        # ADDITIVE: static legend descriptors for the map-mounted tiles
+        # (cyclolab_map.js). Ignored by the existing /satellite/ viewer.
+        "legends": rnd.mw_legends(),
     }
     if not storms and not prior_ok:
         print("tcprimed: empty union AND prior manifest unavailable - NOT "
@@ -243,11 +246,12 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
                       f"{type(e).__name__}: {e}", file=sys.stderr)
                 continue
             try:
-                products = rnd.render_overpass(meta, storm_dir, oid)
+                res = rnd.render_overpass(meta, storm_dir, oid)
             except Exception as e:  # noqa: BLE001
                 print(f"tcprimed: render {oid} ({atcf}) failed: "
                       f"{type(e).__name__}: {e}", file=sys.stderr)
                 continue
+            products, tiles = res["products"], res["tiles"]
             # products holds whichever of {89pct, 37color} rendered (a data gap
             # in one channel publishes the other rather than dropping the pass).
             prod_paths = {k: f"{slug}/{v}" for k, v in products.items()}
@@ -259,6 +263,9 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
                 "intensity_kt": int(meta["intensity_kt"]),
                 "dev_level": meta["dev_level"],
                 "products": prod_paths,
+                # ADDITIVE map-ready fields (ignored by the existing viewer):
+                "tiles": {k: f"{slug}/{v}" for k, v in tiles.items()},
+                "bounds_wgs84": rnd.overpass_bounds_wgs84(meta),
             }
             print(f"tcprimed: rendered {atcf} {oid} ({tier}) "
                   f"[{'+'.join(sorted(products))}]")
@@ -413,18 +420,22 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     (meta["lat37"], meta["lon37"],
                      meta["tb37v"], meta["tb37h"]) = c37
                 try:
-                    products = rnd.render_overpass(
+                    res = rnd.render_overpass(
                         meta, os.path.join(out_dir, slug), oid)
                 except Exception as e:  # noqa: BLE001
                     print(f"tcprimed live: render {slug} {oid} failed: "
                           f"{type(e).__name__}: {e}", file=sys.stderr)
                     continue
+                products, tiles = res["products"], res["tiles"]
                 existing_by_slug[slug][oid] = {
                     "id": oid, "sensor": sensor, "platform": platform,
                     "valid_utc": _iso(meta["valid"]),
                     "intensity_kt": int(meta["intensity_kt"]),
                     "dev_level": meta["dev_level"],
                     "products": {k: f"{slug}/{v}" for k, v in products.items()},
+                    # ADDITIVE map-ready fields (ignored by the existing viewer):
+                    "tiles": {k: f"{slug}/{v}" for k, v in tiles.items()},
+                    "bounds_wgs84": rnd.overpass_bounds_wgs84(meta),
                     "source": "live",
                 }
                 touched.add(slug)

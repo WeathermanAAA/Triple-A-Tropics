@@ -38,6 +38,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.image as mpimg  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap, Normalize  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
 
@@ -258,6 +259,60 @@ def _draw_rgba_image(ax, extent, rgba, zorder):
     a channel was fill -> transparent outside the swath)."""
     ax.imshow(rgba, origin="lower", extent=extent, interpolation="bilinear",
               aspect="auto", zorder=zorder)
+
+
+# ---------------------------------------------------------------------------
+# Map-ready outputs (ADDITIVE): WGS84 bounds + chrome-free georeferenced tiles
+# for mounting in the CycloLab stacking map (cyclolab_map.js type:image source).
+# These never touch the chromed display PNGs.
+# ---------------------------------------------------------------------------
+def overpass_bounds_wgs84(meta: dict, half: float = HALF_DEG):
+    """WGS84 ``[W, S, E, N]`` bbox of an overpass's storm-centered render box.
+
+    The render grid spans ``clon +/- half`` x ``clat +/- half`` (see _regrid).
+    ``clon`` is normalized to -180..180 so the consumer can mount the chrome-free
+    tile as a MapLibre image source; a dateline box leaves E (or W) out of
+    -180..180 range verbatim - MapLibre wraps it, and the consumer owns the single
+    antimeridian unwrap site."""
+    lonc = ((float(meta["clon"]) + 180.0) % 360.0) - 180.0
+    clat = float(meta["clat"])
+    return [lonc - half, clat - half, lonc + half, clat + half]
+
+
+def _save_geotile(rgba, out_path: str) -> None:
+    """Write a chrome-free, north-up RGBA PNG of a regridded product array (bare
+    data pixels, transparent off-swath) for map mounting. The grid is row0=south
+    (origin='lower' in the chromed render), so flip to PNG row0=north."""
+    arr = np.clip(np.asarray(rgba, dtype=float), 0.0, 1.0)
+    mpimg.imsave(out_path, np.flipud(arr))
+
+
+def _hex(rgba) -> str:
+    r, g, b = (int(round(float(c) * 255)) for c in rgba[:3])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def mw_legends() -> dict:
+    """Static legend descriptors for the map-mounted MW products (consumed by
+    cyclolab_map.js). 89 PCT = discrete Kelvin stops sampled from the NRL ice-
+    scattering table at its tick marks; 37 color = a qualitative RGB recipe (the
+    composite has no scalar palette - _color37_rgba is a recipe, not a cmap)."""
+    norm = nrl89_norm()
+    stops = [{"color": _hex(_NRL89_CMAP(norm(float(k)))), "label": f"{k:g}"}
+             for k in _NRL89_TICKS_K]
+    return {
+        "89pct": {"label": "89 GHz PCT (K)", "discrete": True, "stops": stops},
+        "37color": {"label": "37 GHz Color", "legendHtml":
+                    "37V/37H composite - cyan/blue = scattering &amp; deep "
+                    "convection, magenta/red = warm rain &amp; land, dark = ocean."},
+    }
+
+
+def _geo_path(product_path: str) -> str:
+    """Sibling chrome-free tile path for a chromed product PNG:
+    ``..._89pct.png`` -> ``..._89pct_geo.png``."""
+    base, ext = os.path.splitext(product_path)
+    return f"{base}_geo{ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +599,16 @@ def render_89pct(meta: dict, out_path: str) -> str:
 
     fig.savefig(out_path, dpi=150, facecolor=BAND_BG)
     plt.close(fig)
+
+    # ADDITIVE map tile: bare NRL-colored data pixels, transparent off-swath.
+    # Best-effort (after the chromed PNG is safely on disk) so a tile failure can
+    # never drop the published product.
+    try:
+        _save_geotile(cmap(norm(np.ma.masked_invalid(pct_g))), _geo_path(out_path))
+    except Exception as e:  # noqa: BLE001
+        print(f"tcprimed: 89pct geotile skipped for "
+              f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
+              file=sys.stderr)
     return out_path
 
 
@@ -568,19 +633,30 @@ def render_37color(meta: dict, out_path: str) -> str:
 
     fig.savefig(out_path, dpi=150, facecolor=BAND_BG)
     plt.close(fig)
+
+    # ADDITIVE map tile: the RGBA composite already has alpha 0 off-swath.
+    try:
+        _save_geotile(rgba, _geo_path(out_path))
+    except Exception as e:  # noqa: BLE001
+        print(f"tcprimed: 37color geotile skipped for "
+              f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
+              file=sys.stderr)
     return out_path
 
 
 def render_overpass(meta: dict, out_dir: str, overpass_id: str) -> dict:
-    """Render both products for one overpass into out_dir; returns relative
-    product paths {'89pct': ..., '37color': ...} for whichever rendered.
+    """Render both products for one overpass into out_dir; returns
+    ``{"products": {89pct, 37color}, "tiles": {89pct, 37color}}`` (basenames) for
+    whichever rendered. ``products`` are the chromed display PNGs; ``tiles`` are
+    the matching chrome-free georeferenced map tiles (present only when the geo
+    write succeeded for that product).
 
     Each product is rendered independently and a single-product data gap (e.g.
     SSMIS F17 has its 37 GHz V channel all-fill in some passes, so only 89 PCT is
     available) is tolerated: the available product is published and the missing
-    one is omitted from the returned dict. Raises ValueError only if BOTH fail
-    (no usable imagery) so the caller can skip the overpass entirely; a partial
-    render never leaves an orphan PNG without a manifest record."""
+    one is omitted. Raises ValueError only if BOTH fail (no usable imagery) so the
+    caller can skip the overpass entirely; a partial render never leaves an orphan
+    PNG without a manifest record."""
     os.makedirs(out_dir, exist_ok=True)
     out: dict = {}
 
@@ -606,4 +682,11 @@ def render_overpass(meta: dict, out_dir: str, overpass_id: str) -> dict:
 
     if not out:
         raise ValueError("no usable imagery (both products failed)")
-    return out
+
+    # Collect whichever chrome-free tiles were emitted alongside the products.
+    tiles: dict = {}
+    for prod, base in out.items():
+        geo = _geo_path(os.path.join(out_dir, base))
+        if os.path.exists(geo):
+            tiles[prod] = os.path.basename(geo)
+    return {"products": out, "tiles": tiles}
