@@ -74,7 +74,7 @@
         b.className = 'mw-seg' + (p.key === self.product ? ' active' : '');
         b.textContent = p.label;
         b.setAttribute('data-product', p.key);
-        b.addEventListener('click', function () { self._setProduct(p.key); });
+        b.addEventListener('click', function () { self._chooseProduct(p.key); });
         d.toggle.appendChild(b);
       });
     }
@@ -241,6 +241,55 @@
     if (next !== idx) this._selectOverpass(next);
   };
 
+  // Find the overpass index nearest the current one that actually rendered a
+  // given product. Many overpasses publish only 89pct (e.g. SSMIS-F17 passes
+  // whose 37 GHz V channel was all-fill), so 37color can be absent on the
+  // latest pass even though earlier passes have it. Search outward by distance;
+  // on a tie (same distance ahead vs. behind) prefer the MORE RECENT (later)
+  // index. Returns -1 if no overpass has the product. fromIdx defaults to the
+  // current overpass.
+  MicrowaveViewer.prototype._findNearestOverpassWithProduct = function (key, fromIdx) {
+    var ops = this.overpasses;
+    var n = ops.length;
+    if (!n) return -1;
+    var start = (typeof fromIdx === 'number') ? fromIdx : ops.indexOf(this.curOverpass);
+    if (start < 0) start = n - 1;
+    function has(i) {
+      var p = ops[i] && ops[i].products;
+      return !!(p && p[key]);
+    }
+    if (has(start)) return start;
+    for (var d = 1; d < n; d++) {
+      var ahead = start + d;   // more recent: checked first (tie -> latest)
+      if (ahead < n && has(ahead)) return ahead;
+      var behind = start - d;
+      if (behind >= 0 && has(behind)) return behind;
+    }
+    return -1;
+  };
+
+  // User picked a product from the toggle. If the current overpass has it, just
+  // show it. If not, jump to the NEAREST overpass that does (preferring the
+  // most recent) so a one-click toggle always lands on real imagery — this is
+  // the fix for "where is 37 GHz?" when the latest pass is 89pct-only.
+  MicrowaveViewer.prototype._chooseProduct = function (key) {
+    var o = this.curOverpass || {};
+    var prods = o.products || {};
+    if (prods[key]) { this._setProduct(key); return; }
+    var idx = this._findNearestOverpassWithProduct(key);
+    if (idx >= 0) {
+      // Set the desired product first so _selectOverpass ->
+      // _syncProductAvailability won't bounce it back to the old product, then
+      // move to the overpass that has it.
+      this.product = key;
+      this._selectOverpass(idx);
+    } else {
+      // No overpass in this storm has the product; reflect the (disabled)
+      // selection and let the caption say it's unavailable.
+      this._setProduct(key);
+    }
+  };
+
   MicrowaveViewer.prototype._setProduct = function (key) {
     this.product = key;
     var btns = this.dom.toggle ? this.dom.toggle.querySelectorAll('.mw-seg') : [];
@@ -264,6 +313,7 @@
       var has = !!prods[key];
       btns[i].disabled = !has;
       btns[i].classList.toggle('mw-unavailable', !has);
+      btns[i].classList.toggle('active', key === this.product);
       if (has && firstAvail === null) firstAvail = key;
     }
     if (!prods[this.product] && firstAvail) this._setProduct(firstAvail);
