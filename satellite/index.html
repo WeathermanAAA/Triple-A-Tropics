@@ -1540,7 +1540,7 @@
 
 <script>
 // ---- Componentized satellite viewer (factory) -----------------------------
-// THE DUMB PLAYER (the cyclonicwx single-visible-frame approach). One visible <img> per
+// THE DUMB PLAYER (the single-visible-frame approach). One visible <img> per
 // viewer. Every frame is preloaded as its own decoded Image held in a JS
 // array; advancing a frame = setting the visible <img>'s src to the next
 // frame's already-cached URL — no network, no decode work on the tick. Pacing
@@ -1579,7 +1579,7 @@ const CDN = 'https://cdn.triple-a-tropics.com';
 // TWO viewers mount on this page (floater + meso), each with its own rAF loop
 // when playing. Two concurrent loops each painting a large frame compete for
 // the same per-vsync paint budget and BOTH go sloppy -- the floater was
-// perfect back when it was the page's only loop, and cyclonicwx is smooth
+// perfect back when it was the page's only loop, and the reference players are smooth
 // because it never animates two loops at once (separate pages). The token
 // serializes them: exactly ONE viewer may animate at any moment. Claiming it
 // (hover / pointer / Play / the floater's load autoplay) makes the other

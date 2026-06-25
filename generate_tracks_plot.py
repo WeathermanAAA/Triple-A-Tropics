@@ -96,7 +96,7 @@ BASINS: dict[str, dict] = {
         "atcf_dev_levels": {"TS", "TY", "STY", "HU"},
         # Geographic extent for the rendered map (lon_min, lon_max, lat_min, lat_max)
         "extent": (100.0, 180.0, 0.0, 65.0),
-        # Labels at bottom of the map (matching cyclonicwx terminology)
+        # Labels at bottom of the map (matching standard basin terminology)
         "vocab": {"named": "named storms", "cat1plus": "typhoons",
                   "cat3plus": "major typhoons", "cat5": "super typhoons"},
     },

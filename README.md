@@ -160,7 +160,7 @@ python generate_ace_plot.py --basin wp
 
 Things that are on the table but not built yet:
 
-- **Storm tracks map (per basin)** — cyclonicwx-style geographic plot
+- **Storm tracks map (per basin)** — operational-style geographic plot
   showing every current-season storm's position/intensity by DOY. Both
   a static PNG (matplotlib + cartopy) and an interactive version
   (Leaflet.js).
