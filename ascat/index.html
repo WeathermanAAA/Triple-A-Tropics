@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ASCAT Ocean Winds · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="ASCAT scatterometer ocean-surface winds: the most recent ASCAT-B and ASCAT-C coastal passes drawn as wind barbs colored by tropical-cyclone wind speed over a clean basemap, by basin or per storm. C-band winds resolve the broad gale-force wind field.">
+<meta property="og:title" content="ASCAT Ocean Winds · Triple-A-Tropics">
+<meta property="og:description" content="ASCAT-B / ASCAT-C scatterometer ocean-surface winds as barbs colored by TC wind, by basin or per storm. Shareable PNG. © EUMETSAT.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
+  nav, header, footer { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+
+  /* ---- ASCAT viewer (ascat/ascat.js). The CANVAS is the complete figure:
+     header, wind-barb map, kt colorbar, the disclosure + EUMETSAT credit and
+     the @WeathermanAAA_ watermark are ALL drawn on it, so right-click Copy /
+     Save (or Download PNG) yields the whole figure. The only HTML over the
+     canvas is the hover tooltip (pointer-events:none). */
+  #ascat-viewer { display: block; padding: 4px; }
+
+  .ascat-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
+  .ascat-group { display: flex; flex-direction: column; gap: 6px; }
+  .ascat-group > label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; }
+  .ascat-group select, .ascat-region-btn {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 13.5px; min-width: 170px;
+  }
+  .ascat-group select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
+  .ascat-region-btn { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+  .ascat-region-btn:hover { border-color: var(--accent-2); }
+  .ascat-caret { color: var(--accent-2); font-size: 11px; }
+  .ascat-group.ascat-style-wrap { margin-left: auto; }
+  .ascat-group.ascat-style-wrap select { min-width: 150px; }
+
+  .ascat-mapframe { position: relative; width: 100%; }
+  #ascat-canvas { display: block; width: 100%; height: auto; max-width: 100%; border-radius: 8px; cursor: crosshair; background: #0b1320; }
+  .ascat-status { position: absolute; inset: 0; display: none; z-index: 4; align-items: center; justify-content: center; gap: 10px; background: rgba(7,16,28,0.62); color: var(--muted); font-size: 14px; border-radius: 8px; }
+  .ascat-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent-2); animation: ascat-spin 0.9s linear infinite; }
+  @keyframes ascat-spin { to { transform: rotate(360deg); } }
+  #ascat-tooltip { position: absolute; display: none; pointer-events: none; z-index: 5; background: rgba(7,16,28,0.94); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--fg); line-height: 1.4; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .ascat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+  .ascat-btn { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .ascat-btn:hover { border-color: var(--accent-2); color: var(--accent-2); }
+  .ascat-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 14px; }
+
+  .ascat-empty { display: none; padding: 60px 28px; text-align: center; color: var(--muted); }
+  .ascat-empty h2 { color: var(--fg); font-size: 20px; margin: 0 0 10px; }
+  .ascat-empty p { max-width: 560px; margin: 0 auto; line-height: 1.6; }
+
+  @media (max-width: 760px) {
+    .ascat-controls { gap: 12px; }
+    .ascat-group select, .ascat-region-btn { min-width: 140px; }
+    .ascat-group.ascat-style-wrap { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/recon/">Recon</a>
+      <a href="/ascat/" class="active">ASCAT</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>ASCAT Ocean Winds</h1>
+  <p>Scatterometer ocean-surface winds from the <b>ASCAT</b> instruments on
+  EUMETSAT's MetOp-B and MetOp-C satellites, straight from the data. Each pass
+  measures the 10-metre wind over the ocean and is drawn here as standard
+  <b>wind barbs</b> colored by speed on a tropical-cyclone scale, over a clean
+  basemap. Choose a <b>basin</b> to see the most recent ASCAT-B and ASCAT-C
+  coverage stitched together (so a system in one swath gap may be caught by the
+  other), hover any barb for the exact speed and direction, and use Download PNG
+  to share exactly what you see. ASCAT is a <b>C-band</b> scatterometer: it
+  resolves the broad gale-force wind field well, but <b>underestimates the
+  extreme winds in a tropical cyclone's core</b> — it is a wind-field tool, not
+  a peak-intensity tool. Rain- and quality-flagged cells are removed; swaths are
+  intermittent and this feed updates in daily batches.</p>
+</header>
+
+<section class="chart-section">
+  <div class="chart-card">
+    <div id="ascat-viewer" tabindex="0">
+
+      <div class="ascat-controls">
+        <div id="ascat-region-wrap" class="ascat-group">
+          <label>Region</label>
+          <button id="ascat-region" type="button" class="ascat-btn ascat-region-btn">
+            <span id="ascat-region-lab">Atlantic</span> <span class="ascat-caret">&#9662;</span>
+          </button>
+        </div>
+        <div class="ascat-group">
+          <label for="ascat-pass">Pass</label>
+          <select id="ascat-pass"></select>
+        </div>
+        <div class="ascat-group">
+          <label for="ascat-density">Density</label>
+          <select id="ascat-density">
+            <option value="auto">Auto</option>
+            <option value="dense">Dense</option>
+            <option value="sparse">Sparse</option>
+          </select>
+        </div>
+        <div class="ascat-group ascat-style-wrap">
+          <label for="ascat-style">Style</label>
+          <select id="ascat-style"></select>
+        </div>
+      </div>
+
+      <div id="ascat-mapframe" class="ascat-mapframe">
+        <canvas id="ascat-canvas" width="900" height="560"
+                aria-label="ASCAT scatterometer ocean-surface wind barbs"></canvas>
+        <div id="ascat-tooltip"></div>
+        <div id="ascat-status" class="ascat-status">
+          <div class="ascat-spinner"></div><span>Loading…</span>
+        </div>
+      </div>
+
+      <div class="ascat-actions">
+        <button id="ascat-download" class="ascat-btn" type="button" title="Download this figure as a PNG">&#8681; Download PNG</button>
+        <button id="ascat-copy" class="ascat-btn" type="button" title="Copy this figure to the clipboard">Copy</button>
+      </div>
+
+      <div id="ascat-stats" class="ascat-stats"></div>
+
+      <div id="ascat-empty" class="ascat-empty">
+        <h2>No recent ASCAT passes</h2>
+        <p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are
+        published. Scatterometer swaths are intermittent, and this feed updates in
+        daily batches, so the most recent pass may be several hours to about a day
+        old.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section class="chart-section about">
+  <h2>About ASCAT ocean winds</h2>
+  <p>The <b>Advanced Scatterometer (ASCAT)</b> is a real-aperture radar that
+  measures the roughness of the ocean surface, from which the 10-metre wind
+  speed and direction are retrieved. These figures use the <b>12.5 km coastal</b>
+  Level-2 product from the EUMETSAT Ocean and Sea Ice Satellite Application
+  Facility (<b>OSI SAF</b>), processed at KNMI and distributed through the KNMI
+  Data Platform. Because ASCAT operates at <b>C-band</b>, it is relatively
+  insensitive to rain — an advantage over Ku-band scatterometers — but the
+  backscatter-to-wind relationship loses sensitivity above roughly 25 m/s, so
+  ASCAT <b>systematically underestimates the peak winds in an intense tropical
+  cyclone's eyewall</b>. Use it to map the extent of the gale- and storm-force
+  wind field, not to estimate peak intensity. Wind directions are shown in the
+  meteorological convention (barbs point toward the direction the wind is coming
+  from). Rain- and quality-flagged cells are removed. © <span id="cyear"></span>
+  EUMETSAT.</p>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · ASCAT winds: © EUMETSAT / OSI SAF / KNMI</div>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();
+document.getElementById('cyear').textContent = new Date().getFullYear();</script>
+<script src="/models/regions.js?v=e3af569ee9"></script>
+<script src="/ascat/ascat.js?v=0001"></script>
+</body>
+</html>
