@@ -26,7 +26,7 @@
  *
  * Honest caveats (drawn on the figure): C-band ASCAT underestimates extreme
  * TC-core winds; rain/quality-flagged cells are removed; swaths are intermittent
- * and this KNMI feed is daily-batched (the latest pass may be hours-to-a-day old).
+ * (near-real-time feed, so the latest pass over any one storm may be a few h old).
  *
  * Isolated from the other viewers (own IIFE, ascat-* ids).
  */
@@ -34,7 +34,7 @@
   'use strict';
 
   var BASE_DEFAULT = 'https://cdn.triple-a-tropics.com/ascat';
-  var POLL_MS = 300000;                // manifest refresh (daily-batched source)
+  var POLL_MS = 300000;                // manifest refresh (NRT source, slow cadence)
   var WATERMARK = '@WeathermanAAA_';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
   var CREDIT = '© EUMETSAT';
@@ -143,7 +143,7 @@
     '</div>' +
     '<div id="ascat-stats" class="ascat-stats"></div>' +
     '<div id="ascat-empty" class="ascat-empty"><h2>No recent ASCAT passes</h2>' +
-      '<p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are published. Scatterometer swaths are intermittent and this feed updates in daily batches.</p></div>';
+      '<p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are published. Scatterometer swaths are intermittent; this is a near-real-time feed.</p></div>';
 
   var ASCAT_EMBED_CSS =
     '.ascat-controls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;margin-bottom:10px}' +
@@ -618,7 +618,7 @@
     g.save(); g.font = '500 10.5px ' + FONT; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
     g.fillStyle = C.muted;
     var disc = (this.manifest && this.manifest.disclosure) ||
-      'C-band ASCAT underestimates extreme TC-core winds; rain-flagged cells removed; swaths are intermittent (daily-batched feed).';
+      'C-band ASCAT underestimates extreme TC-core winds; rain-flagged cells removed; swaths are intermittent (near-real-time feed).';
     var maxw = this.layout.map.w - 150;
     g.fillText(this._ellipsize(g, disc, maxw), this.layout.pad, this.layout.footerY);
     g.textAlign = 'right'; g.fillStyle = C.muted; g.font = '600 10.5px ' + FONT;
@@ -757,16 +757,22 @@
     }, 140);
   };
 
-  // ---- poll: refresh manifest (daily-batched, so a slow cadence) ----
-  AscatViewer.prototype._schedulePoll = function () { clearTimeout(this._pollTimer); var self = this; this._pollTimer = setTimeout(function () { self._poll(); }, POLL_MS); };
+  // ---- poll: refresh manifest. A slow cadence (NRT, multi-hour swath gaps); the
+  // CycloLab tab pauses it while the tab is hidden (mirrors ReconViewer). ----
+  AscatViewer.prototype._schedulePoll = function () { clearTimeout(this._pollTimer); if (this._paused) return; var self = this; this._pollTimer = setTimeout(function () { self._poll(); }, POLL_MS); };
   AscatViewer.prototype._poll = function () {
+    if (this._paused) return;
     var self = this;
     this._fetchJson('/manifest.json', true).then(function (m) {
-      // only rebuild if the current pass changed (a new batch landed)
+      // only rebuild if the current pass changed (a new pass landed)
       var changed = !self.manifest || (m && m.current_id !== self.manifest.current_id);
       if (changed) { self.loaded = {}; self._onManifest(m); }
     }).catch(function () {}).then(function () { self._schedulePoll(); });
   };
+  // Tab-gated polling for the CycloLab mount: pause when the tab is hidden, resume
+  // (with an immediate refresh) when it's shown again. No-op on the main /ascat/ page.
+  AscatViewer.prototype._pause = function () { this._paused = true; clearTimeout(this._pollTimer); };
+  AscatViewer.prototype._resume = function () { if (!this._paused) return; this._paused = false; this._poll(); };
 
   function uniq(arr) { var seen = {}, out = []; for (var i = 0; i < arr.length; i++) if (arr[i] && !seen[arr[i]]) { seen[arr[i]] = 1; out.push(arr[i]); } return out; }
 

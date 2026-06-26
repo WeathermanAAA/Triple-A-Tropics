@@ -56,20 +56,28 @@ def _pass_id(meta: dict) -> str:
     return f"{meta['sat']}_{meta['orbit']}_{meta['start'].strftime('%Y%m%dT%H%M%S')}"
 
 
-def _fetch_prior_manifest(url: str | None) -> dict | None:
+def _fetch_prior_manifest(url: str | None) -> "tuple[str, dict | None]":
+    """Read the prior manifest, distinguishing 'absent' (no manifest yet - a clean
+    first run, bootstrap from empty) from 'error' (a transient fetch/parse failure
+    on an EXISTING manifest - the caller must abort so an empty rebuild can't
+    clobber last-known-good R2). Returns (status, manifest) with status in
+    {'ok','absent','error'}."""
     if not url:
-        return None
+        return ("absent", None)            # merging disabled -> bootstrap from empty
+    if url.startswith("http"):
+        sep = "&" if "?" in url else "?"
+        status, obj = fetch.get_json_status(f"{url}{sep}t={int(_now().timestamp())}")
+        if status == "ok" and not isinstance(obj, dict):
+            return ("error", None)
+        return (status, obj if isinstance(obj, dict) else None)
+    # local-file manifest (tests / offline)
+    if not os.path.exists(url):
+        return ("absent", None)
     try:
-        if url.startswith("http"):
-            sep = "&" if "?" in url else "?"
-            body = fetch._request(                   # reuse the guarded GET
-                "GET", f"{url}{sep}t={int(_now().timestamp())}", api_key=None)
-            body = body.text if body is not None else None
-        else:
-            body = open(url, encoding="utf-8").read() if os.path.exists(url) else None
-        return json.loads(body) if body else None
+        with open(url, encoding="utf-8") as f:
+            return ("ok", json.load(f))
     except Exception:                                # noqa: BLE001
-        return None
+        return ("error", None)
 
 
 def _write(out_dir: str, key: str, obj) -> None:
@@ -100,8 +108,8 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
     ``window_hours`` is the display window (passes older than it are pruned + their
     R2 JSON reaped). ``backfill_hours`` (>= window_hours) widens the INGEST reach
     for a manual catch-up. ``max_new_per_run`` caps downloads per run (a cold first
-    run or a fresh daily batch otherwise pulls dozens of orbits). The manifest is
-    a growing union upserted by pass id, so passes survive later runs until pruned.
+    run or a wide backfill otherwise pulls dozens of orbits). The manifest is a
+    growing union upserted by pass id, so passes survive later runs until pruned.
     """
     now = _now()
     api_key = api_key or fetch.api_key_from_env()
@@ -113,7 +121,17 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
     window_start = now - _dt.timedelta(hours=window_hours)
     ingest_start = now - _dt.timedelta(hours=ingest_hours)
 
-    prior = _fetch_prior_manifest(prior_manifest_url) or {}
+    # Read the prior manifest BEFORE doing anything destructive. A transient read
+    # failure on an existing manifest must NOT rebuild from an empty union (that
+    # would drop the rolling window / blank the product); abort so the workflow's
+    # exit-code + manifest-presence guards skip the R2 sync and last-known-good
+    # stays live. A clean 'absent' (first run / merge disabled) bootstraps empty.
+    pstatus, prior = _fetch_prior_manifest(prior_manifest_url)
+    if pstatus == "error":
+        raise RuntimeError(
+            "ascat: prior manifest fetch failed (not a clean 404) - aborting before "
+            "the R2 sync so an empty rebuild cannot clobber last-known-good")
+    prior = prior or {}
     by_id: dict[str, dict] = {p["id"]: p for p in prior.get("passes", [])
                               if isinstance(p, dict) and p.get("id")}
 
@@ -121,11 +139,28 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
     active = _storms.active_storms()
     log(f"ascat: {len(active)} active system(s) in the live feed")
 
+    # resolve the ASCAT-B/C coastal-NRT dataset names from the live KNMI catalog
+    # (falls back to the pinned pair if the catalog is unreachable / unmatched)
+    datasets = fetch.resolve_datasets(api_key=api_key, log=log)
+
     # ---- list newest files per sensor, pick the in-window, not-yet-ingested ----
+    # Newest-first listing: 120 keys/sensor spans ~8 days at ~14 orbits/day, so the
+    # incremental 36h window always fits one page. A wide backfill can exceed it,
+    # so page deeper proportional to the ingest reach (so the older-but-in-window
+    # tail is not silently missed).
+    pages = 1 + max(0, int(ingest_hours * 14 / (24 * 120)))  # ~1 page per 120 orbits
+    pages = min(pages, 12)
     candidates: list[dict] = []
+    newest_seen: _dt.datetime | None = None
     for sk in sensors:
-        recs = fetch.fetch_recent(sk, api_key=api_key, max_keys=120)
-        log(f"ascat: {sk}: {len(recs)} listed")
+        recs = fetch.fetch_recent(sk, api_key=api_key, max_keys=120,
+                                  datasets=datasets, max_pages=pages)
+        if recs:
+            sk_newest = max(r["start"] for r in recs)
+            if newest_seen is None or sk_newest > newest_seen:
+                newest_seen = sk_newest
+        log(f"ascat: {sk}: {len(recs)} listed"
+            + (f", newest {_iso(sk_newest)}" if recs else ""))
         for rec in recs:
             pid = _pass_id(rec)
             if pid in by_id:
@@ -133,6 +168,20 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
             if rec["start"] < ingest_start:
                 continue                             # older than the (ingest) window
             candidates.append({**rec, "pass_id": pid})
+    # source-freshness verdict (loud but non-fatal: a stale/dead feed still leaves
+    # last-known-good R2 live). OSI SAF coastal NRT latency is ~2h45m per orbit, so
+    # a newest orbit older than ~12 h means the upstream feed has likely stalled.
+    newest_age_h = None
+    if newest_seen is not None:
+        newest_age_h = (now - newest_seen).total_seconds() / 3600.0
+        log(f"ascat: source freshness {'OK' if newest_age_h <= 12 else 'STALE'}: "
+            f"newest orbit {_iso(newest_seen)} ({newest_age_h:.1f} h old)")
+    else:
+        log("ascat: source freshness: NO orbits listed (empty/unreachable feed)")
+    # STALE = upstream stalled or the listing was empty/unreachable. We then keep
+    # last-known-good passes visible instead of draining the window (below).
+    stale = (newest_seen is None) or (newest_age_h is not None and newest_age_h > 12)
+
     # newest first, then cap (so a huge cold/backfill run stays bounded)
     candidates.sort(key=lambda c: c["start"], reverse=True)
     dropped = max(0, len(candidates) - max_new_per_run)
@@ -166,11 +215,12 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
                 continue
             # Ingest-time tag: distance to the storm's CURRENT centre (a moving
             # proxy - we have no historical track here) within a WINDOW-generous
-            # time pad. The KNMI feed is daily-batched, so a pass is routinely
-            # hours-to-~a-day older than the storm's latest fix; the canonical
-            # +/-3 h gate would reject every batched pass. CycloLab (Phase B) does
-            # the precise +/-3 h / 750 km filter against the real best track it
-            # already holds; this tag is the coarse candidate hint.
+            # time pad. Swath gaps + the ~3 h NRT latency mean a pass is routinely
+            # a few hours older than the storm's latest fix, and the rolling window
+            # keeps older passes too; the canonical +/-3 h gate against the current
+            # fix alone would drop most of them. CycloLab (Phase B) does the precise
+            # +/-3 h / 750 km filter against the real best track it already holds;
+            # this tag is the coarse candidate hint.
             p["storms"] = _storms.associate(
                 active, p["wvc"]["la"], p["wvc"]["lo"], p.get("path"),
                 max_dt_h=float(window_hours + 6))
@@ -184,19 +234,42 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
     log(f"ascat: ingested {len(new_ids)} new pass(es)")
 
     # ---- prune passes older than the display window; reap their R2 JSON ----
+    # When the feed is STALE (upstream stalled / listing failed) we do NOT prune:
+    # draining the window on a transient outage would blank the product, so we keep
+    # the last-known-good passes visible (each shows its true age in the viewer)
+    # until fresh orbits arrive and pruning resumes - recon's last-known-good rule.
     pruned: list[str] = []
     kept: dict[str, dict] = {}
-    for pid, entry in by_id.items():
-        mid = _parse_iso(entry.get("mid_utc")) or _parse_iso(entry.get("start_utc"))
-        if mid is not None and mid < window_start and pid not in new_ids:
-            pruned.append(pid)
-        else:
-            kept[pid] = entry
-    _write(out_dir, "_pruned_ids.json", sorted(pruned))
+    if stale:
+        kept = dict(by_id)
+        if by_id:
+            log("ascat: feed STALE - keeping last-known-good passes (no prune)")
+    else:
+        for pid, entry in by_id.items():
+            mid = _parse_iso(entry.get("mid_utc")) or _parse_iso(entry.get("start_utc"))
+            if mid is not None and mid < window_start and pid not in new_ids:
+                pruned.append(pid)
+            else:
+                kept[pid] = entry
 
     passes = sorted(kept.values(),
                     key=lambda e: e.get("start_utc") or "", reverse=True)
     current_id = passes[0]["id"] if passes else None
+
+    # Last-known-good guard: never publish an EMPTY manifest unless the prior union
+    # was confirmed empty too (a real prune-to-empty / off-season). If this run
+    # produced nothing and there was no prior union to reconcile against, write
+    # NOTHING - the workflow's manifest-presence guard then skips the R2 sync and
+    # last-known-good stays live. (A transient empty listing lands here harmlessly;
+    # the 'error' prior-read case already raised above.) A genuine prune-to-empty
+    # has a truthy prior['passes'], so the truthful empty manifest is still written.
+    if not passes and not prior.get("passes"):
+        log("ascat: empty result with no prior union - skipping write so R2 stays live")
+        return {"mode": "noop", "reason": "empty_no_prior",
+                "new": len(new_ids), "total": 0, "pruned": 0,
+                "active_storms": len(active), "current": None}
+
+    _write(out_dir, "_pruned_ids.json", sorted(pruned))
 
     # ---- current.json: the newest pass, inlined (instant spotlight) ----
     if current_id and current_id in new_ids:
@@ -216,10 +289,14 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
         "schema_version": SCHEMA_VERSION, "generated_utc": _iso(now),
         "source": SOURCE, "credit": CREDIT, "disclosure": DISCLOSURE,
         "window_hours": window_hours,
-        "latency_note": ("KNMI Open Data publishes ASCAT in daily batches; "
-                         "the newest pass may be several hours to about a day old."),
+        "latency_note": ("Near-real-time feed (OSI SAF coastal latency ~3 h, per "
+                         "orbit); swaths are intermittent, so the newest pass over "
+                         "any one storm may be a few hours old."),
         "passes": passes, "current_id": current_id,
         "watermark": _watermark(passes),
+        "stale": bool(stale),
+        "newest_orbit_age_h": (round(newest_age_h, 1)
+                               if newest_age_h is not None else None),
     }
     _write(out_dir, "manifest.json", manifest)
 

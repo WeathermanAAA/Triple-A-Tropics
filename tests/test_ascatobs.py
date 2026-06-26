@@ -15,9 +15,11 @@ no network and no real granule. They are skipped if netCDF4 is unavailable.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -117,6 +119,71 @@ class TestFilename(unittest.TestCase):
         self.assertEqual(fetch.DATASETS["metop-b"]["dataset"], "osisaf_ascat_b_coa")
         self.assertEqual(fetch.DATASETS["metop-c"]["dataset"], "osisaf_ascat_c_coa")
         self.assertEqual(fetch.DATASETS["metop-b"]["version"], "nrt")
+
+
+class TestResolveDatasets(unittest.TestCase):
+    """Programmatic catalog resolution (GET /datasets) with a validated, pinned
+    fallback - the spec's 'resolve the dataset name, don't hardcode a guess'."""
+
+    def test_extract_list_and_dict_shapes(self):
+        self.assertEqual(
+            fetch._extract_datasets({"datasets": [
+                {"name": "osisaf_ascat_b_coa", "version": "nrt"}]}),
+            [{"name": "osisaf_ascat_b_coa", "version": "nrt"}])
+        self.assertEqual(
+            fetch._extract_datasets({"datasets": {
+                "osisaf_ascat_c_coa": {"version": "nrt"}}}),
+            [{"name": "osisaf_ascat_c_coa", "version": "nrt"}])
+        # varied field names + missing version
+        self.assertEqual(
+            fetch._extract_datasets({"datasets": [{"datasetName": "x", "versionId": "1"}]}),
+            [{"name": "x", "version": "1"}])
+        self.assertEqual(fetch._extract_datasets({}), [])
+        self.assertEqual(fetch._extract_datasets("nope"), [])
+
+    def test_match_coastal_nrt_picks_letter_and_skips_a_and_25km(self):
+        cat = [
+            {"name": "osisaf_ascat_a_coa", "version": "nrt"},   # retired A
+            {"name": "osisaf_ascat_b_coa", "version": "nrt"},
+            {"name": "osisaf_ascat_b_250", "version": "nrt"},   # 25 km, not coastal
+            {"name": "osisaf_ascat_c_coa", "version": "nrt"},
+            {"name": "harmonie_arome_cy43", "version": "1.0"},
+        ]
+        self.assertEqual(fetch._match_coastal_nrt(cat, "b")["name"], "osisaf_ascat_b_coa")
+        self.assertEqual(fetch._match_coastal_nrt(cat, "c")["name"], "osisaf_ascat_c_coa")
+        self.assertIsNone(fetch._match_coastal_nrt(cat, "z"))
+
+    def test_match_handles_hyphenated_slug(self):
+        cat = [{"name": "osisaf-ascat-b-coa-nrt", "version": None}]
+        self.assertEqual(fetch._match_coastal_nrt(cat, "b")["name"],
+                         "osisaf-ascat-b-coa-nrt")
+
+    def test_resolve_no_key_returns_pinned(self):
+        r = fetch.resolve_datasets(api_key=None, log=lambda *a, **k: None)
+        self.assertEqual(r["metop-b"]["dataset"], "osisaf_ascat_b_coa")
+        self.assertEqual(r["metop-c"]["version"], "nrt")
+
+    def test_resolve_adopts_validated_catalog_match(self):
+        cat = [{"name": "osisaf_ascat_b_coastal", "version": "1.0"},
+               {"name": "osisaf_ascat_c_coastal", "version": "1.0"}]
+        with mock.patch.object(fetch, "list_datasets", lambda **kw: cat), \
+             mock.patch.object(fetch, "list_files",
+                               lambda *a, **kw: [{"filename": "f.nc"}]):
+            r = fetch.resolve_datasets(api_key="k", log=lambda *a, **k: None)
+        self.assertEqual(r["metop-b"]["dataset"], "osisaf_ascat_b_coastal")
+        self.assertEqual(r["metop-b"]["version"], "1.0")
+
+    def test_resolve_keeps_pin_when_match_serves_no_files(self):
+        cat = [{"name": "osisaf_ascat_b_coa_bogus", "version": "9"}]
+        with mock.patch.object(fetch, "list_datasets", lambda **kw: cat), \
+             mock.patch.object(fetch, "list_files", lambda *a, **kw: []):
+            r = fetch.resolve_datasets(api_key="k", log=lambda *a, **k: None)
+        self.assertEqual(r["metop-b"]["dataset"], "osisaf_ascat_b_coa")  # pinned
+
+    def test_resolve_empty_catalog_keeps_pin(self):
+        with mock.patch.object(fetch, "list_datasets", lambda **kw: []):
+            r = fetch.resolve_datasets(api_key="k", log=lambda *a, **k: None)
+        self.assertEqual(r["metop-c"]["dataset"], "osisaf_ascat_c_coa")
 
 
 @unittest.skipUnless(_HAVE_NC, "netCDF4 not available")
@@ -241,6 +308,31 @@ class TestBuildHelpers(unittest.TestCase):
         self.assertEqual(wm["metopb"], "2026-06-25T23:45:00Z")
         self.assertEqual(wm["metopc"], "2026-06-25T22:30:00Z")
 
+    def test_prior_manifest_status_mapping(self):
+        # http path: status comes straight from get_json_status; a 200 that isn't a
+        # dict is 'error' (a corrupt manifest must not bootstrap from empty)
+        with mock.patch.object(fetch, "get_json_status",
+                               lambda *a, **k: ("ok", {"passes": [{"id": "p1"}]})):
+            self.assertEqual(build._fetch_prior_manifest("https://x/m.json"),
+                             ("ok", {"passes": [{"id": "p1"}]}))
+        with mock.patch.object(fetch, "get_json_status", lambda *a, **k: ("absent", None)):
+            self.assertEqual(build._fetch_prior_manifest("https://x/m.json"), ("absent", None))
+        with mock.patch.object(fetch, "get_json_status", lambda *a, **k: ("error", None)):
+            self.assertEqual(build._fetch_prior_manifest("https://x/m.json"), ("error", None))
+        with mock.patch.object(fetch, "get_json_status", lambda *a, **k: ("ok", [1, 2])):
+            self.assertEqual(build._fetch_prior_manifest("https://x/m.json"), ("error", None))
+        # merging disabled -> absent (bootstrap), never error
+        self.assertEqual(build._fetch_prior_manifest(None), ("absent", None))
+
+    def test_build_aborts_on_transient_prior_failure(self):
+        # a transient prior-manifest read failure must raise (so the workflow skips
+        # the R2 sync and last-known-good stays) - NOT rebuild from an empty union
+        with mock.patch.object(build, "_fetch_prior_manifest",
+                               lambda u: ("error", None)):
+            with self.assertRaises(RuntimeError):
+                build.build(tempfile.mkdtemp(prefix="ascat_guard_"),
+                            api_key="k", prior_manifest_url="https://x/m.json")
+
     def test_manifest_entry_has_no_wvc_arrays(self):
         p = {"sensor": "ASCAT-B", "sat": "metopb", "start_utc": "x", "end_utc": "y",
              "mid_utc": "m", "bbox": [1, 2, 3, 4], "n_wvc": 9, "max_kt": 42.0,
@@ -250,6 +342,44 @@ class TestBuildHelpers(unittest.TestCase):
         self.assertEqual(e["id"], "metopb_1_x")
         self.assertEqual(e["n_wvc"], 9)
         self.assertEqual(e["storms"][0]["atcf"], "AL012026")
+
+
+class TestBuildGuards(unittest.TestCase):
+    """End-to-end build() guards: never clobber last-known-good R2, and keep
+    last-known-good passes visible when the upstream feed stalls."""
+
+    def _run(self, *, prior, recs):
+        out = tempfile.mkdtemp(prefix="ascat_guard_")
+        with mock.patch.object(build, "_fetch_prior_manifest", lambda u: prior), \
+             mock.patch.object(build._storms, "active_storms", lambda *a, **k: []), \
+             mock.patch.object(build.fetch, "resolve_datasets",
+                               lambda **k: fetch.DATASETS), \
+             mock.patch.object(build.fetch, "fetch_recent", lambda *a, **k: recs), \
+             mock.patch.object(build, "_fetch_pass",
+                               lambda pid: {"id": pid, "wvc": {"la": []}}):
+            summary = build.build(out, api_key="k",
+                                  prior_manifest_url="https://x/m.json")
+        return out, summary
+
+    def test_empty_no_prior_skips_write(self):
+        # nothing listed + no prior union -> write NOTHING (workflow skips the sync)
+        out, summary = self._run(prior=("absent", None), recs=[])
+        self.assertEqual(summary["mode"], "noop")
+        self.assertFalse(os.path.exists(os.path.join(out, "manifest.json")))
+
+    def test_stale_empty_listing_keeps_prior_passes(self):
+        # an aged prior pass + an empty listing (feed STALE) -> keep it, don't drain
+        old = {"id": "metopb_1_20260101T000000",
+               "file": "metopb_1_20260101T000000.json",
+               "sensor": "ASCAT-B", "sat": "metopb",
+               "start_utc": "2026-01-01T00:00:00Z",
+               "end_utc": "2026-01-01T01:00:00Z",
+               "mid_utc": "2026-01-01T00:30:00Z",
+               "bbox": [1, 2, 3, 4], "n_wvc": 5, "max_kt": 40, "storms": []}
+        out, _ = self._run(prior=("ok", {"passes": [old]}), recs=[])
+        m = json.load(open(os.path.join(out, "manifest.json")))
+        self.assertTrue(m["stale"])
+        self.assertEqual([p["id"] for p in m["passes"]], [old["id"]])  # not pruned
 
 
 if __name__ == "__main__":
