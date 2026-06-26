@@ -30,15 +30,16 @@ CREDIT = "EUMETSAT"
 #  (1) C-band ASCAT underestimates extreme TC-core winds (saturation above
 #      ~25 m/s); good for the broad gale/wind field, not peak intensity.
 #  (2) rain-flagged cells are removed (KNMI QC).
-#  (3) swaths are intermittent (gaps between passes) and this KNMI Open Data feed
-#      publishes in daily batches, so the latest pass can be hours-to-~a-day old.
+#  (3) swaths are intermittent (multi-hour gaps between passes over any one storm);
+#      this is a near-real-time feed (OSI SAF coastal latency ~3 h, per orbit), so
+#      the most recent pass may be a few hours old.
 DISCLOSURE = (
     "ASCAT C-band scatterometer ocean-surface winds (EUMETSAT/OSI SAF). C-band "
     "underestimates extreme tropical-cyclone core winds (saturation and rain) - "
     "best for the broad gale-force wind field, not peak intensity. Rain- and "
     "quality-flagged cells are removed. Scatterometer swaths are intermittent "
-    "(gaps between passes); this KNMI Open Data feed publishes in daily batches, "
-    "so the most recent pass may be several hours to about a day old."
+    "(multi-hour gaps between passes over any one storm); this is a near-real-time "
+    "feed, so the most recent pass may be a few hours old."
 )
 
 from .build import build  # noqa: E402,F401
