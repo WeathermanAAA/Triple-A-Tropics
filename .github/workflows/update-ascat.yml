@@ -7,15 +7,16 @@ name: update-ascat
 # global_storms.geojson), and syncs the tree to R2 under ascat/. Touches NOTHING
 # in the track/ACE/climatology pipeline.
 #
-# Cadence: OSI SAF ASCAT coastal NRT publishes PER ORBIT (~14/orbit-day per
-# satellite, ~2h45m latency) - near-real-time, not a daily batch. We poll every
-# 2 h on a staggered (non-round) minute; the filename-timestamp watermark makes a
-# re-run a cheap no-op and the rolling-window backfill self-heals any dropped run,
-# so no separate backup cron is needed. The /ascat/ viewer re-polls R2 on top.
+# Cadence: the KNMI Open Data ASCAT coastal feed publishes per-orbit data but runs
+# ~a day behind real time (newest orbit observed ~22 h old), so tight polling is
+# wasteful. We poll every 4 h on a staggered (non-round) minute to pick up the
+# daily refresh within a few hours of it landing; the filename-timestamp watermark
+# makes a re-run a cheap no-op and the rolling-window backfill self-heals any
+# dropped run, so no separate backup cron is needed. The /ascat/ viewer re-polls R2.
 
 on:
   schedule:
-    - cron: "41 */2 * * *"        # every 2 h, staggered minute (NRT, per-orbit)
+    - cron: "41 */4 * * *"        # every 4 h, staggered minute (~daily-latent feed)
   workflow_dispatch:
     inputs:
       window_hours:

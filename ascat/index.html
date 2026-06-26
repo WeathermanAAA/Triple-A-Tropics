@@ -94,7 +94,7 @@
   resolves the broad gale-force wind field well, but <b>underestimates the
   extreme winds in a tropical cyclone's core</b> — it is a wind-field tool, not
   a peak-intensity tool. Rain- and quality-flagged cells are removed; swaths are
-  intermittent (near-real-time, so the latest pass may be a few hours old).</p>
+  intermittent and this feed runs about a day behind real time.</p>
 </header>
 
 <section class="chart-section">
@@ -145,8 +145,9 @@
       <div id="ascat-empty" class="ascat-empty">
         <h2>No recent ASCAT passes</h2>
         <p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are
-        published. Scatterometer swaths are intermittent; this is a near-real-time
-        feed, so the most recent pass over any one storm may be a few hours old.</p>
+        published. Scatterometer swaths are intermittent and this KNMI Open Data feed
+        runs about a day behind real time, so the most recent pass may be several
+        hours to about a day old.</p>
       </div>
 
     </div>
@@ -181,6 +182,6 @@
 <script>document.getElementById('year').textContent = new Date().getFullYear();
 document.getElementById('cyear').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/ascat/ascat.js?v=0001"></script>
+<script src="/ascat/ascat.js?v=0002"></script>
 </body>
 </html>

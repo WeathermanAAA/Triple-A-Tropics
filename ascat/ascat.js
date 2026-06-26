@@ -26,7 +26,7 @@
  *
  * Honest caveats (drawn on the figure): C-band ASCAT underestimates extreme
  * TC-core winds; rain/quality-flagged cells are removed; swaths are intermittent
- * (near-real-time feed, so the latest pass over any one storm may be a few h old).
+ * and this KNMI feed runs ~a day behind real time (latest pass may be hours-to-a-day old).
  *
  * Isolated from the other viewers (own IIFE, ascat-* ids).
  */
@@ -34,7 +34,7 @@
   'use strict';
 
   var BASE_DEFAULT = 'https://cdn.triple-a-tropics.com/ascat';
-  var POLL_MS = 300000;                // manifest refresh (NRT source, slow cadence)
+  var POLL_MS = 600000;                // manifest refresh (feed is ~daily; slow cadence)
   var WATERMARK = '@WeathermanAAA_';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
   var CREDIT = '© EUMETSAT';
@@ -143,7 +143,7 @@
     '</div>' +
     '<div id="ascat-stats" class="ascat-stats"></div>' +
     '<div id="ascat-empty" class="ascat-empty"><h2>No recent ASCAT passes</h2>' +
-      '<p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are published. Scatterometer swaths are intermittent; this is a near-real-time feed.</p></div>';
+      '<p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are published. Scatterometer swaths are intermittent and this feed runs about a day behind real time.</p></div>';
 
   var ASCAT_EMBED_CSS =
     '.ascat-controls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;margin-bottom:10px}' +
@@ -618,7 +618,7 @@
     g.save(); g.font = '500 10.5px ' + FONT; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
     g.fillStyle = C.muted;
     var disc = (this.manifest && this.manifest.disclosure) ||
-      'C-band ASCAT underestimates extreme TC-core winds; rain-flagged cells removed; swaths are intermittent (near-real-time feed).';
+      'C-band ASCAT underestimates extreme TC-core winds; rain-flagged cells removed; swaths are intermittent (feed runs ~a day behind real time).';
     var maxw = this.layout.map.w - 150;
     g.fillText(this._ellipsize(g, disc, maxw), this.layout.pad, this.layout.footerY);
     g.textAlign = 'right'; g.fillStyle = C.muted; g.font = '600 10.5px ' + FONT;
