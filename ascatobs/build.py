@@ -169,18 +169,23 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
                 continue                             # older than the (ingest) window
             candidates.append({**rec, "pass_id": pid})
     # source-freshness verdict (loud but non-fatal: a stale/dead feed still leaves
-    # last-known-good R2 live). OSI SAF coastal NRT latency is ~2h45m per orbit, so
-    # a newest orbit older than ~12 h means the upstream feed has likely stalled.
+    # last-known-good R2 live). The KNMI Open Data ASCAT coastal feed runs ~a day
+    # behind real time (the newest orbit is normally ~20-24 h old), so STALE means
+    # only that even the NEWEST orbit predates the whole display window - the feed
+    # has genuinely stopped, not just its usual ~daily lag. A tighter threshold
+    # would false-positive every run and the window would never prune.
     newest_age_h = None
+    stale_h = float(window_hours)
     if newest_seen is not None:
         newest_age_h = (now - newest_seen).total_seconds() / 3600.0
-        log(f"ascat: source freshness {'OK' if newest_age_h <= 12 else 'STALE'}: "
-            f"newest orbit {_iso(newest_seen)} ({newest_age_h:.1f} h old)")
+        log(f"ascat: source freshness {'OK' if newest_age_h <= stale_h else 'STALE'}: "
+            f"newest orbit {_iso(newest_seen)} ({newest_age_h:.1f} h old, "
+            f"stale>{stale_h:.0f}h)")
     else:
         log("ascat: source freshness: NO orbits listed (empty/unreachable feed)")
-    # STALE = upstream stalled or the listing was empty/unreachable. We then keep
-    # last-known-good passes visible instead of draining the window (below).
-    stale = (newest_seen is None) or (newest_age_h is not None and newest_age_h > 12)
+    # STALE = the feed has stalled past the display window, or the listing was
+    # empty/unreachable. We then keep last-known-good passes visible (below).
+    stale = (newest_seen is None) or (newest_age_h is not None and newest_age_h > stale_h)
 
     # newest first, then cap (so a huge cold/backfill run stays bounded)
     candidates.sort(key=lambda c: c["start"], reverse=True)
@@ -215,8 +220,8 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
                 continue
             # Ingest-time tag: distance to the storm's CURRENT centre (a moving
             # proxy - we have no historical track here) within a WINDOW-generous
-            # time pad. Swath gaps + the ~3 h NRT latency mean a pass is routinely
-            # a few hours older than the storm's latest fix, and the rolling window
+            # time pad. Swath gaps + the ~day feed latency mean a pass is routinely
+            # many hours older than the storm's latest fix, and the rolling window
             # keeps older passes too; the canonical +/-3 h gate against the current
             # fix alone would drop most of them. CycloLab (Phase B) does the precise
             # +/-3 h / 750 km filter against the real best track it already holds;
@@ -289,9 +294,9 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
         "schema_version": SCHEMA_VERSION, "generated_utc": _iso(now),
         "source": SOURCE, "credit": CREDIT, "disclosure": DISCLOSURE,
         "window_hours": window_hours,
-        "latency_note": ("Near-real-time feed (OSI SAF coastal latency ~3 h, per "
-                         "orbit); swaths are intermittent, so the newest pass over "
-                         "any one storm may be a few hours old."),
+        "latency_note": ("The KNMI Open Data ASCAT coastal feed runs ~a day behind "
+                         "real time; swaths are intermittent, so the newest pass "
+                         "over any one storm may be several hours to about a day old."),
         "passes": passes, "current_id": current_id,
         "watermark": _watermark(passes),
         "stale": bool(stale),
