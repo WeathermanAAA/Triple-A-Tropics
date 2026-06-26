@@ -11,6 +11,7 @@
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
 <link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/satellite/subnav.css">
 
 <!-- Leaflet 1.9 (CDN). leaflet-draw 1.0.4 for the rectangle tool. -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -565,82 +566,8 @@
   .gibs-region-select optgroup,
   .sat-field select optgroup { background: var(--panel); color: var(--muted); font-style: normal; }
 
-  /* ---- Passive Microwave (observed) viewer ----------------------------- */
-  /* Ported from the (now-deleted) standalone /microwave/ page. All classes
-     are mw- prefixed and reuse the page palette vars, so they live alongside
-     the geostationary / GIBS styles without collision. */
-  #microwave-viewer { display: block; padding: 4px; }
-
-  /* Controls row: storm + overpass selects, then the product toggle. */
-  .mw-controls {
-    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px;
-    margin-bottom: 14px;
-  }
-  .mw-group { display: flex; flex-direction: column; gap: 6px; }
-  .mw-group > label {
-    font-size: 11px; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
-  }
-  .mw-group select {
-    background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 6px;
-    padding: 8px 10px; font-size: 13.5px; min-width: 220px;
-  }
-  .mw-group select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
-  .mw-group.mw-toggle-wrap { margin-left: auto; }
-
-  /* Segmented product toggle. */
-  .mw-seg-group { display: flex; gap: 0; }
-  .mw-seg {
-    background: var(--bg); color: var(--muted);
-    border: 1px solid var(--border); border-right: none;
-    padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer;
-    letter-spacing: 0.3px; white-space: nowrap;
-  }
-  .mw-seg:first-child { border-radius: 7px 0 0 7px; }
-  .mw-seg:last-child  { border-radius: 0 7px 7px 0; border-right: 1px solid var(--border); }
-  .mw-seg:hover:not(:disabled) { color: var(--fg); }
-  .mw-seg.active { background: var(--accent-2); color: #06222e; border-color: var(--accent-2); }
-  .mw-seg:disabled, .mw-seg.mw-unavailable { opacity: 0.4; cursor: not-allowed; }
-
-  .mw-imageframe {
-    position: relative; width: 100%;
-    background: #0b0e13; border-radius: 8px; overflow: hidden;
-    min-height: 200px;
-  }
-  #mw-image {
-    display: block; width: 100%; height: auto; max-width: 100%;
-  }
-  .mw-status {
-    position: absolute; inset: 0; display: none; z-index: 4;
-    align-items: center; justify-content: center; gap: 10px;
-    background: rgba(7,16,28,0.62); color: var(--muted); font-size: 14px;
-  }
-  .mw-spinner {
-    width: 22px; height: 22px; border-radius: 50%;
-    border: 3px solid var(--border); border-top-color: var(--accent-2);
-    animation: mw-spin 0.9s linear infinite;
-  }
-  @keyframes mw-spin { to { transform: rotate(360deg); } }
-
-  .mw-caption {
-    margin-top: 12px; color: var(--fg); font-size: 13.5px; line-height: 1.6;
-    font-variant-numeric: tabular-nums;
-  }
-  .mw-disclosure {
-    margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.55;
-  }
-  .mw-credit { color: var(--muted); font-size: 12px; margin-top: 4px; }
-
-  .mw-empty { display: none; padding: 60px 28px; text-align: center; color: var(--muted); }
-  .mw-empty h2 { color: var(--fg); font-size: 20px; margin: 0 0 10px; }
-  .mw-empty p { max-width: 560px; margin: 0 auto; line-height: 1.6; }
-
-  @media (max-width: 760px) {
-    .mw-controls { gap: 12px; }
-    .mw-group select { min-width: 160px; }
-    .mw-group.mw-toggle-wrap { margin-left: 0; }
-  }
+  /* Passive-microwave + ASCAT styles moved with their viewers to the
+     /satellite/microwave/ and /satellite/ascat/ subpages. */
 </style>
 </head>
 <body>
@@ -658,9 +585,16 @@
       <a href="/satellite/" class="active">Satellite</a>
       <a href="/models/">Models</a>
       <a href="/recon/">Recon</a>
-      <a href="/ascat/">ASCAT</a>
       <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
     </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Satellite sections">
+  <div class="subnav-inner">
+    <a href="/satellite/" class="active">Imagery</a>
+    <a href="/satellite/microwave/">Microwave</a>
+    <a href="/satellite/ascat/">Scatterometer</a>
   </div>
 </nav>
 
@@ -934,65 +868,15 @@
   </div>
 </section>
 
-<!-- Microwave & Scatterometer.
-     Today this section holds the OBSERVED passive-microwave viewer (89 GHz PCT
-     and 37 GHz color overpasses from NOAA/CIRA TC-PRIMED). It is framed as a
-     "Microwave & Scatterometer" area so a sibling ASCAT scatterometer viewer
-     can join later as a second .chart-card without re-laying-out the page.
-     ASCAT scatterometer to be added here.
-     Same .chart-section / .chart-card chrome and .sat-result-head header
-     pattern as the GIBS true-color block above; the inner #microwave-viewer
-     markup is the mount point microwave.js auto-mounts on (it queries by the
-     mw-* ids). -->
-<section class="chart-section" id="microwave">
-  <div class="chart-card">
-    <div class="sat-result-head">
-      <div>
-        <div class="gibs-head-title">Passive Microwave (Observed) · 89 GHz PCT &amp; 37 GHz Color</div>
-        <div class="sat-result-meta">Live: NASA GPM/PPS near-real-time (~1-3 h) · Archive: NOAA/CIRA TC-PRIMED</div>
-      </div>
-    </div>
-
-    <div id="microwave-viewer" tabindex="0">
-
-      <div id="mw-body">
-        <div class="mw-controls">
-          <div class="mw-group">
-            <label for="mw-storm">Storm</label>
-            <select id="mw-storm"></select>
-          </div>
-          <div class="mw-group">
-            <label for="mw-overpass">Overpass</label>
-            <select id="mw-overpass"></select>
-          </div>
-          <div class="mw-group mw-toggle-wrap">
-            <label for="mw-products">Product</label>
-            <div id="mw-products" class="mw-seg-group"></div>
-          </div>
-        </div>
-
-        <div id="mw-imageframe" class="mw-imageframe">
-          <img id="mw-image" alt="Passive-microwave overpass image">
-          <div id="mw-status" class="mw-status">
-            <div class="mw-spinner"></div><span>Loading…</span>
-          </div>
-        </div>
-
-        <div id="mw-caption" class="mw-caption"></div>
-        <div id="mw-disclosure" class="mw-disclosure"></div>
-        <div class="mw-credit">Data: <b>NASA GPM / PPS</b> near-real-time (active storms, ~1-3 h latency) + <b>NOAA/CIRA TC-PRIMED</b> archive (older storms).</div>
-      </div>
-
-      <!-- Empty / off-season state -->
-      <div id="mw-empty" class="mw-empty">
-        <h2>No passive-microwave imagery yet</h2>
-        <p>Observed 89 GHz PCT and 37 GHz color overpasses of active tropical
-        cyclones appear here from NASA GPM/PPS near-real-time (~1-3 h after the
-        pass), alongside older storms from the NOAA/CIRA TC-PRIMED archive.</p>
-      </div>
-
-    </div>
-  </div>
+<!-- Passive microwave + ASCAT scatterometer now live as sibling /satellite/
+     subpages (the sub-nav above): /satellite/microwave/ and /satellite/ascat/.
+     This page keeps the geostationary imagery (custom renders + floater + meso). -->
+<section class="chart-section about">
+  <h2>More observations</h2>
+  <p>Observed <a href="/satellite/microwave/"><b>passive-microwave</b></a> TC
+  overpasses (89 GHz PCT &amp; 37 GHz color) and <a href="/satellite/ascat/"><b>ASCAT
+  scatterometer ocean-surface winds</b></a> now have their own pages under Satellite
+  — use the sub-navigation at the top.</p>
 </section>
 
 <section class="about">
@@ -2849,9 +2733,7 @@ function makeSatViewer(idPrefix, opts) {
 })();
 </script>
 
-<!-- Passive-microwave viewer. Self-contained, auto-mounts on DOMContentLoaded
-     by id (#microwave-viewer); reads cdn.triple-a-tropics.com/microwave. -->
-<script src="/microwave/microwave.js?v=2" defer></script>
+<!-- Passive-microwave + ASCAT viewers moved to their own /satellite/ subpages. -->
 
 </body>
 </html>
