@@ -127,14 +127,20 @@
   // CycloLab tab passes only a bare root); no-op on /ascat/ which ships its own.
   var ASCAT_SCAFFOLD =
     '<div class="ascat-controls">' +
+      '<div id="ascat-storm-wrap" class="ascat-group"><label for="ascat-storm">View</label><select id="ascat-storm"></select></div>' +
       '<div id="ascat-region-wrap" class="ascat-group"><label>Region</label><button id="ascat-region" type="button" class="ascat-btn ascat-region-btn"><span id="ascat-region-lab">Atlantic</span> <span class="ascat-caret">▾</span></button></div>' +
       '<div class="ascat-group"><label for="ascat-pass">Pass</label><select id="ascat-pass"></select></div>' +
       '<div class="ascat-group"><label for="ascat-density">Density</label><select id="ascat-density"><option value="auto">Auto</option><option value="dense">Dense</option><option value="sparse">Sparse</option></select></div>' +
+      '<div id="ascat-backdrop-wrap" class="ascat-group ascat-backdrop-wrap" style="display:none"><label for="ascat-backdrop">Satellite</label>' +
+        '<div class="ascat-bd-row"><label class="ascat-chk"><input type="checkbox" id="ascat-backdrop"> backdrop</label>' +
+        '<input type="range" id="ascat-bd-opacity" min="10" max="100" value="70" title="Backdrop opacity" disabled></div></div>' +
       '<div class="ascat-group ascat-style-wrap"><label for="ascat-style">Style</label><select id="ascat-style"></select></div>' +
     '</div>' +
     '<div id="ascat-mapframe" class="ascat-mapframe">' +
       '<canvas id="ascat-canvas" width="900" height="560" aria-label="ASCAT scatterometer ocean-surface wind barbs"></canvas>' +
       '<div id="ascat-tooltip" class="ascat-tooltip"></div>' +
+      '<div id="ascat-zoomhint" class="ascat-zoomhint">drag to zoom</div>' +
+      '<button id="ascat-reset" class="ascat-reset" type="button" style="display:none" title="Reset to full extent">⤢ Reset view</button>' +
       '<div id="ascat-status" class="ascat-status"><div class="ascat-spinner"></div><span>Loading…</span></div>' +
     '</div>' +
     '<div class="ascat-actions">' +
@@ -162,7 +168,15 @@
     '.ascat-btn:hover{border-color:#2b6cb0}' +
     '.ascat-caret{color:#2b9cff;font-size:11px}' +
     '.ascat-stats{display:flex;flex-wrap:wrap;gap:8px 18px;color:#cdd9ea;font:13px/1.3 inherit}' +
-    '.ascat-empty{color:#8ea2bd;padding:18px 4px}.ascat-empty h2{color:#e5edf6;margin:0 0 6px;font-size:18px}';
+    '.ascat-empty{color:#8ea2bd;padding:18px 4px}.ascat-empty h2{color:#e5edf6;margin:0 0 6px;font-size:18px}' +
+    '.ascat-bd-row{display:flex;align-items:center;gap:8px}' +
+    '.ascat-chk{display:inline-flex;align-items:center;gap:5px;font:13px/1 inherit;color:#cfe0f5;text-transform:none;letter-spacing:0;cursor:pointer}' +
+    '.ascat-chk input{accent-color:#2b9cff}' +
+    '#ascat-bd-opacity{width:78px;accent-color:#2b9cff}' +
+    '.ascat-zoomhint{position:absolute;right:10px;bottom:44px;z-index:4;pointer-events:none;font:600 10px/1 inherit;color:#bcdcff;background:rgba(7,16,28,.62);border:1px solid rgba(43,156,255,.4);border-radius:4px;padding:3px 6px;opacity:0;transition:opacity .2s}' +
+    '.ascat-mapframe:hover .ascat-zoomhint{opacity:.85}' +
+    '.ascat-reset{position:absolute;right:10px;top:10px;z-index:5;background:rgba(14,26,48,.92);color:#cfe0f5;border:1px solid #2b6cb0;border-radius:7px;padding:6px 11px;font:600 12px/1 inherit;cursor:pointer}' +
+    '.ascat-reset:hover{border-color:#2b9cff;color:#fff}';
 
   // ========================================================================
   function AscatViewer(root, opts) {
@@ -170,9 +184,17 @@
     this.root = root;
     this.base = (opts.base || BASE_DEFAULT).replace(/\/+$/, '');
     this.stormLock = opts.stormLock || null;
+    this.lockFixed = !!opts.stormLock;          // CycloLab locks the storm at build
     this.center = opts.center || null;          // {lat,lon} override (CycloLab)
     this.region = opts.region || null;          // main-site region key
     this.density = 'auto';
+    this.storms = [];                            // active storms w/ passes (F1 picker)
+    this.zoomExt = null;                         // drag-zoom extent override (F3)
+    this.backdrop = false;                       // satellite backdrop on? (F2)
+    this.bdOpacity = 0.7;
+    this.bdFrame = null;                         // matched floater frame {t,url,band,label}
+    this.bdImg = null;                           // loaded backdrop Image (CORS-clean)
+    this._floaterCache = {};                     // slug -> per-storm floater manifest
 
     if (root && root.style) root.style.setProperty('--ascat-accent', C.accent);
 
@@ -187,9 +209,13 @@
 
     this.dom = (opts.els) || {
       root: root,
+      stormWrap: el('ascat-storm-wrap'), stormSel: el('ascat-storm'),
       regionWrap: el('ascat-region-wrap'), regionBtn: el('ascat-region'),
       regionLab: el('ascat-region-lab'),
       passSel: el('ascat-pass'), densitySel: el('ascat-density'),
+      backdropWrap: el('ascat-backdrop-wrap'), backdropChk: el('ascat-backdrop'),
+      bdOpacity: el('ascat-bd-opacity'),
+      reset: el('ascat-reset'), zoomhint: el('ascat-zoomhint'),
       styleSel: el('ascat-style'), canvas: el('ascat-canvas'),
       mapframe: el('ascat-mapframe'), status: el('ascat-status'),
       tooltip: el('ascat-tooltip'), empty: el('ascat-empty'),
@@ -261,34 +287,100 @@
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + path); return r.json(); });
   };
 
-  // ---- manifest -> choose passes -> load them ----
+  // does association tag `s` identify the storm keyed by `lock` (slug/atcf/name)?
+  function stormMatch(s, lock) {
+    if (!s) return false;
+    return String(s.slug).toLowerCase() === lock ||
+           (s.atcf && String(s.atcf).toLowerCase() === lock) ||
+           (s.name && String(s.name).toLowerCase() === lock);
+  }
+
+  // ---- pure helpers (unit-tested) ----
+  // the band frame whose time `t` is nearest `tMs`, with the gap in ms
+  function nearestFrame(frames, tMs) {
+    var best = null, bd = Infinity;
+    for (var i = 0; i < (frames || []).length; i++) {
+      var d = Math.abs((Date.parse(frames[i].t) || 0) - tMs);
+      if (d < bd) { bd = d; best = frames[i]; }
+    }
+    return { frame: best, dms: bd };
+  }
+  // inverse equirectangular projection: map-local (sx,sy) -> [lon,lat] in ext's frame
+  function invProjectExt(ext, W, H, sx, sy) {
+    return [ext[0] + (sx / W) * (ext[1] - ext[0]), ext[3] - (sy / H) * (ext[3] - ext[2])];
+  }
+  // two corner [lon,lat] -> normalized [w,e,s,n]
+  function rectToBbox(a, b) {
+    return [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+  }
+
+  // ---- manifest -> storm list + picker -> choose passes -> load them ----
   AscatViewer.prototype._onManifest = function (m) {
     this.manifest = m || {};
-    var passes = (m && m.passes) || [];
-    if (this.stormLock) {
+    this.allPasses = (m && m.passes) || [];
+    this._buildStorms();            // unique active storms across all passes (F1)
+    this._buildStormSelect();
+    // CycloLab passes a fixed stormLock; the main page starts in Recent mode.
+    if (this.lockFixed && this.stormLock && this.dom.stormWrap) this.dom.stormWrap.style.display = 'none';
+    this._applyView();
+  };
+
+  // Unique storms (newest-first) that have at least one tagged pass, each with a
+  // representative centre + pass count. Drives the storm picker.
+  AscatViewer.prototype._buildStorms = function () {
+    var seen = {}, out = [];
+    for (var i = 0; i < this.allPasses.length; i++) {
+      var st = this.allPasses[i].storms || [];
+      for (var j = 0; j < st.length; j++) {
+        var s = st[j], key = String(s.slug || s.atcf || s.name).toLowerCase();
+        if (!key || key === 'undefined') continue;
+        if (!seen[key]) {
+          seen[key] = { slug: s.slug, atcf: s.atcf, name: s.name, basin: s.basin,
+                        lat: s.lat, lon: s.lon, isInvest: s.is_invest, n: 0, key: key };
+          out.push(seen[key]);
+        }
+        seen[key].n++;
+        if (seen[key].lat == null && s.lat != null) { seen[key].lat = s.lat; seen[key].lon = s.lon; }
+      }
+    }
+    this.storms = out;
+  };
+
+  AscatViewer.prototype._buildStormSelect = function () {
+    var sel = this.dom.stormSel; if (!sel) return;
+    sel.innerHTML = '';
+    var rec = document.createElement('option');
+    rec.value = ''; rec.textContent = 'Recent passes (by basin)';
+    sel.appendChild(rec);
+    for (var i = 0; i < this.storms.length; i++) {
+      var s = this.storms[i], o = document.createElement('option');
+      o.value = s.key;
+      var nm = (s.name && String(s.name).toUpperCase()) || (s.atcf || s.slug);
+      o.textContent = (s.isInvest ? '● ' : '🌀 ') + nm + '  (' + s.n + ' pass' + (s.n === 1 ? '' : 'es') + ')';
+      sel.appendChild(o);
+    }
+    sel.value = this.stormLock ? String(this.stormLock).toLowerCase() : '';
+  };
+
+  // Apply the current view (storm-centered if stormLock set, else region composite).
+  AscatViewer.prototype._applyView = function () {
+    var passes = this.allPasses || [];
+    var inStorm = !!this.stormLock;
+    if (inStorm) {
       var lock = String(this.stormLock).toLowerCase();
-      passes = passes.filter(function (p) {
-        return (p.storms || []).some(function (s) {
-          return String(s.slug).toLowerCase() === lock ||
-                 (s.atcf && String(s.atcf).toLowerCase() === lock) ||
-                 (s.name && String(s.name).toLowerCase() === lock);
-        });
-      });
-      // center on the storm from its association tag (or an opts override)
-      if (!this.center) {
+      passes = passes.filter(function (p) { return (p.storms || []).some(function (s) { return stormMatch(s, lock); }); });
+      if (!this.center || !this.lockFixed) {
+        this.center = null;
         for (var i = 0; i < passes.length && !this.center; i++) {
-          var hit = (passes[i].storms || []).filter(function (s) {
-            return String(s.slug).toLowerCase() === lock ||
-                   (s.atcf && String(s.atcf).toLowerCase() === lock) ||
-                   (s.name && String(s.name).toLowerCase() === lock);
-          })[0];
+          var hit = (passes[i].storms || []).filter(function (s) { return stormMatch(s, lock); })[0];
           if (hit && hit.lat != null && hit.lon != null) this.center = { lat: hit.lat, lon: hit.lon };
         }
       }
-      if (this.dom.regionWrap) this.dom.regionWrap.style.display = 'none';
     } else if (!this.region) {
       this.region = this._defaultRegion(passes);
     }
+    if (this.dom.regionWrap) this.dom.regionWrap.style.display = inStorm ? 'none' : '';
+    if (this.dom.backdropWrap) this.dom.backdropWrap.style.display = inStorm ? '' : 'none';
     this.passMeta = passes;
 
     if (!passes.length) { this._status(''); this._showEmpty(true); return; }
@@ -298,6 +390,16 @@
     }
     this._buildPassSelect();
     this._loadActivePasses();
+  };
+
+  // Switch storm-centered target (key from the picker; '' = Recent mode).
+  AscatViewer.prototype._setStorm = function (key) {
+    this.stormLock = key || null;
+    this.center = null; this.zoomExt = null; this.selectedId = 'all';
+    this.bdFrame = null; this.bdImg = null;
+    if (this.dom.reset) this.dom.reset.style.display = 'none';
+    this._applyView();
+    if (this.backdrop && this.stormLock) this._loadBackdrop();
   };
 
   // default region = the basin of the freshest storm tag, else Atlantic
@@ -346,6 +448,7 @@
 
   // ---- extent ----
   AscatViewer.prototype._extent = function () {
+    if (this.zoomExt) return this.zoomExt.slice();   // F3: drag-zoom override (top)
     if ((this.stormLock || this.center) && this.center) {
       var c = this.center, half = 8.0;            // +/-8 deg lat box around the storm
       return [c.lon - half, c.lon + half, c.lat - half, c.lat + half];
@@ -426,6 +529,11 @@
       sub = pv.length + ' pass' + (pv.length === 1 ? '' : 'es') + '  ·  ' + sensors +
         '  ·  latest ' + fmtZ(newest.start_utc) + ' (' + ageStr(newest.start_utc) + ')';
     } else { sub = 'No passes loaded for this view.'; }
+    // F2: backdrop provenance (honest sat/band + frame age) appended to subtitle
+    if (this.backdrop && this.bdImg && this.bdFrame) {
+      sub += '   ·   🛰 ' + this.bdFrame.sat + ' ' + String(this.bdFrame.band).toUpperCase() +
+        ' ' + fmtZ(this.bdFrame.t);
+    }
     g.fillText(sub, h.x, h.y + 38);
     // sensor chip
     g.font = '700 11px ' + FONT; g.textAlign = 'right';
@@ -464,15 +572,18 @@
     if (window.TATRegions && TATRegions.drawBasemapFill && this.geo && this.geo.countries) {
       TATRegions.drawBasemapFill(g, ext, { countries: this.geo.countries }, L.w, L.h, { ocean: S.ocean, land: S.land });
     } else { g.fillStyle = S.ocean; g.fillRect(0, 0, L.w, L.h); }
+    // 1.5) satellite backdrop (F2): the storm's floater frame, georef'd to its 12 deg box
+    this._drawBackdrop(g, proj);
     // 2) graticule
     this._drawGraticule(g, ext, L.w, L.h);
-    // 3) coastline + faint state borders ON TOP of the fill
+    // 3) coastline + faint state borders ON TOP of the fill (and imagery)
     if (window.TATRegions && TATRegions.drawBasemapLines) {
       TATRegions.drawBasemapLines(g, ext, this.geo, L.w, L.h, { coast: S.coast, coastLw: S.coastLw, state: S.state, stateLw: S.stateLw });
     }
     // 4) barbs (the data), newest pass last so it draws on top
     this._drawBarbs(g, proj, ext, L.w, L.h, S);
     g.restore();
+    this._drawDragRect(g, L);             // F3 rubber-band (figure space)
 
     // map border + colorbar + watermark (figure space)
     g.save(); g.strokeStyle = C.border; g.lineWidth = 1;
@@ -507,10 +618,15 @@
     for (var k in grid) if (grid.hasOwnProperty(k)) cells.push(grid[k]);
     this._cells = cells;
 
-    g.save(); g.lineWidth = S.barbLw; g.lineJoin = 'round'; g.lineCap = 'round';
+    g.save(); g.lineJoin = 'round'; g.lineCap = 'round';
+    // halo pass: over a satellite backdrop, a dark casing keeps barbs legible
+    var halo = this.backdrop && this.bdImg;
+    if (halo) {
+      for (var h = 0; h < cells.length; h++) this._barb(g, cells[h].x, cells[h].y, cells[h].kt, cells[h].dir, 'rgba(5,10,20,0.82)', S.barbLw + 2.4);
+    }
     for (var c = 0; c < cells.length; c++) {
       var cell = cells[c];
-      this._barb(g, cell.x, cell.y, cell.kt, cell.dir, this._windColor(cell.kt));
+      this._barb(g, cell.x, cell.y, cell.kt, cell.dir, this._windColor(cell.kt), S.barbLw);
     }
     g.restore();
   };
@@ -518,12 +634,12 @@
   // One standard wind barb at (x,y); shaft points FROM the wind (dirFrom deg).
   // half=5kt, full=10kt, pennant=50kt; calm (<5kt) = small open ring. Clone of
   // recon._barb (minus the SFMR-suspect dashing).
-  AscatViewer.prototype._barb = function (g, x, y, kt, dirFrom, color) {
+  AscatViewer.prototype._barb = function (g, x, y, kt, dirFrom, color, lw) {
     if (kt == null || dirFrom == null || isNaN(kt) || isNaN(dirFrom)) return;
     var SHAFT = 13, BARB = 5.5, PEN = 6.5, SP = 3.4;
     var a = dirFrom * Math.PI / 180;
     var ux = Math.sin(a), uy = -Math.cos(a), px = -uy, py = ux;
-    g.save(); g.strokeStyle = color; g.fillStyle = color;
+    g.save(); if (lw) g.lineWidth = lw; g.strokeStyle = color; g.fillStyle = color;
     var spd = Math.round(kt / 5) * 5;
     if (spd < 5) { g.beginPath(); g.arc(x, y, 2.2, 0, 6.2832); g.stroke(); g.restore(); return; }
     var ex = x + ux * SHAFT, ey = y + uy * SHAFT;
@@ -552,6 +668,102 @@
       pos -= SP;
     }
     g.restore();
+  };
+
+  // ===== F2: satellite backdrop (storm floater frame, georef'd) =============
+  AscatViewer.prototype._cdnRoot = function () { return this.base.replace(/\/[^/]+\/?$/, ''); };
+
+  // Find the floater whose storm matches this view's locked storm, pick the band
+  // frame nearest the current pass time, and load it CORS-clean. Async; redraws.
+  AscatViewer.prototype._loadBackdrop = function () {
+    var self = this;
+    if (!this.backdrop || !this.stormLock || !this.center) { this.bdImg = null; return; }
+    var storm = this._currentStorm(); if (!storm) return;
+    var root = this._cdnRoot(), band = 'ir';
+    var matchT = this._matchTime();
+    var perStorm = function (slug) {
+      var cached = self._floaterCache[slug];
+      var p = cached ? Promise.resolve(cached) : fetch(root + '/floaters/' + slug + '/manifest.json' + '?t=' + Date.now())
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (j) { self._floaterCache[slug] = j; return j; });
+      return p.then(function (fm) {
+        var b = (fm.bands && (fm.bands[band] || fm.bands.irbd || fm.bands.ir)) || null;
+        var frames = (b && b.frames) || [];
+        if (!frames.length) throw 0;
+        var nf = nearestFrame(frames, matchT), best = nf.frame, bd = nf.dms;
+        var img = new Image(); img.crossOrigin = 'anonymous';
+        self.bdFrame = { t: best.t, band: (b.label || band), spanDeg: 12,
+                         sat: self._floaterSat(storm.basin), ageMs: bd };
+        img.onload = function () { self.bdImg = img; self._draw(); };
+        img.onerror = function () { self.bdImg = null; self.bdFrame = null; self._draw(); };
+        img.src = root + '/' + best.key;
+      });
+    };
+    fetch(root + '/floaters/manifest.json?t=' + Date.now())
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (top) {
+        var st = (top.storms || []), hit = null;
+        for (var i = 0; i < st.length; i++) {
+          var f = st[i], fid = String(f.id || '').toLowerCase(), fnm = String(f.name || '').toLowerCase();
+          if ((storm.atcf && fid.indexOf(String(storm.atcf).toLowerCase()) >= 0) ||
+              (storm.name && fnm === String(storm.name).toLowerCase())) { hit = f; break; }
+        }
+        if (!hit || !hit.slug) throw 0;
+        return perStorm(hit.slug);
+      })
+      .catch(function () { self.bdImg = null; self.bdFrame = null; self._draw(); });
+  };
+
+  AscatViewer.prototype._currentStorm = function () {
+    var lock = String(this.stormLock || '').toLowerCase();
+    for (var i = 0; i < this.storms.length; i++) if (this.storms[i].key === lock) return this.storms[i];
+    return null;
+  };
+  AscatViewer.prototype._matchTime = function () {
+    var lv = this._loadedView();
+    return (lv.length && Date.parse(lv[0].start_utc)) || Date.now();
+  };
+  AscatViewer.prototype._floaterSat = function (basin) {
+    return (['WP', 'SH', 'SP', 'IO', 'SI', 'AU'].indexOf(String(basin).toUpperCase()) >= 0) ? 'Himawari' : 'GOES';
+  };
+
+  AscatViewer.prototype._drawBackdrop = function (g, proj) {
+    if (!this.backdrop || !this.bdImg || !this.bdImg.complete || !this.bdImg.naturalWidth || !this.center) return;
+    var span = (this.bdFrame && this.bdFrame.spanDeg) || 12, half = span / 2, c = this.center;
+    var tl = proj(c.lon - half, c.lat + half), br = proj(c.lon + half, c.lat - half);
+    g.save(); g.globalAlpha = this.bdOpacity;
+    try { g.drawImage(this.bdImg, tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]); } catch (e) {}
+    g.restore();
+  };
+
+  // ===== F3: drag-bbox-to-zoom (pure extent math on loaded WVCs) ============
+  AscatViewer.prototype._invProject = function (sx, sy) {
+    return invProjectExt(this._ext, this.layout.map.w, this.layout.map.h, sx, sy);
+  };
+  // map-local (x,y) from a pointer event
+  AscatViewer.prototype._evXY = function (ev) {
+    var L = this.layout && this.layout.map, cv = this.dom.canvas;
+    if (!L || !cv) return null;
+    var rect = cv.getBoundingClientRect(), sx = cv.width / rect.width / this.dpr;
+    return { x: (ev.clientX - rect.left) * sx - L.x, y: (ev.clientY - rect.top) * sx - L.y };
+  };
+  AscatViewer.prototype._drawDragRect = function (g, L) {
+    var d = this._drag; if (!d || !d.active) return;
+    var x0 = Math.min(d.x0, d.x1), y0 = Math.min(d.y0, d.y1), w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+    g.save();
+    g.fillStyle = 'rgba(43,156,255,0.14)'; g.fillRect(L.x + x0, L.y + y0, w, h);
+    g.strokeStyle = 'rgba(43,156,255,0.95)'; g.lineWidth = 1.2; g.setLineDash([5, 3]);
+    g.strokeRect(L.x + x0 + 0.5, L.y + y0 + 0.5, w, h);
+    g.restore();
+  };
+  AscatViewer.prototype._applyZoom = function () {
+    var d = this._drag; if (!d) return;
+    if (Math.abs(d.x1 - d.x0) < 8 || Math.abs(d.y1 - d.y0) < 8) return;   // a click, not a drag
+    this.zoomExt = rectToBbox(this._invProject(d.x0, d.y0), this._invProject(d.x1, d.y1));
+    if (this.dom.reset) this.dom.reset.style.display = '';
+    this._layoutAndDraw();
+  };
+  AscatViewer.prototype._resetZoom = function () {
+    this.zoomExt = null; if (this.dom.reset) this.dom.reset.style.display = 'none'; this._layoutAndDraw();
   };
 
   // faint lat/lon graticule with edge labels (clone of recon._drawGraticule)
@@ -721,8 +933,16 @@
 
   AscatViewer.prototype._wire = function () {
     var self = this;
-    if (this.dom.passSel) this.dom.passSel.addEventListener('change', function () { self.selectedId = this.value; self._loadActivePasses(); });
+    if (this.dom.stormSel) this.dom.stormSel.addEventListener('change', function () { self._setStorm(this.value); });
+    if (this.dom.passSel) this.dom.passSel.addEventListener('change', function () { self.selectedId = this.value; self._loadActivePasses(); if (self.backdrop && self.stormLock) self._loadBackdrop(); });
     if (this.dom.densitySel) this.dom.densitySel.addEventListener('change', function () { self.density = this.value; self._draw(); });
+    if (this.dom.backdropChk) this.dom.backdropChk.addEventListener('change', function () {
+      self.backdrop = this.checked;
+      if (self.dom.bdOpacity) self.dom.bdOpacity.disabled = !this.checked;
+      if (self.backdrop && self.stormLock) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._draw(); }
+    });
+    if (this.dom.bdOpacity) this.dom.bdOpacity.addEventListener('input', function () { self.bdOpacity = Math.max(0.1, Math.min(1, (+this.value || 70) / 100)); self._draw(); });
+    if (this.dom.reset) this.dom.reset.addEventListener('click', function () { self._resetZoom(); });
     if (this.dom.download) this.dom.download.addEventListener('click', function () { self._download(); });
     if (this.dom.copy) this.dom.copy.addEventListener('click', function () { self._copy(); });
     if (this.dom.styleSel) {
@@ -740,7 +960,22 @@
       });
     } else if (this.dom.regionWrap && this.stormLock) { this.dom.regionWrap.style.display = 'none'; }
     if (this.dom.canvas) {
-      this.dom.canvas.addEventListener('mousemove', function (ev) { self._hover(ev); });
+      // drag = zoom (F3); plain move = hover tooltip. Mouse + touch.
+      var down = function (ev) {
+        var p = self._evXY(ev); if (!p) return;
+        var L = self.layout && self.layout.map; if (!L || p.x < 0 || p.y < 0 || p.x > L.w || p.y > L.h) return;
+        self._drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, active: true };
+        if (self.dom.tooltip) self.dom.tooltip.style.display = 'none';
+        ev.preventDefault();
+      };
+      var move = function (ev) {
+        if (self._drag && self._drag.active) { var p = self._evXY(ev); if (p) { self._drag.x1 = p.x; self._drag.y1 = p.y; self._draw(); } return; }
+        self._hover(ev);
+      };
+      var up = function () { if (self._drag && self._drag.active) { self._drag.active = false; self._applyZoom(); self._drag = null; self._draw(); } };
+      this.dom.canvas.addEventListener('mousedown', down);
+      this.dom.canvas.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
       this.dom.canvas.addEventListener('mouseleave', function () { if (self.dom.tooltip) self.dom.tooltip.style.display = 'none'; });
     }
     if (typeof window !== 'undefined' && window.ResizeObserver && this.dom.mapframe) {
@@ -784,6 +1019,8 @@
   }
   if (typeof window !== 'undefined') window.AscatViewer = AscatViewer;
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { AscatViewer: AscatViewer, STYLES: STYLES, KT_SCALE: KT_SCALE };
+    module.exports = { AscatViewer: AscatViewer, STYLES: STYLES, KT_SCALE: KT_SCALE,
+      stormMatch: stormMatch, nearestFrame: nearestFrame,
+      invProjectExt: invProjectExt, rectToBbox: rectToBbox };
   }
 })();

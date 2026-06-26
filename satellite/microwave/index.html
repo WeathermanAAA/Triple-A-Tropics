@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passive Microwave · Satellite · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Observed passive-microwave tropical-cyclone overpasses: 89 GHz PCT and 37 GHz color from NASA GPM/PPS near-real-time and the NOAA/CIRA TC-PRIMED archive.">
+<meta property="og:title" content="Passive Microwave (Observed) · Triple-A-Tropics">
+<meta property="og:description" content="89 GHz PCT & 37 GHz color TC overpasses — NASA GPM/PPS near-real-time + NOAA/CIRA TC-PRIMED archive.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://triple-a-tropics.com/satellite/microwave/">
+<link rel="canonical" href="https://triple-a-tropics.com/satellite/microwave/">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/satellite/subnav.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
+  nav, header, footer { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+
+  .sat-result-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
+  .sat-result-meta { color: var(--muted); font-size: 13px; font-weight: 600; }
+  .gibs-head-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+
+  /* ---- Passive Microwave (observed) viewer (microwave.js auto-mounts #microwave-viewer) */
+  #microwave-viewer { display: block; padding: 4px; }
+  .mw-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
+  .mw-group { display: flex; flex-direction: column; gap: 6px; }
+  .mw-group > label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; }
+  .mw-group select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13.5px; min-width: 220px; }
+  .mw-group select:focus { outline: 1px solid var(--accent-2); outline-offset: 2px; }
+  .mw-group.mw-toggle-wrap { margin-left: auto; }
+  .mw-seg-group { display: flex; gap: 0; }
+  .mw-seg { background: var(--bg); color: var(--muted); border: 1px solid var(--border); border-right: none; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; letter-spacing: 0.3px; white-space: nowrap; }
+  .mw-seg:first-child { border-radius: 7px 0 0 7px; }
+  .mw-seg:last-child { border-radius: 0 7px 7px 0; border-right: 1px solid var(--border); }
+  .mw-seg:hover:not(:disabled) { color: var(--fg); }
+  .mw-seg.active { background: var(--accent-2); color: #06222e; border-color: var(--accent-2); }
+  .mw-seg:disabled, .mw-seg.mw-unavailable { opacity: 0.4; cursor: not-allowed; }
+  .mw-imageframe { position: relative; width: 100%; background: #0b0e13; border-radius: 8px; overflow: hidden; min-height: 200px; }
+  #mw-image { display: block; width: 100%; height: auto; max-width: 100%; }
+  .mw-status { position: absolute; inset: 0; display: none; z-index: 4; align-items: center; justify-content: center; gap: 10px; background: rgba(7,16,28,0.62); color: var(--muted); font-size: 14px; }
+  .mw-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent-2); animation: mw-spin 0.9s linear infinite; }
+  @keyframes mw-spin { to { transform: rotate(360deg); } }
+  .mw-caption { margin-top: 12px; color: var(--fg); font-size: 13.5px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+  .mw-disclosure { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .mw-credit { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .mw-empty { display: none; padding: 60px 28px; text-align: center; color: var(--muted); }
+  .mw-empty h2 { color: var(--fg); font-size: 20px; margin: 0 0 10px; }
+  .mw-empty p { max-width: 560px; margin: 0 auto; line-height: 1.6; }
+  @media (max-width: 760px) { .mw-controls { gap: 12px; } .mw-group select { min-width: 160px; } .mw-group.mw-toggle-wrap { margin-left: 0; } }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/" class="active">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/recon/">Recon</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Satellite sections">
+  <div class="subnav-inner">
+    <a href="/satellite/">Imagery</a>
+    <a href="/satellite/microwave/" class="active">Microwave</a>
+    <a href="/satellite/ascat/">Scatterometer</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Passive Microwave (Observed)</h1>
+  <p>Observed passive-microwave overpasses of active and recent tropical cyclones —
+  <b>89 GHz PCT</b> (polarization-corrected temperature, which cuts through cirrus to
+  show the storm's convective structure and eyewall) and <b>37 GHz color</b> (which
+  highlights the low-level rain bands and a forming eye). Live overpasses come from
+  <b>NASA GPM/PPS</b> near-real-time (~1–3 h after the pass); older storms from the
+  <b>NOAA/CIRA TC-PRIMED</b> archive. For the scatterometer ocean-surface winds, see
+  the <a href="/satellite/ascat/">Scatterometer</a> tab.</p>
+</header>
+
+<section class="chart-section" id="microwave">
+  <div class="chart-card">
+    <div class="sat-result-head">
+      <div>
+        <div class="gibs-head-title">Passive Microwave (Observed) · 89 GHz PCT &amp; 37 GHz Color</div>
+        <div class="sat-result-meta">Live: NASA GPM/PPS near-real-time (~1-3 h) · Archive: NOAA/CIRA TC-PRIMED</div>
+      </div>
+    </div>
+
+    <div id="microwave-viewer" tabindex="0">
+
+      <div id="mw-body">
+        <div class="mw-controls">
+          <div class="mw-group">
+            <label for="mw-storm">Storm</label>
+            <select id="mw-storm"></select>
+          </div>
+          <div class="mw-group">
+            <label for="mw-overpass">Overpass</label>
+            <select id="mw-overpass"></select>
+          </div>
+          <div class="mw-group mw-toggle-wrap">
+            <label for="mw-products">Product</label>
+            <div id="mw-products" class="mw-seg-group"></div>
+          </div>
+        </div>
+
+        <div id="mw-imageframe" class="mw-imageframe">
+          <img id="mw-image" alt="Passive-microwave overpass image">
+          <div id="mw-status" class="mw-status">
+            <div class="mw-spinner"></div><span>Loading…</span>
+          </div>
+        </div>
+
+        <div id="mw-caption" class="mw-caption"></div>
+        <div id="mw-disclosure" class="mw-disclosure"></div>
+        <div class="mw-credit">Data: <b>NASA GPM / PPS</b> near-real-time (active storms, ~1-3 h latency) + <b>NOAA/CIRA TC-PRIMED</b> archive (older storms).</div>
+      </div>
+
+      <!-- Empty / off-season state -->
+      <div id="mw-empty" class="mw-empty">
+        <h2>No passive-microwave imagery yet</h2>
+        <p>Observed 89 GHz PCT and 37 GHz color overpasses of active tropical
+        cyclones appear here from NASA GPM/PPS near-real-time (~1-3 h after the
+        pass), alongside older storms from the NOAA/CIRA TC-PRIMED archive.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Microwave: NASA GPM/PPS + NOAA/CIRA TC-PRIMED</div>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+<script src="/microwave/microwave.js?v=2" defer></script>
+</body>
+</html>
