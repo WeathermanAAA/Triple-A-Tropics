@@ -1,0 +1,98 @@
+name: update-ascat
+
+# ASCAT scatterometer ocean-surface winds (EUMETSAT/OSI SAF/KNMI), Observations.
+# Self-contained + isolated: pulls ASCAT-B/C 12.5 km coastal NRT NetCDF from the
+# KNMI Open Data API, decodes + quality-masks + decimates each orbit to JSON, tags
+# passes with the active storms they overfly (read-only consumer of the published
+# global_storms.geojson), and syncs the tree to R2 under ascat/. Touches NOTHING
+# in the track/ACE/climatology pipeline.
+#
+# Cadence: the KNMI Open Data feed publishes ASCAT in a DAILY BATCH (~04 UTC), not
+# truly near-real-time, so a tight poll is wasteful. We run every ~3 hours on a
+# staggered (non-round) minute, with extra coverage across the ~04-07 UTC window
+# when the batch lands. The /ascat/ viewer re-polls R2 on top.
+
+on:
+  schedule:
+    - cron: "37 */3 * * *"        # primary: every 3 h, staggered minute
+    - cron: "53 5,6 * * *"        # extra coverage when the daily batch lands
+  workflow_dispatch:
+    inputs:
+      window_hours:
+        description: "Display window in hours (passes older are pruned)"
+        default: "36"
+      backfill_hours:
+        description: "Widen the INGEST reach for a manual catch-up (blank = none)"
+        default: ""
+
+permissions:
+  contents: read            # R2-only product; commits nothing to main
+
+# Serialized so the manifest read-merge-write (the growing union) never races.
+concurrency:
+  group: update-ascat
+  cancel-in-progress: false
+
+jobs:
+  ascat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install deps (NetCDF decode only - no cartopy/matplotlib)
+        run: pip install --no-cache-dir numpy netCDF4 requests
+      - name: Build ASCAT JSON
+        env:
+          ASCAT_ENABLED: ${{ vars.ASCAT_ENABLED || '1' }}
+          KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
+          ASCAT_WINDOW_HOURS: ${{ github.event.inputs.window_hours || '36' }}
+          ASCAT_BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KNMI_API_KEY:-}" ]; then
+            echo "ascat: KNMI_API_KEY secret not set - skipping (last-known-good R2 stays live)"
+            exit 0
+          fi
+          ARGS="--out-dir ./ascat_build --window-hours ${ASCAT_WINDOW_HOURS}"
+          if [ -n "${ASCAT_BACKFILL_HOURS}" ]; then
+            ARGS="$ARGS --backfill-hours ${ASCAT_BACKFILL_HOURS}"
+          fi
+          python generate_ascat.py $ARGS
+      - name: Sync to R2
+        # Guard: only sync when the build wrote a manifest (kill switch / no key /
+        # total failure leaves ascat_build without one -> last-known-good R2 stays
+        # live). The viewer also ?t=-busts the manifest/current.
+        if: ${{ vars.ASCAT_ENABLED != 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./ascat_build/manifest.json ]; then
+            echo "ascat: no manifest written - skipping R2 sync (last-known-good stays live)"
+            exit 0
+          fi
+          # No --delete: ascat_build holds only THIS run's new passes plus the
+          # manifest/current; out-of-window passes stay live on R2 until the prune
+          # reaps them below. The _pruned_ids.json sidecar is not a served file.
+          aws s3 sync ./ascat_build "s3://triple-a-tropics-media/ascat" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --no-progress \
+            --exclude "_pruned_ids.json" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=300"
+          # Reap pass JSON the manifest prune removed (rolling-window expiry).
+          # Targeted rm of each pruned id ONLY -- never a blanket --delete.
+          if [ -f ./ascat_build/_pruned_ids.json ]; then
+            python -c "import json;print('\n'.join(json.load(open('./ascat_build/_pruned_ids.json'))))" \
+            | while read -r pid; do
+                [ -z "$pid" ] && continue
+                echo "ascat: reaping pruned R2 pass ascat/$pid.json"
+                aws s3 rm "s3://triple-a-tropics-media/ascat/$pid.json" \
+                  --endpoint-url "$R2_ENDPOINT" --no-progress || true
+              done
+          fi
