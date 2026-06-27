@@ -1116,12 +1116,12 @@
   AscatViewer.prototype._wire = function () {
     var self = this;
     if (this.dom.stormSel) this.dom.stormSel.addEventListener('change', function () { self._setStorm(this.value); });
-    if (this.dom.passSel) this.dom.passSel.addEventListener('change', function () { self.selectedId = this.value; self._loadActivePasses(); if (self.backdrop && !self._isGlobal()) self._loadBackdrop(); });
+    if (this.dom.passSel) this.dom.passSel.addEventListener('change', function () { self.selectedId = this.value; self._loadActivePasses(); if (self.backdrop) self._loadBackdrop(); });
     if (this.dom.densitySel) this.dom.densitySel.addEventListener('change', function () { self.density = this.value; self._draw(); });
     if (this.dom.backdropChk) this.dom.backdropChk.addEventListener('change', function () {
       self.backdrop = this.checked;
       if (self.dom.bdOpacity) self.dom.bdOpacity.disabled = !this.checked;
-      if (self.backdrop && !self._isGlobal()) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._layoutAndDraw(); }
+      if (self.backdrop) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._layoutAndDraw(); }
     });
     if (this.dom.bdOpacity) this.dom.bdOpacity.addEventListener('input', function () { self.bdOpacity = Math.max(0.1, Math.min(1, (+this.value || 40) / 100)); self._draw(); });
     if (this.dom.reset) this.dom.reset.addEventListener('click', function () { self._resetZoom(); });
