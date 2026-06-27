@@ -126,4 +126,57 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
     'storm dropdown keeps the concise (N passes) qualifier');
 })();
 
+// ---- Global view + backdrop available in storm+basin (Vis/SWIR revision)
+(function globalMode() {
+  const isG = m.AscatViewer.prototype._isGlobal;
+  assert.strictEqual(isG.call({ stormLock: null, region: 'global' }), true, 'global region + no lock -> global');
+  assert.strictEqual(isG.call({ stormLock: null, region: 'atlantic' }), false, 'basin -> not global');
+  assert.strictEqual(isG.call({ stormLock: 'wp082026', region: 'global' }), false, 'storm lock -> not global');
+})();
+
+(function viewPassesCap() {
+  const proto = m.AscatViewer.prototype;
+  const passes = Array.from({ length: 30 }, (_, i) => ({ id: 'p' + i }));
+  const basin = proto._viewPasses.call({ passMeta: passes, selectedId: 'all', stormLock: null, region: 'atlantic', _isGlobal: proto._isGlobal });
+  assert.strictEqual(basin.length, 6, 'basin composite caps at MAX_PASSES=6');
+  const global = proto._viewPasses.call({ passMeta: passes, selectedId: 'all', stormLock: null, region: 'global', _isGlobal: proto._isGlobal });
+  assert.ok(global.length > 6, 'Global lifts the pass cap (whole-world composite)');
+})();
+
+(function drawSwathsFills() {
+  const calls = [];
+  const g = { save() {}, restore() {}, fillRect() { calls.push([].slice.call(arguments)); },
+              set fillStyle(v) {}, get fillStyle() { return ''; } };
+  const proj = (lon, lat) => [(lon + 180) / 360 * 1000, (90 - lat) / 180 * 500];
+  const pass = { sensor: 'ASCAT-B', start_utc: '2026-06-27T00:00:00Z',
+                 wvc: { la: [10, 25], lo: [150, 160], kt: [20, 45], dir: [90, 90] } };
+  m.AscatViewer.prototype._drawSwaths.call(
+    { _loadedView: () => [pass], _windColor: () => '#abc', _cells: null },
+    g, proj, [0, 360, -88, 88], 1000, 500);
+  assert.ok(calls.length >= 2, 'Global draws filled colored cells per WVC (got ' + calls.length + ')');
+})();
+
+(function extentBackdropGating() {
+  const ext = m.AscatViewer.prototype._extent;
+  const storm = ext.call({ zoomExt: null, stormLock: 'x', backdrop: true, bdImg: {}, bdFrame: { bounds: [130, 30, 145, 41] }, center: { lat: 34, lon: 137.5 } });
+  assert.deepStrictEqual(storm, [130, 145, 30, 41], 'storm view collapses to the backdrop cutout');
+  // basin: stub `window` (the TATRegions branch references it) so node doesn't
+  // ReferenceError; with no TATRegions it falls to the Atlantic fallback, proving
+  // the cutout-collapse is gated to storm mode only.
+  global.window = {};
+  try {
+    const basin = ext.call({ zoomExt: null, stormLock: null, backdrop: true, bdImg: {}, bdFrame: { bounds: [130, 30, 145, 41] }, center: null, region: 'atlantic' });
+    assert.deepStrictEqual(basin, [-100, -5, 0, 55], 'basin view keeps the region extent (no cutout collapse)');
+  } finally { delete global.window; }
+})();
+
+(function visswirSourceContract() {
+  const src = fs.readFileSync(path.join(ROOT, 'ascat', 'ascat.js'), 'utf8');
+  assert.ok(/Global composite/.test(src) && /_drawSwaths/.test(src), 'global filled-swath renderer present');
+  assert.ok(/GLOBAL_MAX_PASSES/.test(src), 'global pass cap present');
+  assert.ok(/_loadRegionBackdrop/.test(src), 'basin/regional backdrop loader present');
+  assert.ok(/best\.bd_product/.test(src), 'header reads the true backdrop product (Vis/SWIR)');
+  assert.ok(/classList\.toggle\('ascat-disabled', isGlobal\)/.test(src), 'backdrop toggle disabled only at Global');
+})();
+
 console.log('ascat_v2: PASS');
