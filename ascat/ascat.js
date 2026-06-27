@@ -267,6 +267,7 @@
   AscatViewer.prototype._boot = function () {
     var self = this;
     this._status('Loading…');
+    this._fetchRegionBackdrops();   // know which regions (incl. wide-area mosaic) have a backdrop
     Promise.all([this._loadBasemap(), this._fetchJson('/manifest.json', true)])
       .then(function (res) { return self._onManifest(res[1]); })
       .catch(function (e) { console.warn('ascat: boot failed', e); self._status(''); self._showEmpty(true); });
@@ -416,7 +417,13 @@
     // day-Vis/night-SWIR MOSAIC that will is still in progress. Until it ships the
     // toggle is disabled + greyed with an explaining tooltip (NOT silently blank)
     // for those three views.
-    var isWide = !this.stormLock && ['nhem', 'shem', 'global'].indexOf(this.region) >= 0;
+    // Hemisphere + Global have a backdrop ONLY once the wide-area mosaic is
+    // published (backdrops.json gains a global/nhem/shem entry). Until then the
+    // toggle is greyed with an explainer (not silently blank); once the mosaic is
+    // there those views behave like any basin/regional view.
+    var wideRegion = !this.stormLock && ['nhem', 'shem', 'global'].indexOf(this.region) >= 0;
+    var hasMosaic = !!(this._regionBd && this._regionBd[this.region] && this._regionBd[this.region].key);
+    var isWide = wideRegion && !hasMosaic;
     if (this.dom.backdropWrap) {
       this.dom.backdropWrap.classList.toggle('ascat-disabled', isWide);
       this.dom.backdropWrap.title = isWide
@@ -777,8 +784,11 @@
   // frame nearest the current pass time, and load it CORS-clean. Async; redraws.
   AscatViewer.prototype._loadBackdrop = function () {
     var self = this;
-    if (!this.backdrop || this._isGlobal()) { this.bdImg = null; this.bdFrame = null; return; }
-    if (!this.stormLock) { this._loadRegionBackdrop(); return; }   // basin/regional backdrop
+    if (!this.backdrop) { this.bdImg = null; this.bdFrame = null; return; }
+    // Non-storm view (basin/regional OR the wide-area hemisphere/global mosaic):
+    // both come from backdrops.json keyed by region. Global is no longer special-
+    // cased off here now that it has a mosaic entry.
+    if (!this.stormLock) { this._loadRegionBackdrop(); return; }
     if (!this.center) { this.bdImg = null; return; }
     var storm = this._currentStorm(); if (!storm) return;
     var root = this._cdnRoot(), band = 'ir';
@@ -839,6 +849,22 @@
   // (region slugs match this.region: atlantic / epac / wpac). Absent (until that
   // producer deploys) -> draw nothing (honest); the region extent is kept (the
   // raster fills it via its bounds). One-shot cached fetch.
+  // Fetch backdrops.json ONCE up front so the wide-area (hemisphere/global) toggle
+  // gating in _applyView knows whether the mosaic is published. Re-evaluates the
+  // view if we're sitting on a wide region when it arrives (so the toggle un-greys
+  // without a manual region change).
+  AscatViewer.prototype._fetchRegionBackdrops = function () {
+    var self = this, root = this._cdnRoot();
+    if (self._regionBd) return;
+    fetch(root + '/floaters/backdrops.json?t=' + Date.now())
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (j) {
+        self._regionBd = (j && j.backdrops) || {};
+        if (!self.stormLock && ['nhem', 'shem', 'global'].indexOf(self.region) >= 0) self._applyView();
+      })
+      .catch(function () {});
+  };
+
   AscatViewer.prototype._loadRegionBackdrop = function () {
     var self = this, root = this._cdnRoot(), region = this.region;
     var draw = function (idx) {
