@@ -943,8 +943,9 @@
     for (var i = 0; i < shown.length; i++) {
       var p = shown[i], o = document.createElement('option');
       o.value = p.id;
-      var stormTag = (p.storms && p.storms.length) ? ('  ·  ' + p.storms.map(function (s) { return s.name || s.atcf; }).join(', ')) : '';
-      o.textContent = p.sensor + '  ·  ' + fmtZ(p.start_utc) + stormTag;
+      // Concise label: sensor + time. No appended storm-name summary blurb
+      // (redundant in storm-locked mode where the picker is already filtered).
+      o.textContent = p.sensor + '  ·  ' + fmtZ(p.start_utc);
       sel.appendChild(o);
     }
     sel.value = this.selectedId;
