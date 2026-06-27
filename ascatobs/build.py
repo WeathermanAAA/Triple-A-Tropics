@@ -36,6 +36,23 @@ _now = lambda: _dt.datetime.now(_dt.timezone.utc)            # noqa: E731
 SENSORS = ("metop-b", "metop-c")
 MANIFEST_URL = "https://cdn.triple-a-tropics.com/ascat/manifest.json"
 
+# Display window. KNMI publishes the ASCAT coastal feed in a ~daily BATCH, so the
+# newest orbit ages in a sawtooth (~5 h old just after a batch, up to ~22-24 h old
+# just before the next one). A window only modestly wider than that batch interval
+# prunes old passes faster than fresh batches arrive, so mid-cycle the globe drains
+# to a few sparse swaths. 60 h keeps a full ~36 h of orbits in-window even at the
+# trough (~40+ passes, both satellites) so the Global view stays near-completely
+# tiled all day long - see the viewer's GLOBAL_MAX_PASSES cap, which this feeds.
+DEFAULT_WINDOW_HOURS = 60
+
+# Health bound, DECOUPLED from the prune-stale window below. The newest orbit aging
+# up to ~24-30 h is NORMAL (the daily-batch sawtooth). Older than this means a batch
+# was actually missed - a real upstream stall - which we surface loudly (manifest
+# health flag + a shouting log) so a silent multi-day stall can't hide. This is a
+# health ALERT only; the wider window_hours still governs pruning so a transient
+# outage never drains the product.
+HEALTH_STALE_H = 36.0
+
 
 def _iso(d: _dt.datetime) -> str:
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -99,7 +116,8 @@ def _manifest_entry(p: dict, pass_id: str) -> dict:
     }
 
 
-def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = None,
+def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
+          backfill_hours: int | None = None,
           sensors=SENSORS, max_new_per_run: int = 240, stride: int = 2,
           prior_manifest_url: str | None = MANIFEST_URL,
           api_key: str | None = None, log=print) -> dict:
@@ -145,7 +163,7 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
 
     # ---- list newest files per sensor, pick the in-window, not-yet-ingested ----
     # Newest-first listing: 120 keys/sensor spans ~8 days at ~14 orbits/day, so the
-    # incremental 36h window always fits one page. A wide backfill can exceed it,
+    # incremental 60h window always fits one page. A wide backfill can exceed it,
     # so page deeper proportional to the ingest reach (so the older-but-in-window
     # tail is not silently missed).
     pages = 1 + max(0, int(ingest_hours * 14 / (24 * 120)))  # ~1 page per 120 orbits
@@ -186,6 +204,22 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
     # STALE = the feed has stalled past the display window, or the listing was
     # empty/unreachable. We then keep last-known-good passes visible (below).
     stale = (newest_seen is None) or (newest_age_h is not None and newest_age_h > stale_h)
+
+    # ---- HEALTH guard (decoupled from the prune-stale window) --------------------
+    # A separate, TIGHTER bound so a real upstream stall surfaces loudly instead of
+    # hiding inside the wide last-known-good window. Normal sawtooth (newest up to
+    # ~24-30 h old between daily batches) is healthy; older = a batch was missed.
+    health, health_reason = "ok", ""
+    if newest_seen is None:
+        health, health_reason = "stale", "no orbits listed (feed empty/unreachable)"
+    elif newest_age_h is not None and newest_age_h > HEALTH_STALE_H:
+        health = "stale"
+        health_reason = (f"newest orbit {newest_age_h:.1f} h old "
+                         f"(> {HEALTH_STALE_H:.0f} h health bound)")
+    if health == "stale":
+        log("ascat: !! FEED HEALTH STALE -- " + health_reason
+            + " -- a KNMI daily batch appears MISSED; last-known-good stays live and "
+              "coverage will drain until fresh orbits land. Investigate the source.")
 
     # newest first, then cap (so a huge cold/backfill run stays bounded)
     candidates.sort(key=lambda c: c["start"], reverse=True)
@@ -302,6 +336,12 @@ def build(out_dir: str, *, window_hours: int = 36, backfill_hours: int | None = 
         "stale": bool(stale),
         "newest_orbit_age_h": (round(newest_age_h, 1)
                                if newest_age_h is not None else None),
+        # Health: "ok" during the normal daily-batch sawtooth, "stale" when a batch
+        # was actually missed (newest > HEALTH_STALE_H). The viewer shows an amber
+        # "feed delayed" badge on "stale" so a real stall is visible, not silent.
+        "health": health,
+        "health_reason": health_reason,
+        "health_stale_h": HEALTH_STALE_H,
     }
     _write(out_dir, "manifest.json", manifest)
 
