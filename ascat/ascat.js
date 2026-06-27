@@ -409,23 +409,29 @@
       this.region = this._defaultRegion(passes);
     }
     if (this.dom.regionWrap) this.dom.regionWrap.style.display = inStorm ? 'none' : '';
-    // The Vis/SWIR satellite backdrop is available in STORM-centered AND
-    // BASIN/REGIONAL views (each has a matching georeferenced cutout). Only the
-    // GLOBAL view has no single backdrop (a whole-world montage), so the toggle
-    // is disabled + greyed and forced off there.
-    var isGlobal = this._isGlobal();
+    // The Vis/SWIR satellite backdrop is available in STORM-centered AND every
+    // BASIN/REGIONAL view (each has a matching single-disk georeferenced cutout).
+    // HEMISPHERE + GLOBAL ('nhem'/'shem'/'global') span multiple satellite disks
+    // and the antimeridian, so no single-disk cutout fills them; the wide-area
+    // day-Vis/night-SWIR MOSAIC that will is still in progress. Until it ships the
+    // toggle is disabled + greyed with an explaining tooltip (NOT silently blank)
+    // for those three views.
+    var isWide = !this.stormLock && ['nhem', 'shem', 'global'].indexOf(this.region) >= 0;
     if (this.dom.backdropWrap) {
-      this.dom.backdropWrap.classList.toggle('ascat-disabled', isGlobal);
-      if (this.dom.backdropChk) this.dom.backdropChk.disabled = isGlobal;
-      if (this.dom.bdOpacity) this.dom.bdOpacity.disabled = isGlobal || !this.backdrop;
-      if (isGlobal && this.backdrop) {
+      this.dom.backdropWrap.classList.toggle('ascat-disabled', isWide);
+      this.dom.backdropWrap.title = isWide
+        ? 'Hemisphere & Global: wide-area Vis/SWIR mosaic in progress — basin, regional and storm views have a backdrop'
+        : 'Satellite backdrop — Visible by day, Shortwave IR by night';
+      if (this.dom.backdropChk) this.dom.backdropChk.disabled = isWide;
+      if (this.dom.bdOpacity) this.dom.bdOpacity.disabled = isWide || !this.backdrop;
+      if (isWide && this.backdrop) {
         this.backdrop = false;
         if (this.dom.backdropChk) this.dom.backdropChk.checked = false;
         this.bdImg = null; this.bdFrame = null;
       }
     }
     this.passMeta = passes;
-    if (this.backdrop && !isGlobal) this._loadBackdrop();   // storm or basin backdrop
+    if (this.backdrop && !isWide) this._loadBackdrop();   // storm or basin/regional backdrop
 
     if (!passes.length) { this._status(''); this._showEmpty(true); return; }
     this._showEmpty(false);

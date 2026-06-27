@@ -179,7 +179,8 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
   assert.ok(/GLOBAL_MAX_PASSES/.test(src), 'global pass cap present');
   assert.ok(/_loadRegionBackdrop/.test(src), 'basin/regional backdrop loader present');
   assert.ok(/best\.bd_product/.test(src), 'header reads the true backdrop product (Vis/SWIR)');
-  assert.ok(/classList\.toggle\('ascat-disabled', isGlobal\)/.test(src), 'backdrop toggle disabled only at Global');
+  assert.ok(/classList\.toggle\('ascat-disabled', isWide\)/.test(src), 'backdrop toggle greyed for wide-area (hemisphere/global), not basin/regional');
+  assert.ok(/\['nhem', 'shem', 'global'\]\.indexOf\(this\.region\)/.test(src), 'hemisphere+global are the wide-area no-single-disk set');
 })();
 
 console.log('ascat_v2: PASS');
