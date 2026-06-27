@@ -498,7 +498,11 @@
     var cv = this.dom.canvas; if (!cv) return null;
     var availW = (this.dom.frame && this.dom.frame.clientWidth) || 900; availW = Math.max(360, availW);
     var figW = Math.max(availW, 760), pad = 16, headerH = 54, footerH = 26;
-    var mapH = Math.round(figW * 0.62);
+    // mapH ratio sets the map pane aspect (W/H = 1/0.6 = 1.667); the backdrop
+    // producer pre-widens the satellite raster to THIS aspect so it fills the
+    // frame edge-to-edge. Keep in sync with ascat.js _layout + the producer's
+    // BACKDROP_VIEW_ASPECT (floater_poller.py).
+    var mapH = Math.round(figW * 0.6);
     var figH = pad + headerH + mapH + 10 + footerH + pad;
     var dpr = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
     this.dpr = dpr; this.figW = figW; this.figH = figH;
@@ -517,9 +521,14 @@
       if (TR && TR.get && TR.get('global')) return TR.extentOf(TR.get('global'));
       return [-180, 180, -62, 62];
     }
-    // storm: fit to the current overpass cutout (or the backdrop bounds if on),
-    // padded a touch so the swath isn't flush to the frame.
-    var b = (this.backdrop && this.bdFrame && this.bdFrame.bounds) || boundsOf(this.curOverpass);
+    // storm: when a backdrop is shown, the frame IS the satellite raster -- fit
+    // EXACTLY to its bounds (the producer pre-widens it to this map aspect, so
+    // _aspectExtent is a no-op and it fills the frame edge-to-edge with no bare
+    // basemap). With no backdrop, fit to the overpass cutout, padded a touch so
+    // the swath isn't flush to the frame. bounds = [W,S,E,N] -> [W,E,S,N].
+    var bd = (this.backdrop && this.bdFrame && this.bdFrame.bounds) || null;
+    if (bd) return [bd[0], bd[2], bd[1], bd[3]];   // backdrop bounds, no pad
+    var b = boundsOf(this.curOverpass);
     if (b) { var px = (b[2] - b[0]) * 0.06, py = (b[3] - b[1]) * 0.06;
              return [b[0] - px, b[2] + px, b[1] - py, b[3] + py]; }   // [W,E,S,N]
     return [-100, -5, 0, 55];
@@ -600,8 +609,12 @@
     if (!this.backdrop || this.mode !== 'storm' || !this.bdImg || !this.bdImg.complete || !this.bdImg.naturalWidth) return;
     var b = this.bdFrame && this.bdFrame.bounds; if (!b) return;
     var tl = proj(b[0], b[3]), br = proj(b[2], b[1]);
+    // Bleed ~1px outward so sub-pixel rounding never leaves a bare-basemap seam at
+    // the frame edge when the aspect-matched backdrop fills the whole plot; the
+    // map-rect clip in _drawMap crops the overflow.
+    var x = tl[0] - 1, y = tl[1] - 1, w = (br[0] - tl[0]) + 2, h = (br[1] - tl[1]) + 2;
     g.save(); g.globalAlpha = this.bdOpacity;
-    try { g.drawImage(this.bdImg, tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]); } catch (e) {}
+    try { g.drawImage(this.bdImg, x, y, w, h); } catch (e) {}
     g.restore();
   };
 

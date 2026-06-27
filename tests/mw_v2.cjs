@@ -52,6 +52,13 @@ const V = M.MicrowaveViewer.prototype;
     curOverpass: { bounds_wgs84: [10, 20, 30, 40] } });
   assert.deepStrictEqual(s, [10 - 1.2, 30 + 1.2, 20 - 1.2, 40 + 1.2],
     'storm extent fits the cutout bounds with ~6% pad');
+  // FIX: with a backdrop ON, the frame fits EXACTLY to the (aspect-widened)
+  // backdrop bounds (no pad) so the imagery fills the frame edge-to-edge.
+  const sb = V._extent.call({ mode: 'storm', backdrop: true,
+    bdFrame: { bounds: [5, 20, 35, 40] },
+    curOverpass: { bounds_wgs84: [10, 20, 30, 40] } });
+  assert.deepStrictEqual(sb, [5, 35, 20, 40],
+    'storm extent fits the backdrop bounds exactly when backdrop is on');
 })();
 
 // ---- backdrop draw: georeferenced by WGS84 corner bounds (W,N)->tl (E,S)->br
@@ -65,7 +72,9 @@ const V = M.MicrowaveViewer.prototype;
   }, g, proj);
   assert.strictEqual(calls.length, 1, 'drawImage called once');
   const [, x, y, w, h] = calls[0];
-  assert.deepStrictEqual([x, y, w, h], [0, 0, 1000, 800], 'georef by bounds (tl=W,N; br=E,S)');
+  // bled 1px outward so a sub-pixel seam never shows at the frame edge (the
+  // map-rect clip crops the overflow).
+  assert.deepStrictEqual([x, y, w, h], [-1, -1, 1002, 802], 'georef by bounds (tl=W,N; br=E,S), 1px edge bleed');
   // backdrop never draws in global mode
   calls.length = 0;
   V._drawBackdrop.call({ backdrop: true, mode: 'global', bdImg: { complete: true, naturalWidth: 1 }, bdFrame: { bounds: [0, 0, 1, 1] } }, g, proj);
@@ -113,7 +122,7 @@ const V = M.MicrowaveViewer.prototype;
   assert.ok(/id="mw-canvas"/.test(html), 'page mounts a canvas');
   assert.ok(/id="mw-mode"/.test(html), 'page has the View (storm|global) toggle');
   assert.ok(/id="mw-backdrop"/.test(html), 'page has the Satellite backdrop control');
-  assert.ok(/microwave\.js\?v=4/.test(html), 'cache-bust bumped');
+  assert.ok(/microwave\.js\?v=5/.test(html), 'cache-bust bumped');
 })();
 
 console.log('mw_v2: PASS');
