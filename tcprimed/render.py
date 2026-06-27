@@ -1,19 +1,18 @@
 """tcprimed.render - storm-centered equirectangular PNGs for a TC overpass.
 
-Two products per overpass, both rendered with the canonical NRL passive-microwave
-recipes (the ones the operational TC analysis community use; refs below):
+FOUR products per overpass, each rendered with the EXACT canonical NRL
+passive-microwave color tables (vendored + exactness-guarded in pmw_canonical):
 
-  * 89 GHz PCT   polarization-corrected Tb, PCT = 1.818*Tb_89V - 0.818*Tb_89H
-                 (Spencer et al. 1989; the 85/89 GHz scattering channel), colored
-                 with the continuous NRL 89 GHz ice-scattering table over
-                 Normalize(105 K, 305 K) and displayed in KELVIN: deep ice
-                 scattering reads dark-gray -> maroon -> red; warm clear ocean
-                 reads light blue. (Kieper & Jiang 2012; Lee et al. 2002.)
-  * 37 GHz color NRL 37 GHz true-color RGB from the 37 V/H pair (no colormap):
-                 R = ice scattering (low pct37 = 2.181*Tb_37V - 1.181*Tb_37H),
-                 G = 37V warmth, B = 37H emission. Green = clear ocean, cyan =
-                 warm rain, magenta = deep convection, red = ice scattering.
-                 (Grody 1993; the warm-rain / scattering 37 GHz signal.)
+  * 37H      37 GHz H-pol brightness temperature (K) on the canonical 37 GHz
+             stepped colormap (cream -> magenta/purple -> blue/cyan -> green ->
+             orange -> red -> black; warm low-level emission reads red/black).
+  * 91H      high-freq (85/89/91 GHz) H-pol brightness temperature (K) on the
+             canonical high-freq colormap (white -> black -> red -> gold ->
+             green -> blue -> light; cold scattering cores read black/red).
+  * color37  NRL 37 GHz true-color RGB from the 37 V/H pair: green = clear ocean,
+             cyan = warm rain, magenta = deep convection, red = ice scattering.
+  * color91  NRL high-freq true-color RGB from the 89/91 V/H pair: teal/cyan
+             ocean, convective ice scattering red -> black.
 
 The swath is resampled onto a regular storm-centered grid by LINEAR (Delaunay)
 interpolation in a CENTER-RELATIVE (unwrapped) longitude frame, then drawn with a
@@ -21,7 +20,7 @@ bilinear ``imshow`` -- the continuous NRL look, gap-free even for the
 coarse imagers (SSMIS), with a clean swath edge (cells outside the data convex
 hull stay transparent). Self-contained: no cartopy; the coastline/border drawer
 reads the repo's ne_50m_*.geojson and breaks each ring at large longitude jumps.
-PCT math is hafs_render.compute_pct89 (degC, converted to K for display).
+The two H-pol colormaps + the two color recipes live in tcprimed.pmw_canonical.
 """
 from __future__ import annotations
 
@@ -45,9 +44,8 @@ from matplotlib.ticker import FuncFormatter  # noqa: E402
 import netCDF4 as nc  # noqa: E402
 from scipy.interpolate import griddata  # noqa: E402
 
-from hafs_render.hafs_plot import compute_pct89  # noqa: E402
-
 from . import PMW_CHANNELS, SOURCE_ARCHIVE
+from . import pmw_canonical as pmwc
 
 # ---- look + layout (sober scientific aesthetic, matches the HAFS sim-MW frame)
 BAND_BG = "#0b0e13"          # figure + header band background (dark navy-black)
@@ -69,33 +67,12 @@ _REPO_ROOT = _HERE.parent
 
 
 # ---------------------------------------------------------------------------
-# 89 GHz PCT colormap (canonical NRL 89 GHz ice-scattering color table)
+# The four observed-MW products use the EXACT canonical NRL Tb color tables,
+# vendored in pmw_canonical (single source of truth, guarded by an exactness
+# test): 37H + 91H are single-channel H-pol brightness-temperature colormaps,
+# color37 + color91 are V/H true-color RGB recipes. Kept separate from the HAFS
+# sim-MW ``ice89h`` palette (tuned independently).
 # ---------------------------------------------------------------------------
-# The 89 PCT (PCT = 1.818*Tb_89V - 0.818*Tb_89H; compute_pct89) is colored on the
-# operational NRL/CIMSS 89 GHz table: a continuous LinearSegmentedColormap over
-# Normalize(105 K, 305 K), each anchor placed at position (K - 105) / 200. Deep ice
-# scattering (cold PCT) reads dark-gray -> gray -> maroon -> red; the mids run
-# orange -> gold -> green; warm clear ocean (high PCT) reads blue -> light blue.
-# This is the real passive-MW look (NOT an IR ramp). Kept LOCAL to this product so
-# the HAFS sim-MW ``ice89h`` palette (tuned separately) is untouched.
-_NRL89_VMIN_K, _NRL89_VMAX_K = 105.0, 305.0
-_NRL89_ANCHORS_K = [
-    (105, "#303030"), (125, "#606060"), (150, "#800000"), (180, "#FF0000"),
-    (205, "#FF8C00"), (212, "#FFD700"), (228, "#ADFF2F"), (245, "#00CC44"),
-    (254, "#00DDCC"), (270, "#0066FF"), (280, "#0000CC"), (305, "#8888FF"),
-]
-_NRL89_CMAP = LinearSegmentedColormap.from_list(
-    "nrl89pct",
-    [((k - _NRL89_VMIN_K) / (_NRL89_VMAX_K - _NRL89_VMIN_K), c)
-     for k, c in _NRL89_ANCHORS_K],
-).with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
-# Colorbar ticks (K): an evenly-spaced span of the 105-305 K range.
-_NRL89_TICKS_K = [105, 130, 155, 180, 205, 230, 255, 280, 305]
-
-
-def nrl89_norm() -> Normalize:
-    """Fresh Normalize over the 89 PCT 105-305 K domain (per-call, not shared)."""
-    return Normalize(vmin=_NRL89_VMIN_K, vmax=_NRL89_VMAX_K)
 
 
 # ---------------------------------------------------------------------------
@@ -297,14 +274,22 @@ def mw_legends() -> dict:
     cyclolab_map.js). 89 PCT = discrete Kelvin stops sampled from the NRL ice-
     scattering table at its tick marks; 37 color = a qualitative RGB recipe (the
     composite has no scalar palette - _color37_rgba is a recipe, not a cmap)."""
-    norm = nrl89_norm()
-    stops = [{"color": _hex(_NRL89_CMAP(norm(float(k)))), "label": f"{k:g}"}
-             for k in _NRL89_TICKS_K]
+    def _stops(cmap, norm, ticks):
+        return [{"color": _hex(cmap(norm(float(k)))), "label": f"{k:g}"}
+                for k in ticks]
+    c37, n37 = pmwc.cmap_37h(), pmwc.norm_37h()
+    c91, n91 = pmwc.cmap_91h(), pmwc.norm_91h()
     return {
-        "89pct": {"label": "89 GHz PCT (K)", "discrete": True, "stops": stops},
-        "37color": {"label": "37 GHz Color", "legendHtml":
-                    "37V/37H composite - cyan/blue = scattering &amp; deep "
-                    "convection, magenta/red = warm rain &amp; land, dark = ocean."},
+        "37H": {"label": "37 GHz H-pol (K)", "discrete": True,
+                "stops": _stops(c37, n37, pmwc._37H_TICKS)},
+        "91H": {"label": "91 GHz H-pol (K)", "discrete": True,
+                "stops": _stops(c91, n91, pmwc._91H_TICKS)},
+        "color37": {"label": "37 GHz Color", "legendHtml":
+                    "37V/37H composite - green = clear ocean, cyan = warm rain, "
+                    "magenta/red = deep convection &amp; ice scattering."},
+        "color91": {"label": "91 GHz Color", "legendHtml":
+                    "89/91 V/H composite - teal/cyan ocean, red &rarr; black = "
+                    "convective ice scattering."},
     }
 
 
@@ -375,29 +360,32 @@ def _draw_coast(ax, features, clon, extent, color, lw, zorder):
 # ---------------------------------------------------------------------------
 # 37 GHz color recipe (NRL 2-channel)
 # ---------------------------------------------------------------------------
-def _color37_rgba(tb37v: np.ndarray, tb37h: np.ndarray) -> np.ndarray:
-    """Canonical NRL 37 GHz true-color RGB from the 37 V/H pair (no colormap).
-
-        pct37 = 2.181*Tb_37V - 1.181*Tb_37H
-        R = clip((280 - pct37) / 20, 0, 1)   # ice scattering (low pct37 -> red)
-        G = clip((Tb_37V - 180) / 120, 0, 1) # 37V warmth
-        B = clip((Tb_37H - 160) / 140, 0, 1) # 37H emission
-
-    Scene: green = clear ocean, cyan = warm rain, magenta = deep convection,
-    red = ice scattering. Alpha 0 (transparent) where either channel is invalid
-    (non-finite or Tb <= 0), so the swath edge and data gaps drop out cleanly."""
-    pct37 = 2.181 * tb37v - 1.181 * tb37h
-    r = np.clip((280.0 - pct37) / 20.0, 0.0, 1.0)
-    g = np.clip((tb37v - 180.0) / 120.0, 0.0, 1.0)
-    b = np.clip((tb37h - 160.0) / 140.0, 0.0, 1.0)
-    good = (np.isfinite(tb37v) & np.isfinite(tb37h)
-            & (tb37v > 0.0) & (tb37h > 0.0))
-    rgba = np.zeros(tb37v.shape + (4,), dtype=float)
+def _rgb_to_rgba(v: np.ndarray, h: np.ndarray, rgb) -> np.ndarray:
+    """Stack canonical R,G,B gun arrays into an RGBA image, alpha 0 (transparent)
+    where either channel is invalid (non-finite or Tb <= 0) so the swath edge and
+    data gaps drop out cleanly."""
+    r, g, b = rgb
+    good = np.isfinite(v) & np.isfinite(h) & (v > 0.0) & (h > 0.0)
+    rgba = np.zeros(v.shape + (4,), dtype=float)
     rgba[..., 0] = np.where(good, r, 0.0)
     rgba[..., 1] = np.where(good, g, 0.0)
     rgba[..., 2] = np.where(good, b, 0.0)
     rgba[..., 3] = np.where(good, 1.0, 0.0)
     return rgba
+
+
+def _color37_rgba(tb37v: np.ndarray, tb37h: np.ndarray) -> np.ndarray:
+    """Canonical NRL color37 true-color RGBA from the 37 V/H pair (exact recipe in
+    pmw_canonical). Scene: green = clear ocean, cyan = warm rain, magenta = deep
+    convection, red = ice scattering."""
+    return _rgb_to_rgba(tb37v, tb37h, pmwc.color37_rgb(tb37v, tb37h))
+
+
+def _color91_rgba(tb89v: np.ndarray, tb89h: np.ndarray) -> np.ndarray:
+    """Canonical NRL color89/91 true-color RGBA from the high-freq V/H pair (exact
+    recipe in pmw_canonical). Convective ice scattering reads red -> black; ocean
+    teal/cyan."""
+    return _rgb_to_rgba(tb89v, tb89h, pmwc.color91_rgb(tb89v, tb89h))
 
 
 # ---------------------------------------------------------------------------
@@ -540,148 +528,142 @@ def _decorate_axes(ax, clon, extent):
     ax.grid(True, color="#243042", linewidth=0.4, alpha=0.55)
 
 
-def render_89pct(meta: dict, out_path: str) -> str:
-    """Render the 89 GHz PCT product (canonical NRL ice-scattering colormap,
-    displayed in Kelvin). Returns out_path.
-
-    Falls back to 89 GHz V-pol alone as a PCT proxy when the 89H channel is
-    entirely fill (some SSMIS-F17 / partial passes carry only one usable 89
-    polarization): over clear ocean PCT ~= V, and ice scattering still depresses
-    V, so the pass publishes a usable 89 product instead of being dropped."""
-    v_c = meta["tb89v"] - 273.15
-    h_c = meta["tb89h"] - 273.15
-    pct_c = compute_pct89({0: v_c, 1: h_c}, 0, 1)   # degC, clipped [105,290] K
-    proxy = False
-    if pct_c is not None and np.isfinite(pct_c).any():
-        # PCT coefficients sum to 1, so degC->K is the exact +273.15 offset.
-        pct_k = pct_c + 273.15
-    elif np.isfinite(meta["tb89v"]).any():
-        pct_k = np.clip(np.asarray(meta["tb89v"], dtype=float),
-                        _NRL89_VMIN_K, _NRL89_VMAX_K)
-        proxy = True
-    else:
-        raise ValueError("no valid 89 GHz pixels")
-
-    # Smooth-resample the PCT (in K) onto a regular grid (smooth look, gap-free).
-    extent, (pct_g,) = _regrid(meta["lat89"], meta["lon89"], [pct_k],
-                               meta["clat"], meta["clon"])
-    if not np.isfinite(pct_g).any():
-        raise ValueError("89 GHz swath does not cover the storm-centered box")
-
-    cmap = _NRL89_CMAP
-    norm = nrl89_norm()
-
-    # MIN BT from the RAW swath (the true coldest pixel); the smoothed grid warms
-    # extremes via interpolation, so it would under-report the scattering minimum.
-    btmin_k = float(np.nanmin(pct_k))
-    right_stat = f"MIN BT {btmin_k:.1f} K"
-
-    product_label = ("89 GHz PCT (polarization-corrected)" if not proxy
-                     else "89 GHz V-pol (PCT proxy)")
+def _render_scalar_product(meta, out_path, *, tbkey, latkey, lonkey,
+                           cmap, norm, ticks, product_label):
+    """Render a single-channel H-pol BT product (37H / 91H) on its canonical
+    colormap, with a Kelvin colorbar + chrome-free map tile. Returns out_path."""
+    tb = meta[tbkey]
+    if not np.isfinite(tb).any():
+        raise ValueError(f"no valid pixels for {product_label}")
+    # Smooth-resample onto a regular grid (smooth look, gap-free).
+    extent, (g,) = _regrid(meta[latkey], meta[lonkey], [tb],
+                           meta["clat"], meta["clon"])
+    if not np.isfinite(g).any():
+        raise ValueError(f"{product_label} swath does not cover the storm box")
+    # MIN BT from the RAW swath (the smoothed grid warms extremes via interp).
+    right_stat = f"MIN BT {float(np.nanmin(tb)):.1f} K"
     fig, ax, extent, geom = _common_figure(
         meta, product_label,
         f"{meta.get('source_label', SOURCE_ARCHIVE)} · {meta['platform']}",
         right_stat)
-
-    cf = _draw_scalar_image(ax, extent, pct_g, cmap, norm, zorder=2)
+    cf = _draw_scalar_image(ax, extent, g, cmap, norm, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)
-
-    # Kelvin colorbar (the norm and the data are both in Kelvin).
     (fig_w, fig_h, left_in, right_in, map_bottom, map_h, map_w,
      botpad_in, foot_in) = geom
     cax = fig.add_axes([(left_in + map_w + 0.18) / fig_w, map_bottom / fig_h,
                         0.18 / fig_w, map_h / fig_h])
-    cb = fig.colorbar(cf, cax=cax, ticks=_NRL89_TICKS_K)
-    cb.set_ticklabels([f"{k:g}" for k in _NRL89_TICKS_K])
+    cb = fig.colorbar(cf, cax=cax, ticks=ticks)
+    cb.set_ticklabels([f"{k:g}" for k in ticks])
     cb.set_label("Brightness Temperature (K)", color=TEXT_COLOR, fontsize=9.5)
     cb.ax.tick_params(colors=MUTED_COLOR, labelsize=8)
     cb.outline.set_edgecolor(TICK_COLOR)
-
     fig.savefig(out_path, dpi=150, facecolor=BAND_BG)
     plt.close(fig)
-
-    # ADDITIVE map tile: bare NRL-colored data pixels, transparent off-swath.
-    # Best-effort (after the chromed PNG is safely on disk) so a tile failure can
-    # never drop the published product.
+    # ADDITIVE map tile: bare canonical-colored data pixels, transparent off-swath.
     try:
-        _save_geotile(cmap(norm(np.ma.masked_invalid(pct_g))), _geo_path(out_path))
+        _save_geotile(cmap(norm(np.ma.masked_invalid(g))), _geo_path(out_path))
     except Exception as e:  # noqa: BLE001
-        print(f"tcprimed: 89pct geotile skipped for "
+        print(f"tcprimed: {product_label} geotile skipped for "
               f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
               file=sys.stderr)
     return out_path
 
 
-def render_37color(meta: dict, out_path: str) -> str:
-    """Render the 37 GHz color product. Returns out_path."""
-    if not (np.isfinite(meta["tb37v"]).any() and np.isfinite(meta["tb37h"]).any()):
-        raise ValueError("no valid 37 GHz pixels")
-    # Smooth-resample each channel, THEN build the RGB so the color is continuous.
-    extent, (v37_g, h37_g) = _regrid(meta["lat37"], meta["lon37"],
-                                     [meta["tb37v"], meta["tb37h"]],
-                                     meta["clat"], meta["clon"])
-    rgba = _color37_rgba(v37_g, h37_g)
+def _render_rgb_product(meta, out_path, *, vkey, hkey, latkey, lonkey,
+                        rgba_fn, product_label):
+    """Render a V/H true-color product (color37 / color91) + map tile. Returns
+    out_path. Channels are regridded FIRST, then the RGB recipe is applied so the
+    color stays continuous."""
+    if not (np.isfinite(meta[vkey]).any() and np.isfinite(meta[hkey]).any()):
+        raise ValueError(f"no valid pixels for {product_label}")
+    extent, (vg, hg) = _regrid(meta[latkey], meta[lonkey],
+                               [meta[vkey], meta[hkey]],
+                               meta["clat"], meta["clon"])
+    rgba = rgba_fn(vg, hg)
     if not np.any(rgba[..., 3] > 0):
-        raise ValueError("37 GHz swath does not cover the storm-centered box")
-
+        raise ValueError(f"{product_label} swath does not cover the storm box")
     fig, ax, extent, geom = _common_figure(
-        meta, "37 GHz Color",
+        meta, product_label,
         f"{meta.get('source_label', SOURCE_ARCHIVE)} · {meta['platform']}", "")
-
     _draw_rgba_image(ax, extent, rgba, zorder=2)
     _decorate_axes(ax, meta["clon"], extent)
-
     fig.savefig(out_path, dpi=150, facecolor=BAND_BG)
     plt.close(fig)
-
-    # ADDITIVE map tile: the RGBA composite already has alpha 0 off-swath.
     try:
         _save_geotile(rgba, _geo_path(out_path))
     except Exception as e:  # noqa: BLE001
-        print(f"tcprimed: 37color geotile skipped for "
+        print(f"tcprimed: {product_label} geotile skipped for "
               f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
               file=sys.stderr)
     return out_path
 
 
-def render_overpass(meta: dict, out_dir: str, overpass_id: str) -> dict:
-    """Render both products for one overpass into out_dir; returns
-    ``{"products": {89pct, 37color}, "tiles": {89pct, 37color}}`` (basenames) for
-    whichever rendered. ``products`` are the chromed display PNGs; ``tiles`` are
-    the matching chrome-free georeferenced map tiles (present only when the geo
-    write succeeded for that product).
+def render_color37(meta: dict, out_path: str) -> str:
+    """37 GHz true-color (canonical NRL color37)."""
+    return _render_rgb_product(
+        meta, out_path, vkey="tb37v", hkey="tb37h", latkey="lat37",
+        lonkey="lon37", rgba_fn=_color37_rgba, product_label="37 GHz Color")
 
-    Each product is rendered independently and a single-product data gap (e.g.
-    SSMIS F17 has its 37 GHz V channel all-fill in some passes, so only 89 PCT is
-    available) is tolerated: the available product is published and the missing
-    one is omitted. Raises ValueError only if BOTH fail (no usable imagery) so the
-    caller can skip the overpass entirely; a partial render never leaves an orphan
-    PNG without a manifest record."""
+
+def render_color91(meta: dict, out_path: str) -> str:
+    """High-freq (89/91 GHz) true-color (canonical NRL color89/91)."""
+    return _render_rgb_product(
+        meta, out_path, vkey="tb89v", hkey="tb89h", latkey="lat89",
+        lonkey="lon89", rgba_fn=_color91_rgba, product_label="91 GHz Color")
+
+
+def render_37h(meta: dict, out_path: str) -> str:
+    """37 GHz H-pol brightness temperature (canonical NRL 37H colormap)."""
+    return _render_scalar_product(
+        meta, out_path, tbkey="tb37h", latkey="lat37", lonkey="lon37",
+        cmap=pmwc.cmap_37h(), norm=pmwc.norm_37h(), ticks=pmwc._37H_TICKS,
+        product_label="37 GHz H-pol")
+
+
+def render_91h(meta: dict, out_path: str) -> str:
+    """High-freq (89/91 GHz) H-pol brightness temperature (canonical NRL 91H)."""
+    return _render_scalar_product(
+        meta, out_path, tbkey="tb89h", latkey="lat89", lonkey="lon89",
+        cmap=pmwc.cmap_91h(), norm=pmwc.norm_91h(), ticks=pmwc._91H_TICKS,
+        product_label="91 GHz H-pol")
+
+
+# Product key -> renderer (the manifest, viewer, and map all key on these four).
+_PRODUCT_RENDERERS = [
+    ("color37", render_color37),
+    ("color91", render_color91),
+    ("37H", render_37h),
+    ("91H", render_91h),
+]
+
+
+def render_overpass(meta: dict, out_dir: str, overpass_id: str) -> dict:
+    """Render ALL FOUR products (color37, color91, 37H, 91H) for one overpass into
+    out_dir; returns ``{"products": {key: png}, "tiles": {key: geo_png}}``
+    (basenames) for whichever rendered. ``products`` are the chromed display PNGs;
+    ``tiles`` are the matching chrome-free georeferenced map tiles (present only
+    where the geo write succeeded).
+
+    Each product renders independently; a single-channel data gap (e.g. SSMIS F17
+    with an all-fill 37 V channel) only drops that one product, not the overpass.
+    Raises ValueError only if ALL FOUR fail (no usable imagery) so the caller can
+    skip the overpass entirely; a partial render never leaves an orphan PNG without
+    a manifest record."""
     os.makedirs(out_dir, exist_ok=True)
     out: dict = {}
-
-    p89 = os.path.join(out_dir, f"{overpass_id}_89pct.png")
-    try:
-        render_89pct(meta, p89)
-        out["89pct"] = os.path.basename(p89)
-    except Exception as e:  # noqa: BLE001
-        if os.path.exists(p89):
-            os.remove(p89)
-        print(f"tcprimed: 89pct skipped for {overpass_id}: "
-              f"{type(e).__name__}: {e}", file=sys.stderr)
-
-    p37 = os.path.join(out_dir, f"{overpass_id}_37color.png")
-    try:
-        render_37color(meta, p37)
-        out["37color"] = os.path.basename(p37)
-    except Exception as e:  # noqa: BLE001
-        if os.path.exists(p37):
-            os.remove(p37)
-        print(f"tcprimed: 37color skipped for {overpass_id}: "
-              f"{type(e).__name__}: {e}", file=sys.stderr)
+    for key, fn in _PRODUCT_RENDERERS:
+        p = os.path.join(out_dir, f"{overpass_id}_{key}.png")
+        try:
+            fn(meta, p)
+            out[key] = os.path.basename(p)
+        except Exception as e:  # noqa: BLE001
+            if os.path.exists(p):
+                os.remove(p)
+            print(f"tcprimed: {key} skipped for {overpass_id}: "
+                  f"{type(e).__name__}: {e}", file=sys.stderr)
 
     if not out:
-        raise ValueError("no usable imagery (both products failed)")
+        raise ValueError("no usable imagery (all four products failed)")
 
     # Collect whichever chrome-free tiles were emitted alongside the products.
     tiles: dict = {}

@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Passive Microwave · Satellite · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Observed passive-microwave tropical-cyclone overpasses: 89 GHz PCT and 37 GHz color from NASA GPM/PPS near-real-time and the NOAA/CIRA TC-PRIMED archive.">
+<meta name="description" content="Observed passive-microwave tropical-cyclone overpasses in four canonical NRL products — 37 GHz & 91 GHz color composites plus 37H & 91H brightness temperature — from NASA GPM/PPS near-real-time and the NOAA/CIRA TC-PRIMED archive.">
 <meta property="og:title" content="Passive Microwave (Observed) · Triple-A-Tropics">
-<meta property="og:description" content="89 GHz PCT & 37 GHz color TC overpasses — NASA GPM/PPS near-real-time + NOAA/CIRA TC-PRIMED archive.">
+<meta property="og:description" content="37/91 GHz color + H-pol TC overpasses (canonical NRL tables) — NASA GPM/PPS near-real-time + NOAA/CIRA TC-PRIMED archive.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://triple-a-tropics.com/satellite/microwave/">
 <link rel="canonical" href="https://triple-a-tropics.com/satellite/microwave/">
@@ -37,6 +37,15 @@
   .mw-seg:hover:not(:disabled) { color: var(--fg); }
   .mw-seg.active { background: var(--accent-2); color: #06222e; border-color: var(--accent-2); }
   .mw-seg:disabled, .mw-seg.mw-unavailable { opacity: 0.4; cursor: not-allowed; }
+  .mw-storm-row, .mw-export-row { display: flex; align-items: center; gap: 6px; }
+  .mw-navbtn { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 11px; font-size: 15px; line-height: 1; cursor: pointer; }
+  .mw-navbtn:hover:not(:disabled) { border-color: var(--accent-2); color: var(--accent-2); }
+  .mw-navbtn:disabled { opacity: 0.35; cursor: not-allowed; }
+  #mw-exfmt { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 13px; min-width: 0; }
+  .mw-btn { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .mw-btn:hover:not(:disabled) { border-color: var(--accent-2); color: var(--accent-2); }
+  .mw-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .mw-export-status { color: var(--muted); font-size: 12px; }
   .mw-imageframe { position: relative; width: 100%; background: #0b0e13; border-radius: 8px; overflow: hidden; min-height: 200px; }
   #mw-image { display: block; width: 100%; height: auto; max-width: 100%; }
   .mw-status { position: absolute; inset: 0; display: none; z-index: 4; align-items: center; justify-content: center; gap: 10px; background: rgba(7,16,28,0.62); color: var(--muted); font-size: 14px; }
@@ -81,20 +90,22 @@
 
 <header class="page-head">
   <h1>Passive Microwave (Observed)</h1>
-  <p>Observed passive-microwave overpasses of active and recent tropical cyclones —
-  <b>89 GHz PCT</b> (polarization-corrected temperature, which cuts through cirrus to
-  show the storm's convective structure and eyewall) and <b>37 GHz color</b> (which
-  highlights the low-level rain bands and a forming eye). Live overpasses come from
-  <b>NASA GPM/PPS</b> near-real-time (~1–3 h after the pass); older storms from the
-  <b>NOAA/CIRA TC-PRIMED</b> archive. For the scatterometer ocean-surface winds, see
-  the <a href="/satellite/ascat/">Scatterometer</a> tab.</p>
+  <p>Observed passive-microwave overpasses of active and recent tropical cyclones in
+  four canonical NRL products: the <b>91 GHz</b> color composite and <b>91H</b>
+  brightness temperature (the high-frequency scattering channels, which cut through
+  cirrus to show convective structure and the eyewall), and the <b>37 GHz</b> color
+  composite and <b>37H</b> brightness temperature (which highlight low-level rain
+  bands and a forming eye). Live overpasses come from <b>NASA GPM/PPS</b>
+  near-real-time (~1–3 h after the pass); older storms from the <b>NOAA/CIRA
+  TC-PRIMED</b> archive. For the scatterometer ocean-surface winds, see the
+  <a href="/satellite/ascat/">Scatterometer</a> tab.</p>
 </header>
 
 <section class="chart-section" id="microwave">
   <div class="chart-card">
     <div class="sat-result-head">
       <div>
-        <div class="gibs-head-title">Passive Microwave (Observed) · 89 GHz PCT &amp; 37 GHz Color</div>
+        <div class="gibs-head-title">Passive Microwave (Observed) · 37 &amp; 91 GHz Color + H-pol</div>
         <div class="sat-result-meta">Live: NASA GPM/PPS near-real-time (~1-3 h) · Archive: NOAA/CIRA TC-PRIMED</div>
       </div>
     </div>
@@ -105,15 +116,31 @@
         <div class="mw-controls">
           <div class="mw-group">
             <label for="mw-storm">Storm</label>
-            <select id="mw-storm"></select>
+            <div class="mw-storm-row">
+              <button id="mw-storm-prev" type="button" class="mw-navbtn" title="Newer storm" aria-label="Newer storm">&#8249;</button>
+              <select id="mw-storm"></select>
+              <button id="mw-storm-next" type="button" class="mw-navbtn" title="Older storm" aria-label="Older storm">&#8250;</button>
+            </div>
           </div>
           <div class="mw-group">
             <label for="mw-overpass">Overpass</label>
             <select id="mw-overpass"></select>
           </div>
-          <div class="mw-group mw-toggle-wrap">
+          <div class="mw-group">
             <label for="mw-products">Product</label>
             <div id="mw-products" class="mw-seg-group"></div>
+          </div>
+          <div class="mw-group">
+            <label for="mw-smooth">Display</label>
+            <div id="mw-smooth" class="mw-seg-group"></div>
+          </div>
+          <div class="mw-group mw-toggle-wrap">
+            <label for="mw-export">Export loop</label>
+            <div class="mw-export-row">
+              <select id="mw-exfmt"><option value="mp4">MP4</option><option value="gif">GIF</option></select>
+              <button id="mw-export" type="button" class="mw-btn">&#8681; Export</button>
+              <span id="mw-export-status" class="mw-export-status" style="display:none"></span>
+            </div>
           </div>
         </div>
 
@@ -149,6 +176,9 @@
 </footer>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
-<script src="/microwave/microwave.js?v=2" defer></script>
+<!-- gif.js: client-side animated-GIF fallback for the per-product loop export
+     (the render service /export is the primary mp4/gif path). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script src="/microwave/microwave.js?v=3" defer></script>
 </body>
 </html>

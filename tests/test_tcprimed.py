@@ -189,27 +189,22 @@ class TestColor37(unittest.TestCase):
         self.assertEqual(rgba[0, 3, 3], 0.0)   # H <= 0 -> transparent
 
 
-class TestNRL89Colormap(unittest.TestCase):
-    """The 89 PCT uses the canonical NRL table over Normalize(105, 305) K."""
+class TestCanonicalColortables(unittest.TestCase):
+    """The H-pol products use the canonical NRL Tb colormaps (exact RGB anchors,
+    ranges, and stepped behavior are guarded pixel-exact in test_pmw_canonical)."""
 
-    def test_norm_range(self):
-        from tcprimed.render import nrl89_norm
-        n = nrl89_norm()
-        self.assertEqual((n.vmin, n.vmax), (105.0, 305.0))
+    def test_norm_ranges(self):
+        from tcprimed import pmw_canonical as P
+        self.assertEqual((P.norm_37h().vmin, P.norm_37h().vmax), (125.0, 310.0))
+        self.assertEqual((P.norm_91h().vmin, P.norm_91h().vmax), (105.0, 305.0))
 
-    def test_anchor_endpoints_and_monotonic_positions(self):
-        from tcprimed.render import _NRL89_ANCHORS_K, _NRL89_CMAP
-        ks = [k for k, _ in _NRL89_ANCHORS_K]
-        # 12 anchors spanning exactly the norm endpoints, strictly increasing.
-        self.assertEqual(len(_NRL89_ANCHORS_K), 12)
-        self.assertEqual((ks[0], ks[-1]), (105, 305))
-        self.assertTrue(all(b > a for a, b in zip(ks, ks[1:])))
-        # Cold end (deep ice scattering) is dark; warm end (clear ocean) is light
-        # blue -- the real-MW look, not an IR ramp.
-        cold = _NRL89_CMAP(0.0)
-        warm = _NRL89_CMAP(1.0)
-        self.assertLess(sum(cold[:3]), 0.8)        # dark gray at 105 K
-        self.assertGreater(warm[2], warm[0])       # blue-dominant at 305 K
+    def test_91h_cold_dark_warm_light(self):
+        from tcprimed import pmw_canonical as P
+        c, n = P.cmap_91h(), P.norm_91h()
+        # deep scattering (~178 K, end of the white->black ramp) reads near-black;
+        # warm ocean (~305 K) reads light. (180 K is the hard step boundary.)
+        self.assertLess(sum(c(n(178.0))[:3]), 0.3)
+        self.assertGreater(sum(c(n(305.0))[:3]), 2.5)
 
 
 class TestStormId(unittest.TestCase):
@@ -269,40 +264,40 @@ class TestNativeRender(unittest.TestCase):
             "lat37": lat, "lon37": lon, "tb37v": v37, "tb37h": h37,
         }
 
-    def test_render_both_products(self):
+    def test_render_all_four_products(self):
         import tempfile
-        from tcprimed.render import render_89pct, render_37color
         meta = self._synthetic_meta()
         with tempfile.TemporaryDirectory() as d:
-            p89 = os.path.join(d, "test_89pct.png")
-            p37 = os.path.join(d, "test_37color.png")
-            render_89pct(meta, p89)
-            render_37color(meta, p37)
-            self.assertGreater(os.path.getsize(p89), 2000)
-            self.assertGreater(os.path.getsize(p37), 2000)
+            from tcprimed.render import render_overpass
+            res = render_overpass(meta, d, "ov")
+            self.assertEqual(set(res["products"]),
+                             {"color37", "color91", "37H", "91H"})
+            for base in res["products"].values():
+                self.assertGreater(os.path.getsize(os.path.join(d, base)), 2000)
 
-    def test_89pct_v_only_proxy(self):
-        # When the 89 H channel is entirely fill (some SSMIS-F17 passes), the 89
-        # product still renders from V-pol alone as a PCT proxy rather than failing.
+    def test_91h_v_gap_drops_only_that_product(self):
+        # When the high-freq H channel is entirely fill, the 91H + color91
+        # products are dropped but the 37 GHz products still publish (per-product
+        # gap tolerance), so the overpass is never lost.
         import tempfile
-        from tcprimed.render import render_89pct
+        from tcprimed.render import render_overpass
         meta = self._synthetic_meta()
         meta["tb89h"] = np.full_like(meta["tb89h"], np.nan)
-        with tempfile.TemporaryDirectory() as d:
-            p89 = os.path.join(d, "proxy_89pct.png")
-            render_89pct(meta, p89)
-            self.assertGreater(os.path.getsize(p89), 2000)
-
-    def test_89pct_no_valid_pixels_raises(self):
-        # No usable 89 data at all -> ValueError (caller skips the product).
-        import tempfile
-        from tcprimed.render import render_89pct
-        meta = self._synthetic_meta()
         meta["tb89v"] = np.full_like(meta["tb89v"], np.nan)
-        meta["tb89h"] = np.full_like(meta["tb89h"], np.nan)
+        with tempfile.TemporaryDirectory() as d:
+            res = render_overpass(meta, d, "ov")
+            self.assertEqual(set(res["products"]), {"color37", "37H"})
+
+    def test_no_valid_pixels_raises(self):
+        # No usable data in ANY channel -> ValueError (caller skips the overpass).
+        import tempfile
+        from tcprimed.render import render_overpass
+        meta = self._synthetic_meta()
+        for k in ("tb89v", "tb89h", "tb37v", "tb37h"):
+            meta[k] = np.full_like(meta[k], np.nan)
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError):
-                render_89pct(meta, os.path.join(d, "x.png"))
+                render_overpass(meta, d, "ov")
 
 
 class TestLiveTier(unittest.TestCase):

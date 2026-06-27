@@ -115,4 +115,15 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
   assert.ok(/ascat-disabled/.test(src), 'backdrop control greys out in composite mode');
 })();
 
+// ---- dropdown cleanup: the Pass dropdown drops the appended storm-name blurb,
+// but the View/storm dropdown KEEPS its concise "(N passes)" qualifier.
+(function dropdownLabels() {
+  const src = fs.readFileSync(path.join(ROOT, 'ascat', 'ascat.js'), 'utf8');
+  assert.ok(!/var stormTag = /.test(src), 'pass dropdown no longer appends a storm-name summary');
+  assert.ok(/o\.textContent = p\.sensor \+ '  ·  ' \+ fmtZ\(p\.start_utc\);/.test(src),
+    'pass label is sensor + time only');
+  assert.ok(/pass' \+ \(s\.n === 1 \? '' : 'es'\) \+ '\)'/.test(src),
+    'storm dropdown keeps the concise (N passes) qualifier');
+})();
+
 console.log('ascat_v2: PASS');
