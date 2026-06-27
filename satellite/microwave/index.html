@@ -47,7 +47,12 @@
   .mw-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .mw-export-status { color: var(--muted); font-size: 12px; }
   .mw-imageframe { position: relative; width: 100%; background: #0b0e13; border-radius: 8px; overflow: hidden; min-height: 200px; }
-  #mw-image { display: block; width: 100%; height: auto; max-width: 100%; }
+  #mw-canvas { display: block; width: 100%; height: auto; max-width: 100%; background: #07101c; border-radius: 8px; }
+  .mw-bd-row { display: flex; align-items: center; gap: 8px; }
+  .mw-chk { display: inline-flex; align-items: center; gap: 5px; font: 13px/1 inherit; color: var(--fg); cursor: pointer; }
+  .mw-chk input { accent-color: #2b9cff; }
+  #mw-bd-opacity { width: 78px; accent-color: #2b9cff; }
+  .mw-disabled { opacity: .45; }
   .mw-status { position: absolute; inset: 0; display: none; z-index: 4; align-items: center; justify-content: center; gap: 10px; background: rgba(7,16,28,0.62); color: var(--muted); font-size: 14px; }
   .mw-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent-2); animation: mw-spin 0.9s linear infinite; }
   @keyframes mw-spin { to { transform: rotate(360deg); } }
@@ -115,6 +120,10 @@
       <div id="mw-body">
         <div class="mw-controls">
           <div class="mw-group">
+            <label for="mw-mode">View</label>
+            <div id="mw-mode" class="mw-seg-group"></div>
+          </div>
+          <div class="mw-group">
             <label for="mw-storm">Storm</label>
             <div class="mw-storm-row">
               <button id="mw-storm-prev" type="button" class="mw-navbtn" title="Newer storm" aria-label="Newer storm">&#8249;</button>
@@ -134,6 +143,13 @@
             <label for="mw-smooth">Display</label>
             <div id="mw-smooth" class="mw-seg-group"></div>
           </div>
+          <div id="mw-backdrop-wrap" class="mw-group" title="Satellite backdrop (storm view)">
+            <label for="mw-backdrop">Satellite</label>
+            <div class="mw-bd-row">
+              <label class="mw-chk"><input type="checkbox" id="mw-backdrop"> Vis/IR</label>
+              <input type="range" id="mw-bd-opacity" min="10" max="100" value="40" title="Backdrop opacity" disabled>
+            </div>
+          </div>
           <div class="mw-group mw-toggle-wrap">
             <label for="mw-export">Export loop</label>
             <div class="mw-export-row">
@@ -145,7 +161,7 @@
         </div>
 
         <div id="mw-imageframe" class="mw-imageframe">
-          <img id="mw-image" alt="Passive-microwave overpass image">
+          <canvas id="mw-canvas" aria-label="Passive-microwave overpass map"></canvas>
           <div id="mw-status" class="mw-status">
             <div class="mw-spinner"></div><span>Loading…</span>
           </div>
@@ -179,6 +195,6 @@
 <!-- gif.js: client-side animated-GIF fallback for the per-product loop export
      (the render service /export is the primary mp4/gif path). -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
-<script src="/microwave/microwave.js?v=3" defer></script>
+<script src="/microwave/microwave.js?v=4" defer></script>
 </body>
 </html>
