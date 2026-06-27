@@ -133,7 +133,7 @@
       '<div class="ascat-group"><label for="ascat-pass">Pass</label><select id="ascat-pass"></select></div>' +
       '<div class="ascat-group"><label for="ascat-density">Density</label><select id="ascat-density"><option value="auto">Auto</option><option value="dense">Dense</option><option value="sparse">Sparse</option></select></div>' +
       '<div id="ascat-backdrop-wrap" class="ascat-group ascat-backdrop-wrap" title="Satellite backdrop is available in storm-centered view"><label for="ascat-backdrop">Satellite</label>' +
-        '<div class="ascat-bd-row"><label class="ascat-chk"><input type="checkbox" id="ascat-backdrop"> Clean IR</label>' +
+        '<div class="ascat-bd-row"><label class="ascat-chk"><input type="checkbox" id="ascat-backdrop"> Vis / SWIR</label>' +
         '<input type="range" id="ascat-bd-opacity" min="10" max="100" value="40" title="Backdrop opacity" disabled></div></div>' +
       '<div class="ascat-group ascat-style-wrap"><label for="ascat-style">Style</label><select id="ascat-style"></select></div>' +
     '</div>' +
@@ -307,6 +307,25 @@
       if (d < bd) { bd = d; best = frames[i]; }
     }
     return { frame: best, dms: bd };
+  }
+  // Storm backdrop frame: the MOST RECENT frame that carries a bare backdrop
+  // (bd_key + bounds), preferring one already widened to the plot aspect (~1.667)
+  // so it FILLS edge-to-edge. Matching the (possibly hours-old) overpass/pass time
+  // can pick an older 12x12 SQUARE frame (pre-widen producer) that letterboxes into
+  // the wide plot, leaving bare navy margins. Mirror of microwave.js backdropFrame.
+  function backdropFrame(frames) {
+    var withBd = [];
+    for (var i = 0; i < (frames || []).length; i++) {
+      var f = frames[i], src = f && (f.bd_key || f.backdrop_key);
+      if (src && f.bounds && f.bounds.length === 4) withBd.push(f);
+    }
+    if (!withBd.length) return null;
+    withBd.sort(function (a, b) { return (Date.parse(b.t) || 0) - (Date.parse(a.t) || 0); });
+    for (var j = 0; j < withBd.length; j++) {
+      var bb = withBd[j].bounds, asp = Math.abs(bb[2] - bb[0]) / Math.max(1e-6, Math.abs(bb[3] - bb[1]));
+      if (asp >= 1.4) return withBd[j];
+    }
+    return withBd[0];
   }
   // Floater slug from an ATCF id: basin + 2-digit number, no year (WP072026 ->
   // wp07) -- lets the backdrop reach a storm's per-storm floater manifest even
@@ -766,16 +785,18 @@
         var b = (fm.bands && (fm.bands[band] || fm.bands.irbd || fm.bands.ir)) || null;
         var frames = (b && b.frames) || [];
         if (!frames.length) throw 0;
-        var nf = nearestFrame(frames, matchT), best = nf.frame, bd = nf.dms;
-        // PART 3: draw ONLY the bare chrome-free grayscale Clean-IR cutout
-        // (bd_key + WGS84 bounds from the backdrop producer). The viewer owns the
-        // single shared graticule/coastline/colorbar/legend/watermark, so the
-        // finished CHROMED floater frame (best.key) is never painted under the
-        // barbs. No clean raster yet -> draw nothing (honest blank), never chrome.
+        var best = backdropFrame(frames);
+        if (!best) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
+        var bd = Math.abs((Date.parse(best.t) || 0) - matchT);
+        // Draw ONLY the bare chrome-free grayscale Vis/SWIR cutout (bd_key + WGS84
+        // bounds from the backdrop producer). The viewer owns the single shared
+        // graticule/coastline/colorbar/legend/watermark, so the finished CHROMED
+        // floater frame (best.key) is never painted under the barbs. No clean raster
+        // yet -> draw nothing (honest blank), never chrome.
         var src = best.bd_key || best.backdrop_key || null;
         if (!src || !best.bounds) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
         var img = new Image(); img.crossOrigin = 'anonymous';
-        self.bdFrame = { t: best.t, band: (best.bd_product || 'Clean IR'), bounds: best.bounds,
+        self.bdFrame = { t: best.t, band: (best.bd_product || 'Satellite'), bounds: best.bounds,
                          sat: self._floaterSat(storm.basin), ageMs: bd };
         // relayout (not just redraw): the extent now follows the cutout bounds.
         img.onload = function () { self.bdImg = img; self._layoutAndDraw(); };
