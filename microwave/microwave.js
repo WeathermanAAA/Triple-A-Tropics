@@ -78,17 +78,40 @@
   function lonLab(lon) { var l = lon; while (l > 180) l -= 360; while (l < -180) l += 360; return Math.abs(Math.round(l)) + (l >= 0 ? 'E' : 'W'); }
   function latLab(lat) { return Math.abs(Math.round(lat)) + (lat >= 0 ? 'N' : 'S'); }
 
-  // ---- producer-tile accessor: prefer the chrome-free geo tile; the viewer owns
-  // the chrome. Falls back to the chromed product PNG only as a last resort (so an
-  // older manifest without tiles still shows SOMETHING, drawn as a flat image).
+  // Old (v2) product keys are aliases of the current (v3) products, so overpasses
+  // rendered by the previous producer (89pct / 37color) still draw under the new
+  // product set instead of vanishing -- this is what made the Global view show
+  // only a handful of swaths out of dozens of recent overpasses. 89 PCT and 91H
+  // are both high-freq scattering; 37color and color37 are the same 37 GHz
+  // composite. color91 / 37H have no v2 equivalent.
+  var PRODUCT_ALIASES = {
+    'color37': ['color37', '37color'],
+    'color91': ['color91'],
+    '37H': ['37H'],
+    '91H': ['91H', '89pct']
+  };
+  // ---- producer-tile accessor: prefer the chrome-free geo tile (then the chromed
+  // product PNG as a last resort); the viewer owns the chrome. Tries the exact key
+  // first, then its v2 aliases, so older overpasses still render.
   function tileRel(o, key) {
-    if (o && o.tiles && o.tiles[key]) return { rel: o.tiles[key], bare: true };
-    if (o && o.products && o.products[key]) return { rel: o.products[key], bare: false };
+    if (!o) return null;
+    var keys = PRODUCT_ALIASES[key] || [key];
+    var i;
+    for (i = 0; i < keys.length; i++) if (o.tiles && o.tiles[keys[i]]) return { rel: o.tiles[keys[i]], bare: true };
+    for (i = 0; i < keys.length; i++) if (o.products && o.products[keys[i]]) return { rel: o.products[keys[i]], bare: false };
     return null;
   }
   function boundsOf(o) {
     var b = o && o.bounds_wgs84;
     return (b && b.length === 4) ? b : null;   // [W,S,E,N]
+  }
+  // Floater slug from an ATCF id: basin + 2-digit number, no year (WP072026 ->
+  // wp07). Lets the backdrop fetch a storm's per-storm floater manifest DIRECTLY
+  // even when that storm has been dropped from the top floaters/manifest.json
+  // (retired / went extratropical) but its floater data still exists.
+  function floaterSlug(atcf) {
+    atcf = String(atcf || '');
+    return atcf.length >= 4 ? (atcf.slice(0, 2) + atcf.slice(2, 4)).toLowerCase() : null;
   }
 
   function MicrowaveViewer(root, opts) {
@@ -465,18 +488,25 @@
         img.src = root + '/' + src;
       });
     };
-    fetch(root + '/floaters/manifest.json?t=' + Date.now())
-      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-      .then(function (top) {
-        var st = (top.storms || []), hit = null;
-        for (var i = 0; i < st.length; i++) {
-          var f = st[i], fid = String(f.id || '').toLowerCase(), fnm = String(f.name || '').toLowerCase();
-          if ((s.atcf && fid.indexOf(String(s.atcf).toLowerCase()) >= 0) ||
-              (s.name && fnm === String(s.name).toLowerCase())) { hit = f; break; }
-        }
-        if (!hit || !hit.slug) throw 0;
-        return perStorm(hit.slug);
-      })
+    // Try the slug derived from the ATCF id FIRST (works even when the storm has
+    // been dropped from the top floaters/manifest.json), then fall back to the
+    // top-manifest name/atcf match for any storm whose floater slug differs.
+    var topMatch = function () {
+      return fetch(root + '/floaters/manifest.json?t=' + Date.now())
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (top) {
+          var st = (top.storms || []), hit = null;
+          for (var i = 0; i < st.length; i++) {
+            var f = st[i], fid = String(f.id || '').toLowerCase(), fnm = String(f.name || '').toLowerCase();
+            if ((s.atcf && fid.indexOf(String(s.atcf).toLowerCase()) >= 0) ||
+                (s.name && fnm === String(s.name).toLowerCase())) { hit = f; break; }
+          }
+          if (!hit || !hit.slug) throw 0;
+          return perStorm(hit.slug);
+        });
+    };
+    var derived = floaterSlug(s.atcf);
+    (derived ? perStorm(derived).catch(topMatch) : topMatch())
       .catch(function () { self.bdImg = null; self.bdFrame = null; self._draw(); });
   };
 
@@ -641,7 +671,8 @@
     var scope, sub, o = this.curOverpass;
     if (this.mode === 'global') {
       scope = 'Global';
-      sub = (this.globalOps.length) + ' recent overpass' + (this.globalOps.length === 1 ? '' : 'es') + '  ·  last ' + GLOBAL_WINDOW_H + ' h';
+      var nd = this._globalDrawCount();
+      sub = nd + ' overpass' + (nd === 1 ? '' : 'es') + '  ·  last ' + GLOBAL_WINDOW_H + ' h';
     } else {
       var s = this._stormBySlug(this.curStorm) || {};
       scope = (s.name || s.atcf || s.slug || 'Storm');
@@ -719,11 +750,20 @@
   };
 
   // ---- caption (HTML below the canvas) ------------------------------------
+  // Recent overpasses actually DRAWABLE for the current product (have a tile via
+  // tileRel, incl. v2 aliases) -- the honest count for the header/caption, not the
+  // raw globalOps length which counts passes with no tile for this product.
+  MicrowaveViewer.prototype._globalDrawCount = function () {
+    var self = this, n = 0;
+    (this.globalOps || []).forEach(function (o) { if (tileRel(o, self.product)) n++; });
+    return n;
+  };
+
   MicrowaveViewer.prototype._renderCaption = function () {
     if (!this.dom.caption) return;
     if (this.mode === 'global') {
-      this.dom.caption.innerHTML = '<b>Global</b> &nbsp;·&nbsp; ' + this.globalOps.length +
-        ' recent overpasses (last ' + GLOBAL_WINDOW_H + ' h) &nbsp;·&nbsp; ' + this._prodLabel();
+      this.dom.caption.innerHTML = '<b>Global</b> &nbsp;·&nbsp; ' + this._globalDrawCount() +
+        ' overpasses (last ' + GLOBAL_WINDOW_H + ' h) &nbsp;·&nbsp; ' + this._prodLabel();
       return;
     }
     var o = this.curOverpass; if (!o) { this.dom.caption.innerHTML = ''; return; }

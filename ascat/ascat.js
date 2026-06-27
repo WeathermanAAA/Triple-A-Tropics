@@ -308,6 +308,13 @@
     }
     return { frame: best, dms: bd };
   }
+  // Floater slug from an ATCF id: basin + 2-digit number, no year (WP072026 ->
+  // wp07) -- lets the backdrop reach a storm's per-storm floater manifest even
+  // after that storm is dropped from the top floaters/manifest.json.
+  function floaterSlug(atcf) {
+    atcf = String(atcf || '');
+    return atcf.length >= 4 ? (atcf.slice(0, 2) + atcf.slice(2, 4)).toLowerCase() : null;
+  }
   // inverse equirectangular projection: map-local (sx,sy) -> [lon,lat] in ext's frame
   function invProjectExt(ext, W, H, sx, sy) {
     return [ext[0] + (sx / W) * (ext[1] - ext[0]), ext[3] - (sy / H) * (ext[3] - ext[2])];
@@ -776,18 +783,26 @@
         img.src = root + '/' + src;
       });
     };
-    fetch(root + '/floaters/manifest.json?t=' + Date.now())
-      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-      .then(function (top) {
-        var st = (top.storms || []), hit = null;
-        for (var i = 0; i < st.length; i++) {
-          var f = st[i], fid = String(f.id || '').toLowerCase(), fnm = String(f.name || '').toLowerCase();
-          if ((storm.atcf && fid.indexOf(String(storm.atcf).toLowerCase()) >= 0) ||
-              (storm.name && fnm === String(storm.name).toLowerCase())) { hit = f; break; }
-        }
-        if (!hit || !hit.slug) throw 0;
-        return perStorm(hit.slug);
-      })
+    // Try the slug derived from the ATCF id FIRST (basin+number, no year:
+    // WP072026 -> wp07) so a storm DROPPED from the top floaters/manifest.json
+    // (retired / went extratropical) but whose per-storm floater data still exists
+    // STILL shows a backdrop. Fall back to the top-manifest name/atcf match.
+    var topMatch = function () {
+      return fetch(root + '/floaters/manifest.json?t=' + Date.now())
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (top) {
+          var st = (top.storms || []), hit = null;
+          for (var i = 0; i < st.length; i++) {
+            var f = st[i], fid = String(f.id || '').toLowerCase(), fnm = String(f.name || '').toLowerCase();
+            if ((storm.atcf && fid.indexOf(String(storm.atcf).toLowerCase()) >= 0) ||
+                (storm.name && fnm === String(storm.name).toLowerCase())) { hit = f; break; }
+          }
+          if (!hit || !hit.slug) throw 0;
+          return perStorm(hit.slug);
+        });
+    };
+    var derived = floaterSlug(storm.atcf);
+    (derived ? perStorm(derived).catch(topMatch) : topMatch())
       .catch(function () { self.bdImg = null; self.bdFrame = null; self._draw(); });
   };
 
