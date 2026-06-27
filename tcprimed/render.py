@@ -43,6 +43,7 @@ from matplotlib.ticker import FuncFormatter  # noqa: E402
 
 import netCDF4 as nc  # noqa: E402
 from scipy.interpolate import griddata  # noqa: E402
+from scipy.spatial import cKDTree  # noqa: E402
 
 from . import PMW_CHANNELS, SOURCE_ARCHIVE
 from . import pmw_canonical as pmwc
@@ -60,6 +61,22 @@ WATERMARK = "@WeathermanAAA_"
 HALF_DEG = 5.0               # half-width of the square map, degrees
 GRID_STEP = 0.02             # smooth-resample grid resolution (deg) -> ~500 px
 FILL_THRESHOLD_K = 50.0      # Tb below this -> fill / bad pixel
+
+# Swath-edge QC: griddata("linear") triangulates the CONVEX hull of the swath
+# samples, so it fills any CONCAVITY (a swath entering/leaving the box at an
+# angle, or a cross-track sample-density drop near the scan edge) with long thin
+# "sliver" triangles that linearly interpolate across real gaps -> diagonal
+# streak/fan artifacts radiating toward the swath edge (most visible toward the
+# box bottom). The fix is a distance-to-nearest-sample mask: any regrid cell
+# farther than EDGE_MASK_K x the local sample spacing from a real pixel is set
+# back to NaN (transparent), recovering the TRUE concave swath boundary the
+# convex hull does not. EDGE_MASK_K is sized so the dense interior (cells <~ one
+# footprint from a sample) always survives while the slivers (many footprints
+# wide) are cut. Env kill switch TCPRIMED_EDGE_MASK=0 restores the raw convex
+# fill for an instant rollback.
+EDGE_MASK_K = float(os.environ.get("TCPRIMED_EDGE_MASK_K", "1.8") or "1.8")
+EDGE_MASK_ENABLED = (os.environ.get("TCPRIMED_EDGE_MASK", "1") or "1").lower() \
+    not in ("0", "false", "no")
 
 _HERE = Path(__file__).resolve().parent
 # The ne_50m geojsons live at the repo root (one level up from this package).
@@ -200,9 +217,13 @@ def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
     Linear (Delaunay) interpolation smooths the coarse imager footprints into the
     continuous NRL look (vs. blocky native quads) AND fills solid with
     NO inter-scanline gaps, because every interior target cell is interpolated
-    from the surrounding pixels. Cells outside the swath's convex hull come back
-    NaN, giving a clean swath edge (transparent) without a hand-tuned distance
-    mask. A pixel is a valid source only where EVERY field it feeds is finite."""
+    from the surrounding pixels. The convex hull alone, however, fills swath
+    CONCAVITIES (angled entry/exit, scan-edge density drops) with sliver
+    triangles, so a distance-to-nearest-sample mask (EDGE_MASK_K, env-gated)
+    nulls cells farther than ~one footprint from a real pixel -- recovering the
+    true concave swath edge (transparent) and killing the diagonal streak/fan
+    artifacts. A pixel is a valid source only where EVERY field it feeds is
+    finite."""
     lon_u = _unwrap(lon, clon)
     valid = np.isfinite(lat) & np.isfinite(lon_u)
     for f in fields:
@@ -219,8 +240,41 @@ def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
     for f in fields:
         g = griddata(pts, f[valid], (GX, GY), method="linear")
         out.append(g)
+
+    # Swath-edge QC: mask regrid cells too far from any real sample so the
+    # convex-hull slivers (the diagonal streak/fan artifacts) drop out, leaving
+    # the true concave swath edge. Threshold = EDGE_MASK_K x the swath's own
+    # sample spacing (median nearest-neighbour distance), so it adapts to the
+    # sensor footprint (coarse SSMIS vs. fine AMSR2/GMI) instead of a fixed deg.
+    if EDGE_MASK_ENABLED and pts.shape[0] >= 4:
+        far = _edge_mask(pts, GX, GY, step)
+        if far is not None:
+            for g in out:
+                g[far] = np.nan
+
     extent = [clon - half, clon + half, clat - half, clat + half]
     return extent, out
+
+
+def _edge_mask(pts, GX, GY, step):
+    """Boolean grid (GX/GY shape), True where a cell is farther than EDGE_MASK_K
+    x the swath sample spacing from the nearest real sample -> a convex-hull
+    sliver to be masked back to NaN. Spacing is the median nearest-neighbour
+    distance among the samples (per-sensor adaptive); floored at one grid step so
+    a degenerate (collinear/duplicate) swath never masks the whole field. Returns
+    None if the spacing can't be estimated (caller then leaves the grid as-is)."""
+    tree = cKDTree(pts)
+    # Sample spacing from a strided subset (k=2 -> self + nearest neighbour); the
+    # stride keeps this O(few thousand) regardless of swath size.
+    stride = max(1, pts.shape[0] // 4000)
+    nn, _ = tree.query(pts[::stride], k=2)
+    nn = nn[:, 1]
+    nn = nn[np.isfinite(nn) & (nn > 0.0)]
+    if nn.size == 0:
+        return None
+    spacing = max(float(np.median(nn)), float(step))
+    gd, _ = tree.query(np.column_stack([GX.ravel(), GY.ravel()]), k=1)
+    return (gd > EDGE_MASK_K * spacing).reshape(GX.shape)
 
 
 def _draw_scalar_image(ax, extent, grid, cmap, norm, zorder):

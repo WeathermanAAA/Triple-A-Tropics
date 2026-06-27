@@ -101,8 +101,9 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
   }, g, proj);
   assert.strictEqual(calls.length, 1, 'drawImage called once');
   const [, x, y, w, h] = calls[0];
-  // tl=proj(130,41)=[0,0]; br=proj(145,30)=[1000,800]
-  assert.deepStrictEqual([x, y, w, h], [0, 0, 1000, 800], 'georef by WGS84 corner bounds');
+  // tl=proj(130,41)=[0,0]; br=proj(145,30)=[1000,800], bled 1px outward so a
+  // sub-pixel seam never shows at the frame edge (map-rect clip crops it).
+  assert.deepStrictEqual([x, y, w, h], [-1, -1, 1002, 802], 'georef by WGS84 corner bounds, 1px edge bleed');
 })();
 
 (function backdropSourceContract() {

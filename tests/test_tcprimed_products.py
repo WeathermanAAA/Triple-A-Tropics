@@ -54,5 +54,60 @@ class TestFourProducts(unittest.TestCase):
         self.assertEqual(set(R.mw_legends()), {"color37", "color91", "37H", "91H"})
 
 
+class TestSwathEdgeMask(unittest.TestCase):
+    """The _regrid swath-edge distance mask removes the convex-hull "sliver"
+    fills (the diagonal streak/fan artifacts at the swath edge) while preserving
+    the real swath interior. Modelled on a partial diagonal-band swath, whose
+    convex hull spills into the box corners with no real data."""
+
+    @staticmethod
+    def _concave_swath(clat=18.0, clon=235.0, n=90, half=6.0, arc=3.0):
+        """A swath whose BOTTOM edge bulges UP at the centre (a concave-up arc,
+        like a real conical-scanner scan edge). griddata's convex hull bridges the
+        dip below the arc with sliver triangles that linearly interpolate across
+        the empty gap -- the streak/fan artifact. Valid = above the arc."""
+        lat = np.linspace(clat - half, clat + half, n)
+        lon = np.linspace(clon - half, clon + half, n)
+        LON, LAT = np.meshgrid(lon, lat)
+        u = (LON - clon) / 5.0
+        bottom = (clat - 5.0) + arc * np.clip(1.0 - u * u, 0.0, 1.0)
+        valid = (LAT > bottom) & (LAT < clat + 5.0)
+        tb = np.where(valid, 220.0, np.nan)
+        return LAT, LON, tb
+
+    def _regrid_both(self):
+        LAT, LON, tb = self._concave_swath()
+        old = R.EDGE_MASK_ENABLED
+        try:
+            R.EDGE_MASK_ENABLED = False
+            _, (raw,) = R._regrid(LAT, LON, [tb], 18.0, 235.0, half=5.0, step=0.05)
+            R.EDGE_MASK_ENABLED = True
+            _, (msk,) = R._regrid(LAT, LON, [tb], 18.0, 235.0, half=5.0, step=0.05)
+        finally:
+            R.EDGE_MASK_ENABLED = old
+        return raw, msk
+
+    def test_mask_removes_slivers(self):
+        raw, msk = self._regrid_both()
+        raw_valid = int(np.isfinite(raw).sum())
+        msk_valid = int(np.isfinite(msk).sum())
+        # the convex-hull fill of a concave swath is materially larger than the
+        # true band -> the mask removes a meaningful chunk of fake cells
+        self.assertLess(msk_valid, 0.9 * raw_valid)
+
+    def test_mask_only_subtracts_never_adds(self):
+        raw, msk = self._regrid_both()
+        # every cell the mask KEEPS was already real in the raw fill (the mask is
+        # pure subtraction; it never invents data the linear interp didn't have)
+        self.assertTrue(np.all(np.isfinite(raw)[np.isfinite(msk)]))
+
+    def test_mask_keeps_the_swath_core(self):
+        raw, msk = self._regrid_both()
+        # the band passes through the box centre -> the centre cell (dense real
+        # data) must survive the mask
+        c = msk.shape[0] // 2
+        self.assertTrue(np.isfinite(msk[c, c]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

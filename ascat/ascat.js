@@ -472,10 +472,13 @@
   // ---- extent ----
   AscatViewer.prototype._extent = function () {
     if (this.zoomExt) return this.zoomExt.slice();   // F3: drag-zoom override (top)
-    // PART 3: when a clean backdrop is shown, the frame IS the satellite cutout -
-    // fit the view to the raster's WGS84 corner bounds so barbs are clipped to it
-    // and the composite reads as ONE coherent frame (no barbs sprawling past the
-    // imagery box). bounds = [W,S,E,N]; _extent returns [W,E,S,N].
+    // Storm view with a backdrop: the frame IS the satellite cutout -- fit to its
+    // WGS84 corner bounds so barbs clip to the imagery and the composite reads as
+    // ONE coherent frame. The producer pre-widens the cutout to THIS map aspect
+    // (BACKDROP_VIEW_ASPECT), so _aspectExtent below is a no-op and the imagery
+    // fills edge-to-edge with no bare-basemap margins. Gated to storm mode: basin
+    // views keep their region extent (a basin backdrop fills it via its own wide
+    // bounds + the draw clip). bounds = [W,S,E,N]; _extent returns [W,E,S,N].
     if (this.stormLock && this.backdrop && this.bdImg && this.bdFrame && this.bdFrame.bounds) {
       var b = this.bdFrame.bounds;
       return [b[0], b[2], b[1], b[3]];   // storm view: frame == the cutout
@@ -835,8 +838,12 @@
     else if (this.center) { var c = this.center, half = 6; W = c.lon - half; E = c.lon + half; S = c.lat - half; N = c.lat + half; }
     else return;
     var tl = proj(W, N), br = proj(E, S);
+    // Bleed ~1px outward so sub-pixel rounding never leaves a bare-basemap seam at
+    // the frame edge when the (aspect-matched) backdrop fills the whole plot. The
+    // map rect clip (set in _drawMap) crops the overflow.
+    var x = tl[0] - 1, y = tl[1] - 1, w = (br[0] - tl[0]) + 2, h = (br[1] - tl[1]) + 2;
     g.save(); g.globalAlpha = this.bdOpacity;
-    try { g.drawImage(this.bdImg, tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]); } catch (e) {}
+    try { g.drawImage(this.bdImg, x, y, w, h); } catch (e) {}
     g.restore();
   };
 
