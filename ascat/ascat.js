@@ -38,7 +38,8 @@
   var WATERMARK = '@WeathermanAAA_';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
   var CREDIT = '© EUMETSAT';
-  var MAX_PASSES = 6;                  // recent passes loaded for the composite
+  var MAX_PASSES = 6;                  // recent passes loaded for a basin composite
+  var GLOBAL_MAX_PASSES = 40;          // Global view: all recent passes worldwide
 
   // ---- TC kt color scale (hard bins), shared with recon for cross-product
   // consistency. Each entry [minKt, color]; a speed picks the LAST bin it meets.
@@ -382,21 +383,23 @@
       this.region = this._defaultRegion(passes);
     }
     if (this.dom.regionWrap) this.dom.regionWrap.style.display = inStorm ? 'none' : '';
-    // PART 3: the satellite backdrop is a STORM-CENTERED feature only - a basin
-    // composite has no single cutout, so a backdrop there would be a mismatched
-    // box. Keep the control visible (so the feature is discoverable) but disable
-    // + grey it in composite/basin mode, and force the backdrop off there.
+    // The Vis/SWIR satellite backdrop is available in STORM-centered AND
+    // BASIN/REGIONAL views (each has a matching georeferenced cutout). Only the
+    // GLOBAL view has no single backdrop (a whole-world montage), so the toggle
+    // is disabled + greyed and forced off there.
+    var isGlobal = this._isGlobal();
     if (this.dom.backdropWrap) {
-      this.dom.backdropWrap.classList.toggle('ascat-disabled', !inStorm);
-      if (this.dom.backdropChk) this.dom.backdropChk.disabled = !inStorm;
-      if (this.dom.bdOpacity) this.dom.bdOpacity.disabled = !inStorm || !this.backdrop;
-      if (!inStorm && this.backdrop) {
+      this.dom.backdropWrap.classList.toggle('ascat-disabled', isGlobal);
+      if (this.dom.backdropChk) this.dom.backdropChk.disabled = isGlobal;
+      if (this.dom.bdOpacity) this.dom.bdOpacity.disabled = isGlobal || !this.backdrop;
+      if (isGlobal && this.backdrop) {
         this.backdrop = false;
         if (this.dom.backdropChk) this.dom.backdropChk.checked = false;
         this.bdImg = null; this.bdFrame = null;
       }
     }
     this.passMeta = passes;
+    if (this.backdrop && !isGlobal) this._loadBackdrop();   // storm or basin backdrop
 
     if (!passes.length) { this._status(''); this._showEmpty(true); return; }
     this._showEmpty(false);
@@ -428,10 +431,15 @@
 
   // Which manifest passes feed the current view: the storm's (lock) or the newest
   // few overall (composite). Newest-first, capped.
+  // Global view = whole-world recent composite (no storm lock, region 'global').
+  AscatViewer.prototype._isGlobal = function () {
+    return !this.stormLock && this.region === 'global';
+  };
+
   AscatViewer.prototype._viewPasses = function () {
     var passes = this.passMeta.slice();
     if (this.selectedId !== 'all') passes = passes.filter(function (p) { return p.id === this.selectedId; }, this);
-    return passes.slice(0, MAX_PASSES);
+    return passes.slice(0, this._isGlobal() ? GLOBAL_MAX_PASSES : MAX_PASSES);
   };
 
   AscatViewer.prototype._loadActivePasses = function () {
@@ -468,9 +476,9 @@
     // fit the view to the raster's WGS84 corner bounds so barbs are clipped to it
     // and the composite reads as ONE coherent frame (no barbs sprawling past the
     // imagery box). bounds = [W,S,E,N]; _extent returns [W,E,S,N].
-    if (this.backdrop && this.bdImg && this.bdFrame && this.bdFrame.bounds) {
+    if (this.stormLock && this.backdrop && this.bdImg && this.bdFrame && this.bdFrame.bounds) {
       var b = this.bdFrame.bounds;
-      return [b[0], b[2], b[1], b[3]];
+      return [b[0], b[2], b[1], b[3]];   // storm view: frame == the cutout
     }
     if ((this.stormLock || this.center) && this.center) {
       var c = this.center, half = 8.0;            // +/-8 deg lat box around the storm
@@ -603,8 +611,10 @@
     if (window.TATRegions && TATRegions.drawBasemapLines) {
       TATRegions.drawBasemapLines(g, ext, this.geo, L.w, L.h, { coast: S.coast, coastLw: S.coastLw, state: S.state, stateLw: S.stateLw });
     }
-    // 4) barbs (the data), newest pass last so it draws on top
-    this._drawBarbs(g, proj, ext, L.w, L.h, S);
+    // 4) the data: Global = filled colored swaths (whole-world composite);
+    //    storm/basin = wind barbs (newest pass on top).
+    if (this._isGlobal()) this._drawSwaths(g, proj, ext, L.w, L.h);
+    else this._drawBarbs(g, proj, ext, L.w, L.h, S);
     g.restore();
     this._drawDragRect(g, L);             // F3 rubber-band (figure space)
 
@@ -650,6 +660,38 @@
     for (var c = 0; c < cells.length; c++) {
       var cell = cells[c];
       this._barb(g, cell.x, cell.y, cell.kt, cell.dir, this._windColor(cell.kt), S.barbLw);
+    }
+    g.restore();
+  };
+
+  // Global composite: filled colored cells (one per WVC) instead of barbs, so the
+  // whole-world recent ASCAT swaths read as a continuous filled wind field on the
+  // plain map. Fine screen-space grid (newest pass overwrites); hover still works
+  // off this._cells. No satellite backdrop at global (a world montage has none).
+  AscatViewer.prototype._drawSwaths = function (g, proj, ext, W, H) {
+    var step = 2;                                  // px cell -> continuous swaths
+    var grid = {};
+    var passes = this._loadedView().slice().reverse();   // oldest first; newest wins
+    var wrap = (ext[1] > 180 || ext[0] < -180);
+    for (var pi = 0; pi < passes.length; pi++) {
+      var p = passes[pi], w = p.wvc; if (!w || !w.la) continue;
+      var la = w.la, lo = w.lo, kt = w.kt, dr = w.dir, n = la.length;
+      for (var i = 0; i < n; i++) {
+        var lat = la[i]; if (lat < ext[2] || lat > ext[3]) continue;
+        var Ln = lo[i]; if (wrap && Ln < ext[0]) Ln += 360;
+        if (Ln < ext[0] || Ln > ext[1]) continue;
+        var xy = proj(lo[i], lat);
+        var key = (Math.floor(xy[0] / step)) + ':' + (Math.floor(xy[1] / step));
+        grid[key] = { x: xy[0], y: xy[1], kt: kt[i], dir: dr[i], sensor: p.sensor, t: p.start_utc };
+      }
+    }
+    var cells = [];
+    for (var k in grid) if (grid.hasOwnProperty(k)) cells.push(grid[k]);
+    this._cells = cells;
+    g.save();
+    for (var c = 0; c < cells.length; c++) {
+      g.fillStyle = this._windColor(cells[c].kt);
+      g.fillRect(cells[c].x - step / 2, cells[c].y - step / 2, step + 0.7, step + 0.7);
     }
     g.restore();
   };
@@ -700,7 +742,9 @@
   // frame nearest the current pass time, and load it CORS-clean. Async; redraws.
   AscatViewer.prototype._loadBackdrop = function () {
     var self = this;
-    if (!this.backdrop || !this.stormLock || !this.center) { this.bdImg = null; return; }
+    if (!this.backdrop || this._isGlobal()) { this.bdImg = null; this.bdFrame = null; return; }
+    if (!this.stormLock) { this._loadRegionBackdrop(); return; }   // basin/regional backdrop
+    if (!this.center) { this.bdImg = null; return; }
     var storm = this._currentStorm(); if (!storm) return;
     var root = this._cdnRoot(), band = 'ir';
     var matchT = this._matchTime();
@@ -721,7 +765,7 @@
         var src = best.bd_key || best.backdrop_key || null;
         if (!src || !best.bounds) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
         var img = new Image(); img.crossOrigin = 'anonymous';
-        self.bdFrame = { t: best.t, band: 'Clean IR', bounds: best.bounds,
+        self.bdFrame = { t: best.t, band: (best.bd_product || 'Clean IR'), bounds: best.bounds,
                          sat: self._floaterSat(storm.basin), ageMs: bd };
         // relayout (not just redraw): the extent now follows the cutout bounds.
         img.onload = function () { self.bdImg = img; self._layoutAndDraw(); };
@@ -741,6 +785,31 @@
         if (!hit || !hit.slug) throw 0;
         return perStorm(hit.slug);
       })
+      .catch(function () { self.bdImg = null; self.bdFrame = null; self._draw(); });
+  };
+
+  // Basin/regional Vis/SWIR backdrop: a per-region georeferenced cutout from the
+  // shared backdrop producer (tsr held PR #22), indexed in floaters/backdrops.json
+  // as { backdrops: { <region>: { product:"Vis"|"SWIR", t, bounds:[W,S,E,N], key } } }
+  // (region slugs match this.region: atlantic / epac / wpac). Absent (until that
+  // producer deploys) -> draw nothing (honest); the region extent is kept (the
+  // raster fills it via its bounds). One-shot cached fetch.
+  AscatViewer.prototype._loadRegionBackdrop = function () {
+    var self = this, root = this._cdnRoot(), region = this.region;
+    var draw = function (idx) {
+      var bk = idx && idx[region];
+      if (!bk || !bk.key || !bk.bounds) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
+      var img = new Image(); img.crossOrigin = 'anonymous';
+      self.bdFrame = { t: bk.t || null, band: bk.product || 'Satellite',
+                       bounds: bk.bounds, sat: bk.sat || '', ageMs: 0 };
+      img.onload = function () { if (self.region === region) { self.bdImg = img; self._draw(); } };
+      img.onerror = function () { self.bdImg = null; self.bdFrame = null; self._draw(); };
+      img.src = root + '/' + bk.key;
+    };
+    if (self._regionBd) { draw(self._regionBd); return; }
+    fetch(root + '/floaters/backdrops.json?t=' + Date.now())
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (j) { self._regionBd = (j && j.backdrops) || {}; draw(self._regionBd); })
       .catch(function () { self.bdImg = null; self.bdFrame = null; self._draw(); });
   };
 
@@ -964,19 +1033,20 @@
 
   AscatViewer.prototype._setRegion = function (key) {
     this.region = key;
+    this.zoomExt = null;
     if (this.dom.regionLab && window.TATRegions) { var r = TATRegions.get(key); if (r) this.dom.regionLab.textContent = r.label; }
-    this._layoutAndDraw();
+    this._applyView();   // re-evaluate backdrop gating (off at Global) + reload + redraw
   };
 
   AscatViewer.prototype._wire = function () {
     var self = this;
     if (this.dom.stormSel) this.dom.stormSel.addEventListener('change', function () { self._setStorm(this.value); });
-    if (this.dom.passSel) this.dom.passSel.addEventListener('change', function () { self.selectedId = this.value; self._loadActivePasses(); if (self.backdrop && self.stormLock) self._loadBackdrop(); });
+    if (this.dom.passSel) this.dom.passSel.addEventListener('change', function () { self.selectedId = this.value; self._loadActivePasses(); if (self.backdrop && !self._isGlobal()) self._loadBackdrop(); });
     if (this.dom.densitySel) this.dom.densitySel.addEventListener('change', function () { self.density = this.value; self._draw(); });
     if (this.dom.backdropChk) this.dom.backdropChk.addEventListener('change', function () {
       self.backdrop = this.checked;
       if (self.dom.bdOpacity) self.dom.bdOpacity.disabled = !this.checked;
-      if (self.backdrop && self.stormLock) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._layoutAndDraw(); }
+      if (self.backdrop && !self._isGlobal()) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._layoutAndDraw(); }
     });
     if (this.dom.bdOpacity) this.dom.bdOpacity.addEventListener('input', function () { self.bdOpacity = Math.max(0.1, Math.min(1, (+this.value || 40) / 100)); self._draw(); });
     if (this.dom.reset) this.dom.reset.addEventListener('click', function () { self._resetZoom(); });
