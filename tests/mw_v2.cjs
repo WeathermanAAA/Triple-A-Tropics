@@ -94,17 +94,28 @@ const V = M.MicrowaveViewer.prototype;
   assert.strictEqual(calls.length, 0, 'no backdrop in global mode');
 })();
 
-// ---- mode toggle: Global disables + clears the backdrop (no single cutout)
+// ---- mode toggle: Global greys the backdrop when NO mosaic is published, and
+// enables + loads the wide-area mosaic when one IS.
 (function modeGating() {
-  let loadedGlobal = false;
-  const ctx = { mode: 'storm', backdrop: true, bdImg: {}, bdFrame: {},
-    dom: { modeSel: null, bdWrap: { classList: { toggle() {} } }, bdChk: {}, bdOpac: {} },
-    _syncStormNav() {}, _loadGlobal() { loadedGlobal = true; }, _draw() {} };
-  V._setMode.call(ctx, 'global');
-  assert.strictEqual(ctx.mode, 'global');
-  assert.strictEqual(ctx.backdrop, false, 'backdrop forced off at Global');
-  assert.strictEqual(ctx.dom.bdChk.disabled, true, 'backdrop control disabled at Global');
-  assert.ok(loadedGlobal, 'global overpasses loaded');
+  function mk(extra) {
+    return Object.assign({ mode: 'storm', backdrop: true, bdImg: {}, bdFrame: {},
+      dom: { modeSel: null, bdWrap: { classList: { toggle() {} }, title: '' }, bdChk: {}, bdOpac: {} },
+      _syncStormNav() {}, _loadGlobal() { this._g = true; }, _draw() {},
+      _syncBackdropGate: V._syncBackdropGate, _loadGlobalMosaic() { this._m = true; },
+      _loadBackdrop() {} }, extra || {});
+  }
+  // No mosaic published -> Global greys + clears the backdrop.
+  const a = mk({ _globalBd: null });
+  V._setMode.call(a, 'global');
+  assert.strictEqual(a.mode, 'global');
+  assert.strictEqual(a.backdrop, false, 'backdrop forced off at Global when no mosaic');
+  assert.strictEqual(a.dom.bdChk.disabled, true, 'backdrop control disabled at Global when no mosaic');
+  assert.ok(a._g, 'global overpasses loaded');
+  // Mosaic published -> Global keeps the backdrop enabled and loads the mosaic.
+  const b = mk({ _globalBd: { key: 'm.webp', bounds: [0, -65, 360, 65] } });
+  V._setMode.call(b, 'global');
+  assert.strictEqual(b.dom.bdChk.disabled, false, 'backdrop enabled at Global once mosaic exists');
+  assert.ok(b._m, 'global mosaic backdrop loaded');
 })();
 
 // ---- smoothing: flips this.raw (canvas imageSmoothing applied in _draw)
@@ -135,8 +146,17 @@ const V = M.MicrowaveViewer.prototype;
   assert.ok(/id="mw-canvas"/.test(html), 'page mounts a canvas');
   assert.ok(/id="mw-mode"/.test(html), 'page has the View (storm|global) toggle');
   assert.ok(/id="mw-backdrop"/.test(html), 'page has the Satellite backdrop control');
-  assert.ok(/microwave\.js\?v=9/.test(html), 'cache-bust bumped');
+  assert.ok(/microwave\.js\?v=10/.test(html), 'cache-bust bumped');
   assert.ok(/id="mw-backdrop"> Vis \/ SWIR/.test(html), 'backdrop toggle labeled Vis / SWIR (day Vis / night SWIR)');
+})();
+
+// ---- Global view loads the wide-area mosaic backdrop when one is published.
+(function globalMosaic() {
+  const js = fs.readFileSync(path.join(ROOT, 'microwave', 'microwave.js'), 'utf8');
+  assert.ok(/_loadGlobalMosaic/.test(js), 'has the Global-view mosaic loader');
+  assert.ok(/_fetchGlobalBackdrop/.test(js), 'fetches backdrops.json for the global mosaic availability');
+  assert.ok(/bdFrame\.mosaic/.test(js), 'draws the mosaic backdrop in Global (not just storm)');
+  assert.ok(/_globalBd && this\._globalBd\.key/.test(js), 'global backdrop toggle gated on mosaic availability');
 })();
 
 // ---- storm backdrop picks the latest WIDENED frame (fills the plot edge-to-edge),

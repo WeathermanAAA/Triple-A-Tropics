@@ -179,8 +179,10 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
   assert.ok(/GLOBAL_MAX_PASSES/.test(src), 'global pass cap present');
   assert.ok(/_loadRegionBackdrop/.test(src), 'basin/regional backdrop loader present');
   assert.ok(/best\.bd_product/.test(src), 'header reads the true backdrop product (Vis/SWIR)');
-  assert.ok(/classList\.toggle\('ascat-disabled', isWide\)/.test(src), 'backdrop toggle greyed for wide-area (hemisphere/global), not basin/regional');
-  assert.ok(/\['nhem', 'shem', 'global'\]\.indexOf\(this\.region\)/.test(src), 'hemisphere+global are the wide-area no-single-disk set');
+  assert.ok(/classList\.toggle\('ascat-disabled', isWide\)/.test(src), 'backdrop toggle greyed for wide-area (hemisphere/global) when no mosaic');
+  assert.ok(/\['nhem', 'shem', 'global'\]\.indexOf\(this\.region\)/.test(src), 'hemisphere+global are the wide-area set');
+  assert.ok(/hasMosaic/.test(src), 'wide-area toggle un-greys once the global/nhem/shem mosaic is published');
+  assert.ok(/_fetchRegionBackdrops/.test(src), 'fetches backdrops.json up front so the wide-area gating knows availability');
 })();
 
 console.log('ascat_v2: PASS');

@@ -239,6 +239,7 @@
       self.backdrop = this.checked;
       if (self.dom.bdOpac) self.dom.bdOpac.disabled = !this.checked;
       if (self.backdrop && self.mode === 'storm') self._loadBackdrop();
+      else if (self.backdrop && self.mode === 'global') self._loadGlobalMosaic();
       else { self.bdImg = null; self.bdFrame = null; self._draw(); }
     });
     if (d.bdOpac) d.bdOpac.addEventListener('input', function () {
@@ -293,9 +294,47 @@
   MicrowaveViewer.prototype._boot = function () {
     var self = this;
     this._status('Loading…');
+    this._fetchGlobalBackdrop();   // wide-area mosaic availability for the Global view
     this._fetchJson('/manifest.json', true)
       .then(function (m) { self._onManifest(m); })
       .catch(function (e) { self._status(''); self._showEmpty(true); if (window.console) console.warn('microwave: manifest load failed', e); });
+  };
+
+  // The Global view shows a wide-area day-Vis/night-SWIR mosaic backdrop when the
+  // producer publishes one (backdrops.json 'global' entry); until then the toggle
+  // stays greyed in Global. Fetched once up front so the gating knows.
+  MicrowaveViewer.prototype._fetchGlobalBackdrop = function () {
+    var self = this, root = this._cdnRoot();
+    fetch(root + '/floaters/backdrops.json?t=' + Date.now())
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (j) {
+        self._globalBd = (j && j.backdrops && j.backdrops.global) || null;
+        if (self.mode === 'global') self._syncBackdropGate();
+      })
+      .catch(function () {});
+  };
+
+  MicrowaveViewer.prototype._syncBackdropGate = function () {
+    var gl = (this.mode === 'global'), hasMosaic = !!(this._globalBd && this._globalBd.key);
+    var blocked = gl && !hasMosaic;
+    if (this.dom.bdWrap) {
+      this.dom.bdWrap.classList.toggle('mw-disabled', blocked);
+      this.dom.bdWrap.title = blocked ? 'Wide-area Vis/SWIR mosaic in progress'
+        : 'Satellite backdrop — Visible by day, Shortwave IR by night';
+    }
+    if (this.dom.bdChk) { this.dom.bdChk.disabled = blocked; if (blocked) { this.dom.bdChk.checked = false; this.backdrop = false; } }
+    if (this.dom.bdOpac) this.dom.bdOpac.disabled = blocked || !this.backdrop;
+  };
+
+  // Load the wide-area mosaic as the backdrop for the Global view.
+  MicrowaveViewer.prototype._loadGlobalMosaic = function () {
+    var self = this, bk = this._globalBd, root = this._cdnRoot();
+    if (!bk || !bk.key || !bk.bounds) { this.bdImg = null; this.bdFrame = null; this._draw(); return; }
+    var img = new Image(); img.crossOrigin = 'anonymous';
+    this.bdFrame = { t: bk.t || null, product: bk.product || 'Vis/SWIR', bounds: bk.bounds, sat: bk.sat || '', mosaic: true };
+    img.onload = function () { if (self.mode === 'global') { self.bdImg = img; self._draw(); } };
+    img.onerror = function () { self.bdImg = null; self.bdFrame = null; self._draw(); };
+    img.src = root + '/' + bk.key;
   };
 
   MicrowaveViewer.prototype._onManifest = function (m) {
@@ -448,12 +487,17 @@
     var btns = this.dom.modeSel ? this.dom.modeSel.querySelectorAll('.mw-seg') : [];
     for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-mode') === mode);
     var gl = (mode === 'global');
-    // Global: no single cutout -> backdrop disabled + greyed (ascat-disabled pattern).
-    if (this.dom.bdWrap) this.dom.bdWrap.classList.toggle('mw-disabled', gl);
-    if (this.dom.bdChk) { this.dom.bdChk.disabled = gl; if (gl) { this.dom.bdChk.checked = false; this.backdrop = false; this.bdImg = null; this.bdFrame = null; } }
-    if (this.dom.bdOpac) this.dom.bdOpac.disabled = gl || !this.backdrop;
+    // Global: no single storm cutout, but a wide-area mosaic backdrop when one is
+    // published. Gate the toggle on mosaic availability (greyed otherwise).
+    this.bdImg = null; this.bdFrame = null;
+    this._syncBackdropGate();
     this._syncStormNav();
-    if (gl) this._loadGlobal();
+    if (gl) {
+      this._loadGlobal();
+      if (this.backdrop && this._globalBd) this._loadGlobalMosaic();
+    } else if (this.backdrop) {
+      this._loadBackdrop();   // back to storm view -> its own (per-storm) backdrop
+    }
     else { this._syncProductAvailability(); if (this.backdrop) this._loadBackdrop(); this._draw(); }
   };
 
@@ -666,7 +710,10 @@
   };
 
   MicrowaveViewer.prototype._drawBackdrop = function (g, proj) {
-    if (!this.backdrop || this.mode !== 'storm' || !this.bdImg || !this.bdImg.complete || !this.bdImg.naturalWidth) return;
+    if (!this.backdrop || !this.bdImg || !this.bdImg.complete || !this.bdImg.naturalWidth) return;
+    // Storm view draws its per-storm cutout; Global view draws ONLY the wide-area
+    // mosaic (never a stale storm cutout).
+    if (this.mode !== 'storm' && !(this.bdFrame && this.bdFrame.mosaic)) return;
     var b = this.bdFrame && this.bdFrame.bounds; if (!b) return;
     var tl = proj(b[0], b[3]), br = proj(b[2], b[1]);
     // Bleed ~1px outward so sub-pixel rounding never leaves a bare-basemap seam at
