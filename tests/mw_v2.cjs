@@ -122,7 +122,7 @@ const V = M.MicrowaveViewer.prototype;
   assert.ok(/id="mw-canvas"/.test(html), 'page mounts a canvas');
   assert.ok(/id="mw-mode"/.test(html), 'page has the View (storm|global) toggle');
   assert.ok(/id="mw-backdrop"/.test(html), 'page has the Satellite backdrop control');
-  assert.ok(/microwave\.js\?v=5/.test(html), 'cache-bust bumped');
+  assert.ok(/microwave\.js\?v=6/.test(html), 'cache-bust bumped');
 })();
 
 console.log('mw_v2: PASS');
