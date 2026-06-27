@@ -379,7 +379,61 @@ class TestBuildGuards(unittest.TestCase):
         out, _ = self._run(prior=("ok", {"passes": [old]}), recs=[])
         m = json.load(open(os.path.join(out, "manifest.json")))
         self.assertTrue(m["stale"])
+        self.assertEqual(m["health"], "stale")            # empty listing -> unhealthy
         self.assertEqual([p["id"] for p in m["passes"]], [old["id"]])  # not pruned
+
+
+class TestHealthGuard(unittest.TestCase):
+    """The decoupled freshness/health guard: a real upstream stall flags
+    health='stale' (loud) while the wider window still governs pruning, and the
+    normal daily-batch sawtooth trough stays health='ok'."""
+
+    NOW = dt.datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+
+    def _run_with_age(self, age_h, *, prior_extra_h=0.5):
+        """Build with a single listed orbit `age_h` old that is ALSO in the prior
+        union (so it is not re-downloaded), under a frozen now. Returns the
+        manifest. The pass sits inside the 60 h window so pruning keeps it; only the
+        health verdict varies with `age_h`."""
+        start = self.NOW - dt.timedelta(hours=age_h)
+        pid = build._pass_id({"sat": "metopb", "orbit": 1, "start": start})
+        rec = {"filename": "ascat_x.nc", "start": start, "sat": "metopb",
+               "orbit": 1, "name": "ascat_x.nc", "dataset": "d", "version": "nrt",
+               "label": "ASCAT-B", "sensor_key": "metop-b"}
+        mid = start + dt.timedelta(minutes=30)
+        prior = ("ok", {"passes": [{
+            "id": pid, "file": pid + ".json", "sensor": "ASCAT-B", "sat": "metopb",
+            "start_utc": build._iso(start), "end_utc": build._iso(mid),
+            "mid_utc": build._iso(mid), "bbox": [1, 2, 3, 4],
+            "n_wvc": 5, "max_kt": 40, "storms": []}]})
+        out = tempfile.mkdtemp(prefix="ascat_health_")
+        with mock.patch.object(build, "_now", lambda: self.NOW), \
+             mock.patch.object(build, "_fetch_prior_manifest", lambda u: prior), \
+             mock.patch.object(build._storms, "active_storms", lambda *a, **k: []), \
+             mock.patch.object(build.fetch, "resolve_datasets",
+                               lambda **k: fetch.DATASETS), \
+             mock.patch.object(build.fetch, "fetch_recent",
+                               lambda sk, **k: [rec] if sk == "metop-b" else []), \
+             mock.patch.object(build, "_fetch_pass",
+                               lambda p: {"id": p, "wvc": {"la": []}}):
+            build.build(out, api_key="k", prior_manifest_url="https://x/m.json")
+        return json.load(open(os.path.join(out, "manifest.json")))
+
+    def test_normal_trough_is_healthy(self):
+        # newest ~22 h old = the normal pre-batch trough -> healthy, not pruned-stale
+        m = self._run_with_age(22.0)
+        self.assertEqual(m["health"], "ok")
+        self.assertFalse(m["stale"])
+        self.assertEqual(len(m["passes"]), 1)             # kept (inside 60 h window)
+
+    def test_missed_batch_flags_health_stale(self):
+        # newest 40 h old = past the 36 h health bound but inside the 60 h window:
+        # health 'stale' (loud) yet prune-stale False so the window still prunes.
+        m = self._run_with_age(40.0)
+        self.assertEqual(m["health"], "stale")
+        self.assertFalse(m["stale"])                      # 40 h < 60 h window
+        self.assertTrue(m["health_reason"])
+        self.assertEqual(m["health_stale_h"], build.HEALTH_STALE_H)
 
 
 if __name__ == "__main__":

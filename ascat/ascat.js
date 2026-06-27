@@ -593,7 +593,12 @@
       : (window.TATRegions && this.region && TATRegions.get(this.region) ? TATRegions.get(this.region).label : 'Recent');
     g.fillText(scope + '  ·  ASCAT Ocean Winds', h.x, h.y + 18);
     // subtitle: passes shown + freshest time + age
-    g.fillStyle = C.muted; g.font = '600 12.5px ' + FONT;
+    // Health badge: the ingest flags manifest.health='stale' when the KNMI feed
+    // actually missed its daily batch (newest orbit past the health bound) - the
+    // normal ~22-24 h sawtooth trough stays 'ok'. On 'stale' we recolor the
+    // subtitle amber and append a loud marker so a real stall is visible, not silent.
+    var feedStale = !!(this.manifest && this.manifest.health === 'stale');
+    g.fillStyle = feedStale ? '#ffb24d' : C.muted; g.font = '600 12.5px ' + FONT;
     var pv = this._loadedView();
     var sub;
     if (pv.length) {
@@ -607,6 +612,7 @@
       sub += '   ·   🛰 ' + this.bdFrame.sat + ' ' + String(this.bdFrame.band).toUpperCase() +
         ' ' + fmtZ(this.bdFrame.t);
     }
+    if (feedStale) sub += '   ·   ⚠ FEED DELAYED';
     g.fillText(sub, h.x, h.y + 38);
     // sensor chip
     g.font = '700 11px ' + FONT; g.textAlign = 'right';

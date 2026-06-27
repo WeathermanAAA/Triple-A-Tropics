@@ -7,12 +7,17 @@ name: update-ascat
 # global_storms.geojson), and syncs the tree to R2 under ascat/. Touches NOTHING
 # in the track/ACE/climatology pipeline.
 #
-# Cadence: the KNMI Open Data ASCAT coastal feed publishes per-orbit data but runs
-# ~a day behind real time (newest orbit observed ~22 h old), so tight polling is
-# wasteful. We poll every 4 h on a staggered (non-round) minute to pick up the
-# daily refresh within a few hours of it landing; the filename-timestamp watermark
-# makes a re-run a cheap no-op and the rolling-window backfill self-heals any
-# dropped run, so no separate backup cron is needed. The /ascat/ viewer re-polls R2.
+# Cadence: the KNMI Open Data ASCAT coastal feed publishes per-orbit data in a
+# ~daily BATCH (newest orbit ~5 h old just after a batch, aging to ~22-24 h old
+# before the next), so tight polling is wasteful. We poll every 4 h on a staggered
+# (non-round) minute to pick up the daily refresh within a few hours of it landing;
+# the filename-timestamp watermark makes a re-run a cheap no-op and the rolling
+# window self-heals any dropped run, so no separate backup cron is needed.
+#
+# Window: 60 h (not 36) so the manifest stays ~40+ passes across the WHOLE daily
+# batch sawtooth - a 36 h window drains to a few sparse swaths mid-cycle because it
+# prunes old passes faster than the once-daily batch replaces them. The /ascat/
+# viewer re-polls R2 and caps the Global view at its own GLOBAL_MAX_PASSES.
 
 on:
   schedule:
@@ -21,7 +26,7 @@ on:
     inputs:
       window_hours:
         description: "Display window in hours (passes older are pruned)"
-        default: "36"
+        default: "60"
       backfill_hours:
         description: "Widen the INGEST reach for a manual catch-up (blank = none)"
         default: ""
@@ -49,7 +54,7 @@ jobs:
         env:
           ASCAT_ENABLED: ${{ vars.ASCAT_ENABLED || '1' }}
           KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
-          ASCAT_WINDOW_HOURS: ${{ github.event.inputs.window_hours || '36' }}
+          ASCAT_WINDOW_HOURS: ${{ github.event.inputs.window_hours || '60' }}
           ASCAT_BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours || '' }}
         run: |
           set -euo pipefail
@@ -93,7 +98,10 @@ jobs:
             | while read -r pid; do
                 [ -z "$pid" ] && continue
                 echo "ascat: reaping pruned R2 pass ascat/$pid.json"
+                # NB: `aws s3 rm` does NOT accept --no-progress (that's a sync/cp
+                # flag) - passing it makes every reap fail with ParamValidation and
+                # leaves pruned pass JSON orphaned on R2. Plain rm.
                 aws s3 rm "s3://triple-a-tropics-media/ascat/$pid.json" \
-                  --endpoint-url "$R2_ENDPOINT" --no-progress || true
+                  --endpoint-url "$R2_ENDPOINT" || true
               done
           fi
