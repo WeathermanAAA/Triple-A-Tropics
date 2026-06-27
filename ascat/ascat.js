@@ -131,9 +131,9 @@
       '<div id="ascat-region-wrap" class="ascat-group"><label>Region</label><button id="ascat-region" type="button" class="ascat-btn ascat-region-btn"><span id="ascat-region-lab">Atlantic</span> <span class="ascat-caret">▾</span></button></div>' +
       '<div class="ascat-group"><label for="ascat-pass">Pass</label><select id="ascat-pass"></select></div>' +
       '<div class="ascat-group"><label for="ascat-density">Density</label><select id="ascat-density"><option value="auto">Auto</option><option value="dense">Dense</option><option value="sparse">Sparse</option></select></div>' +
-      '<div id="ascat-backdrop-wrap" class="ascat-group ascat-backdrop-wrap" style="display:none"><label for="ascat-backdrop">Satellite</label>' +
-        '<div class="ascat-bd-row"><label class="ascat-chk"><input type="checkbox" id="ascat-backdrop"> backdrop</label>' +
-        '<input type="range" id="ascat-bd-opacity" min="10" max="100" value="70" title="Backdrop opacity" disabled></div></div>' +
+      '<div id="ascat-backdrop-wrap" class="ascat-group ascat-backdrop-wrap" title="Satellite backdrop is available in storm-centered view"><label for="ascat-backdrop">Satellite</label>' +
+        '<div class="ascat-bd-row"><label class="ascat-chk"><input type="checkbox" id="ascat-backdrop"> Clean IR</label>' +
+        '<input type="range" id="ascat-bd-opacity" min="10" max="100" value="40" title="Backdrop opacity" disabled></div></div>' +
       '<div class="ascat-group ascat-style-wrap"><label for="ascat-style">Style</label><select id="ascat-style"></select></div>' +
     '</div>' +
     '<div id="ascat-mapframe" class="ascat-mapframe">' +
@@ -173,6 +173,8 @@
     '.ascat-chk{display:inline-flex;align-items:center;gap:5px;font:13px/1 inherit;color:#cfe0f5;text-transform:none;letter-spacing:0;cursor:pointer}' +
     '.ascat-chk input{accent-color:#2b9cff}' +
     '#ascat-bd-opacity{width:78px;accent-color:#2b9cff}' +
+    '.ascat-backdrop-wrap.ascat-disabled{opacity:.42}' +
+    '.ascat-backdrop-wrap.ascat-disabled .ascat-chk{cursor:not-allowed}' +
     '.ascat-zoomhint{position:absolute;right:10px;bottom:44px;z-index:4;pointer-events:none;font:600 10px/1 inherit;color:#bcdcff;background:rgba(7,16,28,.62);border:1px solid rgba(43,156,255,.4);border-radius:4px;padding:3px 6px;opacity:0;transition:opacity .2s}' +
     '.ascat-mapframe:hover .ascat-zoomhint{opacity:.85}' +
     '.ascat-reset{position:absolute;right:10px;top:10px;z-index:5;background:rgba(14,26,48,.92);color:#cfe0f5;border:1px solid #2b6cb0;border-radius:7px;padding:6px 11px;font:600 12px/1 inherit;cursor:pointer}' +
@@ -191,8 +193,8 @@
     this.storms = [];                            // active storms w/ passes (F1 picker)
     this.zoomExt = null;                         // drag-zoom extent override (F3)
     this.backdrop = false;                       // satellite backdrop on? (F2)
-    this.bdOpacity = 0.7;
-    this.bdFrame = null;                         // matched floater frame {t,url,band,label}
+    this.bdOpacity = 0.4;                         // PART 3: default dimmed so barbs read
+    this.bdFrame = null;                         // matched clean-IR frame {t,band,bounds:[W,S,E,N]}
     this.bdImg = null;                           // loaded backdrop Image (CORS-clean)
     this._floaterCache = {};                     // slug -> per-storm floater manifest
 
@@ -380,7 +382,20 @@
       this.region = this._defaultRegion(passes);
     }
     if (this.dom.regionWrap) this.dom.regionWrap.style.display = inStorm ? 'none' : '';
-    if (this.dom.backdropWrap) this.dom.backdropWrap.style.display = inStorm ? '' : 'none';
+    // PART 3: the satellite backdrop is a STORM-CENTERED feature only - a basin
+    // composite has no single cutout, so a backdrop there would be a mismatched
+    // box. Keep the control visible (so the feature is discoverable) but disable
+    // + grey it in composite/basin mode, and force the backdrop off there.
+    if (this.dom.backdropWrap) {
+      this.dom.backdropWrap.classList.toggle('ascat-disabled', !inStorm);
+      if (this.dom.backdropChk) this.dom.backdropChk.disabled = !inStorm;
+      if (this.dom.bdOpacity) this.dom.bdOpacity.disabled = !inStorm || !this.backdrop;
+      if (!inStorm && this.backdrop) {
+        this.backdrop = false;
+        if (this.dom.backdropChk) this.dom.backdropChk.checked = false;
+        this.bdImg = null; this.bdFrame = null;
+      }
+    }
     this.passMeta = passes;
 
     if (!passes.length) { this._status(''); this._showEmpty(true); return; }
@@ -449,6 +464,14 @@
   // ---- extent ----
   AscatViewer.prototype._extent = function () {
     if (this.zoomExt) return this.zoomExt.slice();   // F3: drag-zoom override (top)
+    // PART 3: when a clean backdrop is shown, the frame IS the satellite cutout -
+    // fit the view to the raster's WGS84 corner bounds so barbs are clipped to it
+    // and the composite reads as ONE coherent frame (no barbs sprawling past the
+    // imagery box). bounds = [W,S,E,N]; _extent returns [W,E,S,N].
+    if (this.backdrop && this.bdImg && this.bdFrame && this.bdFrame.bounds) {
+      var b = this.bdFrame.bounds;
+      return [b[0], b[2], b[1], b[3]];
+    }
     if ((this.stormLock || this.center) && this.center) {
       var c = this.center, half = 8.0;            // +/-8 deg lat box around the storm
       return [c.lon - half, c.lon + half, c.lat - half, c.lat + half];
@@ -690,12 +713,20 @@
         var frames = (b && b.frames) || [];
         if (!frames.length) throw 0;
         var nf = nearestFrame(frames, matchT), best = nf.frame, bd = nf.dms;
+        // PART 3: draw ONLY the bare chrome-free grayscale Clean-IR cutout
+        // (bd_key + WGS84 bounds from the backdrop producer). The viewer owns the
+        // single shared graticule/coastline/colorbar/legend/watermark, so the
+        // finished CHROMED floater frame (best.key) is never painted under the
+        // barbs. No clean raster yet -> draw nothing (honest blank), never chrome.
+        var src = best.bd_key || best.backdrop_key || null;
+        if (!src || !best.bounds) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
         var img = new Image(); img.crossOrigin = 'anonymous';
-        self.bdFrame = { t: best.t, band: (b.label || band), spanDeg: 12,
+        self.bdFrame = { t: best.t, band: 'Clean IR', bounds: best.bounds,
                          sat: self._floaterSat(storm.basin), ageMs: bd };
-        img.onload = function () { self.bdImg = img; self._draw(); };
-        img.onerror = function () { self.bdImg = null; self.bdFrame = null; self._draw(); };
-        img.src = root + '/' + best.key;
+        // relayout (not just redraw): the extent now follows the cutout bounds.
+        img.onload = function () { self.bdImg = img; self._layoutAndDraw(); };
+        img.onerror = function () { self.bdImg = null; self.bdFrame = null; self._layoutAndDraw(); };
+        img.src = root + '/' + src;
       });
     };
     fetch(root + '/floaters/manifest.json?t=' + Date.now())
@@ -727,9 +758,14 @@
   };
 
   AscatViewer.prototype._drawBackdrop = function (g, proj) {
-    if (!this.backdrop || !this.bdImg || !this.bdImg.complete || !this.bdImg.naturalWidth || !this.center) return;
-    var span = (this.bdFrame && this.bdFrame.spanDeg) || 12, half = span / 2, c = this.center;
-    var tl = proj(c.lon - half, c.lat + half), br = proj(c.lon + half, c.lat - half);
+    if (!this.backdrop || !this.bdImg || !this.bdImg.complete || !this.bdImg.naturalWidth) return;
+    // Georeference by the raster's real WGS84 corner bounds [W,S,E,N] (the
+    // bounds re-center as the storm drifts) rather than a hard-coded box.
+    var bf = this.bdFrame, W, S, E, N;
+    if (bf && bf.bounds) { W = bf.bounds[0]; S = bf.bounds[1]; E = bf.bounds[2]; N = bf.bounds[3]; }
+    else if (this.center) { var c = this.center, half = 6; W = c.lon - half; E = c.lon + half; S = c.lat - half; N = c.lat + half; }
+    else return;
+    var tl = proj(W, N), br = proj(E, S);
     g.save(); g.globalAlpha = this.bdOpacity;
     try { g.drawImage(this.bdImg, tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]); } catch (e) {}
     g.restore();
@@ -939,9 +975,9 @@
     if (this.dom.backdropChk) this.dom.backdropChk.addEventListener('change', function () {
       self.backdrop = this.checked;
       if (self.dom.bdOpacity) self.dom.bdOpacity.disabled = !this.checked;
-      if (self.backdrop && self.stormLock) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._draw(); }
+      if (self.backdrop && self.stormLock) self._loadBackdrop(); else { self.bdImg = null; self.bdFrame = null; self._layoutAndDraw(); }
     });
-    if (this.dom.bdOpacity) this.dom.bdOpacity.addEventListener('input', function () { self.bdOpacity = Math.max(0.1, Math.min(1, (+this.value || 70) / 100)); self._draw(); });
+    if (this.dom.bdOpacity) this.dom.bdOpacity.addEventListener('input', function () { self.bdOpacity = Math.max(0.1, Math.min(1, (+this.value || 40) / 100)); self._draw(); });
     if (this.dom.reset) this.dom.reset.addEventListener('click', function () { self._resetZoom(); });
     if (this.dom.download) this.dom.download.addEventListener('click', function () { self._download(); });
     if (this.dom.copy) this.dom.copy.addEventListener('click', function () { self._copy(); });
