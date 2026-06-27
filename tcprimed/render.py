@@ -208,22 +208,32 @@ def _lat_label(y: float) -> str:
 # ---------------------------------------------------------------------------
 # Smooth swath -> regular grid resample (linear interpolation, gap-free)
 # ---------------------------------------------------------------------------
-def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
+def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP,
+            method="linear"):
     """Resample swath ``fields`` (a list of 2-D arrays sharing lat/lon) onto a
-    regular lat/lon grid centered on (clat, clon), via LINEAR interpolation in a
-    center-unwrapped longitude frame. Returns (extent, [grid fields]) with
+    regular lat/lon grid centered on (clat, clon), in a center-unwrapped
+    longitude frame. Returns (extent, [grid fields]) with
     extent = [clon-half, clon+half, clat-half, clat+half].
 
-    Linear (Delaunay) interpolation smooths the coarse imager footprints into the
-    continuous NRL look (vs. blocky native quads) AND fills solid with
-    NO inter-scanline gaps, because every interior target cell is interpolated
-    from the surrounding pixels. The convex hull alone, however, fills swath
-    CONCAVITIES (angled entry/exit, scan-edge density drops) with sliver
-    triangles, so a distance-to-nearest-sample mask (EDGE_MASK_K, env-gated)
-    nulls cells farther than ~one footprint from a real pixel -- recovering the
-    true concave swath edge (transparent) and killing the diagonal streak/fan
-    artifacts. A pixel is a valid source only where EVERY field it feeds is
-    finite."""
+    ``method`` selects the resampling:
+      * ``"linear"`` (default, the SMOOTHED look) - Delaunay interpolation that
+        smooths the coarse imager footprints into the continuous NRL look (vs.
+        blocky native quads) AND fills solid with NO inter-scanline gaps, because
+        every interior target cell is interpolated from the surrounding pixels.
+      * ``"nearest"`` (the RAW look) - each grid cell takes its nearest real
+        sample's value, so the native sensor footprints read as crisp blocky
+        quads (no inter-footprint blending). griddata("nearest") fills the ENTIRE
+        bounding grid (no NaN), so the edge mask below is what clips it back to
+        the true swath footprint.
+
+    The convex hull (linear) alone fills swath CONCAVITIES (angled entry/exit,
+    scan-edge density drops) with sliver triangles, so a distance-to-nearest-
+    sample mask (EDGE_MASK_K, env-gated) nulls cells farther than ~one footprint
+    from a real pixel -- recovering the true concave swath edge (transparent) and
+    killing the diagonal streak/fan artifacts. The SAME mask (identical ``pts`` ->
+    identical spacing) clips the nearest grid, so the raw and smoothed tiles share
+    a pixel-identical swath boundary and overlay perfectly. A pixel is a valid
+    source only where EVERY field it feeds is finite."""
     lon_u = _unwrap(lon, clon)
     valid = np.isfinite(lat) & np.isfinite(lon_u)
     for f in fields:
@@ -238,7 +248,7 @@ def _regrid(lat, lon, fields, clat, clon, half=HALF_DEG, step=GRID_STEP):
     GX, GY = np.meshgrid(gx, gy)
     out = []
     for f in fields:
-        g = griddata(pts, f[valid], (GX, GY), method="linear")
+        g = griddata(pts, f[valid], (GX, GY), method=method)
         out.append(g)
 
     # Swath-edge QC: mask regrid cells too far from any real sample so the
@@ -352,6 +362,15 @@ def _geo_path(product_path: str) -> str:
     ``..._89pct.png`` -> ``..._89pct_geo.png``."""
     base, ext = os.path.splitext(product_path)
     return f"{base}_geo{ext}"
+
+
+def _raw_geo_path(product_path: str) -> str:
+    """Sibling chrome-free RAW (native-footprint, nearest-neighbour) tile path:
+    ``..._37H.png`` -> ``..._37H_geo_raw.png``. The viewer loads this when the
+    user picks "Raw" so the native sensor footprints read as crisp blocky quads
+    instead of the smoothed (linear) default tile."""
+    base, ext = os.path.splitext(product_path)
+    return f"{base}_geo_raw{ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +639,19 @@ def _render_scalar_product(meta, out_path, *, tbkey, latkey, lonkey,
         print(f"tcprimed: {product_label} geotile skipped for "
               f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
               file=sys.stderr)
+    # ADDITIVE raw (native-footprint) tile: nearest-neighbour regrid -> crisp
+    # blocky quads (the "Raw" view). Same edge mask clips it to the swath, so it
+    # overlays the smoothed tile exactly. Best-effort: a raw-tile failure never
+    # drops the product (the viewer falls back to the smoothed tile).
+    try:
+        _, (gr,) = _regrid(meta[latkey], meta[lonkey], [tb],
+                           meta["clat"], meta["clon"], method="nearest")
+        _save_geotile(cmap(norm(np.ma.masked_invalid(gr))),
+                      _raw_geo_path(out_path))
+    except Exception as e:  # noqa: BLE001
+        print(f"tcprimed: {product_label} raw geotile skipped for "
+              f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
+              file=sys.stderr)
     return out_path
 
 
@@ -647,6 +679,17 @@ def _render_rgb_product(meta, out_path, *, vkey, hkey, latkey, lonkey,
         _save_geotile(rgba, _geo_path(out_path))
     except Exception as e:  # noqa: BLE001
         print(f"tcprimed: {product_label} geotile skipped for "
+              f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
+              file=sys.stderr)
+    # ADDITIVE raw (native-footprint) tile: nearest-neighbour regrid of the
+    # CHANNELS, then the same RGB recipe -> crisp blocky quads (the "Raw" view).
+    try:
+        _, (vgr, hgr) = _regrid(meta[latkey], meta[lonkey],
+                                [meta[vkey], meta[hkey]],
+                                meta["clat"], meta["clon"], method="nearest")
+        _save_geotile(rgba_fn(vgr, hgr), _raw_geo_path(out_path))
+    except Exception as e:  # noqa: BLE001
+        print(f"tcprimed: {product_label} raw geotile skipped for "
               f"{os.path.basename(out_path)}: {type(e).__name__}: {e}",
               file=sys.stderr)
     return out_path
@@ -693,10 +736,12 @@ _PRODUCT_RENDERERS = [
 
 def render_overpass(meta: dict, out_dir: str, overpass_id: str) -> dict:
     """Render ALL FOUR products (color37, color91, 37H, 91H) for one overpass into
-    out_dir; returns ``{"products": {key: png}, "tiles": {key: geo_png}}``
-    (basenames) for whichever rendered. ``products`` are the chromed display PNGs;
-    ``tiles`` are the matching chrome-free georeferenced map tiles (present only
-    where the geo write succeeded).
+    out_dir; returns ``{"products": {key: png}, "tiles": {key: geo_png},
+    "tiles_raw": {key: geo_raw_png}}`` (basenames) for whichever rendered.
+    ``products`` are the chromed display PNGs; ``tiles`` are the matching
+    chrome-free SMOOTHED (linear) map tiles; ``tiles_raw`` are the chrome-free RAW
+    (nearest-neighbour, blocky native-footprint) tiles for the viewer's "Raw"
+    toggle (present only where the geo write succeeded).
 
     Each product renders independently; a single-channel data gap (e.g. SSMIS F17
     with an all-fill 37 V channel) only drops that one product, not the overpass.
@@ -719,10 +764,15 @@ def render_overpass(meta: dict, out_dir: str, overpass_id: str) -> dict:
     if not out:
         raise ValueError("no usable imagery (all four products failed)")
 
-    # Collect whichever chrome-free tiles were emitted alongside the products.
+    # Collect whichever chrome-free tiles were emitted alongside the products
+    # (smoothed + raw native-footprint, each best-effort and independent).
     tiles: dict = {}
+    tiles_raw: dict = {}
     for prod, base in out.items():
         geo = _geo_path(os.path.join(out_dir, base))
         if os.path.exists(geo):
             tiles[prod] = os.path.basename(geo)
-    return {"products": out, "tiles": tiles}
+        raw = _raw_geo_path(os.path.join(out_dir, base))
+        if os.path.exists(raw):
+            tiles_raw[prod] = os.path.basename(raw)
+    return {"products": out, "tiles": tiles, "tiles_raw": tiles_raw}

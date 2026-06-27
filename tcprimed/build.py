@@ -252,6 +252,7 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
                       f"{type(e).__name__}: {e}", file=sys.stderr)
                 continue
             products, tiles = res["products"], res["tiles"]
+            tiles_raw = res.get("tiles_raw", {})
             # products holds whichever of {89pct, 37color} rendered (a data gap
             # in one channel publishes the other rather than dropping the pass).
             prod_paths = {k: f"{slug}/{v}" for k, v in products.items()}
@@ -265,6 +266,8 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
                 "products": prod_paths,
                 # ADDITIVE map-ready fields (ignored by the existing viewer):
                 "tiles": {k: f"{slug}/{v}" for k, v in tiles.items()},
+                # ADDITIVE raw (native-footprint) tiles for the viewer's Raw view:
+                "tiles_raw": {k: f"{slug}/{v}" for k, v in tiles_raw.items()},
                 "bounds_wgs84": rnd.overpass_bounds_wgs84(meta),
             }
             print(f"tcprimed: rendered {atcf} {oid} ({tier}) "
@@ -427,6 +430,7 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                           f"{type(e).__name__}: {e}", file=sys.stderr)
                     continue
                 products, tiles = res["products"], res["tiles"]
+                tiles_raw = res.get("tiles_raw", {})
                 existing_by_slug[slug][oid] = {
                     "id": oid, "sensor": sensor, "platform": platform,
                     "valid_utc": _iso(meta["valid"]),
@@ -435,6 +439,8 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     "products": {k: f"{slug}/{v}" for k, v in products.items()},
                     # ADDITIVE map-ready fields (ignored by the existing viewer):
                     "tiles": {k: f"{slug}/{v}" for k, v in tiles.items()},
+                    # ADDITIVE raw (native-footprint) tiles for the Raw view:
+                    "tiles_raw": {k: f"{slug}/{v}" for k, v in tiles_raw.items()},
                     "bounds_wgs84": rnd.overpass_bounds_wgs84(meta),
                     "source": "live",
                 }
