@@ -73,4 +73,46 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
   assert.ok(!/<a href="\/ascat\/">ASCAT<\/a>/.test(sat), '/satellite/ top-nav drops the standalone ASCAT link');
 })();
 
+// ---- PART 3: clean satellite backdrop (storm-centered, georef by WGS84 bounds)
+(function backdropExtentClip() {
+  const ext = m.AscatViewer.prototype._extent;
+  // storm-centered, backdrop OFF -> the +/-8 deg box around the storm center
+  const off = ext.call({ zoomExt: null, backdrop: false, stormLock: 'wp082026',
+                         center: { lat: 34, lon: 137.5 } });
+  assert.deepStrictEqual(off, [129.5, 145.5, 26, 42], 'backdrop off -> +/-8 storm box');
+  // backdrop ON with a loaded raster + bounds -> the frame IS the cutout (barbs
+  // clip to it: one coherent frame). bounds=[W,S,E,N]; _extent returns [W,E,S,N].
+  const on = ext.call({ zoomExt: null, backdrop: true, bdImg: { naturalWidth: 1 },
+                        bdFrame: { bounds: [130, 30, 145, 41] },
+                        stormLock: 'wp082026', center: { lat: 34, lon: 137.5 } });
+  assert.deepStrictEqual(on, [130, 145, 30, 41], 'backdrop on -> view fits the cutout bounds');
+})();
+
+(function backdropGeorefByBounds() {
+  const calls = [];
+  const g = { save() {}, restore() {}, globalAlpha: 1,
+              drawImage() { calls.push([].slice.call(arguments)); } };
+  // proj maps lon/lat -> x,y linearly over [130..145]x[30..41] into a 1000x800 rect
+  const proj = (lon, lat) => [(lon - 130) / 15 * 1000, (41 - lat) / 11 * 800];
+  m.AscatViewer.prototype._drawBackdrop.call({
+    backdrop: true, bdOpacity: 0.4,
+    bdImg: { complete: true, naturalWidth: 100 },
+    bdFrame: { bounds: [130, 30, 145, 41] },
+  }, g, proj);
+  assert.strictEqual(calls.length, 1, 'drawImage called once');
+  const [, x, y, w, h] = calls[0];
+  // tl=proj(130,41)=[0,0]; br=proj(145,30)=[1000,800]
+  assert.deepStrictEqual([x, y, w, h], [0, 0, 1000, 800], 'georef by WGS84 corner bounds');
+})();
+
+(function backdropSourceContract() {
+  const src = fs.readFileSync(path.join(ROOT, 'ascat', 'ascat.js'), 'utf8');
+  assert.ok(/id="ascat-bd-opacity"[^>]*value="40"/.test(src), 'backdrop opacity defaults to 40% (dimmed so barbs read)');
+  assert.ok(/this\.bdOpacity = 0\.4/.test(src), 'bdOpacity initial = 0.4');
+  assert.ok(/checkbox" id="ascat-backdrop"> Clean IR/.test(src), 'backdrop control labeled Clean IR (Clean IR + Off)');
+  assert.ok(/best\.bd_key/.test(src), 'consumes the clean chrome-free bd_key raster');
+  assert.ok(!/img\.src = root \+ '\/' \+ best\.key;/.test(src), 'never draws the chromed floater frame under the barbs');
+  assert.ok(/ascat-disabled/.test(src), 'backdrop control greys out in composite mode');
+})();
+
 console.log('ascat_v2: PASS');
