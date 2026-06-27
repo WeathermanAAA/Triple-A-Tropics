@@ -109,5 +109,57 @@ class TestSwathEdgeMask(unittest.TestCase):
         self.assertTrue(np.isfinite(msk[c, c]))
 
 
+class TestRawNativeTile(unittest.TestCase):
+    """The "Raw" view loads a nearest-neighbour (native-footprint) tile that is
+    visibly BLOCKIER than the smoothed (linear) default tile, and the producer
+    emits it under tiles_raw alongside every product."""
+
+    @staticmethod
+    def _swath(clat=18.0, clon=235.0, n=70, half=5.5):
+        # a smoothly (linearly) varying field so the SMOOTHED grid is
+        # near-continuous and the nearest grid's flat runs stand out clearly
+        lat = np.linspace(clat - half, clat + half, n)
+        lon = np.linspace(clon - half, clon + half, n)
+        LON, LAT = np.meshgrid(lon, lat)
+        tb = 150.0 + 8.0 * (LON - clon) + 6.0 * (LAT - clat)
+        return LAT, LON, tb
+
+    def test_nearest_is_blockier_than_linear(self):
+        LAT, LON, tb = self._swath()
+        old = R.EDGE_MASK_ENABLED
+        try:
+            R.EDGE_MASK_ENABLED = False  # compare pure resampling
+            _, (lin,) = R._regrid(LAT, LON, [tb], 18.0, 235.0,
+                                  half=5.0, step=0.04, method="linear")
+            _, (nn,) = R._regrid(LAT, LON, [tb], 18.0, 235.0,
+                                 half=5.0, step=0.04, method="nearest")
+        finally:
+            R.EDGE_MASK_ENABLED = old
+
+        def transitions(grid):
+            r = grid[grid.shape[0] // 2]
+            ok = np.isfinite(r)
+            return int(((r[1:] != r[:-1]) & ok[1:] & ok[:-1]).sum())
+
+        t_lin, t_nn = transitions(lin), transitions(nn)
+        # nearest holds each source value across several grid cells -> far fewer
+        # value transitions along a row than the continuously-varying linear grid
+        self.assertGreater(t_lin, 0)
+        self.assertLess(t_nn, 0.5 * t_lin)
+
+    def test_render_overpass_emits_raw_tiles(self):
+        with tempfile.TemporaryDirectory() as td:
+            res = R.render_overpass(_synth_meta(), td, "ov1")
+            self.assertEqual(set(res["tiles_raw"]),
+                             {"color37", "color91", "37H", "91H"})
+            for key, base in res["tiles_raw"].items():
+                self.assertTrue(base.endswith("_geo_raw.png"), base)
+                self.assertTrue(os.path.exists(os.path.join(td, base)),
+                                f"{key} raw tile missing")
+            # the raw tiles are DISTINCT files from the smoothed tiles
+            self.assertEqual(set(res["tiles"].values()) & set(res["tiles_raw"].values()),
+                             set(), "raw and smoothed tiles must be separate files")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

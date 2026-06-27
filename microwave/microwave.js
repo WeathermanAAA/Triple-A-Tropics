@@ -93,10 +93,17 @@
   // ---- producer-tile accessor: prefer the chrome-free geo tile (then the chromed
   // product PNG as a last resort); the viewer owns the chrome. Tries the exact key
   // first, then its v2 aliases, so older overpasses still render.
-  function tileRel(o, key) {
+  // When `raw` is set, prefer the producer's RAW (native-footprint, nearest-
+  // neighbour, blocky) geo tile -- then FALL BACK to the smoothed tile when an
+  // overpass predates the raw-tile producer, so availability/counts are identical
+  // whichever smoothing is selected (a pass never disappears in Raw mode).
+  function tileRel(o, key, raw) {
     if (!o) return null;
     var keys = PRODUCT_ALIASES[key] || [key];
     var i;
+    if (raw && o.tiles_raw) {
+      for (i = 0; i < keys.length; i++) if (o.tiles_raw[keys[i]]) return { rel: o.tiles_raw[keys[i]], bare: true, raw: true };
+    }
     for (i = 0; i < keys.length; i++) if (o.tiles && o.tiles[keys[i]]) return { rel: o.tiles[keys[i]], bare: true };
     for (i = 0; i < keys.length; i++) if (o.products && o.products[keys[i]]) return { rel: o.products[keys[i]], bare: false };
     return null;
@@ -624,13 +631,13 @@
   };
   MicrowaveViewer.prototype._drawStormTile = function (g, proj) {
     var o = this.curOverpass; if (!o) return;
-    var tr = tileRel(o, this.product); if (!tr) return;
+    var tr = tileRel(o, this.product, this.raw); if (!tr) return;
     this._drawTileImg(g, proj, this._tile(tr.rel), boundsOf(o));
   };
   MicrowaveViewer.prototype._drawGlobalTiles = function (g, proj) {
     var self = this;
     (this.globalOps || []).forEach(function (o) {
-      var tr = tileRel(o, self.product); if (!tr) return;
+      var tr = tileRel(o, self.product, self.raw); if (!tr) return;
       self._drawTileImg(g, proj, self._tile(tr.rel), boundsOf(o));
     });
   };
@@ -793,7 +800,7 @@
     if (this.encoding) return;
     if (this.mode === 'global') { this._exStatus('Export is per-storm; switch to a storm.'); return; }
     var key = this.product, self = this;
-    var ops = (this.overpasses || []).filter(function (o) { return tileRel(o, key) && boundsOf(o); });
+    var ops = (this.overpasses || []).filter(function (o) { return tileRel(o, key, self.raw) && boundsOf(o); });
     if (ops.length < 2) { this._exStatus('Need at least 2 ' + key + ' passes to make a loop.'); return; }
     // union bounds for a stable frame
     var W = 1e9, S = 1e9, E = -1e9, N = -1e9;
@@ -807,7 +814,7 @@
       var im = new Image(); im.crossOrigin = 'anonymous';
       im.onload = function () { imgs[i] = im; if (!--pending) build(); };
       im.onerror = function () { imgs[i] = null; if (!--pending) build(); };
-      im.src = self.base + '/' + tileRel(o, key).rel + '?cors=1';
+      im.src = self.base + '/' + tileRel(o, key, self.raw).rel + '?cors=1';
     });
     function build() {
       var Wpx = Math.min(GIF_MAX_W, 760), Hpx = Math.round(Wpx * 0.62);

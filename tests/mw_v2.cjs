@@ -42,6 +42,19 @@ const V = M.MicrowaveViewer.prototype;
   assert.strictEqual(M.tileRel({ tiles: {} }, '91H'), null, 'null when absent');
   assert.deepStrictEqual(M.boundsOf({ bounds_wgs84: [10, 20, 30, 40] }), [10, 20, 30, 40]);
   assert.strictEqual(M.boundsOf({ bounds_wgs84: [1, 2, 3] }), null, 'bad bounds -> null');
+  // RAW view: prefer the native-footprint tiles_raw[product] when raw is set...
+  const o = { tiles: { '91H': 's/a_91H_geo.png' }, tiles_raw: { '91H': 's/a_91H_geo_raw.png' } };
+  assert.deepStrictEqual(M.tileRel(o, '91H', true),
+    { rel: 's/a_91H_geo_raw.png', bare: true, raw: true }, 'raw=true prefers the raw geo tile');
+  assert.deepStrictEqual(M.tileRel(o, '91H', false),
+    { rel: 's/a_91H_geo.png', bare: true }, 'raw=false keeps the smoothed tile');
+  // ...and FALL BACK to the smoothed tile when an overpass has no raw tile, so a
+  // pass never disappears in Raw mode (availability identical either way).
+  assert.deepStrictEqual(M.tileRel({ tiles: { '91H': 's/a_91H_geo.png' } }, '91H', true),
+    { rel: 's/a_91H_geo.png', bare: true }, 'raw falls back to smoothed when no raw tile');
+  // v2 alias also resolves through the raw map (89pct overpasses under 91H).
+  assert.deepStrictEqual(M.tileRel({ tiles_raw: { '89pct': 's/a_89pct_geo_raw.png' } }, '91H', true),
+    { rel: 's/a_89pct_geo_raw.png', bare: true, raw: true }, 'raw resolves v2 aliases too');
 })();
 
 // ---- extent: global = world; storm = overpass cutout (padded), [W,E,S,N]
@@ -122,7 +135,17 @@ const V = M.MicrowaveViewer.prototype;
   assert.ok(/id="mw-canvas"/.test(html), 'page mounts a canvas');
   assert.ok(/id="mw-mode"/.test(html), 'page has the View (storm|global) toggle');
   assert.ok(/id="mw-backdrop"/.test(html), 'page has the Satellite backdrop control');
-  assert.ok(/microwave\.js\?v=7/.test(html), 'cache-bust bumped');
+  assert.ok(/microwave\.js\?v=8/.test(html), 'cache-bust bumped');
+})();
+
+// ---- raw view draws the native-footprint tile: _drawStormTile passes this.raw
+// to tileRel so the blocky tiles_raw image is selected (crisp under the existing
+// imageSmoothingEnabled=!this.raw).
+(function rawDraw() {
+  const js = fs.readFileSync(path.join(ROOT, 'microwave', 'microwave.js'), 'utf8');
+  assert.ok(/tileRel\(o, this\.product, this\.raw\)/.test(js), 'storm tile draw is raw-aware');
+  assert.ok(/tileRel\(o, self\.product, self\.raw\)/.test(js), 'global tile draw is raw-aware');
+  assert.ok(/tiles_raw/.test(js), 'consumes the producer tiles_raw map');
 })();
 
 console.log('mw_v2: PASS');
