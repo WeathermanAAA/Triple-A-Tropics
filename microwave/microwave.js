@@ -18,10 +18,20 @@
 
   var BASE_DEFAULT = 'https://cdn.triple-a-tropics.com/microwave';
 
+  // The four canonical observed-MW products (keys match the producer + manifest).
   var PRODUCTS = [
-    { key: '89pct',   label: '89 GHz PCT', short: '89 PCT' },
-    { key: '37color', label: '37 GHz Color', short: '37 Color' }
+    { key: 'color37', label: '37 Color', short: '37 Color' },
+    { key: 'color91', label: '91 Color', short: '91 Color' },
+    { key: '37H',     label: '37H',      short: '37H' },
+    { key: '91H',     label: '91H',      short: '91H' }
   ];
+  var DEFAULT_PRODUCT = '91H';   // the high-freq scattering view
+
+  // Loop-export endpoint (shared with the satellite viewer): the render service
+  // encodes a smooth mp4 (libx264) or single-palette gif from already-rendered
+  // CDN frame URLs. Primary path; client gif.js is the fallback.
+  var EXPORT_API = 'https://web-production-b88d.up.railway.app/export';
+  var GIF_MAX_W = 900;
 
   function el(id) { return document.getElementById(id); }
 
@@ -29,7 +39,9 @@
     opts = opts || {};
     this.root = root;
     this.base = (opts.base || BASE_DEFAULT).replace(/\/+$/, '');
-    this.product = '89pct';
+    this.product = DEFAULT_PRODUCT;
+    this.raw = false;           // smoothing: false = smoothed (default), true = raw
+    this.encoding = false;      // GIF/MP4 export in flight
     this.manifest = null;
     this.storms = [];
     this.curStorm = null;       // slug
@@ -53,6 +65,12 @@
     d.caption     = el('mw-caption');
     d.empty       = el('mw-empty');
     d.disclosure  = el('mw-disclosure');
+    d.stormPrev   = el('mw-storm-prev');
+    d.stormNext   = el('mw-storm-next');
+    d.smooth      = el('mw-smooth');
+    d.exFmt       = el('mw-exfmt');
+    d.exBtn       = el('mw-export');
+    d.exStatus    = el('mw-export-status');
 
     var self = this;
     if (d.stormSel) {
@@ -78,6 +96,25 @@
         d.toggle.appendChild(b);
       });
     }
+    // Per-storm prev/next: primary navigation, stepping the newest-first storms[].
+    if (d.stormPrev) d.stormPrev.addEventListener('click', function () { self._stepStorm(-1); });
+    if (d.stormNext) d.stormNext.addEventListener('click', function () { self._stepStorm(1); });
+    // Smoothing toggle: client-side CSS image-rendering (no double-render; the
+    // exact colors live in the baked PNG so both modes read correctly).
+    if (d.smooth) {
+      d.smooth.innerHTML = '';
+      [['Smoothed', false], ['Raw', true]].forEach(function (pair) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'mw-seg' + ((!!pair[1] === self.raw) ? ' active' : '');
+        b.textContent = pair[0];
+        b.setAttribute('data-raw', pair[1] ? '1' : '0');
+        b.addEventListener('click', function () { self._setSmoothing(!!pair[1]); });
+        d.smooth.appendChild(b);
+      });
+    }
+    // Per-product loop export (server mp4/gif primary; client gif.js fallback).
+    if (d.exBtn) d.exBtn.addEventListener('click', function () { self._export(); });
     // Keyboard left/right to step overpasses.
     if (this.root) {
       this.root.addEventListener('keydown', function (e) {
@@ -156,13 +193,18 @@
     this.storms.forEach(function (s) {
       var o = document.createElement('option');
       o.value = s.slug;
-      var nm = s.name || s.atcf || s.slug;
-      var n = s.overpass_count || 0;
-      o.textContent = nm + '  ·  ' + (s.basin || '') + ' ' + (s.year || '') +
-        '  ·  ' + n + ' pass' + (n === 1 ? '' : 'es');
+      o.textContent = _stormLabel(s);
       sel.appendChild(o);
     });
   };
+
+  // Concise storm label: name + basin/year qualifier. No auto-generated summary
+  // blurb (the "N passes" count is dropped).
+  function _stormLabel(s) {
+    var nm = s.name || s.atcf || s.slug;
+    var by = ((s.basin || '') + ' ' + (s.year || '')).trim();
+    return by ? (nm + '  ·  ' + by) : nm;
+  }
 
   // ---- storm -> overpasses ------------------------------------------------
   MicrowaveViewer.prototype._selectStorm = function (slug) {
@@ -170,6 +212,7 @@
     if (!s) return;
     this.curStorm = slug;
     if (this.dom.stormSel) this.dom.stormSel.value = slug;
+    this._syncStormNav();
     var self = this;
     var seq = ++this._fetchSeq;
     this._status('Loading…');
@@ -203,13 +246,14 @@
     });
   };
 
+  // Concise overpass label: time + sensor/platform. No auto-generated summary
+  // blurb (the intensity "{kt} {dev}" tail is dropped; it still shows in the
+  // caption below the image).
   function _overpassLabel(o) {
     var t = _fmtTime(o.valid_utc);
-    var kt = (typeof o.intensity_kt === 'number') ? (o.intensity_kt + ' kt') : '';
-    var dev = o.dev_level ? (' ' + o.dev_level) : '';
     var sensor = o.sensor || '';
     if (o.platform) sensor += ' ' + o.platform;
-    return t + '  ·  ' + sensor + (kt ? ('  ·  ' + kt + dev) : '');
+    return sensor ? (t + '  ·  ' + sensor) : t;
   }
 
   function _fmtTime(iso) {
@@ -325,6 +369,7 @@
     var prods = o.products || {};
     var rel = prods[this.product];
     if (this.dom.img) {
+      this.dom.img.style.imageRendering = this.raw ? 'pixelated' : '';
       if (rel) {
         this.dom.img.src = this.base + '/' + rel;
         this.dom.img.alt = _overpassLabel(o) + ' ' + this.product;
@@ -363,6 +408,161 @@
     this.dom.caption.innerHTML = html;
   };
 
+  // ---- per-storm navigation (primary nav) ---------------------------------
+  MicrowaveViewer.prototype._stormIndex = function () {
+    for (var i = 0; i < this.storms.length; i++) {
+      if (this.storms[i].slug === this.curStorm) return i;
+    }
+    return -1;
+  };
+
+  MicrowaveViewer.prototype._stepStorm = function (delta) {
+    if (!this.storms.length) return;
+    var idx = this._stormIndex();
+    if (idx < 0) idx = 0;
+    var next = Math.min(this.storms.length - 1, Math.max(0, idx + delta));
+    if (next !== idx) this._selectStorm(this.storms[next].slug);
+  };
+
+  MicrowaveViewer.prototype._syncStormNav = function () {
+    var idx = this._stormIndex(), n = this.storms.length;
+    if (this.dom.stormPrev) this.dom.stormPrev.disabled = (idx <= 0);
+    if (this.dom.stormNext) this.dom.stormNext.disabled = (idx < 0 || idx >= n - 1);
+  };
+
+  // ---- smoothing toggle (client-side CSS; no double-render) ----------------
+  MicrowaveViewer.prototype._setSmoothing = function (raw) {
+    this.raw = !!raw;
+    var btns = this.dom.smooth ? this.dom.smooth.querySelectorAll('.mw-seg') : [];
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active',
+        (btns[i].getAttribute('data-raw') === '1') === this.raw);
+    }
+    if (this.dom.img) this.dom.img.style.imageRendering = this.raw ? 'pixelated' : '';
+  };
+
+  // ---- per-product loop export (GIF / MP4) --------------------------------
+  // The selected storm's overpasses, oldest->newest, that actually have the
+  // current product -> a frame sequence. Returns the absolute CDN URLs.
+  MicrowaveViewer.prototype._frameUrlsForProduct = function (key) {
+    var self = this, urls = [];
+    (this.overpasses || []).forEach(function (o) {
+      var rel = o && o.products && o.products[key];
+      if (rel) urls.push(self.base + '/' + rel);
+    });
+    return urls;
+  };
+
+  MicrowaveViewer.prototype._exStatus = function (msg) {
+    if (this.dom.exStatus) {
+      this.dom.exStatus.textContent = msg || '';
+      this.dom.exStatus.style.display = msg ? '' : 'none';
+    }
+  };
+
+  MicrowaveViewer.prototype._export = function () {
+    if (this.encoding) return;
+    var key = this.product;
+    var urls = this._frameUrlsForProduct(key);
+    if (urls.length < 2) {
+      this._exStatus('Need at least 2 ' + key + ' passes to make a loop.');
+      return;
+    }
+    var fmtEl = this.dom.exFmt;
+    var fmt = (fmtEl && String(fmtEl.value).toLowerCase() === 'gif') ? 'gif' : 'mp4';
+    var fps = 2, skip = 0;
+    var name = 'mw_' + (this.curStorm || 'storm') + '_' + key + '.' + fmt;
+    var self = this;
+    this.encoding = true;
+    if (this.dom.exBtn) this.dom.exBtn.disabled = true;
+    this._exStatus('Encoding ' + fmt.toUpperCase() + '…');
+    // Server path (primary): one continuous mp4 / single-palette gif.
+    fetch(EXPORT_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frames: urls, fps: fps, skip: skip, format: fmt })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('export HTTP ' + r.status);
+      return r.blob();
+    }).then(function (blob) {
+      if (!blob || !blob.size) throw new Error('empty export');
+      _download(blob, name);
+      self._exStatus('Done.'); self.encoding = false;
+      if (self.dom.exBtn) self.dom.exBtn.disabled = false;
+      setTimeout(function () { self._exStatus(''); }, 1500);
+    }).catch(function () {
+      // Server unavailable -> never break the button: client-side gif.js.
+      self._exStatus('Server busy — encoding GIF locally…');
+      self._exportClient(urls, 'mw_' + (self.curStorm || 'storm') + '_' + key + '.gif');
+    });
+  };
+
+  MicrowaveViewer.prototype._ensureGifWorker = function (cb) {
+    if (this._gifWorkerUrl) { cb(this._gifWorkerUrl); return; }
+    var self = this;
+    var CDNW = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js';
+    fetch(CDNW).then(function (r) { return r.text(); }).then(function (src) {
+      self._gifWorkerUrl = URL.createObjectURL(
+        new Blob([src], { type: 'application/javascript' }));
+      cb(self._gifWorkerUrl);
+    }).catch(function () { cb(CDNW); });
+  };
+
+  // Client-side gif.js fallback: preload the frame PNGs CORS-clean, draw each to
+  // an offscreen canvas, and encode. Used only when the server /export fails.
+  MicrowaveViewer.prototype._exportClient = function (urls, name) {
+    var self = this;
+    function done(ok) {
+      self.encoding = false;
+      if (self.dom.exBtn) self.dom.exBtn.disabled = false;
+      self._exStatus(ok ? 'Done.' : 'GIF export failed — try again.');
+      if (ok) setTimeout(function () { self._exStatus(''); }, 1500);
+    }
+    if (typeof window === 'undefined' || typeof window.GIF === 'undefined') {
+      done(false); return;
+    }
+    var imgs = [], pending = urls.length, failed = false;
+    urls.forEach(function (u, i) {
+      var im = new Image(); im.crossOrigin = 'anonymous';
+      im.onload = function () { imgs[i] = im; if (!--pending) build(); };
+      im.onerror = function () { failed = true; if (!--pending) build(); };
+      im.src = u + (u.indexOf('?') >= 0 ? '&' : '?') + 'cors=1';
+    });
+    function build() {
+      var frames = imgs.filter(function (x) { return x && x.naturalWidth; });
+      if (frames.length < 2) { done(false); return; }
+      var W0 = frames[0].naturalWidth, H0 = frames[0].naturalHeight;
+      var scale = Math.min(1, GIF_MAX_W / W0);
+      var W = Math.round(W0 * scale), H = Math.round(H0 * scale);
+      var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+      var octx = oc.getContext('2d');
+      self._ensureGifWorker(function (worker) {
+        var gif;
+        try {
+          gif = new window.GIF({ workers: 2, quality: 10, width: W, height: H,
+            workerScript: worker, background: '#0b0e13' });
+        } catch (e) { done(false); return; }
+        gif.on('finished', function (blob) { _download(blob, name); done(true); });
+        gif.on('error', function () { done(false); });
+        var added = 0, last = frames.length - 1;
+        frames.forEach(function (im, i) {
+          octx.clearRect(0, 0, W, H);
+          try { octx.drawImage(im, 0, 0, W, H); } catch (e) { return; }
+          gif.addFrame(octx, { copy: true, delay: (i === last) ? 900 : 500 });
+          added++;
+        });
+        if (added < 2) { done(false); return; }
+        try { gif.render(); } catch (e) { done(false); }
+      });
+    }
+  };
+
+  function _download(blob, name) {
+    var u = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = u; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    requestAnimationFrame(function () { URL.revokeObjectURL(u); });
+  }
+
   // ---- auto-mount ---------------------------------------------------------
   if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('DOMContentLoaded', function () {
@@ -372,6 +572,10 @@
   }
   if (typeof window !== 'undefined') window.MicrowaveViewer = MicrowaveViewer;
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { MicrowaveViewer: MicrowaveViewer };
+    module.exports = {
+      MicrowaveViewer: MicrowaveViewer,
+      PRODUCTS: PRODUCTS, DEFAULT_PRODUCT: DEFAULT_PRODUCT,
+      stormLabel: _stormLabel, overpassLabel: _overpassLabel
+    };
   }
 })();
