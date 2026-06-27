@@ -75,6 +75,28 @@
     }
     return { frame: best, dms: bd };
   }
+  // Pick the backdrop frame to draw under the storm: the MOST RECENT frame that
+  // carries a bare backdrop (bd_key + WGS84 bounds), preferring one already widened
+  // to the viewer's plot aspect (~1.667) so it FILLS edge-to-edge. We deliberately
+  // do NOT match the backdrop to the (possibly hours-old) overpass time — an older
+  // frame can predate the producer's widen-to-aspect fix and be a 12x12 SQUARE,
+  // which letterboxes into the wide plot leaving bare navy margins. The freshest
+  // widened frame is both gap-free and the most current sky; the dimmed 40% context
+  // layer tolerates the small storm drift vs the overpass.
+  function backdropFrame(frames) {
+    var withBd = [];
+    for (var i = 0; i < (frames || []).length; i++) {
+      var f = frames[i], src = f && (f.bd_key || f.backdrop_key);
+      if (src && f.bounds && f.bounds.length === 4) withBd.push(f);
+    }
+    if (!withBd.length) return null;
+    withBd.sort(function (a, b) { return (Date.parse(b.t) || 0) - (Date.parse(a.t) || 0); });
+    for (var j = 0; j < withBd.length; j++) {
+      var bb = withBd[j].bounds, asp = Math.abs(bb[2] - bb[0]) / Math.max(1e-6, Math.abs(bb[3] - bb[1]));
+      if (asp >= 1.4) return withBd[j];   // a widened frame -> fills the plot
+    }
+    return withBd[0];                      // fallback: freshest available
+  }
   function lonLab(lon) { var l = lon; while (l > 180) l -= 360; while (l < -180) l += 360; return Math.abs(Math.round(l)) + (l >= 0 ? 'E' : 'W'); }
   function latLab(lat) { return Math.abs(Math.round(lat)) + (lat >= 0 ? 'N' : 'S'); }
 
@@ -482,13 +504,14 @@
         var b = (fm.bands && (fm.bands.ir || fm.bands.irbd)) || null;
         var frames = (b && b.frames) || [];
         if (!frames.length) throw 0;
-        var nf = nearestFrame(frames, matchT), best = nf.frame;
+        var best = backdropFrame(frames);
+        if (!best) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
         var src = best.bd_key || best.backdrop_key || null;
         if (!src || !best.bounds) { self.bdImg = null; self.bdFrame = null; self._draw(); return; }
         var img = new Image(); img.crossOrigin = 'anonymous';
         // backward-compatible: prefer the producer's true product (Vis/SWIR) when
         // present (bd_product, the new producer); else fall back to the band label.
-        var product = best.bd_product || (b.label) || 'Clean IR';
+        var product = best.bd_product || (b.label) || 'Satellite';
         self.bdFrame = { t: best.t, product: product, bounds: best.bounds, sat: self._floaterSat(s.basin) };
         img.onload = function () { self.bdImg = img; self._draw(); };
         img.onerror = function () { self.bdImg = null; self.bdFrame = null; self._draw(); };

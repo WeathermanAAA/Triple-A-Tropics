@@ -135,7 +135,17 @@ const V = M.MicrowaveViewer.prototype;
   assert.ok(/id="mw-canvas"/.test(html), 'page mounts a canvas');
   assert.ok(/id="mw-mode"/.test(html), 'page has the View (storm|global) toggle');
   assert.ok(/id="mw-backdrop"/.test(html), 'page has the Satellite backdrop control');
-  assert.ok(/microwave\.js\?v=8/.test(html), 'cache-bust bumped');
+  assert.ok(/microwave\.js\?v=9/.test(html), 'cache-bust bumped');
+  assert.ok(/id="mw-backdrop"> Vis \/ SWIR/.test(html), 'backdrop toggle labeled Vis / SWIR (day Vis / night SWIR)');
+})();
+
+// ---- storm backdrop picks the latest WIDENED frame (fills the plot edge-to-edge),
+// not the overpass-time-matched (possibly stale 12x12 square) frame.
+(function backdropFill() {
+  const js = fs.readFileSync(path.join(ROOT, 'microwave', 'microwave.js'), 'utf8');
+  assert.ok(/function backdropFrame/.test(js), 'has the latest-widened-frame picker');
+  assert.ok(/var best = backdropFrame\(frames\)/.test(js), 'storm backdrop uses backdropFrame (not nearestFrame)');
+  assert.ok(/asp >= 1\.4/.test(js), 'prefers a widened (>=1.4 aspect) frame so it fills the 1.667 plot');
 })();
 
 // ---- raw view draws the native-footprint tile: _drawStormTile passes this.raw
