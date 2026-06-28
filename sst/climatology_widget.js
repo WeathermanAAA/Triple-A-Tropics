@@ -95,8 +95,11 @@
     _render() {
       this.root.innerHTML = `
         <div class="sw-head">
+          <div class="sw-titlerow">
+            <h3 class="sw-title" data-role="title"></h3>
+            <div class="sw-meta" data-role="meta"></div>
+          </div>
           <div class="sw-subtitle" data-role="subtitle"></div>
-          <div class="sw-meta" data-role="meta"></div>
         </div>
         <div class="sw-controls">
           <label class="sw-ctrl">
@@ -132,6 +135,7 @@
           </div>
         </section>
       `;
+      this.titleEl    = this.root.querySelector('[data-role="title"]');
       this.subtitleEl = this.root.querySelector('[data-role="subtitle"]');
       this.metaEl     = this.root.querySelector('[data-role="meta"]');
       this.regionSel  = this.root.querySelector('[data-role="region"]');
@@ -194,6 +198,10 @@
     _loadRegion() {
       if (!this.regionSlug) return;
       const label = this.m.region_labels[this.regionSlug] || this.regionSlug;
+
+      // Plot header (the region label) — mirrors the baked PNG's bold
+      // left-aligned title (generate_sst_climatology.py header bar).
+      if (this.titleEl) this.titleEl.textContent = label;
 
       // Swap the inset immediately (independent of the JSON fetch).
       const iurl = this._insetUrl(this.regionSlug);
@@ -376,10 +384,78 @@
         }
       }
 
+      // On-plot legend of the currently-plotted series (mean + toggled
+      // years). Rebuilt here on every redraw, so it tracks toggles live.
+      this._drawLegend();
+
       // Crosshair line (recreated on each redraw since clear() wiped it).
       this._cross = el('line', { x1: 0, x2: 0, y1: M_T, y2: M_T + PH,
         stroke: 'var(--accent-2)', 'stroke-width': 1.1,
         'stroke-dasharray': '4 4', opacity: 0, 'pointer-events': 'none' }, svg);
+    }
+
+    // On-plot legend: one row per currently-plotted, identifiable series
+    // (the 1991–2020 mean + each toggled-on year, current-year flagged),
+    // each with its exact line colour/dash. Sits in the top-left corner —
+    // clear of the curves (NH winter SST is low-left; the latest-value
+    // end-dot is mid-year) and clear of the anomaly inset (a separate
+    // element outside the SVG). A translucent panel keeps it readable over
+    // the faint gray spaghetti. Capped so "All" can't paper over the chart.
+    _drawLegend() {
+      const d = this.data;
+      if (!d) return;
+      const entries = [];
+      if (this.selected.has(MEAN_KEY)) {
+        entries.push({ label: d.climo_label || '1991–2020 mean',
+          color: this._colorFor(MEAN_KEY), dash: '6 4', width: 2.2 });
+      }
+      const cur = String(d.cur);
+      const years = (d.years || []).map(String)
+        .filter(y => this.selected.has(y))
+        .sort((a, b) => b - a);                       // newest first
+      for (const y of years) {
+        entries.push({ label: (y === cur) ? `${y} (current)` : y,
+          color: this._colorFor(y), dash: null, width: (y === cur) ? 3.0 : 2.2 });
+      }
+      if (!entries.length) return;                    // nothing on → no legend
+
+      const MAX = 14;                                 // keep it from covering the plot
+      let extra = 0;
+      if (entries.length > MAX) {
+        extra = entries.length - (MAX - 1);
+        entries.length = MAX - 1;
+      }
+
+      const fs = 13, rowH = 17, padX = 10, padY = 8, swW = 22, swGap = 8;
+      const rows = entries.length + (extra ? 1 : 0);
+      let maxChars = 0;
+      for (const e of entries) maxChars = Math.max(maxChars, e.label.length);
+      const moreLab = extra ? `+${extra} more year${extra === 1 ? '' : 's'}` : '';
+      if (extra) maxChars = Math.max(maxChars, moreLab.length);
+      const boxW = padX * 2 + swW + swGap + maxChars * (fs * 0.58);
+      const boxH = padY * 2 + rows * rowH;
+      const x0 = M_L + 12, y0 = M_T + 12;
+
+      const g = el('g', { 'pointer-events': 'none' }, this.svg);
+      el('rect', { x: x0, y: y0, width: boxW.toFixed(1), height: boxH.toFixed(1),
+        rx: 8, fill: 'var(--panel)', 'fill-opacity': 0.82,
+        stroke: 'var(--border)', 'stroke-width': 1 }, g);
+
+      const sx0 = x0 + padX, sx1 = sx0 + swW, tx = sx1 + swGap;
+      let ry = y0 + padY + rowH / 2;
+      for (const e of entries) {
+        const a = { x1: sx0, x2: sx1, y1: ry, y2: ry, stroke: e.color,
+          'stroke-width': Math.min(e.width, 2.6), 'stroke-linecap': 'round' };
+        if (e.dash) a['stroke-dasharray'] = e.dash;
+        el('line', a, g);
+        el('text', { x: tx, y: ry + 4, 'font-size': fs, fill: 'var(--fg)' }, g)
+          .textContent = e.label;
+        ry += rowH;
+      }
+      if (extra) {
+        el('text', { x: sx0, y: ry + 4, 'font-size': fs, fill: 'var(--muted)',
+          'font-style': 'italic' }, g).textContent = moreLab;
+      }
     }
 
     // Polyline from a length-366 array (index i → doy i+1); breaks the path
