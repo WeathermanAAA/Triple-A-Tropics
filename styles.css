@@ -775,6 +775,25 @@ footer {
   max-width: 1180px;
   color: var(--muted);
 }
+/* Plot header: bold region label on the left, "Valid … · updated …" meta on
+   the right, thin border below — mirrors the baked PNG's header bar. */
+.sw-titlerow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.sw-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--fg);
+}
 .sw-subtitle {
   font-size: 14px;
   line-height: 1.5;
