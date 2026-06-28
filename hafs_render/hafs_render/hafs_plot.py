@@ -148,6 +148,163 @@ def upper_field_names() -> tuple:
     names += [RH_LAYER_NAME, "ulayer_700_300", "vlayer_700_300"]
     return tuple(names)
 
+
+# ---------------------------------------------------------------------------
+# Parent-domain ENVIRONMENTAL field set - the broad synoptic product family
+# ---------------------------------------------------------------------------
+# PARENT-domain ONLY, synoptic: no storm-center crop, no vortex removal. Most are
+# direct single-level ``.atm`` reads (precip / SST / CAPE / latent-heat flux /
+# tropopause T / 0-3 km SRH); the deep-layer shear is a simple layer wind
+# difference (200-850 + 500-850 mb); 200 mb potential vorticity is computed with
+# MetPy from a thin TMP/U/V pressure stack (HAFS carries no native PV field).
+# Stored render-ready (display units) so the color factories read frame.env[...]
+# straight, exactly like the upper-air fields read frame.upper[...].
+SHEAR_LAYERS = ((200, 850), (500, 850))    # (upper, lower) mb deep-layer shear
+PV_MAP_LEVEL = 200                          # mb level the PV map shows
+PV_STACK_LEVELS = (300, 250, 225, 200, 175, 150, 100)  # thin stack for the PV calc
+MM_PER_IN = 25.4
+ENV_WIND_LEVELS = (200, 500, 850)           # mb winds the shear + PV-barbs need
+
+
+def env_field_names() -> tuple:
+    """Render-ready PARENT-domain environmental field names cached per frame, in
+    a stable order (display units). Parent-domain only - these never appear on
+    the storm nest. See the env product specs in hafs_registry. ``u_200`` /
+    ``v_200`` (kt) ride along for the PV map's wind barbs; the 500/850 mb winds
+    are transient (consumed into the shear vectors) and not cached."""
+    names = ["apcp_in", "sst_c", "tropt_c", "cape_jkg", "lhtfl_wm2", "srh_03km",
+             "pv_200", "u_200", "v_200"]
+    for up, lo in SHEAR_LAYERS:
+        names += [f"shrmag_{up}_{lo}", f"shru_{up}_{lo}", f"shrv_{up}_{lo}"]
+    return tuple(names)
+
+
+def _read_env_fields(H, remove_grib: bool) -> dict:
+    """Read the parent-domain environmental fields from an already-constructed
+    ``.atm`` Herbie object, returning native-grid (pre-trim, pre-reorder) arrays.
+
+    Direct single-level reads (render-ready display units) for precip (in), SST
+    (degC, ocean-masked via the land-sea mask), tropopause T (degC), surface CAPE
+    (J/kg), latent-heat flux (W/m^2), and 0-3 km storm-relative helicity
+    (m^2/s^2, the model's ``HLCY:3000-0 m`` field). The deep-layer shear winds at
+    ENV_WIND_LEVELS are read in m/s -> kt and differenced into the shear vectors
+    (200-850 + 500-850). A thin TMP/UGRD/VGRD pressure stack rides under the
+    transient ``_pv_*`` keys; the caller turns it into 200 mb potential vorticity
+    AFTER the lat reorder (the PV calc needs the final latitudes for Coriolis +
+    grid deltas) and drops the stack, so it is never cached. cfgrib usually names
+    the messages, with a lone-data-var fallback for any it leaves ``unknown``."""
+    out: dict[str, np.ndarray] = {}
+
+    def _read_2d(search: str, prefer: str | None = None) -> np.ndarray:
+        ds = H.xarray(search, remove_grib=remove_grib)
+        if isinstance(ds, list):
+            ds = ds[0]
+        var = prefer if (prefer and prefer in ds.data_vars) else list(ds.data_vars)[0]
+        return ds[var].values.astype(float)
+
+    def _read_levels(search: str, prefer: str | None = None):
+        """Multi-level read -> (pressures hPa, stack (nlev, lat, lon))."""
+        ds = H.xarray(search, remove_grib=remove_grib)
+        if isinstance(ds, list):
+            ds = ds[0]
+        var = prefer if (prefer and prefer in ds.data_vars) else list(ds.data_vars)[0]
+        da = ds[var]
+        p = da["isobaricInhPa"].values.astype(float)
+        vals = np.moveaxis(da.values.astype(float),
+                           da.dims.index("isobaricInhPa"), 0)
+        return p, vals
+
+    # --- direct single-level reads (render-ready units) ---
+    out["apcp_in"] = _read_2d(":APCP:surface:0-", "tp") / MM_PER_IN  # run-total mm->in
+    wtmp = _read_2d(":WTMP:surface:", "wtmp")
+    try:                                   # mask SST to ocean (land-sea mask 1=land)
+        land = _read_2d(":LAND:surface:", "lsm")
+        wtmp = np.where(land >= 0.5, np.nan, wtmp)
+    except Exception:                      # noqa: BLE001 - mask absent -> show all
+        pass
+    out["sst_c"] = wtmp - 273.15
+    out["tropt_c"] = _read_2d(":TMP:tropopause:", "t") - 273.15
+    out["cape_jkg"] = _read_2d(":CAPE:surface:", "cape")
+    out["lhtfl_wm2"] = _read_2d(":LHTFL:surface:", "lhtfl")
+    out["srh_03km"] = _read_2d(":HLCY:3000-0 m above ground:", "hlcy")
+
+    # --- deep-layer shear (a simple layer wind difference; m/s -> kt) ---
+    lev_winds = {}
+    for lev in ENV_WIND_LEVELS:
+        lev_winds[lev] = (_read_2d(f":UGRD:{lev} mb:", "u") * KT_PER_MS,
+                          _read_2d(f":VGRD:{lev} mb:", "v") * KT_PER_MS)
+    out["u_200"], out["v_200"] = lev_winds[200]      # PV map's 200 mb wind barbs
+    for up, lo in SHEAR_LAYERS:
+        du = lev_winds[up][0] - lev_winds[lo][0]
+        dv = lev_winds[up][1] - lev_winds[lo][1]
+        out[f"shru_{up}_{lo}"] = du
+        out[f"shrv_{up}_{lo}"] = dv
+        out[f"shrmag_{up}_{lo}"] = np.hypot(du, dv)
+
+    # --- thin pressure stack for the 200 mb PV calc (computed after reorder) ---
+    lev_alt = "(" + "|".join(str(lv) for lv in PV_STACK_LEVELS) + ")"
+    p_t, out["_pv_t"] = _read_levels(f":TMP:{lev_alt} mb:", "t")
+    _, out["_pv_u"] = _read_levels(f":UGRD:{lev_alt} mb:", "u")
+    _, out["_pv_v"] = _read_levels(f":VGRD:{lev_alt} mb:", "v")
+    out["_pv_p"] = p_t
+    return out
+
+
+def _pv_at_level(p_hpa, t_stack, u_stack, v_stack, lat, lon, level) -> np.ndarray:
+    """200 mb baroclinic potential vorticity (PVU) via MetPy, smoothed.
+
+    ``potential_vorticity_baroclinic`` is grid-vectorized (operates on the whole
+    (level, y, x) stack at once, NOT per-column), so this is one cheap call. The
+    requested map level is picked from the stack by nearest pressure; the result
+    is x1e6 (SI -> PVU) and lightly Gaussian-smoothed before contouring."""
+    import metpy.calc as mpcalc
+    from metpy.units import units
+    from scipy.ndimage import gaussian_filter
+
+    order = np.argsort(p_hpa)[::-1]                 # descending pressure (sfc->top)
+    p, t = p_hpa[order], t_stack[order]
+    u, v = u_stack[order], v_stack[order]
+    pres = (p[:, None, None] * np.ones_like(t)) * units.hPa
+    theta = mpcalc.potential_temperature(pres, t * units.K)
+    dx, dy = mpcalc.lat_lon_grid_deltas(lon, lat)
+    # lat_lon_grid_deltas returns 2-D deltas (ny, nx-1)/(ny-1, nx); add a leading
+    # level axis so they BROADCAST over the (nlev, ny, nx) stack - without it
+    # MetPy's first_derivative indexes a 2-D delta with a 3-D slice and raises.
+    dx, dy = dx[np.newaxis, ...], dy[np.newaxis, ...]
+    lat2d = (np.ones((lat.size, lon.size)) * lat[:, None]) * units.degrees
+    pv = mpcalc.potential_vorticity_baroclinic(
+        theta, pres, u * units("m/s"), v * units("m/s"),
+        dx=dx, dy=dy, latitude=lat2d, vertical_dim=0, x_dim=-1, y_dim=-2)
+    pv = np.asarray(
+        pv.to("kelvin * meter ** 2 / (kilogram * second)").magnitude)
+    k = int(np.argmin(np.abs(p - level)))
+    field = pv[k] * 1e6                             # SI -> PVU
+    finite = np.isfinite(field)
+    if finite.any():                                # smooth before contouring
+        filled = np.where(finite, field, float(np.nanmean(field[finite])))
+        field = gaussian_filter(filled, sigma=1.2)
+        field = np.where(finite, field, np.nan)
+    return field
+
+
+def _finalize_env(env: dict, lat: np.ndarray, lon: np.ndarray) -> None:
+    """Turn the transient ``_pv_*`` pressure stack into the cached ``pv_200``
+    field and drop the stack. Runs AFTER the lat/lon reorder so the PV calc sees
+    the final ascending latitudes. A PV failure degrades to an all-NaN field
+    (the product then renders empty rather than sinking the frame)."""
+    p = env.pop("_pv_p", None)
+    t = env.pop("_pv_t", None)
+    u = env.pop("_pv_u", None)
+    v = env.pop("_pv_v", None)
+    pv = None
+    if p is not None and t is not None and u is not None and v is not None:
+        try:
+            pv = _pv_at_level(p, t, u, v, lat, lon, PV_MAP_LEVEL)
+        except Exception as e:                      # noqa: BLE001
+            log.warning("env PV compute failed: %s: %s", type(e).__name__, e)
+    env["pv_200"] = pv if pv is not None else np.full((lat.size, lon.size), np.nan)
+
+
 # ---------------------------------------------------------------------------
 # Wind-speed colormap - vivid, high-contrast TAT table. A LinearSegmentedColormap
 # normalized over 0 to 165 kt: deep indigo (calm), through blues and teal, to
@@ -366,6 +523,14 @@ class HafsFrame:
     # the SAME trimmed grid as mslp/wind. None unless fetched with want_upper; no
     # product consumes these yet (Phase 2 shared plumbing).
     upper: Optional[dict] = None
+    # PARENT-domain environmental fields, render-ready, keyed by name
+    # (``env_field_names()``): total precip (in), SST (degC), tropopause T (degC),
+    # surface CAPE (J/kg), latent-heat flux (W/m^2), 0-3 km SRH (m^2/s^2), 200 mb
+    # PV (PVU) + 200 mb wind (kt), and the 200-850 / 500-850 mb shear vectors +
+    # magnitude (kt). Each is a (lat, lon) array on the SAME trimmed grid as
+    # mslp/wind. None unless fetched with want_env; consumed only by the parent
+    # synoptic environmental products (see hafs_registry).
+    env: Optional[dict] = None
 
 
 def _to_180(lon: np.ndarray) -> np.ndarray:
@@ -490,6 +655,7 @@ def _read_raw_fields(
     want_refl: bool = False,
     want_pwat: bool = False,
     want_upper: bool = False,
+    want_env: bool = False,
     sat_parms: Sequence[int] = (),
 ) -> dict:
     """INGEST STAGE core: fetch + decode each REQUIRED GRIB file ONCE and return
@@ -596,6 +762,13 @@ def _read_raw_fields(
     if want_upper:
         upper = _read_upper_air(H, remove_grib)
 
+    # PARENT-domain environmental fields (parent-only products). Native-grid 2-D
+    # render-ready arrays plus the transient ``_pv_*`` 3-D stack the PV calc
+    # consumes after the lat reorder (see _finalize_env), so it is never cached.
+    env: dict[str, np.ndarray] = {}
+    if want_env:
+        env = _read_env_fields(H, remove_grib)
+
     lat = ds_p["latitude"].values
     # Monotonic longitude frame (continuous past +180 for dateline-crossing
     # West Pacific nests; plain signed -180..180 otherwise).
@@ -624,6 +797,10 @@ def _read_raw_fields(
             pwat = pwat[::-1, :]
         bt = {p: a[::-1, :] for p, a in bt.items()}
         upper = {k: a[::-1, :] for k, a in upper.items()}
+        # env holds 2-D fields AND the 3-D _pv_* stack; reverse the LAT axis
+        # (axis -2) for both, leave the 1-D _pv_p level vector untouched.
+        env = {k: (a[..., ::-1, :] if getattr(a, "ndim", 0) >= 2 else a)
+               for k, a in env.items()}
     if lon[0] > lon[-1]:
         lon = lon[::-1]
         mslp = mslp[:, ::-1]
@@ -636,6 +813,8 @@ def _read_raw_fields(
             pwat = pwat[:, ::-1]
         bt = {p: a[:, ::-1] for p, a in bt.items()}
         upper = {k: a[:, ::-1] for k, a in upper.items()}
+        env = {k: (a[..., :, ::-1] if getattr(a, "ndim", 0) >= 2 else a)
+               for k, a in env.items()}
 
     # Derive relative vorticity = ABSV - f now that lat is final/ascending, so
     # the planetary term f = 2*Omega*sin(phi) lines up per-pixel with the
@@ -647,6 +826,11 @@ def _read_raw_fields(
             absv = upper.pop(f"absv_{lev}")
             upper[f"relvort_{lev}"] = absv - f[:, None]
 
+    # Compute 200 mb PV from the (now lat-final) pressure stack and drop the
+    # transient _pv_* stack so only render-ready 2-D env fields are returned.
+    if want_env:
+        _finalize_env(env, lat.astype(float), lon.astype(float))
+
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
 
@@ -655,7 +839,7 @@ def _read_raw_fields(
         "init_time": init_time, "valid_time": valid_time,
         "lon": lon, "lat": lat, "mslp_hpa": mslp, "wind_kt": wind,
         "u_kt": u_kt, "v_kt": v_kt, "refl_dbz": refl, "pwat": pwat, "bt": bt,
-        "upper": upper,
+        "upper": upper, "env": env,
     }
 
 
@@ -702,6 +886,7 @@ def compute_pct89(bt: dict, v_parm: int, h_parm: int):
 
 def _pack_frame(raw: dict, *, want_refl: bool = False,
                 want_pwat: bool = False, want_upper: bool = False,
+                want_env: bool = False,
                 sat_parm: Optional[int] = None,
                 sat_pct: "tuple | None" = None) -> HafsFrame:
     """RENDER-side core: trim a raw field grid (from ``_read_raw_fields`` or the
@@ -721,6 +906,7 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     refl = raw["refl_dbz"] if want_refl else None
     pwat = raw.get("pwat") if want_pwat else None
     upper = raw.get("upper") if want_upper else None
+    env = raw.get("env") if want_env else None
     # ``sat_pct`` (V,H parms) -> a derived POLARIZATION-CORRECTED channel computed
     # from two cached BT channels; otherwise a single channel by sat_parm. Either
     # way the result is the degC field this product colorizes (frame.bt_c).
@@ -757,6 +943,10 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
         # Upper-air fields share the .atm grid; slice to the SAME rectangle in
         # lockstep (the mslp|wind mask already bounds them).
         upper = {k: a[r0:r1, c0:c1] for k, a in upper.items()}
+    if env is not None:
+        # Env fields share the .atm grid too; slice to the SAME rectangle in
+        # lockstep (the mslp|wind mask already bounds them).
+        env = {k: a[r0:r1, c0:c1] for k, a in env.items()}
     if bt is not None:
         bt = bt[r0:r1, c0:c1]
         # Degenerate-frame guard (mirrors the satellite render's scalar-IR guard):
@@ -777,6 +967,7 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
         bt_c=bt,
         pwat=pwat,
         upper=upper,
+        env=env,
     )
 
 
@@ -791,6 +982,7 @@ def fetch_hafs_frame(
     want_refl: bool = False,
     want_pwat: bool = False,
     want_upper: bool = False,
+    want_env: bool = False,
     sat_parm: Optional[int] = None,
     sat_pct: "tuple | None" = None,
 ) -> HafsFrame:
@@ -811,10 +1003,11 @@ def fetch_hafs_frame(
     raw = _read_raw_fields(
         model, storm, product, date, fxx, save_dir,
         remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
-        want_upper=want_upper, sat_parms=parms,
+        want_upper=want_upper, want_env=want_env, sat_parms=parms,
     )
     return _pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
-                       want_upper=want_upper, sat_parm=sat_parm, sat_pct=sat_pct)
+                       want_upper=want_upper, want_env=want_env,
+                       sat_parm=sat_parm, sat_pct=sat_pct)
 
 
 # ---------------------------------------------------------------------------
@@ -1310,11 +1503,18 @@ def render_frame(frame: HafsFrame, out_path: str,
             "fetch with the matching want_refl / sat_parm option")
     enh_name = spec.resolve_enhancement(enhancement)
     is_parent = frame.product == "parent.atm"
+    # Synoptic env products: the broad parent map (NO storm-centered crop), no L,
+    # no SSHWS pill, stats reduced over the WHOLE domain (domain-wide IS the
+    # product, so no honesty suffix). The storm-centered products keep their crop.
+    synoptic = bool(spec.synoptic_parent) and is_parent
     # The namesake's track fix snapped into frame coordinates (None when the
     # tracker has no fix at this hour). This single value anchors the stat
-    # scope, the L marker, and (on the parent) the crop window.
-    fix = _snap_fix(frame, cen_lat, cen_lon)
-    if fix is not None:
+    # scope, the L marker, and (on the parent) the crop window. Suppressed for the
+    # synoptic env maps (they are not storm-centered).
+    fix = None if synoptic else _snap_fix(frame, cen_lat, cen_lon)
+    if synoptic:
+        scope = StatScope()                  # whole domain, no honesty suffix
+    elif fix is not None:
         scope = StatScope(mask=_radius_mask(frame, fix[0], fix[1],
                                             STAT_RADIUS_DEG), tracked=True)
     elif is_parent:
@@ -1327,7 +1527,11 @@ def render_frame(frame: HafsFrame, out_path: str,
         scope = StatScope()
     lon_min, lon_max, lat_min, lat_max = frame.extent
     d_lon_min, d_lon_max, d_lat_min, d_lat_max = frame.extent
-    if is_parent:
+    if synoptic:
+        # Broad synoptic view: the FULL parent extent, no crop (already set from
+        # frame.extent above). The fill/overlays/coasts draw on the full grid.
+        pass
+    elif is_parent:
         # Parent: a fixed 40 x 40 deg window centered on the STORM, not on the
         # parent-domain-wide pressure minimum (which snaps to a deeper midlatitude
         # low and shoves the TC to the edge). The center is the storm track fix
@@ -1482,6 +1686,26 @@ def render_frame(frame: HafsFrame, out_path: str,
         # Subtle dark halo just narrower than the white line so the barbs read as
         # white (legible over the bright fill) with a thin dark edge, not as dark.
         barbs.set_path_effects([pe.withStroke(linewidth=2.0, foreground="#0a0d12")])
+
+    # (2a) Streamlines of a cached vector (the deep-layer-shear products draw the
+    # shear VECTOR as light flowing lines, the synoptic way to read shear
+    # direction + relative magnitude without barb clutter). streamline_provider
+    # returns (u, v) in display units; streamplot needs a strictly-ascending,
+    # roughly-regular grid (frame.lon/lat qualify) and chokes on NaN, so off-grid
+    # NaN is filled with 0 just for the trace. Thin near-white with a dark halo.
+    if spec.streamline_provider is not None:
+        su, sv = spec.streamline_provider(frame)
+        su = np.where(np.isfinite(su), su, 0.0)
+        sv = np.where(np.isfinite(sv), sv, 0.0)
+        try:
+            strm = ax.streamplot(
+                frame.lon, frame.lat, su, sv, density=1.5, linewidth=0.7,
+                color="#e8eef5", arrowsize=0.8, zorder=4)
+            strm.lines.set_path_effects(
+                [pe.withStroke(linewidth=1.7, foreground="#0a0d12")])
+            strm.lines.set_alpha(0.9)
+        except Exception as e:                       # noqa: BLE001 - never fatal
+            log.warning("streamplot failed (%s): %s", product, e)
 
     # (2b) Thin black wind-speed CATEGORY contour LINES over the fill (the wind /
     # height-wind products, spec.draw_wind_contours - decoupled from barbs so the
@@ -1729,17 +1953,20 @@ def render_frame(frame: HafsFrame, out_path: str,
                         ha="left", va="center", fontsize=15, fontweight="bold",
                         color=TEXT_COLOR, transform=band.transAxes)
     # Place the category chip immediately after the title via its measured width.
-    try:
-        rend = fig.canvas.get_renderer()
-        x_after = band.transAxes.inverted().transform(
-            (t_title.get_window_extent(renderer=rend).x1, 0.0))[0]
-    except Exception:
-        x_after = pad_x + 0.10
-    band.text(x_after + 0.012, y_top, cat_label, ha="left", va="center",
-              fontsize=11, fontweight="bold", color=chip_txt,
-              transform=band.transAxes, zorder=3,
-              bbox=dict(boxstyle="round,pad=0.34", facecolor=chip_fill,
-                        edgecolor="none"))
+    # Suppressed for the synoptic env maps: they are not storm-centered, so an
+    # SSHWS category pill would imply a storm focus they don't have.
+    if not synoptic:
+        try:
+            rend = fig.canvas.get_renderer()
+            x_after = band.transAxes.inverted().transform(
+                (t_title.get_window_extent(renderer=rend).x1, 0.0))[0]
+        except Exception:
+            x_after = pad_x + 0.10
+        band.text(x_after + 0.012, y_top, cat_label, ha="left", va="center",
+                  fontsize=11, fontweight="bold", color=chip_txt,
+                  transform=band.transAxes, zorder=3,
+                  bbox=dict(boxstyle="round,pad=0.34", facecolor=chip_fill,
+                            edgecolor="none"))
     band.text(pad_x, y_bot, subtitle,
               ha="left", va="center", fontsize=9.5, color=MUTED_COLOR,
               transform=band.transAxes)

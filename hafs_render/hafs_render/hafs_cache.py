@@ -59,7 +59,11 @@ log = logging.getLogger("hafs-cache")
 # v3: added the 12 pressure-level (upper-air) fields - gh/u/v at 850/700/500,
 #     relative vorticity at 850/500, and the 700-300 mb layer-mean RH.
 # v4: added the 700-300 mb layer-mean u/v (for the RH product's barbs) -> 14.
-CACHE_VERSION = "v4"
+# v5: added the PARENT-domain environmental fields (env_field_names(): precip,
+#     SST, tropopause T, surface CAPE, latent-heat flux, 0-3 km SRH, 200 mb PV +
+#     wind, and the 200-850 / 500-850 mb shear vectors) - ingested only for
+#     parent.atm frames when an env product is in the cycle.
+CACHE_VERSION = "v5"
 
 # Sub-root under save_dir where the local field cache lives.
 CACHE_DIRNAME = "fieldcache"
@@ -91,7 +95,8 @@ def cache_path(save_dir: str, cycle: str, model: str, storm: str,
 def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
                  fxx: int, path: Path, save_dir: str, *,
                  want_refl: bool = False, want_pwat: bool = False,
-                 want_upper: bool = False, sat_parms: Sequence[int] = (),
+                 want_upper: bool = False, want_env: bool = False,
+                 sat_parms: Sequence[int] = (),
                  remove_grib: bool = True, overwrite: bool = False) -> Path:
     """INGEST one frame: fetch + decode the UNION of fields every selected product
     needs (ONE read per GRIB file) and write them to the cache entry at ``path``.
@@ -99,7 +104,8 @@ def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
     decode); ``path`` is the cache .nc to write.
 
     ``want_refl`` adds composite reflectivity; ``want_pwat`` adds precipitable
-    water (mm); ``want_upper`` adds the pressure-level fields; ``sat_parms`` adds
+    water (mm); ``want_upper`` adds the pressure-level fields; ``want_env`` adds
+    the parent-domain environmental fields (parent.atm only); ``sat_parms`` adds
     each requested simulated-satellite BT channel.
     PRMSL + 10 m wind are always read (every
     product overlays MSLP isobars + the VMAX-derived pill). Idempotent: an
@@ -112,7 +118,7 @@ def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
     raw = hp._read_raw_fields(
         model, storm, domain, cycle_dt, fxx, save_dir,
         remove_grib=remove_grib, want_refl=want_refl, want_pwat=want_pwat,
-        want_upper=want_upper, sat_parms=sat_parms,
+        want_upper=want_upper, want_env=want_env, sat_parms=sat_parms,
     )
     _write_cache(raw, path)
     return path
@@ -140,6 +146,10 @@ def _write_cache(raw: dict, path: Path) -> None:
     # (gh_850, ..., relvort_850, relvort_500, rh_layer_700_300). Empty unless the
     # frame was ingested with want_upper.
     for name, arr in raw.get("upper", {}).items():
+        data_vars[name] = (("lat", "lon"), arr)
+    # PARENT-domain environmental fields (env_field_names()), stored under their
+    # clear names. Empty unless the frame was ingested with want_env (parent.atm).
+    for name, arr in (raw.get("env") or {}).items():
         data_vars[name] = (("lat", "lon"), arr)
 
     ds = xr.Dataset(
@@ -177,6 +187,9 @@ def _read_cache(path: Path) -> dict:
         # Reconstruct the upper-air dict from the known field names present.
         upper = {name: ds[name].values for name in hp.upper_field_names()
                  if name in ds.data_vars}
+        # Reconstruct the env dict from the known env field names present.
+        env = {name: ds[name].values for name in hp.env_field_names()
+               if name in ds.data_vars}
         return {
             "model": ds.attrs["model"], "storm": ds.attrs["storm"],
             "product": ds.attrs["product"], "fxx": int(ds.attrs["fxx"]),
@@ -189,12 +202,13 @@ def _read_cache(path: Path) -> dict:
                          else None),
             "pwat": (ds["pwat"].values if "pwat" in ds.data_vars else None),
             "upper": (upper or None),
+            "env": (env or None),
             "bt": bt,
         }
 
 
 def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
-               want_upper: bool = False,
+               want_upper: bool = False, want_env: bool = False,
                sat_parm: Optional[int] = None,
                sat_pct: "tuple | None" = None) -> hp.HafsFrame:
     """RENDER STAGE: read a frame's field cache entry and reconstruct the exact
@@ -216,5 +230,8 @@ def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
         raise KeyError(f"PWAT field not in cache {path.name}")
     if want_upper and raw.get("upper") is None:
         raise KeyError(f"upper-air fields not in cache {path.name}")
+    if want_env and raw.get("env") is None:
+        raise KeyError(f"env fields not in cache {path.name}")
     return hp._pack_frame(raw, want_refl=want_refl, want_pwat=want_pwat,
-                          want_upper=want_upper, sat_parm=sat_parm, sat_pct=sat_pct)
+                          want_upper=want_upper, want_env=want_env,
+                          sat_parm=sat_parm, sat_pct=sat_pct)

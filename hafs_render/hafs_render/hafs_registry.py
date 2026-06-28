@@ -171,6 +171,22 @@ class ProductSpec:
     # field. render_frame draws it (labeled, thin) when present.
     line_contour: Optional[object] = None
 
+    # --- PARENT-domain SYNOPTIC environmental products -------------------------
+    # ``synoptic_parent``: render the FULL parent extent (NOT the 40-deg storm-
+    # centered crop), drop the L center marker AND the SSHWS category pill, and
+    # reduce the header stats over the whole domain - these are broad
+    # environmental maps, not storm-centered. The env products set it True.
+    synoptic_parent: bool = False
+    # ``streamline_provider``: (frame) -> (u, v) in display units for a light
+    # streamline overlay (the deep-layer-shear products draw the shear VECTOR as
+    # streamlines instead of barbs). None for every other product.
+    streamline_provider: Optional[Callable] = None
+    # ``domains``: restrict a product to these HAFS domains (raw names, e.g.
+    # ("parent.atm",)). Empty = every domain (the storm-centered products). The
+    # env products set ("parent.atm",) so they never render on the storm nest -
+    # generate_hafs_plots gates the render jobs on this.
+    domains: tuple = ()
+
     def resolve_enhancement(self, override: Optional[str]) -> Optional[str]:
         """The enhancement name to color with: the caller override or the spec
         default (None for non-BT families)."""
@@ -412,6 +428,87 @@ def _rh_layer_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
 
 
 # ---------------------------------------------------------------------------
+# PARENT-domain ENVIRONMENTAL products (the synoptic family). Sober, one muted
+# ramp per field, high contrast confined to the SUBJECT layer (the house style).
+# Each fill reads frame.env[<key>]; the wind/streamline overlays read the cached
+# env winds / shear vectors; the header stat reduces over the whole domain (these
+# are broad synoptic maps, so scope is domain-wide with no honesty suffix).
+# ---------------------------------------------------------------------------
+def _env_cmap(name, hexes, *, under=None, over=None):
+    cm = mcolors.LinearSegmentedColormap.from_list(name, hexes, N=256)
+    cm.set_bad(alpha=0.0)                          # NaN / off-domain -> transparent
+    if under is not None:
+        cm.set_under(under)
+    if over is not None:
+        cm.set_over(over)
+    return cm
+
+# Muted scientific ramps - calm bases, warm/saturated only at the active end.
+_CMAP_PRECIP = _env_cmap("tat_env_precip",
+    ["#bfe3c9", "#7cc88e", "#3fa58f", "#2f80b0", "#2b5697", "#5a3f9c",
+     "#8a2f78", "#b23048"])
+_CMAP_SHEAR = _env_cmap("tat_env_shear",
+    ["#22405c", "#356f86", "#5aa089", "#b7bd6a", "#d8923f", "#c34a37"],
+    over="#9b2f28")
+_CMAP_PV = _env_cmap("tat_env_pv",                # muted grey -> orange (task)
+    ["#3a3f45", "#5e6166", "#83806f", "#a98f5c", "#cf8a3e", "#c25a23"],
+    over="#a4471a")
+_CMAP_SST = _env_cmap("tat_env_sst",
+    ["#2b2f6e", "#2f6f9e", "#3fae9e", "#7fc46a", "#d9c14a", "#d98f43", "#c0453a"],
+    under="#1b1f4a")
+_CMAP_TROPT = _env_cmap("tat_env_tropt",          # warm pale -> cold deep (rev)
+    ["#2b3f7e", "#3f5f9e", "#6f7fb8", "#9a8fc0", "#d7d2e8"])
+_CMAP_CAPE = _env_cmap("tat_env_cape",
+    ["#243a3a", "#3f6f5a", "#7fae5a", "#d9c14a", "#d98f43", "#c0453a"],
+    over="#9b2f28")
+_CMAP_SRH = _env_cmap("tat_env_srh",
+    ["#2b2f4a", "#3f5f8f", "#5fae9e", "#d9c14a", "#d9803a", "#c0453a"],
+    over="#9b2f28")
+_CMAP_LHTFL = _env_cmap("tat_env_lhtfl",
+    ["#1f3b4a", "#2f7f8f", "#5fae8f", "#d9c14a", "#d98f43"], over="#c0453a")
+
+
+def _env_colors(key, cmap, vmin, vmax, *, mask_below=None):
+    """Fill = frame.env[key] over Normalize(vmin, vmax) with ``cmap``; cells below
+    ``mask_below`` (when set) render transparent so the map shows through."""
+    def f(spec, frame, enh_name) -> FillColors:
+        field = np.asarray(frame.env[key], dtype=float)
+        if mask_below is not None:
+            field = np.where(field < mask_below, np.nan, field)
+        return FillColors(cmap=cmap, norm=mcolors.Normalize(vmin, vmax), field=field)
+    return f
+
+
+def _env_colorbar(label, *, ticks=None, extend="neither"):
+    def f(fig, cax, cf, colors: FillColors):
+        cb = (fig.colorbar(cf, cax=cax, extend=extend, ticks=ticks) if ticks
+              else fig.colorbar(cf, cax=cax, extend=extend))
+        cb.set_label(label, color=hp.TEXT_COLOR, fontsize=10)
+        return cb
+    return f
+
+
+def _env_stat(key, reducer, fmt, subtitle):
+    """Domain-wide header stat for a synoptic env product. ``reducer`` is one of
+    hp.scope_max/min/mean (scope is domain-wide here), ``fmt`` formats the value."""
+    def f(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
+        val = reducer(frame.env[key], scope)
+        return f"{subtitle}  /  {domain_label}", fmt.format(val=val)
+    return f
+
+
+def _shear_streamlines(up, lo):
+    """streamline_provider for a deep-layer-shear product: the shear VECTOR (kt)."""
+    return lambda frame: (frame.env[f"shru_{up}_{lo}"], frame.env[f"shrv_{up}_{lo}"])
+
+
+def _env200_wind(frame):
+    """wind_provider for the PV map: the 200 mb wind (kt) already in env."""
+    u, v = frame.env["u_200"], frame.env["v_200"]
+    return u, v, np.hypot(u, v)
+
+
+# ---------------------------------------------------------------------------
 # The HAFS product specs, in toggle order. mslp_wind stays first so the default
 # frontend view is unchanged (Wind), and the four pre-existing products keep
 # their original order; mslp_pwat is appended LAST so adding it perturbs neither
@@ -615,6 +712,157 @@ _SPECS = (
         # Thin black RH contours every 10% from 50 (only those inside a frame's
         # layer-RH range draw), same style as the PWAT / wind category contours.
         field_contour_levels=(50, 60, 70, 80, 90),
+    ),
+
+    # --- PARENT-domain SYNOPTIC ENVIRONMENTAL products (orders 11..19). All are
+    # parent.atm ONLY (domains=("parent.atm",)) and synoptic_parent=True: the full
+    # parent extent, no storm-centered crop, no L marker, no SSHWS pill, stats
+    # reduced over the whole domain. They read frame.env (requires_attr="env"),
+    # which generate_hafs_plots ingests for parent frames only. One muted ramp
+    # per field; MSLP isobars carry the synoptic context (off where streamlines /
+    # PV barbs already do). Appended last so existing toggle order is unchanged. ---
+    ProductSpec(
+        key="env_precip", slug="env_precip", label="Total Precipitation (in)",
+        short="Precip", order=11,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("apcp_in", _CMAP_PRECIP, 0.0, 8.0, mask_below=0.05),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("Total precip (in)",
+                                    ticks=[0, 1, 2, 3, 4, 5, 6, 7, 8], extend="max"),
+        draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("apcp_in", hp.scope_max, "MAX PRECIP {val:.1f} in",
+                            "Total Precipitation (in) & MSLP"),
+        synoptic_parent=True, domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_shear_200_850", slug="env_shear_200_850",
+        label="200-850 mb Wind Shear (kt)", short="Shear 200-850", order=12,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("shrmag_200_850", _CMAP_SHEAR, 0.0, 80.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("200-850 mb shear (kt)",
+                                    ticks=[0, 20, 40, 60, 80], extend="max"),
+        draw_barbs=False, draw_mslp_isobars=False, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("shrmag_200_850", hp.scope_max, "MAX SHEAR {val:.0f} kt",
+                            "200-850 mb Deep-Layer Shear (kt)"),
+        synoptic_parent=True, streamline_provider=_shear_streamlines(200, 850),
+        domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_shear_500_850", slug="env_shear_500_850",
+        label="500-850 mb Wind Shear (kt)", short="Shear 500-850", order=13,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("shrmag_500_850", _CMAP_SHEAR, 0.0, 60.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("500-850 mb shear (kt)",
+                                    ticks=[0, 15, 30, 45, 60], extend="max"),
+        draw_barbs=False, draw_mslp_isobars=False, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("shrmag_500_850", hp.scope_max, "MAX SHEAR {val:.0f} kt",
+                            "500-850 mb Mid-Level Shear (kt)"),
+        synoptic_parent=True, streamline_provider=_shear_streamlines(500, 850),
+        domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_pv_200", slug="env_pv_200",
+        label="200 mb Potential Vorticity (PVU)", short="200 PV", order=14,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("pv_200", _CMAP_PV, 0.0, 10.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("200 mb PV (PVU)",
+                                    ticks=[0, 2, 4, 6, 8, 10], extend="max"),
+        # 200 mb wind barbs over the PV fill; no isobars / L (upper-level field).
+        draw_barbs=True, wind_provider=_env200_wind,
+        draw_mslp_isobars=False, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("pv_200", hp.scope_max, "MAX PV {val:.1f} PVU",
+                            "200 mb Potential Vorticity (PVU) & Wind"),
+        synoptic_parent=True, domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_sst", slug="env_sst", label="Sea-Surface Temp (°C)",
+        short="SST", order=15,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("sst_c", _CMAP_SST, 10.0, 32.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("SST (°C)",
+                                    ticks=[10, 15, 20, 25, 30], extend="both"),
+        # MSLP isobars for synoptic context (task: SST + MSLP contours).
+        draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("sst_c", hp.scope_max, "MAX SST {val:.1f}°C",
+                            "Sea-Surface Temperature (°C) & MSLP"),
+        synoptic_parent=True, domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_tropt", slug="env_tropt", label="Tropopause Temperature (°C)",
+        short="Tropo T", order=16,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("tropt_c", _CMAP_TROPT, -85.0, -45.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("Tropopause temp (°C)",
+                                    ticks=[-85, -75, -65, -55, -45], extend="both"),
+        draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("tropt_c", hp.scope_min, "MIN TROP T {val:.1f}°C",
+                            "Tropopause Temperature (°C) & MSLP"),
+        synoptic_parent=True, domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_cape", slug="env_cape", label="Surface CAPE (J/kg)",
+        short="CAPE", order=17,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("cape_jkg", _CMAP_CAPE, 0.0, 4000.0, mask_below=100.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("Surface CAPE (J/kg)",
+                                    ticks=[0, 1000, 2000, 3000, 4000], extend="max"),
+        # 10 m wind barbs (default provider) + MSLP isobars.
+        draw_barbs=True, draw_mslp_isobars=True, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("cape_jkg", hp.scope_max, "MAX CAPE {val:.0f} J/kg",
+                            "Surface CAPE (J/kg) & 10 m Wind"),
+        synoptic_parent=True, domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_srh", slug="env_srh",
+        label="0-3 km Storm-Relative Helicity (m²/s²)", short="0-3 km SRH",
+        order=18,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("srh_03km", _CMAP_SRH, 0.0, 500.0, mask_below=25.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("0-3 km SRH (m²/s²)",
+                                    ticks=[0, 100, 200, 300, 400, 500], extend="max"),
+        draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("srh_03km", hp.scope_max, "MAX SRH {val:.0f} m2/s2",
+                            "0-3 km Storm-Relative Helicity & MSLP"),
+        synoptic_parent=True, domains=("parent.atm",),
+    ),
+    ProductSpec(
+        key="env_lhtfl", slug="env_lhtfl", label="Latent Heat Flux (W/m²)",
+        short="Latent Flux", order=19,
+        grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
+        default_enhancement=None, channel=None,
+        make_colors=_env_colors("lhtfl_wm2", _CMAP_LHTFL, 0.0, 400.0),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_env_colorbar("Latent heat flux (W/m²)",
+                                    ticks=[0, 100, 200, 300, 400], extend="both"),
+        # 10 m wind barbs (default provider) + MSLP isobars.
+        draw_barbs=True, draw_mslp_isobars=True, draw_mslp_markers=False,
+        coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
+        make_stat=_env_stat("lhtfl_wm2", hp.scope_max, "MAX LHF {val:.0f} W/m2",
+                            "Latent Heat Flux (W/m²) & 10 m Wind"),
+        synoptic_parent=True, domains=("parent.atm",),
     ),
 )
 
