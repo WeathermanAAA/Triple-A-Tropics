@@ -105,7 +105,13 @@ jobs:
         env:
           HERBIE_DATA: ${{ runner.temp }}/herbie_data
         run: |
-          python generate_hafs_plots.py --jobs 4 --cycle-scoped
+          # --ingest-jobs 2: the parent-domain environmental products (v0.11.0)
+          # make the parent .atm ingest memory-heavier (the PV pressure stack +
+          # the extra surface/level reads), so cap the ingest pool at 2 like the
+          # Railway worker (ingest_jobs=2) - 4-wide env-parent ingests OOM the
+          # 7 GB runner and the halving-backoff thrash blows the 120 min budget.
+          # The render pool stays 4 (CPU-bound, light memory).
+          python generate_hafs_plots.py --jobs 4 --ingest-jobs 2 --cycle-scoped
           echo "---- rendered frames (cycle-scoped) ----"
           find models/hafs -name '*.png' | wc -l
           echo "---- manifest (v2) ----"
