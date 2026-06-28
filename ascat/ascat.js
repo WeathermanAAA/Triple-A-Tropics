@@ -282,7 +282,17 @@
     var p = (window.TATRegions && TATRegions.loadGeo)
       ? TATRegions.loadGeo({ coast: '10m', land: '50m', states: true })
       : Promise.resolve({ coast: null, countries: null, states: null });
-    return p.then(function (g) { self.geo = g; }).catch(function () { self.geo = { coast: null, countries: null, states: null }; });
+    // Lower-res 50m coastline, used ONLY by the whole-world Global view, where
+    // the 10m coast reads thick + rough (every micro-inlet piles up at planet
+    // scale). Optional + guarded: a miss leaves geo.coastLo null and Global
+    // falls back to the 10m coast at the finer weight. Zoomed/basin/storm views
+    // always use the crisp 10m coast (geo.coast) — untouched.
+    var loP = fetch('/ne_50m_coastline.geojson')   // same-origin basemap (like TATRegions.loadGeo)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+    return Promise.all([p, loP])
+      .then(function (a) { self.geo = a[0] || { coast: null, countries: null, states: null }; self.geo.coastLo = a[1]; })
+      .catch(function () { self.geo = { coast: null, countries: null, states: null, coastLo: null }; });
   };
 
   AscatViewer.prototype._fetchJson = function (path, noStore) {
@@ -657,7 +667,19 @@
     this._drawGraticule(g, ext, L.w, L.h);
     // 3) coastline + faint state borders ON TOP of the fill (and imagery)
     if (window.TATRegions && TATRegions.drawBasemapLines) {
-      TATRegions.drawBasemapLines(g, ext, this.geo, L.w, L.h, { coast: S.coast, coastLw: S.coastLw, state: S.state, stateLw: S.stateLw });
+      var lineGeo = this.geo;
+      var lineOpts = { coast: S.coast, coastLw: S.coastLw, state: S.state, stateLw: S.stateLw };
+      if (this._isGlobal()) {
+        // Global only: the 10m coast reads thick + rough at whole-world scale and
+        // competes with the wind swaths. Swap to the cleaner 50m coastline (falls
+        // back to 10m if it didn't load) and a finer weight so the geography frames
+        // the field without overpowering it. Zoomed/basin/storm views keep the
+        // crisp 10m coast at full weight (untouched).
+        lineGeo = { coast: (this.geo && this.geo.coastLo) || (this.geo && this.geo.coast),
+                    states: this.geo && this.geo.states };
+        lineOpts = { coast: S.coast, coastLw: 0.6, state: S.state, stateLw: 0.4 };
+      }
+      TATRegions.drawBasemapLines(g, ext, lineGeo, L.w, L.h, lineOpts);
     }
     // 4) the data: Global = filled colored swaths (whole-world composite);
     //    storm/basin = wind barbs (newest pass on top).
