@@ -349,6 +349,7 @@ class IngestJob:
     want_refl: bool      # cycle needs composite reflectivity
     want_pwat: bool      # cycle needs precipitable water (mm)
     want_upper: bool     # cycle ingests the pressure-level (upper-air) fields
+    want_env: bool       # frame needs the parent-domain environmental fields
     sat_parms: tuple     # GRIB2 parms for the sim-sat channels the cycle needs
 
 
@@ -401,7 +402,8 @@ def _ingest_one(job: IngestJob) -> dict:
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
                 Path(job.cache_path), job.save_dir,
                 want_refl=job.want_refl, want_pwat=job.want_pwat,
-                want_upper=job.want_upper, sat_parms=job.sat_parms,
+                want_upper=job.want_upper, want_env=job.want_env,
+                sat_parms=job.sat_parms,
                 remove_grib=True,
             )
             return {"ok": True, "model": job.model, "storm": job.storm,
@@ -427,9 +429,10 @@ def _render_one(job: RenderJob) -> dict:
     """
     want_refl = job.product == "refl"
     want_pwat = job.product == "mslp_pwat"
-    # Upper-air products declare their need via requires_attr == "upper" (the
-    # registry guard), so the render reconstructs frame.upper from the cache.
+    # Upper-air / env products declare their need via requires_attr (the registry
+    # guard), so the render reconstructs frame.upper / frame.env from the cache.
     want_upper = reg.get_spec(job.product).requires_attr == "upper"
+    want_env = reg.get_spec(job.product).requires_attr == "env"
     # Sim-sat products read their BT channel by GRIB2 parameterNumber from the
     # product's registry spec (None for wind/refl/pwat/upper); a PCT product
     # (sat_pct set) derives its field from two channels instead.
@@ -438,6 +441,7 @@ def _render_one(job: RenderJob) -> dict:
     try:
         frame = fc.load_frame(Path(job.cache_path), want_refl=want_refl,
                               want_pwat=want_pwat, want_upper=want_upper,
+                              want_env=want_env,
                               sat_parm=sat_parm, sat_pct=sat_pct)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
         hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST, states=_STATES,
@@ -655,6 +659,11 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     cycle_want_refl = "refl" in products
     cycle_want_pwat = "mslp_pwat" in products
     cycle_want_upper = INGEST_UPPER_AIR
+    # The parent-domain environmental fields (precip/SST/shear/PV/CAPE/SRH/...) are
+    # ingested ONLY for parent.atm frames, and only when an env product is in this
+    # cycle's product set - they are heavy and parent-only, so the storm nest never
+    # pays for them. A product declares its env need via requires_attr == "env".
+    cycle_has_env = any(reg.get_spec(p).requires_attr == "env" for p in products)
     # Union of EVERY .sat parm any product needs decoded -- the single channel
     # for clean_ir/water_vapor AND both V/H channels for a PCT product (89 PCT),
     # so the per-frame cache carries them all for one shared ingest.
@@ -746,6 +755,9 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                              model, storm, domain, max(avail), terminal)
                     continue
                 dom_slug = DOMAINS[domain][0]
+                # The env fields are parent-only: ingest them only for parent.atm
+                # frames (and only when this cycle renders an env product).
+                want_env_frame = cycle_has_env and (domain == "parent.atm")
                 for fxx in avail:
                     cpath = str(fc.cache_path(save_dir, cycle, model, storm,
                                               dom_slug, fxx))
@@ -754,7 +766,8 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         model=model, storm=storm, domain=domain, fxx=fxx,
                         cycle_dt=cycle_dt, cache_path=cpath, save_dir=save_dir,
                         want_refl=cycle_want_refl, want_pwat=cycle_want_pwat,
-                        want_upper=cycle_want_upper, sat_parms=cycle_sat_parms))
+                        want_upper=cycle_want_upper, want_env=want_env_frame,
+                        sat_parms=cycle_sat_parms))
                     # The namesake's fix at THIS hour: own deck first, then the
                     # previous cycle's fix at the same valid time (provisional;
                     # progressive rendering), then last-known framing anchor,
@@ -762,7 +775,12 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     cen, anchor = hp.pick_track_fix(track, prev_track, fxx)
                     # One render per product, each reading the SAME cache entry
                     # into its own path segment (.../<dom_slug>/<product>/f###.png).
+                    # A product restricted to specific domains (spec.domains, e.g.
+                    # the parent-only env products) is skipped on other domains.
                     for product in products:
+                        pdomains = reg.get_spec(product).domains
+                        if pdomains and domain not in pdomains:
+                            continue
                         out_path = _frame_out_path(
                             out_dir, cycle, model, storm, dom_slug, product, fxx,
                             cycle_scoped=cycle_scoped)
