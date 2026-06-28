@@ -30,7 +30,7 @@ import os
 import tempfile
 
 from . import (CREDIT, DISCLOSURE, SCHEMA_VERSION, SOURCE, decode, fetch,
-               storms as _storms)
+               podaac, storms as _storms)
 
 _now = lambda: _dt.datetime.now(_dt.timezone.utc)            # noqa: E731
 SENSORS = ("metop-b", "metop-c")
@@ -45,13 +45,15 @@ MANIFEST_URL = "https://cdn.triple-a-tropics.com/ascat/manifest.json"
 # tiled all day long - see the viewer's GLOBAL_MAX_PASSES cap, which this feeds.
 DEFAULT_WINDOW_HOURS = 60
 
-# Health bound, DECOUPLED from the prune-stale window below. The newest orbit aging
-# up to ~24-30 h is NORMAL (the daily-batch sawtooth). Older than this means a batch
-# was actually missed - a real upstream stall - which we surface loudly (manifest
-# health flag + a shouting log) so a silent multi-day stall can't hide. This is a
-# health ALERT only; the wider window_hours still governs pruning so a transient
+# Health bound, DECOUPLED from the prune-stale window below, and SOURCE-aware. The
+# bound is the age past which the newest orbit means a real upstream stall (a
+# shouting log + manifest health flag), NOT the normal cadence lag. PO.DAAC is
+# per-orbit (~2-4 h latency) so >8 h means several orbits were missed; KNMI is a
+# ~daily batch (newest legitimately ages to ~24-30 h) so its bound is 36 h. This is
+# a health ALERT only; the wider window_hours still governs pruning so a transient
 # outage never drains the product.
-HEALTH_STALE_H = 36.0
+HEALTH_STALE_H = 36.0           # KNMI fallback (daily batch)
+PODAAC_HEALTH_STALE_H = 8.0     # PO.DAAC primary (per-orbit NRT)
 
 
 def _iso(d: _dt.datetime) -> str:
@@ -120,7 +122,8 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
           backfill_hours: int | None = None,
           sensors=SENSORS, max_new_per_run: int = 240, stride: int = 2,
           prior_manifest_url: str | None = MANIFEST_URL,
-          api_key: str | None = None, log=print) -> dict:
+          source: str | None = None, api_key: str | None = None,
+          earthdata_token: str | None = None, log=print) -> dict:
     """Run one ingest cycle. Returns a small summary dict.
 
     ``window_hours`` is the display window (passes older than it are pruned + their
@@ -130,10 +133,35 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
     growing union upserted by pass id, so passes survive later runs until pruned.
     """
     now = _now()
-    api_key = api_key or fetch.api_key_from_env()
-    if not api_key:
-        log("ascat: no KNMI_API_KEY in env - cannot list/fetch; leaving R2 as-is")
+    # ---- source selection: PO.DAAC (Earthdata, per-orbit ~2-4 h) is primary;
+    # KNMI (~daily batch) is the automatic fallback so the product never goes dark
+    # if the Earthdata creds are absent. ASCAT_SOURCE=knmi forces the fallback first.
+    # The PRODUCT is identical (OSI SAF 12.5 km coastal); only the listing+download+
+    # auth differ - decode/mask/decimate/window/health/manifest are shared.
+    pref = (source or os.environ.get("ASCAT_SOURCE") or "podaac").strip().lower()
+    ed_token = earthdata_token or podaac.creds_from_env(log=log)
+    knmi_key = api_key or fetch.api_key_from_env()
+    order = ["knmi", "podaac"] if pref == "knmi" else ["podaac", "knmi"]
+    source_name, creds = None, None
+    for name in order:
+        if name == "podaac" and ed_token:
+            source_name, creds = "podaac", ed_token
+            break
+        if name == "knmi" and knmi_key:
+            source_name, creds = "knmi", knmi_key
+            break
+    if not source_name:
+        log("ascat: no source creds - need EARTHDATA_TOKEN (or EARTHDATA_USERNAME+"
+            "EARTHDATA_PASSWORD) for PO.DAAC, or KNMI_API_KEY for the fallback; "
+            "leaving R2 as-is")
         return {"mode": "noop", "reason": "no_api_key", "new": 0}
+    using_podaac = (source_name == "podaac")
+    if using_podaac:
+        log("ascat: source = PO.DAAC (per-orbit ~2-4 h NRT)")
+    else:
+        log("ascat: source = KNMI fallback (~daily batch; set EARTHDATA_TOKEN for "
+            "PO.DAAC NRT)")
+    health_bound = PODAAC_HEALTH_STALE_H if using_podaac else HEALTH_STALE_H
 
     ingest_hours = max(int(window_hours), int(backfill_hours or 0))
     window_start = now - _dt.timedelta(hours=window_hours)
@@ -157,22 +185,27 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
     active = _storms.active_storms()
     log(f"ascat: {len(active)} active system(s) in the live feed")
 
-    # resolve the ASCAT-B/C coastal-NRT dataset names from the live KNMI catalog
-    # (falls back to the pinned pair if the catalog is unreachable / unmatched)
-    datasets = fetch.resolve_datasets(api_key=api_key, log=log)
+    # resolve the source: PO.DAAC collection ids are fixed; KNMI dataset names are
+    # re-derived from the live KNMI catalog (validated, pinned-fallback).
+    datasets = None if using_podaac else fetch.resolve_datasets(api_key=creds, log=log)
 
     # ---- list newest files per sensor, pick the in-window, not-yet-ingested ----
     # Newest-first listing: 120 keys/sensor spans ~8 days at ~14 orbits/day, so the
     # incremental 60h window always fits one page. A wide backfill can exceed it,
     # so page deeper proportional to the ingest reach (so the older-but-in-window
-    # tail is not silently missed).
+    # tail is not silently missed). Both sources return the same record shape
+    # (start/sat/orbit/name) the window filter + watermark + decode consume.
     pages = 1 + max(0, int(ingest_hours * 14 / (24 * 120)))  # ~1 page per 120 orbits
     pages = min(pages, 12)
     candidates: list[dict] = []
     newest_seen: _dt.datetime | None = None
     for sk in sensors:
-        recs = fetch.fetch_recent(sk, api_key=api_key, max_keys=120,
-                                  datasets=datasets, max_pages=pages)
+        if using_podaac:
+            recs = podaac.fetch_recent(sk, token=creds, since=ingest_start,
+                                       max_keys=120, max_pages=pages, log=log)
+        else:
+            recs = fetch.fetch_recent(sk, api_key=creds, max_keys=120,
+                                      datasets=datasets, max_pages=pages)
         if recs:
             sk_newest = max(r["start"] for r in recs)
             if newest_seen is None or sk_newest > newest_seen:
@@ -187,11 +220,10 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
                 continue                             # older than the (ingest) window
             candidates.append({**rec, "pass_id": pid})
     # source-freshness verdict (loud but non-fatal: a stale/dead feed still leaves
-    # last-known-good R2 live). The KNMI Open Data ASCAT coastal feed runs ~a day
-    # behind real time (the newest orbit is normally ~20-24 h old), so STALE means
-    # only that even the NEWEST orbit predates the whole display window - the feed
-    # has genuinely stopped, not just its usual ~daily lag. A tighter threshold
-    # would false-positive every run and the window would never prune.
+    # last-known-good R2 live). STALE here is the PRUNE-protection bound (= the whole
+    # display window): even the newest orbit predates the window, so the feed has
+    # genuinely stopped - keep last-known-good rather than draining. The tighter,
+    # source-aware HEALTH bound (below) is what surfaces a real stall loudly.
     newest_age_h = None
     stale_h = float(window_hours)
     if newest_seen is not None:
@@ -205,21 +237,22 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
     # empty/unreachable. We then keep last-known-good passes visible (below).
     stale = (newest_seen is None) or (newest_age_h is not None and newest_age_h > stale_h)
 
-    # ---- HEALTH guard (decoupled from the prune-stale window) --------------------
+    # ---- HEALTH guard (decoupled from the prune-stale window, SOURCE-aware) -------
     # A separate, TIGHTER bound so a real upstream stall surfaces loudly instead of
-    # hiding inside the wide last-known-good window. Normal sawtooth (newest up to
-    # ~24-30 h old between daily batches) is healthy; older = a batch was missed.
+    # hiding inside the wide last-known-good window. PO.DAAC is per-orbit, so newest
+    # > 8 h means orbits were actually missed; KNMI's daily batch legitimately ages
+    # the newest to ~24-30 h, so its bound is 36 h.
     health, health_reason = "ok", ""
     if newest_seen is None:
         health, health_reason = "stale", "no orbits listed (feed empty/unreachable)"
-    elif newest_age_h is not None and newest_age_h > HEALTH_STALE_H:
+    elif newest_age_h is not None and newest_age_h > health_bound:
         health = "stale"
         health_reason = (f"newest orbit {newest_age_h:.1f} h old "
-                         f"(> {HEALTH_STALE_H:.0f} h health bound)")
+                         f"(> {health_bound:.0f} h {source_name} health bound)")
     if health == "stale":
         log("ascat: !! FEED HEALTH STALE -- " + health_reason
-            + " -- a KNMI daily batch appears MISSED; last-known-good stays live and "
-              "coverage will drain until fresh orbits land. Investigate the source.")
+            + f" -- the {source_name} feed appears STALLED; last-known-good stays "
+              "live and coverage will drain until fresh orbits land. Investigate.")
 
     # newest first, then cap (so a huge cold/backfill run stays bounded)
     candidates.sort(key=lambda c: c["start"], reverse=True)
@@ -233,13 +266,18 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
     tmpdir = tempfile.mkdtemp(prefix="ascat_nc_")
     try:
         for c in candidates:
-            url = fetch.get_download_url(c["dataset"], c["version"], c["name"],
-                                         api_key=api_key)
+            if using_podaac:
+                url = c.get("download_url")
+            else:
+                url = fetch.get_download_url(c["dataset"], c["version"], c["name"],
+                                             api_key=creds)
             if not url:
                 log(f"ascat: no download url for {c['name']} - skip")
                 continue
             ncpath = os.path.join(tmpdir, c["pass_id"] + ".nc")
-            if not fetch.download(url, ncpath):
+            ok = (podaac.download(url, ncpath, token=creds) if using_podaac
+                  else fetch.download(url, ncpath))
+            if not ok:
                 log(f"ascat: download failed {c['name']} - skip")
                 continue
             try:
@@ -324,24 +362,32 @@ def build(out_dir: str, *, window_hours: int = DEFAULT_WINDOW_HOURS,
                "disclosure": DISCLOSURE}
     _write(out_dir, "current.json", current)
 
+    # Source-accurate latency wording (PO.DAAC NRT vs the KNMI daily-batch fallback).
+    latency_note = (
+        "Distributed via NASA PO.DAAC (Earthdata) near-real-time - per-orbit, "
+        "typically a few hours old; swaths are intermittent, so the newest pass over "
+        "any one storm may be a few hours old."
+        if using_podaac else
+        "Served from the KNMI Open Data fallback (~a day behind real time); swaths "
+        "are intermittent, so the newest pass over any one storm may be several "
+        "hours to about a day old.")
     manifest = {
         "schema_version": SCHEMA_VERSION, "generated_utc": _iso(now),
         "source": SOURCE, "credit": CREDIT, "disclosure": DISCLOSURE,
+        "source_name": source_name,        # "podaac" (primary) | "knmi" (fallback)
         "window_hours": window_hours,
-        "latency_note": ("The KNMI Open Data ASCAT coastal feed runs ~a day behind "
-                         "real time; swaths are intermittent, so the newest pass "
-                         "over any one storm may be several hours to about a day old."),
+        "latency_note": latency_note,
         "passes": passes, "current_id": current_id,
         "watermark": _watermark(passes),
         "stale": bool(stale),
         "newest_orbit_age_h": (round(newest_age_h, 1)
                                if newest_age_h is not None else None),
-        # Health: "ok" during the normal daily-batch sawtooth, "stale" when a batch
-        # was actually missed (newest > HEALTH_STALE_H). The viewer shows an amber
-        # "feed delayed" badge on "stale" so a real stall is visible, not silent.
+        # Health: "ok" within the source's normal cadence, "stale" when the newest
+        # orbit passes the source-aware health bound (a real stall). The viewer shows
+        # an amber "feed delayed" badge on "stale" so a stall is visible, not silent.
         "health": health,
         "health_reason": health_reason,
-        "health_stale_h": HEALTH_STALE_H,
+        "health_stale_h": health_bound,
     }
     _write(out_dir, "manifest.json", manifest)
 

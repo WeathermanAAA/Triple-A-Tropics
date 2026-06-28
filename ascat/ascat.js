@@ -25,8 +25,8 @@
  * yields the complete figure. Dependency-free except window.TATRegions.
  *
  * Honest caveats (drawn on the figure): C-band ASCAT underestimates extreme
- * TC-core winds; rain/quality-flagged cells are removed; swaths are intermittent
- * and this KNMI feed runs ~a day behind real time (latest pass may be hours-to-a-day old).
+ * TC-core winds; rain/quality-flagged cells are removed; swaths are intermittent;
+ * the near-real-time feed is per-orbit (latest pass typically a few hours old).
  *
  * Isolated from the other viewers (own IIFE, ascat-* ids).
  */
@@ -150,7 +150,7 @@
     '</div>' +
     '<div id="ascat-stats" class="ascat-stats"></div>' +
     '<div id="ascat-empty" class="ascat-empty"><h2>No recent ASCAT passes</h2>' +
-      '<p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are published. Scatterometer swaths are intermittent and this feed runs about a day behind real time.</p></div>';
+      '<p>ASCAT-B and ASCAT-C ocean-surface wind passes appear here as they are published. Scatterometer swaths are intermittent; the near-real-time feed is per-orbit, typically a few hours old.</p></div>';
 
   var ASCAT_EMBED_CSS =
     '.ascat-controls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;margin-bottom:10px}' +
@@ -593,10 +593,10 @@
       : (window.TATRegions && this.region && TATRegions.get(this.region) ? TATRegions.get(this.region).label : 'Recent');
     g.fillText(scope + '  ·  ASCAT Ocean Winds', h.x, h.y + 18);
     // subtitle: passes shown + freshest time + age
-    // Health badge: the ingest flags manifest.health='stale' when the KNMI feed
-    // actually missed its daily batch (newest orbit past the health bound) - the
-    // normal ~22-24 h sawtooth trough stays 'ok'. On 'stale' we recolor the
-    // subtitle amber and append a loud marker so a real stall is visible, not silent.
+    // Health badge: the ingest flags manifest.health='stale' when the newest orbit
+    // passes the source-aware health bound (a real stall: PO.DAAC >8 h, KNMI >36 h);
+    // normal cadence stays 'ok'. On 'stale' we recolor the subtitle amber and append
+    // a loud marker so a real stall is visible, not silent.
     var feedStale = !!(this.manifest && this.manifest.health === 'stale');
     g.fillStyle = feedStale ? '#ffb24d' : C.muted; g.font = '600 12.5px ' + FONT;
     var pv = this._loadedView();
@@ -1016,7 +1016,7 @@
     g.save(); g.font = '500 10.5px ' + FONT; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
     g.fillStyle = C.muted;
     var disc = (this.manifest && this.manifest.disclosure) ||
-      'C-band ASCAT underestimates extreme TC-core winds; rain-flagged cells removed; swaths are intermittent (feed runs ~a day behind real time).';
+      'C-band ASCAT underestimates extreme TC-core winds; rain-flagged cells removed; swaths are intermittent (near-real-time, per-orbit, typically a few hours old).';
     var maxw = this.layout.map.w - 150;
     g.fillText(this._ellipsize(g, disc, maxw), this.layout.pad, this.layout.footerY);
     g.textAlign = 'right'; g.fillStyle = C.muted; g.font = '600 10.5px ' + FONT;

@@ -25,7 +25,7 @@ import numpy as np
 
 import importlib
 
-from ascatobs import fetch, storms
+from ascatobs import fetch, podaac, storms
 # the package re-exports build() the function, shadowing the submodule attribute,
 # so reach the submodule (for its private helpers) via importlib.
 build = importlib.import_module("ascatobs.build")
@@ -352,12 +352,13 @@ class TestBuildGuards(unittest.TestCase):
         out = tempfile.mkdtemp(prefix="ascat_guard_")
         with mock.patch.object(build, "_fetch_prior_manifest", lambda u: prior), \
              mock.patch.object(build._storms, "active_storms", lambda *a, **k: []), \
+             mock.patch.object(build.podaac, "creds_from_env", lambda **k: None), \
              mock.patch.object(build.fetch, "resolve_datasets",
                                lambda **k: fetch.DATASETS), \
              mock.patch.object(build.fetch, "fetch_recent", lambda *a, **k: recs), \
              mock.patch.object(build, "_fetch_pass",
                                lambda pid: {"id": pid, "wvc": {"la": []}}):
-            summary = build.build(out, api_key="k",
+            summary = build.build(out, source="knmi", api_key="k",
                                   prior_manifest_url="https://x/m.json")
         return out, summary
 
@@ -410,13 +411,15 @@ class TestHealthGuard(unittest.TestCase):
         with mock.patch.object(build, "_now", lambda: self.NOW), \
              mock.patch.object(build, "_fetch_prior_manifest", lambda u: prior), \
              mock.patch.object(build._storms, "active_storms", lambda *a, **k: []), \
+             mock.patch.object(build.podaac, "creds_from_env", lambda **k: None), \
              mock.patch.object(build.fetch, "resolve_datasets",
                                lambda **k: fetch.DATASETS), \
              mock.patch.object(build.fetch, "fetch_recent",
                                lambda sk, **k: [rec] if sk == "metop-b" else []), \
              mock.patch.object(build, "_fetch_pass",
                                lambda p: {"id": p, "wvc": {"la": []}}):
-            build.build(out, api_key="k", prior_manifest_url="https://x/m.json")
+            build.build(out, source="knmi", api_key="k",
+                        prior_manifest_url="https://x/m.json")
         return json.load(open(os.path.join(out, "manifest.json")))
 
     def test_normal_trough_is_healthy(self):
@@ -434,6 +437,152 @@ class TestHealthGuard(unittest.TestCase):
         self.assertFalse(m["stale"])                      # 40 h < 60 h window
         self.assertTrue(m["health_reason"])
         self.assertEqual(m["health_stale_h"], build.HEALTH_STALE_H)
+
+
+class TestPodaac(unittest.TestCase):
+    """PO.DAAC (Earthdata) source: CMR granule parsing + bearer-token auth. The
+    product is identical to KNMI's, so only listing/download/auth are exercised
+    here; decode is shared and covered above."""
+
+    def test_collections_concept_ids(self):
+        self.assertEqual(podaac.COLLECTIONS["metop-b"]["cid"], "C2075141605-POCLOUD")
+        self.assertEqual(podaac.COLLECTIONS["metop-c"]["cid"], "C2075141684-POCLOUD")
+        self.assertEqual(podaac.COLLECTIONS["metop-b"]["sat"], "metopb")
+
+    def test_data_url_prefers_nc(self):
+        umm = {"RelatedUrls": [
+            {"Type": "VIEW RELATED INFORMATION", "URL": "https://x/info"},
+            {"Type": "GET DATA", "URL": "https://a/ascat_x_ovw.l2.nc"}]}
+        self.assertEqual(podaac._data_url(umm), "https://a/ascat_x_ovw.l2.nc")
+        self.assertIsNone(podaac._data_url({"RelatedUrls": []}))
+
+    def test_fetch_recent_parses_cmr_umm(self):
+        gid = "ascat_20260627_212100_metopb_71478_eps_o_coa_3301_ovw.l2"
+        url = "https://archive.podaac.earthdata.nasa.gov/x/" + gid + ".nc"
+        body = {"items": [{"umm": {"GranuleUR": gid, "RelatedUrls": [
+            {"Type": "GET DATA", "URL": url}]}}]}
+        with mock.patch.object(podaac, "_cmr_get", lambda p, **k: body):
+            recs = podaac.fetch_recent("metop-b", token="t", max_keys=10)
+        self.assertEqual(len(recs), 1)
+        r = recs[0]
+        self.assertEqual(r["sat"], "metopb")
+        self.assertEqual(r["orbit"], 71478)
+        self.assertEqual(r["download_url"], url)
+        self.assertEqual(r["start"], dt.datetime(2026, 6, 27, 21, 21, tzinfo=UTC))
+        self.assertEqual(r["sensor_key"], "metop-b")
+
+    def test_fetch_recent_skips_unparseable_and_urlless(self):
+        body = {"items": [
+            {"umm": {"GranuleUR": "not_an_ascat_name",
+                     "RelatedUrls": [{"Type": "GET DATA", "URL": "https://x.nc"}]}},
+            {"umm": {"GranuleUR": "ascat_20260627_212100_metopb_71478_eps_o_coa_x",
+                     "RelatedUrls": []}}]}    # parses but no data url
+        with mock.patch.object(podaac, "_cmr_get", lambda p, **k: body):
+            self.assertEqual(podaac.fetch_recent("metop-b", token="t"), [])
+
+    def test_fetch_recent_unknown_sensor(self):
+        self.assertEqual(podaac.fetch_recent("metop-z", token="t"), [])
+
+    def test_creds_token_takes_precedence(self):
+        with mock.patch.dict(os.environ, {"EARTHDATA_TOKEN": "  tok  "}, clear=True):
+            self.assertEqual(podaac.creds_from_env(log=lambda *a, **k: None), "tok")
+
+    def test_creds_mints_from_user_pass(self):
+        env = {"EARTHDATA_USERNAME": "u", "EARTHDATA_PASSWORD": "p"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(podaac, "_mint_token", lambda u, p, **k: "minted"):
+            self.assertEqual(podaac.creds_from_env(log=lambda *a, **k: None), "minted")
+
+    def test_creds_none_when_absent(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(podaac.creds_from_env(log=lambda *a, **k: None))
+
+
+class TestSourceSelectionBuild(unittest.TestCase):
+    """build() picks PO.DAAC when its creds exist, KNMI as the automatic fallback,
+    and applies the source-aware health bound (PO.DAAC 8 h vs KNMI 36 h)."""
+
+    NOW = dt.datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+
+    def _run(self, *, source_pref, ed_token, knmi_key, age_h=3.0):
+        start = self.NOW - dt.timedelta(hours=age_h)
+        pid = build._pass_id({"sat": "metopb", "orbit": 1, "start": start})
+        mid = start + dt.timedelta(minutes=30)
+        prior = ("ok", {"passes": [{
+            "id": pid, "file": pid + ".json", "sensor": "ASCAT-B", "sat": "metopb",
+            "start_utc": build._iso(start), "end_utc": build._iso(mid),
+            "mid_utc": build._iso(mid), "bbox": [1, 2, 3, 4], "n_wvc": 5,
+            "max_kt": 40, "storms": []}]})
+        pod_rec = {"start": start, "sat": "metopb", "orbit": 1, "name": "ascat_x.l2",
+                   "filename": "ascat_x.l2", "download_url": "https://x.nc",
+                   "label": "ASCAT-B", "sensor_key": "metop-b"}
+        knmi_rec = {"start": start, "sat": "metopb", "orbit": 1, "name": "ascat_x",
+                    "dataset": "d", "version": "nrt", "label": "ASCAT-B",
+                    "sensor_key": "metop-b"}
+        calls = {"podaac": 0, "knmi": 0}
+
+        def pod_fetch(sk, **k):
+            calls["podaac"] += 1
+            return [pod_rec] if sk == "metop-b" else []
+
+        def knmi_fetch(sk, **k):
+            calls["knmi"] += 1
+            return [knmi_rec] if sk == "metop-b" else []
+
+        out = tempfile.mkdtemp(prefix="ascat_src_")
+        with mock.patch.object(build, "_now", lambda: self.NOW), \
+             mock.patch.object(build, "_fetch_prior_manifest", lambda u: prior), \
+             mock.patch.object(build._storms, "active_storms", lambda *a, **k: []), \
+             mock.patch.object(build.podaac, "creds_from_env", lambda **k: ed_token), \
+             mock.patch.object(build.fetch, "api_key_from_env", lambda: knmi_key), \
+             mock.patch.object(build.fetch, "resolve_datasets",
+                               lambda **k: fetch.DATASETS), \
+             mock.patch.object(build.podaac, "fetch_recent", pod_fetch), \
+             mock.patch.object(build.fetch, "fetch_recent", knmi_fetch), \
+             mock.patch.object(build, "_fetch_pass",
+                               lambda p: {"id": p, "wvc": {"la": []}}):
+            build.build(out, source=source_pref,
+                        prior_manifest_url="https://x/m.json")
+        m = json.load(open(os.path.join(out, "manifest.json")))
+        return m, calls
+
+    def test_podaac_primary_when_token_present(self):
+        m, calls = self._run(source_pref=None, ed_token="t", knmi_key="k")
+        self.assertEqual(m["source_name"], "podaac")
+        self.assertEqual(calls["podaac"], 2)      # both sensors listed via PO.DAAC
+        self.assertEqual(calls["knmi"], 0)        # KNMI not touched
+
+    def test_falls_back_to_knmi_without_token(self):
+        m, calls = self._run(source_pref=None, ed_token=None, knmi_key="k")
+        self.assertEqual(m["source_name"], "knmi")
+        self.assertEqual(calls["knmi"], 2)
+        self.assertEqual(calls["podaac"], 0)
+
+    def test_podaac_health_bound_is_tight(self):
+        # newest 10 h old: a stall on PO.DAAC (> 8 h per-orbit bound)
+        m, _ = self._run(source_pref="podaac", ed_token="t", knmi_key=None, age_h=10.0)
+        self.assertEqual(m["source_name"], "podaac")
+        self.assertEqual(m["health"], "stale")
+        self.assertEqual(m["health_stale_h"], build.PODAAC_HEALTH_STALE_H)
+
+    def test_knmi_health_bound_is_loose(self):
+        # same 10 h is HEALTHY on the KNMI fallback (< 36 h daily-batch bound)
+        m, _ = self._run(source_pref="knmi", ed_token=None, knmi_key="k", age_h=10.0)
+        self.assertEqual(m["source_name"], "knmi")
+        self.assertEqual(m["health"], "ok")
+        self.assertEqual(m["health_stale_h"], build.HEALTH_STALE_H)
+
+    def test_no_creds_is_noop(self):
+        out = tempfile.mkdtemp(prefix="ascat_src_")
+        with mock.patch.object(build, "_now", lambda: self.NOW), \
+             mock.patch.object(build, "_fetch_prior_manifest",
+                               lambda u: ("absent", None)), \
+             mock.patch.object(build._storms, "active_storms", lambda *a, **k: []), \
+             mock.patch.object(build.podaac, "creds_from_env", lambda **k: None), \
+             mock.patch.object(build.fetch, "api_key_from_env", lambda: None):
+            s = build.build(out, source=None, prior_manifest_url="https://x/m.json")
+        self.assertEqual(s["mode"], "noop")
+        self.assertFalse(os.path.exists(os.path.join(out, "manifest.json")))
 
 
 if __name__ == "__main__":

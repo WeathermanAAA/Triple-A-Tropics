@@ -6,8 +6,10 @@
 
 Kill switch: ASCAT_ENABLED=0 (or --disabled) exits 0 without touching R2 - the
 workflow's R2 sync then has nothing to push, so the last-known-good R2 state stays
-live. Needs KNMI_API_KEY in the environment (never hardcode/commit it); without it
-the build is a guarded no-op (last-known-good stays live).
+live. Needs a source credential in the environment (never hardcode/commit it):
+EARTHDATA_TOKEN (or EARTHDATA_USERNAME+EARTHDATA_PASSWORD) for the PO.DAAC NRT
+primary, or KNMI_API_KEY for the KNMI fallback. Without any, the build is a guarded
+no-op (last-known-good stays live).
 """
 from __future__ import annotations
 
@@ -15,14 +17,17 @@ import argparse
 import os
 import sys
 
+from .build import DEFAULT_WINDOW_HOURS
 from .build import build as run_build
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="ascatobs")
     p.add_argument("--out-dir", default="./ascat_build")
-    p.add_argument("--window-hours", type=int, default=36,
+    p.add_argument("--window-hours", type=int, default=DEFAULT_WINDOW_HOURS,
                    help="display window; passes older than this are pruned")
+    p.add_argument("--source", default=None,
+                   help="ingest source: podaac (default) or knmi (fallback)")
     p.add_argument("--backfill-hours", type=int, default=None,
                    help="widen the INGEST reach for a manual catch-up (>= window)")
     p.add_argument("--sensors", default="metop-b,metop-c")
@@ -48,7 +53,8 @@ def main(argv=None) -> int:
         run_build(args.out_dir, window_hours=args.window_hours,
                   backfill_hours=args.backfill_hours, sensors=sensors,
                   stride=args.stride, max_new_per_run=args.max_new,
-                  prior_manifest_url=(args.manifest_url or None))
+                  prior_manifest_url=(args.manifest_url or None),
+                  source=args.source)
     except Exception as e:                           # noqa: BLE001
         # Never leave a half-written tree that the sync would push: fail loud but
         # non-destructively (the workflow guards the sync on the exit code + the

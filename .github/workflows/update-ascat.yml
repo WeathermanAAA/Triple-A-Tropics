@@ -1,27 +1,25 @@
 name: update-ascat
 
-# ASCAT scatterometer ocean-surface winds (EUMETSAT/OSI SAF/KNMI), Observations.
-# Self-contained + isolated: pulls ASCAT-B/C 12.5 km coastal NRT NetCDF from the
-# KNMI Open Data API, decodes + quality-masks + decimates each orbit to JSON, tags
-# passes with the active storms they overfly (read-only consumer of the published
-# global_storms.geojson), and syncs the tree to R2 under ascat/. Touches NOTHING
-# in the track/ACE/climatology pipeline.
+# ASCAT scatterometer ocean-surface winds (EUMETSAT/OSI SAF), Observations.
+# Self-contained + isolated: pulls ASCAT-B/C 12.5 km coastal NRT NetCDF per orbit
+# from NASA PO.DAAC (Earthdata; CMR granule search + bearer-token download, ~2-4 h
+# latency), decodes + quality-masks + decimates each orbit to JSON, tags passes with
+# the active storms they overfly (read-only consumer of the published
+# global_storms.geojson), and syncs the tree to R2 under ascat/. Touches NOTHING in
+# the track/ACE/climatology pipeline. KNMI Open Data (~daily batch) is the automatic
+# FALLBACK when the Earthdata creds are absent, so the product never goes dark.
 #
-# Cadence: the KNMI Open Data ASCAT coastal feed publishes per-orbit data in a
-# ~daily BATCH (newest orbit ~5 h old just after a batch, aging to ~22-24 h old
-# before the next), so tight polling is wasteful. We poll every 4 h on a staggered
-# (non-round) minute to pick up the daily refresh within a few hours of it landing;
-# the filename-timestamp watermark makes a re-run a cheap no-op and the rolling
-# window self-heals any dropped run, so no separate backup cron is needed.
+# Cadence: PO.DAAC publishes per orbit (~one new orbit every ~50 min across B+C) at
+# ~2-4 h latency, so we poll HOURLY on a staggered (non-round) minute to keep the
+# newest pass within a few hours. The filename-timestamp watermark makes a re-run a
+# cheap no-op and the rolling window self-heals any dropped run, so no backup cron.
 #
-# Window: 60 h (not 36) so the manifest stays ~40+ passes across the WHOLE daily
-# batch sawtooth - a 36 h window drains to a few sparse swaths mid-cycle because it
-# prunes old passes faster than the once-daily batch replaces them. The /ascat/
-# viewer re-polls R2 and caps the Global view at its own GLOBAL_MAX_PASSES.
+# Window: 60 h so the manifest holds plenty of passes for a near-complete global
+# tiling; the /ascat/ viewer re-polls R2 and caps the Global view at GLOBAL_MAX_PASSES.
 
 on:
   schedule:
-    - cron: "41 */4 * * *"        # every 4 h, staggered minute (~daily-latent feed)
+    - cron: "17 * * * *"          # hourly, staggered minute (per-orbit NRT feed)
   workflow_dispatch:
     inputs:
       window_hours:
@@ -53,13 +51,22 @@ jobs:
       - name: Build ASCAT JSON
         env:
           ASCAT_ENABLED: ${{ vars.ASCAT_ENABLED || '1' }}
+          # PO.DAAC (primary): an Earthdata bearer token, OR username+password (a
+          # token is then minted at runtime). KNMI (fallback): the Open Data key.
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
           ASCAT_WINDOW_HOURS: ${{ github.event.inputs.window_hours || '60' }}
           ASCAT_BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours || '' }}
         run: |
           set -euo pipefail
-          if [ -z "${KNMI_API_KEY:-}" ]; then
-            echo "ascat: KNMI_API_KEY secret not set - skipping (last-known-good R2 stays live)"
+          # Need a source credential: PO.DAAC (EARTHDATA_TOKEN, or USERNAME+PASSWORD)
+          # or the KNMI fallback (KNMI_API_KEY). None -> guarded skip, R2 stays live.
+          if [ -z "${EARTHDATA_TOKEN:-}" ] \
+             && { [ -z "${EARTHDATA_USERNAME:-}" ] || [ -z "${EARTHDATA_PASSWORD:-}" ]; } \
+             && [ -z "${KNMI_API_KEY:-}" ]; then
+            echo "ascat: no source creds (EARTHDATA_TOKEN / EARTHDATA_USERNAME+PASSWORD for PO.DAAC, or KNMI_API_KEY) - skipping (last-known-good R2 stays live)"
             exit 0
           fi
           ARGS="--out-dir ./ascat_build --window-hours ${ASCAT_WINDOW_HOURS}"
