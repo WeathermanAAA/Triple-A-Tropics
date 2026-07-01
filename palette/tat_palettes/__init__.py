@@ -339,6 +339,108 @@ RH_TICKS = list(range(0, 101, 20))   # 0..100 by 20
 
 
 # ---------------------------------------------------------------------------
+# era5_isotach - ERA5 / ECMWF upper-level isotach (wind-speed) colortable
+# ---------------------------------------------------------------------------
+# The canonical ERA5 300 mb isotach ramp, low -> high wind:
+#   cyan -> blue -> green -> yellow -> orange -> red -> magenta -> white (jet core).
+# A standalone scalar wind-speed fill: the caller applies it with its OWN
+# Normalize(vmin, vmax) (e.g. Normalize(0, 80) for HAFS 200-850 mb deep-layer
+# shear, Normalize(0, 60) for 500-850 mb). Reused as the shared shear/isotach
+# table so any future wind-speed map matches without re-deriving the ramp.
+# set_under == coldest anchor, set_over == white (jet), NaN/off-domain -> transparent.
+_ERA5_ISOTACH_ANCHORS = [
+    (0.00, "#33d6e6"),  # cyan (calm / low)
+    (0.16, "#2a6ae0"),  # blue
+    (0.33, "#34c84a"),  # green
+    (0.50, "#f2e22a"),  # yellow
+    (0.66, "#f59331"),  # orange
+    (0.80, "#e23030"),  # red
+    (0.92, "#d23bc4"),  # magenta
+    (1.00, "#ffffff"),  # white (strongest)
+]
+
+
+def _era5_isotach_cmap() -> LinearSegmentedColormap:
+    cmap = LinearSegmentedColormap.from_list("era5_isotach", _ERA5_ISOTACH_ANCHORS, N=256)
+    cmap.set_under(_ERA5_ISOTACH_ANCHORS[0][1])
+    cmap.set_over(_ERA5_ISOTACH_ANCHORS[-1][1])
+    cmap.set_bad(alpha=0.0)   # NaN / off-domain -> transparent (panel bg shows)
+    return cmap
+
+
+ERA5_ISOTACH_CMAP = _era5_isotach_cmap()
+
+
+# ---------------------------------------------------------------------------
+# era5_z500_rainbow - ERA5 / ECMWF 500 mb geopotential-height rainbow
+# ---------------------------------------------------------------------------
+# The canonical ERA5 500 mb-height rainbow, low -> high:
+#   purple -> blue -> cyan -> green -> yellow -> orange -> red -> dark red.
+# Standalone scalar fill; the caller supplies the Normalize (e.g. Normalize(-85,
+# -45) for the HAFS tropopause-temperature map, coldest -> warmest). set_under ==
+# purple, set_over == dark red, NaN/off-domain -> transparent.
+_ERA5_Z500_ANCHORS = [
+    (0.00, "#6a2fb0"),  # purple (low)
+    (0.15, "#2f50d8"),  # blue
+    (0.30, "#2ec4dc"),  # cyan
+    (0.45, "#34c24a"),  # green
+    (0.60, "#f2e22a"),  # yellow
+    (0.74, "#f59331"),  # orange
+    (0.88, "#e23030"),  # red
+    (1.00, "#7d0d0d"),  # dark red (high)
+]
+
+
+def _era5_z500_cmap() -> LinearSegmentedColormap:
+    cmap = LinearSegmentedColormap.from_list("era5_z500_rainbow", _ERA5_Z500_ANCHORS, N=256)
+    cmap.set_under(_ERA5_Z500_ANCHORS[0][1])
+    cmap.set_over(_ERA5_Z500_ANCHORS[-1][1])
+    cmap.set_bad(alpha=0.0)
+    return cmap
+
+
+ERA5_Z500_CMAP = _era5_z500_cmap()
+
+
+# ---------------------------------------------------------------------------
+# sst_actual - sea-surface-temperature rainbow (0..32 C), the site SST look
+# ---------------------------------------------------------------------------
+# The canonical TAT "actual SST" rainbow used by generate_sst_plots.py:
+#   violet/indigo at 0 C -> blue -> sky -> cyan -> green -> yellow -> orange ->
+#   red -> oxblood at 32 C.
+# Anchors lifted VERBATIM from generate_sst_plots._sst_actual_cmap so the HAFS
+# SST map matches the site SST product exactly. Apply with Normalize(0, 32) (the
+# range it was DESIGNED for -- violet is 0 C, oxblood is 32 C); NaN (land /
+# off-domain) -> transparent. set_under == violet, set_over == oxblood.
+SST_ACTUAL_VMIN_C = 0.0
+SST_ACTUAL_VMAX_C = 32.0
+_SST_ACTUAL_ANCHORS = [
+    (0.00, "#2c0b4a"),  # dark violet (0 C)
+    (0.08, "#2a1794"),  # indigo
+    (0.18, "#2f4bc4"),  # blue
+    (0.28, "#2e8bd0"),  # sky
+    (0.38, "#2fc4c9"),  # cyan
+    (0.50, "#6bd98e"),  # green
+    (0.62, "#e7ee5f"),  # yellow
+    (0.72, "#f5b23d"),  # orange
+    (0.82, "#e84b2a"),  # red
+    (0.92, "#b01a26"),  # dark red
+    (1.00, "#6b0d18"),  # oxblood (32 C)
+]
+
+
+def _sst_actual_cmap() -> LinearSegmentedColormap:
+    cmap = LinearSegmentedColormap.from_list("sst_actual", _SST_ACTUAL_ANCHORS, N=256)
+    cmap.set_under(_SST_ACTUAL_ANCHORS[0][1])
+    cmap.set_over(_SST_ACTUAL_ANCHORS[-1][1])
+    cmap.set_bad(alpha=0.0)
+    return cmap
+
+
+SST_ACTUAL_CMAP = _sst_actual_cmap()
+
+
+# ---------------------------------------------------------------------------
 # colorbar tick sets (°C)
 # ---------------------------------------------------------------------------
 _RAINBOW_TICKS = [40, 30, 20, 10, 0, -10, -20, -30, -40, -50, -60, -70, -80, -90]
@@ -465,6 +567,28 @@ def cyclonic_vort_cmap() -> LinearSegmentedColormap:
 def rh_cmap() -> LinearSegmentedColormap:
     """The tat_rh colormap singleton (apply with Normalize(0, 100))."""
     return TAT_RH_CMAP
+
+
+def era5_isotach_cmap() -> LinearSegmentedColormap:
+    """ERA5 300 mb isotach ramp (cyan -> ... -> white). Apply with the caller's
+    own Normalize(vmin, vmax) (the wind-speed range of the product)."""
+    return ERA5_ISOTACH_CMAP
+
+
+def era5_z500_cmap() -> LinearSegmentedColormap:
+    """ERA5 500 mb-height rainbow (purple -> ... -> dark red). Apply with the
+    caller's own Normalize(vmin, vmax)."""
+    return ERA5_Z500_CMAP
+
+
+def sst_actual_cmap() -> LinearSegmentedColormap:
+    """Canonical TAT actual-SST rainbow (0..32 C); apply with Normalize(0, 32)."""
+    return SST_ACTUAL_CMAP
+
+
+def sst_actual_norm() -> Normalize:
+    """Fresh Normalize over the SST_ACTUAL design range (0..32 C)."""
+    return Normalize(vmin=SST_ACTUAL_VMIN_C, vmax=SST_ACTUAL_VMAX_C)
 
 
 def list_enhancements_for_domain(domain: str):

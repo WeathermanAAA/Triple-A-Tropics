@@ -1447,6 +1447,80 @@ def _parent_storm_center(frame, cen_lat=None, cen_lon=None,
             0.5 * (float(lon.min()) + float(lon.max())))
 
 
+def _largest_true_rect(mask: np.ndarray):
+    """(r0, r1, c0, c1) inclusive-exclusive of the maximum-AREA all-True
+    axis-aligned rectangle in a 2-D boolean ``mask``, or None if empty. Standard
+    histogram / monotonic-stack method, O(H*W)."""
+    H, W = mask.shape
+    heights = np.zeros(W, dtype=np.int64)
+    best_area = 0
+    best = None
+    for i in range(H):
+        heights = np.where(mask[i], heights + 1, 0)
+        h = heights.tolist()
+        h.append(0)                       # sentinel flushes the stack
+        stack: list[int] = []
+        for j in range(W + 1):
+            while stack and h[stack[-1]] >= h[j]:
+                top = stack.pop()
+                ht = h[top]
+                left = stack[-1] + 1 if stack else 0
+                area = ht * (j - left)
+                if area > best_area:
+                    best_area = area
+                    best = (i - ht + 1, i + 1, left, j)
+            stack.append(j)
+    return best
+
+
+def _synoptic_view_extent(frame: HafsFrame, max_cells: int = 360):
+    """The largest rectangular (lon/lat) view fully INSIDE the parent-domain
+    footprint, so the synoptic env maps render as a clean PlateCarree rectangle
+    with straight edges instead of the native tilted/fanned footprint outline
+    (whose NaN corners show the panel background).
+
+    The HAFS parent is a tilted footprint embedded in a circumscribing regular
+    lon/lat grid (NaN in the corners); ``frame.extent`` is that circumscribing box
+    -> the fan. We instead crop the VIEW (set_xlim/set_ylim) to the largest
+    inscribed all-finite rectangle of the footprint mask (``mslp|wind``), keeping
+    essentially the same coverage minus the corner slivers. The fill is still
+    drawn on the full grid and clipped to this view, so nothing inside is missing.
+
+    Computed on a CONSERVATIVELY block-reduced mask (a coarse cell counts as data
+    only if EVERY fine cell in it is finite) so the result is guaranteed all-finite
+    while staying cheap (~tens of ms). Falls back to ``frame.extent`` if the mask
+    is already a full rectangle (inscribed == full) or degenerate."""
+    lon, lat = frame.lon, frame.lat
+    full = frame.extent
+    mask = np.isfinite(frame.mslp_hpa) | np.isfinite(frame.wind_kt)
+    H, W = mask.shape
+    if H == 0 or W == 0 or mask.all():
+        return full                                   # already a full rectangle
+    s = max(1, int(np.ceil(max(H, W) / max_cells)))   # block stride
+    if s > 1:                                          # conservative block-AND reduce
+        Hp, Wp = -(-H // s) * s, -(-W // s) * s        # pad up to a multiple of s
+        padded = np.zeros((Hp, Wp), dtype=bool)
+        padded[:H, :W] = mask
+        ds = padded.reshape(Hp // s, s, Wp // s, s).all(axis=(1, 3))
+    else:
+        ds = mask
+    rect = _largest_true_rect(ds)
+    if rect is None:
+        return full
+    R0, R1, C0, C1 = rect
+    r0, r1 = R0 * s, min(R1 * s, H)
+    c0, c1 = C0 * s, min(C1 * s, W)
+    if r1 - r0 < 2 or c1 - c0 < 2:
+        return full                                   # degenerate -> no crop
+    box = (float(lon[c0]), float(lon[c1 - 1]), float(lat[r0]), float(lat[r1 - 1]))
+    # If the inscribed box is essentially the full extent, keep the full extent
+    # (regular grids / the offline synthetic frame stay byte-identical).
+    if (abs(box[0] - full[0]) < 1e-6 and abs(box[1] - full[1]) < 1e-6
+            and abs(box[2] - full[2]) < 1e-6 and abs(box[3] - full[3]) < 1e-6):
+        return full
+    return box
+
+
 def render_frame(frame: HafsFrame, out_path: str,
                  countries: Optional[dict], coast: Optional[dict],
                  states: Optional[dict] = None,
@@ -1528,9 +1602,12 @@ def render_frame(frame: HafsFrame, out_path: str,
     lon_min, lon_max, lat_min, lat_max = frame.extent
     d_lon_min, d_lon_max, d_lat_min, d_lat_max = frame.extent
     if synoptic:
-        # Broad synoptic view: the FULL parent extent, no crop (already set from
-        # frame.extent above). The fill/overlays/coasts draw on the full grid.
-        pass
+        # Broad synoptic view, rendered as a clean rectangular PlateCarree extent:
+        # crop the VIEW to the largest rectangle fully inside the parent footprint
+        # (straight edges) instead of the circumscribing frame.extent (whose NaN
+        # corners show the panel background as the native tilted/fanned outline).
+        # The fill/overlays/coasts still draw on the full grid and clip to this view.
+        lon_min, lon_max, lat_min, lat_max = _synoptic_view_extent(frame)
     elif is_parent:
         # Parent: a fixed 40 x 40 deg window centered on the STORM, not on the
         # parent-domain-wide pressure minimum (which snaps to a deeper midlatitude
