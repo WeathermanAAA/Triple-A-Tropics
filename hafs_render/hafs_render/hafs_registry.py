@@ -447,17 +447,13 @@ def _env_cmap(name, hexes, *, under=None, over=None):
 _CMAP_PRECIP = _env_cmap("tat_env_precip",
     ["#bfe3c9", "#7cc88e", "#3fa58f", "#2f80b0", "#2b5697", "#5a3f9c",
      "#8a2f78", "#b23048"])
-_CMAP_SHEAR = _env_cmap("tat_env_shear",
-    ["#22405c", "#356f86", "#5aa089", "#b7bd6a", "#d8923f", "#c34a37"],
-    over="#9b2f28")
-_CMAP_PV = _env_cmap("tat_env_pv",                # muted grey -> orange (task)
-    ["#3a3f45", "#5e6166", "#83806f", "#a98f5c", "#cf8a3e", "#c25a23"],
-    over="#a4471a")
-_CMAP_SST = _env_cmap("tat_env_sst",
-    ["#2b2f6e", "#2f6f9e", "#3fae9e", "#7fc46a", "#d9c14a", "#d98f43", "#c0453a"],
-    under="#1b1f4a")
-_CMAP_TROPT = _env_cmap("tat_env_tropt",          # warm pale -> cold deep (rev)
-    ["#2b3f7e", "#3f5f9e", "#6f7fb8", "#9a8fc0", "#d7d2e8"])
+# Restyle (data unchanged): shear / PV / SST / tropopause-temp now reuse the
+# canonical shared tat_palettes colortables instead of the local muted ramps, so
+# they match the rest of the site and a color edit propagates from ONE place.
+_CMAP_SHEAR = tp.era5_isotach_cmap()   # ERA5 300 mb isotach: cyan->blue->green->yellow->orange->red->magenta->white
+_CMAP_PV = tp.cyclonic_vort_cmap()     # reuse the cyclonic-vorticity palette (dark #333 -> blue/purple -> magenta -> gold -> pale)
+_CMAP_SST = tp.sst_actual_cmap()       # reuse the site SST rainbow (violet 0 C -> oxblood 32 C); applied over 0..32 below
+_CMAP_TROPT = tp.era5_z500_cmap()      # ERA5 500 mb-height rainbow: purple->blue->cyan->green->yellow->orange->red->dark red
 _CMAP_CAPE = _env_cmap("tat_env_cape",
     ["#243a3a", "#3f6f5a", "#7fae5a", "#d9c14a", "#d98f43", "#c0453a"],
     over="#9b2f28")
@@ -790,10 +786,12 @@ _SPECS = (
         short="SST", order=15,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("sst_c", _CMAP_SST, 10.0, 32.0),
+        # 0..32 °C == the SST_ACTUAL palette's design range (violet 0 -> oxblood
+        # 32), so a given SST reads the SAME color as the site SST maps.
+        make_colors=_env_colors("sst_c", _CMAP_SST, 0.0, 32.0),
         fill_method=FillMethod.PCOLORMESH,
         make_colorbar=_env_colorbar("SST (°C)",
-                                    ticks=[10, 15, 20, 25, 30], extend="both"),
+                                    ticks=[0, 8, 16, 24, 32], extend="both"),
         # MSLP isobars for synoptic context (task: SST + MSLP contours).
         draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
