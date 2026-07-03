@@ -112,6 +112,39 @@ def _is_real_name(value) -> bool:
     return True
 
 
+def _spell_cardinals(n_max: int = 99) -> "frozenset[str]":
+    """The English cardinals 1..n_max in upper case ('ONE'..'NINETY-NINE')."""
+    ones = ["", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT",
+            "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN",
+            "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"]
+    tens = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY",
+            "EIGHTY", "NINETY"]
+    out: set[str] = set()
+    for n in range(1, n_max + 1):
+        if n < 20:
+            out.add(ones[n])
+        else:
+            t, o = divmod(n, 10)
+            out.add(tens[t] if o == 0 else f"{tens[t]}-{ones[o]}")
+    return frozenset(out)
+
+
+# An ATCF b-deck names a DESIGNATED-BUT-UNNAMED system with the spelled-out
+# cardinal of its storm number ("TEN" for JTWC TD 10W; NHC uses the same for an
+# unnamed Atlantic TD). That is a designation, NOT a real storm name, so the
+# tracks feed relabels it to the "##<letter>" ATCF id — the label the invests
+# already wear ("91W") and the one operators expect for a numbered depression.
+_ATCF_NUMBER_WORDS = _spell_cardinals(99)
+
+
+def _is_atcf_number_name(value) -> bool:
+    """True if ``value`` is the spelled-out cardinal an ATCF b-deck uses as the
+    'name' of a designated-but-unnamed system ('TEN' for TD 10W) — a designation
+    rather than a real storm name. No JMA/NHC name is an English cardinal, so
+    this never suppresses a genuine name."""
+    return str(value or "").strip().upper() in _ATCF_NUMBER_WORDS
+
+
 # ATCF basin prefix (USA_ATCF_ID first two letters) -> the trailing storm-id
 # letter used on the climatology Gantt (e.g. "EP" -> "E", so EP012023 -> 01E).
 _ATCF_BASIN_LETTER = {
@@ -144,6 +177,41 @@ def short_id_from_storm_num(storm_num, basin_short) -> Optional[str]:
     if letter is None or n <= 0 or n >= 90:
         return None
     return f"{n:02d}{letter}"
+
+
+def agency_sid_from_atcf_id(usa_atcf_id, basin_cfg, year) -> Optional[str]:
+    """Map an IBTrACS ``USA_ATCF_ID`` ('WP092026') to the agency SID the live
+    b-deck / knackwx path emits ('JTWC_WP092026'), so a current-season IBTrACS
+    entry and its live JTWC/NHC designation collapse onto ONE sid and merge in
+    ``merge_and_extract_storms`` instead of rendering as a duplicate UNNAMED
+    ghost on the tracks/home map.
+
+    Returns None (caller keeps the raw IBTrACS sid) when the id is unparseable,
+    an invest (>=90) or 00, a DIFFERENT basin than ``basin_cfg`` (so a
+    basin-crossed storm is never mis-merged onto this basin's numbering), or a
+    different year than the season being built. ``basin_cfg`` must carry
+    ``agency_name`` + ``short`` (the tracks BASINS dicts); the produced sid is
+    byte-identical to parse_bdeck's
+    ``f"{agency_name}_{short.upper()}{NN}{year}"``."""
+    s = str(usa_atcf_id or "").strip().upper()
+    if len(s) < 8:
+        return None
+    pre, num_s, yr_s = s[:2], s[2:4], s[4:8]
+    if not (num_s.isdigit() and yr_s.isdigit()):
+        return None
+    short = str(basin_cfg.get("short") or "").strip()
+    agency = str(basin_cfg.get("agency_name") or "").strip()
+    # The ATCF basin prefix must match THIS basin (WP<->wp, AL<->al, EP<->ep) so
+    # the remapped sid matches what this basin's live fetch produces; a mismatch
+    # (e.g. an EP-origin storm carried in the WP file) keeps the raw sid.
+    if not short or not agency or pre != short.upper():
+        return None
+    n = int(num_s)
+    if n <= 0 or n >= 90:
+        return None
+    if int(yr_s) != int(year):
+        return None
+    return f"{agency}_{short.upper()}{n:02d}{int(year)}"
 
 
 def designation_label(short_id, peak_wind_kt) -> str:
@@ -1246,7 +1314,32 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     # pick the same source -> identical canonical track per storm.
     ibtracs, live = merge_named_sources(ibtracs, live, name_col="NAME")
 
-    frames = [df for df in (ibtracs, live) if not df.empty]
+    # CROSS-SOURCE SID COLLISION (the WPAC provisional-twin case). With the
+    # IBTrACS current-season sid remapped to the agency form (load_ibtracs_
+    # current_year, via USA_ATCF_ID), a freshly-formed system appears in BOTH
+    # sources under ONE sid while carrying DIFFERENT names — the live b-deck has
+    # its JTWC number / JMA name (+ storm_num), IBTrACS still has it as an
+    # UNNAMED provisional NR entry. merge_named_sources contests by NAME and
+    # cannot reconcile that (the IBTrACS side is the UNNAMED placeholder it
+    # deliberately skips), so the two reach the concat below under one sid.
+    #
+    # We keep the UNION of both sources (drop NEITHER) with LIVE ORDERED FIRST,
+    # so drop_duplicates(keep="first") lets the live b-deck WIN every overlapping
+    # synoptic fix while IBTrACS-only fixes still fill genuine gaps. Keeping the
+    # union — rather than dropping the obs-lighter source — is load-bearing: the
+    # designation carrier (live's storm_num + real/ATCF name) MUST survive so the
+    # per-storm loop's `nums` is non-empty and the designation relabel fires
+    # (10W / the JMA name), never a bare UNNAMED. Dropping live whenever IBTrACS
+    # merely out-COUNTS it would discard that carrier and re-draw the very
+    # UNNAMED ghost this fix removes — and IBTrACS legitimately out-counts live
+    # during the fresh-designation window (b-deck starts at TCFA with 1-2 fixes),
+    # for a dissipated storm JTWC has trimmed to a stub, or generally in WPAC
+    # (IBTrACS carries the longer JMA-tracked pre-genesis phase). Live-first also
+    # keeps the winning track pristine (b-deck tropical fixes beat IBTrACS's
+    # lagged NR duplicates at shared times). PRE-REMAP this ordering is a no-op:
+    # raw IBTrACS sids never collided with live sids, so no cross-source
+    # (sid, time) pair existed to arbitrate.
+    frames = [df for df in (live, ibtracs) if not df.empty]
     if not frames:
         return []
     df = pd.concat(frames, ignore_index=True)
@@ -1424,6 +1517,19 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         names = [p["NAME"] for p in points if p["NAME"]
                  and p["NAME"] not in {"UNNAMED", "INVEST", "NAMELESS"}]
         name = names[0] if names else (points[0]["NAME"] if points else "UNNAMED")
+        # DESIGNATED-BUT-UNNAMED label. A JTWC/NHC-numbered system with no real
+        # name yet — its "name" is the ATCF spelled-out cardinal ("TEN" for TD
+        # 10W), a "#NN" parse_bdeck fallback, or a bare placeholder — surfaces
+        # its "##<letter>" ATCF designation (10W), the label the invests already
+        # wear and operators expect for a numbered depression. A genuine JMA/NHC
+        # name (BAVI) is kept. Invests keep the invest_x path's atcf_id label and
+        # PTCs keep their real designation, so both are excluded here; the
+        # designation only replaces a non-name.
+        if (not is_invest and not is_ptc and nums
+                and (not _is_real_name(name) or _is_atcf_number_name(name))):
+            desig = short_id_from_storm_num(nums[0], basin_short)
+            if desig:
+                name = desig
 
         # PTC->invest handoff bookkeeping (applied after the loop). An ACTIVE
         # DESIGNATED storm contributes the invest numbers it spawned (b-deck
