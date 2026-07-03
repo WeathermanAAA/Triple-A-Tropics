@@ -323,6 +323,25 @@ def load_ibtracs_current_year(csv_path: Path, basin_cfg: dict,
     d["WIND_KT"] = d.apply(lambda r: _best_wind(r, basin_cfg["wind_preference"]), axis=1)
     d["PRES_MB"] = d.apply(lambda r: _best_pressure(r, basin_cfg["pressure_preference"]), axis=1)
 
+    # SID remap: IBTrACS keys current-season entries by its own SID
+    # (season+genesis position), but each row carries USA_ATCF_ID cross-
+    # referencing the agency ATCF id ("WP092026"). Remap to the agency sid form
+    # ("JTWC_WP092026" — the sid the live b-deck/knackwx path emits) so a
+    # freshly-formed system's UNNAMED provisional IBTrACS entry and its live
+    # designation share ONE sid and MERGE in merge_and_extract_storms, instead
+    # of rendering as a duplicate UNNAMED ghost on the tracks/home map. Done at
+    # the STORM level (one representative USA_ATCF_ID per raw sid) so a storm
+    # whose earliest fixes predate the id backfill is never split across two
+    # sids. A blank/foreign/invest USA_ATCF_ID leaves the raw sid untouched.
+    sid_remap: dict = {}
+    if "USA_ATCF_ID" in d.columns:
+        for raw_sid, grp in d.groupby("SID"):
+            for a in grp["USA_ATCF_ID"].dropna():
+                mapped = ac.agency_sid_from_atcf_id(a, basin_cfg, year)
+                if mapped:
+                    sid_remap[raw_sid] = mapped
+                    break
+
     rows = []
     for _, row in d.iterrows():
         ll = _parse_ibtracs_latlon(row)
@@ -330,7 +349,7 @@ def load_ibtracs_current_year(csv_path: Path, basin_cfg: dict,
             continue
         lat, lon = ll
         rows.append({
-            "SID": row["SID"],
+            "SID": sid_remap.get(row["SID"], row["SID"]),
             "NAME": (row.get("NAME") or "").strip() or "UNNAMED",
             "season": year,
             "time": row["ISO_TIME"].to_pydatetime(),
