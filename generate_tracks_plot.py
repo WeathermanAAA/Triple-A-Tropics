@@ -2542,10 +2542,22 @@ LIVE_BASIN_JS = r"""
   }
 
   function buildCardsHtml(storms) {
-    // SYNC: mirrors render_cards_html().
+    // SYNC: mirrors render_cards_html(). Cards are ordered strictly by
+    // formation date (earliest first) across ALL storms — no active-pin,
+    // no per-ACE ranking. Sort a COPY so the caller's storms array (which
+    // still drives the map layers in feed order) is left untouched.
+    var ordered = storms.slice().sort(function (a, b) {
+      var sa = (a.start || ""), sb = (b.start || "");
+      if (sa < sb) return -1;
+      if (sa > sb) return 1;
+      var ia = (a.sid || ""), ib = (b.sid || "");
+      if (ia < ib) return -1;
+      if (ia > ib) return 1;
+      return 0;
+    });
     var cards = [];
-    for (var i = 0; i < storms.length; i++) {
-      cards.push(buildStormCard(storms[i]));
+    for (var i = 0; i < ordered.length; i++) {
+      cards.push(buildStormCard(ordered[i]));
     }
     return cards.join("\n") || ('<div class="storm-card"><div class="storm-meta">' +
                                 'No storms yet this year.</div></div>');
@@ -3881,9 +3893,15 @@ def render_stats_html(header: dict, vocab: dict) -> str:
 
 
 def render_cards_html(storms: list[dict]) -> str:
-    """Storm-card list (innerHTML of #storms). SYNC: mirrored by
-    LIVE_BASIN_JS buildCardsHtml() — parity-tested, change both."""
-    return "\n".join(render_storm_card(s) for s in storms) or (
+    """Storm-card list (innerHTML of #storms). Cards are ordered strictly
+    by formation date (earliest first) across ALL storms — active systems
+    are NOT pinned to the top, and there is no per-ACE ranking. SYNC:
+    mirrored by LIVE_BASIN_JS buildCardsHtml() — parity-tested, change both.
+    (The feed's storms array carries its own ace_core ordering; card order
+    is owned here so it stays chronological regardless of feed order.)"""
+    ordered = sorted(storms, key=lambda s: ((s.get("start") or ""),
+                                            (s.get("sid") or "")))
+    return "\n".join(render_storm_card(s) for s in ordered) or (
         '<div class="storm-card"><div class="storm-meta">'
         'No storms yet this year.</div></div>'
     )
