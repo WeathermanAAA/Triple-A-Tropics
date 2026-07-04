@@ -1,0 +1,4 @@
+daily_active_users,no_cache_read_cost,90pct_cache_read_cost,98pct_cache_read_cost
+10000,113.04,8.06,0.0
+100000,1162.8,113.04,19.73
+500000,5828.4,579.6,113.04

@@ -1,0 +1,306 @@
+{
+  "$schema_version": "1.0",
+  "_doc": "Declarative satellite/product/domain registry. A new bird/product/sector is added by APPENDING config here; the tat-satellite-render backend and the browser toolkit both read this manifest. No bespoke code per satellite.",
+  "satellites": [
+    {
+      "id": "goes19",
+      "name": "GOES-19 (GOES-East)",
+      "generation": "GOES-R",
+      "sensor": "ABI",
+      "position_lon": -75.2,
+      "status": "operational",
+      "operational_from": "2025-04",
+      "source": {
+        "kind": "s3",
+        "bucket": "noaa-goes19",
+        "region": "us-east-1",
+        "path": "ABI-L1b-Rad{DOMAIN}/{YYYY}/{DOY}/{HH}/",
+        "format": "netcdf",
+        "license": "NOAA open data (public domain)"
+      },
+      "bands": {
+        "C01": 0.47,
+        "C02": 0.64,
+        "C03": 0.86,
+        "C04": 1.37,
+        "C05": 1.6,
+        "C06": 2.2,
+        "C07": 3.9,
+        "C08": 6.2,
+        "C09": 6.9,
+        "C10": 7.3,
+        "C11": 8.4,
+        "C12": 9.6,
+        "C13": 10.3,
+        "C14": 11.2,
+        "C15": 12.3,
+        "C16": 13.3
+      },
+      "native_green": false,
+      "green_recipe": "synthetic_cimss",
+      "domains": [
+        {
+          "id": "FD",
+          "name": "Full Disk",
+          "cadence_min": 10,
+          "base_px": 5424
+        },
+        {
+          "id": "CONUS",
+          "name": "CONUS",
+          "cadence_min": 5,
+          "base_px": 2500
+        },
+        {
+          "id": "M1",
+          "name": "Meso 1",
+          "cadence_min": 1,
+          "base_px": 2000,
+          "movable": true
+        },
+        {
+          "id": "M2",
+          "name": "Meso 2",
+          "cadence_min": 1,
+          "base_px": 2000,
+          "movable": true
+        }
+      ],
+      "projection": "geos",
+      "pyramid": {
+        "scheme": "xyz",
+        "tile": 256,
+        "format": "webp"
+      }
+    },
+    {
+      "id": "himawari9",
+      "name": "Himawari-9",
+      "generation": "Himawari",
+      "sensor": "AHI",
+      "position_lon": 140.7,
+      "status": "operational",
+      "operational_from": "2022-12",
+      "source": {
+        "kind": "s3",
+        "bucket": "noaa-himawari9",
+        "region": "us-east-1",
+        "path": "AHI-L1b-{DOMAIN}/{YYYY}/{MM}/{DD}/{HHMM}/",
+        "format": "netcdf",
+        "license": "JMA via NOAA - attribution requested, no endorsement implied"
+      },
+      "bands": {
+        "B01": 0.47,
+        "B02": 0.51,
+        "B03": 0.64,
+        "B04": 0.86,
+        "B05": 1.6,
+        "B06": 2.3,
+        "B07": 3.9,
+        "B08": 6.2,
+        "B09": 6.9,
+        "B10": 7.3,
+        "B11": 8.6,
+        "B12": 9.6,
+        "B13": 10.4,
+        "B14": 11.2,
+        "B15": 12.4,
+        "B16": 13.3
+      },
+      "native_green": true,
+      "green_recipe": "native_B02",
+      "domains": [
+        {
+          "id": "FD",
+          "name": "Full Disk",
+          "cadence_min": 10,
+          "base_px": 5500
+        },
+        {
+          "id": "JP",
+          "name": "Japan/Target",
+          "cadence_min": 2.5,
+          "base_px": 2000,
+          "movable": true
+        }
+      ],
+      "projection": "geos",
+      "pyramid": {
+        "scheme": "xyz",
+        "tile": 256,
+        "format": "webp"
+      }
+    },
+    {
+      "id": "gridsat_goes",
+      "name": "GridSat-GOES (reprocessed 1994-2015)",
+      "generation": "legacy-CDR",
+      "sensor": "GOES I-M/N-P Imager",
+      "status": "archive",
+      "operational_from": "1994-08",
+      "operational_to": "2015",
+      "source": {
+        "kind": "ncei",
+        "dataset": "C00993",
+        "format": "netcdf-cf",
+        "cadence_min": 60,
+        "license": "NOAA CDR - public"
+      },
+      "bands": {
+        "ch2_39": 3.9,
+        "ch3_wv": 6.7,
+        "ch4_ir": 11.0,
+        "ch5_ir": 12.0,
+        "ch1_vis": 0.6
+      },
+      "native_green": false,
+      "green_recipe": "none_ir_only",
+      "domains": [
+        {
+          "id": "FD",
+          "name": "East+West mapped",
+          "cadence_min": 60,
+          "base_px": 1000
+        }
+      ],
+      "projection": "equirect_0.04deg",
+      "pyramid": {
+        "scheme": "xyz",
+        "tile": 256,
+        "format": "webp"
+      },
+      "archive_mode": "on_demand_render",
+      "era_notes": "5 channels, hourly, 4km IR. UI must gray-out 16-ch RGBs and show 'legacy era' banner."
+    }
+  ],
+  "products": [
+    {
+      "id": "geocolor",
+      "name": "GeoColor",
+      "kind": "composite",
+      "recipe": "geocolor_cira",
+      "requires_bands": [
+        "C01",
+        "C02",
+        "C03",
+        "C13"
+      ],
+      "day_night": true,
+      "palette": null
+    },
+    {
+      "id": "ch13_clean_ir",
+      "name": "Clean IR (10.3um)",
+      "kind": "single",
+      "band": "C13",
+      "palette_default": "rainbow_ir",
+      "palette_alt": [
+        "dvorak_bd_corrected"
+      ],
+      "colorbar": "right",
+      "data_raster": true,
+      "units": "K"
+    },
+    {
+      "id": "airmass",
+      "name": "Air Mass",
+      "kind": "rgb",
+      "recipe": {
+        "R": [
+          "C08",
+          "-",
+          "C10"
+        ],
+        "G": [
+          "C12",
+          "-",
+          "C13"
+        ],
+        "B": [
+          "C08",
+          "invert"
+        ]
+      },
+      "day_night": true
+    },
+    {
+      "id": "dust",
+      "name": "Dust",
+      "kind": "rgb",
+      "recipe": {
+        "R": [
+          "C15",
+          "-",
+          "C13"
+        ],
+        "G": [
+          "C14",
+          "-",
+          "C11"
+        ],
+        "B": [
+          "C13"
+        ]
+      },
+      "day_night": true
+    },
+    {
+      "id": "sandwich",
+      "name": "Sandwich",
+      "kind": "blend",
+      "recipe": {
+        "base": "C02",
+        "overlay": "C13",
+        "overlay_alpha": 0.5,
+        "overlay_palette": "ir_enhanced"
+      }
+    }
+  ],
+  "overlays": [
+    {
+      "id": "mrms",
+      "name": "US Radar (MRMS)",
+      "scope": "US",
+      "source": "noaa-mrms-pds",
+      "cadence_min": 2,
+      "shared_with": "TAW"
+    },
+    {
+      "id": "imerg",
+      "name": "Global Precip (IMERG Early)",
+      "scope": "global",
+      "cadence_min": 30,
+      "latency_h": 4,
+      "shared_with": "TAW",
+      "label": "satellite estimate, not radar"
+    },
+    {
+      "id": "glm",
+      "name": "Lightning (GLM)",
+      "scope": "Americas",
+      "source": "goes GLM-L2",
+      "cadence_s": 20,
+      "shared_with": "TAW"
+    },
+    {
+      "id": "mtgli",
+      "name": "Lightning (MTG-LI)",
+      "scope": "Europe/Africa",
+      "source": "eumetsat",
+      "shared_with": "TAW"
+    },
+    {
+      "id": "ecmwf_ifs",
+      "name": "ECMWF IFS/AIFS fields",
+      "scope": "global",
+      "license": "CC-BY-4.0 (attribution)",
+      "shared_with": "TAW"
+    }
+  ],
+  "palettes": [
+    "rainbow_ir",
+    "dvorak_bd_corrected",
+    "__user_pal__"
+  ],
+  "notes": "shared_with:'TAW' marks components built once and mounted in both /satellite/ and the MapLibre map."
+}

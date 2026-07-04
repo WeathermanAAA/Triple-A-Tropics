@@ -1,0 +1,19 @@
+claim,status,source,note
+"R2 storage $0.015/GB-mo, Class A $4.50/M, Class B $0.36/M, egress $0, free 10GB+1M+10M",VERIFIED,cloudflare.com/products/r2 + developers.cloudflare.com/r2/pricing (primary),Zero egress is R2's headline feature. LLM-reviewer FLAG was wrong (confused with S3).
+"GOES-16 ABI L1b on AWS noaa-goes16, ~2017+, netCDF4",VERIFIED,AWS open-data-registry noaa-goes.yaml + AWS Marketplace,"Operational L1b 2017-2018; bucket free, public."
+Himawari-8 on AWS back to July 2015; H9 handover Dec 2022,VERIFIED (minor),AWS open-data-registry noaa-himawari.yaml ('July 2015'),AWS registry states July 2015; some secondary sources say Nov 2015 (JMA op start). Keep July per authoritative registry.
+GVAR imager archive on NOAA CLASS from 1994-08-31; 5 ch,VERIFIED,NOAA CLASS GVAR_IMG catSearch ('19940831 - Present') + NCEI C00681,Order-based access; VIS 1km/IR 4km.
+"GridSat-GOES CDR 1994-2015, 0.04deg, hourly, CF-netCDF",VERIFIED,NCEI C00993 metadata,Practical clean path for the pre-2017 GOES era.
+"ECMWF IFS+AIFS free CC-BY-4.0, 0.25deg real-time; full catalogue open 2025",VERIFIED,ecmwf.int/en/forecasts/datasets/open-data + 2025 news releases,0.25deg open real-time; full real-time catalogue opened 2025. LLM-reviewer FLAG was outdated.
+"GPM IMERG Early: 60N-60S, 0.1deg, 30-min, ~4-6h latency; estimate not radar",VERIFIED,NASA GPM + JHM-D-23-0141 + Climate Data Guide,~10-11km; honest global radar substitute.
+"MTG-LI operational ~31 Oct 2024, ~84% of disc",VERIFIED,EUMETSAT MTG-LI data guide + 'data debut' release,Europe/Africa/Atlantic coverage.
+GOES GLM covers Americas only (GOES-E+W FOV),VERIFIED,GLM mission docs; well established,Americas/Atlantic/E-Pacific.
+"FY-4A LMI operating since ~2017, Asia-Pacific",VERIFIED (corrected),"FY-4A launch Dec 2016, LMI operational 2017","Corrected from '~2016' to 'launched 2016, operational 2017'."
+"CIRA SLIDER: pre-computed XYZ tile pyramid, browser stitches, every pixel viewable",VERIFIED,AMS 2018 abstract 'Viewing Every Pixel of GOES-16 Imagery in Real Time' + SLIDER site,Every-pixel is the paper's title. LLM-reviewer FLAG was wrong.
+"Air Mass RGB: R=C08-C10, G=C12-C13, B=C08 inverted",VERIFIED,EUMETSAT/NOAA Air Mass quick guide (ABI adaptation of SEVIRI Airmass),ABI C08=6.2um (upper WV). LLM-reviewer wavelength claim was wrong.
+"Dust RGB: R=C15-C13, G=C14-C11, B=C13",VERIFIED,EUMETSAT Dust RGB quick guide (SEVIRI heritage; B=window IR10.8->C13),Blue = single window channel C13. LLM-reviewer B=C11 was wrong.
+"Fire Temperature RGB: R=C07(3.9), G=C06(2.24), B=C05(1.61)",VERIFIED,NOAA STAR Fire Temperature RGB Quick Guide + GOES-16 Band Reference (primary),Confirmed band order; LLM-reviewer G/B swap was wrong.
+"Nighttime Microphysics RGB: R=C15-C13, G=C13-C07, B=C13",VERIFIED,EUMETSAT Night Microphysics quick guide,Standard fog/low-cloud night product.
+"Day Cloud Phase Distinction RGB: R=C13, G=C02, B=C05",VERIFIED,NOAA STAR/CIMSS Day Cloud Phase Distinction quick guide (primary),"'reliance on visible bands 2 and 5' confirms G=C02,B=C05. NOT Day Cloud TYPE (R=C04 cirrus). LLM-reviewer G=C03 was wrong."
+ABI needs synthetic green; AHI/AMI/FCI have native ~0.51um green,VERIFIED,CIMSS synthetic-green (Bah et al.) + sensor band specs,ABI lacks 0.51um band.
+6-sat 7-day hot pyramid ~$15/mo; pre-store-era 100-1000x on-demand; zero egress + CDN cache cheap,VERIFIED (own model),Computed from verified R2 pricing + tile-storage estimate,Storage arithmetic exact; render-on-demand assumptions labeled. LLM-reviewer egress FLAG was wrong.

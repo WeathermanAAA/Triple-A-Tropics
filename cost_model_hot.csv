@@ -1,0 +1,13 @@
+config,retention_days,hot_storage_GB,monthly_storage_cost
+Baseline 3-sat (GOES-E/W+Him),1,70.1,0.9
+Baseline 3-sat (GOES-E/W+Him),2,140.3,1.95
+Baseline 3-sat (GOES-E/W+Him),3,210.4,3.01
+Baseline 3-sat (GOES-E/W+Him),7,491.0,7.22
+Baseline 3-sat (GOES-E/W+Him),14,982.1,14.58
+Baseline 3-sat (GOES-E/W+Him),30,2104.5,31.42
+Expanded 6-sat ring,1,140.3,1.95
+Expanded 6-sat ring,2,280.6,4.06
+Expanded 6-sat ring,3,420.9,6.16
+Expanded 6-sat ring,7,982.1,14.58
+Expanded 6-sat ring,14,1964.2,29.31
+Expanded 6-sat ring,30,4208.9,62.98
