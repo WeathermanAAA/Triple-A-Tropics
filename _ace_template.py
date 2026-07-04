@@ -260,7 +260,13 @@ HTML_TEMPLATE = """<!doctype html>
   </footer>
 </div>
 <script>
-const DATA = {payload};
+// DATA is the embedded snapshot baked by this cron run — the fallback if
+// the live fetch below fails. It becomes `let` so the live-feed overlay
+// (initLiveAce, bottom of this script) can swap in the freshest poller
+// value before anything is drawn. CURRENT_YEAR stays pinned to the BAKED
+// year: it is the season-rollover guard that validateAceFeed() checks a
+// fresh feed against, so it must not move when DATA is replaced.
+let DATA = {payload};
 const BASIN_SHORT = "{basin_short_label}";
 const CURRENT_YEAR = parseInt(DATA.current.label, 10);
 const NS = "http://www.w3.org/2000/svg";
@@ -270,10 +276,12 @@ const NS = "http://www.w3.org/2000/svg";
 // cumulative curve for any such year so the cumulative / rank / daily panels and
 // the year selector treat EVERY year uniformly — no "year unavailable" gap. A
 // zero season never out-ranks a real one, so the rank trajectory is unchanged.
-(DATA.rankings || []).forEach((r) => {{
-  if (DATA.all_years && !DATA.all_years[r.year])
-    DATA.all_years[r.year] = new Array(DATA.doy.length).fill(0);
-}});
+function synthMissingYears() {{
+  (DATA.rankings || []).forEach((r) => {{
+    if (DATA.all_years && !DATA.all_years[r.year])
+      DATA.all_years[r.year] = new Array(DATA.doy.length).fill(0);
+  }});
+}}
 
 // Storm SSHWS palette — colors are the SINGLE SOURCE OF TRUTH from
 // ace_core.SSHS_COLORS (injected), never invented here: TD blue, TS green,
@@ -393,15 +401,21 @@ const ACE_M = {{ t: 14, b: 30 }};
 const ACE_VBH = 440;
 const ACE_PH = ACE_VBH - ACE_M.t - ACE_M.b;
 
-const yMaxCandidates = [DATA.climo.max[DATA.climo.max.length - 1] || 0];
-for (const y in DATA.all_years) {{
-  const arr = DATA.all_years[y];
-  if (arr && arr.length) yMaxCandidates.push(arr[arr.length - 1]);
+// Y-axis scale depends on DATA, so it is (re)computed in boot() AFTER the
+// live feed may have replaced DATA — otherwise a fresh current-year total
+// taller than the baked snapshot would clip. aceY() reads aceYMax lazily.
+let aceYMax = 1;
+function computeAceScale() {{
+  const yMaxCandidates = [DATA.climo.max[DATA.climo.max.length - 1] || 0];
+  for (const y in DATA.all_years) {{
+    const arr = DATA.all_years[y];
+    if (arr && arr.length) yMaxCandidates.push(arr[arr.length - 1]);
+  }}
+  aceYMax = (Math.max.apply(null, yMaxCandidates) || 1) * 1.05;
 }}
-const aceYMax = (Math.max.apply(null, yMaxCandidates) || 1) * 1.05;
 const aceY = (v) => ACE_M.t + ACE_PH - (v / aceYMax) * ACE_PH;
 
-(function initAcePanel() {{
+function initAcePanel() {{
   // Y gridlines + labels
   const ySteps = 5;
   const yStep = niceStep(aceYMax / ySteps);
@@ -492,7 +506,7 @@ const aceY = (v) => ACE_M.t + ACE_PH - (v / aceYMax) * ACE_PH;
   el("g", {{ id: "selGroup" }}, aceSvg);
   // No in-chart watermark over the data: attribution lives in the small,
   // low-emphasis header credit line ("@WeathermanAAA_ · Triple-A-Tropics").
-}})();
+}}
 
 let selectedYear = CURRENT_YEAR;
 // Cached per-render arrays, used for crosshair tooltip.
@@ -871,7 +885,7 @@ document.addEventListener("click", (evt) => {{
 
 // ===== Panel 5: SSHWS legend strip (renders once) =====
 const legSvg = document.getElementById("chartLegend");
-(function initLegend() {{
+function initLegend() {{
   const items = [
     ["TD", "≤33 kt"], ["TS", "34–63"], ["C1", "64–82"],
     ["C2", "83–95"],  ["C3", "96–112"],["C4", "113–136"],
@@ -891,7 +905,7 @@ const legSvg = document.getElementById("chartLegend");
       "font-weight": 700, fill: "var(--fg)" }}, legSvg)
       .textContent = `${{cat}} (${{krange}})`;
   }});
-}})();
+}}
 
 // ===== Cross-panel crosshair (panels 1, 2, 3 share X axis) =====
 // renderRankPanel and renderDailyPanel both clear() their svg on every
@@ -1091,7 +1105,7 @@ window.WPAceChart = {{
 }};
 
 // ===== Rank list (with search, keyboard nav) =====
-(function initRankList() {{
+function initRankList() {{
   // The builder already sorts `rankings` by YTD ACE (cumulative through the
   // current day-of-year) with rank assigned — apples-to-apples, so "Rank 17/82"
   // is meaningful. We render that order verbatim: one ACE column (the YTD value
@@ -1219,10 +1233,76 @@ window.WPAceChart = {{
       setSelectedYear(yr);
     }}
   }});
-}})();
+}}
 
-// Initial render — current year on load
-setSelectedYear(CURRENT_YEAR);
+// ===== Live-feed overlay: draw once from the freshest data =====
+// The chart is JS-drawn (the baked HTML ships EMPTY <svg> panels), so unlike
+// the per-basin tracks page there is no server-rendered frame to show first.
+// We therefore fetch the poller-written ACE feed and draw the whole page from
+// it; the embedded {{payload}} snapshot this cron run baked is the fallback,
+// used only if the fetch fails, times out, or fails the season-rollover guard.
+// ONE draw — no stale-then-fresh flicker. This is the same live path the home
+// status panel + global map already read (cdn.triple-a-tropics.com/feeds/,
+// cache-busted + no-store so a freshly poller-written R2 object is picked up).
+const FEED_URL = "{feed_url}";
+const BAKED_UPDATED = "{updated}";
+
+function validateAceFeed(d) {{
+  if (!d || !d.current || !Array.isArray(d.doy) || !d.climo ||
+      !Array.isArray(d.rankings) || !d.all_years) return false;
+  // Season-rollover guard: never paint next year's cumulative curve onto this
+  // baked "{current_year}" frame — hold the snapshot until the cron rebuilds.
+  return parseInt(d.current.label, 10) === CURRENT_YEAR;
+}}
+
+function fmtAsOf(z) {{
+  // "2026-07-04T13:48:48Z" -> "2026-07-04 13:48 UTC"; null on anything else.
+  if (typeof z !== "string" || z.length < 16) return null;
+  if (z.charAt(4) !== "-" || z.charAt(10) !== "T") return null;
+  return z.slice(0, 10) + " " + z.slice(11, 16) + " UTC";
+}}
+
+function updateAsOf() {{
+  const credit = document.getElementById("headerCredit");
+  if (!credit) return;
+  // Surface the feed's TRUE freshness (generated_utc); the baked build-time
+  // stamp stands only when the live fetch was rejected or absent.
+  credit.textContent = "@WeathermanAAA_ · Triple-A-Tropics · " +
+    (fmtAsOf(DATA.generated_utc) || BAKED_UPDATED);
+}}
+
+// The single draw entry point. Every DATA-dependent build runs here, so the
+// page always reflects whatever DATA holds when boot() is called (the fresh
+// feed if accepted, the baked snapshot otherwise). Runs exactly once.
+function boot() {{
+  synthMissingYears();
+  computeAceScale();
+  initAcePanel();
+  initLegend();
+  initRankList();
+  setSelectedYear(CURRENT_YEAR);
+  updateAsOf();
+}}
+
+(function initLiveAce() {{
+  let drawn = false;
+  function draw() {{ if (drawn) return; drawn = true; boot(); }}
+  if (typeof fetch !== "function") {{ draw(); return; }}
+  try {{
+    const url = FEED_URL + (FEED_URL.indexOf("?") >= 0 ? "&" : "?") +
+      "t=" + Date.now();
+    fetch(url, {{ cache: "no-store" }})
+      .then((r) => {{ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }})
+      .then((fresh) => {{ if (validateAceFeed(fresh)) DATA = fresh; }})
+      .catch((e) => {{ if (typeof console !== "undefined")
+        console.warn("[live-ace] keeping baked render:", e); }})
+      .finally(draw);
+    // Hung-fetch guard: draw the baked snapshot if the network never answers.
+    setTimeout(draw, 4000);
+  }} catch (e) {{
+    draw();
+  }}
+}})();
 </script>
 </body>
 </html>

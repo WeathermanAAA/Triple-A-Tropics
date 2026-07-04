@@ -139,6 +139,13 @@ CLIMO_END = 2020
 FETCH_LIVE = True
 FETCH_TIMEOUT = 10  # seconds
 
+# R2 live-feed base. The ACE page's client-side overlay refetches
+# {basin}_ace_data.json from here at view time (cache-busted + no-store) so the
+# chart tracks the poller, not this cron's 6-hourly bake — the same live path
+# the home status panel and global map already read. Must match the key the
+# update-ace workflow uploads to (feeds/{basin}_ace_data.json).
+FEEDS_BASE_URL = "https://cdn.triple-a-tropics.com/feeds/"
+
 # Browser-like User-Agent — .mil/.gov sites routinely block plain urllib.
 FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
             "AppleWebKit/605.1.15 (KHTML, like Gecko) "
@@ -391,6 +398,10 @@ def render_html(payload: dict, basin_cfg: dict, current_year: int,
         climo_start=climo_start,
         climo_end=climo_end,
         updated=build_now.strftime("%Y-%m-%d %H:%M UTC"),
+        # Basin-specific live feed the client-side overlay refetches at view
+        # time; the URL alone pins the basin (the ACE feed carries no basin
+        # field), so fetching {basin}_ace_data.json guarantees the right one.
+        feed_url=f"{FEEDS_BASE_URL}{basin_cfg['short']}_ace_data.json",
         live_note=live_note,
         # Single source of truth for SSHWS category colors (TD blue … C1 yellow …
         # C5 purple). The chart never invents a palette.
