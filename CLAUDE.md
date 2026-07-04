@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working agreement (standing rule — in effect until Andrew says otherwise)
+
+Andrew is frequently **unavailable** (traveling, laptop closed) for reviews, decisions, and manual steps. Work **autonomously on best judgment** — do not block waiting on him.
+
+- **Never leave work uncommitted or stranded on a local branch.** A dead Codespace once cost 600+ uncommitted lines. As soon as a piece is done, tested, and safe, **commit and push it to `main`** so it deploys. This overrides the generic "branch first / commit only when asked" default for this repo — the site's whole model is commit-to-`main`.
+- **Make design/art calls yourself** using the documented house style (sober, data-forward; the locked palettes + tokens; no pulse rings/fireworks/em-dashes/cutesy taglines — see the plot-style memory). Where you'd normally stop for art sign-off, decide and proceed; jot down what you landed so Andrew can eyeball it later, but don't hold work for it.
+- **Keep the gates that protect the live site.** ACE/data-critical and cross-repo (`ace_core`) changes still get an adversarial review + a byte-identical ACE check (compare `--no-live` data output before/after) **before** merge. No irreversible/destructive ops. But once a change passes its own gate, **land it** — don't hold it for review.
+- **Only Railway web-UI deploys and real-secret steps truly need Andrew's hands.** For those: commit + push the code anyway (nothing left uncommitted), and append the exact manual step (repo, command, why) to a single running **QUEUED manual steps** list so it's ready when he's back.
+
 ## What this repo is
 
 Triple-A-Tropics is a static GitHub Pages site (`triple-a-tropics.com`). Python generator scripts run on scheduled GitHub Actions, re-render data products (charts, maps, GIFs, interactive pages) into plain HTML/PNG/JSON files, and commit them back to `main`. No server, no database — the repo *is* the site. Understand this model before making changes: if a commit lands on `main`, it is live within ~60 s.
