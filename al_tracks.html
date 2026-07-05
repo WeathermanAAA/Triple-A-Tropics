@@ -261,7 +261,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-07-04 20:38 UTC</div>
+        <div class="sub" id="as-of">As of 2026-07-05 04:17 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>1</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">0.41 ACE</span></div>
     </div>
@@ -3748,10 +3748,22 @@
   }
 
   function buildCardsHtml(storms) {
-    // SYNC: mirrors render_cards_html().
+    // SYNC: mirrors render_cards_html(). Cards are ordered strictly by
+    // formation date (earliest first) across ALL storms — no active-pin,
+    // no per-ACE ranking. Sort a COPY so the caller's storms array (which
+    // still drives the map layers in feed order) is left untouched.
+    var ordered = storms.slice().sort(function (a, b) {
+      var sa = (a.start || ""), sb = (b.start || "");
+      if (sa < sb) return -1;
+      if (sa > sb) return 1;
+      var ia = (a.sid || ""), ib = (b.sid || "");
+      if (ia < ib) return -1;
+      if (ia > ib) return 1;
+      return 0;
+    });
     var cards = [];
-    for (var i = 0; i < storms.length; i++) {
-      cards.push(buildStormCard(storms[i]));
+    for (var i = 0; i < ordered.length; i++) {
+      cards.push(buildStormCard(ordered[i]));
     }
     return cards.join("\n") || ('<div class="storm-card"><div class="storm-meta">' +
                                 'No storms yet this year.</div></div>');
