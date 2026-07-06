@@ -81,16 +81,18 @@ def _seg_cmap(name, anchors):
 # sweep; white-hot overshoot core. Domain -95 .. +40 C. (Warm tail changed from
 # blue to gray 2026-05-28 per Andrew - copy TT so landmasses are visible.)
 _RAINBOW_IR_ANCHORS = [
-    # Purple band shifted ~10 C warmer 2026-07-05 (per Andrew): pure purple now
-    # begins at ~-70 C (was ~-84), so more of the cold tops (-70..-80) read
-    # purple instead of dark-maroon/red. The coldest anchors (magenta -90,
-    # white-hot -95) are UNCHANGED, and the red-and-warmer side (-58 up) is
-    # byte-identical to before -- only the red->purple transition moved warmer.
+    # Purple band re-anchored 2026-07-05..07-06 (per Andrew). The dark-red->purple
+    # transition is a ~3 C band: -70 C still reads DARK RED and eases into FULL
+    # purple by -73 C (full-purple anchor moved -72 -> -73; the old -66 maroon-
+    # purple anchor became a -70 dark-red anchor). Below -73 the purple->magenta
+    # ->white gradation and the coldest anchors (-90 magenta, -95 white-hot) are
+    # UNCHANGED, and the red-and-warmer side (-58 up) is byte-identical -- only the
+    # -70..-73 onset was tuned.
     (-95.0, 1.00, 1.00, 1.00),  # white-hot overshoot core
     (-90.0, 0.88, 0.25, 0.98),  # magenta
     (-80.0, 0.72, 0.10, 0.74),  # magenta -> purple
-    (-72.0, 0.62, 0.06, 0.62),  # purple (band begins ~-70; was at -84)
-    (-66.0, 0.42, 0.03, 0.22),  # maroon-purple
+    (-73.0, 0.62, 0.06, 0.62),  # full purple -- onset (was -72)
+    (-70.0, 0.60, 0.03, 0.05),  # dark red -- transition to purple begins here (~3 C band)
     (-61.0, 0.78, 0.05, 0.04),  # deep red
     (-58.0, 0.96, 0.16, 0.04),  # red
     (-50.0, 1.00, 0.45, 0.05),  # orange
