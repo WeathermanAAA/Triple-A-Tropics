@@ -81,19 +81,19 @@ def _seg_cmap(name, anchors):
 # sweep; white-hot overshoot core. Domain -95 .. +40 C. (Warm tail changed from
 # blue to gray 2026-05-28 per Andrew - copy TT so landmasses are visible.)
 _RAINBOW_IR_ANCHORS = [
-    # Purple band re-anchored 2026-07-05..07-06 (per Andrew). The dark-red->purple
-    # transition is a ~3 C band: -70 C still reads DARK RED and eases into FULL
-    # purple by -73 C (full-purple anchor moved -72 -> -73; the old -66 maroon-
-    # purple anchor became a -70 dark-red anchor). Below -73 the purple->magenta
-    # ->white gradation and the coldest anchors (-90 magenta, -95 white-hot) are
-    # UNCHANGED, and the red-and-warmer side (-58 up) is byte-identical -- only the
-    # -70..-73 onset was tuned.
+    # PURE DEGREE-REMAP of the ORIGINAL palette (2026-07-06). The color VALUES are
+    # the original ones verbatim (deep maroon 0.55/0.02/0.06, maroon-purple, the
+    # saturated purple 0.62/0.06/0.62, magenta) -- ONLY the cold-end degrees moved.
+    # The purple gradient (maroon-purple -> purple -> magenta) is stretched to span
+    # ~-70..-90 so it BEGINS at ~-70 C (was ~-80), while magenta stays -90 and white
+    # -95 and the whole warm side (red -58 and up) is byte-identical. Original
+    # degrees were: deep red -66, dark maroon -72, maroon-purple -78, purple -84.
     (-95.0, 1.00, 1.00, 1.00),  # white-hot overshoot core
     (-90.0, 0.88, 0.25, 0.98),  # magenta
-    (-80.0, 0.72, 0.10, 0.74),  # magenta -> purple
-    (-73.0, 0.62, 0.06, 0.62),  # full purple -- onset (was -72)
-    (-70.0, 0.60, 0.03, 0.05),  # dark red -- transition to purple begins here (~3 C band)
-    (-61.0, 0.78, 0.05, 0.04),  # deep red
+    (-80.0, 0.62, 0.06, 0.62),  # purple        (orig color; was -84)
+    (-70.0, 0.42, 0.03, 0.22),  # maroon-purple (orig color; was -78) -- purple begins ~-70
+    (-67.0, 0.55, 0.02, 0.06),  # dark maroon   (orig color; was -72)
+    (-63.0, 0.80, 0.05, 0.03),  # deep red      (orig color; was -66)
     (-58.0, 0.96, 0.16, 0.04),  # red
     (-50.0, 1.00, 0.45, 0.05),  # orange
     (-44.0, 1.00, 0.70, 0.08),  # amber
