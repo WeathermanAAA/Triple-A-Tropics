@@ -1578,12 +1578,15 @@ function makeSatViewer(idPrefix, opts) {
   }
   // ---- locked frame box ------------------------------------------------------
   // Pin the visible <img> to ONE fixed, centered box per loop, sized from the
-  // reference (first-painted) frame's contain-fit in the stage. Every frame
-  // then renders into the SAME rect (object-fit:fill), so per-frame pixel-size
-  // quirks (e.g. a GOES meso sector re-aim changing the PNG height mid-window)
-  // can never re-letterbox or re-center the imagery between frames. A frame
-  // whose dims differ from the reference stretches a few % instead of making
-  // the whole framing jump. Re-applied on resize; re-locked per band/sector.
+  // reference (first-painted) frame's contain-fit in the stage, so per-frame
+  // pixel-size quirks (e.g. a GOES meso sector re-aim, or a square Himawari
+  // Target vs a slightly taller GOES meso PNG) can't re-letterbox or re-center
+  // the framing between frames. Each frame draws with object-fit:CONTAIN, so it
+  // is ALWAYS shown at its OWN native aspect -- letterboxed inside the box when
+  // its dims differ from the reference, and NEVER stretched to a non-native
+  // (e.g. landscape) aspect that would squash a round eye. The box aspect
+  // follows the actual frame dims, so square sectors stay square and any future
+  // sector renders undistorted. Re-applied on resize; re-locked per band/sector.
   function satApplyFrameBox() {
     var stage = satEl("stage"), img = satEl("frame");
     if (!stage || !img || !sat.boxRefW || !sat.boxRefH) return;
@@ -1595,7 +1598,7 @@ function makeSatViewer(idPrefix, opts) {
     img.style.left = "50%"; img.style.top = "50%";
     img.style.right = "auto"; img.style.bottom = "auto";
     img.style.transform = "translate(-50%, -50%)";
-    img.style.objectFit = "fill";
+    img.style.objectFit = "contain";
   }
   function satLockFrameBox(im) {
     if (!im || !im.naturalWidth) return;
