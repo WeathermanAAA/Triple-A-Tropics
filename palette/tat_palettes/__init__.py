@@ -81,12 +81,17 @@ def _seg_cmap(name, anchors):
 # sweep; white-hot overshoot core. Domain -95 .. +40 C. (Warm tail changed from
 # blue to gray 2026-05-28 per Andrew - copy TT so landmasses are visible.)
 _RAINBOW_IR_ANCHORS = [
+    # Purple band shifted ~10 C warmer 2026-07-05 (per Andrew): pure purple now
+    # begins at ~-70 C (was ~-84), so more of the cold tops (-70..-80) read
+    # purple instead of dark-maroon/red. The coldest anchors (magenta -90,
+    # white-hot -95) are UNCHANGED, and the red-and-warmer side (-58 up) is
+    # byte-identical to before -- only the red->purple transition moved warmer.
     (-95.0, 1.00, 1.00, 1.00),  # white-hot overshoot core
     (-90.0, 0.88, 0.25, 0.98),  # magenta
-    (-84.0, 0.62, 0.06, 0.62),  # purple
-    (-78.0, 0.42, 0.03, 0.22),  # maroon-purple
-    (-72.0, 0.55, 0.02, 0.06),  # dark maroon
-    (-66.0, 0.80, 0.05, 0.03),  # deep red
+    (-80.0, 0.72, 0.10, 0.74),  # magenta -> purple
+    (-72.0, 0.62, 0.06, 0.62),  # purple (band begins ~-70; was at -84)
+    (-66.0, 0.42, 0.03, 0.22),  # maroon-purple
+    (-61.0, 0.78, 0.05, 0.04),  # deep red
     (-58.0, 0.96, 0.16, 0.04),  # red
     (-50.0, 1.00, 0.45, 0.05),  # orange
     (-44.0, 1.00, 0.70, 0.08),  # amber
