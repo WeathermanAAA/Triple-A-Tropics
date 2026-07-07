@@ -100,7 +100,7 @@
       container: this.el, style: darkStyle(),
       bounds: b ? [[b[0], b[1]], [b[2], b[3]]] : [[-160, -60], [10, 60]],
       fitBoundsOptions: { padding: 24 },
-      minZoom: (m.minzoom || 0), maxZoom: (m.maxzoom || 5) + 2,   // allow slight over-zoom
+      minZoom: (m.minzoom || 0), maxZoom: (m.maxzoom || 5) + 1,   // native + 1 over-zoom level
       renderWorldCopies: false, attributionControl: false, cooperativeGestures: true,
       preserveDrawingBuffer: true
     });
@@ -132,6 +132,14 @@
 
     this.onStatus('ready', m.latest);
     this._updateReadout();
+    // Constrain zoom-OUT to the data footprint: once the initial fitBounds
+    // settles, pin minZoom to that zoom so you can never zoom out into empty
+    // global space (a regional product is never a tiny patch on the whole world).
+    var self = this;
+    this.map.once('idle', function () {
+      self._fitZoom = self.map.getZoom();
+      self.map.setMinZoom(Math.max(0, self._fitZoom - 0.15));
+    });
   };
 
   VP._addFurniture = function (geo) {
