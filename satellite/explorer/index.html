@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Satellite Explorer (shadow) · Triple-A-Tropics</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/satellite/subnav.css">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  .tv-wrap{position:relative;border-radius:10px;overflow:hidden;background:#0a0d12;
+    border:1px solid var(--border,#242c36)}
+  #tv-map{width:100%;aspect-ratio:16/10;min-height:420px;background:#0a0d12}
+  .maplibregl-ctrl-attrib{display:none}
+  /* chrome overlays (HTML over canvas): pointer-events off except controls */
+  .tv-ov{position:absolute;z-index:5;pointer-events:none}
+  .tv-head{top:0;left:0;right:0;display:flex;justify-content:space-between;gap:12px;
+    padding:10px 14px;background:linear-gradient(180deg,rgba(10,13,18,.82),rgba(10,13,18,0));
+    font-family:'Metropolis',system-ui,sans-serif}
+  .tv-title{font-weight:700;font-size:15px;color:#dbe3ec;letter-spacing:.01em}
+  .tv-sub{font-size:12px;color:#9aa8b8;margin-top:2px;font-variant-numeric:tabular-nums}
+  .tv-brand{font-weight:700;font-size:17px;color:rgba(255,255,255,.5);
+    text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap}
+  .tv-cbar{top:64px;right:12px;display:flex;gap:6px;align-items:stretch}
+  .tv-cbar img{width:14px;height:230px;image-rendering:pixelated;border:1px solid rgba(255,255,255,.18);border-radius:2px}
+  .tv-cbar .ticks{display:flex;flex-direction:column;justify-content:space-between;
+    font-size:10px;color:#b6c0cc;font-variant-numeric:tabular-nums;padding:1px 0}
+  .tv-cbar .cap{writing-mode:vertical-rl;font-size:10px;color:#8b97a6;align-self:center}
+  .tv-ctl{bottom:0;left:0;right:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+    padding:10px 12px;background:linear-gradient(0deg,rgba(10,13,18,.86),rgba(10,13,18,0));
+    pointer-events:auto;font-family:ui-monospace,Menlo,monospace}
+  .tv-btn{font-size:12px;color:#dbe3ec;background:rgba(17,23,33,.9);border:1px solid #2a3644;
+    border-radius:7px;padding:6px 10px;cursor:pointer;line-height:1}
+  .tv-btn:hover{border-color:#49b6c8;color:#49b6c8}
+  .tv-btn.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.14)}
+  .tv-btn.pill{border-radius:999px}
+  .tv-spacer{flex:1}
+  .tv-read{font-size:12px;color:#9aa8b8;font-variant-numeric:tabular-nums}
+  .tv-read b{color:#49b6c8}
+  .tv-drawbox{position:absolute;top:0;left:0;background:rgba(73,182,200,.14);
+    border:1.5px solid #49b6c8;pointer-events:none;z-index:6}
+  .tv-note{color:var(--muted,#7c8896);font-size:12px;margin:12px 2px 0;font-family:ui-monospace,monospace}
+  .tv-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    color:#9aa8b8;font-family:ui-monospace,monospace;font-size:13px;text-align:center;padding:20px;z-index:7}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/" class="active">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/recon/">Recon</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<!-- shadow-first: NOT added to the satellite subnav until deliberately shipped -->
+<nav class="subnav" aria-label="Satellite sections">
+  <div class="subnav-inner">
+    <a href="/satellite/" class="active">Imagery</a>
+    <a href="/satellite/microwave/">Microwave</a>
+    <a href="/satellite/ascat/">Scatterometer</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Satellite Explorer <span style="font-size:.6em;color:var(--muted,#7c8896)">· shadow preview</span></h1>
+  <p>Zoom and pan a pre-rendered tile pyramid. Draw a box or pick a region — the view
+     re-frames from cached tiles, never an on-demand render. Coastlines, borders and the
+     graticule are vector overlays that stay sharp at every zoom.</p>
+</header>
+
+<section class="chart-section">
+  <div class="chart-card">
+    <div class="tv-wrap">
+      <div id="tv-map"></div>
+
+      <div class="tv-ov tv-head">
+        <div>
+          <div class="tv-title" id="tv-title">GOES-19 · CONUS · Clean IR</div>
+          <div class="tv-sub" id="tv-sub">loading manifest…</div>
+        </div>
+        <div class="tv-brand">@WeathermanAAA_</div>
+      </div>
+
+      <div class="tv-ov tv-cbar">
+        <span class="cap">Brightness temperature (°C)</span>
+        <div class="ticks"><span>40</span><span>0</span><span>−40</span><span>−80</span></div>
+        <img src="rainbow_ir_cbar.png" alt="rainbow_ir colorbar">
+      </div>
+
+      <div class="tv-ov tv-ctl">
+        <button class="tv-btn pill" id="tv-play">▶ Play</button>
+        <button class="tv-btn" id="tv-region">Regions</button>
+        <button class="tv-btn" id="tv-draw">Draw box</button>
+        <button class="tv-btn" id="tv-fit">Fit</button>
+        <span style="width:1px;height:18px;background:#2a3644"></span>
+        <button class="tv-btn on" id="tv-coast">Coast</button>
+        <button class="tv-btn on" id="tv-borders">Borders</button>
+        <button class="tv-btn on" id="tv-states">States</button>
+        <button class="tv-btn on" id="tv-grid">Grid</button>
+        <span class="tv-spacer"></span>
+        <span class="tv-read" id="tv-read">—</span>
+      </div>
+
+      <div class="tv-err" id="tv-err"></div>
+    </div>
+    <p class="tv-note" id="tv-note">Shift-drag (or “Draw box”, then drag) to frame an area · scroll to zoom · double-click resets.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <span>© <span id="year"></span> Triple-A-Tropics</span>
+    <span>Satellite Explorer — shadow preview · not linked in nav</span>
+  </div>
+</footer>
+
+<script src="/models/regions.js"></script>
+<script src="tiled_viewer.js"></script>
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+  // Manifest URL: ?manifest=… override (local dev / a different product), else the
+  // shadow CDN default baked into tiled_viewer.js.
+  var params = new URLSearchParams(location.search);
+  var opts = { container: 'tv-map' };
+  if (params.get('manifest')) opts.manifest = params.get('manifest');
+
+  var sub = document.getElementById('tv-sub'), read = document.getElementById('tv-read');
+  var err = document.getElementById('tv-err'), playBtn = document.getElementById('tv-play');
+  function fmtStamp(s) {
+    if (!s || s.length < 13) return s || '';
+    return s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8)+' '+s.slice(9,11)+':'+s.slice(11,13)+'Z';
+  }
+  opts.onStatus = function (kind, data) {
+    if (kind === 'error') { err.style.display = 'flex'; err.textContent = data; sub.textContent = 'unavailable'; }
+    else if (kind === 'ready') { sub.textContent = 'Valid ' + fmtStamp(data); }
+    else if (kind === 'frame') { sub.textContent = 'Valid ' + fmtStamp(data.stamp);
+      read.innerHTML = 'frame <b>' + (data.idx+1) + '</b>/' + data.n; }
+    else if (kind === 'play') { playBtn.textContent = '❚❚ Pause'; playBtn.classList.add('on'); }
+    else if (kind === 'pause') { playBtn.textContent = '▶ Play'; playBtn.classList.remove('on'); }
+  };
+
+  var tv = new TiledViewer(opts);
+  tv.boot().then(function () {
+    if (!tv.map) return;
+    tv.map.on('load', function () {
+      playBtn.onclick = function () { tv.toggle(); };
+      document.getElementById('tv-fit').onclick = function () { tv.fitData(); };
+      var toggle = function (id, key) {
+        var b = document.getElementById(id);
+        b.onclick = function () { var on = !b.classList.contains('on'); b.classList.toggle('on', on); tv.setLayer(key, on); };
+      };
+      toggle('tv-coast','coast'); toggle('tv-borders','borders'); toggle('tv-states','states'); toggle('tv-grid','grid');
+      tv.enableDrawBox(document.getElementById('tv-draw'));
+      tv.map.doubleClickZoom.disable();
+      tv.map.on('dblclick', function () { tv.fitData(); });
+      // preset region picker (reuse the shared component)
+      if (window.TATRegions) {
+        var picker = new window.TATRegions.RegionPicker({ current: 'us', onPick: function (k) { tv.gotoRegion(k); } });
+        document.getElementById('tv-region').onclick = function () { picker.open(); };
+      } else {
+        document.getElementById('tv-region').style.display = 'none';
+      }
+    });
+  });
+</script>
+</body>
+</html>
