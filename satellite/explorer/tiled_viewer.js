@@ -107,6 +107,9 @@
     this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     this.map.dragRotate.disable();
     this.map.touchZoomRotate.disableRotation();
+    // Our shift-drag AOI owns the shift+drag gesture; disable MapLibre's built-in
+    // box-zoom so the two don't both fire (double camera move) on shift-drag.
+    this.map.boxZoom.disable();
 
     this.map.on('load', function () { self._onLoad(); });
   };
@@ -204,17 +207,29 @@
   VP.showFrame = function (idx) {
     if (!this.frames.length) return;
     idx = (idx + this.frames.length) % this.frames.length;
-    var stamp = this.frames[idx];
-    // hold on the prior frame until the new one's tiles are ready (decode gate)
+    var stamp = this.frames[idx], sid = this._srcId(stamp), self = this;
+    // Add/show the new frame ON TOP at full opacity, but HOLD the prior frame(s)
+    // opaque underneath until the new source's tiles are actually loaded -- else
+    // an uncached frame flashes the dark background (raster-fade-duration:0). The
+    // new layer renders transparent (prior shows through) until its tiles land.
     this._ensureFrame(stamp, 1);
-    // dim all other visible frames
-    for (var i = 0; i < this.frames.length; i++) {
-      var s = this.frames[i];
-      if (s !== stamp && this._added[s] && this.map.getLayer(this._srcId(s)))
-        this.map.setPaintProperty(this._srcId(s), 'raster-opacity', 0);
-    }
-    this.frameIdx = idx;
-    this._updateReadout();
+    var reveal = function () {
+      for (var i = 0; i < self.frames.length; i++) {
+        var s = self.frames[i];
+        if (s !== stamp && self._added[s] && self.map.getLayer(self._srcId(s)))
+          self.map.setPaintProperty(self._srcId(s), 'raster-opacity', 0);
+      }
+      self.frameIdx = idx;
+      self._evictBeyondWindow(stamp);   // bound texture residency on EVERY advance
+      self._updateReadout();
+    };
+    if (this.map.isSourceLoaded(sid)) { reveal(); return; }
+    var onData = function (e) {
+      if (e.sourceId === sid && self.map.isSourceLoaded(sid)) {
+        self.map.off('sourcedata', onData); reveal();
+      }
+    };
+    this.map.on('sourcedata', onData);
   };
 
   // ---- fixed-timestep loop playback ----
@@ -258,8 +273,11 @@
   VP.gotoRegion = function (key) {
     var r = window.TATRegions && window.TATRegions.get(key);
     if (!r) return;
-    // regions.js uses {w,e,s,n}; MapLibre wants [[W,S],[E,N]]. Dateline-safe:
-    var w = r.w, e = r.e; if (e < w) e += 360;   // wrap
+    // regions.js uses {w,e,s,n}; MapLibre wants [[W,S],[E,N]]. A region that
+    // crosses the antimeridian (e < w) frames past +180, which only renders with
+    // world copies on -- enable them just for that case (CONUS never crosses).
+    var w = r.w, e = r.e;
+    if (e < w) { e += 360; this.map.setRenderWorldCopies(true); }
     this.map.fitBounds([[w, r.s], [e, r.n]], { padding: 20, duration: 500 });
   };
   VP.fitData = function () {
