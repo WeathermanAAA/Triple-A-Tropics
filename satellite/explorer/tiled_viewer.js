@@ -92,6 +92,8 @@
   VP._initMap = function () {
     var self = this, m = this.manifest;
     this.base = manifestBase(this.manifestUrl, m.product);
+    // calibrated BT data raster probe (pixel/BT inspector), if the product ships one
+    this.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, this.base) : null;
     this.frames = (m.times || []).slice();
     this.frameIdx = Math.max(0, this.frames.length - 1);
 
@@ -117,7 +119,10 @@
   VP._onLoad = function () {
     var self = this, m = this.manifest;
     // 1) the imagery: the latest frame's raster pyramid, first (under furniture)
-    if (this.frames.length) this._ensureFrame(this.frames[this.frameIdx], 1);
+    if (this.frames.length) {
+      this._ensureFrame(this.frames[this.frameIdx], 1);
+      if (this.probe) this.probe.load(this.frames[this.frameIdx]).catch(function () {});
+    }
 
     // 2) graticule (below coast so land lines read on top)
     this.map.addSource('grat', { type: 'geojson', data: graticule(10) });
@@ -216,6 +221,7 @@
     if (!this.frames.length) return;
     idx = (idx + this.frames.length) % this.frames.length;
     var stamp = this.frames[idx], sid = this._srcId(stamp), self = this;
+    if (this.probe) this.probe.load(stamp).catch(function () {});   // BT for the inspector
     // Add/show the new frame ON TOP at full opacity, but HOLD the prior frame(s)
     // opaque underneath until the new source's tiles are actually loaded -- else
     // an uncached frame flashes the dark background (raster-fade-duration:0). The
@@ -284,8 +290,9 @@
     // regions.js uses {w,e,s,n}; MapLibre wants [[W,S],[E,N]]. A region that
     // crosses the antimeridian (e < w) frames past +180, which only renders with
     // world copies on -- enable them just for that case (CONUS never crosses).
-    var w = r.w, e = r.e;
-    if (e < w) { e += 360; this.map.setRenderWorldCopies(true); }
+    var w = r.w, e = r.e, crosses = e < w;
+    if (crosses) e += 360;
+    this.map.setRenderWorldCopies(crosses);   // restore false for non-crossing regions
     this.map.fitBounds([[w, r.s], [e, r.n]], { padding: 20, duration: 500 });
   };
   VP.fitData = function () {
@@ -343,9 +350,78 @@
     if (stamp) this.onStatus('frame', { stamp: stamp, idx: this.frameIdx, n: this.frames.length });
   };
 
-  if (typeof window !== 'undefined') window.TiledViewer = TiledViewer;
+  // ---- pixel/BT inspector: hover reads REAL brightness temp from the BT raster
+  // (not the colorized tile); click pins it. ----
+  VP.enableInspector = function () {
+    if (!this.probe) return;
+    var self = this, map = this.map;
+    map.on('mousemove', function (e) {
+      var btC = self.probe.sample(self.frames[self.frameIdx], e.lngLat.lng, e.lngLat.lat);
+      self.onStatus('probe', { lon: e.lngLat.lng, lat: e.lngLat.lat, btC: btC });
+    });
+    map.getCanvas().addEventListener('mouseout', function () { self.onStatus('probe', null); });
+    map.on('click', function (e) { if (!self._armed) self._pinBT(e.lngLat); });
+  };
+  VP._pinBT = function (lngLat) {
+    if (!this.probe) return;
+    var self = this, stamp = this.frames[this.frameIdx];
+    var el = document.createElement('div'); el.className = 'tv-pin';
+    var lbl = document.createElement('b'), bar = document.createElement('i');
+    el.appendChild(lbl); el.appendChild(bar);
+    // Sample now; re-sample once the BT PNG is decoded, so a pin dropped before
+    // the raster loaded upgrades a provisional 'no data' to the real BT (genuine
+    // off-data still resolves to 'no data'). load() returns a resolved promise
+    // when already cached, so this is a no-op in the common case.
+    var render = function () {
+      var btC = self.probe.sample(stamp, lngLat.lng, lngLat.lat);
+      lbl.textContent = (btC == null ? 'no data' : btC.toFixed(1) + '°C');
+    };
+    render();
+    self.probe.load(stamp).then(render, render);
+    new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(lngLat).addTo(this.map);
+  };
+
+  // Link N TiledViewers into a COMPARE group: ONE camera (AOI) + ONE clock across
+  // all panes (feedback-guarded). Each pane keeps its own product / BT / manifest,
+  // so it generalizes to product-vs-product; here the panes share a product and
+  // demonstrate the time-locked, AOI-locked mechanics.
+  function syncViewers(viewers) {
+    var syncing = false;
+    viewers.forEach(function (v) {
+      v.map.on('move', function () {
+        if (syncing) return; syncing = true;
+        var c = v.map.getCenter(), z = v.map.getZoom();
+        viewers.forEach(function (o) { if (o !== v) o.map.jumpTo({ center: c, zoom: z }); });
+        syncing = false;
+      });
+    });
+    var playing = false, raf = null, last = 0, fps = 6;
+    var n0 = function () { return viewers[0].frames.length; };
+    function step(t) {
+      if (!playing) return;
+      if (!last) last = t;
+      if (t - last >= 1000 / fps) {
+        last = t;
+        var nx = (viewers[0].frameIdx + 1) % n0();
+        viewers.forEach(function (v) { v.showFrame(nx); });
+      }
+      raf = requestAnimationFrame(step);
+    }
+    return {
+      viewers: viewers,
+      showFrame: function (i) { viewers.forEach(function (v) { v.showFrame(i); }); },
+      play: function () { if (playing || n0() < 2) return; playing = true; last = 0; raf = requestAnimationFrame(step); },
+      pause: function () { playing = false; if (raf) cancelAnimationFrame(raf); },
+      toggle: function () { if (playing) { this.pause(); } else { this.play(); } return playing; },
+      fitData: function () { viewers.forEach(function (v) { v.fitData(); }); },
+      gotoRegion: function (k) { viewers.forEach(function (v) { v.gotoRegion(k); }); },
+      setLayer: function (k, on) { viewers.forEach(function (v) { v.setLayer(k, on); }); }
+    };
+  }
+
+  if (typeof window !== 'undefined') { window.TiledViewer = TiledViewer; window.syncViewers = syncViewers; }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { TiledViewer: TiledViewer,
+    module.exports = { TiledViewer: TiledViewer, syncViewers: syncViewers,
       _test: { manifestBase: manifestBase, frameTiles: frameTiles, graticule: graticule } };
   }
 })();

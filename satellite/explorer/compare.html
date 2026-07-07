@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare — Satellite Explorer (shadow) · Triple-A-Tropics</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/satellite/subnav.css">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  .cmp-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;
+    font-family:ui-monospace,Menlo,monospace}
+  .b{font-size:12px;color:var(--fg,#dbe3ec);background:var(--panel,#111721);border:1px solid #2a3644;
+    border-radius:7px;padding:6px 10px;cursor:pointer;line-height:1}
+  .b:hover{border-color:#49b6c8;color:#49b6c8}
+  .b.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.14)}
+  .b.pill{border-radius:999px}
+  select.b{padding-right:6px}
+  .cmp-sp{flex:1}
+  .cmp-grid{display:grid;gap:10px;grid-template-columns:1fr 1fr}
+  .cmp-grid.q{grid-template-columns:1fr 1fr}
+  .pane{position:relative;border:1px solid #2a3644;border-radius:10px;overflow:hidden;background:#0a0d12}
+  .pane .map{width:100%;aspect-ratio:16/10;min-height:300px;background:#0a0d12}
+  .maplibregl-ctrl-attrib,.maplibregl-ctrl-bottom-right{display:none}
+  .pane .lab{position:absolute;top:0;left:0;right:0;z-index:5;pointer-events:none;
+    display:flex;justify-content:space-between;gap:10px;padding:7px 10px;
+    background:linear-gradient(180deg,rgba(10,13,18,.82),rgba(10,13,18,0));
+    font-family:'Metropolis',system-ui,sans-serif}
+  .pane .lab b{color:#dbe3ec;font-size:13px}
+  .pane .lab .t{color:#9aa8b8;font-size:11px;font-family:ui-monospace,monospace}
+  .pane .pr{position:absolute;left:8px;bottom:8px;z-index:5;pointer-events:none;display:none;
+    font-family:ui-monospace,monospace;font-size:11px;color:#dbe3ec;background:rgba(10,13,18,.82);
+    border:1px solid #2a3644;border-radius:6px;padding:4px 7px;line-height:1.4}
+  .pane .pr b{color:#49b6c8}
+  .cmp-note{color:var(--muted,#7c8896);font-size:12px;margin:12px 2px 0;font-family:ui-monospace,monospace}
+  .tv-pin{display:flex;flex-direction:column;align-items:center;pointer-events:none;font-family:ui-monospace,monospace}
+  .tv-pin b{font-size:11px;color:#0a0d12;background:#49b6c8;border-radius:4px;padding:1px 5px;white-space:nowrap;font-weight:700}
+  .tv-pin i{width:2px;height:9px;background:#49b6c8;display:block}
+  @media(max-width:720px){.cmp-grid,.cmp-grid.q{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<nav class="nav"><div class="nav-inner">
+  <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" aria-hidden="true"><span>Triple-A-Tropics</span></a>
+  <div class="nav-links">
+    <a href="/">Home</a><a href="/climatology/">Climatology</a><a href="/sst/">SST</a>
+    <a href="/satellite/" class="active">Satellite</a><a href="/models/">Models</a>
+    <a href="/recon/">Recon</a><a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+  </div>
+</div></nav>
+<nav class="subnav" aria-label="Satellite sections"><div class="subnav-inner">
+  <a href="/satellite/" class="active">Imagery</a>
+  <a href="/satellite/microwave/">Microwave</a>
+  <a href="/satellite/ascat/">Scatterometer</a>
+</div></nav>
+
+<header class="page-head">
+  <h1>Compare <span style="font-size:.6em;color:var(--muted,#7c8896)">· shadow preview</span></h1>
+  <p>Synchronized viewports over the tile pyramid: one AOI and one clock drive every pane. Pan, zoom or
+     pick a region and all panes follow; hover any pane to read its brightness temperature. In production
+     each pane holds a different product (band, enhancement or satellite); here they share GOES-19 clean-IR
+     to show the time-locked, AOI-locked mechanics.</p>
+</header>
+
+<section class="chart-section">
+  <div class="chart-card">
+    <div class="cmp-ctl">
+      <button class="b pill" id="play">▶ Play</button>
+      <button class="b" id="timelock">Time-lock: off</button>
+      <button class="b" id="panes">4 panes</button>
+      <select class="b" id="region" title="Preset regions"></select>
+      <button class="b" id="fit">Fit</button>
+      <span style="width:1px;height:18px;background:#2a3644"></span>
+      <button class="b on" id="t-coast">Coast</button>
+      <button class="b on" id="t-borders">Borders</button>
+      <button class="b on" id="t-grid">Grid</button>
+      <span class="cmp-sp"></span>
+      <span class="b" id="clk" style="cursor:default"></span>
+    </div>
+    <div class="cmp-grid" id="grid"></div>
+    <p class="cmp-note">AOI + layers are locked across panes. “Time-lock” syncs the clock (all panes same frame + Play);
+      unlocked, each pane holds its own time — a then-vs-now compare at a locked AOI. Hover reads real BT from the
+      calibrated data raster, not the color.</p>
+  </div>
+</section>
+
+<footer><div class="footer-inner">
+  <span>© <span id="year"></span> Triple-A-Tropics</span>
+  <span>Compare — shadow preview · not linked in nav</span>
+</div></footer>
+
+<script src="/models/regions.js"></script>
+<script src="bt_probe.js"></script>
+<script src="tiled_viewer.js"></script>
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+  var params = new URLSearchParams(location.search);
+  var MANIFEST = params.get('manifest') || undefined;   // else tiled_viewer default
+  var PANE_META = [
+    { key: 'A', label: 'GOES-19 · Clean IR' },
+    { key: 'B', label: 'GOES-19 · Clean IR' },
+    { key: 'C', label: 'GOES-19 · Clean IR' },
+    { key: 'D', label: 'GOES-19 · Clean IR' }
+  ];
+  var grid = document.getElementById('grid');
+  var viewers = [], group = null, nPanes = 2, timelock = false;
+
+  function fmtStamp(s) { return s ? s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8)+' '+s.slice(9,11)+':'+s.slice(11,13)+'Z' : ''; }
+
+  function buildPanes(n) {
+    if (group) group.pause();
+    var pb = document.getElementById('play');   // a rebuilt group starts paused
+    pb.textContent = '▶ Play'; pb.classList.remove('on');
+    viewers.forEach(function (v) { try { v.map.remove(); } catch (e) {} });
+    viewers = []; grid.innerHTML = '';
+    grid.className = 'cmp-grid' + (n > 2 ? ' q' : '');
+    var booted = [];
+    for (var i = 0; i < n; i++) {
+      (function (i) {
+        var pane = document.createElement('div'); pane.className = 'pane';
+        var mapDiv = document.createElement('div'); mapDiv.className = 'map'; mapDiv.id = 'm' + i;
+        var lab = document.createElement('div'); lab.className = 'lab';
+        lab.innerHTML = '<b>' + PANE_META[i].label + '</b><span class="t" id="t' + i + '">—</span>';
+        var pr = document.createElement('div'); pr.className = 'pr'; pr.id = 'pr' + i;
+        pane.appendChild(mapDiv); pane.appendChild(lab); pane.appendChild(pr);
+        grid.appendChild(pane);
+        var opts = { container: 'm' + i };
+        if (MANIFEST) opts.manifest = MANIFEST;
+        opts.onStatus = function (kind, data) {
+          if (kind === 'error') { var le = document.getElementById('t' + i); if (le) le.textContent = 'manifest unavailable'; }
+          else if (kind === 'frame') { var el = document.getElementById('t' + i); if (el) el.textContent = 'Valid ' + fmtStamp(data.stamp); }
+          else if (kind === 'probe') {
+            var p = document.getElementById('pr' + i); if (!p) return;
+            if (!data) { p.style.display = 'none'; return; }
+            p.style.display = 'block';
+            p.innerHTML = data.btC == null ? 'no data'
+              : '<b>' + data.btC.toFixed(1) + '°C</b> · ' + data.lat.toFixed(1) + ', ' + data.lon.toFixed(1);
+          }
+        };
+        var v = new window.TiledViewer(opts);
+        booted.push(v.boot().then(function () {
+          return new Promise(function (res) {
+            if (!v.map) return res(null);   // manifest/init failed -> drop from the group
+            v.map.on('load', function () {
+              v.enableInspector();
+              // stagger initial frames across panes (then-vs-now when unlocked)
+              if (v.frames.length) v.showFrame(Math.round(i / Math.max(1, n - 1) * (v.frames.length - 1)));
+              res(v);
+            });
+          });
+        }));
+        viewers.push(v);
+      })(i);
+    }
+    Promise.all(booted).then(function (vs) {
+      var ok = vs.filter(Boolean);
+      if (!ok.length) return;   // all failed: panes already show 'manifest unavailable'
+      group = window.syncViewers(ok);
+      applyTimelock();
+    });
+  }
+
+  function applyTimelock() {
+    if (!group) return;
+    if (timelock) group.showFrame(viewers[0].frames.length - 1);   // all -> latest
+    tickClock();
+  }
+  function tickClock() {
+    var v = viewers[0];
+    document.getElementById('clk').textContent = v && v.frames.length
+      ? (timelock ? 'clock ' + fmtStamp(v.frames[v.frameIdx]) : 'panes independent') : '';
+  }
+
+  document.getElementById('play').onclick = function () {
+    if (!group || !timelock) return;
+    var on = group.toggle();
+    this.textContent = on ? '❚❚ Pause' : '▶ Play'; this.classList.toggle('on', on);
+    tickClock();
+  };
+  document.getElementById('timelock').onclick = function () {
+    timelock = !timelock; this.textContent = 'Time-lock: ' + (timelock ? 'on' : 'off');
+    this.classList.toggle('on', timelock);
+    if (group) group.pause();
+    document.getElementById('play').textContent = '▶ Play';
+    document.getElementById('play').classList.remove('on');
+    document.getElementById('play').style.opacity = timelock ? '1' : '.5';
+    applyTimelock();
+  };
+  document.getElementById('panes').onclick = function () {
+    nPanes = nPanes === 2 ? 4 : 2; this.textContent = (nPanes === 2 ? '4' : '2') + ' panes';
+    buildPanes(nPanes);
+  };
+  document.getElementById('fit').onclick = function () { if (group) group.fitData(); };
+  var toggle = function (id, key) {
+    var b = document.getElementById(id);
+    b.onclick = function () { var on = !b.classList.contains('on'); b.classList.toggle('on', on); if (group) group.setLayer(key, on); };
+  };
+  toggle('t-coast', 'coast'); toggle('t-borders', 'borders'); toggle('t-grid', 'grid');
+
+  // region picker (reused), applied to the whole group
+  if (window.TATRegions) {
+    var picker = new window.TATRegions.RegionPicker({ current: 'us', onPick: function (k) { if (group) group.gotoRegion(k); } });
+    document.getElementById('region').style.display = 'none';
+    var rbtn = document.createElement('button'); rbtn.className = 'b'; rbtn.textContent = 'Regions';
+    document.getElementById('region').parentNode.insertBefore(rbtn, document.getElementById('region'));
+    rbtn.onclick = function () { picker.open(); };
+  }
+  document.getElementById('play').style.opacity = '.5';
+  buildPanes(2);
+</script>
+</body>
+</html>

@@ -43,6 +43,14 @@
   .tv-read b{color:#49b6c8}
   .tv-drawbox{position:absolute;top:0;left:0;background:rgba(73,182,200,.14);
     border:1.5px solid #49b6c8;pointer-events:none;z-index:6}
+  .tv-probe{position:absolute;left:12px;bottom:56px;z-index:5;pointer-events:none;
+    font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#dbe3ec;
+    background:rgba(10,13,18,.82);border:1px solid #2a3644;border-radius:7px;
+    padding:6px 9px;backdrop-filter:blur(3px);line-height:1.5;display:none}
+  .tv-probe b{color:#49b6c8}.tv-probe .ll{color:#9aa8b8}
+  .tv-pin{display:flex;flex-direction:column;align-items:center;pointer-events:none;font-family:ui-monospace,monospace}
+  .tv-pin b{font-size:11px;color:#0a0d12;background:#49b6c8;border-radius:4px;padding:1px 5px;white-space:nowrap;font-weight:700}
+  .tv-pin i{width:2px;height:9px;background:#49b6c8;display:block}
   .tv-note{color:var(--muted,#7c8896);font-size:12px;margin:12px 2px 0;font-family:ui-monospace,monospace}
   .tv-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     color:#9aa8b8;font-family:ui-monospace,monospace;font-size:13px;text-align:center;padding:20px;z-index:7}
@@ -117,9 +125,10 @@
         <span class="tv-read" id="tv-read">—</span>
       </div>
 
+      <div class="tv-ov tv-probe" id="tv-probe"></div>
       <div class="tv-err" id="tv-err"></div>
     </div>
-    <p class="tv-note" id="tv-note">Shift-drag (or “Draw box”, then drag) to frame an area · scroll to zoom · double-click resets.</p>
+    <p class="tv-note" id="tv-note">Hover to read brightness temperature · click to pin · shift-drag to frame an area · scroll to zoom.</p>
   </div>
 </section>
 
@@ -131,6 +140,7 @@
 </footer>
 
 <script src="/models/regions.js"></script>
+<script src="bt_probe.js"></script>
 <script src="tiled_viewer.js"></script>
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
@@ -153,6 +163,15 @@
       read.innerHTML = 'frame <b>' + (data.idx+1) + '</b>/' + data.n; }
     else if (kind === 'play') { playBtn.textContent = '❚❚ Pause'; playBtn.classList.add('on'); }
     else if (kind === 'pause') { playBtn.textContent = '▶ Play'; playBtn.classList.remove('on'); }
+    else if (kind === 'probe') {
+      var pr = document.getElementById('tv-probe');
+      if (!data) { pr.style.display = 'none'; return; }
+      pr.style.display = 'block';
+      var t = data.btC == null ? 'no data'
+        : '<b>' + data.btC.toFixed(1) + ' °C</b> · ' + (data.btC + 273.15).toFixed(1) + ' K';
+      pr.innerHTML = t + '<br><span class="ll">' + data.lat.toFixed(2) + '°, ' +
+        data.lon.toFixed(2) + '°</span>';
+    }
   };
 
   var tv = new TiledViewer(opts);
@@ -167,6 +186,7 @@
       };
       toggle('tv-coast','coast'); toggle('tv-borders','borders'); toggle('tv-states','states'); toggle('tv-grid','grid');
       tv.enableDrawBox(document.getElementById('tv-draw'));
+      tv.enableInspector();
       tv.map.doubleClickZoom.disable();
       tv.map.on('dblclick', function () { tv.fitData(); });
       // preset region picker (reuse the shared component)
