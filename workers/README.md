@@ -64,15 +64,22 @@ cookie; otherwise the site's REAL 404). Fail-closed if the secret is unset.
 Un-gate for public launch = delete the Worker route (dashboard, or
 `npx wrangler delete --name explorer-gate`) — the pages are already on Pages.
 
-### Deploy (user action — CF account, ~3 minutes)
+### Deploy (Claude-owned, headless — needs `CLOUDFLARE_API_TOKEN` in env)
+
+The Codespace carries an Edit-Workers scoped API token as the
+`CLOUDFLARE_API_TOKEN` Codespaces secret; wrangler picks it up natively
+(no `wrangler login`). The preview token is generated fresh at deploy
+time and lives ONLY in the Worker secret — never in this repo (the repo
+is public). Rotation = rerun these two commands with a new value.
 
 ```bash
 cd workers
-npx wrangler login                      # once per machine
-npx wrangler secret put PREVIEW_TOKEN -c explorer-gate.toml
-#   paste the preview token (Claude has it; also in AGENT_STATUS.md queue)
 npx wrangler deploy -c explorer-gate.toml
+openssl rand -hex 16 | npx wrangler secret put PREVIEW_TOKEN -c explorer-gate.toml
 ```
+
+Deploy-then-secret is safe: the Worker fails closed (404s everything)
+while `PREVIEW_TOKEN` is unset.
 
 ### Gate check (run after deploy)
 
