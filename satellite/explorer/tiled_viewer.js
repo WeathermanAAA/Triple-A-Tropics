@@ -241,9 +241,16 @@
     if (this.map.isSourceLoaded(sid)) { reveal(); return; }
     var onData = function (e) {
       if (e.sourceId === sid && self.map.isSourceLoaded(sid)) {
-        self.map.off('sourcedata', onData); reveal();
+        self.map.off('sourcedata', onData);
+        var k = self._pendingData.indexOf(onData);
+        if (k >= 0) self._pendingData.splice(k, 1);
+        reveal();
       }
     };
+    // Track pending listeners so setProduct can detach the ones whose source
+    // it just removed (their sid can never match again -- they'd pile up).
+    this._pendingData = this._pendingData || [];
+    this._pendingData.push(onData);
     this.map.on('sourcedata', onData);
   };
 
@@ -266,6 +273,10 @@
           if (self.map.getSource(id)) self.map.removeSource(id);
         }
         self._added = {};
+        // detach in-flight showFrame listeners -- their sources are gone, so
+        // they could never resolve and would run on every future sourcedata.
+        (self._pendingData || []).forEach(function (fn) { self.map.off('sourcedata', fn); });
+        self._pendingData = [];
         self.manifestUrl = manifestUrl;
         self.manifest = m;
         self.base = manifestBase(manifestUrl, m.product);
@@ -500,9 +511,14 @@
     // its own nearest-in-time frame (panes hold different products whose stamp
     // lists can differ in cadence/coverage).
     function syncTo(idx) {
-      var lead = viewers[0];
+      var lead = viewers[0], n = lead.frames.length;
+      if (!n) return;
+      idx = ((idx % n) + n) % n;
       lead.showFrame(idx);
-      var stamp = lead.frames[lead.frameIdx];
+      // Use the REQUESTED stamp, not lead.frameIdx -- on an uncached frame the
+      // lead updates frameIdx asynchronously (after tiles load), and re-reading
+      // it here would sync every follower to the lead's PREVIOUS frame.
+      var stamp = lead.frames[idx];
       for (var k = 1; k < viewers.length; k++) viewers[k].showStamp(stamp);
     }
     function step(t) {

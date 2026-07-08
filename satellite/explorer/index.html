@@ -27,8 +27,11 @@
     text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap}
   .tv-cbar{top:64px;right:12px;display:flex;gap:6px;align-items:stretch}
   .tv-cbar img{width:14px;height:230px;image-rendering:pixelated;border:1px solid rgba(255,255,255,.18);border-radius:2px}
-  .tv-cbar .ticks{display:flex;flex-direction:column;justify-content:space-between;
-    font-size:10px;color:#b6c0cc;font-variant-numeric:tabular-nums;padding:1px 0}
+  /* ticks are absolutely positioned at their exact norm fraction (data-p),
+     so a label sits AT its color -- not evenly spread over the bar */
+  .tv-cbar .ticks{position:relative;width:2.6em;
+    font-size:10px;color:#b6c0cc;font-variant-numeric:tabular-nums}
+  .tv-cbar .ticks span{position:absolute;right:2px;transform:translateY(-50%)}
   .tv-cbar .cap{writing-mode:vertical-rl;font-size:10px;color:#8b97a6;align-self:center}
   .tv-ctl{bottom:0;left:0;right:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
     padding:10px 12px;background:linear-gradient(0deg,rgba(10,13,18,.86),rgba(10,13,18,0));
@@ -108,7 +111,7 @@
 
       <div class="tv-ov tv-cbar" id="tv-cbar">
         <span class="cap" id="tv-cbar-cap">Brightness temperature (°C)</span>
-        <div class="ticks" id="tv-cbar-ticks"><span>40</span><span>0</span><span>−40</span><span>−80</span></div>
+        <div class="ticks" id="tv-cbar-ticks"><span style="top:1%">40</span><span style="top:29.63%">0</span><span style="top:59.26%">−40</span><span style="top:88.89%">−80</span></div>
         <img src="cbars/rainbow_ir.png" alt="colorbar" id="tv-cbar-img">
       </div>
 
@@ -251,7 +254,10 @@
       document.getElementById('tv-cbar-img').src = p.cbar.img;
       document.getElementById('tv-cbar-cap').textContent = p.cbar.cap;
       document.getElementById('tv-cbar-ticks').innerHTML =
-        p.cbar.ticks.map(function (t) { return '<span>' + t + '</span>'; }).join('');
+        p.cbar.ticks.map(function (t) {
+          var pos = Math.max(0.01, Math.min(0.99, t.p)) * 100;
+          return '<span style="top:' + pos.toFixed(2) + '%">' + t.t + '</span>';
+        }).join('');
       cb.style.display = 'flex';
     } else { cb.style.display = 'none'; }
     document.getElementById('tv-note').textContent = (p.bt

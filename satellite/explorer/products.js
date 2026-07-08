@@ -18,10 +18,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -37,10 +49,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -116,9 +140,18 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/gray_refl.png",
         "ticks": [
-          "100",
-          "50",
-          "0"
+          {
+            "t": "100",
+            "p": 0.0
+          },
+          {
+            "t": "50",
+            "p": 0.5
+          },
+          {
+            "t": "0",
+            "p": 1.0
+          }
         ],
         "cap": "Reflectance (%)"
       }
@@ -134,9 +167,18 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/gray_refl.png",
         "ticks": [
-          "100",
-          "50",
-          "0"
+          {
+            "t": "100",
+            "p": 0.0
+          },
+          {
+            "t": "50",
+            "p": 0.5
+          },
+          {
+            "t": "0",
+            "p": 1.0
+          }
         ],
         "cap": "Reflectance (%)"
       }
@@ -152,9 +194,18 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/gray_refl.png",
         "ticks": [
-          "100",
-          "50",
-          "0"
+          {
+            "t": "100",
+            "p": 0.0
+          },
+          {
+            "t": "50",
+            "p": 0.5
+          },
+          {
+            "t": "0",
+            "p": 1.0
+          }
         ],
         "cap": "Reflectance (%)"
       }
@@ -170,9 +221,18 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/gray_refl.png",
         "ticks": [
-          "100",
-          "50",
-          "0"
+          {
+            "t": "100",
+            "p": 0.0
+          },
+          {
+            "t": "50",
+            "p": 0.5
+          },
+          {
+            "t": "0",
+            "p": 1.0
+          }
         ],
         "cap": "Reflectance (%)"
       }
@@ -188,9 +248,18 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/gray_refl.png",
         "ticks": [
-          "100",
-          "50",
-          "0"
+          {
+            "t": "100",
+            "p": 0.0
+          },
+          {
+            "t": "50",
+            "p": 0.5
+          },
+          {
+            "t": "0",
+            "p": 1.0
+          }
         ],
         "cap": "Reflectance (%)"
       }
@@ -206,9 +275,18 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/gray_refl.png",
         "ticks": [
-          "100",
-          "50",
-          "0"
+          {
+            "t": "100",
+            "p": 0.0
+          },
+          {
+            "t": "50",
+            "p": 0.5
+          },
+          {
+            "t": "0",
+            "p": 1.0
+          }
         ],
         "cap": "Reflectance (%)"
       }
@@ -224,10 +302,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/grayscale.png",
         "ticks": [
-          "30",
-          "−10",
-          "−50",
-          "−90"
+          {
+            "t": "30",
+            "p": 0.0
+          },
+          {
+            "t": "−10",
+            "p": 0.3333
+          },
+          {
+            "t": "−50",
+            "p": 0.6667
+          },
+          {
+            "t": "−90",
+            "p": 1.0
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -243,10 +333,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/wv_tat.png",
         "ticks": [
-          "0",
-          "−30",
-          "−60",
-          "−90"
+          {
+            "t": "0",
+            "p": 0.0
+          },
+          {
+            "t": "−30",
+            "p": 0.3333
+          },
+          {
+            "t": "−60",
+            "p": 0.6667
+          },
+          {
+            "t": "−90",
+            "p": 1.0
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -262,10 +364,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/wv_tat.png",
         "ticks": [
-          "0",
-          "−30",
-          "−60",
-          "−90"
+          {
+            "t": "0",
+            "p": 0.0
+          },
+          {
+            "t": "−30",
+            "p": 0.3333
+          },
+          {
+            "t": "−60",
+            "p": 0.6667
+          },
+          {
+            "t": "−90",
+            "p": 1.0
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -281,10 +395,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/wv_tat.png",
         "ticks": [
-          "0",
-          "−30",
-          "−60",
-          "−90"
+          {
+            "t": "0",
+            "p": 0.0
+          },
+          {
+            "t": "−30",
+            "p": 0.3333
+          },
+          {
+            "t": "−60",
+            "p": 0.6667
+          },
+          {
+            "t": "−90",
+            "p": 1.0
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -300,10 +426,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -319,10 +457,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -338,10 +488,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/dvorak.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -357,10 +519,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -376,10 +550,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
@@ -395,10 +581,22 @@ window.TVProducts = {
       "cbar": {
         "img": "cbars/rainbow_ir.png",
         "ticks": [
-          "40",
-          "0",
-          "−40",
-          "−80"
+          {
+            "t": "40",
+            "p": 0.0
+          },
+          {
+            "t": "0",
+            "p": 0.2963
+          },
+          {
+            "t": "−40",
+            "p": 0.5926
+          },
+          {
+            "t": "−80",
+            "p": 0.8889
+          }
         ],
         "cap": "Brightness temperature (°C)"
       }
