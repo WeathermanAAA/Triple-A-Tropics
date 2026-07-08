@@ -85,7 +85,17 @@ window.TVProducts = {
       "path": "sat/goes19/conus/airmass",
       "title": "Air Mass RGB",
       "group": "rgb",
-      "bt": false,
+      "bt": true,
+      "dayOnly": false,
+      "cbar": null
+    },
+    {
+      "key": "ash",
+      "id": "goes19-conus-ash",
+      "path": "sat/goes19/conus/ash",
+      "title": "Ash RGB",
+      "group": "rgb",
+      "bt": true,
       "dayOnly": false,
       "cbar": null
     },
@@ -94,6 +104,26 @@ window.TVProducts = {
       "id": "goes19-conus-daycloudphase",
       "path": "sat/goes19/conus/daycloudphase",
       "title": "Day Cloud Phase Distinction",
+      "group": "rgb",
+      "bt": true,
+      "dayOnly": true,
+      "cbar": null
+    },
+    {
+      "key": "dayconvection",
+      "id": "goes19-conus-dayconvection",
+      "path": "sat/goes19/conus/dayconvection",
+      "title": "Day Convection RGB",
+      "group": "rgb",
+      "bt": false,
+      "dayOnly": true,
+      "cbar": null
+    },
+    {
+      "key": "daylandcloud",
+      "id": "goes19-conus-daylandcloud",
+      "path": "sat/goes19/conus/daylandcloud",
+      "title": "Day Land Cloud (Natural Color)",
       "group": "rgb",
       "bt": false,
       "dayOnly": true,
@@ -105,7 +135,7 @@ window.TVProducts = {
       "path": "sat/goes19/conus/dust",
       "title": "Dust RGB",
       "group": "rgb",
-      "bt": false,
+      "bt": true,
       "dayOnly": false,
       "cbar": null
     },
@@ -125,7 +155,7 @@ window.TVProducts = {
       "path": "sat/goes19/conus/nightmicro",
       "title": "Nighttime Microphysics",
       "group": "rgb",
-      "bt": false,
+      "bt": true,
       "dayOnly": false,
       "cbar": null
     },

@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-08 ~21:30 UTC_
+_Last update: 2026-07-08 ~22:40 UTC_
 
 ---
 
@@ -54,9 +54,17 @@ optional $10 AWS budget alarm (console/root only).
   a config row"), suite emit off one pinned scan with shared band fetches,
   dockerized box service, viewer product picker + per-pane compare products +
   per-product colorbars (exact-norm tick placement). All 5 RGB scalings
-  verified against the CIRA/RAMMB quick-guide PDFs; 104 s2 tests green;
-  4-finding adversarial review folded.
+  verified against the CIRA/RAMMB quick-guide PDFs; 4-finding adversarial
+  review folded (tsr `52a3306` + TAT `da0a66e`).
   Artifact: https://claude.ai/code/artifact/22ac0c0b-3cfe-4ab5-aad8-53291ee55783
+- **Suite extension** (2026-07-08, tsr `7902a98` + TAT, see git log): **Ash,
+  Day Convection, Day Land Cloud/Natural Color** (primary-source verified —
+  Day Convection green gamma 1 per the ABI guide, not EUMETSAT's 0.5 heritage)
+  + **full-disk rows for every recipe** (goes19-fd-*, config-only; fd anchor
+  path verified on a real CMIPF scan) + C13 BT rasters on the IR-window RGBs
+  so the inspector works there. Registry now 27 CONUS + 26 FD tiled products;
+  106 s2 tests green. Same box command lights everything: the cron form covers
+  `--suite conus`; full disk = `--suite fd` (heavier, on-demand).
 - **Phase 2d 90-frame WebM export** (recovered from dead session, `0906d09`) +
   **Q7 tiering plumbing** (tsr `ced02e1`: `--max-zoom`, lifecycle-TTL script).
 - Earlier phases: 2a pyramid emitter `dfde476` ·
@@ -68,10 +76,9 @@ optional $10 AWS budget alarm (console/root only).
 
 ## IN PROGRESS
 
-- Extending the RGB suite with the remaining rgb_recipes.csv rows (Ash, Day
-  Convection, Snow/Fog Natural Color) after primary-source verification of
-  their scalings, + full-disk (fd) suite rows. Config-only additions; will
-  land with tests + regenerated products.js.
+- Nothing mid-flight. Next natural steps (will pick up autonomously): Day
+  Snow-Fog RGB (verified numbers on file), fd sector in the viewer picker,
+  live-verify + AGENT_STATUS update once the box emit (queue ①) runs.
 
 ## BLOCKERS
 
