@@ -1,0 +1,11 @@
+# wrangler config for the explorer preview gate (deploy: see workers/README.md)
+name = "explorer-gate"
+main = "explorer-gate.js"
+compatibility_date = "2026-06-01"
+
+routes = [
+  { pattern = "triple-a-tropics.com/satellite/explorer*", zone_name = "triple-a-tropics.com" }
+]
+
+# secret (NOT here, NOT in the repo):
+#   npx wrangler secret put PREVIEW_TOKEN -c explorer-gate.toml
