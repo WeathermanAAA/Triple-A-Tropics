@@ -10,7 +10,7 @@ _Last update: 2026-07-08 ~22:40 UTC_
 
 ## MY QUEUE (Andrew's hands / decisions, ordered)
 
-**① Box session (Hostinger, ~10 min) — lights the whole 24-product explorer.**
+**① Box session (Hostinger, ~10 min) — lights the whole 27-product explorer (53 with full-disk).**
 On the box, in the tsr repo dir (Docker only — no host pip, no cred paste):
 
 ```bash
