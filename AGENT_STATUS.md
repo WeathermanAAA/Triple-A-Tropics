@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-08 ~22:40 UTC_
+_Last update: 2026-07-08 ~23:20 UTC_
 
 ---
 
@@ -28,6 +28,22 @@ Then: https://triple-a-tropics.com/satellite/explorer/ (picker top-left) and
 `curl https://cdn.triple-a-tropics.com/shadow/sat/goes19/conus/products.json`.
 Claude polls the CDN and live-verifies once frames land. Full detail:
 `RUNBOOK-S2.md` on tsr `s2-sat-ingest`.
+
+**①·b Deploy the explorer preview gate (CF Worker, ~3 min — wrangler login is your hands).**
+Keeps /satellite/explorer/ LINK-ONLY: real 404 without the token, no nav links, noindex+robots
+already shipped (TAT `7856e3c`). In the TAT repo:
+
+```bash
+cd workers
+npx wrangler login
+npx wrangler secret put PREVIEW_TOKEN -c explorer-gate.toml   # paste: 611618edf063b10dcbe84857be9dd411
+npx wrangler deploy -c explorer-gate.toml
+```
+
+**Bookmark (arms a 90-day cookie, then plain URLs work):**
+`https://triple-a-tropics.com/satellite/explorer/?k=611618edf063b10dcbe84857be9dd411`
+Un-gate for public launch: delete the Worker route (`npx wrangler delete --name explorer-gate`) — nothing else to change.
+(Note: this token sits in a public repo, so the gate is soft until you rotate it — say the word and Claude re-keys via a new secret + status update. Until the Worker deploys, the page is un-gated but unlinked, as before.)
 
 **② Decision (art): HAFS env-color v0.12 on the live worker** — say go and
 Claude repins `hafs-render-worker` hafs-render v0.11.0→v0.12.0 (Railway
