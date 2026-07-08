@@ -381,6 +381,44 @@
     new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(lngLat).addTo(this.map);
   };
 
+  // ---- 90-frame export: encode the loaded frames to WebM (true palette, no GIF
+  // palette drift; Discord-safe <=10 MB at viewer res). Client-only, no server. ----
+  VP.exportWebM = function (opts) {
+    opts = opts || {};
+    if (!this.frames.length || typeof MediaRecorder === 'undefined') {
+      if (opts.onError) opts.onError('MediaRecorder unavailable'); return;
+    }
+    var self = this, map = this.map, fps = opts.fps || 8;
+    var N = Math.min(this.frames.length, opts.maxFrames || 90);
+    var canvas = map.getCanvas();
+    var stream = canvas.captureStream(fps);
+    var mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+      .filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || 'video/webm';
+    // budget the bitrate so N/fps seconds stays comfortably under ~9 MB.
+    var secs = Math.max(1, N / fps);
+    var bitrate = Math.min(6e6, Math.floor(9e6 * 8 / secs));
+    var rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
+    var chunks = [];
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = function () {
+      var blob = new Blob(chunks, { type: 'video/webm' });
+      if (opts.onDone) { opts.onDone(blob); return; }
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (self.manifest.product.replace(/\//g, '-')) + '_loop.webm';
+      a.click();
+    };
+    var i = 0, dwell = 1000 / fps;
+    if (opts.onProgress) opts.onProgress(0, N);
+    rec.start();
+    (function step() {
+      self.showFrame(i); i++;
+      if (opts.onProgress) opts.onProgress(i, N);
+      if (i < N) setTimeout(step, dwell);
+      else setTimeout(function () { try { rec.stop(); } catch (e) {} }, dwell * 2);
+    })();
+  };
+
   // Link N TiledViewers into a COMPARE group: ONE camera (AOI) + ONE clock across
   // all panes (feedback-guarded). Each pane keeps its own product / BT / manifest,
   // so it generalizes to product-vs-product; here the panes share a product and

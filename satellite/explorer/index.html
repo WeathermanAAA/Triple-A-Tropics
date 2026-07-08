@@ -116,6 +116,7 @@
         <button class="tv-btn" id="tv-region">Regions</button>
         <button class="tv-btn" id="tv-draw">Draw box</button>
         <button class="tv-btn" id="tv-fit">Fit</button>
+        <button class="tv-btn" id="tv-export">Export ↓</button>
         <span style="width:1px;height:18px;background:#2a3644"></span>
         <button class="tv-btn on" id="tv-coast">Coast</button>
         <button class="tv-btn on" id="tv-borders">Borders</button>
@@ -187,6 +188,20 @@
       toggle('tv-coast','coast'); toggle('tv-borders','borders'); toggle('tv-states','states'); toggle('tv-grid','grid');
       tv.enableDrawBox(document.getElementById('tv-draw'));
       tv.enableInspector();
+      var exBtn = document.getElementById('tv-export');
+      exBtn.onclick = function () {
+        if (exBtn.dataset.busy) return;
+        exBtn.dataset.busy = '1'; tv.pause();
+        tv.exportWebM({
+          onProgress: function (i, n) { exBtn.textContent = i < n ? 'Export ' + i + '/' + n : 'Encoding…'; },
+          onDone: function (blob) {
+            var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+            a.download = 'goes19-conus-ir_loop.webm'; a.click();
+            exBtn.textContent = 'Export ↓'; delete exBtn.dataset.busy;
+          },
+          onError: function (m) { exBtn.textContent = m; delete exBtn.dataset.busy; }
+        });
+      };
       tv.map.doubleClickZoom.disable();
       tv.map.on('dblclick', function () { tv.fitData(); });
       // preset region picker (reuse the shared component)
