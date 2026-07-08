@@ -61,10 +61,10 @@
 
 <header class="page-head">
   <h1>Compare <span style="font-size:.6em;color:var(--muted,#7c8896)">· shadow preview</span></h1>
-  <p>Synchronized viewports over the tile pyramid: one AOI and one clock drive every pane. Pan, zoom or
-     pick a region and all panes follow; hover any pane to read its brightness temperature. In production
-     each pane holds a different product (band, enhancement or satellite); here they share GOES-19 clean-IR
-     to show the time-locked, AOI-locked mechanics.</p>
+  <p>Synchronized viewports over the tile pyramid: one AOI and one clock drive every pane, and each pane
+     holds its own product — clean IR next to water vapor next to true color on the same storm. Pan, zoom
+     or pick a region and all panes follow; the clock syncs by valid time (nearest frame per product);
+     hover any pane to read its brightness temperature where the product ships a BT raster.</p>
 </header>
 
 <section class="chart-section">
@@ -95,18 +95,26 @@
 </div></footer>
 
 <script src="/models/regions.js"></script>
+<script src="products.js"></script>
 <script src="bt_probe.js"></script>
 <script src="tiled_viewer.js"></script>
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
   var params = new URLSearchParams(location.search);
-  var MANIFEST = params.get('manifest') || undefined;   // else tiled_viewer default
-  var PANE_META = [
-    { key: 'A', label: 'GOES-19 · Clean IR' },
-    { key: 'B', label: 'GOES-19 · Clean IR' },
-    { key: 'C', label: 'GOES-19 · Clean IR' },
-    { key: 'D', label: 'GOES-19 · Clean IR' }
-  ];
+  var MANIFEST = params.get('manifest') || undefined;   // force-override (local dev)
+
+  // Product table (generated from the tsr registry) + per-pane defaults:
+  // IR vs WV vs true color vs Air Mass on one storm, time-locked.
+  var PRODUCTS = (window.TVProducts && window.TVProducts.products) || [];
+  var PBASE = window.TVProducts ? window.TVProducts.base : '';
+  function productByKey(k) {
+    for (var i = 0; i < PRODUCTS.length; i++) if (PRODUCTS[i].key === k) return PRODUCTS[i];
+    return null;
+  }
+  function manifestUrlFor(p) { return PBASE + p.path + '/latest_times.json'; }
+  var PANE_DEFAULTS = ['ir', 'c08', 'truecolor', 'airmass'];
+  var paneProduct = PANE_DEFAULTS.map(function (k) { return productByKey(k); });
+
   var grid = document.getElementById('grid');
   var viewers = [], group = null, nPanes = 2, timelock = false;
 
@@ -125,12 +133,39 @@
         var pane = document.createElement('div'); pane.className = 'pane';
         var mapDiv = document.createElement('div'); mapDiv.className = 'map'; mapDiv.id = 'm' + i;
         var lab = document.createElement('div'); lab.className = 'lab';
-        lab.innerHTML = '<b>' + PANE_META[i].label + '</b><span class="t" id="t' + i + '">—</span>';
+        // per-pane product select (the compare picker) + the pane clock
+        var psel = document.createElement('select');
+        psel.className = 'b'; psel.id = 'ps' + i;
+        psel.style.pointerEvents = 'auto'; psel.style.maxWidth = '58%';
+        if (!PRODUCTS.length) psel.style.display = 'none';
+        PRODUCTS.forEach(function (p) {
+          var o = document.createElement('option');
+          o.value = p.key; o.textContent = p.title + (p.dayOnly ? ' · day' : '');
+          psel.appendChild(o);
+        });
+        if (paneProduct[i]) psel.value = paneProduct[i].key;
+        var tspan = document.createElement('span'); tspan.className = 't'; tspan.id = 't' + i;
+        tspan.textContent = '—';
+        lab.appendChild(psel); lab.appendChild(tspan);
         var pr = document.createElement('div'); pr.className = 'pr'; pr.id = 'pr' + i;
         pane.appendChild(mapDiv); pane.appendChild(lab); pane.appendChild(pr);
         grid.appendChild(pane);
         var opts = { container: 'm' + i };
+        if (paneProduct[i]) opts.manifest = manifestUrlFor(paneProduct[i]);
         if (MANIFEST) opts.manifest = MANIFEST;
+        psel.onchange = function () {
+          var p = productByKey(psel.value), v = viewers[i];
+          if (!p || !v || !v.map) return;
+          var el = document.getElementById('t' + i);
+          if (el) el.textContent = 'loading…';
+          v.setProduct(manifestUrlFor(p), p).then(function () {
+            paneProduct[i] = p;
+            if (timelock && group) group.showFrame(viewers[0].frameIdx);  // re-sync clock
+          }).catch(function () {
+            if (el) el.textContent = 'no data yet — box emit pending';
+            psel.value = paneProduct[i] ? paneProduct[i].key : 'ir';
+          });
+        };
         opts.onStatus = function (kind, data) {
           if (kind === 'error') { var le = document.getElementById('t' + i); if (le) le.textContent = 'manifest unavailable'; }
           else if (kind === 'frame') { var el = document.getElementById('t' + i); if (el) el.textContent = 'Valid ' + fmtStamp(data.stamp); }

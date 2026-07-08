@@ -92,6 +92,7 @@
   VP._initMap = function () {
     var self = this, m = this.manifest;
     this.base = manifestBase(this.manifestUrl, m.product);
+    this._pfx = m.product;    // product-scoped source ids (setProduct teardown safety)
     // calibrated BT data raster probe (pixel/BT inspector), if the product ships one
     this.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, this.base) : null;
     this.frames = (m.times || []).slice();
@@ -179,7 +180,7 @@
   };
 
   // ---- frame raster sources (§6.1: per-frame source + opacity toggle) ----
-  VP._srcId = function (stamp) { return 'ir-' + stamp; };
+  VP._srcId = function (stamp) { return (this._pfx || 'ir') + '-' + stamp; };
 
   VP._ensureFrame = function (stamp, opacity) {
     if (this._added[stamp]) {
@@ -244,6 +245,64 @@
       }
     };
     this.map.on('sourcedata', onData);
+  };
+
+  // ---- product switching (the imagery-suite picker) ----
+  // Swap manifests IN PLACE: camera, furniture, layer toggles and inspector all
+  // survive; only the frame sources + probe + clock change. On a missing/failed
+  // manifest the current product stays up (onStatus 'product-missing' lets the
+  // page say "no data yet" -- products appear as the box emits them).
+  VP.setProduct = function (manifestUrl, meta) {
+    var self = this;
+    return fetch(manifestUrl, { cache: 'no-cache' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (m) {
+        if (!m || !m.tile) throw new Error('not a tiled manifest');
+        self.pause();
+        // tear down the old product's frame layers/sources (probe GC's itself)
+        for (var s in self._added) {
+          var id = self._srcId(s);
+          if (self.map.getLayer(id)) self.map.removeLayer(id);
+          if (self.map.getSource(id)) self.map.removeSource(id);
+        }
+        self._added = {};
+        self.manifestUrl = manifestUrl;
+        self.manifest = m;
+        self.base = manifestBase(manifestUrl, m.product);
+        self._pfx = m.product;
+        self.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, self.base) : null;
+        self.frames = (m.times || []).slice();
+        self.frameIdx = Math.max(0, self.frames.length - 1);
+        self.map.setMaxZoom((m.maxzoom || 5) + 1);   // per-product native zoom
+        if (self.frames.length) {
+          self._ensureFrame(self.frames[self.frameIdx], 1);
+          if (self.probe) self.probe.load(self.frames[self.frameIdx]).catch(function () {});
+        }
+        self.onStatus('ready', m.latest);
+        self._updateReadout();
+        return m;
+      })
+      .catch(function (e) {
+        self.onStatus('product-missing', { url: manifestUrl, meta: meta, err: e.message });
+        throw e;
+      });
+  };
+
+  // Nearest-in-time frame (compare panes hold DIFFERENT products whose stamp
+  // lists may differ; the shared clock syncs by time, not index).
+  function stampMs(s) {
+    return Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+                    +s.slice(9, 11), +s.slice(11, 13), +s.slice(13, 15) || 0);
+  }
+  VP.showStamp = function (stamp) {
+    var f = this.frames;
+    if (!f.length || !stamp) return;
+    var t = stampMs(stamp), best = 0, bd = Infinity;
+    for (var i = 0; i < f.length; i++) {
+      var d = Math.abs(stampMs(f[i]) - t);
+      if (d < bd) { bd = d; best = i; }
+    }
+    this.showFrame(best);
   };
 
   // ---- fixed-timestep loop playback ----
@@ -353,14 +412,16 @@
   // ---- pixel/BT inspector: hover reads REAL brightness temp from the BT raster
   // (not the colorized tile); click pins it. ----
   VP.enableInspector = function () {
-    if (!this.probe) return;
+    // Attach unconditionally: `this.probe` is re-resolved per event, so a
+    // product switch (setProduct) turns the inspector on/off with the product.
     var self = this, map = this.map;
     map.on('mousemove', function (e) {
+      if (!self.probe) { self.onStatus('probe', null); return; }
       var btC = self.probe.sample(self.frames[self.frameIdx], e.lngLat.lng, e.lngLat.lat);
       self.onStatus('probe', { lon: e.lngLat.lng, lat: e.lngLat.lat, btC: btC });
     });
     map.getCanvas().addEventListener('mouseout', function () { self.onStatus('probe', null); });
-    map.on('click', function (e) { if (!self._armed) self._pinBT(e.lngLat); });
+    map.on('click', function (e) { if (!self._armed && self.probe) self._pinBT(e.lngLat); });
   };
   VP._pinBT = function (lngLat) {
     if (!this.probe) return;
@@ -435,19 +496,27 @@
     });
     var playing = false, raf = null, last = 0, fps = 6;
     var n0 = function () { return viewers[0].frames.length; };
+    // ONE clock, synced by TIME not index: pane 0 leads; every other pane shows
+    // its own nearest-in-time frame (panes hold different products whose stamp
+    // lists can differ in cadence/coverage).
+    function syncTo(idx) {
+      var lead = viewers[0];
+      lead.showFrame(idx);
+      var stamp = lead.frames[lead.frameIdx];
+      for (var k = 1; k < viewers.length; k++) viewers[k].showStamp(stamp);
+    }
     function step(t) {
       if (!playing) return;
       if (!last) last = t;
       if (t - last >= 1000 / fps) {
         last = t;
-        var nx = (viewers[0].frameIdx + 1) % n0();
-        viewers.forEach(function (v) { v.showFrame(nx); });
+        syncTo((viewers[0].frameIdx + 1) % n0());
       }
       raf = requestAnimationFrame(step);
     }
     return {
       viewers: viewers,
-      showFrame: function (i) { viewers.forEach(function (v) { v.showFrame(i); }); },
+      showFrame: function (i) { syncTo(i); },
       play: function () { if (playing || n0() < 2) return; playing = true; last = 0; raf = requestAnimationFrame(step); },
       pause: function () { playing = false; if (raf) cancelAnimationFrame(raf); },
       toggle: function () { if (playing) { this.pause(); } else { this.play(); } return playing; },

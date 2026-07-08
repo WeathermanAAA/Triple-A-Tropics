@@ -36,6 +36,7 @@
   .tv-btn{font-size:12px;color:#dbe3ec;background:rgba(17,23,33,.9);border:1px solid #2a3644;
     border-radius:7px;padding:6px 10px;cursor:pointer;line-height:1}
   .tv-btn:hover{border-color:#49b6c8;color:#49b6c8}
+  select.tv-btn{max-width:230px;padding-right:4px}
   .tv-btn.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.14)}
   .tv-btn.pill{border-radius:999px}
   .tv-spacer{flex:1}
@@ -105,13 +106,14 @@
         <div class="tv-brand">@WeathermanAAA_</div>
       </div>
 
-      <div class="tv-ov tv-cbar">
-        <span class="cap">Brightness temperature (°C)</span>
-        <div class="ticks"><span>40</span><span>0</span><span>−40</span><span>−80</span></div>
-        <img src="rainbow_ir_cbar.png" alt="rainbow_ir colorbar">
+      <div class="tv-ov tv-cbar" id="tv-cbar">
+        <span class="cap" id="tv-cbar-cap">Brightness temperature (°C)</span>
+        <div class="ticks" id="tv-cbar-ticks"><span>40</span><span>0</span><span>−40</span><span>−80</span></div>
+        <img src="cbars/rainbow_ir.png" alt="colorbar" id="tv-cbar-img">
       </div>
 
       <div class="tv-ov tv-ctl">
+        <select class="tv-btn" id="tv-product" title="Product"></select>
         <button class="tv-btn pill" id="tv-play">▶ Play</button>
         <button class="tv-btn" id="tv-region">Regions</button>
         <button class="tv-btn" id="tv-draw">Draw box</button>
@@ -141,14 +143,25 @@
 </footer>
 
 <script src="/models/regions.js"></script>
+<script src="products.js"></script>
 <script src="bt_probe.js"></script>
 <script src="tiled_viewer.js"></script>
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
-  // Manifest URL: ?manifest=… override (local dev / a different product), else the
-  // shadow CDN default baked into tiled_viewer.js.
+  // Product table (generated from the tsr registry). ?product=KEY picks the boot
+  // product; ?manifest=… still force-overrides for local dev.
+  var PRODUCTS = (window.TVProducts && window.TVProducts.products) || [];
+  var PBASE = window.TVProducts ? window.TVProducts.base : '';
+  function productByKey(k) {
+    for (var i = 0; i < PRODUCTS.length; i++) if (PRODUCTS[i].key === k) return PRODUCTS[i];
+    return null;
+  }
+  function manifestUrlFor(p) { return PBASE + p.path + '/latest_times.json'; }
+
   var params = new URLSearchParams(location.search);
+  var current = productByKey(params.get('product')) || productByKey('ir') || PRODUCTS[0];
   var opts = { container: 'tv-map' };
+  if (current) opts.manifest = manifestUrlFor(current);
   if (params.get('manifest')) opts.manifest = params.get('manifest');
 
   var sub = document.getElementById('tv-sub'), read = document.getElementById('tv-read');
@@ -196,7 +209,7 @@
           onProgress: function (i, n) { exBtn.textContent = i < n ? 'Export ' + i + '/' + n : 'Encoding…'; },
           onDone: function (blob) {
             var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-            a.download = 'goes19-conus-ir_loop.webm'; a.click();
+            a.download = (current ? current.id : 'goes19-conus-ir') + '_loop.webm'; a.click();
             exBtn.textContent = 'Export ↓'; delete exBtn.dataset.busy;
           },
           onError: function (m) { exBtn.textContent = m; delete exBtn.dataset.busy; }
@@ -213,6 +226,50 @@
       }
     });
   });
+
+  // ---- product picker (the imagery suite; table generated from the registry) ----
+  var GROUP_LABELS = { composite: 'Composites', rgb: 'RGB composites', channel: 'Channels' };
+  var sel = document.getElementById('tv-product');
+  (function buildPicker() {
+    if (!PRODUCTS.length) { sel.style.display = 'none'; return; }
+    ['composite', 'rgb', 'channel'].forEach(function (g) {
+      var og = document.createElement('optgroup'); og.label = GROUP_LABELS[g];
+      PRODUCTS.forEach(function (p) {
+        if (p.group !== g) return;
+        var o = document.createElement('option');
+        o.value = p.key; o.textContent = p.title + (p.dayOnly ? ' · day' : '');
+        og.appendChild(o);
+      });
+      if (og.children.length) sel.appendChild(og);
+    });
+    sel.value = current ? current.key : 'ir';
+  })();
+  function applyChrome(p) {
+    document.getElementById('tv-title').textContent = 'GOES-19 · CONUS · ' + p.title;
+    var cb = document.getElementById('tv-cbar');
+    if (p.cbar) {
+      document.getElementById('tv-cbar-img').src = p.cbar.img;
+      document.getElementById('tv-cbar-cap').textContent = p.cbar.cap;
+      document.getElementById('tv-cbar-ticks').innerHTML =
+        p.cbar.ticks.map(function (t) { return '<span>' + t + '</span>'; }).join('');
+      cb.style.display = 'flex';
+    } else { cb.style.display = 'none'; }
+    document.getElementById('tv-note').textContent = (p.bt
+      ? 'Hover to read brightness temperature · click to pin · '
+      : '') + 'shift-drag to frame an area · scroll to zoom.';
+  }
+  if (current) applyChrome(current);
+  sel.onchange = function () {
+    var p = productByKey(sel.value);
+    if (!p || !tv.map) { return; }
+    sub.textContent = 'loading ' + p.title + '…';
+    tv.setProduct(manifestUrlFor(p), p).then(function () {
+      current = p; applyChrome(p);
+    }).catch(function () {
+      sub.textContent = 'no data yet for ' + p.title + ' — box emit pending';
+      sel.value = current ? current.key : 'ir';   // stay on the working product
+    });
+  };
 </script>
 </body>
 </html>
