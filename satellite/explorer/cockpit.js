@@ -1070,7 +1070,10 @@
     $('cx-count').textContent = (S.tm.idx + 1) + ' / ' + n + ' · archive';
     drawTimeline();
   }
-  var TM_MAX_DEG = 80;   // backend's per-axis bbox cap (mirrors the old panel)
+  var TM_MAX_DEG = 60;   // per-axis cap, kept below the backend's 80° limit
+  // GOES-East usable window: the renderer crashes on off-disk (limb-masked)
+  // extents, so the request box never leaves this envelope.
+  var TM_SAFE = { w: -145, e: -15, s: -55, n: 55 };
   function tmBody(pane, timeIso, quality) {
     var m = TM_MAP[pane.product.key] || TM_MAP.ir;
     var b = pane.tv.map.getBounds();
@@ -1079,7 +1082,23 @@
     // clamp around the view center rather than failing the request
     if (e - w > TM_MAX_DEG) { var cx = (e + w) / 2; w = cx - TM_MAX_DEG / 2; e = cx + TM_MAX_DEG / 2; }
     if (n - s > TM_MAX_DEG) { var cy = (n + s) / 2; s = cy - TM_MAX_DEG / 2; n = cy + TM_MAX_DEG / 2; }
-    s = Math.max(-80, s); n = Math.min(80, n);
+    w = Math.max(TM_SAFE.w, w); e = Math.min(TM_SAFE.e, e);
+    s = Math.max(TM_SAFE.s, s); n = Math.min(TM_SAFE.n, n);
+    if (!(e - w > 1 && n - s > 1)) return null;   // view is off the GOES-East disk
+    // limb guard: the renderer crashes when a corner is beyond the usable
+    // disk (~68° great-circle from the 75.2°W sub-satellite point) — shrink
+    // toward the box center until every corner is on-disk.
+    var sep = function (lon, lat) {
+      var la = lat * Math.PI / 180, dl = (lon + 75.2) * Math.PI / 180;
+      return Math.acos(Math.cos(la) * Math.cos(dl)) * 180 / Math.PI;
+    };
+    for (var it = 0; it < 8; it++) {
+      var worst = Math.max(sep(w, s), sep(w, n), sep(e, s), sep(e, n));
+      if (worst <= 68) break;
+      var mx = (w + e) / 2, my = (s + n) / 2;
+      w = mx + (w - mx) * 0.88; e = mx + (e - mx) * 0.88;
+      s = my + (s - my) * 0.88; n = my + (n - my) * 0.88;
+    }
     return {
       bbox: [w, s, e, n],
       time: timeIso,
@@ -1098,6 +1117,10 @@
         .then(function (j) { throw new Error(j.detail || ('render failed (' + r.status + ')')); });
       return r.blob();
     });
+  }
+  function tmFetchBody(body) {
+    if (!body) return Promise.reject(new Error('view is outside GOES-East coverage — pan east'));
+    return tmFetch(body);
   }
   function enterTM() {
     stopClock(); disarmTools(); hideEmbed();
@@ -1145,7 +1168,7 @@
     var chain = Promise.resolve();
     targets.forEach(function (i) {
       chain = chain.then(function () {
-        return tmFetch(tmBody(S.panes[i], timeIso)).then(function (blob) {
+        return tmFetchBody(tmBody(S.panes[i], timeIso)).then(function (blob) {
           var im = $('cx-tm-img-' + i);
           if (im.dataset.url) URL.revokeObjectURL(im.dataset.url);
           im.src = im.dataset.url = URL.createObjectURL(blob);
@@ -1186,7 +1209,7 @@
       }
       var d = stamps[done], iso = d.toISOString().slice(0, 16);
       flash('archive loop: rendering ' + (done + 1) + '/' + stamps.length + '…', true);
-      tmFetch(tmBody(pane, iso + ':00Z', 'low')).then(function (blob) {
+      tmFetchBody(tmBody(pane, iso + ':00Z', 'low')).then(function (blob) {
         S.tm.frames.push({ stamp: tmStamp(iso), url: URL.createObjectURL(blob) });
         tmShowFrame(S.tm.frames.length - 1);
         done++;
