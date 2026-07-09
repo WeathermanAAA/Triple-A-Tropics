@@ -119,8 +119,35 @@
   .cx-ph-sub{font-size:10.5px;color:#9aa8b8;font-variant-numeric:tabular-nums;margin-top:1px}
   .cx-ph-brand{font-weight:700;font-size:13.5px;color:rgba(255,255,255,.48);white-space:nowrap;
     text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45)}
+  /* ONE watermark for the whole view (panes carry headers, not brands) */
+  .cx-wm{top:8px;right:14px;font-weight:700;font-size:14px;color:rgba(255,255,255,.5);
+    text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap;z-index:6}
   .cx-pane-cbar{position:absolute;right:8px;top:46px;z-index:4;pointer-events:none;
     display:none;gap:4px;align-items:stretch}
+  /* RGB interpretation key (quick-guide semantics) — no pane is ever bare */
+  .cx-pane-key{position:absolute;right:8px;top:46px;z-index:4;pointer-events:none;
+    display:none;flex-direction:column;gap:3px;background:rgba(10,13,18,.72);
+    border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:6px 8px;max-width:150px}
+  .cx-pane-key i{display:flex;align-items:center;gap:5px;font-style:normal;
+    font-size:9.5px;font-weight:500;color:#c6d0da;line-height:1.25}
+  .cx-pane-key i b{width:9px;height:9px;border-radius:2px;flex:none;
+    border:1px solid rgba(255,255,255,.25)}
+  /* Time Machine: pane shows the backend's finished render (own baked chrome) */
+  .cx-tm-img{position:absolute;inset:0;z-index:5;display:none;width:100%;height:100%;
+    object-fit:contain;background:#0a0d12}
+  .cx-pane.cx-tm-showing .cx-pane-head,.cx-pane.cx-tm-showing .cx-pane-cbar,
+  .cx-pane.cx-tm-showing .cx-pane-key{display:none !important}
+  body.cx-tm-mode .cx-field:not([data-tm]){opacity:.4;pointer-events:none}
+  body.cx-tm-mode #cx-tmbar{display:flex}
+  #cx-tmbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;
+    padding-top:8px;border-top:1px solid var(--cx-line-soft)}
+  #cx-tmbar label{font-size:10.5px;font-weight:700;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--cx-dim)}
+  #cx-tmbar input[type=datetime-local]{font-family:inherit;font-size:12px;color:var(--cx-fg);
+    background:rgba(17,23,33,.9);border:1px solid var(--cx-line);border-radius:7px;padding:5px 8px;
+    color-scheme:dark}
+  #cx-tmbar select{font-family:inherit;font-size:11.5px;color:var(--cx-fg);
+    background:rgba(17,23,33,.9);border:1px solid var(--cx-line);border-radius:7px;padding:5px 6px}
   .cx-pane-cbar img{width:10px;height:150px;image-rendering:pixelated;
     border:1px solid rgba(255,255,255,.18);border-radius:2px}
   .cx-pane-cbar .ticks{position:relative;width:2.4em;font-size:9px;color:#b6c0cc;
@@ -316,6 +343,7 @@
     <div class="cx-view">
       <div id="cx-panes" data-n="1"></div>
       <div id="cx-embed"></div>
+      <div class="cx-ovl cx-wm">@WeathermanAAA_</div>
       <div class="cx-ovl" id="cx-flash"></div>
       <div class="cx-err" id="cx-err"></div>
     </div>
@@ -326,9 +354,31 @@
         <span class="cx-clock"><b id="cx-valid">—</b></span>
         <canvas id="cx-tl" height="40"></canvas>
         <span class="cx-clock" id="cx-count">—</span>
-        <button type="button" class="cx-btn icon" disabled title="Time machine — coming">
+        <button type="button" class="cx-btn" id="cx-tm" title="Live ↔ Time Machine (render-on-demand from the GOES-R archive)">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-cal"/></svg>
-          <i class="cx-chip">soon</i></button>
+          <span class="lbl">Live</span></button>
+      </div>
+      <div id="cx-tmbar">
+        <label>Time machine</label>
+        <input type="datetime-local" id="cx-tm-time" step="60"
+               min="2017-07-10T00:00" title="UTC — GOES-R era only">
+        <span class="cx-clock">UTC</span>
+        <button type="button" class="cx-btn icon" id="cx-tm-back" title="−1 h">−1h</button>
+        <button type="button" class="cx-btn icon" id="cx-tm-fwd" title="+1 h">+1h</button>
+        <button type="button" class="cx-btn" id="cx-tm-render" title="Render this view at this time">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-reset"/></svg>
+          <span class="lbl">Render</span></button>
+        <span class="cx-sep"></span>
+        <label>Loop to</label>
+        <input type="datetime-local" id="cx-tm-end" step="60" min="2017-07-10T00:00" title="UTC">
+        <select id="cx-tm-step" title="Frame step">
+          <option value="10">10 min</option>
+          <option value="30" selected>30 min</option>
+          <option value="60">1 h</option>
+          <option value="180">3 h</option>
+        </select>
+        <button type="button" class="cx-btn" id="cx-tm-loop"><span class="lbl">Load loop</span></button>
+        <span class="cx-clock" id="cx-tm-note">archive renders are rate-limited — loops cap at 12 frames</span>
       </div>
       <div class="cx-tools">
         <div class="cx-tgroup">

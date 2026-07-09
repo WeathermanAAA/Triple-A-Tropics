@@ -575,6 +575,9 @@
    auto-sizing (global_tracks postMessage precedent). */
 html.embedded .nav, html.embedded .subnav, html.embedded .page-head,
 html.embedded footer { display: none !important; }
+/* the custom-snapshot tool now lives in the explorer cockpit (Time Machine) —
+   hidden in the embedded mount only; the standalone page keeps it. */
+html.embedded #sat-zoom-section, html.embedded #sat-result-section { display: none !important; }
 </style>
 <script>
 if (new URLSearchParams(location.search).get('embed') === '1') {
@@ -622,7 +625,7 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
   <p>Draw a rectangle anywhere in GOES-East coverage (Americas, Atlantic, eastern Pacific to ~-105°W), GOES-West coverage (eastern Pacific west of ~-105°W, Hawaii, Alaska, central Pacific via GOES-18 + GOES-17 archive back to Feb 2019), or Himawari coverage (Western Pacific via Himawari-9 + Himawari-8 archive back to 2017). METEOSAT (Atlantic east / Africa / Europe) coming soon.</p>
 </header>
 
-<section class="chart-section">
+<section class="chart-section" id="sat-zoom-section">
   <div class="chart-card">
     <div class="sat-grid">
       <div class="sat-map-wrap">

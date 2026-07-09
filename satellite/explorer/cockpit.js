@@ -129,6 +129,7 @@
       var isCh = p.group === 'channel';
       var row = document.createElement('button');
       row.type = 'button'; row.className = 'cx-field'; row.dataset.key = p.key;
+      if (TM_MAP[p.key]) row.dataset.tm = '1';   // archive-servable in Time Machine
       var ch = isCh ? chParts(p) : null;
       if (ch) {
         row.innerHTML = '<b>' + ch.met + '</b><span class="cx-meta">' +
@@ -340,11 +341,12 @@
     el.innerHTML = '<div class="cx-pane-map" id="cx-map-' + i + '"></div>' +
       '<div class="cx-pane-head" id="cx-ph-' + i + '"><div>' +
         '<div class="cx-ph-title" id="cx-pht-' + i + '"></div>' +
-        '<div class="cx-ph-sub" id="cx-phs-' + i + '"></div></div>' +
-        '<div class="cx-ph-brand">@WeathermanAAA_</div></div>' +
+        '<div class="cx-ph-sub" id="cx-phs-' + i + '"></div></div></div>' +
       '<div class="cx-pane-cbar" id="cx-pc-' + i + '">' +
         '<div class="ticks" id="cx-pct-' + i + '"></div>' +
         '<img alt="" id="cx-pci-' + i + '"></div>' +
+      '<div class="cx-pane-key" id="cx-pk-' + i + '"></div>' +
+      '<img class="cx-tm-img" id="cx-tm-img-' + i + '" alt="">' +
       '<div class="cx-pane-probe" id="cx-pp-' + i + '"></div>' +
       '<div class="cx-load" id="cx-load-' + i + '"><i></i><span>Loading GOES-19 tiles…</span></div>';
     el.onclick = function () { setActivePane(i); };
@@ -420,9 +422,35 @@
     };
   }
 
-  // burned-in branded chrome per pane: title strip + valid time + colorbar.
-  // Scalar/BT fields carry their color table; RGB composites have no cbar in
-  // products.js (cbar:null) so nothing meaningless is forced.
+  // RGB interpretation keys (CIRA/RAMMB quick-guide semantics, the same
+  // sources the recipes were verified against) — every cbar-less field gets
+  // one so no pane is ever bare. Swatch hex ≈ the product's canonical hue.
+  var LEGENDS = {
+    truecolor: [['#e8e8e8', 'Cloud'], ['#3e5c33', 'Vegetation'],
+                ['#b09a6a', 'Bare ground'], ['#0b2740', 'Ocean']],
+    daylandcloud: [['#7fd4d4', 'Ice cloud / snow'], ['#e8e8e8', 'Water cloud'],
+                   ['#3f6b35', 'Vegetation'], ['#0b2740', 'Water']],
+    airmass: [['#c0392b', 'Dry stratospheric air'], ['#3f9b4c', 'Moist tropical air'],
+              ['#3a6fd8', 'Cool moist air'], ['#e8e8e8', 'Thick high cloud']],
+    dust: [['#d452c4', 'Lofted dust'], ['#8a1f1f', 'Thick high cloud'],
+           ['#8fb6c9', 'Moist low levels']],
+    ash: [['#d452c4', 'Ash / dust plume'], ['#b8d44f', 'SO₂-rich plume'],
+          ['#8a1f1f', 'Thick ice cloud']],
+    dayconvection: [['#e8d84a', 'Vigorous updrafts'], ['#7a3b2e', 'Mature glaciated tops'],
+                    ['#2c4d6e', 'Weak / clear']],
+    daycloudphase: [['#e8d84a', 'Thick ice / convection'], ['#49c8c8', 'Liquid water cloud'],
+                    ['#59b04f', 'Snow / ice surface'], ['#101820', 'Clear']],
+    nightmicro: [['#9fd4c8', 'Fog / low stratus'], ['#c74a3a', 'Thick cold cloud'],
+                 ['#1a2340', 'Thin cirrus']],
+    snowfog: [['#c0392b', 'Snow cover'], ['#e8e0b0', 'Fog / low cloud'],
+              ['#182028', 'Clear / water']],
+    firetemp: [['#ffffff', 'Hottest fire cores'], ['#e8b84a', 'Active fire'],
+               ['#c0392b', 'Warm hotspot']]
+  };
+
+  // burned-in branded chrome per pane: title strip + valid time + color key.
+  // Scalar/BT fields carry their colorbar; cbar-less fields get their
+  // quick-guide interpretation legend — no pane is ever bare.
   function renderPaneChrome(i, stamp) {
     var pane = S.panes[i];
     if (!pane || !pane.product || !$('cx-pht-' + i)) return;
@@ -433,15 +461,24 @@
       (pane.tv && pane.tv.frames && pane.tv.frames[pane.tv.frameIdx]) ||
       (pane.tv && pane.tv.manifest && pane.tv.manifest.latest);
     $('cx-phs-' + i).textContent = s ? 'Valid ' + fmtStamp(s) : '';
-    var cb = $('cx-pc-' + i);
+    var cb = $('cx-pc-' + i), key = $('cx-pk-' + i);
     if (p.cbar) {
       $('cx-pci-' + i).src = p.cbar.img;
       $('cx-pct-' + i).innerHTML = p.cbar.ticks.map(function (t) {
         var pos = Math.max(0.02, Math.min(0.98, t.p)) * 100;
         return '<span style="top:' + pos.toFixed(2) + '%">' + t.t + '</span>';
       }).join('');
-      cb.style.display = 'flex';
-    } else cb.style.display = 'none';
+      cb.style.display = 'flex'; key.style.display = 'none';
+    } else {
+      cb.style.display = 'none';
+      var lg = LEGENDS[p.key];
+      if (lg) {
+        key.innerHTML = lg.map(function (e) {
+          return '<i><b style="background:' + e[0] + '"></b>' + e[1] + '</i>';
+        }).join('');
+        key.style.display = 'flex';
+      } else key.style.display = 'none';
+    }
   }
   function paneTag(i, stamp) { renderPaneChrome(i, stamp); }
 
@@ -502,6 +539,15 @@
   function setPaneProduct(i, p, forceDomain) {
     var pane = S.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
+    if (S.tm.on) {
+      // Time Machine: the field only changes what the archive renders — the
+      // live tile manifests are untouched until Live mode returns.
+      if (!TM_MAP[p.key]) { flash('that field is live-only'); return; }
+      pane.product = p;
+      if (i === S.active) markFieldActive();
+      tmRenderOnce();
+      return;
+    }
     if (S.available && !S.available.has(p.id) && S.domain === 'conus') return;
     flash('Loading ' + p.title + '…', true);
     pane.tv.setProduct(manifestUrlFor(p, S.domain), p).then(function () {
@@ -530,6 +576,7 @@
   function lead() { return S.panes[0] && S.panes[0].tv; }
 
   function clockShow(idx) {
+    if (S.tm.on) { tmShowFrame(idx); return; }
     var tv = lead();
     if (!tv || !tv.frames.length) return;
     var n = tv.frames.length;
@@ -539,10 +586,13 @@
     for (var k = 1; k < S.panes.length; k++)
       if (S.panes[k] && S.panes[k].ready) S.panes[k].tv.showStamp(stamp);
   }
+  function clockIdx() { return S.tm.on ? S.tm.idx : (lead() ? lead().frameIdx : 0); }
   function startClock() {
     var tv = lead();
-    if (S.playing || !tv || tv.frames.length < 2) {
-      if (tv && tv.frames.length < 2) flash('1 frame — the loop fills as the emit cron runs');
+    if (S.playing || framesList().length < 2) {
+      if (framesList().length < 2)
+        flash(S.tm.on ? 'load an archive loop first'
+                      : '1 frame — the loop fills as the emit cron runs');
       return;
     }
     S.playing = true; S.last = 0;
@@ -551,8 +601,8 @@
       if (!S.playing) return;
       if (!S.last) S.last = t;
       var iv = 1000 / S.fps;
-      if (S.dwell && lead().frameIdx === lead().frames.length - 1) iv *= 6;
-      if (t - S.last >= iv) { S.last = t; clockShow(lead().frameIdx + 1); }
+      if (S.dwell && clockIdx() === framesList().length - 1) iv *= 6;
+      if (t - S.last >= iv) { S.last = t; clockShow(clockIdx() + 1); }
       S.raf = requestAnimationFrame(step);
     }
     S.raf = requestAnimationFrame(step);
@@ -579,17 +629,18 @@
   function drawTimeline() {
     var cv = $('cx-tl'), tv = lead();
     if (!cv || !tv) return;
+    var frames = framesList(), fi = clockIdx();
     var dpr = window.devicePixelRatio || 1;
     var w = cv.clientWidth, h = cv.clientHeight;
     if (!w) return;
     cv.width = w * dpr; cv.height = h * dpr;
     var ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-    var n = tv.frames.length;
+    var n = frames.length;
     ctx.fillStyle = '#141b25'; ctx.fillRect(0, h / 2 - 3, w, 6);
     if (!n) return;
     // progress fill to the current frame
-    var fx = n > 1 ? (tv.frameIdx / (n - 1)) * w : w;
+    var fx = n > 1 ? (fi / (n - 1)) * w : w;
     ctx.fillStyle = 'rgba(73,182,200,.35)'; ctx.fillRect(0, h / 2 - 3, fx, 6);
     ctx.fillStyle = '#3a4756';
     for (var i = 0; i < n; i++) {
@@ -602,10 +653,10 @@
     // end labels
     ctx.fillStyle = '#71809a'; ctx.font = '600 9.5px Metropolis,system-ui,sans-serif';
     ctx.textBaseline = 'top';
-    ctx.fillText(fmtStamp(tv.frames[0]).slice(5), 2, h - 12);
-    var lastLbl = fmtStamp(tv.frames[n - 1]).slice(5);
+    ctx.fillText(fmtStamp(frames[0]).slice(5), 2, h - 12);
+    var lastLbl = fmtStamp(frames[n - 1]).slice(5);
     ctx.fillText(lastLbl, w - ctx.measureText(lastLbl).width - 2, h - 12);
-    if (n === 1) {
+    if (n === 1 && !S.tm.on) {
       ctx.fillStyle = '#5b6879';
       var note = 'single frame — the loop fills as new scans land';
       ctx.fillText(note, (w - ctx.measureText(note).width) / 2, 2);
@@ -615,10 +666,10 @@
     var cv = $('cx-tl');
     var wasPlaying = false, scrubbing = false;
     function idxAt(e) {
-      var r = cv.getBoundingClientRect(), tv = lead();
-      if (!tv || !tv.frames.length) return 0;
+      var r = cv.getBoundingClientRect(), frames = framesList();
+      if (!frames.length) return 0;
       var f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-      return Math.round(f * (tv.frames.length - 1));
+      return Math.round(f * (frames.length - 1));
     }
     cv.addEventListener('mouseenter', function () {
       scrubbing = true; wasPlaying = S.playing; if (S.playing) stopClock();
@@ -859,7 +910,25 @@
     ctx.font = '700 ' + f(13.5) + 'px Metropolis,system-ui,sans-serif';
     var brand = '@WeathermanAAA_';
     ctx.fillText(brand, w - ctx.measureText(brand).width - f(12), f(9));
-    // colorbar (scalar/BT fields only — RGB composites carry none)
+    // color key: colorbar for scalar/BT fields, quick-guide legend otherwise
+    var lg = !p.cbar && LEGENDS[p.key];
+    if (lg) {
+      var lx = w - f(158), ly = f(46), lh = lg.length * f(15) + f(10);
+      ctx.fillStyle = 'rgba(10,13,18,.72)';
+      ctx.fillRect(lx, ly, f(150), lh);
+      ctx.strokeStyle = 'rgba(255,255,255,.12)';
+      ctx.strokeRect(lx + .5, ly + .5, f(150) - 1, lh - 1);
+      ctx.font = '500 ' + f(9.5) + 'px Metropolis,system-ui,sans-serif';
+      ctx.textBaseline = 'middle';
+      lg.forEach(function (e, k) {
+        var ry = ly + f(8) + k * f(15);
+        ctx.fillStyle = e[0]; ctx.fillRect(lx + f(8), ry - f(4.5), f(9), f(9));
+        ctx.strokeStyle = 'rgba(255,255,255,.25)';
+        ctx.strokeRect(lx + f(8) + .5, ry - f(4.5) + .5, f(9) - 1, f(9) - 1);
+        ctx.fillStyle = '#c6d0da'; ctx.fillText(e[1], lx + f(22), ry);
+      });
+      ctx.textBaseline = 'top';
+    }
     var img = $('cx-pci-' + S.panes.indexOf(pane));
     if (p.cbar && img && img.complete && img.naturalWidth) {
       var bw = f(10), bh = f(150), bx = w - bw - f(10), by = f(46);
@@ -885,6 +954,15 @@
   function exportPNG() {
     var pane = S.panes[S.active];
     if (!pane || !pane.ready) return;
+    if (S.tm.on) {
+      // the archive render IS the finished branded graphic — save it directly
+      var im = $('cx-tm-img-' + S.active);
+      if (!im || !im.src) { flash('render an archive view first'); return; }
+      var a = document.createElement('a');
+      a.href = im.src;
+      a.download = 'archive_' + ($('cx-tm-time').value || 'view').replace(/[-:]/g, '') + '.png';
+      a.click(); return;
+    }
     var map = pane.tv.map;
     map.triggerRepaint();
     requestAnimationFrame(function () {
@@ -902,6 +980,7 @@
     });
   }
   function exportLoop(btn) {
+    if (S.tm.on) { exportTMLoop(btn); return; }
     var tv = lead(), pane = S.panes[0];
     if (!tv || btn.dataset.busy) return;
     if (tv.frames.length < 2) { flash('1 frame — loop export needs the cron backfill'); return; }
@@ -938,6 +1017,7 @@
   }
 
   function resetAll() {
+    if (S.tm.on) exitTM();
     disarmTools(); stopClock(); clearSketch(); hideEmbed();
     setPaneCount(1);
     var p = productByKey('ir') || PRODUCTS[0];
@@ -947,6 +1027,211 @@
     if (tv && tv.map) { tv.fitData(); tv.clearPins(); clockShow(tv.frames.length - 1); }
     history.replaceState(null, '', location.pathname);
     flash('');
+  }
+
+  // ========================================================================
+  // TIME MACHINE — render-on-demand from the GOES-R archive via the EXISTING
+  // custom-snapshot backend (smallest-covering-product crop logic lives
+  // server-side; we only map cockpit state onto its request shape). The
+  // returned image is a finished branded graphic (own strip/colorbar), so
+  // panes show it as-is and hide their live chrome. Field = rail, region =
+  // viewport, overlays = toggles, resolution = the ≤10MB/HQ toggle; the only
+  // new control is TIME. Live tiles are untouched — Live mode = exit.
+  // ========================================================================
+  var RENDER_API = 'https://web-production-b88d.up.railway.app/render';
+  var TM_MAP = {   // cockpit field -> what the archive backend can serve
+    truecolor: { channel: 'true_color' },
+    ir: { channel: 'clean_ir', enh: 'rainbow_ir' },
+    irbd: { channel: 'clean_ir', enh: 'dvorak' },
+    c02: { channel: 'visible_red', enh: 'ir_gray' },
+    c07: { channel: 'shortwave_ir', enh: 'ir_gray' },
+    c08: { channel: 'wv_upper', enh: 'ir_gray' },
+    c10: { channel: 'wv_lower', enh: 'ir_gray' },
+    c14: { channel: 'ir_window', enh: 'rainbow_ir' }
+  };
+  var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
+  var TM_PACE_MS = 6500;
+  S.tm = { on: false, frames: [], idx: 0, busy: false };
+
+  function tmStamp(v) { return v.replace(/[-:]/g, '') + '00Z'; }  // input -> STAMP_FMT
+  function framesList() {
+    return S.tm.on ? S.tm.frames.map(function (f) { return f.stamp; })
+                   : (lead() ? lead().frames : []);
+  }
+  function tmShowFrame(idx) {
+    var n = S.tm.frames.length;
+    if (!n) return;
+    S.tm.idx = ((idx % n) + n) % n;
+    var f = S.tm.frames[S.tm.idx];
+    var im = $('cx-tm-img-' + S.active);
+    if (im) { im.src = f.url; im.style.display = 'block'; }
+    S.panes[S.active].el.classList.add('cx-tm-showing');
+    $('cx-valid').textContent = fmtStamp(f.stamp);
+    $('cx-count').textContent = (S.tm.idx + 1) + ' / ' + n + ' · archive';
+    drawTimeline();
+  }
+  function tmBody(pane, timeIso, quality) {
+    var m = TM_MAP[pane.product.key] || TM_MAP.ir;
+    var b = pane.tv.map.getBounds();
+    return {
+      bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+      time: timeIso,
+      channel: m.channel, enhancement: m.enh || 'rainbow_ir',
+      quality: quality || (S.hqExport ? 'high' : 'default'),
+      gridlines: $('cx-ov-grid').classList.contains('on'),
+      coastlines: $('cx-ov-coast').classList.contains('on')
+    };
+  }
+  function tmFetch(body) {
+    return fetch(RENDER_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; })
+        .then(function (j) { throw new Error(j.detail || ('render failed (' + r.status + ')')); });
+      return r.blob();
+    });
+  }
+  function enterTM() {
+    stopClock(); disarmTools(); hideEmbed();
+    S.tm.on = true;
+    document.body.classList.add('cx-tm-mode');
+    $('cx-tm').classList.add('on');
+    $('cx-tm').querySelector('.lbl').textContent = 'Time Machine';
+    var maxIso = new Date(Date.now() - 3600e3).toISOString().slice(0, 16);
+    $('cx-tm-time').max = maxIso; $('cx-tm-end').max = maxIso;
+    if (!$('cx-tm-time').value)
+      $('cx-tm-time').value = new Date(Date.now() - 864e5).toISOString().slice(0, 16);
+    flash('Time Machine: set a UTC time, then Render — the current field, view and overlays apply');
+  }
+  function exitTM() {
+    S.tm.on = false; S.tm.busy = false;
+    document.body.classList.remove('cx-tm-mode');
+    $('cx-tm').classList.remove('on');
+    $('cx-tm').querySelector('.lbl').textContent = 'Live';
+    S.tm.frames.forEach(function (f) { URL.revokeObjectURL(f.url); });
+    S.tm.frames = []; S.tm.idx = 0;
+    S.panes.forEach(function (p, i) {
+      if (!p) return;
+      var im = $('cx-tm-img-' + i);
+      if (im) { im.style.display = 'none'; im.removeAttribute('src'); }
+      p.el.classList.remove('cx-tm-showing');
+    });
+    stopClock(); drawTimeline(); updateHeader();
+    var tv = lead();
+    if (tv) { updateClockUI({ stamp: tv.frames[tv.frameIdx], idx: tv.frameIdx, n: tv.frames.length }); }
+    flash('');
+  }
+  function tmRenderOnce() {
+    if (S.tm.busy) return;
+    var t = $('cx-tm-time').value;
+    if (!t) { flash('pick a UTC time first'); return; }
+    var timeIso = t + ':00Z', stamp = tmStamp(t);
+    // every ready pane whose field the archive can serve renders at the SAME
+    // time (linked cameras share the box); unsupported panes sit out.
+    var targets = [];
+    S.panes.forEach(function (p, i) {
+      if (p && p.ready && TM_MAP[p.product.key]) targets.push(i);
+    });
+    if (!targets.length) { flash('this field is live-only — pick a channel or True Color'); return; }
+    S.tm.busy = true; flash('rendering the archive view…', true);
+    var chain = Promise.resolve();
+    targets.forEach(function (i) {
+      chain = chain.then(function () {
+        return tmFetch(tmBody(S.panes[i], timeIso)).then(function (blob) {
+          var im = $('cx-tm-img-' + i);
+          if (im.dataset.url) URL.revokeObjectURL(im.dataset.url);
+          im.src = im.dataset.url = URL.createObjectURL(blob);
+          im.style.display = 'block';
+          S.panes[i].el.classList.add('cx-tm-showing');
+        });
+      });
+    });
+    chain.then(function () {
+      S.tm.busy = false; flash('');
+      $('cx-valid').textContent = fmtStamp(stamp);
+      $('cx-count').textContent = 'archive';
+    }).catch(function (e) {
+      S.tm.busy = false; flash(String(e.message || e).slice(0, 90));
+    });
+  }
+  function tmLoadLoop() {
+    if (S.tm.busy) return;
+    var a = $('cx-tm-time').value, z = $('cx-tm-end').value;
+    var stepMin = +$('cx-tm-step').value;
+    if (!a || !z) { flash('set both loop times (UTC)'); return; }
+    var t0 = Date.parse(a + ':00Z'), t1 = Date.parse(z + ':00Z');
+    if (!(t1 > t0)) { flash('loop end must be after the start'); return; }
+    var stamps = [];
+    for (var t = t0; t <= t1 && stamps.length < TM_MAX_LOOP; t += stepMin * 60e3)
+      stamps.push(new Date(t));
+    var pane = S.panes[S.active];
+    if (!pane || !TM_MAP[pane.product.key]) { flash('this field is live-only'); return; }
+    S.tm.frames.forEach(function (f) { URL.revokeObjectURL(f.url); });
+    S.tm.frames = []; S.tm.idx = 0; S.tm.busy = true;
+    var done = 0;
+    var next = function () {
+      if (done >= stamps.length) {
+        S.tm.busy = false;
+        flash(S.tm.frames.length + '-frame archive loop ready — play or export');
+        tmShowFrame(S.tm.frames.length - 1);
+        return;
+      }
+      var d = stamps[done], iso = d.toISOString().slice(0, 16);
+      flash('archive loop: rendering ' + (done + 1) + '/' + stamps.length + '…', true);
+      tmFetch(tmBody(pane, iso + ':00Z', 'low')).then(function (blob) {
+        S.tm.frames.push({ stamp: tmStamp(iso), url: URL.createObjectURL(blob) });
+        tmShowFrame(S.tm.frames.length - 1);
+        done++;
+        setTimeout(next, TM_PACE_MS);   // stay under the backend's rate limit
+      }).catch(function (e) {
+        done++;                          // skip a failed slot, keep going
+        setTimeout(next, TM_PACE_MS);
+      });
+    };
+    next();
+  }
+  // archive loop export: same recorder + byte budget as the live path, fed by
+  // the rendered frames (already branded by the backend — no extra chrome).
+  function exportTMLoop(btn) {
+    if (S.tm.frames.length < 2) { flash('load an archive loop first'); return; }
+    if (btn.dataset.busy) return;
+    btn.dataset.busy = '1'; stopClock();
+    var imgs = [], loaded = 0, fps = 6;
+    S.tm.frames.forEach(function (f, k) {
+      var im = new Image();
+      im.onload = function () { if (++loaded === S.tm.frames.length) start(); };
+      im.src = f.url; imgs[k] = im;
+    });
+    function start() {
+      var c = document.createElement('canvas');
+      c.width = imgs[0].naturalWidth; c.height = imgs[0].naturalHeight;
+      var ctx = c.getContext('2d');
+      var stream = c.captureStream(fps);
+      var mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+        .filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || 'video/webm';
+      var secs = Math.max(1, imgs.length / fps);
+      var budget = S.hqExport ? 24e6 : 9e6;
+      var rec = new MediaRecorder(stream, { mimeType: mime,
+        videoBitsPerSecond: Math.min(S.hqExport ? 12e6 : 6e6, Math.floor(budget * 8 / secs)) });
+      var chunks = [];
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = function () {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+        a.download = 'archive_' + S.tm.frames[0].stamp + '_loop.webm';
+        a.click();
+        btn.querySelector('.lbl').textContent = 'Loop'; delete btn.dataset.busy;
+      };
+      var k = 0; rec.start();
+      (function step() {
+        ctx.drawImage(imgs[k % imgs.length], 0, 0, c.width, c.height);
+        btn.querySelector('.lbl').textContent = (k + 1) + '/' + imgs.length;
+        k++;
+        if (k < imgs.length) setTimeout(step, 1000 / fps);
+        else setTimeout(function () { try { rec.stop(); } catch (e) {} }, 2000 / fps);
+      })();
+    }
   }
 
   var flashTimer = null;
@@ -1002,13 +1287,27 @@
       $('cx-link').classList.toggle('on', S.linked);
       flash(S.linked ? 'panes linked — pan/zoom moves all' : 'panes independent');
     };
+    $('cx-tm').onclick = function () { S.tm.on ? exitTM() : enterTM(); };
+    $('cx-tm-render').onclick = tmRenderOnce;
+    $('cx-tm-loop').onclick = tmLoadLoop;
+    var tmShift = function (h) {
+      var el = $('cx-tm-time');
+      if (!el.value) return;
+      var t = new Date(Date.parse(el.value + ':00Z') + h * 3600e3);
+      var iso = t.toISOString().slice(0, 16);
+      if (el.max && iso > el.max) iso = el.max;
+      if (iso < el.min) iso = el.min;
+      el.value = iso; tmRenderOnce();
+    };
+    $('cx-tm-back').onclick = function () { tmShift(-1); };
+    $('cx-tm-fwd').onclick = function () { tmShift(+1); };
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') disarmTools();
       if (e.key === ' ' && document.activeElement === document.body) {
         e.preventDefault(); S.playing ? stopClock() : startClock();
       }
-      if (e.key === 'ArrowRight') { stopClock(); clockShow(lead().frameIdx + 1); }
-      if (e.key === 'ArrowLeft') { stopClock(); clockShow(lead().frameIdx - 1); }
+      if (e.key === 'ArrowRight') { stopClock(); clockShow(clockIdx() + 1); }
+      if (e.key === 'ArrowLeft') { stopClock(); clockShow(clockIdx() - 1); }
     });
   }
 
