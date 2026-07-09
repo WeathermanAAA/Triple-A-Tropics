@@ -104,3 +104,47 @@ scheme but were paywalled at fetch time; anything not in the Guide is marked.
 Status: methods verified and frozen here; implementation lands next session
 against this spec. Do not implement constants not written above without
 re-verifying against the cited sources.
+
+## D. Resolution addendum (2026-07-09, implementation session)
+
+Every UNCONFIRMED above was resolved against primary source before
+implementation (ajwimmers/archer @ d09f5c7: archer4_visir.py, ScoreFuncs.py,
+Conversions.py; ADT v8.x via the SSEC McIDAS-V port Scene/Intensity/Functions
+.java, cross-checked against AODT v7.2 C in Unidata/gempak). Corrections to
+the text above — the source is authoritative where they differ:
+
+- **Spiral score (exact):** grad(BT) per 0.025° cell, log-compressed
+  (`g·ln(1+|g|)/|g|`); spiral unit field alpha=5°, hemisphere via sign(lat);
+  score per pixel = cross(spiral, grad_log), inward full weight,
+  counter-aligned ×0.5 (IR); grid score = 15·mean − 20. Analysis grid 0.025°
+  over ±2.5° perimeter; spiral candidates searched on a 0.05° grid within
+  2.0°, then interpolated; input first thinned to ~4 km.
+- **Ring score (exact):** radii 0.05–0.50° step 0.05, 72 azimuths (reject→0
+  if ≤42.5% points valid), gradient of BT^(1/3) with the author's ±1.14
+  spacing, dot with inward radials, ×r^0.1, best radius kept, ×250
+  internally; THEN ring_weight 0.0167 (IR) / 0.0020 (Vis) in the combo. Ring
+  evaluated only in a swarm ≤1.5 score-units below / ≤0.25° around the
+  penalized spiral max.
+- **Penalty (CORRECTED — was flagged quadratic stand-in):** LINEAR,
+  0.33 × great-circle degrees from first guess.
+- **Confidence (exact, §A form confirmed):** prominence of the no-penalty
+  combo beyond 0.75°; alpha = per-sensor linear fit with vmax blend
+  (IR lo 9.89·c−2.07, hi 9.26·c+1.95; blend 60–85 kt; floor 0.5);
+  P(err≤x) = 1−(αx+1)e^(−αx) → 50%/95% radii ARE reportable in v1.
+- **Quality gates (exact):** valid fraction of the 2.5° filter disk <0.5 →
+  no fix; spiral peak on grid edge (≤1 or ≥n−2) or NaN within 2 cells in a
+  cardinal direction → no fix; BT < 80 K treated as void; failed fix demotes
+  to weak-center (faint crosshair).
+- **ADT scene cutoffs (RESOLVED):** Eye factor total ≥0.50 → EYE (large eye
+  radius ≥38 km in v8.x); Cloud factor total <0 → SHEAR, ≥1/≥2/≥3 ladder →
+  curved band / CDO with the source's symmetry (>40/>30 °C) + temp-diff
+  (±8 °C) overrides; EMBEDDED CENTER via 10° log-spiral arc 8–20 segs.
+- **Raw T# (CORRECTED — the §B linear formulas are the 2007 paper's, not the
+  operational code):** v8.x interpolates BD-category base tables
+  (EYE Atl: 1.00…8.25; CLD Atl: 2.00…4.70 across DG→CDG+) + the confirmed
+  additive terms (eye 0.011·(Teye−Tcloud) − 0.015·Sym; cloud 0.002·Rcdo −
+  0.030·Sym − 0.1 bias). SHEAR: dist {0,35,50,80,110,140} km → T#
+  {3.5,3.0,2.5,2.25,2.0,1.5}. Curved band: {1.5,1.5,2.0,2.5,3.0,3.5,4.0} per
+  20% wrap.
+- **CI→Vmax:** Dvorak table confirmed; implement the full 0.1-step table
+  (non-uniform increments), not interpolation between half points.

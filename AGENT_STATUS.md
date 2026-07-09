@@ -4,7 +4,32 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~07:30 UTC — overnight wind-down report_
+_Last update: 2026-07-09 ~21:30 UTC — objfix + MW/ASCAT-native builds STARTED_
+
+---
+
+## IN PROGRESS tonight (2026-07-09 evening)
+
+Two explorer builds running now, committed piecewise as they land:
+
+1. **Objective center + intensity (ARCHER/ADT)** against the frozen spec
+   (`satellite/explorer/OBJFIX-METHODS.md`). Pre-build: every UNCONFIRMED
+   constant is now RESOLVED from primary source (ajwimmers/archer @ d09f5c7 +
+   ADT v8.x via the SSEC McIDAS-V port, cross-checked vs AODT v7.2) — two
+   spec corrections recorded in the spec's new §D addendum (penalty is
+   linear 0.33/deg; Raw T# uses BD-category base tables). Data paths
+   verified live: fd `bt.png` (u16, 0.01 °C, 1280×1045, ~14 km — flagged);
+   WP floater frames 1056×1056, data rect from render.py axes
+   [0.04,0.04,0.84,0.90] (graticule-verified ±2 px), display extent
+   per-frame = [cx−6, S, cx+6, N] from the backdrop bounds; LUT inversion
+   self-calibrates from each frame's own baked colorbar (rainbow_ir linear
+   −95→40 °C). Honesty contract enforced in the panel.
+2. **MW + ASCAT as NATIVE cockpit fields/layers** (retiring the ?embed=1
+   stage takeover): MW georeferenced overpass tiles as MapLibre image
+   sources, ASCAT barbs as a camera-synced per-pane canvas overlay, both
+   reusing the legacy viewers' fetch/product/legend/barb code (re-hosted,
+   not rebuilt); per-pane controls in the rail; ASCAT defaults
+   high-contrast; layerable over any base field; exports composite them.
 
 ---
 
