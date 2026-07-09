@@ -312,6 +312,15 @@
             return analyzeInWorker(field, guess, frame.timeMs, S.history, env, opts)
               .then(function (r) {
                 r.frame = frame; r.field = field;
+                // memory: only the NEWEST frame keeps its heavy field data
+                // (BT grids + decoded image); older results keep the numbers.
+                // A 40-frame loop would otherwise pin ~0.5 GB and can kill
+                // the tab.
+                if (S.results.length) {
+                  var prev = S.results[S.results.length - 1];
+                  prev.field = { inputQuality: prev.field.inputQuality,
+                                 degraded: prev.field.degraded };
+                }
                 S.results.push(r);
                 S.history.push(r.rec);
                 env.initStrengthTF = false;
