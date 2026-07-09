@@ -534,9 +534,12 @@
     rows.push(['Scene type', sceneName(rec) + ' · skill: ' + skill.tier]);
     rows.push(['Raw T# / Final T#', (rec.TrawO != null ? rec.TrawO.toFixed(1) : '—') + ' / ' +
       (rec.Tfinal != null ? rec.Tfinal.toFixed(1) : '—')]);
-    rows.push(['CI number', rec.CI != null ? rec.CI.toFixed(1) : '—']);
-    rows.push(['Est. Vmax', rec.vmax != null ? Math.round(rec.vmax) + ' kt (1-min)' : '—']);
-    rows.push(['Est. MSLP', rec.mslp != null ? Math.round(rec.mslp) + ' mb (table, unadjusted)' : '—']);
+    // poor fix -> the intensity number itself carries the caveat, not just
+    // the warning block (honesty contract: no confident wrong numbers)
+    var unrel = !a.center ? ' — UNRELIABLE (poor fix)' : '';
+    rows.push(['CI number', (rec.CI != null ? rec.CI.toFixed(1) : '—') + unrel]);
+    rows.push(['Est. Vmax', rec.vmax != null ? '~' + Math.round(rec.vmax) + ' kt (1-min)' + unrel : '—']);
+    rows.push(['Est. MSLP', rec.mslp != null ? '~' + Math.round(rec.mslp) + ' mb (table, unadjusted)' + unrel : '—']);
     rows.push(['Eye / cloud BT', rec.eyet.toFixed(1) + ' / ' + rec.cloudt.toFixed(1) + ' °C']);
     host.innerHTML = rows.map(function (rw) {
       return '<b>' + rw[0] + '</b><i>' + rw[1] + '</i>';

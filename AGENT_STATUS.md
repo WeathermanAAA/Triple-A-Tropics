@@ -4,32 +4,86 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~21:30 UTC — objfix + MW/ASCAT-native builds STARTED_
+_Last update: 2026-07-10 ~00:15 UTC — objfix + MW/ASCAT-native BOTH SHIPPED + live-verified_
 
 ---
 
-## IN PROGRESS tonight (2026-07-09 evening)
+## LANDED tonight (2026-07-09 evening → 07-10)
 
-Two explorer builds running now, committed piecewise as they land:
+### 1. Objective center + intensity (ARCHER/ADT) — SHIPPED, live-verified on BAVI + 97W
 
-1. **Objective center + intensity (ARCHER/ADT)** against the frozen spec
-   (`satellite/explorer/OBJFIX-METHODS.md`). Pre-build: every UNCONFIRMED
-   constant is now RESOLVED from primary source (ajwimmers/archer @ d09f5c7 +
-   ADT v8.x via the SSEC McIDAS-V port, cross-checked vs AODT v7.2) — two
-   spec corrections recorded in the spec's new §D addendum (penalty is
-   linear 0.33/deg; Raw T# uses BD-category base tables). Data paths
-   verified live: fd `bt.png` (u16, 0.01 °C, 1280×1045, ~14 km — flagged);
-   WP floater frames 1056×1056, data rect from render.py axes
-   [0.04,0.04,0.84,0.90] (graticule-verified ±2 px), display extent
-   per-frame = [cx−6, S, cx+6, N] from the backdrop bounds; LUT inversion
-   self-calibrates from each frame's own baked colorbar (rainbow_ir linear
-   −95→40 °C). Honesty contract enforced in the panel.
-2. **MW + ASCAT as NATIVE cockpit fields/layers** (retiring the ?embed=1
-   stage takeover): MW georeferenced overpass tiles as MapLibre image
-   sources, ASCAT barbs as a camera-synced per-pane canvas overlay, both
-   reusing the legacy viewers' fetch/product/legend/barb code (re-hosted,
-   not rebuilt); per-pane controls in the rail; ASCAT defaults
-   high-contrast; layerable over any base field; exports composite them.
+On the explorer dev route (`/satellite/explorer/`, still unlinked+noindex).
+Commits: spec §D addendum @f2b294 → compute module @ca3bb4 → panel+sources
+@a2f22d → loop-memory fix @116683. Eyeball crops (also in repo):
+`satellite/explorer/_shots/objfix_bavi_loop.jpg` + `objfix_97w_degraded.jpg`.
+
+- **Faithful, not fast:** `objfix.js` is a line-faithful PORT — ARCHER from
+  ajwimmers/archer @ d09f5c7 (log-compressed-gradient spiral score ×15−20,
+  cube-root ring score ×250 then 0.0167, LINEAR 0.33/deg penalty, no-penalty
+  prominence → per-sensor alpha → real 50%/95% certainty radii, quality
+  gates + weak-center demotion, feature/surface ladder) and ADT v8.x from
+  the SSEC McIDAS-V Java (ring/sector/FFT stats, exact scene-score cutoffs,
+  10° log-spiral curved-band, BD-category base-table Raw T#, Rule 8 clamps,
+  3 h Final T#, Rule 9 CI + rapid-diss, full 0.1-step Dvorak tables). Every
+  UNCONFIRMED in the frozen spec was resolved from primary source pre-build
+  (two spec corrections recorded in §D); the 7 unavoidable departures are
+  D1–D7 in the file header, each flagged inline. Unit tests
+  (`tests/test_objfix.cjs`): synthetic-vortex center recovery <0.15°,
+  eye/shear scene classification, Rule 8/9 behavior, table exactness.
+- **Data paths per spec:** AL/EP = fd `bt.png` (calibrated u16, ~14 km,
+  labeled); WP = floater WebP **LUT inversion self-calibrated from each
+  frame's own baked colorbar** (layout from tsr render.py axes rects,
+  graticule-verified ±2 px; chrome/coast pixels masked + median-filled,
+  labeled DEGRADED PRECISION). First guess per frame = the floater box
+  center (official-track anchor) — chaining ARCHER's own fixes measurably
+  drifted (22.9°N vs 20.5°N on BAVI) and is banned in-code.
+- **Panel** (Obj Fix · beta, toolbar): honesty banner AUTOMATED OBJECTIVE
+  SATELLITE ESTIMATE / not official / see NHC-JTWC; scene canvas with solid
+  crosshair fix, faint rejected-candidate crosshairs, dashed weak center,
+  r50/r95 circles, eye ring; confidence tier + km radii + eye probability;
+  scene type + ADT skill tier (eye r≈0.70 / cloud r≈0.50); Raw/Final T#,
+  CI, ~Vmax, ~MSLP (table, unadjusted; Pacific column for WP per the ADT
+  source); Raw/Final/CI **trend chart** over a 26 h loop; center-track JSON
+  (download + `window.ObjFix.tracks`) = the Hovmöller's input. Compute runs
+  in a Web Worker (~2 min for a 41-frame loop).
+- **Live results:** BAVI 41-frame loop → fix 20.48N 127.30E, conf 0.66
+  (r50 23 km), UNIFORM CDO, CI 3.9 → ~63 kt / ~978 mb vs official 90 kt —
+  the expected ADT no-eye-CDO low bias, surfaced as "skill: low" + degraded
+  input. 97W invest → POOR FIX (gates rejected → weak center, dashed),
+  SHEAR scene, r95 253 km, numbers stamped "UNRELIABLE (poor fix)" — the
+  degradation path working as contracted.
+
+### 2. MW + ASCAT as NATIVE cockpit fields/layers — SHIPPED, live-verified
+
+The `?embed=1` stage takeover is retired (`#cx-embed` deleted). Eyeball
+crops: `_shots/mw_91h_pane.jpg`, `_shots/ascat_layer_over_ir.jpg`,
+`_shots/ascat_pane.jpg`.
+
+- **Fields:** MW (37/91 color, 37H/91H, smoothed/raw) and ASCAT winds are
+  pickable per pane like any field in 1/2/4-pane: MW overpass tiles are
+  georeferenced MapLibre image sources (smoothed/raw = raster resampling),
+  ASCAT barbs a camera-synced per-pane canvas overlay — pan/zoom/linked
+  cameras/time-lock all apply (the clock pulls MW panes to the
+  nearest-in-time overpass unless pinned).
+- **Layers:** "MW pass" + "ASCAT winds" in the Overlays rail layer onto the
+  ACTIVE pane's base field (91H over Clean IR, barbs with dark halos over
+  IR) with a burned-in provenance badge; PNG/WebM exports composite both.
+- **Re-hosted, not rebuilt:** the legacy engines now export their
+  primitives (`MicrowaveViewer.PRODUCTS/tileRel/boundsOf`,
+  `AscatViewer.STYLES/KT_SCALE*/drawBarb`) and the cockpit adapters
+  (`cockpit_fields.js`) consume them; per-pane controls live in the rail
+  tabs (MW: storm/overpass/product/display; ASCAT: view/pass/density/style,
+  **high-contrast default**). Standalone pages unchanged for the below-fold
+  section.
+- Verified live end-to-end (puppeteer, zero pageerrors): field modes, layer
+  modes, per-pane controls, chrome/legends, reset regression, exports path.
+
+Also: `tests/` suite green except 4 pre-existing HAFS errors (installed
+tat-palettes 0.1.0 lacks `era5_isotach_cmap` — environment, not code) and
+the stale models asset-stamp failure which I fixed @bb7ee1. CLAUDE.md
+gained the objfix/MW-ASCAT gotchas. **Next up (queue):** the Hovmöller can
+now consume `ObjFix.tracks`; MW-channel ARCHER (constants already in hand)
+is a natural follow-on.
 
 ---
 
