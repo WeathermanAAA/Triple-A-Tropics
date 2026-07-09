@@ -12,52 +12,145 @@
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <style>
-  .tv-wrap{position:relative;border-radius:10px;overflow:hidden;background:#0a0d12;
-    border:1px solid var(--border,#242c36)}
-  #tv-map{width:100%;aspect-ratio:16/10;min-height:420px;background:#0a0d12}
-  .maplibregl-ctrl-attrib{display:none}
-  /* chrome overlays (HTML over canvas): pointer-events off except controls */
-  .tv-ov{position:absolute;z-index:5;pointer-events:none}
-  .tv-head{top:0;left:0;right:0;display:flex;justify-content:space-between;gap:12px;
-    padding:10px 14px;background:linear-gradient(180deg,rgba(10,13,18,.82),rgba(10,13,18,0));
+  /* ---- cockpit shell -------------------------------------------------- */
+  .cx-shell{display:grid;grid-template-columns:236px minmax(0,1fr) 232px;gap:12px;
+    max-width:1680px;margin:14px auto 26px;padding:0 14px;
     font-family:'Metropolis',system-ui,sans-serif}
-  .tv-title{font-weight:700;font-size:15px;color:#dbe3ec;letter-spacing:.01em}
-  .tv-sub{font-size:12px;color:#9aa8b8;margin-top:2px;font-variant-numeric:tabular-nums}
-  .tv-brand{font-weight:700;font-size:17px;color:rgba(255,255,255,.5);
+  .cx-rail{background:#0d1219;border:1px solid var(--border,#242c36);border-radius:10px;
+    padding:10px;display:flex;flex-direction:column;gap:10px;
+    max-height:calc(62vh + 190px);overflow-y:auto;scrollbar-width:thin}
+  .cx-rail h3{font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:#7c8896;margin:4px 2px 2px;font-weight:700}
+  .cx-stage{display:flex;flex-direction:column;gap:10px;min-width:0}
+
+  /* ---- left rail: field selector -------------------------------------- */
+  .cx-tabs{display:flex;gap:6px}
+  .cx-tab{flex:1;font-size:12px;padding:7px 4px;border-radius:7px;cursor:pointer;
+    background:rgba(17,23,33,.9);border:1px solid #2a3644;color:#9aa8b8;text-align:center}
+  .cx-tab.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.12)}
+  .cx-field{display:block;width:100%;text-align:left;padding:7px 9px;margin:2px 0;
+    background:transparent;border:1px solid transparent;border-radius:7px;cursor:pointer;color:#dbe3ec}
+  .cx-field b{display:block;font-size:12.5px;font-weight:600;line-height:1.25}
+  .cx-field .cx-meta{display:block;font-size:10.5px;color:#7c8896;
+    font-variant-numeric:tabular-nums;margin-top:1px}
+  .cx-field:hover{border-color:#2a3644;background:rgba(17,23,33,.7)}
+  .cx-field.active{border-color:#49b6c8;background:rgba(73,182,200,.10)}
+  .cx-field.active b{color:#49b6c8}
+  .cx-field.coming,.cx-item.coming{opacity:.42;cursor:default}
+  .cx-field.coming:hover{border-color:transparent;background:transparent}
+  .cx-chip{font-style:normal;font-size:9.5px;color:#c9a35a;border:1px solid rgba(201,163,90,.45);
+    border-radius:999px;padding:0 6px;white-space:nowrap}
+
+  /* ---- right rail: satellite / domain / regions / overlays ------------ */
+  .cx-item{display:flex;justify-content:space-between;align-items:center;gap:6px;width:100%;
+    text-align:left;padding:7px 9px;margin:2px 0;font-size:12.5px;color:#dbe3ec;
+    background:transparent;border:1px solid transparent;border-radius:7px;cursor:pointer}
+  .cx-item:hover{border-color:#2a3644;background:rgba(17,23,33,.7)}
+  .cx-item.active{border-color:#49b6c8;background:rgba(73,182,200,.10);color:#49b6c8}
+  .cx-item.coming:hover{border-color:transparent;background:transparent}
+  .cx-item.on{border-color:#ffb347;color:#ffb347}
+  #cx-regions details{border-top:1px solid #1c242f;padding:2px 0}
+  #cx-regions summary{font-size:11.5px;color:#9aa8b8;cursor:pointer;padding:6px 2px;
+    list-style-position:inside}
+  #cx-regions summary:hover{color:#dbe3ec}
+  .cx-rgn-box{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 8px}
+  .cx-rgn{font-size:11px;color:#b6c0cc;background:rgba(17,23,33,.9);border:1px solid #2a3644;
+    border-radius:999px;padding:3px 9px;cursor:pointer}
+  .cx-rgn:hover{border-color:#49b6c8;color:#49b6c8}
+  .cx-ov-row{display:flex;flex-wrap:wrap;gap:5px}
+  .cx-ov{font-size:11px;color:#9aa8b8;background:rgba(17,23,33,.9);border:1px solid #2a3644;
+    border-radius:7px;padding:5px 9px;cursor:pointer}
+  .cx-ov.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.12)}
+  .cx-ov:disabled{opacity:.42;cursor:default}
+
+  /* ---- stage / panes --------------------------------------------------- */
+  .cx-view{position:relative;border-radius:10px;overflow:hidden;background:#0a0d12;
+    border:1px solid var(--border,#242c36)}
+  #cx-panes{display:grid;gap:2px;height:clamp(480px,62vh,780px)}
+  #cx-panes[data-n="1"]{grid-template-columns:1fr}
+  #cx-panes[data-n="2"]{grid-template-columns:1fr 1fr}
+  #cx-panes[data-n="4"]{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+  .cx-pane{position:relative;min-height:0;background:#0a0d12}
+  .cx-pane-map{position:absolute;inset:0}
+  .cx-pane.cx-active{outline:1.5px solid rgba(73,182,200,.75);outline-offset:-1.5px;z-index:2}
+  .cx-pane-tag{position:absolute;left:8px;top:8px;z-index:4;display:none;pointer-events:none;
+    font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#dbe3ec;
+    background:rgba(10,13,18,.78);border:1px solid #2a3644;border-radius:6px;padding:3px 7px}
+  .cx-pane-probe{position:absolute;left:8px;bottom:8px;z-index:4;display:none;pointer-events:none;
+    font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#dbe3ec;line-height:1.45;
+    background:rgba(10,13,18,.82);border:1px solid #2a3644;border-radius:7px;padding:5px 8px}
+  .cx-pane-probe b{color:#49b6c8}.cx-pane-probe span{color:#9aa8b8;font-size:10.5px}
+
+  /* overlays over the whole stage (header, colorbar, flash, error) */
+  .cx-ovl{position:absolute;z-index:5;pointer-events:none}
+  .cx-head{top:0;left:0;right:0;display:flex;justify-content:space-between;gap:12px;
+    padding:10px 14px;background:linear-gradient(180deg,rgba(10,13,18,.82),rgba(10,13,18,0))}
+  .cx-title{font-weight:700;font-size:15px;color:#dbe3ec;letter-spacing:.01em}
+  .cx-sub{font-size:12px;color:#9aa8b8;margin-top:2px;font-variant-numeric:tabular-nums}
+  .cx-brand{font-weight:700;font-size:17px;color:rgba(255,255,255,.5);
     text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap}
-  .tv-cbar{top:64px;right:12px;display:flex;gap:6px;align-items:stretch}
-  .tv-cbar img{width:14px;height:230px;image-rendering:pixelated;border:1px solid rgba(255,255,255,.18);border-radius:2px}
-  /* ticks are absolutely positioned at their exact norm fraction (data-p),
-     so a label sits AT its color -- not evenly spread over the bar */
-  .tv-cbar .ticks{position:relative;width:2.6em;
-    font-size:10px;color:#b6c0cc;font-variant-numeric:tabular-nums}
-  .tv-cbar .ticks span{position:absolute;right:2px;transform:translateY(-50%)}
-  .tv-cbar .cap{writing-mode:vertical-rl;font-size:10px;color:#8b97a6;align-self:center}
-  .tv-ctl{bottom:0;left:0;right:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
-    padding:10px 12px;background:linear-gradient(0deg,rgba(10,13,18,.86),rgba(10,13,18,0));
-    pointer-events:auto;font-family:ui-monospace,Menlo,monospace}
-  .tv-btn{font-size:12px;color:#dbe3ec;background:rgba(17,23,33,.9);border:1px solid #2a3644;
-    border-radius:7px;padding:6px 10px;cursor:pointer;line-height:1}
-  .tv-btn:hover{border-color:#49b6c8;color:#49b6c8}
-  select.tv-btn{max-width:230px;padding-right:4px}
-  .tv-btn.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.14)}
-  .tv-btn.pill{border-radius:999px}
-  .tv-spacer{flex:1}
-  .tv-read{font-size:12px;color:#9aa8b8;font-variant-numeric:tabular-nums}
-  .tv-read b{color:#49b6c8}
+  .cx-cbar{top:64px;right:12px;display:flex;gap:6px;align-items:stretch}
+  .cx-cbar img{width:14px;height:230px;image-rendering:pixelated;
+    border:1px solid rgba(255,255,255,.18);border-radius:2px}
+  .cx-cbar .ticks{position:relative;width:2.6em;font-size:10px;color:#b6c0cc;
+    font-variant-numeric:tabular-nums}
+  .cx-cbar .ticks span{position:absolute;right:2px;transform:translateY(-50%)}
+  .cx-cbar .cap{writing-mode:vertical-rl;font-size:10px;color:#8b97a6;align-self:center}
+  #cx-flash{bottom:10px;left:50%;transform:translateX(-50%);font-size:12px;color:#ffb347;
+    font-family:ui-monospace,monospace;background:rgba(10,13,18,.85);border:1px solid #3a3428;
+    border-radius:7px;padding:5px 12px;opacity:0;transition:opacity .25s;white-space:nowrap}
+  .cx-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    color:#9aa8b8;font-family:ui-monospace,monospace;font-size:13px;text-align:center;
+    padding:20px;z-index:7}
+  .cx-mlabel{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:#0a0d12;
+    background:#ffb347;border-radius:4px;padding:1px 6px;white-space:nowrap}
+
+  /* draw-box + BT pin (tiled_viewer.js expects these class names) */
   .tv-drawbox{position:absolute;top:0;left:0;background:rgba(73,182,200,.14);
     border:1.5px solid #49b6c8;pointer-events:none;z-index:6}
-  .tv-probe{position:absolute;left:12px;bottom:56px;z-index:5;pointer-events:none;
-    font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#dbe3ec;
-    background:rgba(10,13,18,.82);border:1px solid #2a3644;border-radius:7px;
-    padding:6px 9px;backdrop-filter:blur(3px);line-height:1.5;display:none}
-  .tv-probe b{color:#49b6c8}.tv-probe .ll{color:#9aa8b8}
-  .tv-pin{display:flex;flex-direction:column;align-items:center;pointer-events:none;font-family:ui-monospace,monospace}
-  .tv-pin b{font-size:11px;color:#0a0d12;background:#49b6c8;border-radius:4px;padding:1px 5px;white-space:nowrap;font-weight:700}
+  .tv-pin{display:flex;flex-direction:column;align-items:center;pointer-events:none;
+    font-family:ui-monospace,monospace}
+  .tv-pin b{font-size:11px;color:#0a0d12;background:#49b6c8;border-radius:4px;
+    padding:1px 5px;white-space:nowrap;font-weight:700}
   .tv-pin i{width:2px;height:9px;background:#49b6c8;display:block}
-  .tv-note{color:var(--muted,#7c8896);font-size:12px;margin:12px 2px 0;font-family:ui-monospace,monospace}
-  .tv-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
-    color:#9aa8b8;font-family:ui-monospace,monospace;font-size:13px;text-align:center;padding:20px;z-index:7}
+  .maplibregl-ctrl-attrib{display:none}
+
+  /* ---- bottom: timeline + transport + tools ---------------------------- */
+  .cx-bottom{background:#0d1219;border:1px solid var(--border,#242c36);border-radius:10px;
+    padding:10px 12px;display:flex;flex-direction:column;gap:9px}
+  .cx-tl-row{display:flex;align-items:center;gap:12px}
+  #cx-tl{flex:1;height:40px;min-width:0;cursor:pointer}
+  .cx-clock{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa8b8;
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .cx-clock b{color:#49b6c8;font-weight:600}
+  .cx-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+    font-family:ui-monospace,Menlo,monospace}
+  .cx-btn{font-size:12px;color:#dbe3ec;background:rgba(17,23,33,.9);border:1px solid #2a3644;
+    border-radius:7px;padding:6px 10px;cursor:pointer;line-height:1}
+  .cx-btn:hover{border-color:#49b6c8;color:#49b6c8}
+  .cx-btn.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.14)}
+  .cx-btn.warn.on{border-color:#ffb347;color:#ffb347;background:rgba(255,179,71,.10)}
+  .cx-btn:disabled{opacity:.42;cursor:default}
+  .cx-btn:disabled:hover{border-color:#2a3644;color:#dbe3ec}
+  .cx-sep{width:1px;height:18px;background:#2a3644;margin:0 3px}
+  .cx-grow{flex:1}
+  .cx-seg{display:flex;border:1px solid #2a3644;border-radius:7px;overflow:hidden}
+  .cx-seg .cx-btn{border:0;border-radius:0}
+  .cx-seg .cx-btn+.cx-btn{border-left:1px solid #2a3644}
+  #cx-setpop{position:absolute;right:12px;bottom:52px;z-index:9;display:none;
+    background:#0d1219;border:1px solid #2a3644;border-radius:9px;padding:10px 12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#9aa8b8;min-width:210px}
+  #cx-setpop .cx-btn{margin-top:6px;width:100%}
+  .cx-note{color:var(--muted,#7c8896);font-size:12px;margin:2px 2px 0;
+    font-family:ui-monospace,monospace}
+
+  /* ---- compact screens -------------------------------------------------- */
+  @media (max-width: 1080px){
+    .cx-shell{grid-template-columns:1fr;max-width:900px}
+    .cx-rail{max-height:none;flex-direction:column}
+    .cx-rail.cx-left{order:2}.cx-stage{order:1}.cx-rail.cx-right{order:3}
+    #cx-panes{height:clamp(380px,56vh,620px)}
+  }
 </style>
 </head>
 <body>
@@ -89,54 +182,122 @@
   </div>
 </nav>
 
-<header class="page-head">
-  <h1>Satellite Explorer <span style="font-size:.6em;color:var(--muted,#7c8896)">· shadow preview</span></h1>
-  <p>Zoom and pan a pre-rendered tile pyramid. Draw a box or pick a region — the view
-     re-frames from cached tiles, never an on-demand render. Coastlines, borders and the
-     graticule are vector overlays that stay sharp at every zoom.</p>
-</header>
+<div class="cx-shell">
 
-<section class="chart-section">
-  <div class="chart-card">
-    <div class="tv-wrap">
-      <div id="tv-map"></div>
-
-      <div class="tv-ov tv-head">
-        <div>
-          <div class="tv-title" id="tv-title">GOES-19 · CONUS · Clean IR</div>
-          <div class="tv-sub" id="tv-sub">loading manifest…</div>
-        </div>
-        <div class="tv-brand">@WeathermanAAA_</div>
-      </div>
-
-      <div class="tv-ov tv-cbar" id="tv-cbar">
-        <span class="cap" id="tv-cbar-cap">Brightness temperature (°C)</span>
-        <div class="ticks" id="tv-cbar-ticks"><span style="top:1%">40</span><span style="top:29.63%">0</span><span style="top:59.26%">−40</span><span style="top:88.89%">−80</span></div>
-        <img src="cbars/rainbow_ir.png" alt="colorbar" id="tv-cbar-img">
-      </div>
-
-      <div class="tv-ov tv-ctl">
-        <select class="tv-btn" id="tv-product" title="Product"></select>
-        <button class="tv-btn pill" id="tv-play">▶ Play</button>
-        <button class="tv-btn" id="tv-region">Regions</button>
-        <button class="tv-btn" id="tv-draw">Draw box</button>
-        <button class="tv-btn" id="tv-fit">Fit</button>
-        <button class="tv-btn" id="tv-export">Export ↓</button>
-        <span style="width:1px;height:18px;background:#2a3644"></span>
-        <button class="tv-btn on" id="tv-coast">Coast</button>
-        <button class="tv-btn on" id="tv-borders">Borders</button>
-        <button class="tv-btn on" id="tv-states">States</button>
-        <button class="tv-btn on" id="tv-grid">Grid</button>
-        <span class="tv-spacer"></span>
-        <span class="tv-read" id="tv-read">—</span>
-      </div>
-
-      <div class="tv-ov tv-probe" id="tv-probe"></div>
-      <div class="tv-err" id="tv-err"></div>
+  <!-- ============== LEFT RAIL: FIELD ============== -->
+  <aside class="cx-rail cx-left">
+    <h3>Field</h3>
+    <div class="cx-tabs">
+      <button type="button" class="cx-tab on" id="cx-tab-rgb">RGB · Composites</button>
+      <button type="button" class="cx-tab" id="cx-tab-ch">Channels</button>
     </div>
-    <p class="tv-note" id="tv-note">Hover to read brightness temperature · click to pin · shift-drag to frame an area · scroll to zoom.</p>
-  </div>
-</section>
+    <div id="cx-list-rgb"></div>
+    <div id="cx-list-ch" style="display:none"></div>
+  </aside>
+
+  <!-- ============== STAGE ============== -->
+  <main class="cx-stage">
+    <div class="cx-view">
+      <div id="cx-panes" data-n="1"></div>
+
+      <div class="cx-ovl cx-head">
+        <div>
+          <div class="cx-title" id="cx-title">GOES-19 · CONUS · Clean IR</div>
+          <div class="cx-sub" id="cx-sub">loading manifest…</div>
+        </div>
+        <div class="cx-brand">@WeathermanAAA_</div>
+      </div>
+
+      <div class="cx-ovl cx-cbar" id="cx-cbar">
+        <span class="cap" id="cx-cbar-cap">Brightness temperature (°C)</span>
+        <div class="ticks" id="cx-cbar-ticks"></div>
+        <img src="cbars/rainbow_ir.png" alt="colorbar" id="cx-cbar-img">
+      </div>
+
+      <div class="cx-ovl" id="cx-flash"></div>
+      <div class="cx-err" id="cx-err"></div>
+    </div>
+
+    <!-- ============== BOTTOM: TIMELINE + TRANSPORT + TOOLS ============== -->
+    <div class="cx-bottom" style="position:relative">
+      <div class="cx-tl-row">
+        <span class="cx-clock"><b id="cx-valid">—</b></span>
+        <canvas id="cx-tl" height="40"></canvas>
+        <span class="cx-clock" id="cx-count">—</span>
+        <button type="button" class="cx-btn" disabled title="Time machine — coming">
+          📅 <i class="cx-chip">coming</i></button>
+      </div>
+      <div class="cx-tools">
+        <button type="button" class="cx-btn" id="cx-slower" title="Slower">−</button>
+        <button type="button" class="cx-btn" id="cx-play" title="Play/Pause (space)">▶</button>
+        <button type="button" class="cx-btn" id="cx-faster" title="Faster">+</button>
+        <span class="cx-clock" id="cx-speed">6 fps</span>
+        <span class="cx-sep"></span>
+        <button type="button" class="cx-btn on" id="cx-inspect" title="Hover reads BT; click pins">Inspect</button>
+        <button type="button" class="cx-btn warn" id="cx-measure" title="Two clicks measure distance">Measure</button>
+        <button type="button" class="cx-btn" id="cx-box" title="Drag a rectangle to frame it">Box</button>
+        <button type="button" class="cx-btn warn" id="cx-sketch" title="Freehand annotation">Sketch</button>
+        <button type="button" class="cx-btn" id="cx-clear" title="Clear sketches + pins">Clear</button>
+        <button type="button" class="cx-btn" disabled title="Icon stamps — coming">Icons <i class="cx-chip">coming</i></button>
+        <button type="button" class="cx-btn" disabled title="Point time-series — coming">Chart <i class="cx-chip">coming</i></button>
+        <span class="cx-sep"></span>
+        <button type="button" class="cx-btn" id="cx-share" title="Copy a permalink to this exact view">Share</button>
+        <button type="button" class="cx-btn" id="cx-png" title="Current pane as PNG">PNG ↓</button>
+        <button type="button" class="cx-btn" id="cx-loop" title="Loop as WebM video">Loop ↓</button>
+        <button type="button" class="cx-btn" id="cx-hq" title="Export size budget">≤10MB</button>
+        <span class="cx-grow"></span>
+        <button type="button" class="cx-btn" id="cx-fit" title="Fit the data footprint">Fit</button>
+        <div class="cx-seg" title="Panes">
+          <button type="button" class="cx-btn on" data-panes="1">1</button>
+          <button type="button" class="cx-btn" data-panes="2">2</button>
+          <button type="button" class="cx-btn" data-panes="4">4</button>
+        </div>
+        <button type="button" class="cx-btn" id="cx-settings">⚙</button>
+        <button type="button" class="cx-btn" id="cx-reset" title="Back to boot state">Reset</button>
+      </div>
+      <div id="cx-setpop">
+        playback
+        <button type="button" class="cx-btn on" id="cx-set-dwell">6× dwell on newest frame</button>
+      </div>
+    </div>
+
+    <p class="cx-note">Hover reads calibrated brightness temperature where the field ships a BT
+      raster · click pins · shift-drag frames a box · panes are time-locked, fields and regions
+      are per-pane · everything renders from pre-cut tiles, never an on-demand render.</p>
+  </main>
+
+  <!-- ============== RIGHT RAIL: SATELLITE / DOMAIN / REGIONS / OVERLAYS ============== -->
+  <aside class="cx-rail cx-right">
+    <h3>Satellite</h3>
+    <div>
+      <button type="button" class="cx-item active">GOES-19 · East</button>
+      <button type="button" class="cx-item coming">GOES-18 · West <i class="cx-chip">coming</i></button>
+    </div>
+    <h3>Domain</h3>
+    <div id="cx-domains">
+      <button type="button" class="cx-item active" data-domain="conus">CONUS</button>
+      <button type="button" class="cx-item coming" data-domain="fd">Full Disk <i class="cx-chip">no data yet</i></button>
+      <button type="button" class="cx-item coming" data-domain="meso1">Meso 1 <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-item coming" data-domain="meso2">Meso 2 <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-item" data-domain="drawbox">Draw a box</button>
+      <button type="button" class="cx-item" data-domain="selectmap">Select on map</button>
+    </div>
+    <h3>Regions</h3>
+    <div id="cx-regions"></div>
+    <h3>Overlays</h3>
+    <div class="cx-ov-row">
+      <button type="button" class="cx-ov on" id="cx-ov-coast">Coast</button>
+      <button type="button" class="cx-ov on" id="cx-ov-borders">Borders</button>
+      <button type="button" class="cx-ov on" id="cx-ov-states">States</button>
+      <button type="button" class="cx-ov on" id="cx-ov-grid">Grid</button>
+    </div>
+    <div class="cx-ov-row">
+      <button type="button" class="cx-ov" disabled>MRMS radar <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-ov" disabled>Obs · METAR <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-ov" disabled>Model fields <i class="cx-chip">coming</i></button>
+    </div>
+  </aside>
+</div>
 
 <footer>
   <div class="footer-inner">
@@ -145,137 +306,11 @@
   </div>
 </footer>
 
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js"></script>
 <script src="products.js"></script>
 <script src="bt_probe.js"></script>
 <script src="tiled_viewer.js"></script>
-<script>
-  document.getElementById('year').textContent = new Date().getFullYear();
-  // Product table (generated from the tsr registry). ?product=KEY picks the boot
-  // product; ?manifest=… still force-overrides for local dev.
-  var PRODUCTS = (window.TVProducts && window.TVProducts.products) || [];
-  var PBASE = window.TVProducts ? window.TVProducts.base : '';
-  function productByKey(k) {
-    for (var i = 0; i < PRODUCTS.length; i++) if (PRODUCTS[i].key === k) return PRODUCTS[i];
-    return null;
-  }
-  function manifestUrlFor(p) { return PBASE + p.path + '/latest_times.json'; }
-
-  var params = new URLSearchParams(location.search);
-  var current = productByKey(params.get('product')) || productByKey('ir') || PRODUCTS[0];
-  var opts = { container: 'tv-map' };
-  if (current) opts.manifest = manifestUrlFor(current);
-  if (params.get('manifest')) opts.manifest = params.get('manifest');
-
-  var sub = document.getElementById('tv-sub'), read = document.getElementById('tv-read');
-  var err = document.getElementById('tv-err'), playBtn = document.getElementById('tv-play');
-  function fmtStamp(s) {
-    if (!s || s.length < 13) return s || '';
-    return s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8)+' '+s.slice(9,11)+':'+s.slice(11,13)+'Z';
-  }
-  opts.onStatus = function (kind, data) {
-    if (kind === 'error') { err.style.display = 'flex'; err.textContent = data; sub.textContent = 'unavailable'; }
-    else if (kind === 'ready') { sub.textContent = 'Valid ' + fmtStamp(data); }
-    else if (kind === 'frame') { sub.textContent = 'Valid ' + fmtStamp(data.stamp);
-      read.innerHTML = 'frame <b>' + (data.idx+1) + '</b>/' + data.n; }
-    else if (kind === 'play') { playBtn.textContent = '❚❚ Pause'; playBtn.classList.add('on'); }
-    else if (kind === 'pause') { playBtn.textContent = '▶ Play'; playBtn.classList.remove('on'); }
-    else if (kind === 'probe') {
-      var pr = document.getElementById('tv-probe');
-      if (!data) { pr.style.display = 'none'; return; }
-      pr.style.display = 'block';
-      var t = data.btC == null ? 'no data'
-        : '<b>' + data.btC.toFixed(1) + ' °C</b> · ' + (data.btC + 273.15).toFixed(1) + ' K';
-      pr.innerHTML = t + '<br><span class="ll">' + data.lat.toFixed(2) + '°, ' +
-        data.lon.toFixed(2) + '°</span>';
-    }
-  };
-
-  var tv = new TiledViewer(opts);
-  tv.boot().then(function () {
-    if (!tv.map) return;
-    tv.map.on('load', function () {
-      playBtn.onclick = function () { tv.toggle(); };
-      document.getElementById('tv-fit').onclick = function () { tv.fitData(); };
-      var toggle = function (id, key) {
-        var b = document.getElementById(id);
-        b.onclick = function () { var on = !b.classList.contains('on'); b.classList.toggle('on', on); tv.setLayer(key, on); };
-      };
-      toggle('tv-coast','coast'); toggle('tv-borders','borders'); toggle('tv-states','states'); toggle('tv-grid','grid');
-      tv.enableDrawBox(document.getElementById('tv-draw'));
-      tv.enableInspector();
-      var exBtn = document.getElementById('tv-export');
-      exBtn.onclick = function () {
-        if (exBtn.dataset.busy) return;
-        exBtn.dataset.busy = '1'; tv.pause();
-        tv.exportWebM({
-          onProgress: function (i, n) { exBtn.textContent = i < n ? 'Export ' + i + '/' + n : 'Encoding…'; },
-          onDone: function (blob) {
-            var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-            a.download = (current ? current.id : 'goes19-conus-ir') + '_loop.webm'; a.click();
-            exBtn.textContent = 'Export ↓'; delete exBtn.dataset.busy;
-          },
-          onError: function (m) { exBtn.textContent = m; delete exBtn.dataset.busy; }
-        });
-      };
-      tv.map.doubleClickZoom.disable();
-      tv.map.on('dblclick', function () { tv.fitData(); });
-      // preset region picker (reuse the shared component)
-      if (window.TATRegions) {
-        var picker = new window.TATRegions.RegionPicker({ current: 'us', onPick: function (k) { tv.gotoRegion(k); } });
-        document.getElementById('tv-region').onclick = function () { picker.open(); };
-      } else {
-        document.getElementById('tv-region').style.display = 'none';
-      }
-    });
-  });
-
-  // ---- product picker (the imagery suite; table generated from the registry) ----
-  var GROUP_LABELS = { composite: 'Composites', rgb: 'RGB composites', channel: 'Channels' };
-  var sel = document.getElementById('tv-product');
-  (function buildPicker() {
-    if (!PRODUCTS.length) { sel.style.display = 'none'; return; }
-    ['composite', 'rgb', 'channel'].forEach(function (g) {
-      var og = document.createElement('optgroup'); og.label = GROUP_LABELS[g];
-      PRODUCTS.forEach(function (p) {
-        if (p.group !== g) return;
-        var o = document.createElement('option');
-        o.value = p.key; o.textContent = p.title + (p.dayOnly ? ' · day' : '');
-        og.appendChild(o);
-      });
-      if (og.children.length) sel.appendChild(og);
-    });
-    sel.value = current ? current.key : 'ir';
-  })();
-  function applyChrome(p) {
-    document.getElementById('tv-title').textContent = 'GOES-19 · CONUS · ' + p.title;
-    var cb = document.getElementById('tv-cbar');
-    if (p.cbar) {
-      document.getElementById('tv-cbar-img').src = p.cbar.img;
-      document.getElementById('tv-cbar-cap').textContent = p.cbar.cap;
-      document.getElementById('tv-cbar-ticks').innerHTML =
-        p.cbar.ticks.map(function (t) {
-          var pos = Math.max(0.01, Math.min(0.99, t.p)) * 100;
-          return '<span style="top:' + pos.toFixed(2) + '%">' + t.t + '</span>';
-        }).join('');
-      cb.style.display = 'flex';
-    } else { cb.style.display = 'none'; }
-    document.getElementById('tv-note').textContent = (p.bt
-      ? 'Hover to read brightness temperature · click to pin · '
-      : '') + 'shift-drag to frame an area · scroll to zoom.';
-  }
-  if (current) applyChrome(current);
-  sel.onchange = function () {
-    var p = productByKey(sel.value);
-    if (!p || !tv.map) { return; }
-    sub.textContent = 'loading ' + p.title + '…';
-    tv.setProduct(manifestUrlFor(p), p).then(function () {
-      current = p; applyChrome(p);
-    }).catch(function () {
-      sub.textContent = 'no data yet for ' + p.title + ' — box emit pending';
-      sel.value = current ? current.key : 'ir';   // stay on the working product
-    });
-  };
-</script>
+<script src="cockpit.js"></script>
 </body>
 </html>

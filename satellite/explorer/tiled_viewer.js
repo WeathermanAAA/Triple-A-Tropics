@@ -425,14 +425,25 @@
   VP.enableInspector = function () {
     // Attach unconditionally: `this.probe` is re-resolved per event, so a
     // product switch (setProduct) turns the inspector on/off with the product.
+    // setInspector(false) gates BOTH the hover readout and click-to-pin (the
+    // cockpit's Inspect toggle) without detaching anything.
     var self = this, map = this.map;
+    this._inspect = true;
     map.on('mousemove', function (e) {
-      if (!self.probe) { self.onStatus('probe', null); return; }
+      if (!self._inspect || !self.probe) { self.onStatus('probe', null); return; }
       var btC = self.probe.sample(self.frames[self.frameIdx], e.lngLat.lng, e.lngLat.lat);
       self.onStatus('probe', { lon: e.lngLat.lng, lat: e.lngLat.lat, btC: btC });
     });
     map.getCanvas().addEventListener('mouseout', function () { self.onStatus('probe', null); });
-    map.on('click', function (e) { if (!self._armed && self.probe) self._pinBT(e.lngLat); });
+    map.on('click', function (e) { if (!self._armed && self._inspect && self.probe) self._pinBT(e.lngLat); });
+  };
+  VP.setInspector = function (on) {
+    this._inspect = !!on;
+    if (!on) this.onStatus('probe', null);
+  };
+  VP.clearPins = function () {
+    (this._pins || []).forEach(function (p) { p.remove(); });
+    this._pins = [];
   };
   VP._pinBT = function (lngLat) {
     if (!this.probe) return;
@@ -450,7 +461,8 @@
     };
     render();
     self.probe.load(stamp).then(render, render);
-    new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(lngLat).addTo(this.map);
+    var mk = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(lngLat).addTo(this.map);
+    (this._pins = this._pins || []).push(mk);
   };
 
   // ---- 90-frame export: encode the loaded frames to WebM (true palette, no GIF
@@ -466,9 +478,11 @@
     var stream = canvas.captureStream(fps);
     var mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
       .filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || 'video/webm';
-    // budget the bitrate so N/fps seconds stays comfortably under ~9 MB.
+    // budget the bitrate so N/fps seconds stays comfortably under the byte
+    // budget (default ~9 MB = Discord-safe; the cockpit's HQ mode raises it).
     var secs = Math.max(1, N / fps);
-    var bitrate = Math.min(6e6, Math.floor(9e6 * 8 / secs));
+    var bitrate = Math.min(opts.maxBitrate || 6e6,
+                           Math.floor((opts.maxBytes || 9e6) * 8 / secs));
     var rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
     var chunks = [];
     rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };

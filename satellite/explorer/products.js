@@ -130,6 +130,16 @@ window.TVProducts = {
       "cbar": null
     },
     {
+      "key": "snowfog",
+      "id": "goes19-conus-snowfog",
+      "path": "sat/goes19/conus/snowfog",
+      "title": "Day Snow-Fog RGB",
+      "group": "rgb",
+      "bt": false,
+      "dayOnly": true,
+      "cbar": null
+    },
+    {
       "key": "dust",
       "id": "goes19-conus-dust",
       "path": "sat/goes19/conus/dust",
