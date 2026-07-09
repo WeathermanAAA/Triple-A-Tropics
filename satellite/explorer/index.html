@@ -17,22 +17,30 @@
     --cx-panel:#0d1219; --cx-line:#232d3a; --cx-line-soft:#1a2230;
     --cx-fg:#dbe3ec; --cx-mut:#8ea2bd; --cx-dim:#71809a;
   }
-  /* ---- cockpit shell -------------------------------------------------- */
-  .cx-shell{display:grid;grid-template-columns:238px minmax(0,1fr) 234px;gap:12px;
-    max-width:1680px;margin:14px auto 26px;padding:0 14px;
+  /* ---- FULL-BLEED app frame: the explorer owns the viewport below the
+     nav/subnav — one continuous edge-to-edge surface, no floating cards.
+     Body becomes a flex column; the shell takes all remaining height; a
+     too-short window falls back to normal page scroll (min-height). ---- */
+  html,body{height:100%}
+  body{display:flex;flex-direction:column;height:100vh;overflow:auto;margin:0}
+  body>.nav,body>.subnav{flex:none}
+  .cx-shell{flex:1 1 auto;min-height:540px;display:grid;
+    grid-template-columns:238px minmax(0,1fr) 234px;gap:0;
+    width:100%;max-width:none;margin:0;padding:0;min-width:0;
     font-family:'Metropolis',system-ui,sans-serif}
   .cx-rail{background:linear-gradient(180deg,#0f1621,#0b1018);
-    border:1px solid var(--cx-line);border-radius:12px;
-    box-shadow:0 10px 26px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
+    border:0;border-radius:0;
     padding:12px;display:flex;flex-direction:column;gap:12px;
-    max-height:calc(62vh + 196px);overflow-y:auto;scrollbar-width:thin;
+    min-height:0;overflow-y:auto;scrollbar-width:thin;
     scrollbar-color:#2a3644 transparent}
+  .cx-rail.cx-left{border-right:1px solid var(--cx-line)}
+  .cx-rail.cx-right{border-left:1px solid var(--cx-line)}
   .cx-rail h3{display:flex;align-items:center;gap:7px;
     font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
     color:var(--cx-dim);margin:2px 1px 0;font-weight:700}
   .cx-rail h3::before{content:'';width:3px;height:11px;border-radius:2px;
     background:var(--cx-teal);flex:none}
-  .cx-stage{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .cx-stage{display:flex;flex-direction:column;gap:0;min-width:0;min-height:0}
 
   /* ---- left rail: field selector -------------------------------------- */
   .cx-tabs{display:flex;gap:16px;border-bottom:1px solid var(--cx-line-soft);padding:0 2px}
@@ -93,9 +101,9 @@
   .cx-ov:disabled{opacity:.4;cursor:default}
 
   /* ---- stage / panes --------------------------------------------------- */
-  .cx-view{position:relative;border-radius:12px;overflow:hidden;background:#0a0d12;
-    border:1px solid var(--cx-line);box-shadow:0 10px 26px rgba(0,0,0,.35)}
-  #cx-panes{display:grid;gap:2px;height:clamp(480px,62vh,780px)}
+  .cx-view{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;
+    background:#0a0d12;border:0;border-radius:0}
+  #cx-panes{display:grid;gap:2px;height:100%}
   #cx-panes[data-n="1"]{grid-template-columns:1fr}
   #cx-panes[data-n="2"]{grid-template-columns:1fr 1fr}
   #cx-panes[data-n="4"]{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
@@ -167,10 +175,10 @@
   .maplibregl-ctrl-attrib{display:none}
 
   /* ---- bottom: timeline + transport + tools ---------------------------- */
-  .cx-bottom{background:linear-gradient(180deg,#0f1621,#0b1018);
-    border:1px solid var(--cx-line);border-radius:12px;
-    box-shadow:0 10px 26px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
-    padding:10px 12px;display:flex;flex-direction:column;gap:9px}
+  .cx-bottom{flex:none;background:linear-gradient(180deg,#0f1621,#0b1018);
+    border:0;border-top:1px solid var(--cx-line);border-radius:0;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+    padding:9px 12px;display:flex;flex-direction:column;gap:8px}
   .cx-tl-row{display:flex;align-items:center;gap:12px}
   #cx-tl{flex:1;height:40px;min-width:0;cursor:pointer}
   .cx-clock{font-size:12px;font-weight:600;color:var(--cx-mut);
@@ -205,15 +213,22 @@
     letter-spacing:.12em;text-transform:uppercase;color:var(--cx-dim);min-width:220px}
   #cx-setpop .cx-btn{margin-top:8px;width:100%;letter-spacing:.02em;text-transform:none;
     font-size:11.5px;justify-content:center}
-  .cx-note{color:var(--cx-dim);font-size:11.5px;font-weight:500;letter-spacing:.02em;
-    margin:2px 4px 0;line-height:1.6}
-  .cx-note b{color:var(--cx-mut);font-weight:600}
+  /* thin footer strip: the old page footer + helper line, one line each side */
+  .cx-strip{flex:none;display:flex;justify-content:space-between;align-items:center;
+    gap:16px;padding:5px 12px;background:#0b1018;border-top:1px solid var(--cx-line-soft);
+    font-family:'Metropolis',system-ui,sans-serif;font-size:10.5px;font-weight:500;
+    letter-spacing:.02em;color:var(--cx-dim);white-space:nowrap;overflow:hidden}
+  .cx-strip span{overflow:hidden;text-overflow:ellipsis}
+  .cx-strip b{color:var(--cx-mut);font-weight:600}
 
   /* ---- compact screens -------------------------------------------------- */
   @media (max-width: 1080px){
-    .cx-shell{grid-template-columns:1fr;max-width:900px}
-    .cx-rail{max-height:none;flex-direction:column}
-    .cx-rail.cx-left{order:2}.cx-stage{order:1}.cx-rail.cx-right{order:3}
+    body{display:block;height:auto;overflow:auto}
+    .cx-shell{grid-template-columns:1fr;min-height:0}
+    .cx-rail{max-height:none;overflow-y:visible}
+    .cx-rail.cx-left{order:2;border-right:0;border-top:1px solid var(--cx-line)}
+    .cx-stage{order:1}
+    .cx-rail.cx-right{order:3;border-left:0;border-top:1px solid var(--cx-line)}
     #cx-panes{height:clamp(380px,56vh,620px)}
   }
 </style>
@@ -386,10 +401,6 @@
       </div>
     </div>
 
-    <p class="cx-note"><b>Hover</b> reads calibrated brightness temperature where the field ships a
-      BT raster · <b>click</b> pins it · <b>shift-drag</b> frames a box · panes are time-locked while
-      fields and regions stay per-pane · everything renders from pre-cut tiles, never an
-      on-demand render.</p>
   </main>
 
   <!-- ============== RIGHT RAIL: SATELLITE / DOMAIN / REGIONS / OVERLAYS ============== -->
@@ -425,12 +436,12 @@
   </aside>
 </div>
 
-<footer>
-  <div class="footer-inner">
-    <span>© <span id="year"></span> Triple-A-Tropics</span>
-    <span>Satellite Explorer — shadow preview · not linked in nav</span>
-  </div>
-</footer>
+<div class="cx-strip">
+  <span>© <span id="year"></span> Triple-A-Tropics · <b>hover</b> reads BT where the field
+    ships a raster · <b>click</b> pins · <b>shift-drag</b> frames a box · panes time-locked,
+    fields + regions per-pane · pre-cut tiles only, never an on-demand render</span>
+  <span>Satellite Explorer — shadow preview · not linked in nav</span>
+</div>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js"></script>
