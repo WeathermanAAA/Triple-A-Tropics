@@ -1070,11 +1070,18 @@
     $('cx-count').textContent = (S.tm.idx + 1) + ' / ' + n + ' · archive';
     drawTimeline();
   }
+  var TM_MAX_DEG = 80;   // backend's per-axis bbox cap (mirrors the old panel)
   function tmBody(pane, timeIso, quality) {
     var m = TM_MAP[pane.product.key] || TM_MAP.ir;
     var b = pane.tv.map.getBounds();
+    var w = b.getWest(), s = b.getSouth(), e = b.getEast(), n = b.getNorth();
+    // an over-wide viewport (e.g. the boot fit) exceeds the render cap —
+    // clamp around the view center rather than failing the request
+    if (e - w > TM_MAX_DEG) { var cx = (e + w) / 2; w = cx - TM_MAX_DEG / 2; e = cx + TM_MAX_DEG / 2; }
+    if (n - s > TM_MAX_DEG) { var cy = (n + s) / 2; s = cy - TM_MAX_DEG / 2; n = cy + TM_MAX_DEG / 2; }
+    s = Math.max(-80, s); n = Math.min(80, n);
     return {
-      bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+      bbox: [w, s, e, n],
       time: timeIso,
       channel: m.channel, enhancement: m.enh || 'rainbow_ir',
       quality: quality || (S.hqExport ? 'high' : 'default'),
