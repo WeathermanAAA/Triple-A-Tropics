@@ -65,9 +65,11 @@
     return { num: 'C' + m[1], wl: m[2], met: met };
   }
 
-  // Microwave + Scatterometer fold into the rail as categories: selecting one
-  // mounts the EXISTING viewer (?embed=1 iframe) in the stage — reuse, not a
-  // rebuild. Entries grey "SOON" off each source's own R2 manifest.
+  // Microwave + Scatterometer are NATIVE pane fields (cockpit_fields.js):
+  // selecting one repurposes the ACTIVE pane — MW overpass tiles become
+  // georeferenced maplibre image sources, ASCAT barbs a camera-synced canvas
+  // overlay; the legacy standalone viewers' fetch/render logic is re-hosted,
+  // not rebuilt. Entries grey "SOON" off each source's own R2 manifest.
   var MW_FIELDS = [
     { key: 'mw-91c', title: '91 GHz color composite', meta: 'NRL · convective structure' },
     { key: 'mw-91h', title: '91H brightness temp', meta: 'NRL · eyewall through cirrus' },
@@ -75,13 +77,9 @@
     { key: 'mw-37h', title: '37H brightness temp', meta: 'NRL · forming eye' }
   ];
   var SC_FIELDS = [
-    { key: 'sc-basin', title: 'Ocean winds · basin passes', meta: 'wind barbs · stitched passes' },
+    { key: 'sc-basin', title: 'Ocean winds · recent passes', meta: 'wind barbs · frame via Regions' },
     { key: 'sc-storm', title: 'Ocean winds · storm-locked', meta: 'tagged passes per storm' }
   ];
-  var EMBEDS = {
-    mw: { src: '/satellite/microwave/?embed=1', label: 'Passive Microwave' },
-    sc: { src: '/satellite/ascat/?embed=1', label: 'Scatterometer' }
-  };
 
   function buildFieldRail() {
     var tabs = { rgb: $('cx-tab-rgb'), ch: $('cx-tab-ch'),
@@ -98,7 +96,7 @@
       tabs[k].onclick = function () { switchTab(k); };
     });
 
-    // legacy-source categories (embed on select)
+    // MW / ASCAT categories -> native pane fields (cockpit_fields.js)
     [['mw', MW_FIELDS], ['sc', SC_FIELDS]].forEach(function (pair) {
       var kind = pair[0];
       pair[1].forEach(function (f) {
@@ -109,16 +107,12 @@
           ' · <i class="cx-chip">soon</i></span>';
         row.onclick = function () {
           if (row.classList.contains('coming')) return;
-          showEmbed(kind);
-          document.querySelectorAll('.cx-field').forEach(function (el) {
-            el.classList.toggle('active', el === row);
-          });
+          if (S.tm.on) { flash('MW / ASCAT are live-only — exit Time Machine first'); return; }
+          if (window.CockpitFields) window.CockpitFields.setPaneField(S.active, f.key);
         };
         lists[kind].appendChild(row);
       });
     });
-    checkLegacySource('mw', 'https://cdn.triple-a-tropics.com/microwave/manifest.json');
-    checkLegacySource('sc', 'https://cdn.triple-a-tropics.com/ascat/manifest.json');
 
     // composites lead the RGB tab (True Color, Sandwich), then the RGBs;
     // channels keep their products.js order (Clean IR first, then C01..C16).
@@ -141,7 +135,7 @@
       }
       row.onclick = function () {
         if (row.classList.contains('coming')) return;
-        hideEmbed();
+        if (window.CockpitFields) window.CockpitFields.clearPaneField(S.active);
         setPaneProduct(S.active, p);
       };
       lists[isCh ? 'ch' : 'rgb'].appendChild(row);
@@ -149,39 +143,11 @@
     switchTab('rgb');
   }
 
-  // ---- legacy-source embeds (Microwave / Scatterometer) -------------------
-  function checkLegacySource(kind, url) {
-    fetch(url, { cache: 'no-cache' })
-      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-      .then(function () {
-        document.querySelectorAll('[data-embed="' + kind + '"]').forEach(function (el) {
-          el.classList.remove('coming');
-          var chip = el.querySelector('.cx-chip'); if (chip) chip.remove();
-          var meta = el.querySelector('.cx-meta');
-          if (meta) meta.innerHTML = meta.innerHTML.replace(/ · $/, '');
-        });
-      })
-      .catch(function () { /* stays greyed "soon" — honest */ });
-  }
-  function showEmbed(kind) {
-    stopClock(); disarmTools();
-    var box = $('cx-embed');
-    if (box.dataset.kind !== kind) {
-      box.innerHTML = '<iframe src="' + EMBEDS[kind].src + '" title="' +
-        EMBEDS[kind].label + '"></iframe>';
-      box.dataset.kind = kind;
-    }
-    box.style.display = 'block';
-    flash(EMBEDS[kind].label + ' — controls are inside the viewer');
-  }
-  function hideEmbed() {
-    var box = $('cx-embed');
-    if (box.style.display === 'block') box.style.display = 'none';
-  }
-
   function markFieldActive() {
-    var key = S.panes[S.active] && S.panes[S.active].product
-      ? S.panes[S.active].product.key : null;
+    var pane = S.panes[S.active];
+    var key = pane ? (pane.kind === 'mw' || pane.kind === 'sc'
+      ? pane.fieldKey
+      : (pane.product ? pane.product.key : null)) : null;
     document.querySelectorAll('.cx-field').forEach(function (el) {
       el.classList.toggle('active', el.dataset.key === key);
     });
@@ -326,6 +292,24 @@
         S.panes.forEach(function (p) { if (p.tv && p.tv.map) p.tv.setLayer(k, on); });
       };
     });
+    // MW pass / ASCAT winds layer over the ACTIVE pane's base field (per-pane
+    // settings; the same layer path model/MRMS/obs overlays will use). The
+    // buttons enable off their manifests (cockpit_fields.checkAvailability).
+    [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc']].forEach(function (pair) {
+      var b = $(pair[1]);
+      if (!b) return;
+      b.onclick = function () {
+        if (b.disabled || !window.CockpitFields) return;
+        var pane = S.panes[S.active];
+        if (!pane) return;
+        if (pane.kind === pair[0]) { flash('already the pane field — pick a base field first'); return; }
+        var st = pair[0] === 'mw' ? pane.mw : pane.sc;
+        var on = !(st && st.on);
+        window.CockpitFields.setLayer(S.active, pair[0], on);
+        b.classList.toggle('on', on);
+        window.CockpitFields.syncControls();
+      };
+    });
     // MRMS / METAR / model-field toggles are STUBS on purpose: each needs its
     // own ingest pipeline (separate builds). The buttons exist, disabled, so
     // the panel shows the plan without faking data.
@@ -453,8 +437,39 @@
   // quick-guide interpretation legend — no pane is ever bare.
   function renderPaneChrome(i, stamp) {
     var pane = S.panes[i];
-    if (!pane || !pane.product || !$('cx-pht-' + i)) return;
+    if (!pane || !$('cx-pht-' + i)) return;
+    var CF = window.CockpitFields;
+    var badge = pane.el.querySelector('.cx-pane-lbadge');
+    // MW/ASCAT FIELD panes: cockpit_fields owns the chrome content
+    if (pane.kind === 'mw' || pane.kind === 'sc') {
+      var ch = CF ? CF.chromeFor(pane) : null;
+      if (ch) {
+        $('cx-pht-' + i).textContent = ch.title;
+        $('cx-phs-' + i).textContent = ch.sub || '';
+        var cbx = $('cx-pc-' + i), keyx = $('cx-pk-' + i);
+        cbx.style.display = 'none';
+        if (ch.legend && ch.legend.rows.length) {
+          keyx.innerHTML = ch.legend.rows.map(function (e) {
+            return '<i><b style="background:' + e[0] + '"></b>' + e[1] + '</i>';
+          }).join('') + '<i style="color:#8ea2bd">' + ch.legend.cap + '</i>';
+          keyx.style.display = 'flex';
+        } else keyx.style.display = 'none';
+      }
+      if (badge) badge.remove();
+      return;
+    }
+    if (!pane.product) return;
     var p = pane.product;
+    // MW/ASCAT as LAYERS over a tile field: a small provenance badge
+    var lch = CF ? CF.chromeFor(pane) : null;
+    if (lch && lch.layerBadge) {
+      if (!badge) {
+        badge = document.createElement('div');
+        badge.className = 'cx-pane-lbadge';
+        pane.el.appendChild(badge);
+      }
+      badge.textContent = lch.layerBadge;
+    } else if (badge) badge.remove();
     $('cx-pht-' + i).textContent =
       'GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') + ' · ' + p.title;
     var s = stamp ||
@@ -504,6 +519,7 @@
       if (p) p.el.classList.toggle('cx-active', k === i && S.panes.filter(Boolean).length > 1);
     });
     updateHeader(); markFieldActive();
+    if (window.CockpitFields) window.CockpitFields.syncControls();
   }
 
   function setPaneCount(n) {
@@ -585,6 +601,8 @@
     var stamp = tv.frames[idx];
     for (var k = 1; k < S.panes.length; k++)
       if (S.panes[k] && S.panes[k].ready) S.panes[k].tv.showStamp(stamp);
+    // MW panes follow the clock to their nearest-in-time overpass
+    if (window.CockpitFields) window.CockpitFields.timeSync(stamp);
   }
   function clockIdx() { return S.tm.on ? S.tm.idx : (lead() ? lead().frameIdx : 0); }
   function startClock() {
@@ -893,12 +911,57 @@
   // -- exports: composite the burned-in chrome so a saved pane is a finished
   // branded graphic (same strip/watermark/colorbar the overlay shows) --------
   function drawChrome(ctx, pane, w, h, stamp) {
-    var p = pane.product, dpr = w / pane.tv.map.getCanvas().clientWidth || 1;
+    var CF = window.CockpitFields;
+    var dpr = w / pane.tv.map.getCanvas().clientWidth || 1;
     var f = function (px) { return Math.round(px * dpr); };
     var grad = ctx.createLinearGradient(0, 0, 0, f(56));
     grad.addColorStop(0, 'rgba(10,13,18,.84)'); grad.addColorStop(1, 'rgba(10,13,18,0)');
     ctx.fillStyle = grad; ctx.fillRect(0, 0, w, f(56));
     ctx.textBaseline = 'top';
+    // MW/ASCAT field panes: their own strip + key + credit (same look)
+    if (pane.kind === 'mw' || pane.kind === 'sc') {
+      var ch = CF ? CF.chromeFor(pane) : null;
+      if (!ch) return;
+      ctx.fillStyle = '#dbe3ec';
+      ctx.font = '700 ' + f(13) + 'px Metropolis,system-ui,sans-serif';
+      ctx.fillText(ch.title, f(12), f(9));
+      ctx.fillStyle = '#9aa8b8';
+      ctx.font = '500 ' + f(10.5) + 'px Metropolis,system-ui,sans-serif';
+      if (ch.sub) ctx.fillText(ch.sub, f(12), f(27));
+      ctx.fillStyle = 'rgba(255,255,255,.48)';
+      ctx.font = '700 ' + f(13.5) + 'px Metropolis,system-ui,sans-serif';
+      var brandX = '@WeathermanAAA_';
+      ctx.fillText(brandX, w - ctx.measureText(brandX).width - f(12), f(9));
+      if (ch.legend && ch.legend.rows.length) {
+        var rows = ch.legend.rows.concat([[null, ch.legend.cap]]);
+        var lx = w - f(158), ly = f(46), lh = rows.length * f(15) + f(10);
+        ctx.fillStyle = 'rgba(10,13,18,.72)';
+        ctx.fillRect(lx, ly, f(150), lh);
+        ctx.strokeStyle = 'rgba(255,255,255,.12)';
+        ctx.strokeRect(lx + .5, ly + .5, f(150) - 1, lh - 1);
+        ctx.font = '500 ' + f(9.5) + 'px Metropolis,system-ui,sans-serif';
+        ctx.textBaseline = 'middle';
+        rows.forEach(function (e, k) {
+          var ry = ly + f(8) + k * f(15);
+          if (e[0]) {
+            ctx.fillStyle = e[0]; ctx.fillRect(lx + f(8), ry - f(4.5), f(9), f(9));
+            ctx.strokeStyle = 'rgba(255,255,255,.25)';
+            ctx.strokeRect(lx + f(8) + .5, ry - f(4.5) + .5, f(9) - 1, f(9) - 1);
+            ctx.fillStyle = '#c6d0da'; ctx.fillText(e[1], lx + f(22), ry);
+          } else {
+            ctx.fillStyle = '#8ea2bd'; ctx.fillText(e[1], lx + f(8), ry);
+          }
+        });
+        ctx.textBaseline = 'top';
+      }
+      if (ch.credit) {
+        ctx.fillStyle = '#8ea2bd';
+        ctx.font = '600 ' + f(9.5) + 'px Metropolis,system-ui,sans-serif';
+        ctx.fillText(ch.credit, w - ctx.measureText(ch.credit).width - f(10), h - f(18));
+      }
+      return;
+    }
+    var p = pane.product;
     ctx.fillStyle = '#dbe3ec';
     ctx.font = '700 ' + f(13) + 'px Metropolis,system-ui,sans-serif';
     ctx.fillText('GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') + ' · ' + p.title,
@@ -906,6 +969,13 @@
     ctx.fillStyle = '#9aa8b8';
     ctx.font = '500 ' + f(10.5) + 'px Metropolis,system-ui,sans-serif';
     if (stamp) ctx.fillText('Valid ' + fmtStamp(stamp), f(12), f(27));
+    // MW/ASCAT layer provenance badge rides into the export too
+    var lch = CF ? CF.chromeFor(pane) : null;
+    if (lch && lch.layerBadge) {
+      ctx.fillStyle = '#bcdcff';
+      ctx.font = '600 ' + f(10) + 'px Metropolis,system-ui,sans-serif';
+      ctx.fillText(lch.layerBadge, f(12), f(44));
+    }
     ctx.fillStyle = 'rgba(255,255,255,.48)';
     ctx.font = '700 ' + f(13.5) + 'px Metropolis,system-ui,sans-serif';
     var brand = '@WeathermanAAA_';
@@ -968,12 +1038,16 @@
     requestAnimationFrame(function () {
       var src = map.getCanvas(), c = compositeCanvas(pane), ctx = c.getContext('2d');
       ctx.drawImage(src, 0, 0);
+      // ASCAT barbs live on an overlay canvas, not in the GL canvas
+      if (window.CockpitFields) window.CockpitFields.compositeOverlays(ctx, pane, c.width, c.height);
       drawChrome(ctx, pane, c.width, c.height, pane.tv.frames[pane.tv.frameIdx]);
       c.toBlob(function (blob) {
         if (!blob) { flash('PNG export failed'); return; }
+        var name = (pane.kind === 'mw' || pane.kind === 'sc')
+          ? pane.fieldKey : pane.product.id;
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = pane.product.id + '_' +
+        a.download = name + '_' +
           (pane.tv.frames[pane.tv.frameIdx] || 'latest') + '.png';
         a.click(); flash('');
       }, 'image/png');
@@ -992,6 +1066,7 @@
     (function tick() {
       if (!compositing) return;
       ctx.drawImage(pane.tv.map.getCanvas(), 0, 0, c.width, c.height);
+      if (window.CockpitFields) window.CockpitFields.compositeOverlays(ctx, pane, c.width, c.height);
       drawChrome(ctx, pane, c.width, c.height, tv.frames[tv.frameIdx]);
       requestAnimationFrame(tick);
     })();
@@ -1018,7 +1093,18 @@
 
   function resetAll() {
     if (S.tm.on) exitTM();
-    disarmTools(); stopClock(); clearSketch(); hideEmbed();
+    disarmTools(); stopClock(); clearSketch();
+    // drop MW/ASCAT fields + layers back to boot state
+    if (window.CockpitFields) {
+      S.panes.forEach(function (pane, i) {
+        if (!pane) return;
+        if (pane.mw) { pane.mw.on = false; }
+        if (pane.sc) { pane.sc.on = false; }
+        if (pane.kind === 'mw' || pane.kind === 'sc') window.CockpitFields.clearPaneField(i);
+        else if (pane.tv && pane.tv.map) { window.CockpitFields.setLayer(i, 'mw', false); window.CockpitFields.setLayer(i, 'sc', false); }
+      });
+      window.CockpitFields.syncControls();
+    }
     setPaneCount(1);
     var p = productByKey('ir') || PRODUCTS[0];
     if (S.domain !== 'conus') { S.domain = 'conus'; markDomain(); }
@@ -1123,7 +1209,7 @@
     return tmFetch(body);
   }
   function enterTM() {
-    stopClock(); disarmTools(); hideEmbed();
+    stopClock(); disarmTools();
     S.tm.on = true;
     document.body.classList.add('cx-tm-mode');
     $('cx-tm').classList.add('on');
@@ -1161,7 +1247,8 @@
     // time (linked cameras share the box); unsupported panes sit out.
     var targets = [];
     S.panes.forEach(function (p, i) {
-      if (p && p.ready && TM_MAP[p.product.key]) targets.push(i);
+      if (p && p.ready && (!p.kind || p.kind === 'tile') &&
+          p.product && TM_MAP[p.product.key]) targets.push(i);
     });
     if (!targets.length) { flash('this field is live-only — pick a channel or True Color'); return; }
     S.tm.busy = true; flash('rendering the archive view…', true);
@@ -1310,7 +1397,7 @@
       $('cx-set-dwell').classList.toggle('on', S.dwell);
     };
     document.querySelectorAll('[data-panes]').forEach(function (b) {
-      b.onclick = function () { hideEmbed(); setPaneCount(+b.dataset.panes); wireSelectMap(); };
+      b.onclick = function () { setPaneCount(+b.dataset.panes); wireSelectMap(); };
     });
     $('cx-link').onclick = function () {
       S.linked = !S.linked;
@@ -1344,6 +1431,14 @@
   function boot() {
     buildFieldRail(); buildDomainRail(); buildRegionRail(); buildOverlayRail();
     wireBottomBar(); wireTimeline();
+    // native MW/ASCAT fields+layers (controls cards, manifests, adapters)
+    if (window.CockpitFields) {
+      window.CockpitFields.init(S, {
+        flash: flash,
+        renderPaneChrome: renderPaneChrome,
+        markFieldActive: markFieldActive
+      });
+    }
     $('cx-speed').textContent = S.fps + ' fps';
 
     // first screen = exactly one viewport below the main nav
@@ -1395,6 +1490,10 @@
       tryApply(); if (applied) clearInterval(poll);
     }, 250);
   }
+
+  // dev hook: sibling explorer modules (objfix panel markers, MW/ASCAT
+  // adapters) reach the pane list through this — read-only by convention.
+  window.__cockpit = S;
 
   if (document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', boot);

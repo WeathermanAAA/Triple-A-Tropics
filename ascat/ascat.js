@@ -1228,6 +1228,17 @@
     });
   }
   if (typeof window !== 'undefined') window.AscatViewer = AscatViewer;
+  // reusable primitives for the explorer cockpit's native ASCAT fields
+  // (re-host, not rebuild): the kt scales/styles and the barb painter —
+  // additive-only; _barb touches no instance state.
+  AscatViewer.STYLES = STYLES;
+  AscatViewer.KT_SCALE = KT_SCALE;
+  AscatViewer.KT_SCALE_HC = KT_SCALE_HC;
+  AscatViewer.DENSITY = DENSITY;
+  AscatViewer.drawBarb = function (g, x, y, kt, dirFrom, color, lw) {
+    AscatViewer.prototype._barb.call(null, g, x, y, kt, dirFrom, color, lw);
+  };
+  AscatViewer.stormMatch = stormMatch;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = { AscatViewer: AscatViewer, STYLES: STYLES, KT_SCALE: KT_SCALE,
       stormMatch: stormMatch, nearestFrame: nearestFrame,

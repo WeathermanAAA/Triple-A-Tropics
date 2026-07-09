@@ -201,6 +201,7 @@
     this.map.addLayer({ id: sid, type: 'raster', source: sid,
       paint: { 'raster-opacity': opacity, 'raster-fade-duration': 0,
                'raster-resampling': 'linear' } }, before);
+    if (this._imgHidden) this.map.setLayoutProperty(sid, 'visibility', 'none');
     this._added[stamp] = true;
     this._evictBeyondWindow(stamp);
   };
@@ -345,6 +346,18 @@
 
   // ---- layer toggles ----
   VP.setLayer = function (key, on) { this.showLayers[key] = on; this._applyLayerVis(); };
+
+  // Hide/show ALL imagery frame layers (cockpit MW/ASCAT field mode: the
+  // vector furniture stays, the tiles go). _ensureFrame honors the flag so
+  // frames added later while hidden stay hidden.
+  VP.setImageryVisible = function (on) {
+    this._imgHidden = !on;
+    for (var s in this._added) {
+      var id = this._srcId(s);
+      if (this.map.getLayer(id))
+        this.map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    }
+  };
   VP._applyLayerVis = function () {
     var v = this.showLayers, map = this.map;
     var set = function (id, on) { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); };

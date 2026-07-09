@@ -947,6 +947,12 @@
     });
   }
   if (typeof window !== 'undefined') window.MicrowaveViewer = MicrowaveViewer;
+  // reusable primitives for the explorer cockpit's native MW fields (re-host,
+  // not rebuild): product list + tile/bounds accessors, additive-only.
+  MicrowaveViewer.PRODUCTS = PRODUCTS;
+  MicrowaveViewer.DEFAULT_PRODUCT = DEFAULT_PRODUCT;
+  MicrowaveViewer.tileRel = tileRel;
+  MicrowaveViewer.boundsOf = boundsOf;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       MicrowaveViewer: MicrowaveViewer, PRODUCTS: PRODUCTS, DEFAULT_PRODUCT: DEFAULT_PRODUCT,

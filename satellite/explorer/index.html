@@ -178,8 +178,6 @@
 
   /* overlays over the whole stage (flash toast, error card, legacy embed) */
   .cx-ovl{position:absolute;z-index:5;pointer-events:none}
-  #cx-embed{position:absolute;inset:0;z-index:6;display:none;background:#0a0d12}
-  #cx-embed iframe{width:100%;height:100%;border:0;display:block}
   #cx-flash{bottom:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;
     gap:8px;font-size:12px;font-weight:600;letter-spacing:.02em;color:#ffcf87;
     background:rgba(13,18,25,.92);border:1px solid rgba(255,179,71,.28);border-radius:999px;
@@ -342,7 +340,6 @@
   <main class="cx-stage">
     <div class="cx-view">
       <div id="cx-panes" data-n="1"></div>
-      <div id="cx-embed"></div>
       <div class="cx-ovl cx-wm">@WeathermanAAA_</div>
       <div class="cx-ovl" id="cx-flash"></div>
       <div class="cx-err" id="cx-err"></div>
@@ -477,6 +474,10 @@
       <button type="button" class="cx-ov on" id="cx-ov-grid">Grid</button>
     </div>
     <div class="cx-ov-row">
+      <button type="button" class="cx-ov" id="cx-ov-mw" disabled
+        title="Microwave overpass over the active pane's base field">MW pass</button>
+      <button type="button" class="cx-ov" id="cx-ov-sc" disabled
+        title="ASCAT wind barbs over the active pane's base field">ASCAT winds</button>
       <button type="button" class="cx-ov" disabled>MRMS radar <i class="cx-chip">soon</i></button>
       <button type="button" class="cx-ov" disabled>METAR obs <i class="cx-chip">soon</i></button>
       <button type="button" class="cx-ov" disabled>Model fields <i class="cx-chip">soon</i></button>
@@ -508,7 +509,16 @@
 <script src="/models/regions.js"></script>
 <script src="products.js?v=tm2"></script>
 <script src="bt_probe.js?v=tm2"></script>
-<script src="tiled_viewer.js?v=tm2"></script>
-<script src="cockpit.js?v=tm2"></script>
+<script src="tiled_viewer.js?v=mwsc1"></script>
+<!-- native MW/ASCAT fields: the legacy viewer engines (reused primitives) +
+     the cockpit adapters — loaded BEFORE cockpit.js so boot can init them -->
+<script src="/microwave/microwave.js?v=11"></script>
+<script src="/ascat/ascat.js?v=0016"></script>
+<script src="cockpit_fields.js?v=mwsc1"></script>
+<script src="cockpit.js?v=mwsc1"></script>
+<!-- objective center + intensity (ARCHER/ADT ports) — panel + compute -->
+<script src="objfix.js?v=ofx1"></script>
+<script src="objfix_sources.js?v=ofx1"></script>
+<script src="objfix_panel.js?v=ofx1"></script>
 </body>
 </html>
