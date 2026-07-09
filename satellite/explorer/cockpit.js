@@ -44,7 +44,7 @@
     available: null,            // Set of product ids the box has actually emitted
     panes: [],                  // [{tv, el, product, ready}] — pane 0 persistent
     active: 0,                  // active pane index (field/region target)
-    playing: false, fps: 6, dwell: true,
+    playing: false, fps: 6, dwell: true, linked: true,
     raf: null, last: 0,
     hqExport: false,
     tool: null,                 // 'measure' | 'sketch' | 'selectmap' | null
@@ -65,17 +65,60 @@
     return { num: 'C' + m[1], wl: m[2], met: met };
   }
 
+  // Microwave + Scatterometer fold into the rail as categories: selecting one
+  // mounts the EXISTING viewer (?embed=1 iframe) in the stage — reuse, not a
+  // rebuild. Entries grey "SOON" off each source's own R2 manifest.
+  var MW_FIELDS = [
+    { key: 'mw-91c', title: '91 GHz color composite', meta: 'NRL · convective structure' },
+    { key: 'mw-91h', title: '91H brightness temp', meta: 'NRL · eyewall through cirrus' },
+    { key: 'mw-37c', title: '37 GHz color composite', meta: 'NRL · low-level rain bands' },
+    { key: 'mw-37h', title: '37H brightness temp', meta: 'NRL · forming eye' }
+  ];
+  var SC_FIELDS = [
+    { key: 'sc-basin', title: 'Ocean winds · basin passes', meta: 'wind barbs · stitched passes' },
+    { key: 'sc-storm', title: 'Ocean winds · storm-locked', meta: 'tagged passes per storm' }
+  ];
+  var EMBEDS = {
+    mw: { src: '/satellite/microwave/?embed=1', label: 'Passive Microwave' },
+    sc: { src: '/satellite/ascat/?embed=1', label: 'Scatterometer' }
+  };
+
   function buildFieldRail() {
-    var tabs = { rgb: $('cx-tab-rgb'), ch: $('cx-tab-ch') };
-    var lists = { rgb: $('cx-list-rgb'), ch: $('cx-list-ch') };
+    var tabs = { rgb: $('cx-tab-rgb'), ch: $('cx-tab-ch'),
+                 mw: $('cx-tab-mw'), sc: $('cx-tab-sc') };
+    var lists = { rgb: $('cx-list-rgb'), ch: $('cx-list-ch'),
+                  mw: $('cx-list-mw'), sc: $('cx-list-sc') };
     function switchTab(which) {
       Object.keys(tabs).forEach(function (k) {
         tabs[k].classList.toggle('on', k === which);
         lists[k].style.display = (k === which) ? '' : 'none';
       });
     }
-    tabs.rgb.onclick = function () { switchTab('rgb'); };
-    tabs.ch.onclick = function () { switchTab('ch'); };
+    Object.keys(tabs).forEach(function (k) {
+      tabs[k].onclick = function () { switchTab(k); };
+    });
+
+    // legacy-source categories (embed on select)
+    [['mw', MW_FIELDS], ['sc', SC_FIELDS]].forEach(function (pair) {
+      var kind = pair[0];
+      pair[1].forEach(function (f) {
+        var row = document.createElement('button');
+        row.type = 'button'; row.className = 'cx-field coming';
+        row.dataset.embed = kind; row.dataset.key = f.key;
+        row.innerHTML = '<b>' + f.title + '</b><span class="cx-meta">' + f.meta +
+          ' · <i class="cx-chip">soon</i></span>';
+        row.onclick = function () {
+          if (row.classList.contains('coming')) return;
+          showEmbed(kind);
+          document.querySelectorAll('.cx-field').forEach(function (el) {
+            el.classList.toggle('active', el === row);
+          });
+        };
+        lists[kind].appendChild(row);
+      });
+    });
+    checkLegacySource('mw', 'https://cdn.triple-a-tropics.com/microwave/manifest.json');
+    checkLegacySource('sc', 'https://cdn.triple-a-tropics.com/ascat/manifest.json');
 
     // composites lead the RGB tab (True Color, Sandwich), then the RGBs;
     // channels keep their products.js order (Clean IR first, then C01..C16).
@@ -97,11 +140,42 @@
       }
       row.onclick = function () {
         if (row.classList.contains('coming')) return;
+        hideEmbed();
         setPaneProduct(S.active, p);
       };
       lists[isCh ? 'ch' : 'rgb'].appendChild(row);
     });
     switchTab('rgb');
+  }
+
+  // ---- legacy-source embeds (Microwave / Scatterometer) -------------------
+  function checkLegacySource(kind, url) {
+    fetch(url, { cache: 'no-cache' })
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function () {
+        document.querySelectorAll('[data-embed="' + kind + '"]').forEach(function (el) {
+          el.classList.remove('coming');
+          var chip = el.querySelector('.cx-chip'); if (chip) chip.remove();
+          var meta = el.querySelector('.cx-meta');
+          if (meta) meta.innerHTML = meta.innerHTML.replace(/ · $/, '');
+        });
+      })
+      .catch(function () { /* stays greyed "soon" — honest */ });
+  }
+  function showEmbed(kind) {
+    stopClock(); disarmTools();
+    var box = $('cx-embed');
+    if (box.dataset.kind !== kind) {
+      box.innerHTML = '<iframe src="' + EMBEDS[kind].src + '" title="' +
+        EMBEDS[kind].label + '"></iframe>';
+      box.dataset.kind = kind;
+    }
+    box.style.display = 'block';
+    flash(EMBEDS[kind].label + ' — controls are inside the viewer');
+  }
+  function hideEmbed() {
+    var box = $('cx-embed');
+    if (box.style.display === 'block') box.style.display = 'none';
   }
 
   function markFieldActive() {
@@ -115,6 +189,7 @@
   function applyAvailability() {
     if (!S.available) return;
     document.querySelectorAll('.cx-field').forEach(function (el) {
+      if (el.dataset.embed) return;   // MW/ASCAT rows: their own manifests gate them
       var p = productByKey(el.dataset.key);
       var ok = p && S.available.has(p.id);
       el.classList.toggle('coming', !ok);
@@ -263,7 +338,13 @@
     var el = document.createElement('div');
     el.className = 'cx-pane';
     el.innerHTML = '<div class="cx-pane-map" id="cx-map-' + i + '"></div>' +
-      '<div class="cx-pane-tag" id="cx-tag-' + i + '"></div>' +
+      '<div class="cx-pane-head" id="cx-ph-' + i + '"><div>' +
+        '<div class="cx-ph-title" id="cx-pht-' + i + '"></div>' +
+        '<div class="cx-ph-sub" id="cx-phs-' + i + '"></div></div>' +
+        '<div class="cx-ph-brand">@WeathermanAAA_</div></div>' +
+      '<div class="cx-pane-cbar" id="cx-pc-' + i + '">' +
+        '<div class="ticks" id="cx-pct-' + i + '"></div>' +
+        '<img alt="" id="cx-pci-' + i + '"></div>' +
       '<div class="cx-pane-probe" id="cx-pp-' + i + '"></div>' +
       '<div class="cx-load" id="cx-load-' + i + '"><i></i><span>Loading GOES-19 tiles…</span></div>';
     el.onclick = function () { setActivePane(i); };
@@ -289,7 +370,8 @@
         tv.map.doubleClickZoom.disable();
         tv.map.on('dblclick', function () { tv.fitData(); });
         applyOverlayState(tv);
-        paneTag(i);
+        renderPaneChrome(i);
+        wireCameraSync(pane);
       });
     });
     return pane;
@@ -338,12 +420,44 @@
     };
   }
 
-  function paneTag(i, stamp) {
-    var pane = S.panes[i], el = $('cx-tag-' + i);
-    if (!pane || !el) return;
-    var t = pane.product ? pane.product.title : '';
-    el.textContent = t + (stamp ? ' · ' + fmtStamp(stamp) : '');
-    el.style.display = (S.panes.filter(Boolean).length > 1) ? 'block' : 'none';
+  // burned-in branded chrome per pane: title strip + valid time + colorbar.
+  // Scalar/BT fields carry their color table; RGB composites have no cbar in
+  // products.js (cbar:null) so nothing meaningless is forced.
+  function renderPaneChrome(i, stamp) {
+    var pane = S.panes[i];
+    if (!pane || !pane.product || !$('cx-pht-' + i)) return;
+    var p = pane.product;
+    $('cx-pht-' + i).textContent =
+      'GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') + ' · ' + p.title;
+    var s = stamp ||
+      (pane.tv && pane.tv.frames && pane.tv.frames[pane.tv.frameIdx]) ||
+      (pane.tv && pane.tv.manifest && pane.tv.manifest.latest);
+    $('cx-phs-' + i).textContent = s ? 'Valid ' + fmtStamp(s) : '';
+    var cb = $('cx-pc-' + i);
+    if (p.cbar) {
+      $('cx-pci-' + i).src = p.cbar.img;
+      $('cx-pct-' + i).innerHTML = p.cbar.ticks.map(function (t) {
+        var pos = Math.max(0.02, Math.min(0.98, t.p)) * 100;
+        return '<span style="top:' + pos.toFixed(2) + '%">' + t.t + '</span>';
+      }).join('');
+      cb.style.display = 'flex';
+    } else cb.style.display = 'none';
+  }
+  function paneTag(i, stamp) { renderPaneChrome(i, stamp); }
+
+  // ---- linked cameras: pan/zoom one pane, all follow (toolbar-toggleable;
+  // default ON). Feedback-guarded like syncViewers; per-pane views when off.
+  function wireCameraSync(pane) {
+    pane.tv.map.on('move', function () {
+      if (!S.linked || S._camSync) return;
+      S._camSync = true;
+      var c = pane.tv.map.getCenter(), z = pane.tv.map.getZoom();
+      S.panes.forEach(function (o) {
+        if (o && o !== pane && o.ready)
+          o.tv.map.jumpTo({ center: c, zoom: z });
+      });
+      S._camSync = false;
+    });
   }
 
   function setActivePane(i) {
@@ -402,25 +516,9 @@
     });
   }
 
-  // header + colorbar reflect the ACTIVE pane
+  // every pane owns its chrome now; "header" = re-render all panes
   function updateHeader() {
-    var pane = S.panes[S.active];
-    if (!pane || !pane.product) return;
-    var p = pane.product;
-    $('cx-title').textContent = 'GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') +
-      ' · ' + p.title;
-    var latest = pane.tv && pane.tv.manifest ? pane.tv.manifest.latest : null;
-    if (latest) $('cx-sub').textContent = 'Valid ' + fmtStamp(latest);
-    var cb = $('cx-cbar');
-    if (p.cbar) {
-      $('cx-cbar-img').src = p.cbar.img;
-      $('cx-cbar-cap').textContent = p.cbar.cap;
-      $('cx-cbar-ticks').innerHTML = p.cbar.ticks.map(function (t) {
-        var pos = Math.max(0.01, Math.min(0.99, t.p)) * 100;
-        return '<span style="top:' + pos.toFixed(2) + '%">' + t.t + '</span>';
-      }).join('');
-      cb.style.display = 'flex';
-    } else cb.style.display = 'none';
+    S.panes.forEach(function (p, i) { if (p) renderPaneChrome(i); });
   }
 
   // ========================================================================
@@ -741,14 +839,59 @@
     }
   }
 
-  // -- exports ---------------------------------------------------------------
+  // -- exports: composite the burned-in chrome so a saved pane is a finished
+  // branded graphic (same strip/watermark/colorbar the overlay shows) --------
+  function drawChrome(ctx, pane, w, h, stamp) {
+    var p = pane.product, dpr = w / pane.tv.map.getCanvas().clientWidth || 1;
+    var f = function (px) { return Math.round(px * dpr); };
+    var grad = ctx.createLinearGradient(0, 0, 0, f(56));
+    grad.addColorStop(0, 'rgba(10,13,18,.84)'); grad.addColorStop(1, 'rgba(10,13,18,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, w, f(56));
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#dbe3ec';
+    ctx.font = '700 ' + f(13) + 'px Metropolis,system-ui,sans-serif';
+    ctx.fillText('GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') + ' · ' + p.title,
+                 f(12), f(9));
+    ctx.fillStyle = '#9aa8b8';
+    ctx.font = '500 ' + f(10.5) + 'px Metropolis,system-ui,sans-serif';
+    if (stamp) ctx.fillText('Valid ' + fmtStamp(stamp), f(12), f(27));
+    ctx.fillStyle = 'rgba(255,255,255,.48)';
+    ctx.font = '700 ' + f(13.5) + 'px Metropolis,system-ui,sans-serif';
+    var brand = '@WeathermanAAA_';
+    ctx.fillText(brand, w - ctx.measureText(brand).width - f(12), f(9));
+    // colorbar (scalar/BT fields only — RGB composites carry none)
+    var img = $('cx-pci-' + S.panes.indexOf(pane));
+    if (p.cbar && img && img.complete && img.naturalWidth) {
+      var bw = f(10), bh = f(150), bx = w - bw - f(10), by = f(46);
+      ctx.drawImage(img, bx, by, bw, bh);
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1;
+      ctx.strokeRect(bx - .5, by - .5, bw + 1, bh + 1);
+      ctx.fillStyle = '#b6c0cc';
+      ctx.font = '500 ' + f(9) + 'px Metropolis,system-ui,sans-serif';
+      ctx.textBaseline = 'middle';
+      p.cbar.ticks.forEach(function (t) {
+        var ty = by + Math.max(.02, Math.min(.98, t.p)) * bh;
+        ctx.fillText(t.t, bx - ctx.measureText(t.t).width - f(4), ty);
+      });
+      ctx.textBaseline = 'top';
+    }
+  }
+  function compositeCanvas(pane) {
+    var src = pane.tv.map.getCanvas();
+    var c = document.createElement('canvas');
+    c.width = src.width; c.height = src.height;
+    return c;
+  }
   function exportPNG() {
     var pane = S.panes[S.active];
     if (!pane || !pane.ready) return;
     var map = pane.tv.map;
     map.triggerRepaint();
     requestAnimationFrame(function () {
-      map.getCanvas().toBlob(function (blob) {
+      var src = map.getCanvas(), c = compositeCanvas(pane), ctx = c.getContext('2d');
+      ctx.drawImage(src, 0, 0);
+      drawChrome(ctx, pane, c.width, c.height, pane.tv.frames[pane.tv.frameIdx]);
+      c.toBlob(function (blob) {
         if (!blob) { flash('PNG export failed'); return; }
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -759,11 +902,26 @@
     });
   }
   function exportLoop(btn) {
-    var tv = lead();
+    var tv = lead(), pane = S.panes[0];
     if (!tv || btn.dataset.busy) return;
     if (tv.frames.length < 2) { flash('1 frame — loop export needs the cron backfill'); return; }
     btn.dataset.busy = '1'; stopClock();
+    // record a COMPOSITE canvas: map frames + the branded chrome, redrawn
+    // every animation tick so the valid time tracks the playing frame.
+    var c = compositeCanvas(pane), ctx = c.getContext('2d');
+    var compositing = true;
+    (function tick() {
+      if (!compositing) return;
+      ctx.drawImage(pane.tv.map.getCanvas(), 0, 0, c.width, c.height);
+      drawChrome(ctx, pane, c.width, c.height, tv.frames[tv.frameIdx]);
+      requestAnimationFrame(tick);
+    })();
+    var finish = function (label) {
+      compositing = false;
+      btn.querySelector('.lbl').textContent = label; delete btn.dataset.busy;
+    };
     tv.exportWebM({
+      captureCanvas: c,
       maxBytes: S.hqExport ? 24e6 : 9e6,
       maxBitrate: S.hqExport ? 12e6 : 6e6,
       onProgress: function (i, n) {
@@ -772,15 +930,15 @@
       onDone: function (blob) {
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = S.panes[0].product.id + '_loop.webm';
-        a.click(); btn.querySelector('.lbl').textContent = 'Loop'; delete btn.dataset.busy;
+        a.download = pane.product.id + '_loop.webm';
+        a.click(); finish('Loop');
       },
-      onError: function (m) { btn.querySelector('.lbl').textContent = m; delete btn.dataset.busy; }
+      onError: function (m) { finish(m); }
     });
   }
 
   function resetAll() {
-    disarmTools(); stopClock(); clearSketch();
+    disarmTools(); stopClock(); clearSketch(); hideEmbed();
     setPaneCount(1);
     var p = productByKey('ir') || PRODUCTS[0];
     if (S.domain !== 'conus') { S.domain = 'conus'; markDomain(); }
@@ -837,8 +995,13 @@
       $('cx-set-dwell').classList.toggle('on', S.dwell);
     };
     document.querySelectorAll('[data-panes]').forEach(function (b) {
-      b.onclick = function () { setPaneCount(+b.dataset.panes); wireSelectMap(); };
+      b.onclick = function () { hideEmbed(); setPaneCount(+b.dataset.panes); wireSelectMap(); };
     });
+    $('cx-link').onclick = function () {
+      S.linked = !S.linked;
+      $('cx-link').classList.toggle('on', S.linked);
+      flash(S.linked ? 'panes linked — pan/zoom moves all' : 'panes independent');
+    };
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') disarmTools();
       if (e.key === ' ' && document.activeElement === document.body) {
@@ -853,6 +1016,21 @@
     buildFieldRail(); buildDomainRail(); buildRegionRail(); buildOverlayRail();
     wireBottomBar(); wireTimeline();
     $('cx-speed').textContent = S.fps + ' fps';
+
+    // first screen = exactly one viewport below the main nav
+    var setNavH = function () {
+      var nav = document.querySelector('.nav');
+      if (nav) document.documentElement.style.setProperty('--cx-nav', nav.offsetHeight + 'px');
+    };
+    setNavH(); window.addEventListener('resize', setNavH);
+    // the below-fold legacy page reports its height (postMessage) — size its iframe
+    window.addEventListener('message', function (e) {
+      var d = e.data || {};
+      if (d.tatEmbedHeight && d.page === '/satellite/') {
+        var fr = $('cx-legacy-frame');
+        if (fr) fr.style.height = Math.max(900, d.tatEmbedHeight) + 'px';
+      }
+    });
 
     var bootKey = params.get('product') || 'ir';
     var p0 = productByKey(bootKey) || productByKey('ir') || PRODUCTS[0];

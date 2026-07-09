@@ -17,14 +17,13 @@
     --cx-panel:#0d1219; --cx-line:#232d3a; --cx-line-soft:#1a2230;
     --cx-fg:#dbe3ec; --cx-mut:#8ea2bd; --cx-dim:#71809a;
   }
-  /* ---- FULL-BLEED app frame: the explorer owns the viewport below the
-     nav/subnav — one continuous edge-to-edge surface, no floating cards.
-     Body becomes a flex column; the shell takes all remaining height; a
-     too-short window falls back to normal page scroll (min-height). ---- */
-  html,body{height:100%}
-  body{display:flex;flex-direction:column;height:100vh;overflow:auto;margin:0}
-  body>.nav,body>.subnav{flex:none}
-  .cx-shell{flex:1 1 auto;min-height:540px;display:grid;
+  /* ---- FULL-BLEED first screen + page scroll: the cockpit fills exactly one
+     viewport below the main nav (edge to edge, no subnav); scrolling reveals
+     the legacy loops/imagery section mounted below it. ---- */
+  body{margin:0}
+  .cx-screen{height:calc(100vh - var(--cx-nav,56px));min-height:560px;
+    display:flex;flex-direction:column}
+  .cx-shell{flex:1 1 auto;min-height:0;display:grid;
     grid-template-columns:238px minmax(0,1fr) 234px;gap:0;
     width:100%;max-width:none;margin:0;padding:0;min-width:0;
     font-family:'Metropolis',system-ui,sans-serif}
@@ -43,7 +42,7 @@
   .cx-stage{display:flex;flex-direction:column;gap:0;min-width:0;min-height:0}
 
   /* ---- left rail: field selector -------------------------------------- */
-  .cx-tabs{display:flex;gap:16px;border-bottom:1px solid var(--cx-line-soft);padding:0 2px}
+  .cx-tabs{display:flex;flex-wrap:wrap;gap:2px 14px;border-bottom:1px solid var(--cx-line-soft);padding:0 2px}
   .cx-tab{font-size:12.5px;font-weight:600;letter-spacing:.02em;padding:8px 2px 9px;
     cursor:pointer;background:transparent;border:0;border-bottom:2px solid transparent;
     color:var(--cx-mut);margin-bottom:-1px}
@@ -110,10 +109,23 @@
   .cx-pane{position:relative;min-height:0;background:#0a0d12}
   .cx-pane-map{position:absolute;inset:0}
   .cx-pane.cx-active{outline:1.5px solid rgba(73,182,200,.75);outline-offset:-1.5px;z-index:2}
-  .cx-pane-tag{position:absolute;left:8px;top:8px;z-index:4;display:none;pointer-events:none;
-    font-size:10.5px;font-weight:600;letter-spacing:.02em;color:var(--cx-fg);
-    font-variant-numeric:tabular-nums;background:rgba(10,13,18,.8);
-    border:1px solid var(--cx-line);border-radius:6px;padding:3px 8px}
+  /* per-pane BURNED-IN chrome: branded title strip + watermark + colorbar —
+     overlay on the interactive map AND composited into PNG/WebM exports */
+  .cx-pane-head{position:absolute;top:0;left:0;right:0;z-index:4;pointer-events:none;
+    display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
+    padding:8px 12px 14px;
+    background:linear-gradient(180deg,rgba(10,13,18,.84),rgba(10,13,18,0))}
+  .cx-ph-title{font-size:13px;font-weight:700;color:var(--cx-fg);letter-spacing:.01em;line-height:1.25}
+  .cx-ph-sub{font-size:10.5px;color:#9aa8b8;font-variant-numeric:tabular-nums;margin-top:1px}
+  .cx-ph-brand{font-weight:700;font-size:13.5px;color:rgba(255,255,255,.48);white-space:nowrap;
+    text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45)}
+  .cx-pane-cbar{position:absolute;right:8px;top:46px;z-index:4;pointer-events:none;
+    display:none;gap:4px;align-items:stretch}
+  .cx-pane-cbar img{width:10px;height:150px;image-rendering:pixelated;
+    border:1px solid rgba(255,255,255,.18);border-radius:2px}
+  .cx-pane-cbar .ticks{position:relative;width:2.4em;font-size:9px;color:#b6c0cc;
+    font-variant-numeric:tabular-nums}
+  .cx-pane-cbar .ticks span{position:absolute;right:1px;transform:translateY(-50%)}
   .cx-pane-probe{position:absolute;left:8px;bottom:8px;z-index:4;display:none;pointer-events:none;
     font-size:11.5px;font-weight:500;color:var(--cx-fg);line-height:1.5;
     font-variant-numeric:tabular-nums;background:rgba(10,13,18,.84);
@@ -137,21 +149,10 @@
   .cx-err-card b{font-size:13.5px;font-weight:700;color:var(--cx-fg)}
   .cx-err-card span{font-size:12px;color:var(--cx-mut);line-height:1.5}
 
-  /* overlays over the whole stage (header, colorbar, flash) */
+  /* overlays over the whole stage (flash toast, error card, legacy embed) */
   .cx-ovl{position:absolute;z-index:5;pointer-events:none}
-  .cx-head{top:0;left:0;right:0;display:flex;justify-content:space-between;gap:12px;
-    padding:10px 14px;background:linear-gradient(180deg,rgba(10,13,18,.82),rgba(10,13,18,0))}
-  .cx-title{font-weight:700;font-size:15px;color:var(--cx-fg);letter-spacing:.01em}
-  .cx-sub{font-size:12px;color:#9aa8b8;margin-top:2px;font-variant-numeric:tabular-nums}
-  .cx-brand{font-weight:700;font-size:17px;color:rgba(255,255,255,.5);
-    text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap}
-  .cx-cbar{top:64px;right:12px;display:flex;gap:6px;align-items:stretch}
-  .cx-cbar img{width:14px;height:230px;image-rendering:pixelated;
-    border:1px solid rgba(255,255,255,.18);border-radius:2px}
-  .cx-cbar .ticks{position:relative;width:2.6em;font-size:10px;color:#b6c0cc;
-    font-variant-numeric:tabular-nums}
-  .cx-cbar .ticks span{position:absolute;right:2px;transform:translateY(-50%)}
-  .cx-cbar .cap{writing-mode:vertical-rl;font-size:10px;color:#8b97a6;align-self:center}
+  #cx-embed{position:absolute;inset:0;z-index:6;display:none;background:#0a0d12}
+  #cx-embed iframe{width:100%;height:100%;border:0;display:block}
   #cx-flash{bottom:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;
     gap:8px;font-size:12px;font-weight:600;letter-spacing:.02em;color:#ffcf87;
     background:rgba(13,18,25,.92);border:1px solid rgba(255,179,71,.28);border-radius:999px;
@@ -221,9 +222,18 @@
   .cx-strip span{overflow:hidden;text-overflow:ellipsis}
   .cx-strip b{color:var(--cx-mut);font-weight:600}
 
+  /* ---- below-the-fold: the existing loops + daily imagery, mounted as-is */
+  .cx-legacy{background:#0a0d12;border-top:1px solid var(--cx-line);
+    font-family:'Metropolis',system-ui,sans-serif}
+  .cx-legacy-head{display:flex;align-items:baseline;gap:10px;padding:16px 18px 4px}
+  .cx-legacy-head h2{font-size:16px;font-weight:700;color:var(--cx-fg);margin:0;
+    letter-spacing:.01em}
+  .cx-legacy-head span{font-size:11.5px;color:var(--cx-dim)}
+  .cx-legacy iframe{width:100%;border:0;display:block;min-height:900px}
+
   /* ---- compact screens -------------------------------------------------- */
   @media (max-width: 1080px){
-    body{display:block;height:auto;overflow:auto}
+    .cx-screen{height:auto;min-height:0}
     .cx-shell{grid-template-columns:1fr;min-height:0}
     .cx-rail{max-height:none;overflow-y:visible}
     .cx-rail.cx-left{order:2;border-right:0;border-top:1px solid var(--cx-line)}
@@ -253,14 +263,7 @@
   </div>
 </nav>
 
-<!-- shadow-first: NOT added to the satellite subnav until deliberately shipped -->
-<nav class="subnav" aria-label="Satellite sections">
-  <div class="subnav-inner">
-    <a href="/satellite/" class="active">Imagery</a>
-    <a href="/satellite/microwave/">Microwave</a>
-    <a href="/satellite/ascat/">Scatterometer</a>
-  </div>
-</nav>
+<!-- subnav removed: Microwave + Scatterometer live in the FIELD rail now -->
 
 <!-- inline icon set (stroke = currentColor; self-contained, no CDN) -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -290,6 +293,7 @@
   </defs>
 </svg>
 
+<div class="cx-screen">
 <div class="cx-shell">
 
   <!-- ============== LEFT RAIL: FIELD ============== -->
@@ -298,30 +302,20 @@
     <div class="cx-tabs">
       <button type="button" class="cx-tab on" id="cx-tab-rgb">RGB · Composites</button>
       <button type="button" class="cx-tab" id="cx-tab-ch">Channels</button>
+      <button type="button" class="cx-tab" id="cx-tab-mw">Microwave</button>
+      <button type="button" class="cx-tab" id="cx-tab-sc">Scatterometer</button>
     </div>
     <div id="cx-list-rgb"></div>
     <div id="cx-list-ch" style="display:none"></div>
+    <div id="cx-list-mw" style="display:none"></div>
+    <div id="cx-list-sc" style="display:none"></div>
   </aside>
 
   <!-- ============== STAGE ============== -->
   <main class="cx-stage">
     <div class="cx-view">
       <div id="cx-panes" data-n="1"></div>
-
-      <div class="cx-ovl cx-head">
-        <div>
-          <div class="cx-title" id="cx-title">GOES-19 · CONUS · Clean IR</div>
-          <div class="cx-sub" id="cx-sub">&nbsp;</div>
-        </div>
-        <div class="cx-brand">@WeathermanAAA_</div>
-      </div>
-
-      <div class="cx-ovl cx-cbar" id="cx-cbar">
-        <span class="cap" id="cx-cbar-cap">Brightness temperature (°C)</span>
-        <div class="ticks" id="cx-cbar-ticks"></div>
-        <img src="cbars/rainbow_ir.png" alt="colorbar" id="cx-cbar-img">
-      </div>
-
+      <div id="cx-embed"></div>
       <div class="cx-ovl" id="cx-flash"></div>
       <div class="cx-err" id="cx-err"></div>
     </div>
@@ -386,6 +380,10 @@
             <button type="button" class="cx-btn" data-panes="4" title="Quad panes">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-p4"/></svg></button>
           </div>
+          <button type="button" class="cx-btn on" id="cx-link"
+            title="Linked panes: pan/zoom one, all follow. Off = independent views.">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5l3-3M5 11l-1.2 1.2a2.3 2.3 0 0 1-3.2-3.2L3.8 5.8a2.3 2.3 0 0 1 3.2 0M11 5l1.2-1.2a2.3 2.3 0 0 1 3.2 3.2l-3.2 3.2a2.3 2.3 0 0 1-3.2 0" transform="scale(.94) translate(.5 .3)"/></svg>
+            <span class="lbl">Link</span></button>
         </div>
         <span class="cx-grow"></span>
         <div class="cx-tgroup">
@@ -439,9 +437,22 @@
 <div class="cx-strip">
   <span>© <span id="year"></span> Triple-A-Tropics · <b>hover</b> reads BT where the field
     ships a raster · <b>click</b> pins · <b>shift-drag</b> frames a box · panes time-locked,
-    fields + regions per-pane · pre-cut tiles only, never an on-demand render</span>
+    fields + regions per-pane · pre-cut tiles only, never an on-demand render ·
+    <b>scroll down</b> for loops + daily imagery</span>
   <span>Satellite Explorer — shadow preview · not linked in nav</span>
 </div>
+</div><!-- /cx-screen -->
+
+<!-- ====== BELOW THE FOLD: the existing loops + daily imagery, unchanged ====== -->
+<section class="cx-legacy">
+  <div class="cx-legacy-head">
+    <h2>Loops &amp; Daily Imagery</h2>
+    <span>the existing floater/meso loops, custom snapshots and daily true-color —
+      mounted as-is</span>
+  </div>
+  <iframe id="cx-legacy-frame" src="/satellite/?embed=1" loading="lazy"
+    title="Satellite loops and daily imagery"></iframe>
+</section>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js"></script>

@@ -22,6 +22,25 @@
      Download PNG yield the whole figure. ascat.js injects its own controls. */
   #ascat-viewer { display: block; padding: 4px; }
 </style>
+<style>
+/* ?embed=1: chrome-less mount inside the explorer cockpit (nav/head/footer
+   hidden; components untouched). Height is reported to the parent for iframe
+   auto-sizing (global_tracks postMessage precedent). */
+html.embedded .nav, html.embedded .subnav, html.embedded .page-head,
+html.embedded footer { display: none !important; }
+</style>
+<script>
+if (new URLSearchParams(location.search).get('embed') === '1') {
+  document.documentElement.classList.add('embedded');
+  window.addEventListener('load', function () {
+    var post = function () {
+      parent.postMessage({ tatEmbedHeight: document.documentElement.scrollHeight,
+                           page: location.pathname }, '*');
+    };
+    post(); setInterval(post, 1500);
+  });
+}
+</script>
 </head>
 <body>
 

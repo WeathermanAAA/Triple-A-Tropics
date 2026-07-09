@@ -474,7 +474,9 @@
     }
     var self = this, map = this.map, fps = opts.fps || 8;
     var N = Math.min(this.frames.length, opts.maxFrames || 90);
-    var canvas = map.getCanvas();
+    // opts.captureCanvas: record a caller-composited canvas (e.g. map + the
+    // cockpit's branded chrome) instead of the raw map canvas.
+    var canvas = opts.captureCanvas || map.getCanvas();
     var stream = canvas.captureStream(fps);
     var mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
       .filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || 'video/webm';
