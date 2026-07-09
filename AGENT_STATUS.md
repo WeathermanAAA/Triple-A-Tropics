@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~02:40 UTC_
+_Last update: 2026-07-09 ~04:05 UTC_
 
 ---
 
@@ -33,11 +33,14 @@ Worker; no CLOUDFLARE_API_TOKEN. The explorer stays live-but-unlinked +
 noindex/robots — the intended dev-preview state. (Vendored worker code stays
 in `workers/` for a possible future launch gate; not to be re-raised.)
 
-**①·c Decision: git-history expunge, go/no-go.** The internal planning
-artifacts removed at `962f659` still exist in git HISTORY (public). A full
-expunge = history rewrite (filter-repo) + force-push + all clones re-sync —
-say go and Claude runs it (with a pre-rewrite bundle backup), or accept
-history as-is. HEAD is already clean either way.
+**①·c History rewrite: READY, needs one explicit confirm.** Both repos' HEADs
+are fully clean (TAT `9131452`, tsr `731bbef` — files removed + references
+neutralized, verified). The main-branch history rewrite is scoped and cheap
+(main only — the planning files only ever existed on main, all 35 other
+branches provably predate them or are orphans; ~1.1 GB on /tmp, bundle backup
+first, no giant mirrors) but the tooling's safety gate wants a fresh explicit
+go after the earlier "too much" interrupt. Say "run the history rewrite" and
+it executes in one pass; afterwards GitHub support can force-GC orphaned SHAs.
 
 **② Decision (art): HAFS env-color v0.12 on the live worker** — say go and
 Claude repins `hafs-render-worker` hafs-render v0.11.0→v0.12.0 (Railway
