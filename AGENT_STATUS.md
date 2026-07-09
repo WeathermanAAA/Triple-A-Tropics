@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~00:30 UTC_
+_Last update: 2026-07-09 ~01:20 UTC_
 
 ---
 
@@ -23,6 +23,10 @@ docker compose -p tat-s2 -f docker-compose.s2.yml --profile cron up -d --build e
 `shadow/sat/**` >14 d, keeps a per-product minimum) — it replaces the
 `lifecycle --days 10` step that AccessDenied'd (bucket-lifecycle needs a
 permission the box R2 token doesn't have; no scope change needed for this).
+The same pull also picks up **Day Snow-Fog** (28th product — its greyed picker
+entry lights up on the next emit). Optional extra:
+`run --rm emit --suite fd --store r2 --prefix shadow --max-zoom 5` lights the
+Full Disk domain in the cockpit (27 more products; heavier, on-demand).
 
 **Explorer preview gate: DROPPED (Andrew 2026-07-09).** Not deploying the
 Worker; no CLOUDFLARE_API_TOKEN. The explorer stays live-but-unlinked +
@@ -44,6 +48,27 @@ since 07-01).
 optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
+
+- **Explorer COCKPIT — the full §6 shell** (2026-07-09, TAT `7525ecc` +
+  cockpit.js): /satellite/explorer/ went from bare map + dropdown to the full
+  toolkit, additive around the working viewer (zero regression to pyramid/
+  BT-inspector/export/compare — compare.html re-verified clean). Left rail =
+  field selector (RGB·Composites / Channels tabs, MET labels: Upper/Mid/Low
+  WV, Clean IR, Dvorak BD…). Right rail = satellite (GOES-18 greyed "coming"),
+  domain (CONUS active; Full Disk self-enables when the box emits `--suite fd`;
+  Meso greyed), TATRegions presets + a US-states group derived from the
+  admin_1 overlay geojson, overlay toggles + MRMS/METAR/model STUBS. Bottom =
+  canvas timeline (hover-scrub; fills when the cron backfills), fps-ladder
+  transport, Measure (geodesic km/nmi), freehand Sketch v1, draw-box,
+  select-on-map, Share permalink (URL state incl. camera/panes/frame), PNG
+  snapshot, WebM loop (≤10MB default / HQ toggle), Settings, Reset; 1/2/4
+  panes time-locked by VALID TIME with per-pane field+region. **Honesty rule
+  enforced**: everything without real data ships greyed with a "coming"/"no
+  data yet" chip, driven by the R2 products.json ground truth — nothing fake.
+  Headless-verified against real tiles (boot/product-switch/quad/measure all
+  clean; only pre-existing console noise). **Day Snow-Fog RGB** landed in tsr
+  (`cacbf64`, verified numbers test-locked, registry now 28 conus + 27 fd) —
+  it sits greyed in the picker until the box's next pull+emit.
 
 - **Object-level shadow prune** (2026-07-09, tsr `1d5046d`): `s2_prune.py` —
   ListObjectsV2+DeleteObject only (works with the box token's frozen scopes;
@@ -102,9 +127,10 @@ optional $10 AWS budget alarm (console/root only).
 
 ## IN PROGRESS
 
-- Object-level shadow prune (replaces bucket-lifecycle; queue ① wires it on
-  the box), full-disk sector in the viewer picker, Day Snow-Fog RGB
-  (verified numbers on file). All three landing this session.
+- Nothing mid-flight. Natural next steps: MRMS/METAR/model overlay pipelines
+  (separate builds, stubs already in the cockpit), Chart (point time-series)
+  once multi-frame history exists, GOES-18 West onboarding (registry rows +
+  SNS re-subscribe per Stage-2 Phase 4), icon stamps for Sketch.
 
 ## BLOCKERS
 
