@@ -127,7 +127,7 @@ The ledger (§3.2) and per-`(sat, product)` watermarks (§3.3) are a **cache, no
 
 ## 4. SERVE — manifest-SSOT, R2-cost-disciplined
 
-### 4.1 Manifest as SSOT (the-operational-monitor-style)
+### 4.1 Manifest as SSOT (operational-monitor style)
 
 The viewer **never lists the bucket.** Per product a small **`latest_times.json`** is the SSOT; the viewer derives every URL from a **deterministic path template** + the times.
 

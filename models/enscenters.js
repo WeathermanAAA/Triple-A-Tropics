@@ -817,7 +817,7 @@
       g.beginPath(); g.moveTo(pts[s2 - 1][0], pts[s2 - 1][1]); g.lineTo(pts[s2][0], pts[s2][1]); g.stroke();
     }
     if (!dim) {
-      // dated median-MSLP labels at daily leads (the a-reference-site EEMN look) -
+      // dated median-MSLP labels at daily leads (the classic ensemble-mean look) -
       // behind the "Pressure points" toggle (default off), headline cluster only.
       if (labelDaily && this.pptsOn) this._drawMeanDailyLabels(g, pts, lut);
       var last = pts[pts.length - 1], hmslp = lut[last[2]];

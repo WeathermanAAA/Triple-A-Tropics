@@ -1,6 +1,6 @@
 # Satellite custom-zoom tool
 
-custom-snapshots-style tool: user picks a bbox + time + channel + enhancement on triple-a-tropics.com/satellite/, gets back a clean cropped GOES PNG.
+Custom-snapshot tool: user picks a bbox + time + channel + enhancement on triple-a-tropics.com/satellite/, gets back a clean cropped GOES PNG.
 
 Two pieces:
 - **Frontend:** `satellite/index.html` (Leaflet + leaflet-draw) on this repo, served by GitHub Pages.
