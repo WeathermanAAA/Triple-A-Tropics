@@ -264,7 +264,8 @@
     el.className = 'cx-pane';
     el.innerHTML = '<div class="cx-pane-map" id="cx-map-' + i + '"></div>' +
       '<div class="cx-pane-tag" id="cx-tag-' + i + '"></div>' +
-      '<div class="cx-pane-probe" id="cx-pp-' + i + '"></div>';
+      '<div class="cx-pane-probe" id="cx-pp-' + i + '"></div>' +
+      '<div class="cx-load" id="cx-load-' + i + '"><i></i><span>Loading GOES-19 tiles…</span></div>';
     el.onclick = function () { setActivePane(i); };
     return el;
   }
@@ -303,8 +304,21 @@
   function paneStatus(i) {
     return function (kind, data) {
       var pane = S.panes[i];
+      if (kind === 'ready' || kind === 'frame' || kind === 'error') {
+        var ld = $('cx-load-' + i);
+        if (ld) ld.style.display = 'none';
+      }
       if (kind === 'error') {
-        if (i === 0) { $('cx-err').style.display = 'flex'; $('cx-err').textContent = data; }
+        if (i === 0) {
+          $('cx-err').style.display = 'flex';
+          $('cx-err').innerHTML =
+            '<div class="cx-err-card">' +
+            '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+            'stroke-linecap="round" stroke-linejoin="round"><use href="#i-warn"/></svg>' +
+            '<b>Imagery unavailable</b>' +
+            '<span>' + String(data).replace(/[<>]/g, '') +
+            '<br>The tile feed may still be spinning up — try again shortly.</span></div>';
+        }
       } else if (kind === 'frame') {
         if (i === 0) { updateClockUI(data); drawTimeline(); }
         paneTag(i, data.stamp);
@@ -375,7 +389,7 @@
     var pane = S.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
     if (S.available && !S.available.has(p.id) && S.domain === 'conus') return;
-    flash('loading ' + p.title + '…');
+    flash('Loading ' + p.title + '…', true);
     pane.tv.setProduct(manifestUrlFor(p, S.domain), p).then(function () {
       pane.product = p;
       paneTag(i);
@@ -434,7 +448,7 @@
       return;
     }
     S.playing = true; S.last = 0;
-    $('cx-play').textContent = '❚❚'; $('cx-play').classList.add('on');
+    $('cx-play').classList.add('playing', 'on');
     function step(t) {
       if (!S.playing) return;
       if (!S.last) S.last = t;
@@ -448,7 +462,7 @@
   function stopClock() {
     S.playing = false;
     if (S.raf) cancelAnimationFrame(S.raf);
-    $('cx-play').textContent = '▶'; $('cx-play').classList.remove('on');
+    $('cx-play').classList.remove('playing', 'on');
   }
   function speed(delta) {
     var i = FPS_STEPS.indexOf(S.fps);
@@ -488,11 +502,16 @@
     ctx.fillStyle = '#49b6c8';
     ctx.fillRect(fx - 1.25, 2, 2.5, h - 4);
     // end labels
-    ctx.fillStyle = '#7c8896'; ctx.font = '10px ui-monospace,monospace';
+    ctx.fillStyle = '#71809a'; ctx.font = '600 9.5px Metropolis,system-ui,sans-serif';
     ctx.textBaseline = 'top';
     ctx.fillText(fmtStamp(tv.frames[0]).slice(5), 2, h - 12);
     var lastLbl = fmtStamp(tv.frames[n - 1]).slice(5);
     ctx.fillText(lastLbl, w - ctx.measureText(lastLbl).width - 2, h - 12);
+    if (n === 1) {
+      ctx.fillStyle = '#5b6879';
+      var note = 'single frame — the loop fills as new scans land';
+      ctx.fillText(note, (w - ctx.measureText(note).width) / 2, 2);
+    }
   }
   function wireTimeline() {
     var cv = $('cx-tl');
@@ -747,14 +766,16 @@
     tv.exportWebM({
       maxBytes: S.hqExport ? 24e6 : 9e6,
       maxBitrate: S.hqExport ? 12e6 : 6e6,
-      onProgress: function (i, n) { btn.textContent = i < n ? i + '/' + n : 'encoding…'; },
+      onProgress: function (i, n) {
+        btn.querySelector('.lbl').textContent = i < n ? i + '/' + n : 'encoding…';
+      },
       onDone: function (blob) {
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = S.panes[0].product.id + '_loop.webm';
-        a.click(); btn.textContent = 'Loop ↓'; delete btn.dataset.busy;
+        a.click(); btn.querySelector('.lbl').textContent = 'Loop'; delete btn.dataset.busy;
       },
-      onError: function (m) { btn.textContent = m; delete btn.dataset.busy; }
+      onError: function (m) { btn.querySelector('.lbl').textContent = m; delete btn.dataset.busy; }
     });
   }
 
@@ -771,11 +792,12 @@
   }
 
   var flashTimer = null;
-  function flash(msg) {
+  function flash(msg, busy) {
     var el = $('cx-flash');
     el.textContent = msg || ''; el.style.opacity = msg ? 1 : 0;
+    el.classList.toggle('busy', !!(msg && busy));
     if (flashTimer) clearTimeout(flashTimer);
-    if (msg) flashTimer = setTimeout(function () { el.style.opacity = 0; }, 4000);
+    if (msg && !busy) flashTimer = setTimeout(function () { el.style.opacity = 0; }, 4000);
   }
 
   // ========================================================================
@@ -800,7 +822,7 @@
     $('cx-hq').onclick = function () {
       S.hqExport = !S.hqExport;
       $('cx-hq').classList.toggle('on', S.hqExport);
-      $('cx-hq').textContent = S.hqExport ? 'HQ' : '≤10MB';
+      $('cx-hq').querySelector('.lbl').textContent = S.hqExport ? 'HQ' : '≤10MB';
     };
     $('cx-fit').onclick = function () {
       var p = S.panes[S.active]; if (p && p.ready) p.tv.fitData();

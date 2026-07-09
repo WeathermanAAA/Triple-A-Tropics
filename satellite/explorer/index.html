@@ -12,60 +12,89 @@
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <style>
+  :root{
+    --cx-teal:#49b6c8; --cx-teal-soft:rgba(73,182,200,.14);
+    --cx-panel:#0d1219; --cx-line:#232d3a; --cx-line-soft:#1a2230;
+    --cx-fg:#dbe3ec; --cx-mut:#8ea2bd; --cx-dim:#71809a;
+  }
   /* ---- cockpit shell -------------------------------------------------- */
-  .cx-shell{display:grid;grid-template-columns:236px minmax(0,1fr) 232px;gap:12px;
+  .cx-shell{display:grid;grid-template-columns:238px minmax(0,1fr) 234px;gap:12px;
     max-width:1680px;margin:14px auto 26px;padding:0 14px;
     font-family:'Metropolis',system-ui,sans-serif}
-  .cx-rail{background:#0d1219;border:1px solid var(--border,#242c36);border-radius:10px;
-    padding:10px;display:flex;flex-direction:column;gap:10px;
-    max-height:calc(62vh + 190px);overflow-y:auto;scrollbar-width:thin}
-  .cx-rail h3{font-size:11px;letter-spacing:.14em;text-transform:uppercase;
-    color:#7c8896;margin:4px 2px 2px;font-weight:700}
+  .cx-rail{background:linear-gradient(180deg,#0f1621,#0b1018);
+    border:1px solid var(--cx-line);border-radius:12px;
+    box-shadow:0 10px 26px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
+    padding:12px;display:flex;flex-direction:column;gap:12px;
+    max-height:calc(62vh + 196px);overflow-y:auto;scrollbar-width:thin;
+    scrollbar-color:#2a3644 transparent}
+  .cx-rail h3{display:flex;align-items:center;gap:7px;
+    font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--cx-dim);margin:2px 1px 0;font-weight:700}
+  .cx-rail h3::before{content:'';width:3px;height:11px;border-radius:2px;
+    background:var(--cx-teal);flex:none}
   .cx-stage{display:flex;flex-direction:column;gap:10px;min-width:0}
 
   /* ---- left rail: field selector -------------------------------------- */
-  .cx-tabs{display:flex;gap:6px}
-  .cx-tab{flex:1;font-size:12px;padding:7px 4px;border-radius:7px;cursor:pointer;
-    background:rgba(17,23,33,.9);border:1px solid #2a3644;color:#9aa8b8;text-align:center}
-  .cx-tab.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.12)}
-  .cx-field{display:block;width:100%;text-align:left;padding:7px 9px;margin:2px 0;
-    background:transparent;border:1px solid transparent;border-radius:7px;cursor:pointer;color:#dbe3ec}
-  .cx-field b{display:block;font-size:12.5px;font-weight:600;line-height:1.25}
-  .cx-field .cx-meta{display:block;font-size:10.5px;color:#7c8896;
-    font-variant-numeric:tabular-nums;margin-top:1px}
-  .cx-field:hover{border-color:#2a3644;background:rgba(17,23,33,.7)}
-  .cx-field.active{border-color:#49b6c8;background:rgba(73,182,200,.10)}
-  .cx-field.active b{color:#49b6c8}
-  .cx-field.coming,.cx-item.coming{opacity:.42;cursor:default}
+  .cx-tabs{display:flex;gap:16px;border-bottom:1px solid var(--cx-line-soft);padding:0 2px}
+  .cx-tab{font-size:12.5px;font-weight:600;letter-spacing:.02em;padding:8px 2px 9px;
+    cursor:pointer;background:transparent;border:0;border-bottom:2px solid transparent;
+    color:var(--cx-mut);margin-bottom:-1px}
+  .cx-tab:hover{color:#fff}
+  .cx-tab.on{color:#fff;border-bottom-color:var(--cx-teal)}
+  .cx-field{position:relative;display:block;width:100%;text-align:left;padding:7px 10px;
+    margin:2px 0;background:transparent;border:1px solid transparent;border-radius:8px;
+    cursor:pointer;color:var(--cx-fg);font-family:inherit}
+  .cx-field b{display:block;font-size:12.5px;font-weight:600;line-height:1.3}
+  .cx-field .cx-meta{display:block;font-size:10.5px;color:var(--cx-dim);
+    font-variant-numeric:tabular-nums;margin-top:1px;font-weight:500}
+  .cx-field:hover{border-color:var(--cx-line);background:rgba(17,23,33,.7)}
+  .cx-field.active{border-color:rgba(73,182,200,.45);
+    background:linear-gradient(90deg,rgba(73,182,200,.16),rgba(73,182,200,.04));
+    box-shadow:inset 3px 0 0 var(--cx-teal), 0 0 14px rgba(73,182,200,.10)}
+  .cx-field.active b{color:var(--cx-teal)}
+  .cx-field.coming,.cx-item.coming{opacity:.4;cursor:default}
   .cx-field.coming:hover{border-color:transparent;background:transparent}
-  .cx-chip{font-style:normal;font-size:9.5px;color:#c9a35a;border:1px solid rgba(201,163,90,.45);
-    border-radius:999px;padding:0 6px;white-space:nowrap}
+  .cx-chip{font-style:normal;font-size:8.5px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;color:#9c8f6e;border:1px solid rgba(156,143,110,.35);
+    border-radius:999px;padding:1px 6px;white-space:nowrap;vertical-align:1px}
 
   /* ---- right rail: satellite / domain / regions / overlays ------------ */
-  .cx-item{display:flex;justify-content:space-between;align-items:center;gap:6px;width:100%;
-    text-align:left;padding:7px 9px;margin:2px 0;font-size:12.5px;color:#dbe3ec;
-    background:transparent;border:1px solid transparent;border-radius:7px;cursor:pointer}
-  .cx-item:hover{border-color:#2a3644;background:rgba(17,23,33,.7)}
-  .cx-item.active{border-color:#49b6c8;background:rgba(73,182,200,.10);color:#49b6c8}
+  .cx-item{position:relative;display:flex;justify-content:space-between;align-items:center;
+    gap:6px;width:100%;text-align:left;padding:7px 10px;margin:2px 0;font-size:12.5px;
+    font-weight:500;color:var(--cx-fg);background:transparent;font-family:inherit;
+    border:1px solid transparent;border-radius:8px;cursor:pointer}
+  .cx-item:hover{border-color:var(--cx-line);background:rgba(17,23,33,.7)}
+  .cx-item.active{border-color:rgba(73,182,200,.45);color:var(--cx-teal);font-weight:600;
+    background:linear-gradient(90deg,rgba(73,182,200,.16),rgba(73,182,200,.04));
+    box-shadow:inset 3px 0 0 var(--cx-teal)}
   .cx-item.coming:hover{border-color:transparent;background:transparent}
-  .cx-item.on{border-color:#ffb347;color:#ffb347}
-  #cx-regions details{border-top:1px solid #1c242f;padding:2px 0}
-  #cx-regions summary{font-size:11.5px;color:#9aa8b8;cursor:pointer;padding:6px 2px;
-    list-style-position:inside}
-  #cx-regions summary:hover{color:#dbe3ec}
-  .cx-rgn-box{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 8px}
-  .cx-rgn{font-size:11px;color:#b6c0cc;background:rgba(17,23,33,.9);border:1px solid #2a3644;
-    border-radius:999px;padding:3px 9px;cursor:pointer}
-  .cx-rgn:hover{border-color:#49b6c8;color:#49b6c8}
+  .cx-item.on{border-color:rgba(255,179,71,.5);color:#ffb347}
+  #cx-regions details{border-top:1px solid var(--cx-line-soft);padding:1px 0}
+  #cx-regions details:first-of-type{border-top:0}
+  #cx-regions summary{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+    color:var(--cx-mut);cursor:pointer;padding:7px 2px;list-style:none}
+  #cx-regions summary::-webkit-details-marker{display:none}
+  #cx-regions summary::before{content:'';width:0;height:0;flex:none;
+    border-left:4.5px solid var(--cx-dim);border-top:3.5px solid transparent;
+    border-bottom:3.5px solid transparent;transition:transform .15s}
+  #cx-regions details[open] summary::before{transform:rotate(90deg);
+    border-left-color:var(--cx-teal)}
+  #cx-regions summary:hover{color:#fff}
+  .cx-rgn-box{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 9px}
+  .cx-rgn{font-size:11px;font-weight:500;color:#b6c0cc;background:rgba(17,23,33,.9);
+    border:1px solid var(--cx-line);border-radius:999px;padding:3.5px 10px;cursor:pointer;
+    font-family:inherit}
+  .cx-rgn:hover{border-color:var(--cx-teal);color:var(--cx-teal)}
   .cx-ov-row{display:flex;flex-wrap:wrap;gap:5px}
-  .cx-ov{font-size:11px;color:#9aa8b8;background:rgba(17,23,33,.9);border:1px solid #2a3644;
-    border-radius:7px;padding:5px 9px;cursor:pointer}
-  .cx-ov.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.12)}
-  .cx-ov:disabled{opacity:.42;cursor:default}
+  .cx-ov{font-size:11px;font-weight:600;color:var(--cx-mut);background:rgba(17,23,33,.9);
+    border:1px solid var(--cx-line);border-radius:8px;padding:5px 10px;cursor:pointer;
+    font-family:inherit}
+  .cx-ov.on{border-color:rgba(73,182,200,.55);color:var(--cx-teal);background:var(--cx-teal-soft)}
+  .cx-ov:disabled{opacity:.4;cursor:default}
 
   /* ---- stage / panes --------------------------------------------------- */
-  .cx-view{position:relative;border-radius:10px;overflow:hidden;background:#0a0d12;
-    border:1px solid var(--border,#242c36)}
+  .cx-view{position:relative;border-radius:12px;overflow:hidden;background:#0a0d12;
+    border:1px solid var(--cx-line);box-shadow:0 10px 26px rgba(0,0,0,.35)}
   #cx-panes{display:grid;gap:2px;height:clamp(480px,62vh,780px)}
   #cx-panes[data-n="1"]{grid-template-columns:1fr}
   #cx-panes[data-n="2"]{grid-template-columns:1fr 1fr}
@@ -74,18 +103,37 @@
   .cx-pane-map{position:absolute;inset:0}
   .cx-pane.cx-active{outline:1.5px solid rgba(73,182,200,.75);outline-offset:-1.5px;z-index:2}
   .cx-pane-tag{position:absolute;left:8px;top:8px;z-index:4;display:none;pointer-events:none;
-    font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#dbe3ec;
-    background:rgba(10,13,18,.78);border:1px solid #2a3644;border-radius:6px;padding:3px 7px}
+    font-size:10.5px;font-weight:600;letter-spacing:.02em;color:var(--cx-fg);
+    font-variant-numeric:tabular-nums;background:rgba(10,13,18,.8);
+    border:1px solid var(--cx-line);border-radius:6px;padding:3px 8px}
   .cx-pane-probe{position:absolute;left:8px;bottom:8px;z-index:4;display:none;pointer-events:none;
-    font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#dbe3ec;line-height:1.45;
-    background:rgba(10,13,18,.82);border:1px solid #2a3644;border-radius:7px;padding:5px 8px}
-  .cx-pane-probe b{color:#49b6c8}.cx-pane-probe span{color:#9aa8b8;font-size:10.5px}
+    font-size:11.5px;font-weight:500;color:var(--cx-fg);line-height:1.5;
+    font-variant-numeric:tabular-nums;background:rgba(10,13,18,.84);
+    border:1px solid var(--cx-line);border-radius:8px;padding:5px 9px}
+  .cx-pane-probe b{color:var(--cx-teal);font-weight:700}
+  .cx-pane-probe span{color:var(--cx-mut);font-size:10.5px}
 
-  /* overlays over the whole stage (header, colorbar, flash, error) */
+  /* branded loading / error / empty states (no dev-console text) */
+  .cx-load{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;gap:12px;
+    align-items:center;justify-content:center;background:#0a0d12;pointer-events:none}
+  .cx-load i{width:26px;height:26px;border-radius:50%;flex:none;
+    border:2.5px solid rgba(73,182,200,.22);border-top-color:var(--cx-teal);
+    animation:cx-spin .8s linear infinite}
+  .cx-load span{font-size:12.5px;font-weight:600;letter-spacing:.03em;color:var(--cx-mut)}
+  @keyframes cx-spin{to{transform:rotate(360deg)}}
+  .cx-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:7}
+  .cx-err-card{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;
+    background:rgba(13,18,25,.96);border:1px solid var(--cx-line);border-radius:12px;
+    padding:22px 30px;max-width:340px}
+  .cx-err-card svg{width:22px;height:22px;color:#c9a35a}
+  .cx-err-card b{font-size:13.5px;font-weight:700;color:var(--cx-fg)}
+  .cx-err-card span{font-size:12px;color:var(--cx-mut);line-height:1.5}
+
+  /* overlays over the whole stage (header, colorbar, flash) */
   .cx-ovl{position:absolute;z-index:5;pointer-events:none}
   .cx-head{top:0;left:0;right:0;display:flex;justify-content:space-between;gap:12px;
     padding:10px 14px;background:linear-gradient(180deg,rgba(10,13,18,.82),rgba(10,13,18,0))}
-  .cx-title{font-weight:700;font-size:15px;color:#dbe3ec;letter-spacing:.01em}
+  .cx-title{font-weight:700;font-size:15px;color:var(--cx-fg);letter-spacing:.01em}
   .cx-sub{font-size:12px;color:#9aa8b8;margin-top:2px;font-variant-numeric:tabular-nums}
   .cx-brand{font-weight:700;font-size:17px;color:rgba(255,255,255,.5);
     text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap}
@@ -96,53 +144,70 @@
     font-variant-numeric:tabular-nums}
   .cx-cbar .ticks span{position:absolute;right:2px;transform:translateY(-50%)}
   .cx-cbar .cap{writing-mode:vertical-rl;font-size:10px;color:#8b97a6;align-self:center}
-  #cx-flash{bottom:10px;left:50%;transform:translateX(-50%);font-size:12px;color:#ffb347;
-    font-family:ui-monospace,monospace;background:rgba(10,13,18,.85);border:1px solid #3a3428;
-    border-radius:7px;padding:5px 12px;opacity:0;transition:opacity .25s;white-space:nowrap}
-  .cx-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
-    color:#9aa8b8;font-family:ui-monospace,monospace;font-size:13px;text-align:center;
-    padding:20px;z-index:7}
-  .cx-mlabel{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:#0a0d12;
-    background:#ffb347;border-radius:4px;padding:1px 6px;white-space:nowrap}
+  #cx-flash{bottom:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;
+    gap:8px;font-size:12px;font-weight:600;letter-spacing:.02em;color:#ffcf87;
+    background:rgba(13,18,25,.92);border:1px solid rgba(255,179,71,.28);border-radius:999px;
+    padding:6px 14px;opacity:0;transition:opacity .25s;white-space:nowrap;
+    box-shadow:0 6px 18px rgba(0,0,0,.4)}
+  #cx-flash.busy::before{content:'';width:11px;height:11px;border-radius:50%;flex:none;
+    border:2px solid rgba(255,179,71,.3);border-top-color:#ffb347;
+    animation:cx-spin .8s linear infinite}
+  .cx-mlabel{font-family:'Metropolis',system-ui,sans-serif;font-size:11px;font-weight:700;
+    color:#0a0d12;background:#ffb347;border-radius:4px;padding:1px 7px;white-space:nowrap;
+    font-variant-numeric:tabular-nums}
 
   /* draw-box + BT pin (tiled_viewer.js expects these class names) */
   .tv-drawbox{position:absolute;top:0;left:0;background:rgba(73,182,200,.14);
-    border:1.5px solid #49b6c8;pointer-events:none;z-index:6}
+    border:1.5px solid var(--cx-teal);pointer-events:none;z-index:6}
   .tv-pin{display:flex;flex-direction:column;align-items:center;pointer-events:none;
-    font-family:ui-monospace,monospace}
-  .tv-pin b{font-size:11px;color:#0a0d12;background:#49b6c8;border-radius:4px;
-    padding:1px 5px;white-space:nowrap;font-weight:700}
-  .tv-pin i{width:2px;height:9px;background:#49b6c8;display:block}
+    font-family:'Metropolis',system-ui,sans-serif}
+  .tv-pin b{font-size:11px;font-weight:700;color:#0a0d12;background:var(--cx-teal);
+    border-radius:4px;padding:1px 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tv-pin i{width:2px;height:9px;background:var(--cx-teal);display:block}
   .maplibregl-ctrl-attrib{display:none}
 
   /* ---- bottom: timeline + transport + tools ---------------------------- */
-  .cx-bottom{background:#0d1219;border:1px solid var(--border,#242c36);border-radius:10px;
+  .cx-bottom{background:linear-gradient(180deg,#0f1621,#0b1018);
+    border:1px solid var(--cx-line);border-radius:12px;
+    box-shadow:0 10px 26px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
     padding:10px 12px;display:flex;flex-direction:column;gap:9px}
   .cx-tl-row{display:flex;align-items:center;gap:12px}
   #cx-tl{flex:1;height:40px;min-width:0;cursor:pointer}
-  .cx-clock{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa8b8;
-    font-variant-numeric:tabular-nums;white-space:nowrap}
-  .cx-clock b{color:#49b6c8;font-weight:600}
-  .cx-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
-    font-family:ui-monospace,Menlo,monospace}
-  .cx-btn{font-size:12px;color:#dbe3ec;background:rgba(17,23,33,.9);border:1px solid #2a3644;
-    border-radius:7px;padding:6px 10px;cursor:pointer;line-height:1}
-  .cx-btn:hover{border-color:#49b6c8;color:#49b6c8}
-  .cx-btn.on{border-color:#49b6c8;color:#49b6c8;background:rgba(73,182,200,.14)}
-  .cx-btn.warn.on{border-color:#ffb347;color:#ffb347;background:rgba(255,179,71,.10)}
-  .cx-btn:disabled{opacity:.42;cursor:default}
-  .cx-btn:disabled:hover{border-color:#2a3644;color:#dbe3ec}
-  .cx-sep{width:1px;height:18px;background:#2a3644;margin:0 3px}
+  .cx-clock{font-size:12px;font-weight:600;color:var(--cx-mut);
+    font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:.02em}
+  .cx-clock b{color:var(--cx-teal);font-weight:700}
+  .cx-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .cx-tgroup{display:flex;align-items:center;gap:5px}
+  .cx-tdiv{width:1px;height:22px;background:var(--cx-line);flex:none}
+  .cx-btn{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;
+    letter-spacing:.02em;color:var(--cx-fg);background:rgba(17,23,33,.9);
+    border:1px solid var(--cx-line);border-radius:8px;padding:6px 10px;cursor:pointer;
+    line-height:1;font-family:inherit}
+  .cx-btn svg{width:15px;height:15px;flex:none}
+  .cx-btn:hover{border-color:var(--cx-teal);color:var(--cx-teal)}
+  .cx-btn.on{border-color:rgba(73,182,200,.6);color:var(--cx-teal);background:var(--cx-teal-soft);
+    box-shadow:0 0 10px rgba(73,182,200,.12)}
+  .cx-btn.warn.on{border-color:rgba(255,179,71,.55);color:#ffb347;
+    background:rgba(255,179,71,.10);box-shadow:0 0 10px rgba(255,179,71,.10)}
+  .cx-btn:disabled{opacity:.4;cursor:default}
+  .cx-btn:disabled:hover{border-color:var(--cx-line);color:var(--cx-fg)}
+  .cx-btn.icon{padding:6px 8px}
+  #cx-play .ic-pause{display:none}
+  #cx-play.playing .ic-play{display:none}
+  #cx-play.playing .ic-pause{display:block}
   .cx-grow{flex:1}
-  .cx-seg{display:flex;border:1px solid #2a3644;border-radius:7px;overflow:hidden}
-  .cx-seg .cx-btn{border:0;border-radius:0}
-  .cx-seg .cx-btn+.cx-btn{border-left:1px solid #2a3644}
+  .cx-seg{display:flex;border:1px solid var(--cx-line);border-radius:8px;overflow:hidden}
+  .cx-seg .cx-btn{border:0;border-radius:0;padding:6px 9px}
+  .cx-seg .cx-btn+.cx-btn{border-left:1px solid var(--cx-line)}
   #cx-setpop{position:absolute;right:12px;bottom:52px;z-index:9;display:none;
-    background:#0d1219;border:1px solid #2a3644;border-radius:9px;padding:10px 12px;
-    font-family:ui-monospace,monospace;font-size:12px;color:#9aa8b8;min-width:210px}
-  #cx-setpop .cx-btn{margin-top:6px;width:100%}
-  .cx-note{color:var(--muted,#7c8896);font-size:12px;margin:2px 2px 0;
-    font-family:ui-monospace,monospace}
+    background:var(--cx-panel);border:1px solid var(--cx-line);border-radius:10px;
+    box-shadow:0 10px 26px rgba(0,0,0,.45);padding:11px 12px;font-size:11px;font-weight:700;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--cx-dim);min-width:220px}
+  #cx-setpop .cx-btn{margin-top:8px;width:100%;letter-spacing:.02em;text-transform:none;
+    font-size:11.5px;justify-content:center}
+  .cx-note{color:var(--cx-dim);font-size:11.5px;font-weight:500;letter-spacing:.02em;
+    margin:2px 4px 0;line-height:1.6}
+  .cx-note b{color:var(--cx-mut);font-weight:600}
 
   /* ---- compact screens -------------------------------------------------- */
   @media (max-width: 1080px){
@@ -182,6 +247,34 @@
   </div>
 </nav>
 
+<!-- inline icon set (stroke = currentColor; self-contained, no CDN) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-play"><path d="M4.6 3.1v9.8L13 8z" fill="currentColor" stroke="none"/></g>
+    <g id="i-pause"><path d="M5.2 3.4v9.2M10.8 3.4v9.2" stroke-width="2.4"/></g>
+    <g id="i-minus"><path d="M3.5 8h9"/></g>
+    <g id="i-plus"><path d="M8 3.5v9M3.5 8h9"/></g>
+    <g id="i-inspect"><circle cx="8" cy="8" r="3.4"/><path d="M8 1.4v2.1M8 12.5v2.1M1.4 8h2.1M12.5 8h2.1"/></g>
+    <g id="i-measure"><path d="M2.2 13.8L13.8 2.2"/><path d="M4.7 11.3l1.5 1.5M7.2 8.8l1.5 1.5M9.7 6.3l1.5 1.5"/></g>
+    <g id="i-box"><rect x="2.5" y="3.5" width="11" height="9" rx="1" stroke-dasharray="2.8 2"/></g>
+    <g id="i-sketch"><path d="M3 13l.9-3.1L11 2.7l2.3 2.3L6.1 12 3 13z"/><path d="M9.7 4l2.3 2.3"/></g>
+    <g id="i-clear"><circle cx="8" cy="8" r="5.8"/><path d="M6 6l4 4M10 6l-4 4"/></g>
+    <g id="i-stamp"><path d="M8 2.1l1.8 3.7 4.1.6-3 2.9.7 4L8 11.4l-3.6 1.9.7-4-3-2.9 4.1-.6z"/></g>
+    <g id="i-chart"><path d="M2.5 13.5h11"/><path d="M3.5 10.6l3-3.1 2.4 2 3.6-4.6"/></g>
+    <g id="i-share"><circle cx="4" cy="8" r="1.8"/><circle cx="12" cy="3.9" r="1.8"/><circle cx="12" cy="12.1" r="1.8"/><path d="M5.7 7.2l4.6-2.5M5.7 8.8l4.6 2.5"/></g>
+    <g id="i-image"><rect x="2.5" y="3" width="11" height="10" rx="1.2"/><circle cx="6" cy="6.4" r="1" fill="currentColor" stroke="none"/><path d="M4.2 11.8l2.8-2.9 2 2 2.7-3.2 1.8 2.1"/></g>
+    <g id="i-loop"><path d="M13.2 8A5.2 5.2 0 1 1 11 3.7"/><path d="M11.2 1.5v2.4h2.4"/></g>
+    <g id="i-fit"><path d="M2.5 5.4V2.5h2.9M13.5 5.4V2.5h-2.9M2.5 10.6v2.9h2.9M13.5 10.6v2.9h-2.9"/></g>
+    <g id="i-set"><path d="M2.5 4.7h11M2.5 8h11M2.5 11.3h11"/><circle cx="6.2" cy="4.7" r="1.5" fill="#0b1018"/><circle cx="10.4" cy="8" r="1.5" fill="#0b1018"/><circle cx="5" cy="11.3" r="1.5" fill="#0b1018"/></g>
+    <g id="i-reset"><path d="M3.1 8a4.9 4.9 0 1 1 1.5 3.5"/><path d="M3.1 11.9V9.1h2.8"/></g>
+    <g id="i-cal"><rect x="2.5" y="3.5" width="11" height="10" rx="1.2"/><path d="M2.5 6.6h11M5.4 1.9v3M10.6 1.9v3"/></g>
+    <g id="i-p1"><rect x="3" y="3.5" width="10" height="9" rx="1"/></g>
+    <g id="i-p2"><rect x="2.5" y="3.5" width="5" height="9" rx=".8"/><rect x="8.5" y="3.5" width="5" height="9" rx=".8"/></g>
+    <g id="i-p4"><rect x="2.5" y="3" width="5" height="4.4" rx=".8"/><rect x="8.5" y="3" width="5" height="4.4" rx=".8"/><rect x="2.5" y="8.6" width="5" height="4.4" rx=".8"/><rect x="8.5" y="8.6" width="5" height="4.4" rx=".8"/></g>
+    <g id="i-warn"><path d="M8 2.4L14.4 13H1.6z"/><path d="M8 6.4v3.2M8 11.5v.1"/></g>
+  </defs>
+</svg>
+
 <div class="cx-shell">
 
   <!-- ============== LEFT RAIL: FIELD ============== -->
@@ -203,7 +296,7 @@
       <div class="cx-ovl cx-head">
         <div>
           <div class="cx-title" id="cx-title">GOES-19 · CONUS · Clean IR</div>
-          <div class="cx-sub" id="cx-sub">loading manifest…</div>
+          <div class="cx-sub" id="cx-sub">&nbsp;</div>
         </div>
         <div class="cx-brand">@WeathermanAAA_</div>
       </div>
@@ -224,46 +317,79 @@
         <span class="cx-clock"><b id="cx-valid">—</b></span>
         <canvas id="cx-tl" height="40"></canvas>
         <span class="cx-clock" id="cx-count">—</span>
-        <button type="button" class="cx-btn" disabled title="Time machine — coming">
-          📅 <i class="cx-chip">coming</i></button>
+        <button type="button" class="cx-btn icon" disabled title="Time machine — coming">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-cal"/></svg>
+          <i class="cx-chip">soon</i></button>
       </div>
       <div class="cx-tools">
-        <button type="button" class="cx-btn" id="cx-slower" title="Slower">−</button>
-        <button type="button" class="cx-btn" id="cx-play" title="Play/Pause (space)">▶</button>
-        <button type="button" class="cx-btn" id="cx-faster" title="Faster">+</button>
-        <span class="cx-clock" id="cx-speed">6 fps</span>
-        <span class="cx-sep"></span>
-        <button type="button" class="cx-btn on" id="cx-inspect" title="Hover reads BT; click pins">Inspect</button>
-        <button type="button" class="cx-btn warn" id="cx-measure" title="Two clicks measure distance">Measure</button>
-        <button type="button" class="cx-btn" id="cx-box" title="Drag a rectangle to frame it">Box</button>
-        <button type="button" class="cx-btn warn" id="cx-sketch" title="Freehand annotation">Sketch</button>
-        <button type="button" class="cx-btn" id="cx-clear" title="Clear sketches + pins">Clear</button>
-        <button type="button" class="cx-btn" disabled title="Icon stamps — coming">Icons <i class="cx-chip">coming</i></button>
-        <button type="button" class="cx-btn" disabled title="Point time-series — coming">Chart <i class="cx-chip">coming</i></button>
-        <span class="cx-sep"></span>
-        <button type="button" class="cx-btn" id="cx-share" title="Copy a permalink to this exact view">Share</button>
-        <button type="button" class="cx-btn" id="cx-png" title="Current pane as PNG">PNG ↓</button>
-        <button type="button" class="cx-btn" id="cx-loop" title="Loop as WebM video">Loop ↓</button>
-        <button type="button" class="cx-btn" id="cx-hq" title="Export size budget">≤10MB</button>
-        <span class="cx-grow"></span>
-        <button type="button" class="cx-btn" id="cx-fit" title="Fit the data footprint">Fit</button>
-        <div class="cx-seg" title="Panes">
-          <button type="button" class="cx-btn on" data-panes="1">1</button>
-          <button type="button" class="cx-btn" data-panes="2">2</button>
-          <button type="button" class="cx-btn" data-panes="4">4</button>
+        <div class="cx-tgroup">
+          <button type="button" class="cx-btn icon" id="cx-slower" title="Slower">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><use href="#i-minus"/></svg></button>
+          <button type="button" class="cx-btn icon" id="cx-play" title="Play / pause (space)">
+            <svg class="ic-play" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><use href="#i-play"/></svg>
+            <svg class="ic-pause" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><use href="#i-pause"/></svg></button>
+          <button type="button" class="cx-btn icon" id="cx-faster" title="Faster">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><use href="#i-plus"/></svg></button>
+          <span class="cx-clock" id="cx-speed">6 fps</span>
         </div>
-        <button type="button" class="cx-btn" id="cx-settings">⚙</button>
-        <button type="button" class="cx-btn" id="cx-reset" title="Back to boot state">Reset</button>
+        <div class="cx-tdiv"></div>
+        <div class="cx-tgroup">
+          <button type="button" class="cx-btn on" id="cx-inspect" title="Hover reads BT; click pins">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-inspect"/></svg><span class="lbl">Inspect</span></button>
+          <button type="button" class="cx-btn warn" id="cx-measure" title="Two clicks measure distance">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-measure"/></svg><span class="lbl">Measure</span></button>
+          <button type="button" class="cx-btn" id="cx-box" title="Drag a rectangle to frame it">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-box"/></svg><span class="lbl">Box</span></button>
+          <button type="button" class="cx-btn warn" id="cx-sketch" title="Freehand annotation">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><use href="#i-sketch"/></svg><span class="lbl">Sketch</span></button>
+          <button type="button" class="cx-btn icon" id="cx-clear" title="Clear sketches + pins">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-clear"/></svg></button>
+          <button type="button" class="cx-btn" disabled title="Icon stamps — coming">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><use href="#i-stamp"/></svg><i class="cx-chip">soon</i></button>
+          <button type="button" class="cx-btn" disabled title="Point time-series — coming">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-chart"/></svg><i class="cx-chip">soon</i></button>
+        </div>
+        <div class="cx-tdiv"></div>
+        <div class="cx-tgroup">
+          <button type="button" class="cx-btn" id="cx-share" title="Copy a permalink to this exact view">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-share"/></svg><span class="lbl">Share</span></button>
+          <button type="button" class="cx-btn" id="cx-png" title="Current pane as PNG">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg><span class="lbl">PNG</span></button>
+          <button type="button" class="cx-btn" id="cx-loop" title="Loop as WebM video">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-loop"/></svg><span class="lbl">Loop</span></button>
+          <button type="button" class="cx-btn" id="cx-hq" title="Export size budget"><span class="lbl">≤10MB</span></button>
+        </div>
+        <div class="cx-tdiv"></div>
+        <div class="cx-tgroup">
+          <button type="button" class="cx-btn icon" id="cx-fit" title="Fit the data footprint">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-fit"/></svg></button>
+          <div class="cx-seg" title="Panes">
+            <button type="button" class="cx-btn on" data-panes="1" title="Single pane">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-p1"/></svg></button>
+            <button type="button" class="cx-btn" data-panes="2" title="Dual panes">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-p2"/></svg></button>
+            <button type="button" class="cx-btn" data-panes="4" title="Quad panes">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-p4"/></svg></button>
+          </div>
+        </div>
+        <span class="cx-grow"></span>
+        <div class="cx-tgroup">
+          <button type="button" class="cx-btn icon" id="cx-settings" title="Settings">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-set"/></svg></button>
+          <button type="button" class="cx-btn" id="cx-reset" title="Back to boot state">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-reset"/></svg><span class="lbl">Reset</span></button>
+        </div>
       </div>
       <div id="cx-setpop">
-        playback
+        Playback
         <button type="button" class="cx-btn on" id="cx-set-dwell">6× dwell on newest frame</button>
       </div>
     </div>
 
-    <p class="cx-note">Hover reads calibrated brightness temperature where the field ships a BT
-      raster · click pins · shift-drag frames a box · panes are time-locked, fields and regions
-      are per-pane · everything renders from pre-cut tiles, never an on-demand render.</p>
+    <p class="cx-note"><b>Hover</b> reads calibrated brightness temperature where the field ships a
+      BT raster · <b>click</b> pins it · <b>shift-drag</b> frames a box · panes are time-locked while
+      fields and regions stay per-pane · everything renders from pre-cut tiles, never an
+      on-demand render.</p>
   </main>
 
   <!-- ============== RIGHT RAIL: SATELLITE / DOMAIN / REGIONS / OVERLAYS ============== -->
@@ -271,14 +397,14 @@
     <h3>Satellite</h3>
     <div>
       <button type="button" class="cx-item active">GOES-19 · East</button>
-      <button type="button" class="cx-item coming">GOES-18 · West <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-item coming">GOES-18 · West <i class="cx-chip">soon</i></button>
     </div>
     <h3>Domain</h3>
     <div id="cx-domains">
       <button type="button" class="cx-item active" data-domain="conus">CONUS</button>
       <button type="button" class="cx-item coming" data-domain="fd">Full Disk <i class="cx-chip">no data yet</i></button>
-      <button type="button" class="cx-item coming" data-domain="meso1">Meso 1 <i class="cx-chip">coming</i></button>
-      <button type="button" class="cx-item coming" data-domain="meso2">Meso 2 <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-item coming" data-domain="meso1">Meso 1 <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-item coming" data-domain="meso2">Meso 2 <i class="cx-chip">soon</i></button>
       <button type="button" class="cx-item" data-domain="drawbox">Draw a box</button>
       <button type="button" class="cx-item" data-domain="selectmap">Select on map</button>
     </div>
@@ -292,9 +418,9 @@
       <button type="button" class="cx-ov on" id="cx-ov-grid">Grid</button>
     </div>
     <div class="cx-ov-row">
-      <button type="button" class="cx-ov" disabled>MRMS radar <i class="cx-chip">coming</i></button>
-      <button type="button" class="cx-ov" disabled>Obs · METAR <i class="cx-chip">coming</i></button>
-      <button type="button" class="cx-ov" disabled>Model fields <i class="cx-chip">coming</i></button>
+      <button type="button" class="cx-ov" disabled>MRMS radar <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-ov" disabled>METAR obs <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-ov" disabled>Model fields <i class="cx-chip">soon</i></button>
     </div>
   </aside>
 </div>
