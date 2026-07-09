@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~01:20 UTC_
+_Last update: 2026-07-09 ~01:50 UTC_
 
 ---
 
@@ -48,6 +48,21 @@ since 07-01).
 optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
+
+- **Cockpit design pass** (2026-07-09, TAT `a789981`): the shell now reads
+  designed, not scaffolded — inline-SVG icons across the toolbar, grouped
+  playback | tools | export | view with dividers; monospace/dev-console text
+  replaced by Metropolis everywhere (branded ring-spinner pane loading, error
+  card, pill flash toast with busy spinner, brand-type timeline labels +
+  single-frame note); selected field/domain rows pop with a teal accent bar +
+  soft glow; rail tabs mirror the main-nav underline; unified section headers
+  (teal tick + tracked caps), consistent region-group carets, softer uppercase
+  SOON chips, gradient depth + shadow on rails/bottom bar. Zero layout or
+  behavior change — headless-verified (play/product-switch/HQ/loader), then
+  live-screenshot on the deployed page. **Bonus observed live: the box
+  emit-cron is RUNNING** — the timeline already shows 2 frames
+  (23:36Z + 01:11Z), so the loop/export light up on their own now; only the
+  `git pull` for prune + Snow-Fog remains from queue ①.
 
 - **Explorer COCKPIT — the full §6 shell** (2026-07-09, TAT `7525ecc` +
   cockpit.js): /satellite/explorer/ went from bare map + dropdown to the full
