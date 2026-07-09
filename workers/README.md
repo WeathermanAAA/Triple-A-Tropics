@@ -64,11 +64,16 @@ cookie; otherwise the site's REAL 404). Fail-closed if the secret is unset.
 Un-gate for public launch = delete the Worker route (dashboard, or
 `npx wrangler delete --name explorer-gate`) — the pages are already on Pages.
 
-### Deploy (Claude-owned, headless — needs `CLOUDFLARE_API_TOKEN` in env)
+### Status: PARKED, NOT DEPLOYED (Andrew, 2026-07-09)
 
-The Codespace carries an Edit-Workers scoped API token as the
-`CLOUDFLARE_API_TOKEN` Codespaces secret; wrangler picks it up natively
-(no `wrangler login`). The preview token is generated fresh at deploy
+The gate was dropped before ever deploying: `/satellite/explorer/*` stays
+live-but-unlinked + noindex/robots as its intended dev-preview state. The
+worker + toml stay vendored here in case a launch-time gate is ever wanted.
+
+### Deploy (if ever revived — headless, needs `CLOUDFLARE_API_TOKEN` in env)
+
+Wrangler picks up a `CLOUDFLARE_API_TOKEN` env var natively (no
+`wrangler login`). The preview token is generated fresh at deploy
 time and lives ONLY in the Worker secret — never in this repo (the repo
 is public). Rotation = rerun these two commands with a new value.
 

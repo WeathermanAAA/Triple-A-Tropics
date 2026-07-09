@@ -4,42 +4,30 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-08 ~23:45 UTC_
+_Last update: 2026-07-09 ~00:30 UTC_
 
 ---
 
 ## MY QUEUE (Andrew's hands / decisions, ordered)
 
-**① Box session (Hostinger, ~10 min) — lights the whole 27-product explorer (53 with full-disk).**
-On the box, in the tsr repo dir (Docker only — no host pip, no cred paste):
+**① Box (next convenient session, ~1 min) — start the emit loop + the new prune:**
+the 27/27 one-shot emit LANDED + live-verified (see below); frames stay at 1/product
+until the cron loop runs. In the tsr dir on the box:
 
 ```bash
-git fetch origin && git checkout s2-sat-ingest && git pull
-docker compose -p tat-s2 -f docker-compose.s2.yml build emit
-docker compose -p tat-s2 -f docker-compose.s2.yml run --rm lifecycle --days 10
-docker compose -p tat-s2 -f docker-compose.s2.yml run --rm emit \
-    --suite conus --store r2 --prefix shadow --max-zoom 5
-# optional continuous loop (Q7-tiered, 15-min default):
-docker compose -p tat-s2 -f docker-compose.s2.yml --profile cron up -d emit-cron
+git pull      # s2-sat-ingest
+docker compose -p tat-s2 -f docker-compose.s2.yml --profile cron up -d --build emit-cron prune-cron
 ```
 
-Then: https://triple-a-tropics.com/satellite/explorer/ (picker top-left) and
-…/explorer/compare.html. Credless check:
-`curl https://cdn.triple-a-tropics.com/shadow/sat/goes19/conus/products.json`.
-Claude polls the CDN and live-verifies once frames land. Full detail:
-`RUNBOOK-S2.md` on tsr `s2-sat-ingest`.
+`prune-cron` is the NEW object-level shadow TTL (ListObjectsV2+DeleteObject on
+`shadow/sat/**` >14 d, keeps a per-product minimum) — it replaces the
+`lifecycle --days 10` step that AccessDenied'd (bucket-lifecycle needs a
+permission the box R2 token doesn't have; no scope change needed for this).
 
-**①·b Explorer preview gate — ONE secret drop, then Claude deploys.**
-Claude now owns the Worker deploy (no wrangler login needed). One-time step:
-add a Codespaces secret named **`CLOUDFLARE_API_TOKEN`** (the Edit-Workers
-scoped API token from the cyclolab-router deploy) at
-github.com/settings/codespaces → New secret → grant access to this repo,
-then reload the Codespace. Claude then deploys `workers/explorer-gate.js`,
-generates a **fresh** preview token that lives ONLY in the Worker secret
-(never committed — the previously committed token is void), verifies the
-404/302 gate live, and hands the tokened bookmark URL over directly in chat.
-Un-gate for public launch: delete the Worker route — nothing else to change.
-Until deployed, the page is un-gated but unlinked, as before.
+**Explorer preview gate: DROPPED (Andrew 2026-07-09).** Not deploying the
+Worker; no CLOUDFLARE_API_TOKEN. The explorer stays live-but-unlinked +
+noindex/robots — the intended dev-preview state. (Vendored worker code stays
+in `workers/` for a possible future launch gate; not to be re-raised.)
 
 **② Decision (art): HAFS env-color v0.12 on the live worker** — say go and
 Claude repins `hafs-render-worker` hafs-render v0.11.0→v0.12.0 (Railway
@@ -56,6 +44,23 @@ since 07-01).
 optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
+
+- **Box emit VERIFIED LIVE — the 27-product explorer is real** (2026-07-09):
+  Andrew's box session emitted the full GOES-19 CONUS suite (27/27, 0 failed,
+  scan 2026-07-08T23:36Z). Claude live-verified end-to-end against the REAL
+  R2 tiles: products.json (count/fields ok) ↔ picker products.js ids/paths/bt
+  flags match 27/27; every manifest carries the full viewer contract
+  (webmercator-xyz, tile template, bounds, times/latest/count, bt descriptor);
+  z0 + max-zoom tile per product = HTTP 200 + valid 512px WebP; `_ready.json`
+  present per frame; BT rasters decode to physically-sensible ranges per
+  channel (e.g. C08 −62..−24 °C, C07 −29..+42 °C). Headless-browser run
+  (Playwright): viewer + compare render real tiles with ZERO JS errors;
+  product switch (?product=airmass/truecolor) works; **BT hover probe read
+  31.3 °C at 32.7°N −101.6°W (clear-sky W-Texas, correct)**; compare 2-pane
+  C13/C08 synced at 23:36Z. Only console noise = the site-wide cdnfonts
+  stylesheet block (cosmetic, pre-existing) + CF analytics beacon injection.
+  **Not exercisable yet: loop playback + 90-frame WebM export — every product
+  has exactly 1 frame until the emit cron runs (gated on cadence, by design).**
 
 - **Sat explorer Phase 3 — multi-product imagery suite** (2026-07-08):
   tsr `s2-sat-ingest` `a00fa8e` + review-fix `52a3306`; TAT main `d0b7c7c`
@@ -88,9 +93,9 @@ optional $10 AWS budget alarm (console/root only).
 
 ## IN PROGRESS
 
-- Nothing mid-flight. Next natural steps (will pick up autonomously): Day
-  Snow-Fog RGB (verified numbers on file), fd sector in the viewer picker,
-  live-verify + AGENT_STATUS update once the box emit (queue ①) runs.
+- Object-level shadow prune (replaces bucket-lifecycle; queue ① wires it on
+  the box), full-disk sector in the viewer picker, Day Snow-Fog RGB
+  (verified numbers on file). All three landing this session.
 
 ## BLOCKERS
 
