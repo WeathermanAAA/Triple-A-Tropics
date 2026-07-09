@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~05:15 UTC_
+_Last update: 2026-07-09 ~06:30 UTC_
 
 ---
 
@@ -57,6 +57,27 @@ since 07-01).
 optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
+
+- **Cockpit v3 — single watermark, RGB keys, TIME MACHINE** (2026-07-09, TAT
+  `9a64ad7` + fixes `9725ba5`): one @WeathermanAAA_ watermark for the whole
+  view (headers stay per-pane; exports keep one per output). Every cbar-less
+  pane now carries a compact quick-guide interpretation key (Air Mass, Dust,
+  Ash, Day Convection, DCPD, Night Micro, Snow-Fog, Fire Temp + labeled
+  natural-color keys) overlay + in exports — no pane is ever bare. **Time
+  Machine**: the timeline chip toggles Live ↔ archive mode driving the
+  existing render-on-demand backend; field = rail (8 archive-servable fields,
+  rest grey in-mode), region = viewport (auto-clamped to the render cap + a
+  great-circle limb guard that shrinks the box until every corner is on-disk
+  — found the hard way: off-disk corners 500 the renderer), overlays/quality =
+  existing toggles; UTC picker bounded to the GOES-R era; ±1h steps; a time
+  range assembles a rate-limit-paced ≤12-frame archive loop that plays on the
+  normal transport and exports via the same ≤10MB/HQ WebM path. Live-verified:
+  2026-07-08 18Z render displayed in-pane (backend satellite-hopped to
+  GOES-18 for a west-CONUS box — its own covering-product logic at work).
+  The standalone custom-snapshot panel is now hidden in the embedded legacy
+  section (function lives in the cockpit); floaters/meso/VIIRS-MODIS intact
+  (legacy iframe 4245→3291 px). Scripts got ?v= cache-busting (edge cache
+  masked the first fix — lesson noted).
 
 - **Cockpit v2 — branded panes, linked cameras, unified rail, scroll page**
   (2026-07-09, TAT `9012388`): every pane (1/2/4) now carries burned-in
