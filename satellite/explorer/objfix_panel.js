@@ -128,6 +128,10 @@
     '#ofx-scene{width:100%;border:1px solid var(--cx-line);border-radius:8px;background:#0a0d12;display:block}' +
     '#ofx-trend{width:100%;height:120px;border:1px solid var(--cx-line-soft);border-radius:8px;' +
     ' background:#0a0d12;display:block}' +
+    '#ofx-stats{display:flex;flex-direction:column;gap:9px}' +
+    '.ofx-sec h6{margin:0 0 3px;font-size:9.5px;font-weight:700;letter-spacing:.12em;' +
+    ' text-transform:uppercase;color:var(--cx-dim)}' +
+    '.ofx-sec + .ofx-sec{border-top:1px solid var(--cx-line-soft);padding-top:8px}' +
     '.ofx-stat{display:grid;grid-template-columns:118px 1fr;gap:3px 10px;font-size:11.5px;' +
     ' color:var(--cx-fg);font-variant-numeric:tabular-nums}' +
     '.ofx-stat b{color:var(--cx-dim);font-weight:600;font-size:10.5px;text-transform:uppercase;' +
@@ -162,7 +166,7 @@
       '    <button type="button" class="ofx-btn" id="ofx-dl" disabled title="Center-track JSON — the reusable output (Hovmöller consumer)">Track JSON</button></div>' +
       '  <div class="ofx-prog" id="ofx-prog"><i></i></div>' +
       '  <canvas id="ofx-scene" width="640" height="640"></canvas>' +
-      '  <div class="ofx-stat" id="ofx-stats"></div>' +
+      '  <div id="ofx-stats"></div>' +
       '  <div class="ofx-warn" id="ofx-warn" style="display:none"></div>' +
       '  <canvas id="ofx-trend" width="640" height="240"></canvas>' +
       '  <div class="ofx-note" id="ofx-note"></div>' +
@@ -451,13 +455,51 @@
         g.strokeStyle = 'rgba(255,179,71,0.8)'; g.lineWidth = 1.4; g.stroke();
       }
     }
-    // stamp + input badge
-    g.font = '600 15px Metropolis,system-ui,sans-serif';
-    g.fillStyle = 'rgba(219,227,236,0.9)';
-    g.fillText(r.frame.stamp.replace('T', ' ').replace(/Z$/, ' Z'), 12, 24);
-    g.font = '500 12px Metropolis,system-ui,sans-serif';
-    g.fillStyle = field.degraded ? 'rgba(232,138,90,0.9)' : 'rgba(142,162,189,0.9)';
-    g.fillText(field.degraded ? 'LUT-inverted input — degraded precision' : 'calibrated BT input', 12, 42);
+    drawSceneHeader(g, W, r, field);
+  }
+
+  // burned-in-header convention (matches the cockpit pane exports): a top
+  // gradient strip carrying ONE provenance line (satellite · valid time) at
+  // left + the watermark at right — drawn over any text baked into the source
+  // frame's corner so nothing stacks — and the input caveat as its own badge
+  // at bottom-left, never overlapping the provenance.
+  function sourceSat() {
+    var st = S.storm;
+    if (!st) return '';
+    if (st.source === 'fd') return 'GOES-19 ABI';
+    if (st.basin === 'WP') return 'JMA Himawari-9 AHI';
+    if (st.basin === 'AL' || st.basin === 'EP') return 'GOES-19 ABI';
+    return 'floater imagery';
+  }
+  function drawSceneHeader(g, W, r, field) {
+    var cv = $('ofx-scene'), H = cv.height;
+    // gradient strip: makes the provenance line legible AND dims any text the
+    // source frame bakes into its top-left corner (no stacked pile)
+    var grad = g.createLinearGradient(0, 0, 0, 56);
+    grad.addColorStop(0, 'rgba(10,13,18,0.88)');
+    grad.addColorStop(1, 'rgba(10,13,18,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, W, 56);
+    g.textBaseline = 'top';
+    g.font = '700 15px Metropolis,system-ui,sans-serif';
+    g.fillStyle = 'rgba(219,227,236,0.95)';
+    g.fillText(sourceSat() + ' · ' + r.frame.stamp.replace('T', ' ').replace(/Z$/, ' Z'), 12, 10);
+    g.font = '700 14px Metropolis,system-ui,sans-serif';
+    g.fillStyle = 'rgba(255,255,255,0.48)';
+    var brand = '@WeathermanAAA_';
+    g.fillText(brand, W - g.measureText(brand).width - 12, 10);
+    // input caveat: its own badge, bottom-left
+    var txt = field.degraded ? 'LUT-inverted input — degraded precision' : 'calibrated BT input';
+    g.font = '600 11.5px Metropolis,system-ui,sans-serif';
+    var tw = g.measureText(txt).width;
+    var bx = 10, bh = 22, by = H - bh - 10, bw = tw + 16;
+    g.fillStyle = 'rgba(10,13,18,0.78)';
+    g.fillRect(bx, by, bw, bh);
+    g.strokeStyle = field.degraded ? 'rgba(232,138,90,0.55)' : 'rgba(142,162,189,0.4)';
+    g.lineWidth = 1; g.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    g.fillStyle = field.degraded ? 'rgba(232,138,90,0.95)' : 'rgba(142,162,189,0.95)';
+    g.textBaseline = 'middle';
+    g.fillText(txt, bx + 8, by + bh / 2);
+    g.textBaseline = 'alphabetic';
   }
   function crosshair(g, p, r, color, lw, dashed) {
     g.save();
@@ -523,27 +565,34 @@
     var c = a.center || a.weakCenter;
     var tier = confTier(a.confidenceScore);
     var skill = window.ObjFix.sceneSkill(rec);
-    var rows = [];
-    rows.push(['Center', c ? Math.abs(c.lat).toFixed(2) + '°' + (c.lat >= 0 ? 'N' : 'S') + ' ' +
-      Math.abs(c.lon).toFixed(2) + '°' + (c.lon >= 0 ? 'E' : 'W') +
-      (a.center ? '' : ' · WEAK (gates failed)') : '—']);
-    rows.push(['Fix confidence', '<i class="' + tier[1] + '">' + tier[0] + '</i> · score ' +
-      a.confidenceScore.toFixed(2) + ' · r50 ' + Math.round(a.radius50percCertDeg * 111) +
-      ' km · r95 ' + Math.round(a.radius95percCertDeg * 111) + ' km']);
-    if (a.eyeProb != null) rows.push(['Eye probability', Math.round(a.eyeProb) + ' %']);
-    rows.push(['Scene type', sceneName(rec) + ' · skill: ' + skill.tier]);
-    rows.push(['Raw T# / Final T#', (rec.TrawO != null ? rec.TrawO.toFixed(1) : '—') + ' / ' +
-      (rec.Tfinal != null ? rec.Tfinal.toFixed(1) : '—')]);
     // poor fix -> the intensity number itself carries the caveat, not just
     // the warning block (honesty contract: no confident wrong numbers)
     var unrel = !a.center ? ' — UNRELIABLE (poor fix)' : '';
-    rows.push(['CI number', (rec.CI != null ? rec.CI.toFixed(1) : '—') + unrel]);
-    rows.push(['Est. Vmax', rec.vmax != null ? '~' + Math.round(rec.vmax) + ' kt (1-min)' + unrel : '—']);
-    rows.push(['Est. MSLP', rec.mslp != null ? '~' + Math.round(rec.mslp) + ' mb (table, unadjusted)' + unrel : '—']);
-    rows.push(['Eye / cloud BT', rec.eyet.toFixed(1) + ' / ' + rec.cloudt.toFixed(1) + ' °C']);
-    host.innerHTML = rows.map(function (rw) {
-      return '<b>' + rw[0] + '</b><i>' + rw[1] + '</i>';
-    }).join('');
+    var fixRows = [];
+    fixRows.push(['Center', c ? Math.abs(c.lat).toFixed(2) + '°' + (c.lat >= 0 ? 'N' : 'S') + ' ' +
+      Math.abs(c.lon).toFixed(2) + '°' + (c.lon >= 0 ? 'E' : 'W') +
+      (a.center ? '' : ' · WEAK (gates failed)') : '—']);
+    fixRows.push(['Fix confidence', '<i class="' + tier[1] + '">' + tier[0] + '</i> · score ' +
+      a.confidenceScore.toFixed(2) + ' · r50 ' + Math.round(a.radius50percCertDeg * 111) +
+      ' km · r95 ' + Math.round(a.radius95percCertDeg * 111) + ' km']);
+    if (a.eyeProb != null) fixRows.push(['Eye probability', Math.round(a.eyeProb) + ' %']);
+    var intRows = [];
+    intRows.push(['Raw T# / Final T#', (rec.TrawO != null ? rec.TrawO.toFixed(1) : '—') + ' / ' +
+      (rec.Tfinal != null ? rec.Tfinal.toFixed(1) : '—')]);
+    intRows.push(['CI number', (rec.CI != null ? rec.CI.toFixed(1) : '—') + unrel]);
+    intRows.push(['Est. Vmax', rec.vmax != null ? '~' + Math.round(rec.vmax) + ' kt (1-min)' + unrel : '—']);
+    intRows.push(['Est. MSLP', rec.mslp != null ? '~' + Math.round(rec.mslp) + ' mb (table, unadjusted)' + unrel : '—']);
+    var sceneRows = [];
+    sceneRows.push(['Scene type', sceneName(rec) + ' · skill: ' + skill.tier]);
+    sceneRows.push(['Eye / cloud BT', rec.eyet.toFixed(1) + ' / ' + rec.cloudt.toFixed(1) + ' °C']);
+    var section = function (title, rows) {
+      return '<div class="ofx-sec"><h6>' + title + '</h6><div class="ofx-stat">' +
+        rows.map(function (rw) { return '<b>' + rw[0] + '</b><i>' + rw[1] + '</i>'; }).join('') +
+        '</div></div>';
+    };
+    host.innerHTML = section('Center & Fix', fixRows) +
+      section('Intensity', intRows) +
+      section('Scene & Structure', sceneRows);
 
     // honesty degradations — loud, before the numbers get quoted
     var warns = [];
