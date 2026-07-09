@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~01:50 UTC_
+_Last update: 2026-07-09 ~02:15 UTC_
 
 ---
 
@@ -48,6 +48,18 @@ since 07-01).
 optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
+
+- **Cockpit full-bleed layout** (2026-07-09, TAT `63c4202`): the explorer now
+  owns the whole viewport below the nav/subnav — rails flush to both screen
+  edges, the pane grid fills all space between and grows vertically, timeline
+  + toolbar pinned to the bottom, the page footer folded into a thin strip
+  (© + helper hints + shadow-preview note). Panel gaps/radii/shadows replaced
+  by hairline dividers so it reads as ONE app surface; short windows fall back
+  to page scroll; mobile keeps the stacked flow. Container/CSS only.
+  Live-verified at 1920×1080: rails at 0px from both edges, strip at the
+  viewport bottom, no page scroll, quad panes filling the frame, zero JS
+  errors. Timeline was at 3 frames (01:41Z) during the check — the box
+  emit-cron keeps backfilling.
 
 - **Cockpit design pass** (2026-07-09, TAT `a789981`): the shell now reads
   designed, not scaffolded — inline-SVG icons across the toolbar, grouped
