@@ -45,6 +45,15 @@ optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
 
+- **Object-level shadow prune** (2026-07-09, tsr `1d5046d`): `s2_prune.py` —
+  ListObjectsV2+DeleteObject only (works with the box token's frozen scopes;
+  bucket-lifecycle is OUT). Stamp-parsed 14-day TTL on `shadow/sat/**`,
+  keep-min newest-2 per product, ready-marker-first deletes, manifest rewrite
+  for retired products, dry-run default, `shadow/`-only guard, batch-delete
+  with per-key fallback. `prune`/`prune-cron` compose services replace the
+  removed `lifecycle` service; RUNBOOK rewritten; 8 new tests (114 s2 green).
+  Goes live on the box at queue ①'s `git pull` + `--profile cron up -d`.
+
 - **Box emit VERIFIED LIVE — the 27-product explorer is real** (2026-07-09):
   Andrew's box session emitted the full GOES-19 CONUS suite (27/27, 0 failed,
   scan 2026-07-08T23:36Z). Claude live-verified end-to-end against the REAL
