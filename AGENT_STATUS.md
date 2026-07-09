@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-09 ~04:05 UTC_
+_Last update: 2026-07-09 ~05:15 UTC_
 
 ---
 
@@ -57,6 +57,25 @@ since 07-01).
 optional $10 AWS budget alarm (console/root only).
 
 ## LANDED (with SHAs + artifacts)
+
+- **Cockpit v2 — branded panes, linked cameras, unified rail, scroll page**
+  (2026-07-09, TAT `9012388`): every pane (1/2/4) now carries burned-in
+  branded chrome — title strip (product · domain · valid time) + watermark +
+  per-product colorbar (scalar/BT only; RGB composites correctly carry none) —
+  overlaid on the interactive map AND composited into PNG/WebM exports, so a
+  saved pane is a finished graphic. Cameras link across panes (pan/zoom one,
+  all follow; toolbar Link toggle, default ON). The satellite subnav is gone:
+  **Microwave + Scatterometer are FIELD-rail categories** that mount the
+  existing viewers chrome-less (`?embed=1` flag added to the three legacy
+  pages; components untouched), gated off their own R2 manifests (all 6
+  entries lit live). The page scrolls: cockpit = one full viewport under the
+  main nav; below the fold the existing /satellite/ page (floater/meso loops,
+  custom snapshots, GIBS daily true-color) mounts unchanged in an auto-sizing
+  iframe. Live-verified end-to-end, zero JS errors: linked quad pans as one,
+  MW embed opens/returns, legacy section shows BAVI floater + meso 03:14Z +
+  VIIRS/MODIS intact. **Full Disk went LIVE during the pass** — the fd suite
+  (27 products) landed on R2 and the domain self-enabled; conus loop at 5
+  frames and climbing.
 
 - **Cockpit full-bleed layout** (2026-07-09, TAT `63c4202`): the explorer now
   owns the whole viewport below the nav/subnav — rails flush to both screen
