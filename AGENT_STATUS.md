@@ -75,10 +75,46 @@ header per the burned-in convention (provenance line + watermark + caveat
 badge, no stacking) + grouped stats (Center & Fix / Intensity / Scene &
 Structure). Live-verified on BAVI; shots in `_shots/`.
 
-### IN FLIGHT (next in this session): consolidated Time Machine spec
-Unified archive-grade burned-in header on ALL panes + multi-pane TM/TCD;
-then the DEEP ARCHIVE (GridSat-B1 to 1980 / MergIR 2000-17 / ABI 2017+,
-honest era labels, 12 h scrub windows, per-frame diagnostics, loop export).
+### 0c. Unified archive-grade burned-in header + multi-pane TM/TCD — SHIPPED @fdf9146a
+
+Live tile panes carry the archive render's EXACT header (centered
+SAT·INSTRUMENT·CHANNEL·VALID UTC, right product·palette tag, per-pane
+watermark+attribution, REAL viewport min/max BT off the calibrated bt.png,
+colorbar) — no lesser overlay; exports draw the same layout; compact at
+2/4-pane (shot: `_shots/unified_header_4pane.jpg`). Time Machine loops load
+per-pane on every servable pane; TCD frames the storm on all panes.
+
+### 0d. TIME MACHINE DEEP ARCHIVE to 1980 — SHIPPED (tsr main c616602+86716a7f → Railway auto-deploys the live /render; TAT @0d896f59)
+
+- **GridSat-B1 tier** (`gridsat.py`): explicit-time /render requests before
+  2017-03-01 (previously 502) serve the NOAA CDR (noaa-cdr-gridsat-b1-pds,
+  3-hourly, ~8 km, GLOBAL, 1980→present; lazy S3 range-crops, wrap-aware).
+  11 µm IR window + 6.7 µm WV only; multi-band 422s honestly. Era header
+  baked: "GridSat-B1 · 11 µm IR window · 3-hourly · ~8 km". `format=btpng`
+  returns the frame's calibrated BT (u16, suite-encoding) — deep tier only
+  (ABI's curvilinear grid would misregister the linear decode). ADDITIVE:
+  live/2017+ paths untouched; full main suite 692 green. MergIR (2000-17,
+  4 km/30-min) DEFERRED (GES DISC Earthdata auth) — GridSat serves those
+  dates honestly labeled; noted as the future middle tier.
+- **Cockpit:** date picker to 1980; pre-2017 flips `cx-tm-deep` (IR-only
+  fields; RGBs grey "not available before 2017"); deep era skips GOES disk
+  clamps. Render auto-builds a **12 h scrub window +6 h buffers**
+  (center-out render-ahead, rate-limit paced, time-sorted — the timeline
+  scrubber drags real archive frames while it fills); loop export downloads
+  the window with the era header baked in.
+- **Per-frame TC-Diagnostics:** TCD now COEXISTS with TM; every scrubbed
+  frame recomputes objfix from GridSat calibrated BT (ArchiveSource →
+  btpng; first guess = view center, stated; independent single-frame
+  estimates with the full honesty ladder). `TCDiag.onArchiveFrame` is the
+  archive-capability contract for every future diagnostic (DAV/WN-1/etc
+  remain SOON cards, to be built archive-capable from day one).
+- **Verified end-to-end on Hurricane Gilbert 1988-09-13** against a local
+  backend: 888 mb eye rendered, era gating flips, window fills, scrubbing
+  recomputes the center per frame (18Z → 21Z track motion visible), archive
+  loop downloaded. Shots: `_shots/tm_gilbert88_scrub_objfix.jpg` +
+  `tm_gilbert88_gridsat_render.jpg`. NOTE: the LIVE Railway /render picks
+  the tier up on its auto-deploy from main — poll a pre-2017 render to
+  confirm once deployed.
 
 ---
 
