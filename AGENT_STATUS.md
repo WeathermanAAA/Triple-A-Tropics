@@ -160,6 +160,21 @@ paired backend coverage message). Verified 4-pane on Andrew 1992-08-23 18Z
 (shot `_shots/tm4_andrew92_honest_panes.jpg`). NEXT IN FLIGHT: rail
 redesign (blue-chrome register, real-LUT swatches, ring provenance).
 
+### 0g. Rail redesign — blue-chrome channel register SHIPPED (TAT + tsr e7ff90cd)
+
+Rails restyled to the approved mockup (restyle/reorg ONLY — imagery, plate,
+burned-in header, toolbar, panes, widths all untouched): the site nav's REAL
+navy chrome gradient + bevel on both rails; active states in the mockup teal
+#35d0a5 (no teal existed in site CSS — flagged). LEFT = channel register:
+spectral-region subheaders (VISIBLE/NIR · WATER VAPOR · INFRARED; COMPOSITES
+· MULTISPECTRAL RGB), band-ordered rows with REAL-LUT palette swatches
+(horizontal ramps generated from the frozen tat_palettes cmap+norm; discrete
+Dvorak renders discretely; RGBs get quick-guide hue dots, never fake ramps).
+RIGHT: satellite ring with orbital provenance (75.2°W / 137.2°W / 0° /
+45.5°E / 140.7°E) incl. quiet Meteosat-0° + IODC 'soon' rows; domains
+World · Full Disk · CONUS · Meso; availability honesty kept, chips quiet.
+Shots: `_shots/rails_redesign_channels.jpg` + `rails_redesign_rgb.jpg`.
+
 ## LANDED tonight (2026-07-09 evening → 07-10)
 
 ### 1. Objective center + intensity (ARCHER/ADT) — SHIPPED, live-verified on BAVI + 97W
