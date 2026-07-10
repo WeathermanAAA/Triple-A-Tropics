@@ -133,6 +133,33 @@ the Himawari side, honest gap (shots `_shots/global_default_meteosat_gap.jpg`
 + `global_composite_z2_tiles.jpg`). Auto-default waits for pane readiness
 and yields to any user steer. BOX: add `geo-global` to S2_CRON_SUITES (Q11).
 
+### 0f. MergIR tier + TM multi-pane honesty — SHIPPED (tsr main e518e548+b63fd29c, TAT da8b6290)
+
+**MergIR (2000-02→2017, 4 km/30-min):** access VERIFIED — NO anonymous path
+exists (the AWS Open Data 'nasa-gpmmergir' listing = the CONTROLLED
+requester-pays GES DISC bucket; PPS doesn't mirror the Tb granules). Tier
+implemented against GES DISC HTTPS with Earthdata creds from env; the
+best-available selector prefers MergIR for clean_ir ≥2000-02 ONLY when it
+can actually fetch — otherwise GridSat serves the date HONESTLY (verified
+via HTTP: 2005 render → X-Satellite: GridSat-B1). Era header 'NASA MergIR ·
+11 µm IR window · 30-min · ~4 km'. WV + pre-2000 stay GridSat. 21 tests
+(synthetic merg-granule decode/crop seam; live Katrina test creds-gated).
+**BLOCKED ON Q12** (Earthdata account: authorize 'NASA GESDISC DATA
+ARCHIVE' app, re-run the fetch-mergir-sample workflow, put creds in the
+Railway render env) — then the Katrina 4 km re-render verifies itself.
+Deferred by decision: native GOES archives (NOAA CLASS/AWS) for pre-2017
+Americas.
+
+**TM multi-pane honesty (bug fix):** entering TM in 4-pane no longer leaves
+non-servable panes showing LIVE imagery beside the archive. Every pane
+participates: servable panes render at the scrubbed time (Render + window
+builder now cover ALL servable panes, per-pane frame lists, stamp-matched
+followers); the rest BLOCK with the honest reason (RGBs pre-2017, MW/ASCAT
+live-only, era-absent channels e.g. 1992 WV '35% valid — VAS era' via a
+paired backend coverage message). Verified 4-pane on Andrew 1992-08-23 18Z
+(shot `_shots/tm4_andrew92_honest_panes.jpg`). NEXT IN FLIGHT: rail
+redesign (blue-chrome register, real-LUT swatches, ring provenance).
+
 ## LANDED tonight (2026-07-09 evening → 07-10)
 
 ### 1. Objective center + intensity (ARCHER/ADT) — SHIPPED, live-verified on BAVI + 97W
