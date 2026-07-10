@@ -229,6 +229,13 @@
     // an uncached frame flashes the dark background (raster-fade-duration:0). The
     // new layer renders transparent (prior shows through) until its tiles land.
     this._ensureFrame(stamp, 1);
+    // decode-ahead: mount the next frames' sources at opacity 0 so their
+    // tiles fetch+decode BEFORE the clock flips to them (the flip is then a
+    // pure opacity toggle — no mid-loop fetch stall)
+    for (var ah = 1; ah <= 2; ah++) {
+      var nxt = this.frames[(idx + ah) % this.frames.length];
+      if (nxt && nxt !== stamp) this._ensureFrame(nxt, 0);
+    }
     var reveal = function () {
       for (var i = 0; i < self.frames.length; i++) {
         var s = self.frames[i];
@@ -385,7 +392,7 @@
 
   // A drag-rectangle AOI over the map -> fitBounds. Reusable across MapLibre
   // viewers (satellite/models/TAW). Shift+drag to draw (so plain drag still pans).
-  VP.enableDrawBox = function (buttonEl) {
+  VP.enableDrawBox = function (buttonEl, onBox) {
     var self = this, map = this.map, canvas = map.getCanvasContainer();
     var start = null, box = null, active = false;
     function mousePos(e) {
@@ -420,6 +427,7 @@
       var w = Math.min(p1.lng, p2.lng), e2 = Math.max(p1.lng, p2.lng);
       var s = Math.min(p1.lat, p2.lat), n = Math.max(p1.lat, p2.lat);
       map.fitBounds([[w, s], [e2, n]], { padding: 10, duration: 400 });  // viewport rect, no render
+      if (onBox) onBox([w, s, e2, n]);   // consumers (Time Machine AOI) get the box
     }
     active = true;
     canvas.addEventListener('mousedown', onDown, true);

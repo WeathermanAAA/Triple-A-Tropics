@@ -838,14 +838,45 @@
     var pane = S.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
     if (S.tm.on) {
-      // Time Machine: the field only changes what the archive renders — the
-      // live tile manifests are untouched until Live mode returns.
+      // Time Machine: the field only changes what THIS pane renders — the
+      // box + time stay shared/time-locked; the switch re-renders just this
+      // pane's crop from the cache or a queued render, and its scrub window
+      // refills band-by-band behind it.
       if (!tmCurrentMap()[p.key]) { flash(document.body.classList.contains('cx-tm-deep')
-        ? 'not available before 2017 — the deep archive is single-channel IR (Clean IR / Dvorak BD / WV)'
+        ? 'not available before 2017 — the deep archive is single-channel IR (Clean IR / IR window / Dvorak BD / WV)'
         : 'that field is live-only'); return; }
       pane.product = p;
       if (i === S.active) markFieldActive();
-      tmRenderOnce();
+      tmUnblockPane(i);
+      var cur = S.tm.frames[S.tm.idx];
+      var iso = cur
+        ? cur.stamp.slice(0, 4) + '-' + cur.stamp.slice(4, 6) + '-' + cur.stamp.slice(6, 8) +
+          'T' + cur.stamp.slice(9, 11) + ':' + cur.stamp.slice(11, 13) + ':00Z'
+        : ($('cx-tm-time').value ? $('cx-tm-time').value + ':00Z' : null);
+      if (iso) {
+        S.tm.byPane[i] = [];               // this pane's window refills lazily
+        tmRequest(tmBody(pane, iso)).then(function (url) {
+          var im = $('cx-tm-img-' + i);
+          im.src = url;
+          im.style.display = 'block';
+          pane.el.classList.add('cx-tm-showing');
+        }).catch(function (e) {
+          tmBlockPane(i, 'archive render unavailable — ' +
+                      String(e && e.message || e).slice(0, 110));
+        });
+        // refill this pane's frames for the loaded window (cache-first)
+        S.tm.frames.forEach(function (f) {
+          if (!f || !f.stamp) return;
+          var fiso = f.stamp.slice(0, 4) + '-' + f.stamp.slice(4, 6) + '-' + f.stamp.slice(6, 8) +
+                     'T' + f.stamp.slice(9, 11) + ':' + f.stamp.slice(11, 13) + ':00Z';
+          tmRequest(tmBody(pane, fiso, 'low')).then(function (url) {
+            var lst = S.tm.byPane[i];
+            var k = 0;
+            while (k < lst.length && lst[k] && lst[k].stamp < f.stamp) k++;
+            lst.splice(k, 0, { stamp: f.stamp, url: url });
+          }).catch(function () {});
+        });
+      }
       return;
     }
     var av = availSet(S.domain);
@@ -1141,9 +1172,17 @@
   function armDrawBox() {
     var pane = S.panes[S.active];
     if (pane && pane.ready) {
-      if (!pane._drawWired) { pane._drawWired = true; pane.tv.enableDrawBox(null); }
+      if (!pane._drawWired) {
+        pane._drawWired = true;
+        pane.tv.enableDrawBox(null, function (box) {
+          // in Time Machine the drawn box IS the archive crop (box the
+          // storm -> scrub its archive); live keeps the plain camera fit
+          if (S.tm.on) tmSetBox(box);
+        });
+      }
       pane.tv._armed = true;
-      flash('drag a box to frame it (or shift-drag anytime)');
+      flash(S.tm.on ? 'drag a box — the archive renders just that crop'
+                    : 'drag a box to frame it (or shift-drag anytime)');
     }
   }
 
@@ -1453,6 +1492,9 @@
   var TM_DEEP_MAP = {
     ir: { channel: 'clean_ir', enh: 'rainbow_ir' },
     irbd: { channel: 'clean_ir', enh: 'dvorak' },
+    // C14 11.2 um IR window == the archive's single ~11 um window channel
+    // (GridSat irwin / MergIR Tb) -- the honest mapping, not a fake band
+    c14: { channel: 'clean_ir', enh: 'rainbow_ir' },
     c08: { channel: 'wv_upper', enh: 'ir_gray' }
   };
   function tmDeepEra(iso) { return Date.parse(iso) < TM_ABI_START; }
@@ -1468,6 +1510,59 @@
   }
   var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
   var TM_PACE_MS = 6500;
+  // ---- archive render queue + cache -------------------------------------
+  // Every archive render goes through ONE serialized queue with de-dupe:
+  // identical band+time+box renders resolve to the SAME cached object URL
+  // (rendered once = reused forever within the TM session), 429s back off
+  // and retry instead of failing panes, and concurrency is capped at 1 so
+  // multi-pane windows fill without hammering the backend.
+  var TMRQ = { cache: {}, queue: [], active: 0, MAX: 1, RETRIES: 4 };
+  function tmrqKey(body) {
+    var b = body.bbox.map(function (v) { return Math.round(v * 20) / 20; });
+    return [b.join(','), body.time, body.channel, body.enhancement,
+            body.quality].join('|');
+  }
+  function tmRequest(body) {
+    if (!body) return Promise.reject(new Error('view is outside archive coverage'));
+    var key = tmrqKey(body);
+    if (TMRQ.cache[key]) return TMRQ.cache[key];
+    TMRQ.cache[key] = new Promise(function (res, rej) {
+      TMRQ.queue.push({ body: body, res: res, rej: rej, tries: 0, key: key });
+      tmrqPump();
+    });
+    return TMRQ.cache[key];
+  }
+  function tmrqPump() {
+    if (TMRQ.active >= TMRQ.MAX || !TMRQ.queue.length) return;
+    var job = TMRQ.queue.shift();
+    TMRQ.active++;
+    tmFetch(job.body).then(function (blob) {
+      TMRQ.active--;
+      job.res(URL.createObjectURL(blob));
+      setTimeout(tmrqPump, TM_PACE_MS);          // pace under the rate limit
+    }).catch(function (e) {
+      TMRQ.active--;
+      var msg = String(e && e.message || e);
+      if (/429|rate limit/i.test(msg) && job.tries < TMRQ.RETRIES) {
+        job.tries++;
+        // back off harder each attempt, then re-queue at the FRONT so the
+        // pane that hit the limit fills before new work starts
+        setTimeout(function () { TMRQ.queue.unshift(job); tmrqPump(); },
+                   TM_PACE_MS * (1 + job.tries));
+      } else {
+        delete TMRQ.cache[job.key];              // real failures retry on demand
+        job.rej(e);
+        setTimeout(tmrqPump, TM_PACE_MS);
+      }
+    });
+  }
+  function tmrqClear() {
+    Object.keys(TMRQ.cache).forEach(function (k) {
+      TMRQ.cache[k].then(function (u) { URL.revokeObjectURL(u); })
+        .catch(function () {});
+    });
+    TMRQ.cache = {}; TMRQ.queue = []; TMRQ.active = 0;
+  }
   // frames = the timeline's stamp list; byPane[i] = per-pane rendered frames
   // (multi-pane loops: every servable pane loads the same stamps, paced)
   S.tm = { on: false, frames: [], byPane: {}, idx: 0, busy: false };
@@ -1558,9 +1653,9 @@
       if (list.some(function (f) { return f && f.stamp === stamp; })) { next(); return; }
       flash('archive window: ' + S.tm.frames.length + '/' + times.length +
             ' frames × ' + targets.length + ' panes — scrub anytime while it fills', true);
-      tmFetchBody(tmBody(S.panes[job.i], iso + ':00Z', 'low')).then(function (blob) {
+      tmRequest(tmBody(S.panes[job.i], iso + ':00Z', 'low')).then(function (url) {
         if (!S.tm.on || S.tm.windowFor !== t0) { S.tm.windowBusy = false; return; }
-        var rec = { stamp: stamp, url: URL.createObjectURL(blob) };
+        var rec = { stamp: stamp, url: url };   // cache owns the URL
         if (job.i === targets[0]) insertFrameSorted(rec, job.i);
         else {
           // follower panes: keep their per-pane lists time-sorted too
@@ -1571,7 +1666,7 @@
         }
         fails[job.i] = 0;
         drawTimeline();
-        setTimeout(next, TM_PACE_MS);      // stay under the backend rate limit
+        next();                            // the queue itself paces the backend
       }).catch(function (e) {
         // a pane whose archive channel has NO data for this era must end up
         // BLOCKED, not silently live: after 2 straight failures with zero
@@ -1583,7 +1678,7 @@
                       String(e && e.message || e).slice(0, 110));
           jobs = jobs.filter(function (j, k) { return k < done || j.i !== job.i; });
         }
-        setTimeout(next, TM_PACE_MS);
+        next();
       });
     };
     next();
@@ -1596,8 +1691,21 @@
     var deep = tmDeepEra(timeIso);
     var map = tmMapFor(timeIso);
     var m = map[pane.product.key] || map.ir;
-    var b = pane.tv.map.getBounds();
-    var w = b.getWest(), s = b.getSouth(), e = b.getEast(), n = b.getNorth();
+    // the render extent: a DRAWN BOX (the Time Machine's foundation --
+    // box the storm, scrub its crop) beats the frozen first-render box
+    // beats the live viewport. Freezing the box keeps every archive frame
+    // of a session the SAME crop: stable pane geometry (no self-resizing)
+    // and exact queue-cache hits.
+    var w, s, e, n;
+    if (S.tm.box) {
+      w = S.tm.box[0]; s = S.tm.box[1]; e = S.tm.box[2]; n = S.tm.box[3];
+    } else if (S.tm.lockedBox) {
+      w = S.tm.lockedBox[0]; s = S.tm.lockedBox[1];
+      e = S.tm.lockedBox[2]; n = S.tm.lockedBox[3];
+    } else {
+      var b = pane.tv.map.getBounds();
+      w = b.getWest(); s = b.getSouth(); e = b.getEast(); n = b.getNorth();
+    }
     // an over-wide viewport (e.g. the boot fit) exceeds the render cap —
     // clamp around the view center rather than failing the request
     if (e - w > TM_MAX_DEG) { var cx = (e + w) / 2; w = cx - TM_MAX_DEG / 2; e = cx + TM_MAX_DEG / 2; }
@@ -1625,6 +1733,7 @@
         s = my + (s - my) * 0.88; n = my + (n - my) * 0.88;
       }
     }
+    if (!S.tm.box && !S.tm.lockedBox) S.tm.lockedBox = [w, s, e, n];
     return {
       bbox: [w, s, e, n],
       time: timeIso,
@@ -1633,6 +1742,21 @@
       gridlines: $('cx-ov-grid').classList.contains('on'),
       coastlines: $('cx-ov-coast').classList.contains('on')
     };
+  }
+  // a drawn AOI while Time Machine is on becomes the archive crop for ALL
+  // panes: re-render + rebuild the scrub window at the new extent
+  function tmSetBox(box) {
+    if (!S.tm.on) return;
+    S.tm.box = box;
+    S.tm.lockedBox = null;
+    tmClearLoop();
+    S.panes.forEach(function (pane) {
+      if (pane && pane.ready)
+        pane.tv.map.fitBounds([[box[0], box[1]], [box[2], box[3]]],
+                              { padding: 16, duration: 400 });
+    });
+    flash('archive box set — rendering the crop');
+    tmRenderOnce();
   }
   function tmFetch(body) {
     return fetch(RENDER_API, {
@@ -1672,6 +1796,8 @@
     $('cx-tm').classList.remove('on');
     $('cx-tm').querySelector('.lbl').textContent = 'Live';
     tmClearLoop();
+    tmrqClear();
+    S.tm.box = null; S.tm.lockedBox = null;
     S.panes.forEach(function (p, i) {
       if (!p) return;
       var im = $('cx-tm-img-' + i);
@@ -1741,24 +1867,22 @@
     var targets = tmPaneTargets(timeIso);
     if (!targets.length) { flash('no archive-servable pane — pick a channel or True Color'); return; }
     S.tm.busy = true; flash('rendering the archive view…', true);
-    var chain = Promise.resolve();
-    targets.forEach(function (i) {
-      chain = chain.then(function () {
-        return tmFetchBody(tmBody(S.panes[i], timeIso)).then(function (blob) {
-          var im = $('cx-tm-img-' + i);
-          if (im.dataset.url) URL.revokeObjectURL(im.dataset.url);
-          im.src = im.dataset.url = URL.createObjectURL(blob);
-          im.style.display = 'block';
-          S.panes[i].el.classList.add('cx-tm-showing');
-        }).catch(function (e) {
-          // an archive pane must NEVER fall back to live imagery — a failed
-          // render blocks the pane with the honest reason (e.g. no WV in
-          // this era's source satellites)
-          tmBlockPane(i, 'archive render unavailable — ' +
-                      String(e && e.message || e).slice(0, 110));
-        });
+    // all panes go through the SERIALIZED render queue (de-duped + cached:
+    // two panes on the same band share one render; re-renders are instant)
+    var chain = Promise.all(targets.map(function (i) {
+      return tmRequest(tmBody(S.panes[i], timeIso)).then(function (url) {
+        var im = $('cx-tm-img-' + i);
+        im.src = url;                     // cache owns the URL (revoked on exit)
+        im.style.display = 'block';
+        S.panes[i].el.classList.add('cx-tm-showing');
+      }).catch(function (e) {
+        // an archive pane must NEVER fall back to live imagery — a failed
+        // render blocks the pane with the honest reason (e.g. no WV in
+        // this era's source satellites)
+        tmBlockPane(i, 'archive render unavailable — ' +
+                    String(e && e.message || e).slice(0, 110));
       });
-    });
+    }));
     chain.then(function () {
       S.tm.busy = false; flash('');
       $('cx-valid').textContent = fmtStamp(stamp);
@@ -1770,13 +1894,8 @@
     });
   }
   function tmClearLoop() {
-    var seen = [];
-    S.tm.frames.forEach(function (f) { if (f.url) { URL.revokeObjectURL(f.url); seen.push(f.url); } });
-    Object.keys(S.tm.byPane).forEach(function (k) {
-      (S.tm.byPane[k] || []).forEach(function (f) {
-        if (f && f.url && seen.indexOf(f.url) < 0) URL.revokeObjectURL(f.url);
-      });
-    });
+    // frame records BORROW their object URLs from the render cache (TMRQ) —
+    // clearing a loop never revokes; tmrqClear on exit owns that
     S.tm.frames = []; S.tm.byPane = {}; S.tm.idx = 0; S.tm.windowFor = null;
   }
   function tmCurrentMap() {
@@ -1820,19 +1939,19 @@
       var job = jobs[done], iso = job.d.toISOString().slice(0, 16);
       flash('archive loop: rendering ' + (done + 1) + '/' + jobs.length +
             (targets.length > 1 ? ' (pane ' + (job.i + 1) + ')' : '') + '…', true);
-      tmFetchBody(tmBody(S.panes[job.i], iso + ':00Z', 'low')).then(function (blob) {
-        var rec = { stamp: tmStamp(iso), url: URL.createObjectURL(blob) };
+      tmRequest(tmBody(S.panes[job.i], iso + ':00Z', 'low')).then(function (url) {
+        var rec = { stamp: tmStamp(iso), url: url };   // cache owns the URL
         S.tm.byPane[job.i].push(rec);
         if (job.i === targets[0]) S.tm.frames.push(rec);   // the timeline's list
         tmShowFrame(S.tm.frames.length - 1);
         done++;
-        setTimeout(next, TM_PACE_MS);   // stay under the backend's rate limit
+        next();                          // the queue itself paces the backend
       }).catch(function (e) {
         // keep the per-pane lists index-aligned: a failed slot holds its place
         S.tm.byPane[job.i].push(null);
         if (job.i === targets[0]) S.tm.frames.push({ stamp: tmStamp(iso), url: '' });
         done++;
-        setTimeout(next, TM_PACE_MS);
+        next();
       });
     };
     next();
