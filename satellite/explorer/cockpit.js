@@ -27,12 +27,26 @@
   // labels, and the sector token substituted into the product path (the
   // products.js export sector is conus for goes19, wpac for himawari9).
   var DOMAINS = {
-    conus:     { sat: 'goes19', satLabel: 'GOES-19', label: 'CONUS', sector: 'conus' },
-    fd:        { sat: 'goes19', satLabel: 'GOES-19', label: 'Full Disk', sector: 'fd' },
-    'hw-wpac': { sat: 'himawari9', satLabel: 'Himawari-9', label: 'W Pacific', sector: 'wpac' },
-    'hw-fd':   { sat: 'himawari9', satLabel: 'Himawari-9', label: 'Full Disk', sector: 'fd' }
+    conus:     { sat: 'goes19', satLabel: 'GOES-19', label: 'CONUS', sector: 'conus',
+                 sensor: 'ABI', source: 'NOAA', scanProd: 'CMIPC' },
+    fd:        { sat: 'goes19', satLabel: 'GOES-19', label: 'Full Disk', sector: 'fd',
+                 sensor: 'ABI', source: 'NOAA', scanProd: 'CMIPF' },
+    'hw-wpac': { sat: 'himawari9', satLabel: 'Himawari-9', label: 'W Pacific', sector: 'wpac',
+                 sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' },
+    'hw-fd':   { sat: 'himawari9', satLabel: 'Himawari-9', label: 'Full Disk', sector: 'fd',
+                 sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' }
   };
   function domainInfo(d) { return DOMAINS[d] || DOMAINS.conus; }
+  // palette tag for the unified header's product·palette slot (archive
+  // parity: "CMIPC · rainbow_ir"); scalar products name their frozen
+  // enhancement, composites/RGBs name themselves honestly
+  function paletteTag(p) {
+    if (p.cbar && p.cbar.img) {
+      var m = /cbars\/(.+)\.png$/.exec(p.cbar.img);
+      if (m) return m[1] === 'gray_refl' ? 'gray refl' : m[1];
+    }
+    return p.group === 'composite' ? p.key : 'RGB';
+  }
   function productSet(domain) {
     return domainInfo(domain).sat === 'himawari9' ? HW_PRODUCTS : PRODUCTS;
   }
@@ -432,9 +446,14 @@
     var el = document.createElement('div');
     el.className = 'cx-pane';
     el.innerHTML = '<div class="cx-pane-map" id="cx-map-' + i + '"></div>' +
-      '<div class="cx-pane-head" id="cx-ph-' + i + '"><div>' +
-        '<div class="cx-ph-title" id="cx-pht-' + i + '"></div>' +
-        '<div class="cx-ph-sub" id="cx-phs-' + i + '"></div></div></div>' +
+      '<div class="cx-pane-head" id="cx-ph-' + i + '">' +
+        '<div class="cx-ph-badge" id="cx-phb-' + i + '"></div>' +
+        '<div class="cx-ph-center">' +
+          '<div class="cx-ph-title" id="cx-pht-' + i + '"></div>' +
+          '<div class="cx-ph-sub" id="cx-phs-' + i + '"></div></div>' +
+        '<div class="cx-ph-tag" id="cx-phg-' + i + '"></div></div>' +
+      '<div class="cx-ph-wm" id="cx-phw-' + i + '"></div>' +
+      '<div class="cx-ph-minmax" id="cx-phm-' + i + '"></div>' +
       '<div class="cx-pane-cbar" id="cx-pc-' + i + '">' +
         '<div class="ticks" id="cx-pct-' + i + '"></div>' +
         '<img alt="" id="cx-pci-' + i + '"></div>' +
@@ -470,6 +489,7 @@
         applyOverlayState(tv);
         renderPaneChrome(i);
         wireCameraSync(pane);
+        tv.map.on('moveend', function () { paneMinMax(i); });   // header min/max readout
       });
     });
     return pane;
@@ -582,13 +602,21 @@
       }
       badge.textContent = lch.layerBadge;
     } else if (badge) badge.remove();
+    // UNIFIED header (archive-render parity): centered SAT·INSTRUMENT·
+    // CHANNEL·VALID title, right product·palette tag, per-pane watermark +
+    // source attribution, min/max BT readout, colorbar right.
     var di = domainInfo(S.domain);
-    $('cx-pht-' + i).textContent =
-      di.satLabel + ' · ' + di.label + ' · ' + p.title;
     var s = stamp ||
       (pane.tv && pane.tv.frames && pane.tv.frames[pane.tv.frameIdx]) ||
       (pane.tv && pane.tv.manifest && pane.tv.manifest.latest);
-    $('cx-phs-' + i).textContent = s ? 'Valid ' + fmtStamp(s) : '';
+    $('cx-pht-' + i).textContent =
+      di.satLabel + ' ' + di.sensor + ' · ' + p.title +
+      (s ? ' · ' + fmtStamp(s).replace(/Z$/, '') + ' UTC' : '');
+    $('cx-phs-' + i).textContent = di.label;
+    $('cx-phg-' + i).textContent = di.scanProd + ' · ' + paletteTag(p);
+    $('cx-phw-' + i).textContent =
+      '@WeathermanAAA_  ·  ' + di.source + ' ' + di.satLabel + ' ' + di.sensor;
+    paneMinMax(i);
     var cb = $('cx-pc-' + i), key = $('cx-pk-' + i);
     if (p.cbar) {
       $('cx-pci-' + i).src = p.cbar.img;
@@ -609,6 +637,39 @@
     }
   }
   function paneTag(i, stamp) { renderPaneChrome(i, stamp); }
+
+  // min/max brightness temperature over the CURRENT viewport, read from the
+  // frame's calibrated BT raster (the archive render's bottom-left readout,
+  // reproduced from real data — IR/BT products only, hidden otherwise).
+  function paneMinMax(i) {
+    var pane = S.panes[i], el = $('cx-phm-' + i);
+    if (!el) return;
+    var tv = pane && pane.tv;
+    var p = pane && pane.product;
+    if (!tv || !tv.map || !tv.probe || !p || !p.bt) { el.style.display = 'none'; return; }
+    var stamp = tv.frames[tv.frameIdx];
+    if (!stamp) { el.style.display = 'none'; return; }
+    var compute = function () {
+      if (!tv.probe || !tv.probe._cache[stamp]) { el.style.display = 'none'; return; }
+      var b = tv.map.getBounds();
+      var w = b.getWest(), e = b.getEast(), sB = b.getSouth(), n = b.getNorth();
+      var mn = Infinity, mx = -Infinity;
+      var N = 36;
+      for (var yi = 0; yi <= N; yi++) {
+        for (var xi = 0; xi <= N; xi++) {
+          var v = tv.probe.sample(stamp, w + (e - w) * xi / N, sB + (n - sB) * yi / N);
+          if (v == null) continue;
+          if (v < mn) mn = v;
+          if (v > mx) mx = v;
+        }
+      }
+      if (mn > mx) { el.style.display = 'none'; return; }
+      el.textContent = 'min: ' + Math.round(mn) + '°C  ·  max: ' + Math.round(mx) + '°C';
+      el.style.display = 'block';
+    };
+    if (tv.probe._cache[stamp]) compute();
+    else tv.probe.load(stamp).then(compute).catch(function () { el.style.display = 'none'; });
+  }
 
   // ---- linked cameras: pan/zoom one pane, all follow (toolbar-toggleable;
   // default ON). Feedback-guarded like syncViewers; per-pane views when off.
@@ -1075,26 +1136,44 @@
       }
       return;
     }
+    // UNIFIED header, export form (same layout as the live overlay + the
+    // archive render): centered title, right product·palette tag, top-left
+    // watermark+attribution, bottom-left min/max BT
     var p = pane.product;
     var dinf = domainInfo(S.domain);
+    var title = dinf.satLabel + ' ' + dinf.sensor + ' · ' + p.title +
+      (stamp ? ' · ' + fmtStamp(stamp).replace(/Z$/, '') + ' UTC' : '');
     ctx.fillStyle = '#dbe3ec';
     ctx.font = '700 ' + f(13) + 'px Metropolis,system-ui,sans-serif';
-    ctx.fillText(dinf.satLabel + ' · ' + dinf.label + ' · ' + p.title,
-                 f(12), f(9));
+    ctx.fillText(title, Math.max(f(12), (w - ctx.measureText(title).width) / 2), f(9));
     ctx.fillStyle = '#9aa8b8';
     ctx.font = '500 ' + f(10.5) + 'px Metropolis,system-ui,sans-serif';
-    if (stamp) ctx.fillText('Valid ' + fmtStamp(stamp), f(12), f(27));
+    var sub = dinf.label;
+    ctx.fillText(sub, (w - ctx.measureText(sub).width) / 2, f(27));
+    ctx.fillStyle = '#49b6c8';
+    ctx.font = '600 ' + f(10) + 'px Metropolis,system-ui,sans-serif';
+    var tag = dinf.scanProd + ' · ' + paletteTag(p);
+    ctx.fillText(tag, w - ctx.measureText(tag).width - f(12), f(11));
+    var wmTxt = '@WeathermanAAA_  ·  ' + dinf.source + ' ' + dinf.satLabel + ' ' + dinf.sensor;
+    ctx.fillStyle = 'rgba(0,0,0,.4)';
+    ctx.fillRect(f(8), f(40), ctx.measureText(wmTxt).width + f(12), f(17));
+    ctx.fillStyle = '#49b6c8';
+    ctx.fillText(wmTxt, f(14), f(44));
+    var mmEl = $('cx-phm-' + S.panes.indexOf(pane));
+    if (mmEl && mmEl.style.display !== 'none' && mmEl.textContent) {
+      var mm = mmEl.textContent;
+      ctx.fillStyle = 'rgba(0,0,0,.4)';
+      ctx.fillRect(f(8), h - f(26), ctx.measureText(mm).width + f(12), f(17));
+      ctx.fillStyle = '#49b6c8';
+      ctx.fillText(mm, f(14), h - f(22));
+    }
     // MW/ASCAT layer provenance badge rides into the export too
     var lch = CF ? CF.chromeFor(pane) : null;
     if (lch && lch.layerBadge) {
       ctx.fillStyle = '#bcdcff';
       ctx.font = '600 ' + f(10) + 'px Metropolis,system-ui,sans-serif';
-      ctx.fillText(lch.layerBadge, f(12), f(44));
+      ctx.fillText(lch.layerBadge, f(12), f(62));
     }
-    ctx.fillStyle = 'rgba(255,255,255,.48)';
-    ctx.font = '700 ' + f(13.5) + 'px Metropolis,system-ui,sans-serif';
-    var brand = '@WeathermanAAA_';
-    ctx.fillText(brand, w - ctx.measureText(brand).width - f(12), f(9));
     // color key: colorbar for scalar/BT fields, quick-guide legend otherwise
     var lg = !p.cbar && LEGENDS[p.key];
     if (lg) {
@@ -1259,7 +1338,9 @@
   };
   var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
   var TM_PACE_MS = 6500;
-  S.tm = { on: false, frames: [], idx: 0, busy: false };
+  // frames = the timeline's stamp list; byPane[i] = per-pane rendered frames
+  // (multi-pane loops: every servable pane loads the same stamps, paced)
+  S.tm = { on: false, frames: [], byPane: {}, idx: 0, busy: false };
 
   function tmStamp(v) { return v.replace(/[-:]/g, '') + '00Z'; }  // input -> STAMP_FMT
   function framesList() {
@@ -1271,9 +1352,15 @@
     if (!n) return;
     S.tm.idx = ((idx % n) + n) % n;
     var f = S.tm.frames[S.tm.idx];
-    var im = $('cx-tm-img-' + S.active);
-    if (im) { im.src = f.url; im.style.display = 'block'; }
-    S.panes[S.active].el.classList.add('cx-tm-showing');
+    // every pane with a loaded loop shows ITS render of this stamp
+    S.panes.forEach(function (pane, i) {
+      if (!pane) return;
+      var fp = S.tm.byPane[i] && S.tm.byPane[i][S.tm.idx];
+      if (!fp) return;
+      var im = $('cx-tm-img-' + i);
+      if (im) { im.src = fp.url; im.style.display = 'block'; }
+      pane.el.classList.add('cx-tm-showing');
+    });
     $('cx-valid').textContent = fmtStamp(f.stamp);
     $('cx-count').textContent = (S.tm.idx + 1) + ' / ' + n + ' · archive';
     drawTimeline();
@@ -1351,8 +1438,7 @@
     document.body.classList.remove('cx-tm-mode');
     $('cx-tm').classList.remove('on');
     $('cx-tm').querySelector('.lbl').textContent = 'Live';
-    S.tm.frames.forEach(function (f) { URL.revokeObjectURL(f.url); });
-    S.tm.frames = []; S.tm.idx = 0;
+    tmClearLoop();
     S.panes.forEach(function (p, i) {
       if (!p) return;
       var im = $('cx-tm-img-' + i);
@@ -1398,6 +1484,13 @@
       S.tm.busy = false; flash(String(e.message || e).slice(0, 90));
     });
   }
+  function tmClearLoop() {
+    S.tm.frames.forEach(function (f) { URL.revokeObjectURL(f.url); });
+    Object.keys(S.tm.byPane).forEach(function (k) {
+      (S.tm.byPane[k] || []).forEach(function (f) { if (f) URL.revokeObjectURL(f.url); });
+    });
+    S.tm.frames = []; S.tm.byPane = {}; S.tm.idx = 0;
+  }
   function tmLoadLoop() {
     if (S.tm.busy) return;
     var a = $('cx-tm-time').value, z = $('cx-tm-end').value;
@@ -1408,27 +1501,45 @@
     var stamps = [];
     for (var t = t0; t <= t1 && stamps.length < TM_MAX_LOOP; t += stepMin * 60e3)
       stamps.push(new Date(t));
-    var pane = S.panes[S.active];
-    if (!pane || !TM_MAP[pane.product.key]) { flash('this field is live-only'); return; }
-    S.tm.frames.forEach(function (f) { URL.revokeObjectURL(f.url); });
-    S.tm.frames = []; S.tm.idx = 0; S.tm.busy = true;
+    // MULTI-PANE: every ready pane whose field the archive serves loads the
+    // loop (paced renders; N panes multiply the wait — progress says so)
+    var targets = [];
+    S.panes.forEach(function (p, i) {
+      if (p && p.ready && (!p.kind || p.kind === 'tile') &&
+          p.product && TM_MAP[p.product.key]) targets.push(i);
+    });
+    if (!targets.length) { flash('these fields are live-only — pick a channel or True Color'); return; }
+    tmClearLoop();
+    S.tm.busy = true;
+    var jobs = [];
+    stamps.forEach(function (d) {
+      targets.forEach(function (i) { jobs.push({ d: d, i: i }); });
+    });
+    targets.forEach(function (i) { S.tm.byPane[i] = []; });
     var done = 0;
     var next = function () {
-      if (done >= stamps.length) {
+      if (done >= jobs.length) {
         S.tm.busy = false;
-        flash(S.tm.frames.length + '-frame archive loop ready — play or export');
+        flash(S.tm.frames.length + '-frame archive loop ready on ' + targets.length +
+              ' pane' + (targets.length === 1 ? '' : 's') + ' — play or export');
         tmShowFrame(S.tm.frames.length - 1);
         return;
       }
-      var d = stamps[done], iso = d.toISOString().slice(0, 16);
-      flash('archive loop: rendering ' + (done + 1) + '/' + stamps.length + '…', true);
-      tmFetchBody(tmBody(pane, iso + ':00Z', 'low')).then(function (blob) {
-        S.tm.frames.push({ stamp: tmStamp(iso), url: URL.createObjectURL(blob) });
+      var job = jobs[done], iso = job.d.toISOString().slice(0, 16);
+      flash('archive loop: rendering ' + (done + 1) + '/' + jobs.length +
+            (targets.length > 1 ? ' (pane ' + (job.i + 1) + ')' : '') + '…', true);
+      tmFetchBody(tmBody(S.panes[job.i], iso + ':00Z', 'low')).then(function (blob) {
+        var rec = { stamp: tmStamp(iso), url: URL.createObjectURL(blob) };
+        S.tm.byPane[job.i].push(rec);
+        if (job.i === targets[0]) S.tm.frames.push(rec);   // the timeline's list
         tmShowFrame(S.tm.frames.length - 1);
         done++;
         setTimeout(next, TM_PACE_MS);   // stay under the backend's rate limit
       }).catch(function (e) {
-        done++;                          // skip a failed slot, keep going
+        // keep the per-pane lists index-aligned: a failed slot holds its place
+        S.tm.byPane[job.i].push(null);
+        if (job.i === targets[0]) S.tm.frames.push({ stamp: tmStamp(iso), url: '' });
+        done++;
         setTimeout(next, TM_PACE_MS);
       });
     };
@@ -1437,13 +1548,17 @@
   // archive loop export: same recorder + byte budget as the live path, fed by
   // the rendered frames (already branded by the backend — no extra chrome).
   function exportTMLoop(btn) {
-    if (S.tm.frames.length < 2) { flash('load an archive loop first'); return; }
+    // export the ACTIVE pane's loop when it has one, else the timeline list;
+    // failed slots (null / empty url) are skipped, not black frames
+    var list = (S.tm.byPane[S.active] || S.tm.frames)
+      .filter(function (f) { return f && f.url; });
+    if (list.length < 2) { flash('load an archive loop first'); return; }
     if (btn.dataset.busy) return;
     btn.dataset.busy = '1'; stopClock();
     var imgs = [], loaded = 0, fps = 6;
-    S.tm.frames.forEach(function (f, k) {
+    list.forEach(function (f, k) {
       var im = new Image();
-      im.onload = function () { if (++loaded === S.tm.frames.length) start(); };
+      im.onload = function () { if (++loaded === list.length) start(); };
       im.src = f.url; imgs[k] = im;
     });
     function start() {

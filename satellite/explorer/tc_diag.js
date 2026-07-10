@@ -137,15 +137,19 @@
     sel.onchange.call(sel);
   }
 
-  // anchor: frame the primary pane on the selected storm (the objfix center
-  // markers land on the pane maps via objfix_panel.paneMarkers)
+  // anchor: frame the storm on EVERY ready pane (multi-pane dashboards get
+  // the storm in all fields; with linked cameras the lead pane propagates,
+  // unlinked panes each fit themselves). The objfix center markers land on
+  // every pane map via objfix_panel.paneMarkers.
   function frameStorm() {
     var P = window.ObjFixPanel, CX = window.__cockpit;
     var st = P && P.storm();
-    if (!st || st.lat == null || !CX || !CX.panes[0] || !CX.panes[0].ready) return;
-    CX.panes[0].tv.map.fitBounds(
-      [[st.lon - 6, st.lat - 4.5], [st.lon + 6, st.lat + 4.5]],
-      { padding: 20, duration: 600 });
+    if (!st || st.lat == null || !CX) return;
+    var box = [[st.lon - 6, st.lat - 4.5], [st.lon + 6, st.lat + 4.5]];
+    var panes = CX.linked ? [CX.panes[0]] : CX.panes;
+    (panes || []).forEach(function (pane) {
+      if (pane && pane.ready) pane.tv.map.fitBounds(box, { padding: 20, duration: 600 });
+    });
   }
 
   function enterMode() {

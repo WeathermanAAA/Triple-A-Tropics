@@ -111,17 +111,40 @@
   .cx-pane.cx-active{outline:1.5px solid rgba(73,182,200,.75);outline-offset:-1.5px;z-index:2}
   /* per-pane BURNED-IN chrome: branded title strip + watermark + colorbar —
      overlay on the interactive map AND composited into PNG/WebM exports */
+  /* UNIFIED BURNED-IN HEADER — matches the archive render's layout exactly:
+     centered SAT·INSTRUMENT·CHANNEL·VALID title strip, right-aligned
+     product·palette tag, per-pane watermark + source attribution top-left,
+     min/max BT readout bottom-left, colorbar right. Live panes and archive
+     renders are visually identical. */
   .cx-pane-head{position:absolute;top:0;left:0;right:0;z-index:4;pointer-events:none;
-    display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
-    padding:8px 12px 14px;
-    background:linear-gradient(180deg,rgba(10,13,18,.84),rgba(10,13,18,0))}
-  .cx-ph-title{font-size:13px;font-weight:700;color:var(--cx-fg);letter-spacing:.01em;line-height:1.25}
+    display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;
+    padding:7px 12px 13px;
+    background:linear-gradient(180deg,rgba(10,13,18,.9),rgba(10,13,18,0))}
+  .cx-ph-badge{justify-self:start;min-width:0}
+  .cx-ph-center{justify-self:center;text-align:center;min-width:0}
+  .cx-ph-tag{justify-self:end;font-size:10px;font-weight:600;color:var(--cx-teal);
+    white-space:nowrap;font-variant-numeric:tabular-nums}
+  .cx-ph-title{font-size:13px;font-weight:700;color:var(--cx-fg);letter-spacing:.01em;
+    line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cx-ph-sub{font-size:10.5px;color:#9aa8b8;font-variant-numeric:tabular-nums;margin-top:1px}
+  .cx-ph-wm{position:absolute;left:8px;top:40px;z-index:4;pointer-events:none;
+    font-size:9.5px;font-weight:600;color:var(--cx-teal);background:rgba(0,0,0,.4);
+    border-radius:4px;padding:3px 6px;white-space:nowrap}
+  .cx-ph-minmax{position:absolute;left:8px;bottom:8px;z-index:4;pointer-events:none;
+    display:none;font-size:9.5px;font-weight:600;color:var(--cx-teal);
+    background:rgba(0,0,0,.4);border-radius:4px;padding:3px 6px;
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* compact scaling so the full header survives 2/4-pane */
+  #cx-panes[data-n="4"] .cx-ph-title{font-size:11px}
+  #cx-panes[data-n="4"] .cx-ph-tag{font-size:8.5px}
+  #cx-panes[data-n="4"] .cx-ph-sub{font-size:9px}
+  #cx-panes[data-n="4"] .cx-ph-wm,#cx-panes[data-n="4"] .cx-ph-minmax{font-size:8.5px;top:auto}
+  #cx-panes[data-n="4"] .cx-ph-wm{top:36px}
   .cx-ph-brand{font-weight:700;font-size:13.5px;color:rgba(255,255,255,.48);white-space:nowrap;
     text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45)}
-  /* ONE watermark for the whole view (panes carry headers, not brands) */
-  .cx-wm{top:8px;right:14px;font-weight:700;font-size:14px;color:rgba(255,255,255,.5);
-    text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45);white-space:nowrap;z-index:6}
+  /* the old single view-level watermark is retired — every pane now carries
+     the archive-style watermark + attribution itself */
+  .cx-wm{display:none}
   .cx-pane-cbar{position:absolute;right:8px;top:46px;z-index:4;pointer-events:none;
     display:none;gap:4px;align-items:stretch}
   /* RGB interpretation key (quick-guide semantics) — no pane is ever bare */
