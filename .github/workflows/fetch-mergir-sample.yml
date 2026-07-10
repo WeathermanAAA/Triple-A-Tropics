@@ -30,16 +30,25 @@ jobs:
           Y=${WHEN:0:4}; DOY=$(date -u -d "${WHEN:0:10}" +%j); STAMP="${WHEN:0:4}${WHEN:5:2}${WHEN:8:2}${WHEN:11:2}"
           URL="https://data.gesdisc.earthdata.nasa.gov/data/MERGED_IR/GPM_MERGIR.1/${Y}/${DOY}/merg_${STAMP}_4km-pixel.nc4"
           echo "fetching ${URL}"
+          ok=""
           if [ -n "${EARTHDATA_TOKEN:-}" ]; then
-            curl -fSL -o merg_sample.nc4 -H "Authorization: Bearer ${EARTHDATA_TOKEN}" "$URL"
-          else
+            if curl -fSL -o merg_sample.nc4 -H "Authorization: Bearer ${EARTHDATA_TOKEN}" "$URL"; then
+              ok=token
+            else
+              echo "bearer-token path failed (GES DISC app may not be authorized for tokens) — trying URS user/pass flow"
+            fi
+          fi
+          if [ -z "$ok" ]; then
             # URS redirect flow with basic auth (credentials only ever go to
             # urs.earthdata.nasa.gov via curl's location-trusted handling)
             curl -fSL -o merg_sample.nc4 --location-trusted \
               -u "${EARTHDATA_USERNAME}:${EARTHDATA_PASSWORD}" \
               -c /tmp/urs_cookies -b /tmp/urs_cookies "$URL"
+            ok=userpass
           fi
+          echo "auth path used: $ok"
           ls -la merg_sample.nc4
+          file merg_sample.nc4 || true
       - uses: actions/upload-artifact@v6
         with:
           name: mergir-sample
