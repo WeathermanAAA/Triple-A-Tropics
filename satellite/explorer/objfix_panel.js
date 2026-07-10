@@ -141,7 +141,16 @@
     '.ofx-note{font-size:10px;color:var(--cx-dim);line-height:1.55}' +
     '.ofx-warn{font-size:10.5px;color:#e88a5a;font-weight:600;line-height:1.5}' +
     '.ofx-prog{height:4px;border-radius:2px;background:#141b25;overflow:hidden;display:none}' +
-    '.ofx-prog i{display:block;height:100%;background:var(--cx-teal);width:0%}';
+    '.ofx-prog i{display:block;height:100%;background:var(--cx-teal);width:0%}' +
+    /* docked as TC-Diagnostics card #1: same node, card layout (the mode's
+       header owns storm selection + close, so those controls hide) */
+    '#ofx-panel.ofx-docked{position:static;width:auto;border-left:0;background:transparent;' +
+    ' overflow:visible;display:block}' +
+    '#ofx-panel.ofx-docked .ofx-head{position:static;background:transparent;padding:0 0 6px}' +
+    '#ofx-panel.ofx-docked .ofx-head h4{display:none}' +   /* the card h5 owns the title */
+    '#ofx-panel.ofx-docked .ofx-x{display:none}' +
+    '#ofx-panel.ofx-docked #ofx-storm{display:none}' +
+    '#ofx-panel.ofx-docked .ofx-body{padding:4px 0 8px}';
 
   function buildPanel() {
     var st = document.createElement('style');
@@ -196,7 +205,14 @@
     btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
       'stroke-linecap="round"><use href="#i-inspect"/></svg><span class="lbl">Obj Fix</span>' +
       '<i class="cx-chip">beta</i>';
-    btn.onclick = function () { S.panelOpen ? closePanel() : openPanel(); };
+    btn.onclick = function () {
+      if (S.docked) {
+        var el = $('ofx-panel');
+        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;   // TC-Diagnostics owns the panel while docked
+      }
+      S.panelOpen ? closePanel() : openPanel();
+    };
     if (group) group.appendChild(btn);
   }
 
@@ -214,33 +230,39 @@
   }
 
   // ---- storms ---------------------------------------------------------------
+  function stormLabel(s) {
+    return s.name + ' · ' + s.basin +
+      (s.vmax ? ' · ' + s.vmax + ' kt' : '') +
+      (s.source === 'fd' ? ' · fd BT' : ' · floater (LUT)');
+  }
   function loadStorms() {
-    window.ObjFixSources.listStorms().then(function (storms) {
-      S.storms = storms;
-      var sel = $('ofx-storm');
-      sel.innerHTML = '';
-      if (!storms.length) {
-        sel.innerHTML = '<option>— no active storms in the feeds —</option>';
-        return;
-      }
-      storms.forEach(function (s, i) {
-        var o = document.createElement('option');
-        o.value = String(i);
-        o.textContent = s.name + ' · ' + s.basin +
-          (s.vmax ? ' · ' + s.vmax + ' kt' : '') +
-          (s.source === 'fd' ? ' · fd BT' : ' · floater (LUT)');
-        sel.appendChild(o);
-      });
-      S.storm = storms[0];
-    }).catch(function (e) {
-      $('ofx-storm').innerHTML = '<option>— storm feed unavailable —</option>';
-    });
     // land test for ADT's over-land suspension
     if (window.TATRegions && TATRegions.loadGeo) {
       TATRegions.loadGeo({}).then(function (geo) {
         S.isLand = window.ObjFixSources.makeLandTest(geo);
       }).catch(function () {});
     }
+    if (S.storms.length) return Promise.resolve(S.storms);
+    return window.ObjFixSources.listStorms().then(function (storms) {
+      S.storms = storms;
+      var sel = $('ofx-storm');
+      sel.innerHTML = '';
+      if (!storms.length) {
+        sel.innerHTML = '<option>— no active storms in the feeds —</option>';
+        return storms;
+      }
+      storms.forEach(function (s, i) {
+        var o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = stormLabel(s);
+        sel.appendChild(o);
+      });
+      S.storm = storms[0];
+      return storms;
+    }).catch(function (e) {
+      $('ofx-storm').innerHTML = '<option>— storm feed unavailable —</option>';
+      return [];
+    });
   }
 
   function getSource() {
@@ -732,4 +754,40 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
+
+  // ---- TC-Diagnostics integration (tc_diag.js) -------------------------------
+  // The panel can be DOCKED as diagnostic card #1: the same DOM node is
+  // re-parented into the mode's dock (canvases/worker/state survive), and the
+  // mode's own storm control drives selection through select().
+  window.ObjFixPanel = {
+    open: openPanel,
+    close: closePanel,
+    dock: function (host) {
+      var el = $('ofx-panel');
+      if (!el || !host) return;
+      host.appendChild(el);
+      el.classList.add('ofx-docked', 'open');
+      S.docked = true; S.panelOpen = true;
+      var b = $('cx-objfix'); if (b) b.classList.add('on');
+    },
+    undock: function () {
+      var el = $('ofx-panel');
+      if (!el) return;
+      el.classList.remove('ofx-docked');
+      var view = document.querySelector('.cx-view');
+      if (view) view.appendChild(el);
+      S.docked = false;
+      closePanel();
+    },
+    loadStorms: loadStorms,
+    storms: function () { return S.storms; },
+    storm: function () { return S.storm; },
+    select: function (i) {
+      var sel = $('ofx-storm');
+      sel.value = String(i);
+      if (sel.onchange) sel.onchange.call(sel);
+    },
+    analyze: function (loop) { runAnalysis(!!loop); },
+    running: function () { return S.running; }
+  };
 })();
