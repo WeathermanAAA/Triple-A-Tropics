@@ -162,6 +162,14 @@
   /* Time Machine: pane shows the backend's finished render (own baked chrome) */
   .cx-tm-img{position:absolute;inset:0;z-index:5;display:none;width:100%;height:100%;
     object-fit:contain;background:#0a0d12}
+  /* honest per-pane archive gate: a field the archive can't serve at this
+     date is COVERED with the reason — live imagery never leaks into an
+     archive view */
+  .cx-tm-block{position:absolute;inset:0;z-index:6;display:none;align-items:center;
+    justify-content:center;background:rgba(10,13,18,.92)}
+  .cx-tm-block div{font-size:12px;font-weight:600;color:#8ea2bd;line-height:1.5;
+    border:1px dashed rgba(142,162,189,.4);border-radius:8px;padding:12px 18px;
+    max-width:72%;text-align:center}
   .cx-pane.cx-tm-showing .cx-pane-head,.cx-pane.cx-tm-showing .cx-pane-cbar,
   .cx-pane.cx-tm-showing .cx-pane-key{display:none !important}
   body.cx-tm-mode .cx-field:not([data-tm]){opacity:.4;pointer-events:none}

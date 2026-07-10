@@ -1430,11 +1430,18 @@
     if (!n) return;
     S.tm.idx = ((idx % n) + n) % n;
     var f = S.tm.frames[S.tm.idx];
-    // every pane with a loaded loop shows ITS render of this stamp
+    // every pane with a loaded loop shows ITS render of this stamp; lists
+    // can fill at different rates, so followers match by STAMP (nearest)
     S.panes.forEach(function (pane, i) {
       if (!pane) return;
-      var fp = S.tm.byPane[i] && S.tm.byPane[i][S.tm.idx];
-      if (!fp) return;
+      var lst = S.tm.byPane[i];
+      if (!lst || !lst.length) return;
+      var fp = null;
+      for (var k = 0; k < lst.length; k++) {
+        if (lst[k] && lst[k].stamp === f.stamp) { fp = lst[k]; break; }
+      }
+      if (!fp) fp = lst[S.tm.idx] || null;
+      if (!fp || !fp.url) return;
       var im = $('cx-tm-img-' + i);
       if (im) { im.src = fp.url; im.style.display = 'block'; }
       pane.el.classList.add('cx-tm-showing');
@@ -1456,15 +1463,16 @@
     while (k < S.tm.frames.length && S.tm.frames[k].stamp < rec.stamp) k++;
     S.tm.frames.splice(k, 0, rec);
     if (k <= S.tm.idx && S.tm.frames.length > 1) S.tm.idx++;
-    S.tm.byPane[paneIdx] = S.tm.frames;    // single-pane window: same list
+    S.tm.byPane[paneIdx] = S.tm.frames;    // lead pane: the timeline's list
   }
   function tmLoadWindow(centerIso) {
     if (!S.tm.on || S.tm.windowBusy) return;
     var t0 = Date.parse(centerIso);
     if (S.tm.windowFor != null && Math.abs(t0 - S.tm.windowFor) < 9 * 3600e3) return;
-    var pane = S.panes[S.active];
-    var map = tmMapFor(centerIso);
-    if (!pane || !pane.product || !map[pane.product.key]) return;
+    // ALL archive-servable panes load the window (time-locked multi-pane
+    // scrub, like live); blocked panes stay honestly blocked.
+    var targets = tmPaneTargets(centerIso);
+    if (!targets.length) return;
     tmClearLoop();
     S.tm.windowFor = t0;
     S.tm.windowBusy = true;
@@ -1474,26 +1482,57 @@
     var times = [];
     for (var t = t0 - half; t <= t0 + half; t += stepMs) times.push(t);
     times.sort(function (a, b) { return Math.abs(a - t0) - Math.abs(b - t0); });
+    var jobs = [];
+    times.forEach(function (tt) {
+      targets.forEach(function (i) { jobs.push({ t: tt, i: i }); });
+    });
+    targets.forEach(function (i) { S.tm.byPane[i] = S.tm.byPane[i] || []; });
+    var fails = {};
     var done = 0;
     var next = function () {
-      if (!S.tm.on || S.tm.windowFor !== t0 || done >= times.length) {
+      if (!S.tm.on || S.tm.windowFor !== t0 || done >= jobs.length) {
         S.tm.windowBusy = false;
         if (S.tm.on && S.tm.windowFor === t0)
-          flash(S.tm.frames.length + '-frame archive window loaded — scrub the timeline, play, or export the loop');
+          flash(S.tm.frames.length + '-frame archive window loaded on ' +
+                targets.length + ' pane' + (targets.length === 1 ? '' : 's') +
+                ' — scrub the timeline, play, or export the loop');
         return;
       }
-      var iso = new Date(times[done]).toISOString().slice(0, 16);
+      var job = jobs[done];
       done++;
+      var iso = new Date(job.t).toISOString().slice(0, 16);
       var stamp = tmStamp(iso);
-      if (S.tm.frames.some(function (f) { return f.stamp === stamp; })) { next(); return; }
+      var list = S.tm.byPane[job.i] || [];
+      if (list.some(function (f) { return f && f.stamp === stamp; })) { next(); return; }
       flash('archive window: ' + S.tm.frames.length + '/' + times.length +
-            ' frames — scrub anytime while it fills', true);
-      tmFetchBody(tmBody(pane, iso + ':00Z', 'low')).then(function (blob) {
+            ' frames × ' + targets.length + ' panes — scrub anytime while it fills', true);
+      tmFetchBody(tmBody(S.panes[job.i], iso + ':00Z', 'low')).then(function (blob) {
         if (!S.tm.on || S.tm.windowFor !== t0) { S.tm.windowBusy = false; return; }
-        insertFrameSorted({ stamp: stamp, url: URL.createObjectURL(blob) }, S.active);
+        var rec = { stamp: stamp, url: URL.createObjectURL(blob) };
+        if (job.i === targets[0]) insertFrameSorted(rec, job.i);
+        else {
+          // follower panes: keep their per-pane lists time-sorted too
+          var lst = S.tm.byPane[job.i];
+          var k = 0;
+          while (k < lst.length && lst[k] && lst[k].stamp < rec.stamp) k++;
+          lst.splice(k, 0, rec);
+        }
+        fails[job.i] = 0;
         drawTimeline();
         setTimeout(next, TM_PACE_MS);      // stay under the backend rate limit
-      }).catch(function () { setTimeout(next, TM_PACE_MS); });
+      }).catch(function (e) {
+        // a pane whose archive channel has NO data for this era must end up
+        // BLOCKED, not silently live: after 2 straight failures with zero
+        // successes, block it and stop asking the backend for it
+        fails[job.i] = (fails[job.i] || 0) + 1;
+        var got = (S.tm.byPane[job.i] || []).length;
+        if (!got && fails[job.i] >= 2) {
+          tmBlockPane(job.i, 'archive render unavailable — ' +
+                      String(e && e.message || e).slice(0, 110));
+          jobs = jobs.filter(function (j, k) { return k < done || j.i !== job.i; });
+        }
+        setTimeout(next, TM_PACE_MS);
+      });
     };
     next();
   }
@@ -1586,25 +1625,69 @@
       var im = $('cx-tm-img-' + i);
       if (im) { im.style.display = 'none'; im.removeAttribute('src'); }
       p.el.classList.remove('cx-tm-showing');
+      tmUnblockPane(i);
     });
     stopClock(); drawTimeline(); updateHeader();
     var tv = lead();
     if (tv) { updateClockUI({ stamp: tv.frames[tv.frameIdx], idx: tv.frameIdx, n: tv.frames.length }); }
     flash('');
   }
+  // HONEST per-pane archive gating: a pane whose field the archive cannot
+  // serve at this date is BLOCKED (dark cover + reason) — it must never keep
+  // showing live imagery beside archive panes (the silent-live-fallback bug).
+  function tmBlockPane(i, msg) {
+    var pane = S.panes[i];
+    if (!pane) return;
+    var el = pane.el.querySelector('.cx-tm-block');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'cx-tm-block';
+      el.innerHTML = '<div></div>';
+      pane.el.appendChild(el);
+    }
+    el.firstChild.textContent = msg;
+    el.style.display = 'flex';
+    pane.el.classList.add('cx-tm-showing');
+  }
+  function tmUnblockPane(i) {
+    var pane = S.panes[i];
+    if (!pane) return;
+    var el = pane.el.querySelector('.cx-tm-block');
+    if (el) el.style.display = 'none';
+  }
+  function tmBlockMsg(pane, timeIso) {
+    if (pane.kind === 'mw' || pane.kind === 'sc')
+      return 'live-only field — MW / scatterometer have no archive render';
+    if (!pane.product) return 'no field';
+    if (tmDeepEra(timeIso))
+      return 'not available before 2017 — single-channel archive (pick Clean IR / Dvorak BD / WV)';
+    return 'live-only field — no archive render for ' + pane.product.title;
+  }
+  // every pane participates: servable panes render, the rest block honestly
+  function tmPaneTargets(timeIso) {
+    var targets = [];
+    S.panes.forEach(function (p, i) {
+      if (!p || !p.ready) return;
+      if ((!p.kind || p.kind === 'tile') && p.product &&
+          tmMapFor(timeIso)[p.product.key]) {
+        tmUnblockPane(i);
+        targets.push(i);
+      } else {
+        tmBlockPane(i, tmBlockMsg(p, timeIso));
+      }
+    });
+    return targets;
+  }
+
   function tmRenderOnce() {
     if (S.tm.busy) return;
     var t = $('cx-tm-time').value;
     if (!t) { flash('pick a UTC time first'); return; }
     var timeIso = t + ':00Z', stamp = tmStamp(t);
-    // every ready pane whose field the archive can serve renders at the SAME
-    // time (linked cameras share the box); unsupported panes sit out.
-    var targets = [];
-    S.panes.forEach(function (p, i) {
-      if (p && p.ready && (!p.kind || p.kind === 'tile') &&
-          p.product && tmMapFor(timeIso)[p.product.key]) targets.push(i);
-    });
-    if (!targets.length) { flash('this field is live-only — pick a channel or True Color'); return; }
+    // EVERY ready pane participates: archive-servable panes render at the
+    // SAME time; the rest are blocked with the honest reason.
+    var targets = tmPaneTargets(timeIso);
+    if (!targets.length) { flash('no archive-servable pane — pick a channel or True Color'); return; }
     S.tm.busy = true; flash('rendering the archive view…', true);
     var chain = Promise.resolve();
     targets.forEach(function (i) {
@@ -1615,6 +1698,12 @@
           im.src = im.dataset.url = URL.createObjectURL(blob);
           im.style.display = 'block';
           S.panes[i].el.classList.add('cx-tm-showing');
+        }).catch(function (e) {
+          // an archive pane must NEVER fall back to live imagery — a failed
+          // render blocks the pane with the honest reason (e.g. no WV in
+          // this era's source satellites)
+          tmBlockPane(i, 'archive render unavailable — ' +
+                      String(e && e.message || e).slice(0, 110));
         });
       });
     });
