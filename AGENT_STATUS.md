@@ -4,7 +4,77 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-10 ~02:15 UTC — Himawari-9 suite + TC-Diag mode + unified header + TM deep archive (1980) + GLOBAL-DEFAULT geo-ring composite ALL SHIPPED_
+_Last update: 2026-07-10 ~04:30 UTC — OVERNIGHT REPORT above: TM draw-box+queue accepted on Irma; main merged into s2 (veg-green verified); cron foolproofed_
+
+---
+
+## OVERNIGHT REPORT — 2026-07-10 (Andrew asleep; autonomous)
+
+### LANDED (newest first, all pushed)
+- **TM draw-box foundation + archive render queue** — TAT `c25effab` +
+  shots `d0cf60c8`. A drawn AOI is the archive crop for ALL panes (box the
+  storm → scrub it); no box = the first render's extent FROZEN for the
+  session (this also fixed the self-resizing archive pane — it was viewport
+  drift changing each request's aspect). EVERY archive render goes through
+  one serialized queue with de-dupe + cache (same band+time+box = one render,
+  reused instantly), 429 back-off/retry, concurrency 1. Per-pane band picks
+  in TM (box+time shared; a switch re-renders just that crop cache-first and
+  lazily refills that pane's window). Archive coverage: Clean IR / C14 IR
+  window (honest map to the archive's ~11 µm channel) / Dvorak BD / 6.7 µm
+  WV; vis+RGB grey pre-2017 as before. Live playback decode-ahead (next 2
+  frames' tiles mount invisibly; the flip is a pure opacity toggle).
+  **ACCEPTED on Irma 2017-09-05 18Z, 4-pane** (Clean IR / BD / WV / True
+  Color, boxed, scrubbed): 4/4 panes filled, 0 blocked, 0 failures — the 2
+  raw 429s the limiter threw were absorbed by retry. Shot:
+  `_shots/tm_irma17_4pane_boxed.jpg`.
+- **main → s2-sat-ingest MERGE (veg-green skew fixed)** — tsr `fd98aa96`.
+  20 conflict hunks resolved keeping BOTH lineages' behavior: box branch's
+  custom rate limiter (+ /export converted to it), header_get +
+  second-precision frame keys, antimeridian gridliner (now behind main's
+  gridlines toggle), concurrent truecolor band-resolve (+ main's downsample
+  threading), multiband AHI slot prober. Suite: **929 passed**. Veg-green
+  VERIFIED on a fresh wpac truecolor emit: Borneo/Sumatra forest green
+  (`_shots/veg_green_merged_branch.jpg`). tat-palettes stays pinned v0.2.2.
+- **emit-cron foolproofed** — tsr `84da1685`: bare `compose up` now runs the
+  FULL suite set (conus fd himawari9-wpac himawari9-fd geo-global); env still
+  overrides.
+- **Rail accent** → real site teal #49b6c8 — TAT `47cf4821`.
+- Earlier tonight: rails redesign, MergIR tier (Q12-gated), TM multi-pane
+  honesty, global-default composite, TM deep archive, unified header,
+  Himawari-9 suite, TC-Diagnostics — see the sections below.
+
+### IN PROGRESS / HONEST GAPS
+- Live-loop jank: decode-ahead landed; real-browser feel needs Andrew's
+  eyeball (headless can't measure smoothness). If still janky, next lever is
+  pre-warming the whole window on play start.
+- Storm-following archive box: needs a per-time historical track source
+  (HURDAT/objfix chaining is banned as first-guess) — designed, not built.
+- TCD SOON diagnostics (DAV/WN-1/eye-CDO/Hovmöller): scaffolded, archive
+  hook contract ready, not implemented.
+
+### ANDREW QUEUE (box + secrets; full detail in the memory queue file)
+1. **Box session (Q11, updated):** in the tsr dir — `git fetch && git
+   checkout s2-sat-ingest && git pull` (now INCLUDES the main merge + cron
+   default), `docker compose -p tat-s2 -f docker-compose.s2.yml build emit`,
+   then `--profile cron up -d --force-recreate emit-cron` (no env edit
+   needed anymore). **For imagery NOW before the cron warms:** one-shots
+   `run --rm emit --suite himawari9-wpac --store r2 --prefix shadow
+   --max-zoom 5` and the same with `--suite geo-global` light the Himawari
+   domains, the global default, and objfix's WP real-BT path immediately.
+2. **Q12 Earthdata:** authorize "NASA GESDISC DATA ARCHIVE" on the profile,
+   re-run the `fetch-mergir-sample` workflow (green = fixed), add the
+   credential to the Railway render env → MergIR serves 2000-2017 at 4 km.
+3. Q9/Q10/Q8/Q4 unchanged.
+
+### BLOCKERS
+- MergIR live verification blocked on Q12 (GridSat serves those dates
+  honestly meanwhile). Nothing else blocked.
+
+### HEALTH
+- tsr main deployed tiers live via Railway auto-deploy (confirm one pre-2017
+  render once it cycles). Box branches untouched since the last box session;
+  the merged s2-sat-ingest is ready for Q11. All suites green at push time
+  (TAT 496−4 pre-existing env; tsr s2 929; tsr main 692+21). Feeds normal.
 
 ---
 
