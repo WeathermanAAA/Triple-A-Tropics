@@ -142,6 +142,10 @@
   #cx-panes[data-n="4"] .cx-ph-wm{top:36px}
   .cx-ph-brand{font-weight:700;font-size:13.5px;color:rgba(255,255,255,.48);white-space:nowrap;
     text-shadow:0 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.45)}
+  /* honest coverage-gap badge on the global composite (Meteosat sector) */
+  .cx-gap-badge{font-size:10px;font-weight:600;color:#8ea2bd;background:rgba(10,13,18,.72);
+    border:1px dashed rgba(142,162,189,.45);border-radius:6px;padding:4px 8px;
+    white-space:nowrap;pointer-events:none}
   /* the old single view-level watermark is retired — every pane now carries
      the archive-style watermark + attribution itself */
   .cx-wm{display:none}
@@ -478,12 +482,14 @@
   <aside class="cx-rail cx-right">
     <h3>Satellite</h3>
     <div id="cx-sats">
+      <button type="button" class="cx-item coming" data-sat="geo">Global · GEO ring <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item active" data-sat="goes19">GOES-19 · East</button>
       <button type="button" class="cx-item coming" data-sat="himawari9">Himawari-9 · Pacific <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item coming">GOES-18 · West <i class="cx-chip">soon</i></button>
     </div>
     <h3>Domain</h3>
     <div id="cx-domains">
+      <button type="button" class="cx-item coming" data-domain="global" data-satgroup="geo" style="display:none">World <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item active" data-domain="conus" data-satgroup="goes19">CONUS</button>
       <button type="button" class="cx-item coming" data-domain="fd" data-satgroup="goes19">Full Disk <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item coming" data-domain="meso1" data-satgroup="goes19">Meso 1 <i class="cx-chip">soon</i></button>

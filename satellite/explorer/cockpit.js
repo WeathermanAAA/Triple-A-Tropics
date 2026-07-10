@@ -19,6 +19,8 @@
   var PRODUCTS = (window.TVProducts && window.TVProducts.products) || [];
   var HW_PRODUCTS = (window.TVProducts && window.TVProducts.himawari9 &&
                      window.TVProducts.himawari9.products) || [];
+  var GEO_PRODUCTS = (window.TVProducts && window.TVProducts.geo &&
+                      window.TVProducts.geo.products) || [];
   var PBASE = window.TVProducts ? window.TVProducts.base : '';
   var params = new URLSearchParams(location.search);
   var $ = function (id) { return document.getElementById(id); };
@@ -34,7 +36,11 @@
     'hw-wpac': { sat: 'himawari9', satLabel: 'Himawari-9', label: 'W Pacific', sector: 'wpac',
                  sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' },
     'hw-fd':   { sat: 'himawari9', satLabel: 'Himawari-9', label: 'Full Disk', sector: 'fd',
-                 sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' }
+                 sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' },
+    // the GLOBAL DEFAULT: GOES-19 + GOES-18 + Himawari-9 full disks stitched
+    // nadir-nearest; the Meteosat sector is an HONEST transparent gap
+    global:    { sat: 'geo', satLabel: 'GEO ring', label: 'Global', sector: 'global',
+                 sensor: 'multi-sat', source: 'NOAA + JMA', scanProd: 'GEO-RING' }
   };
   function domainInfo(d) { return DOMAINS[d] || DOMAINS.conus; }
   // palette tag for the unified header's product·palette slot (archive
@@ -48,7 +54,10 @@
     return p.group === 'composite' ? p.key : 'RGB';
   }
   function productSet(domain) {
-    return domainInfo(domain).sat === 'himawari9' ? HW_PRODUCTS : PRODUCTS;
+    var sat = domainInfo(domain).sat;
+    return sat === 'himawari9' ? HW_PRODUCTS
+      : sat === 'geo' ? GEO_PRODUCTS
+      : PRODUCTS;
   }
   function productByKey(k, domain) {
     var set = productSet(domain === undefined ? S.domain : domain);
@@ -190,6 +199,7 @@
       }
       row.onclick = function () {
         if (row.classList.contains('coming')) return;
+        S._touched = true;
         if (window.CockpitFields) window.CockpitFields.clearPaneField(S.active);
         setPaneProduct(S.active, p);
       };
@@ -243,6 +253,7 @@
       el.onclick = function () {
         var d = el.dataset.domain;
         if (el.classList.contains('coming')) return;
+        S._touched = true;
         if (d === 'drawbox') { armDrawBox(); return; }
         if (d === 'selectmap') { armTool('selectmap', el); return; }
         setDomain(d);
@@ -290,6 +301,7 @@
     var crossSat = domainInfo(d).sat !== domainInfo(S.domain).sat;
     S.domain = d;
     markDomain();
+    updateGapBadges();
     if (crossSat) rebuildProductRows();
     // re-point every pane at the (mapped) product key in the new domain; the
     // Himawari full disk crosses the antimeridian, so its panes render world
@@ -305,11 +317,31 @@
     });
   }
 
+  // The Meteosat sector (~10°W–75°E) has no ingested satellite: the global
+  // composite leaves it transparent, and this badge says WHY on the map —
+  // never stretch a neighboring disk across it.
+  function updateGapBadges() {
+    S.panes.forEach(function (pane) {
+      if (!pane || !pane.tv || !pane.tv.map) return;
+      if (S.domain === 'global' && !pane._gapBadge && window.maplibregl) {
+        var el = document.createElement('div');
+        el.className = 'cx-gap-badge';
+        el.textContent = 'Meteosat sector — no ingest yet · coming';
+        pane._gapBadge = new maplibregl.Marker({ element: el })
+          .setLngLat([32, 12]).addTo(pane.tv.map);
+      } else if (S.domain !== 'global' && pane._gapBadge) {
+        pane._gapBadge.remove();
+        pane._gapBadge = null;
+      }
+    });
+  }
+
   // availability probes: each non-default domain self-enables off ITS OWN
   // products.json (the box emitter's on-R2 SSOT) — never faked. A himawari
   // domain succeeding also un-greys the Himawari-9 satellite row.
   function probeDomains() {
-    [{ d: 'fd', url: 'sat/goes19/fd/products.json' },
+    [{ d: 'global', url: 'sat/geo/global/products.json' },
+     { d: 'fd', url: 'sat/goes19/fd/products.json' },
      { d: 'hw-wpac', url: 'sat/himawari9/wpac/products.json' },
      { d: 'hw-fd', url: 'sat/himawari9/fd/products.json' }].forEach(function (spec) {
       fetch(PBASE + spec.url, { cache: 'no-cache' })
@@ -322,14 +354,36 @@
             el.classList.remove('coming');
             var chip = el.querySelector('.cx-chip'); if (chip) chip.remove();
           }
-          if (DOMAINS[spec.d].sat === 'himawari9') {
-            var srow = document.querySelector('#cx-sats [data-sat="himawari9"]');
+          if (DOMAINS[spec.d].sat !== 'goes19') {
+            var srow = document.querySelector('#cx-sats [data-sat="' + DOMAINS[spec.d].sat + '"]');
             if (srow) {
               srow.classList.remove('coming');
               var sc = srow.querySelector('.cx-chip'); if (sc) sc.remove();
             }
           }
           if (spec.d === S.domain) applyAvailability();
+          // GLOBAL BY DEFAULT: the explorer opens on the stitched world when
+          // the composite exists and the user hasn't steered elsewhere. The
+          // probe usually resolves BEFORE pane 0's map is ready — wait for it.
+          if (spec.d === 'global' && !params.get('domain') &&
+              !params.get('product') && !params.get('manifest')) {
+            var tryGlobal = function () {
+              if (S._touched || S.domain !== 'conus') return;
+              var p0 = S.panes[0];
+              if (!p0 || !p0.ready) { setTimeout(tryGlobal, 400); return; }
+              setDomain('global');
+              // "opens on the world": frame the composite once it swaps in
+              var fit = function (n) {
+                var pane = S.panes[0];
+                if (S.domain !== 'global' || S._touched || n > 20) return;
+                if (pane.product && pane.product.id.indexOf('geo-') === 0 &&
+                    pane.tv.frames.length) { pane.tv.fitData(); return; }
+                setTimeout(function () { fit(n + 1); }, 400);
+              };
+              fit(0);
+            };
+            tryGlobal();
+          }
         })
         .catch(function () { /* stays greyed "no data yet" — honest */ });
     });
@@ -489,6 +543,7 @@
         applyOverlayState(tv);
         renderPaneChrome(i);
         wireCameraSync(pane);
+        updateGapBadges();
         tv.map.on('moveend', function () { paneMinMax(i); });   // header min/max readout
       });
     });

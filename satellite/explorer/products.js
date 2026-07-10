@@ -1280,5 +1280,103 @@ window.TVProducts = {
         }
       }
     ]
+  },
+  "geo": {
+    "sector": "global",
+    "products": [
+      {
+        "key": "ir",
+        "id": "geo-global-ir",
+        "path": "sat/geo/global/ir",
+        "title": "Clean IR window · multi-satellite",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "wv",
+        "id": "geo-global-wv",
+        "path": "sat/geo/global/wv",
+        "title": "6.2 µm Water Vapor · multi-satellite",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/wv_tat.png",
+          "ticks": [
+            {
+              "t": "0",
+              "p": 0.0
+            },
+            {
+              "t": "−30",
+              "p": 0.3333
+            },
+            {
+              "t": "−60",
+              "p": 0.6667
+            },
+            {
+              "t": "−90",
+              "p": 1.0
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "irbd",
+        "id": "geo-global-irbd",
+        "path": "sat/geo/global/irbd",
+        "title": "IR Dvorak BD · multi-satellite",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/dvorak.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      }
+    ]
   }
 };
