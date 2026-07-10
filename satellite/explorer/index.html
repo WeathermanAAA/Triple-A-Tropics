@@ -451,16 +451,19 @@
   <!-- ============== RIGHT RAIL: SATELLITE / DOMAIN / REGIONS / OVERLAYS ============== -->
   <aside class="cx-rail cx-right">
     <h3>Satellite</h3>
-    <div>
-      <button type="button" class="cx-item active">GOES-19 · East</button>
+    <div id="cx-sats">
+      <button type="button" class="cx-item active" data-sat="goes19">GOES-19 · East</button>
+      <button type="button" class="cx-item coming" data-sat="himawari9">Himawari-9 · Pacific <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item coming">GOES-18 · West <i class="cx-chip">soon</i></button>
     </div>
     <h3>Domain</h3>
     <div id="cx-domains">
-      <button type="button" class="cx-item active" data-domain="conus">CONUS</button>
-      <button type="button" class="cx-item coming" data-domain="fd">Full Disk <i class="cx-chip">no data yet</i></button>
-      <button type="button" class="cx-item coming" data-domain="meso1">Meso 1 <i class="cx-chip">soon</i></button>
-      <button type="button" class="cx-item coming" data-domain="meso2">Meso 2 <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-item active" data-domain="conus" data-satgroup="goes19">CONUS</button>
+      <button type="button" class="cx-item coming" data-domain="fd" data-satgroup="goes19">Full Disk <i class="cx-chip">no data yet</i></button>
+      <button type="button" class="cx-item coming" data-domain="meso1" data-satgroup="goes19">Meso 1 <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-item coming" data-domain="meso2" data-satgroup="goes19">Meso 2 <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-item coming" data-domain="hw-wpac" data-satgroup="himawari9" style="display:none">W Pacific <i class="cx-chip">no data yet</i></button>
+      <button type="button" class="cx-item coming" data-domain="hw-fd" data-satgroup="himawari9" style="display:none">Full Disk <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item" data-domain="drawbox">Draw a box</button>
       <button type="button" class="cx-item" data-domain="selectmap">Select on map</button>
     </div>

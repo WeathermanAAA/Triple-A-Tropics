@@ -46,9 +46,12 @@
   };
 
   // Sample BT (deg C) at lon/lat for a loaded stamp, or null (off-data / not loaded).
+  // Antimeridian-crossing rasters (Himawari full disk) carry an UNWRAPPED east
+  // bound (E > 180): probe longitudes west of W unwrap by +360 to match.
   PP.sample = function (stamp, lon, lat) {
     var c = this._cache[stamp];
     if (!c) return null;
+    if (this.E > 180 && lon < this.W && lon + 360 <= this.E + 1e-9) lon += 360;
     if (lon < this.W || lon > this.E || lat < this.S || lat > this.N) return null;
     var col = Math.round((lon - this.W) / (this.E - this.W) * (c.w - 1));
     var row = Math.round((this.N - lat) / (this.N - this.S) * (c.h - 1));

@@ -233,7 +233,9 @@
   function stormLabel(s) {
     return s.name + ' · ' + s.basin +
       (s.vmax ? ' · ' + s.vmax + ' kt' : '') +
-      (s.source === 'fd' ? ' · fd BT' : ' · floater (LUT)');
+      (s.source === 'fd' ? ' · fd BT'
+        : s.source === 'wp_bt' ? ' · AHI B13 BT'
+        : ' · floater (LUT)');
   }
   function loadStorms() {
     // land test for ADT's over-land suspension
@@ -268,8 +270,8 @@
   function getSource() {
     if (S.src) return Promise.resolve(S.src);
     var st = S.storm;
-    var src = st.source === 'fd'
-      ? new window.ObjFixSources.FdSource()
+    var src = st.source === 'fd' ? new window.ObjFixSources.FdSource()
+      : st.source === 'wp_bt' ? new window.ObjFixSources.WpBtSource(st.slug)
       : new window.ObjFixSources.FloaterSource(st.slug);
     return src.load().then(function () { S.src = src; S.frames = src.frames(); return src; });
   }
@@ -291,6 +293,14 @@
   function frameField(frame) {
     var st = S.storm;
     if (st.source === 'fd') return S.src.field(frame.stamp, st.lat, st.lon, 4.0);
+    if (st.source === 'wp_bt') {
+      // cut around THIS frame's official-track anchor (floater box center),
+      // falling back to the feed position — a 26 h loop of a mover would
+      // otherwise slide the storm out of a fixed window
+      var la = frame.guessLat != null ? frame.guessLat : st.lat;
+      var lo = frame.guessLon != null ? frame.guessLon : st.lon;
+      return S.src.field(frame.stamp, la, lo, 4.0);
+    }
     return S.src.field(frame);
   }
 
@@ -489,6 +499,7 @@
     var st = S.storm;
     if (!st) return '';
     if (st.source === 'fd') return 'GOES-19 ABI';
+    if (st.source === 'wp_bt') return 'Himawari-9 AHI B13';
     if (st.basin === 'WP') return 'JMA Himawari-9 AHI';
     if (st.basin === 'AL' || st.basin === 'EP') return 'GOES-19 ABI';
     return 'floater imagery';

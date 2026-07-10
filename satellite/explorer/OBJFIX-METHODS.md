@@ -87,15 +87,20 @@ scheme but were paywalled at fetch time; anything not in the Guide is marked.
   CDO is the weakest scene; per-estimate RMSE figure UNCONFIRMED (2019 paper
   paywalled). The UI must show scene type + these skill tiers with the number.
 
-## C. Data path (established this session)
+## C. Data path (updated 2026-07-10 — Himawari suite landed)
 
-- AL/EP storms: calibrated BT from the fd pyramid's per-frame `bt.png`
+- AL/EP storms: calibrated BT from the GOES fd pyramid's per-frame `bt.png`
   (lossless u16, decode = BTProbe's formula) — clean input for both methods.
-- WP storms (e.g. BAVI): floater frames are rainbow_ir-colorized WebP with
-  baked chrome; BT recovery = crop chrome margins + invert the rainbow_ir
-  LUT (norm −95→40 °C, verified against the generated colorbar ticks);
-  coastline-pixel contamination must be median-filled and the inversion
-  labeled as degraded-precision input in the confidence readout.
+- WP storms (e.g. BAVI): calibrated AHI **Band-13** BT from the himawari9
+  WPAC suite's per-frame `bt.png` (`shadow/sat/himawari9/wpac/ir/{t}/bt.png`,
+  same u16 encoding, 2560 px ≈ 3.7 km). Per-frame FIRST-GUESS anchors still
+  come from the floater manifest's box centers (the official-track anchor).
+  The rainbow_ir LUT inversion is RETIRED for WP **when the suite manifest
+  is live**; it remains the labeled degraded-precision fallback until the
+  box emits (and for CP / any basin without a suite domain).
+- Live BT is direct per-basin Band 13 (GOES ABI / Himawari AHI). MergIR and
+  GridSat are ARCHIVE-ONLY (~24 h latency) — reserved for the Time Machine /
+  global composite tier, never the live intensity path.
 - First guess + storm list: `feeds/global_storms.geojson` +
   `floaters/manifest.json` (lat/lon/intensity per storm, live).
 - Center-track output: reusable JSON (stamp, lat, lon, confidence, method

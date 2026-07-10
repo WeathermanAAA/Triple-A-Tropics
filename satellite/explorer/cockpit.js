@@ -17,16 +17,43 @@
   'use strict';
 
   var PRODUCTS = (window.TVProducts && window.TVProducts.products) || [];
+  var HW_PRODUCTS = (window.TVProducts && window.TVProducts.himawari9 &&
+                     window.TVProducts.himawari9.products) || [];
   var PBASE = window.TVProducts ? window.TVProducts.base : '';
   var params = new URLSearchParams(location.search);
   var $ = function (id) { return document.getElementById(id); };
 
-  function productByKey(k) {
-    for (var i = 0; i < PRODUCTS.length; i++) if (PRODUCTS[i].key === k) return PRODUCTS[i];
+  // Domains are satellite-scoped: each row names its satellite, display
+  // labels, and the sector token substituted into the product path (the
+  // products.js export sector is conus for goes19, wpac for himawari9).
+  var DOMAINS = {
+    conus:     { sat: 'goes19', satLabel: 'GOES-19', label: 'CONUS', sector: 'conus' },
+    fd:        { sat: 'goes19', satLabel: 'GOES-19', label: 'Full Disk', sector: 'fd' },
+    'hw-wpac': { sat: 'himawari9', satLabel: 'Himawari-9', label: 'W Pacific', sector: 'wpac' },
+    'hw-fd':   { sat: 'himawari9', satLabel: 'Himawari-9', label: 'Full Disk', sector: 'fd' }
+  };
+  function domainInfo(d) { return DOMAINS[d] || DOMAINS.conus; }
+  function productSet(domain) {
+    return domainInfo(domain).sat === 'himawari9' ? HW_PRODUCTS : PRODUCTS;
+  }
+  function productByKey(k, domain) {
+    var set = productSet(domain === undefined ? S.domain : domain);
+    for (var i = 0; i < set.length; i++) if (set[i].key === k) return set[i];
     return null;
   }
+  // cross-satellite field continuity: same key, else C##<->B## by number
+  // (the AHI green B02 and the ABI cirrus C04 have no counterpart), else ir.
+  function mapKeyAcross(key, toDomain) {
+    if (productByKey(key, toDomain)) return key;
+    var m = /^([cb])(\d\d)$/.exec(key);
+    if (m) {
+      var alt = (m[1] === 'c' ? 'b' : 'c') + m[2];
+      if (productByKey(alt, toDomain)) return alt;
+    }
+    return 'ir';
+  }
   function manifestUrlFor(p, domain) {
-    var path = (domain === 'fd') ? p.path.replace('/conus/', '/fd/') : p.path;
+    var path = p.path.replace(/\/(conus|fd|wpac)\//, '/' + domainInfo(domain).sector + '/');
     return PBASE + path + '/latest_times.json';
   }
   function fmtStamp(s) {
@@ -39,9 +66,9 @@
   // STATE
   // ========================================================================
   var S = {
-    domain: 'conus',            // conus | fd (meso1/2 + goes18 are "coming")
-    fdAvailable: false,
-    available: null,            // Set of product ids the box has actually emitted
+    domain: 'conus',            // DOMAINS key (meso1/2 + goes18 are "coming")
+    avail: {},                  // per-domain Set of emitted product ids (null = unprobed)
+    available: null,            // conus Set (kept name: boot availability ground truth)
     panes: [],                  // [{tv, el, product, ready}] — pane 0 persistent
     active: 0,                  // active pane index (field/region target)
     playing: false, fps: 6, dwell: true, linked: true,
@@ -56,13 +83,13 @@
   // ========================================================================
   // LEFT RAIL — field selector (tabs: RGB/Composites | Channels)
   // ========================================================================
-  var CH_RE = /^C(\d\d) · ([\d.]+ µm) \((.+)\)$/;
+  var CH_RE = /^([CB])(\d\d) · ([\d.]+ µm) \((.+)\)$/;
   function chParts(p) {
     var m = CH_RE.exec(p.title);
     if (!m) return null;
-    var met = m[3];
+    var met = m[4];
     if (p.key === 'irbd') met = 'Dvorak BD';
-    return { num: 'C' + m[1], wl: m[2], met: met };
+    return { num: m[1] + m[2], wl: m[3], met: met };
   }
 
   // Microwave + Scatterometer are NATIVE pane fields (cockpit_fields.js):
@@ -114,16 +141,30 @@
       });
     });
 
-    // composites lead the RGB tab (True Color, Sandwich), then the RGBs;
-    // channels keep their products.js order (Clean IR first, then C01..C16).
-    var ordered = PRODUCTS.filter(function (p) { return p.group === 'composite'; })
-      .concat(PRODUCTS.filter(function (p) { return p.group === 'rgb'; }))
-      .concat(PRODUCTS.filter(function (p) { return p.group === 'channel'; }));
+    rebuildProductRows();
+    switchTab('rgb');
+  }
+
+  // tile-product rows for the ACTIVE satellite's product set — rebuilt on a
+  // cross-satellite domain switch (composites lead the RGB tab, then RGBs;
+  // channels keep their products.js order: Clean IR first, then the bands).
+  function rebuildProductRows() {
+    var lists = { rgb: $('cx-list-rgb'), ch: $('cx-list-ch') };
+    ['rgb', 'ch'].forEach(function (k) {
+      lists[k].querySelectorAll('.cx-field:not([data-embed])').forEach(function (el) {
+        el.remove();
+      });
+    });
+    var set = productSet(S.domain);
+    var tmOK = domainInfo(S.domain).sat === 'goes19';   // archive backend is GOES-East
+    var ordered = set.filter(function (p) { return p.group === 'composite'; })
+      .concat(set.filter(function (p) { return p.group === 'rgb'; }))
+      .concat(set.filter(function (p) { return p.group === 'channel'; }));
     ordered.forEach(function (p) {
       var isCh = p.group === 'channel';
       var row = document.createElement('button');
       row.type = 'button'; row.className = 'cx-field'; row.dataset.key = p.key;
-      if (TM_MAP[p.key]) row.dataset.tm = '1';   // archive-servable in Time Machine
+      if (tmOK && TM_MAP[p.key]) row.dataset.tm = '1';   // archive-servable in Time Machine
       var ch = isCh ? chParts(p) : null;
       if (ch) {
         row.innerHTML = '<b>' + ch.met + '</b><span class="cx-meta">' +
@@ -140,7 +181,8 @@
       };
       lists[isCh ? 'ch' : 'rgb'].appendChild(row);
     });
-    switchTab('rgb');
+    applyAvailability();
+    markFieldActive();
   }
 
   function markFieldActive() {
@@ -153,16 +195,28 @@
     });
   }
 
+  function availSet(domain) {
+    // the honesty ground truth for a domain: its own products.json id Set
+    // (null until the probe lands -> rows stay ungated rather than lying)
+    if (domain === 'conus') return S.available;
+    return S.avail[domain] || null;
+  }
   function applyAvailability() {
-    if (!S.available) return;
+    var set = availSet(S.domain);
+    if (!set) return;
     document.querySelectorAll('.cx-field').forEach(function (el) {
       if (el.dataset.embed) return;   // MW/ASCAT rows: their own manifests gate them
       var p = productByKey(el.dataset.key);
-      var ok = p && S.available.has(p.id);
+      var ok = p && set.has(p.id);
       el.classList.toggle('coming', !ok);
       var meta = el.querySelector('.cx-meta');
       if (!ok && meta && meta.textContent.indexOf('no data yet') < 0) {
         meta.innerHTML += ' · <i class="cx-chip">no data yet</i>';
+      } else if (ok && meta) {
+        var chip = meta.querySelector('.cx-chip');
+        if (chip && chip.textContent === 'no data yet') {
+          meta.innerHTML = meta.innerHTML.replace(/ · <i class="cx-chip">no data yet<\/i>/, '');
+        }
       }
     });
   }
@@ -171,7 +225,6 @@
   // RIGHT RAIL — satellite / domain / regions / overlays
   // ========================================================================
   function buildDomainRail() {
-    // satellite rows are static in the HTML (GOES-19 on, GOES-18 coming).
     document.querySelectorAll('#cx-domains .cx-item').forEach(function (el) {
       el.onclick = function () {
         var d = el.dataset.domain;
@@ -181,35 +234,91 @@
         setDomain(d);
       };
     });
+    // satellite rows scope the domain list; a satellite with no emitted
+    // domain yet stays greyed (probeDomains un-greys it mechanically)
+    document.querySelectorAll('#cx-sats .cx-item[data-sat]').forEach(function (el) {
+      el.onclick = function () {
+        if (el.classList.contains('coming')) return;
+        var sat = el.dataset.sat;
+        if (sat === domainInfo(S.domain).sat) return;
+        var first = null;
+        Object.keys(DOMAINS).forEach(function (d) {
+          if (first) return;
+          var row = document.querySelector('[data-domain="' + d + '"]');
+          if (DOMAINS[d].sat === sat && row && !row.classList.contains('coming')) first = d;
+        });
+        if (first) setDomain(first);
+        else flash('no ' + (sat === 'himawari9' ? 'Himawari-9' : sat) + ' data yet — box emit pending');
+      };
+    });
   }
   function markDomain() {
+    var sat = domainInfo(S.domain).sat;
     document.querySelectorAll('#cx-domains .cx-item').forEach(function (el) {
       el.classList.toggle('active', el.dataset.domain === S.domain);
+      // domain rows show only for the active satellite (tools always show)
+      var grp = el.dataset.satgroup;
+      if (grp) el.style.display = (grp === sat) ? '' : 'none';
+    });
+    document.querySelectorAll('#cx-sats .cx-item[data-sat]').forEach(function (el) {
+      el.classList.toggle('active', el.dataset.sat === sat);
     });
   }
 
   function setDomain(d) {
-    if (d === S.domain) return;
-    if (d === 'fd' && !S.fdAvailable) return;
+    if (d === S.domain || !DOMAINS[d]) return;
+    var row = document.querySelector('[data-domain="' + d + '"]');
+    if (row && row.classList.contains('coming')) return;
+    if (S.tm.on && domainInfo(d).sat !== 'goes19') {
+      flash('Time Machine covers the GOES-East archive — exit it to view Himawari');
+      return;
+    }
+    var crossSat = domainInfo(d).sat !== domainInfo(S.domain).sat;
     S.domain = d;
     markDomain();
-    // re-point every pane at the same product key in the new domain
+    if (crossSat) rebuildProductRows();
+    // re-point every pane at the (mapped) product key in the new domain; the
+    // Himawari full disk crosses the antimeridian, so its panes render world
+    // copies (the eastern lobe lives at wrapped longitudes).
+    var copies = (d === 'hw-fd');
     S.panes.forEach(function (pane, i) {
-      if (pane.product) setPaneProduct(i, pane.product, true);
+      if (pane.tv && pane.tv.map && pane.tv.map.setRenderWorldCopies)
+        pane.tv.map.setRenderWorldCopies(copies);
+      if (pane.product) {
+        var p = productByKey(mapKeyAcross(pane.product.key, d), d) || productByKey('ir', d);
+        setPaneProduct(i, p, true);
+      }
     });
   }
 
-  function checkFullDisk() {
-    fetch(PBASE + 'sat/goes19/fd/products.json', { cache: 'no-cache' })
-      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-      .then(function (idx) {
-        if (!idx || !idx.count) throw 0;
-        S.fdAvailable = true;
-        var el = document.querySelector('[data-domain="fd"]');
-        el.classList.remove('coming');
-        var chip = el.querySelector('.cx-chip'); if (chip) chip.remove();
-      })
-      .catch(function () { /* stays greyed "no data yet" — honest */ });
+  // availability probes: each non-default domain self-enables off ITS OWN
+  // products.json (the box emitter's on-R2 SSOT) — never faked. A himawari
+  // domain succeeding also un-greys the Himawari-9 satellite row.
+  function probeDomains() {
+    [{ d: 'fd', url: 'sat/goes19/fd/products.json' },
+     { d: 'hw-wpac', url: 'sat/himawari9/wpac/products.json' },
+     { d: 'hw-fd', url: 'sat/himawari9/fd/products.json' }].forEach(function (spec) {
+      fetch(PBASE + spec.url, { cache: 'no-cache' })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (idx) {
+          if (!idx || !idx.count) throw 0;
+          S.avail[spec.d] = new Set((idx.products || []).map(function (p) { return p.id; }));
+          var el = document.querySelector('[data-domain="' + spec.d + '"]');
+          if (el) {
+            el.classList.remove('coming');
+            var chip = el.querySelector('.cx-chip'); if (chip) chip.remove();
+          }
+          if (DOMAINS[spec.d].sat === 'himawari9') {
+            var srow = document.querySelector('#cx-sats [data-sat="himawari9"]');
+            if (srow) {
+              srow.classList.remove('coming');
+              var sc = srow.querySelector('.cx-chip'); if (sc) sc.remove();
+            }
+          }
+          if (spec.d === S.domain) applyAvailability();
+        })
+        .catch(function () { /* stays greyed "no data yet" — honest */ });
+    });
   }
 
   function buildRegionRail() {
@@ -355,6 +464,9 @@
         tv.enableInspector();
         tv.map.doubleClickZoom.disable();
         tv.map.on('dblclick', function () { tv.fitData(); });
+        // antimeridian-crossing domain (Himawari full disk): world copies on
+        if (S.domain === 'hw-fd' && tv.map.setRenderWorldCopies)
+          tv.map.setRenderWorldCopies(true);
         applyOverlayState(tv);
         renderPaneChrome(i);
         wireCameraSync(pane);
@@ -470,8 +582,9 @@
       }
       badge.textContent = lch.layerBadge;
     } else if (badge) badge.remove();
+    var di = domainInfo(S.domain);
     $('cx-pht-' + i).textContent =
-      'GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') + ' · ' + p.title;
+      di.satLabel + ' · ' + di.label + ' · ' + p.title;
     var s = stamp ||
       (pane.tv && pane.tv.frames && pane.tv.frames[pane.tv.frameIdx]) ||
       (pane.tv && pane.tv.manifest && pane.tv.manifest.latest);
@@ -529,11 +642,12 @@
     if (n > cur) {
       for (var i = cur; i < n; i++) {
         var used = S.panes.filter(Boolean).map(function (p) { return p.product.key; });
+        var av = availSet(S.domain);
         var pick = PANE_DEFAULTS.filter(function (k) {
           var p = productByKey(k);
-          return used.indexOf(k) < 0 && p && (!S.available || S.available.has(p.id));
+          return used.indexOf(k) < 0 && p && (!av || av.has(p.id));
         })[0] || 'ir';
-        makePane(i, productByKey(pick) || PRODUCTS[0]);
+        makePane(i, productByKey(pick) || productSet(S.domain)[0]);
       }
     } else {
       for (var j = cur - 1; j >= n; j--) {
@@ -564,7 +678,8 @@
       tmRenderOnce();
       return;
     }
-    if (S.available && !S.available.has(p.id) && S.domain === 'conus') return;
+    var av = availSet(S.domain);
+    if (av && !av.has(p.id)) return;
     flash('Loading ' + p.title + '…', true);
     pane.tv.setProduct(manifestUrlFor(p, S.domain), p).then(function () {
       pane.product = p;
@@ -573,8 +688,7 @@
       if (i === 0) drawTimeline();
       flash('');
     }).catch(function () {
-      if (forceDomain) flash('no ' + (S.domain === 'fd' ? 'full-disk' : S.domain) +
-                             ' data yet for ' + p.title);
+      if (forceDomain) flash('no ' + domainInfo(S.domain).label + ' data yet for ' + p.title);
     });
   }
 
@@ -962,9 +1076,10 @@
       return;
     }
     var p = pane.product;
+    var dinf = domainInfo(S.domain);
     ctx.fillStyle = '#dbe3ec';
     ctx.font = '700 ' + f(13) + 'px Metropolis,system-ui,sans-serif';
-    ctx.fillText('GOES-19 · ' + (S.domain === 'fd' ? 'Full Disk' : 'CONUS') + ' · ' + p.title,
+    ctx.fillText(dinf.satLabel + ' · ' + dinf.label + ' · ' + p.title,
                  f(12), f(9));
     ctx.fillStyle = '#9aa8b8';
     ctx.font = '500 ' + f(10.5) + 'px Metropolis,system-ui,sans-serif';
@@ -1106,9 +1221,16 @@
       window.CockpitFields.syncControls();
     }
     setPaneCount(1);
-    var p = productByKey('ir') || PRODUCTS[0];
-    if (S.domain !== 'conus') { S.domain = 'conus'; markDomain(); }
-    if (S.panes[0].product.key !== p.key) setPaneProduct(0, p);
+    if (S.domain !== 'conus') {
+      var wasCross = domainInfo(S.domain).sat !== 'goes19';
+      S.domain = 'conus'; markDomain();
+      if (wasCross) rebuildProductRows();
+      var pane0 = S.panes[0];
+      if (pane0 && pane0.tv && pane0.tv.map && pane0.tv.map.setRenderWorldCopies)
+        pane0.tv.map.setRenderWorldCopies(false);
+    }
+    var p = productByKey('ir', 'conus') || PRODUCTS[0];
+    if (S.panes[0].product.id !== p.id) setPaneProduct(0, p);
     var tv = lead();
     if (tv && tv.map) { tv.fitData(); tv.clearPins(); clockShow(tv.frames.length - 1); }
     history.replaceState(null, '', location.pathname);
@@ -1209,6 +1331,10 @@
     return tmFetch(body);
   }
   function enterTM() {
+    if (domainInfo(S.domain).sat !== 'goes19') {
+      flash('Time Machine covers the GOES-East archive — switch to a GOES-19 domain first');
+      return;
+    }
     stopClock(); disarmTools();
     S.tm.on = true;
     document.body.classList.add('cx-tm-mode');
@@ -1456,15 +1582,17 @@
       }
     });
 
+    var urlDomain = params.get('domain');
+    S.domain = DOMAINS[urlDomain] ? urlDomain : 'conus';
     var bootKey = params.get('product') || 'ir';
-    var p0 = productByKey(bootKey) || productByKey('ir') || PRODUCTS[0];
-    S.domain = (params.get('domain') === 'fd') ? 'fd' : 'conus';
+    var p0 = productByKey(bootKey) || productByKey('ir') || productSet(S.domain)[0];
+    if (domainInfo(S.domain).sat !== 'goes19') rebuildProductRows();
     var pane0 = makePane(0, p0);
     // dev override: ?manifest= forces pane 0's manifest verbatim
     if (params.get('manifest')) pane0.tv.manifestUrl = params.get('manifest');
     markDomain(); setActivePane(0); updateHeader(); markFieldActive();
 
-    // availability ground truth (ONE fetch) + fd probe
+    // availability ground truth (ONE fetch per sector index) + domain probes
     fetch(PBASE + 'sat/goes19/conus/products.json', { cache: 'no-cache' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (idx) {
@@ -1472,7 +1600,7 @@
         S.available = new Set(idx.products.map(function (r) { return r.id; }));
         applyAvailability();
       }).catch(function () {});
-    checkFullDisk();
+    probeDomains();
 
     // US states region group once the shared geojson lands (same loader the
     // furniture uses; cached by the browser so this costs ~nothing extra)

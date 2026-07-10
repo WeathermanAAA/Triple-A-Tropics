@@ -1,15 +1,21 @@
 /* objfix_sources.js — BT field extraction for the objective center/intensity
  * feature (browser-only; feeds satellite/explorer/objfix.js).
  *
- * Two data paths (OBJFIX-METHODS.md §C):
- *  - AL/EP: the fd pyramid's per-frame calibrated bt.png (lossless u16,
+ * Data paths (OBJFIX-METHODS.md §C, updated for the Himawari suite):
+ *  - AL/EP: the GOES fd pyramid's per-frame calibrated bt.png (lossless u16,
  *    BTProbe's formula) — clean input.
- *  - WP (+ any floater storm): the floater's rainbow_ir-colorized WebP frames
- *    with baked chrome. BT recovery = crop the render.py data rect + invert
- *    the rainbow_ir LUT. The LUT is SELF-CALIBRATED per frame from the baked
- *    colorbar strip (linear Normalize(-95, 40) °C, tat_palettes), so a future
- *    palette repin can't silently skew the inversion. DEGRADED-PRECISION
- *    input by construction — surfaced in every readout.
+ *  - WP: the himawari9 WPAC suite's per-frame calibrated AHI Band-13 bt.png
+ *    (same u16 encoding, ~3.7 km) — clean input; per-frame FIRST-GUESS
+ *    anchors still come from the floater manifest's box centers (the
+ *    official-track anchor — NEVER chained fixes). Live BT is direct
+ *    per-basin Band 13 (GOES ABI / Himawari AHI); MergIR + GridSat stay
+ *    ARCHIVE-ONLY (~24 h latency) for the Time Machine / global composite.
+ *  - Floater LUT fallback (WP only, until the box emits the himawari suite;
+ *    + CP and any basin without a suite domain): the floater's rainbow_ir-
+ *    colorized WebP frames with baked chrome. BT recovery = crop the
+ *    render.py data rect + invert the rainbow_ir LUT, SELF-CALIBRATED per
+ *    frame from the baked colorbar strip. DEGRADED-PRECISION input by
+ *    construction — surfaced in every readout.
  *
  * Frame geometry (verified against tsr render.py + live graticule, ±2 px):
  *  - figure: 12 in × 12 in (square 12° floater box) -> WebP 1056×1056
@@ -29,6 +35,7 @@
 
   var CDN = 'https://cdn.triple-a-tropics.com';
   var FD_MANIFEST = CDN + '/shadow/sat/goes19/fd/ir/latest_times.json';
+  var WP_MANIFEST = CDN + '/shadow/sat/himawari9/wpac/ir/latest_times.json';
   var KELVIN = 273.15;
 
   // render.py layout fractions (see header)
@@ -60,15 +67,19 @@
   }
 
   // ========================================================================
-  // AL/EP — fd bt.png (calibrated u16)
+  // Suite bt.png sources (calibrated u16): GOES fd for AL/EP, himawari9
+  // wpac AHI B13 for WP — one decoder, parameterized by manifest.
   // ========================================================================
-  function FdSource() {
+  function FdSource(manifestUrl, qualityTag, diskName) {
+    this.manifestUrl = manifestUrl || FD_MANIFEST;
+    this.qualityTag = qualityTag || 'GOES fd calibrated BT (u16)';
+    this.diskName = diskName || 'GOES-East';
     this.manifest = null;
-    this._cache = {};   // stamp -> decoded full-disk field (shared subgrids cut per storm)
+    this._cache = {};   // stamp -> decoded full-domain field (subgrids cut per storm)
   }
   FdSource.prototype.load = function () {
     var self = this;
-    return fetchJson(FD_MANIFEST).then(function (m) { self.manifest = m; return m; });
+    return fetchJson(this.manifestUrl).then(function (m) { self.manifest = m; return m; });
   };
   FdSource.prototype.frames = function () {
     return this.manifest ? (this.manifest.times || []).map(function (t) {
@@ -90,19 +101,28 @@
         });
     return p.then(function (id) {
       var W = bt.bounds[0], S = bt.bounds[1], E = bt.bounds[2], N = bt.bounds[3];
+      // antimeridian-crossing domain (unwrapped E > 180): unwrap the probe lon
+      if (E > 180 && lon < W && lon + 360 <= E + 1e-9) lon += 360;
       var nx = id.width, ny = id.height;
       var dLon = (E - W) / (nx - 1), dLat = (N - S) / (ny - 1);
       var j0 = Math.max(0, Math.floor((lon - halfDeg - W) / dLon));
       var j1 = Math.min(nx - 1, Math.ceil((lon + halfDeg - W) / dLon));
       var i0 = Math.max(0, Math.floor((N - (lat + halfDeg)) / dLat));
       var i1 = Math.min(ny - 1, Math.ceil((N - (lat - halfDeg)) / dLat));
-      if (j1 <= j0 || i1 <= i0) throw new Error('storm outside the GOES-East disk');
+      if (j1 <= j0 || i1 <= i0) throw new Error('storm outside the ' + self.diskName + ' domain');
       var nr = i1 - i0 + 1, nc = j1 - j0 + 1;
       var latArr = new Float64Array(nr), lonArr = new Float64Array(nc);
       var out = new Float64Array(nr * nc);
       for (var i = 0; i < nr; i++) latArr[i] = N - (i0 + i) * dLat;
-      for (var j = 0; j < nc; j++) lonArr[j] = W + (j0 + j) * dLon;
-      var d = id.data.data;
+      for (var j = 0; j < nc; j++) {
+        var lj = W + (j0 + j) * dLon;
+        lonArr[j] = lj > 180 ? lj - 360 : lj;   // wrap back for display/geodesy
+      }
+      // NOTE: `id` IS an ImageData (imageData(im).data) — its pixel buffer is
+      // id.data. The original fd path read id.data.data (undefined) — a latent
+      // TypeError that never fired live because every storm to date had a
+      // floater; caught when the WP AHI-B13 path first exercised this decode.
+      var d = id.data;
       for (i = 0; i < nr; i++) {
         for (j = 0; j < nc; j++) {
           var px = ((i0 + i) * nx + (j0 + j)) * 4;
@@ -114,10 +134,52 @@
       return {
         latArr: latArr, lonArr: lonArr, bt: out, nr: nr, nc: nc,
         resKm: dLat * 111,
-        inputQuality: 'fd calibrated BT (u16) · ~' + Math.round(dLat * 111) + ' km input',
+        inputQuality: self.qualityTag + ' · ~' + Math.round(dLat * 111) + ' km input',
         degraded: false,
         extent: [lonArr[0], latArr[nr - 1], lonArr[nc - 1], latArr[0]]
       };
+    });
+  };
+
+  // WP: himawari9 wpac AHI B13 BT frames + per-frame OFFICIAL-TRACK anchors
+  // from the floater manifest (the floater box center follows agency fixes;
+  // ARCHER's penalty term anchors to it — never to its own prior fixes).
+  function WpBtSource(slug) {
+    FdSource.call(this, WP_MANIFEST,
+      'Himawari-9 AHI B13 calibrated BT (u16)', 'Himawari WPAC');
+    this.slug = slug || null;
+    this._anchors = [];   // [{timeMs, lat, lon}] from the floater ir frames
+  }
+  WpBtSource.prototype = Object.create(FdSource.prototype);
+  WpBtSource.prototype.constructor = WpBtSource;
+  WpBtSource.prototype.load = function () {
+    var self = this;
+    var anchors = !this.slug ? Promise.resolve(null)
+      : fetchJson(CDN + '/floaters/' + this.slug + '/manifest.json')
+          .catch(function () { return null; });
+    return Promise.all([FdSource.prototype.load.call(this), anchors])
+      .then(function (r) {
+        var b = r[1] && r[1].bands && r[1].bands.ir;
+        self._anchors = (b && b.frames || []).filter(function (f) {
+          return f.bounds && f.bounds.length === 4;
+        }).map(function (f) {
+          var ext = displayExtent(f.bounds);
+          return { timeMs: Date.parse(f.t),
+                   lat: (ext[1] + ext[3]) / 2, lon: (ext[0] + ext[2]) / 2 };
+        });
+        return r[0];
+      });
+  };
+  WpBtSource.prototype.frames = function () {
+    var self = this;
+    return FdSource.prototype.frames.call(this).map(function (f) {
+      var best = null, bd = 45 * 60e3;   // official anchor within ±45 min
+      for (var k = 0; k < self._anchors.length; k++) {
+        var d = Math.abs(self._anchors[k].timeMs - f.timeMs);
+        if (d < bd) { bd = d; best = self._anchors[k]; }
+      }
+      if (best) { f.guessLat = best.lat; f.guessLon = best.lon; }
+      return f;
     });
   };
 
@@ -282,7 +344,12 @@
   function listStorms() {
     var feed = fetchJson(CDN + '/global_storms.geojson').catch(function () { return null; });
     var flt = fetchJson(CDN + '/floaters/manifest.json').catch(function () { return null; });
-    return Promise.all([feed, flt]).then(function (r) {
+    // is the himawari9 wpac B13 suite live? (box emit) — decides the WP path
+    var wp = fetchJson(WP_MANIFEST).then(function (m) {
+      return (m && m.bt && m.times && m.times.length) ? true : false;
+    }).catch(function () { return false; });
+    return Promise.all([feed, flt, wp]).then(function (r) {
+      var wpBtLive = r[2];
       var markers = {};
       if (r[0]) {
         (r[0].features || []).forEach(function (f) {
@@ -302,12 +369,17 @@
         (r[1].storms || []).forEach(function (s) {
           var mk = markers[String(s.id)] || {};
           var basin = String(s.basin || '').toUpperCase();
+          // WP live BT = the himawari9 wpac AHI B13 raster (rainbow_ir LUT
+          // inversion RETIRED for WP once the suite is on R2; the floater
+          // path remains the honest fallback until the box emits, and for
+          // basins with no suite domain)
+          var src = (basin === 'WP' && wpBtLive) ? 'wp_bt' : 'floater';
           storms.push({
             slug: s.slug, id: s.id, name: s.name || mk.name, basin: basin,
             lat: mk.lat != null ? mk.lat : s.lat,
             lon: mk.lon != null ? mk.lon : s.lon,
             vmax: mk.vmax || 0, category: mk.category || '',
-            source: 'floater',
+            source: src,
             domainID: basin === 'AL' ? 0 : 1,
             basinID: basin === 'AL' ? 0 : (basin === 'EP' || basin === 'CP' ? 2 : 1)
           });
@@ -402,6 +474,7 @@
 
   window.ObjFixSources = {
     FdSource: FdSource,
+    WpBtSource: WpBtSource,
     FloaterSource: FloaterSource,
     listStorms: listStorms,
     makeLandTest: makeLandTest,

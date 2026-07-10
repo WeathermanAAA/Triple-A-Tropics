@@ -641,5 +641,644 @@ window.TVProducts = {
         "cap": "Brightness temperature (°C)"
       }
     }
-  ]
+  ],
+  "himawari9": {
+    "sector": "wpac",
+    "products": [
+      {
+        "key": "ir",
+        "id": "himawari9-wpac-ir",
+        "path": "sat/himawari9/wpac/ir",
+        "title": "B13 · 10.4 µm (Clean IR)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "sandwich",
+        "id": "himawari9-wpac-sandwich",
+        "path": "sat/himawari9/wpac/sandwich",
+        "title": "Sandwich (VIS × IR)",
+        "group": "composite",
+        "bt": true,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "truecolor",
+        "id": "himawari9-wpac-truecolor",
+        "path": "sat/himawari9/wpac/truecolor",
+        "title": "True Color (GeoColor-lite)",
+        "group": "composite",
+        "bt": false,
+        "dayOnly": false,
+        "cbar": null
+      },
+      {
+        "key": "airmass",
+        "id": "himawari9-wpac-airmass",
+        "path": "sat/himawari9/wpac/airmass",
+        "title": "Air Mass RGB",
+        "group": "rgb",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": null
+      },
+      {
+        "key": "ash",
+        "id": "himawari9-wpac-ash",
+        "path": "sat/himawari9/wpac/ash",
+        "title": "Ash RGB",
+        "group": "rgb",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": null
+      },
+      {
+        "key": "daycloudphase",
+        "id": "himawari9-wpac-daycloudphase",
+        "path": "sat/himawari9/wpac/daycloudphase",
+        "title": "Day Cloud Phase Distinction",
+        "group": "rgb",
+        "bt": true,
+        "dayOnly": true,
+        "cbar": null
+      },
+      {
+        "key": "dayconvection",
+        "id": "himawari9-wpac-dayconvection",
+        "path": "sat/himawari9/wpac/dayconvection",
+        "title": "Day Convection RGB",
+        "group": "rgb",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": null
+      },
+      {
+        "key": "daylandcloud",
+        "id": "himawari9-wpac-daylandcloud",
+        "path": "sat/himawari9/wpac/daylandcloud",
+        "title": "Day Land Cloud (Natural Color)",
+        "group": "rgb",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": null
+      },
+      {
+        "key": "snowfog",
+        "id": "himawari9-wpac-snowfog",
+        "path": "sat/himawari9/wpac/snowfog",
+        "title": "Day Snow-Fog RGB",
+        "group": "rgb",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": null
+      },
+      {
+        "key": "dust",
+        "id": "himawari9-wpac-dust",
+        "path": "sat/himawari9/wpac/dust",
+        "title": "Dust RGB",
+        "group": "rgb",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": null
+      },
+      {
+        "key": "firetemp",
+        "id": "himawari9-wpac-firetemp",
+        "path": "sat/himawari9/wpac/firetemp",
+        "title": "Fire Temperature RGB",
+        "group": "rgb",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": null
+      },
+      {
+        "key": "nightmicro",
+        "id": "himawari9-wpac-nightmicro",
+        "path": "sat/himawari9/wpac/nightmicro",
+        "title": "Nighttime Microphysics",
+        "group": "rgb",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": null
+      },
+      {
+        "key": "b01",
+        "id": "himawari9-wpac-b01",
+        "path": "sat/himawari9/wpac/b01",
+        "title": "B01 · 0.47 µm (Blue)",
+        "group": "channel",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/gray_refl.png",
+          "ticks": [
+            {
+              "t": "100",
+              "p": 0.0
+            },
+            {
+              "t": "50",
+              "p": 0.5
+            },
+            {
+              "t": "0",
+              "p": 1.0
+            }
+          ],
+          "cap": "Reflectance (%)"
+        }
+      },
+      {
+        "key": "b02",
+        "id": "himawari9-wpac-b02",
+        "path": "sat/himawari9/wpac/b02",
+        "title": "B02 · 0.51 µm (Green)",
+        "group": "channel",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/gray_refl.png",
+          "ticks": [
+            {
+              "t": "100",
+              "p": 0.0
+            },
+            {
+              "t": "50",
+              "p": 0.5
+            },
+            {
+              "t": "0",
+              "p": 1.0
+            }
+          ],
+          "cap": "Reflectance (%)"
+        }
+      },
+      {
+        "key": "b03",
+        "id": "himawari9-wpac-b03",
+        "path": "sat/himawari9/wpac/b03",
+        "title": "B03 · 0.64 µm (Red visible)",
+        "group": "channel",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/gray_refl.png",
+          "ticks": [
+            {
+              "t": "100",
+              "p": 0.0
+            },
+            {
+              "t": "50",
+              "p": 0.5
+            },
+            {
+              "t": "0",
+              "p": 1.0
+            }
+          ],
+          "cap": "Reflectance (%)"
+        }
+      },
+      {
+        "key": "b04",
+        "id": "himawari9-wpac-b04",
+        "path": "sat/himawari9/wpac/b04",
+        "title": "B04 · 0.86 µm (Veggie NIR)",
+        "group": "channel",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/gray_refl.png",
+          "ticks": [
+            {
+              "t": "100",
+              "p": 0.0
+            },
+            {
+              "t": "50",
+              "p": 0.5
+            },
+            {
+              "t": "0",
+              "p": 1.0
+            }
+          ],
+          "cap": "Reflectance (%)"
+        }
+      },
+      {
+        "key": "b05",
+        "id": "himawari9-wpac-b05",
+        "path": "sat/himawari9/wpac/b05",
+        "title": "B05 · 1.6 µm (Snow/Ice)",
+        "group": "channel",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/gray_refl.png",
+          "ticks": [
+            {
+              "t": "100",
+              "p": 0.0
+            },
+            {
+              "t": "50",
+              "p": 0.5
+            },
+            {
+              "t": "0",
+              "p": 1.0
+            }
+          ],
+          "cap": "Reflectance (%)"
+        }
+      },
+      {
+        "key": "b06",
+        "id": "himawari9-wpac-b06",
+        "path": "sat/himawari9/wpac/b06",
+        "title": "B06 · 2.3 µm (Cloud particle)",
+        "group": "channel",
+        "bt": false,
+        "dayOnly": true,
+        "cbar": {
+          "img": "cbars/gray_refl.png",
+          "ticks": [
+            {
+              "t": "100",
+              "p": 0.0
+            },
+            {
+              "t": "50",
+              "p": 0.5
+            },
+            {
+              "t": "0",
+              "p": 1.0
+            }
+          ],
+          "cap": "Reflectance (%)"
+        }
+      },
+      {
+        "key": "b07",
+        "id": "himawari9-wpac-b07",
+        "path": "sat/himawari9/wpac/b07",
+        "title": "B07 · 3.9 µm (Shortwave IR)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/grayscale.png",
+          "ticks": [
+            {
+              "t": "30",
+              "p": 0.0
+            },
+            {
+              "t": "−10",
+              "p": 0.3333
+            },
+            {
+              "t": "−50",
+              "p": 0.6667
+            },
+            {
+              "t": "−90",
+              "p": 1.0
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b08",
+        "id": "himawari9-wpac-b08",
+        "path": "sat/himawari9/wpac/b08",
+        "title": "B08 · 6.2 µm (Upper-level WV)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/wv_tat.png",
+          "ticks": [
+            {
+              "t": "0",
+              "p": 0.0
+            },
+            {
+              "t": "−30",
+              "p": 0.3333
+            },
+            {
+              "t": "−60",
+              "p": 0.6667
+            },
+            {
+              "t": "−90",
+              "p": 1.0
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b09",
+        "id": "himawari9-wpac-b09",
+        "path": "sat/himawari9/wpac/b09",
+        "title": "B09 · 6.9 µm (Mid-level WV)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/wv_tat.png",
+          "ticks": [
+            {
+              "t": "0",
+              "p": 0.0
+            },
+            {
+              "t": "−30",
+              "p": 0.3333
+            },
+            {
+              "t": "−60",
+              "p": 0.6667
+            },
+            {
+              "t": "−90",
+              "p": 1.0
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b10",
+        "id": "himawari9-wpac-b10",
+        "path": "sat/himawari9/wpac/b10",
+        "title": "B10 · 7.3 µm (Low-level WV)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/wv_tat.png",
+          "ticks": [
+            {
+              "t": "0",
+              "p": 0.0
+            },
+            {
+              "t": "−30",
+              "p": 0.3333
+            },
+            {
+              "t": "−60",
+              "p": 0.6667
+            },
+            {
+              "t": "−90",
+              "p": 1.0
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b11",
+        "id": "himawari9-wpac-b11",
+        "path": "sat/himawari9/wpac/b11",
+        "title": "B11 · 8.6 µm (Cloud-top phase)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b12",
+        "id": "himawari9-wpac-b12",
+        "path": "sat/himawari9/wpac/b12",
+        "title": "B12 · 9.6 µm (Ozone)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "irbd",
+        "id": "himawari9-wpac-irbd",
+        "path": "sat/himawari9/wpac/irbd",
+        "title": "B13 · 10.4 µm (IR, Dvorak BD)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/dvorak.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b14",
+        "id": "himawari9-wpac-b14",
+        "path": "sat/himawari9/wpac/b14",
+        "title": "B14 · 11.2 µm (IR window)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b15",
+        "id": "himawari9-wpac-b15",
+        "path": "sat/himawari9/wpac/b15",
+        "title": "B15 · 12.4 µm (Dirty IR)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "b16",
+        "id": "himawari9-wpac-b16",
+        "path": "sat/himawari9/wpac/b16",
+        "title": "B16 · 13.3 µm (CO₂)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      }
+    ]
+  }
 };
