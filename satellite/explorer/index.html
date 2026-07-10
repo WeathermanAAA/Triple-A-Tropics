@@ -14,6 +14,7 @@
 <style>
   :root{
     --cx-teal:#49b6c8; --cx-teal-soft:rgba(73,182,200,.14);
+    --cx-rail-teal:#35d0a5; --cx-rail-teal-soft:rgba(53,208,165,.13);
     --cx-panel:#0d1219; --cx-line:#232d3a; --cx-line-soft:#1a2230;
     --cx-fg:#dbe3ec; --cx-mut:#8ea2bd; --cx-dim:#71809a;
   }
@@ -27,7 +28,9 @@
     grid-template-columns:238px minmax(0,1fr) 234px;gap:0;
     width:100%;max-width:none;margin:0;padding:0;min-width:0;
     font-family:'Metropolis',system-ui,sans-serif}
-  .cx-rail{background:linear-gradient(180deg,#0f1621,#0b1018);
+  .cx-rail{background:linear-gradient(180deg,
+      #0a1a2e 0%, #1d3a5c 3%, #16294a 9%, #0e1e38 55%, #0a1a2e 100%);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 0 rgba(0,0,0,.40);
     border:0;border-radius:0;
     padding:12px;display:flex;flex-direction:column;gap:12px;
     min-height:0;overflow-y:auto;scrollbar-width:thin;
@@ -60,8 +63,27 @@
     box-shadow:inset 3px 0 0 var(--cx-teal), 0 0 14px rgba(73,182,200,.10)}
   .cx-field.active b{color:var(--cx-teal)}
   .cx-field.coming,.cx-item.coming{opacity:.4;cursor:default}
+  .cx-field{border-left:3px solid transparent}
+  .cx-field.active{border-left-color:var(--cx-rail-teal);
+    background:var(--cx-rail-teal-soft)}
+  .cx-swatch{position:absolute;right:9px;top:50%;transform:translateY(-50%);
+    width:34px;height:8px;border-radius:2px;background-size:100% 100%;
+    border:1px solid rgba(255,255,255,.18)}
+  .cx-dots{position:absolute;right:9px;top:50%;transform:translateY(-50%);
+    display:flex;gap:2px}
+  .cx-dots i{width:8px;height:8px;border-radius:2px;
+    border:1px solid rgba(255,255,255,.18)}
+  .cx-field b,.cx-field .cx-meta{padding-right:44px}
+  .cx-sub{font-size:8.5px;font-weight:700;letter-spacing:.14em;color:#5b6f8c;
+    text-transform:uppercase;padding:9px 10px 2px}
+  #cx-sats .cx-item{flex-direction:column;align-items:flex-start;gap:1px}
+  #cx-sats .cx-item .cx-meta{font-size:9.5px;color:var(--cx-dim);font-weight:500;
+    font-variant-numeric:tabular-nums}
+  #cx-sats .cx-item.active,#cx-domains .cx-item.active{
+    border-color:rgba(53,208,165,.5);color:var(--cx-rail-teal);
+    background:var(--cx-rail-teal-soft)}
   .cx-field.coming:hover{border-color:transparent;background:transparent}
-  .cx-chip{font-style:normal;font-size:8.5px;font-weight:600;letter-spacing:.06em;
+  .cx-chip{font-style:normal;font-size:7.5px;font-weight:600;letter-spacing:.08em;opacity:.75;
     text-transform:uppercase;color:#9c8f6e;border:1px solid rgba(156,143,110,.35);
     border-radius:999px;padding:1px 6px;white-space:nowrap;vertical-align:1px}
 
@@ -490,18 +512,19 @@
   <aside class="cx-rail cx-right">
     <h3>Satellite</h3>
     <div id="cx-sats">
-      <button type="button" class="cx-item coming" data-sat="geo">Global · GEO ring <i class="cx-chip">no data yet</i></button>
-      <button type="button" class="cx-item active" data-sat="goes19">GOES-19 · East</button>
-      <button type="button" class="cx-item coming" data-sat="himawari9">Himawari-9 · Pacific <i class="cx-chip">no data yet</i></button>
-      <button type="button" class="cx-item coming">GOES-18 · West <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-item coming" data-sat="geo">Global · GEO ring <span class="cx-meta">3-satellite composite · <i class="cx-chip">no data yet</i></span></button>
+      <button type="button" class="cx-item active" data-sat="goes19">GOES-19 · East <span class="cx-meta">75.2°W</span></button>
+      <button type="button" class="cx-item coming">GOES-18 · West <span class="cx-meta">137.2°W · <i class="cx-chip">soon</i></span></button>
+      <button type="button" class="cx-item coming">Meteosat-0° <span class="cx-meta">0° · <i class="cx-chip">soon</i></span></button>
+      <button type="button" class="cx-item coming">Meteosat IODC <span class="cx-meta">45.5°E · <i class="cx-chip">soon</i></span></button>
+      <button type="button" class="cx-item coming" data-sat="himawari9">Himawari-9 · Pacific <span class="cx-meta">140.7°E · <i class="cx-chip">no data yet</i></span></button>
     </div>
     <h3>Domain</h3>
     <div id="cx-domains">
       <button type="button" class="cx-item coming" data-domain="global" data-satgroup="geo" style="display:none">World <i class="cx-chip">no data yet</i></button>
-      <button type="button" class="cx-item active" data-domain="conus" data-satgroup="goes19">CONUS</button>
       <button type="button" class="cx-item coming" data-domain="fd" data-satgroup="goes19">Full Disk <i class="cx-chip">no data yet</i></button>
-      <button type="button" class="cx-item coming" data-domain="meso1" data-satgroup="goes19">Meso 1 <i class="cx-chip">soon</i></button>
-      <button type="button" class="cx-item coming" data-domain="meso2" data-satgroup="goes19">Meso 2 <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-item active" data-domain="conus" data-satgroup="goes19">CONUS</button>
+      <button type="button" class="cx-item coming" data-domain="meso1" data-satgroup="goes19">Meso <i class="cx-chip">soon</i></button>
       <button type="button" class="cx-item coming" data-domain="hw-wpac" data-satgroup="himawari9" style="display:none">W Pacific <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item coming" data-domain="hw-fd" data-satgroup="himawari9" style="display:none">Full Disk <i class="cx-chip">no data yet</i></button>
       <button type="button" class="cx-item" data-domain="drawbox">Draw a box</button>

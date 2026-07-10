@@ -174,17 +174,50 @@
   function rebuildProductRows() {
     var lists = { rgb: $('cx-list-rgb'), ch: $('cx-list-ch') };
     ['rgb', 'ch'].forEach(function (k) {
-      lists[k].querySelectorAll('.cx-field:not([data-embed])').forEach(function (el) {
+      lists[k].querySelectorAll('.cx-field:not([data-embed]), .cx-sub').forEach(function (el) {
         el.remove();
       });
     });
     var set = productSet(S.domain);
     var tmOK = domainInfo(S.domain).sat === 'goes19';   // archive backend is GOES-East
-    var ordered = set.filter(function (p) { return p.group === 'composite'; })
-      .concat(set.filter(function (p) { return p.group === 'rgb'; }))
-      .concat(set.filter(function (p) { return p.group === 'channel'; }));
+    // CHANNEL REGISTER ordering: group by spectral region, then by band
+    // (ir/irbd ride with their 10.3/10.4 µm slot inside INFRARED)
+    function bandNum(p) {
+      var m = /^[CB](\d\d)/.exec(p.title);
+      if (m) return +m[1];
+      return (p.key === 'ir' || p.key === 'irbd') ? 13 : 99;
+    }
+    function spectralGroup(p) {
+      if (p.group === 'composite') return 'COMPOSITES';
+      if (p.group === 'rgb') return 'MULTISPECTRAL RGB';
+      var n = bandNum(p);
+      if (n <= 6) return 'VISIBLE / NIR';
+      if (n >= 8 && n <= 10) return 'WATER VAPOR';
+      return 'INFRARED';
+    }
+    var GORDER = { 'COMPOSITES': 0, 'MULTISPECTRAL RGB': 1,
+                   'VISIBLE / NIR': 2, 'WATER VAPOR': 3, 'INFRARED': 4 };
+    var ordered = set.slice().sort(function (a, b) {
+      var g = GORDER[spectralGroup(a)] - GORDER[spectralGroup(b)];
+      if (g) return g;
+      var n = bandNum(a) - bandNum(b);
+      if (n) return n;
+      if (a.key === 'irbd') return 1;      // Dvorak BD after Clean IR
+      if (b.key === 'irbd') return -1;
+      return a.title < b.title ? -1 : 1;
+    });
+    var lastSub = { rgb: null, ch: null };
     ordered.forEach(function (p) {
       var isCh = p.group === 'channel';
+      var listKey = isCh ? 'ch' : 'rgb';
+      var grp = spectralGroup(p);
+      if (lastSub[listKey] !== grp) {   // quiet spectral-region subheaders
+        var sub = document.createElement('div');
+        sub.className = 'cx-sub';
+        sub.textContent = grp;
+        lists[listKey].appendChild(sub);
+        lastSub[listKey] = grp;
+      }
       var row = document.createElement('button');
       row.type = 'button'; row.className = 'cx-field'; row.dataset.key = p.key;
       if (tmOK && TM_MAP[p.key]) row.dataset.tm = '1';   // archive-servable in Time Machine
@@ -197,13 +230,32 @@
           (p.group === 'composite' ? 'composite' : 'RGB') +
           (p.bt ? ' · BT' : '') + (p.dayOnly ? ' · ☀ day' : '') + '</span>';
       }
+      // palette preview: the field's ACTUAL colortable LUT (the generated
+      // swatch PNGs come straight from the frozen tat_palettes cmap+norm);
+      // RGBs carry their quick-guide hue key instead — never a fake ramp
+      if (p.cbar && p.cbar.img) {
+        var sw = document.createElement('i');
+        sw.className = 'cx-swatch';
+        sw.style.backgroundImage =
+          'url(' + p.cbar.img.replace('cbars/', 'cbars/swatch_') + ')';
+        row.appendChild(sw);
+      } else if (LEGENDS[p.key]) {
+        var dots = document.createElement('i');
+        dots.className = 'cx-dots';
+        LEGENDS[p.key].slice(0, 3).forEach(function (e) {
+          var d = document.createElement('i');
+          d.style.background = e[0];
+          dots.appendChild(d);
+        });
+        row.appendChild(dots);
+      }
       row.onclick = function () {
         if (row.classList.contains('coming')) return;
         S._touched = true;
         if (window.CockpitFields) window.CockpitFields.clearPaneField(S.active);
         setPaneProduct(S.active, p);
       };
-      lists[isCh ? 'ch' : 'rgb'].appendChild(row);
+      lists[listKey].appendChild(row);
     });
     applyAvailability();
     markFieldActive();
