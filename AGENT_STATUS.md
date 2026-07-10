@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-10 ~01:30 UTC — FULL HIMAWARI-9 SUITE SHIPPED (backend + cockpit + objfix real-BT cutover) + TC-Diagnostics mode scaffold_
+_Last update: 2026-07-10 ~02:15 UTC — Himawari-9 suite + TC-Diag mode + unified header + TM deep archive (1980) + GLOBAL-DEFAULT geo-ring composite ALL SHIPPED_
 
 ---
 
@@ -117,6 +117,21 @@ per-pane on every servable pane; TCD frames the storm on all panes.
   confirm once deployed.
 
 ---
+
+### 0e. GLOBAL-DEFAULT EXPLORER — geo-ring composite SHIPPED (tsr s2 @e277fc78 + TAT @b96a187b)
+
+The cockpit now OPENS ON THE WORLD: GOES-19 + GOES-18 + Himawari-9 full
+disks stitched nadir-nearest (10° BT cross-fade, 65° limb cutoff) into one
+global webmerc pyramid (`sat/geo/global/{ir,irbd,wv}`); satellite/domain/
+region controls are drill-downs from it. Meteosat sector = honest
+transparent gap + dashed 'no ingest yet · coming' map badge (never
+stretched). BT fields only on the global view (BT blends across sensors);
+RGBs stay per-satellite, manifest-gated. Global 2560px BT raster feeds the
+inspector. Q7 z0-5 cron + shape-driven prune as the other suites.
+Live-verified on a full 3-disk local emit: seamless E/W overlap, BAVI on
+the Himawari side, honest gap (shots `_shots/global_default_meteosat_gap.jpg`
++ `global_composite_z2_tiles.jpg`). Auto-default waits for pane readiness
+and yields to any user steer. BOX: add `geo-global` to S2_CRON_SUITES (Q11).
 
 ## LANDED tonight (2026-07-09 evening → 07-10)
 
