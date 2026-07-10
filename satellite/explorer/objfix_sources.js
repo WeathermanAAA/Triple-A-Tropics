@@ -184,6 +184,64 @@
   };
 
   // ========================================================================
+  // DEEP ARCHIVE (Time Machine, pre-2017) — GridSat-B1 calibrated BT via the
+  // render backend's format=btpng (same u16 encoding as the suite bt.png).
+  // ADT-HURSAT-style reanalysis input: honest ~8 km / 3-hourly, labeled.
+  // ========================================================================
+  var RENDER_API = 'https://web-production-b88d.up.railway.app/render';
+  function ArchiveSource() {
+    this._cache = {};   // one decoded frame field per (stamp, anchor) key
+  }
+  ArchiveSource.prototype.load = function () { return Promise.resolve(null); };
+  ArchiveSource.prototype.frames = function () { return []; };   // frames come from the TM window
+  ArchiveSource.prototype.field = function (stampIso, lat, lon, halfDeg) {
+    var self = this;
+    halfDeg = halfDeg || 4.0;
+    var W = lon - halfDeg, E = lon + halfDeg;
+    var S0 = Math.max(-70, lat - halfDeg), N = Math.min(70, lat + halfDeg);
+    var key = stampIso + '|' + lat.toFixed(1) + '|' + lon.toFixed(1);
+    if (this._cache[key]) return Promise.resolve(this._cache[key]);
+    return fetch(RENDER_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bbox: [W, S0, E, N], time: stampIso,
+                             channel: 'clean_ir', format: 'btpng' })
+    }).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; })
+        .then(function (j) { throw new Error(j.detail || ('archive BT failed (' + r.status + ')')); });
+      return r.blob();
+    }).then(function (blob) {
+      return loadImage(URL.createObjectURL(blob));
+    }).then(function (im) {
+      var id = imageData(im).data;
+      URL.revokeObjectURL(im.src);
+      var nx = id.width, ny = id.height, d = id.data;
+      var dLon = (E - W) / (nx - 1), dLat = (N - S0) / (ny - 1);
+      var latArr = new Float64Array(ny), lonArr = new Float64Array(nx);
+      for (var i = 0; i < ny; i++) latArr[i] = N - i * dLat;   // row 0 = north
+      for (var j = 0; j < nx; j++) lonArr[j] = W + j * dLon;
+      var bt = new Float64Array(ny * nx);
+      for (i = 0; i < ny; i++) {
+        for (j = 0; j < nx; j++) {
+          var px = (i * nx + j) * 4;
+          bt[i * nx + j] = d[px + 3] === 0 ? NaN
+            : (d[px] * 256 + d[px + 1]) * 0.01 - 120.0 + KELVIN;
+        }
+      }
+      var field = {
+        latArr: latArr, lonArr: lonArr, bt: bt, nr: ny, nc: nx,
+        resKm: dLat * 111,
+        inputQuality: 'GridSat-B1 11 µm calibrated BT (u16) · ~' +
+          Math.round(dLat * 111) + ' km · 3-hourly deep archive',
+        degraded: false,
+        extent: [W, S0, E, N]
+      };
+      self._cache = {};          // hold ONE frame (loop-memory rule)
+      self._cache[key] = field;
+      return field;
+    });
+  };
+
+  // ========================================================================
   // WP / floaters — rainbow_ir WebP inversion
   // ========================================================================
   function FloaterSource(slug) {
@@ -475,6 +533,7 @@
   window.ObjFixSources = {
     FdSource: FdSource,
     WpBtSource: WpBtSource,
+    ArchiveSource: ArchiveSource,
     FloaterSource: FloaterSource,
     listStorms: listStorms,
     makeLandTest: makeLandTest,

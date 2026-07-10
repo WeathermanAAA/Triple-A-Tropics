@@ -74,8 +74,8 @@
       '<i class="cx-chip">beta</i>';
     b.onclick = function () { S.on ? exitMode() : enterMode(); };
     tm.parentNode.insertBefore(b, tm.nextSibling);
-    // mutual exclusion: entering Time Machine (or Reset) leaves TC-Diagnostics
-    tm.addEventListener('click', function () { if (S.on) exitMode(); }, true);
+    // TC-Diagnostics COEXISTS with Time Machine (the deep archive feeds the
+    // diagnostics per scrubbed frame); only Reset exits the mode.
     var rst = $('cx-reset');
     if (rst) rst.addEventListener('click', function () { if (S.on) exitMode(); }, true);
   }
@@ -133,6 +133,12 @@
       o.textContent = s.name + ' · ' + s.basin + (s.vmax ? ' · ' + s.vmax + ' kt' : '');
       sel.appendChild(o);
     });
+    var CX = window.__cockpit;
+    if (CX && CX.tm && CX.tm.on) {
+      // Time Machine drives the analysis (per scrubbed archive frame) — do
+      // not yank the camera to a live storm or auto-run a live analysis
+      return;
+    }
     sel.value = '0';
     sel.onchange.call(sel);
   }
@@ -153,8 +159,6 @@
   }
 
   function enterMode() {
-    var CX = window.__cockpit;
-    if (CX && CX.tm && CX.tm.on) $('cx-tm').click();     // leave Time Machine first
     S.on = true;
     document.body.classList.add('cx-tcd-mode');
     $('cx-tcd').classList.add('on');
@@ -180,5 +184,21 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
-  window.TCDiag = { enter: enterMode, exit: exitMode, active: function () { return S.on; } };
+  // Time Machine tie-in: every scrubbed archive frame recomputes the live
+  // diagnostics (objfix now; every future diagnostic must take this hook —
+  // archive-frame support is a first-class requirement). Debounced so a
+  // fast drag analyzes the frame you settle on.
+  var _afTimer = null;
+  function onArchiveFrame(stamp) {
+    if (!S.on || !window.ObjFixPanel) return;
+    if (_afTimer) clearTimeout(_afTimer);
+    _afTimer = setTimeout(function () {
+      if (S.on && !window.ObjFixPanel.running())
+        window.ObjFixPanel.analyzeArchive(stamp);
+    }, 500);
+  }
+
+  window.TCDiag = { enter: enterMode, exit: exitMode,
+                    active: function () { return S.on; },
+                    onArchiveFrame: onArchiveFrame };
 })();

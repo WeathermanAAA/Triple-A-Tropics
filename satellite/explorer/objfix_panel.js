@@ -292,6 +292,8 @@
 
   function frameField(frame) {
     var st = S.storm;
+    if (st.source === 'archive')
+      return S.src.field(frame.stampIso, st.lat, st.lon, 4.0);
     if (st.source === 'fd') return S.src.field(frame.stamp, st.lat, st.lon, 4.0);
     if (st.source === 'wp_bt') {
       // cut around THIS frame's official-track anchor (floater box center),
@@ -498,6 +500,7 @@
   function sourceSat() {
     var st = S.storm;
     if (!st) return '';
+    if (st.source === 'archive') return 'GridSat-B1 geo-IR (deep archive)';
     if (st.source === 'fd') return 'GOES-19 ABI';
     if (st.source === 'wp_bt') return 'Himawari-9 AHI B13';
     if (st.basin === 'WP') return 'JMA Himawari-9 AHI';
@@ -799,6 +802,33 @@
       if (sel.onchange) sel.onchange.call(sel);
     },
     analyze: function (loop) { runAnalysis(!!loop); },
-    running: function () { return S.running; }
+    running: function () { return S.running; },
+    // DEEP-ARCHIVE per-frame analysis (Time Machine): analyze the exact
+    // scrubbed frame from GridSat-B1 calibrated BT. First guess = the active
+    // pane's view center (the user frames the historical storm; there is no
+    // live feed for it) — stated in the panel note, never implied otherwise.
+    // Each scrubbed frame is an INDEPENDENT single-frame estimate (Raw T#
+    // only; the existing single-frame honesty warning stays active).
+    analyzeArchive: function (stamp) {
+      if (S.running || !window.ObjFixSources.ArchiveSource) return;
+      var CX = window.__cockpit;
+      var pane = CX && CX.panes[CX.active];
+      if (!pane || !pane.ready) return;
+      var c = pane.tv.map.getCenter();
+      var lon = ((c.lng + 180) % 360 + 360) % 360 - 180;
+      var iso = stamp.slice(0, 4) + '-' + stamp.slice(4, 6) + '-' + stamp.slice(6, 8) +
+                'T' + stamp.slice(9, 11) + ':' + stamp.slice(11, 13) + ':00Z';
+      var basin = lon > -100 && lon < -30 ? 'AL' : (lon <= -100 && lon > -180 ? 'EP' : 'WP');
+      S.storm = {
+        id: 'archive', name: 'ARCHIVE VIEW', basin: basin, slug: null,
+        lat: c.lat, lon: lon, vmax: 0, category: '',
+        source: 'archive',
+        domainID: basin === 'AL' ? 0 : 1,
+        basinID: basin === 'AL' ? 0 : (basin === 'EP' ? 2 : 1)
+      };
+      S.src = new window.ObjFixSources.ArchiveSource();
+      S.frames = [{ stamp: stamp, stampIso: iso, timeMs: Date.parse(iso) }];
+      runAnalysis(false);
+    }
   };
 })();

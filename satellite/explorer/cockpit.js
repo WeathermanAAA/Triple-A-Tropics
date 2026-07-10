@@ -733,7 +733,9 @@
     if (S.tm.on) {
       // Time Machine: the field only changes what the archive renders — the
       // live tile manifests are untouched until Live mode returns.
-      if (!TM_MAP[p.key]) { flash('that field is live-only'); return; }
+      if (!tmCurrentMap()[p.key]) { flash(document.body.classList.contains('cx-tm-deep')
+        ? 'not available before 2017 — the deep archive is single-channel IR (Clean IR / Dvorak BD / WV)'
+        : 'that field is live-only'); return; }
       pane.product = p;
       if (i === S.active) markFieldActive();
       tmRenderOnce();
@@ -1336,6 +1338,27 @@
     c10: { channel: 'wv_lower', enh: 'ir_gray' },
     c14: { channel: 'ir_window', enh: 'rainbow_ir' }
   };
+  // DEEP ARCHIVE (pre-2017): the backend serves GridSat-B1 — a single-channel
+  // 11 µm IR (+6.7 µm WV) geostationary composite, GLOBAL, 3-hourly, ~8 km.
+  // Only IR-based fields exist in that era; the backend bakes the honest era
+  // header ("GridSat-B1 · 11 µm IR window · 3-hourly · ~8 km").
+  var TM_ABI_START = Date.parse('2017-03-01T00:00:00Z');
+  var TM_DEEP_MAP = {
+    ir: { channel: 'clean_ir', enh: 'rainbow_ir' },
+    irbd: { channel: 'clean_ir', enh: 'dvorak' },
+    c08: { channel: 'wv_upper', enh: 'ir_gray' }
+  };
+  function tmDeepEra(iso) { return Date.parse(iso) < TM_ABI_START; }
+  function tmMapFor(iso) { return tmDeepEra(iso) ? TM_DEEP_MAP : TM_MAP; }
+  function tmSyncEraUI() {
+    var v = $('cx-tm-time').value;
+    var deep = S.tm.on && v && tmDeepEra(v + ':00Z');
+    document.body.classList.toggle('cx-tm-deep', !!deep);
+    document.querySelectorAll('.cx-field[data-key]').forEach(function (el) {
+      if (TM_DEEP_MAP[el.dataset.key]) el.dataset.tmDeep = '1';
+      else delete el.dataset.tmDeep;
+    });
+  }
   var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
   var TM_PACE_MS = 6500;
   // frames = the timeline's stamp list; byPane[i] = per-pane rendered frames
@@ -1364,35 +1387,97 @@
     $('cx-valid').textContent = fmtStamp(f.stamp);
     $('cx-count').textContent = (S.tm.idx + 1) + ' / ' + n + ' · archive';
     drawTimeline();
+    // per-frame diagnostics: TC-Diagnostics recomputes for the scrubbed frame
+    if (window.TCDiag && window.TCDiag.onArchiveFrame)
+      window.TCDiag.onArchiveFrame(f.stamp);
+  }
+
+  // 12 h scrub window centered on the rendered date (+6 h buffer each end):
+  // CENTER-OUT render-ahead so the scrubbed date is usable immediately and
+  // the buffers fill behind it, paced under the backend rate limit. Frames
+  // stay time-sorted (the timeline scrubber drags through real archive data).
+  function insertFrameSorted(rec, paneIdx) {
+    var k = 0;
+    while (k < S.tm.frames.length && S.tm.frames[k].stamp < rec.stamp) k++;
+    S.tm.frames.splice(k, 0, rec);
+    if (k <= S.tm.idx && S.tm.frames.length > 1) S.tm.idx++;
+    S.tm.byPane[paneIdx] = S.tm.frames;    // single-pane window: same list
+  }
+  function tmLoadWindow(centerIso) {
+    if (!S.tm.on || S.tm.windowBusy) return;
+    var t0 = Date.parse(centerIso);
+    if (S.tm.windowFor != null && Math.abs(t0 - S.tm.windowFor) < 9 * 3600e3) return;
+    var pane = S.panes[S.active];
+    var map = tmMapFor(centerIso);
+    if (!pane || !pane.product || !map[pane.product.key]) return;
+    tmClearLoop();
+    S.tm.windowFor = t0;
+    S.tm.windowBusy = true;
+    var deep = tmDeepEra(centerIso);
+    var stepMs = (deep ? 180 : 90) * 60e3;   // era cadence: GridSat 3-hourly
+    var half = 12 * 3600e3;
+    var times = [];
+    for (var t = t0 - half; t <= t0 + half; t += stepMs) times.push(t);
+    times.sort(function (a, b) { return Math.abs(a - t0) - Math.abs(b - t0); });
+    var done = 0;
+    var next = function () {
+      if (!S.tm.on || S.tm.windowFor !== t0 || done >= times.length) {
+        S.tm.windowBusy = false;
+        if (S.tm.on && S.tm.windowFor === t0)
+          flash(S.tm.frames.length + '-frame archive window loaded — scrub the timeline, play, or export the loop');
+        return;
+      }
+      var iso = new Date(times[done]).toISOString().slice(0, 16);
+      done++;
+      var stamp = tmStamp(iso);
+      if (S.tm.frames.some(function (f) { return f.stamp === stamp; })) { next(); return; }
+      flash('archive window: ' + S.tm.frames.length + '/' + times.length +
+            ' frames — scrub anytime while it fills', true);
+      tmFetchBody(tmBody(pane, iso + ':00Z', 'low')).then(function (blob) {
+        if (!S.tm.on || S.tm.windowFor !== t0) { S.tm.windowBusy = false; return; }
+        insertFrameSorted({ stamp: stamp, url: URL.createObjectURL(blob) }, S.active);
+        drawTimeline();
+        setTimeout(next, TM_PACE_MS);      // stay under the backend rate limit
+      }).catch(function () { setTimeout(next, TM_PACE_MS); });
+    };
+    next();
   }
   var TM_MAX_DEG = 60;   // per-axis cap, kept below the backend's 80° limit
   // GOES-East usable window: the renderer crashes on off-disk (limb-masked)
   // extents, so the request box never leaves this envelope.
   var TM_SAFE = { w: -145, e: -15, s: -55, n: 55 };
   function tmBody(pane, timeIso, quality) {
-    var m = TM_MAP[pane.product.key] || TM_MAP.ir;
+    var deep = tmDeepEra(timeIso);
+    var map = tmMapFor(timeIso);
+    var m = map[pane.product.key] || map.ir;
     var b = pane.tv.map.getBounds();
     var w = b.getWest(), s = b.getSouth(), e = b.getEast(), n = b.getNorth();
     // an over-wide viewport (e.g. the boot fit) exceeds the render cap —
     // clamp around the view center rather than failing the request
     if (e - w > TM_MAX_DEG) { var cx = (e + w) / 2; w = cx - TM_MAX_DEG / 2; e = cx + TM_MAX_DEG / 2; }
     if (n - s > TM_MAX_DEG) { var cy = (n + s) / 2; s = cy - TM_MAX_DEG / 2; n = cy + TM_MAX_DEG / 2; }
-    w = Math.max(TM_SAFE.w, w); e = Math.min(TM_SAFE.e, e);
-    s = Math.max(TM_SAFE.s, s); n = Math.min(TM_SAFE.n, n);
-    if (!(e - w > 1 && n - s > 1)) return null;   // view is off the GOES-East disk
-    // limb guard: the renderer crashes when a corner is beyond the usable
-    // disk (~68° great-circle from the 75.2°W sub-satellite point) — shrink
-    // toward the box center until every corner is on-disk.
-    var sep = function (lon, lat) {
-      var la = lat * Math.PI / 180, dl = (lon + 75.2) * Math.PI / 180;
-      return Math.acos(Math.cos(la) * Math.cos(dl)) * 180 / Math.PI;
-    };
-    for (var it = 0; it < 8; it++) {
-      var worst = Math.max(sep(w, s), sep(w, n), sep(e, s), sep(e, n));
-      if (worst <= 68) break;
-      var mx = (w + e) / 2, my = (s + n) / 2;
-      w = mx + (w - mx) * 0.88; e = mx + (e - mx) * 0.88;
-      s = my + (s - my) * 0.88; n = my + (n - my) * 0.88;
+    if (deep) {
+      // GridSat-B1 is GLOBAL (no disk limb) but covers 70°S–70°N
+      s = Math.max(-70, s); n = Math.min(70, n);
+      if (!(e - w > 1 && n - s > 1)) return null;
+    } else {
+      w = Math.max(TM_SAFE.w, w); e = Math.min(TM_SAFE.e, e);
+      s = Math.max(TM_SAFE.s, s); n = Math.min(TM_SAFE.n, n);
+      if (!(e - w > 1 && n - s > 1)) return null;   // view is off the GOES-East disk
+      // limb guard: the renderer crashes when a corner is beyond the usable
+      // disk (~68° great-circle from the 75.2°W sub-satellite point) — shrink
+      // toward the box center until every corner is on-disk.
+      var sep = function (lon, lat) {
+        var la = lat * Math.PI / 180, dl = (lon + 75.2) * Math.PI / 180;
+        return Math.acos(Math.cos(la) * Math.cos(dl)) * 180 / Math.PI;
+      };
+      for (var it = 0; it < 8; it++) {
+        var worst = Math.max(sep(w, s), sep(w, n), sep(e, s), sep(e, n));
+        if (worst <= 68) break;
+        var mx = (w + e) / 2, my = (s + n) / 2;
+        w = mx + (w - mx) * 0.88; e = mx + (e - mx) * 0.88;
+        s = my + (s - my) * 0.88; n = my + (n - my) * 0.88;
+      }
     }
     return {
       bbox: [w, s, e, n],
@@ -1431,11 +1516,13 @@
     $('cx-tm-time').max = maxIso; $('cx-tm-end').max = maxIso;
     if (!$('cx-tm-time').value)
       $('cx-tm-time').value = new Date(Date.now() - 864e5).toISOString().slice(0, 16);
+    tmSyncEraUI();
     flash('Time Machine: set a UTC time, then Render — the current field, view and overlays apply');
   }
   function exitTM() {
     S.tm.on = false; S.tm.busy = false;
     document.body.classList.remove('cx-tm-mode');
+    document.body.classList.remove('cx-tm-deep');
     $('cx-tm').classList.remove('on');
     $('cx-tm').querySelector('.lbl').textContent = 'Live';
     tmClearLoop();
@@ -1460,7 +1547,7 @@
     var targets = [];
     S.panes.forEach(function (p, i) {
       if (p && p.ready && (!p.kind || p.kind === 'tile') &&
-          p.product && TM_MAP[p.product.key]) targets.push(i);
+          p.product && tmMapFor(timeIso)[p.product.key]) targets.push(i);
     });
     if (!targets.length) { flash('this field is live-only — pick a channel or True Color'); return; }
     S.tm.busy = true; flash('rendering the archive view…', true);
@@ -1480,16 +1567,25 @@
       S.tm.busy = false; flash('');
       $('cx-valid').textContent = fmtStamp(stamp);
       $('cx-count').textContent = 'archive';
+      tmSyncEraUI();
+      tmLoadWindow(timeIso);   // 12 h scrub window + 6 h buffers, center-out
     }).catch(function (e) {
       S.tm.busy = false; flash(String(e.message || e).slice(0, 90));
     });
   }
   function tmClearLoop() {
-    S.tm.frames.forEach(function (f) { URL.revokeObjectURL(f.url); });
+    var seen = [];
+    S.tm.frames.forEach(function (f) { if (f.url) { URL.revokeObjectURL(f.url); seen.push(f.url); } });
     Object.keys(S.tm.byPane).forEach(function (k) {
-      (S.tm.byPane[k] || []).forEach(function (f) { if (f) URL.revokeObjectURL(f.url); });
+      (S.tm.byPane[k] || []).forEach(function (f) {
+        if (f && f.url && seen.indexOf(f.url) < 0) URL.revokeObjectURL(f.url);
+      });
     });
-    S.tm.frames = []; S.tm.byPane = {}; S.tm.idx = 0;
+    S.tm.frames = []; S.tm.byPane = {}; S.tm.idx = 0; S.tm.windowFor = null;
+  }
+  function tmCurrentMap() {
+    var v = $('cx-tm-time').value;
+    return tmMapFor(v ? v + ':00Z' : new Date().toISOString());
   }
   function tmLoadLoop() {
     if (S.tm.busy) return;
@@ -1506,7 +1602,7 @@
     var targets = [];
     S.panes.forEach(function (p, i) {
       if (p && p.ready && (!p.kind || p.kind === 'tile') &&
-          p.product && TM_MAP[p.product.key]) targets.push(i);
+          p.product && tmCurrentMap()[p.product.key]) targets.push(i);
     });
     if (!targets.length) { flash('these fields are live-only — pick a channel or True Color'); return; }
     tmClearLoop();
@@ -1647,6 +1743,7 @@
     };
     $('cx-tm').onclick = function () { S.tm.on ? exitTM() : enterTM(); };
     $('cx-tm-render').onclick = tmRenderOnce;
+    $('cx-tm-time').addEventListener('change', tmSyncEraUI);
     $('cx-tm-loop').onclick = tmLoadLoop;
     var tmShift = function (h) {
       var el = $('cx-tm-time');
