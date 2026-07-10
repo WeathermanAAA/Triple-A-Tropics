@@ -1,0 +1,47 @@
+# One-shot archive sampler: pull a single NASA MergIR (GPM_MERGIR.1) hourly
+# granule from GES DISC with the repo's Earthdata credentials and hand it back
+# as a workflow artifact. Used to verify the /render MergIR tier's decode +
+# crop against real data without pasting credentials anywhere (the same
+# EARTHDATA_* secrets update-ascat.yml already uses). Manual dispatch only.
+name: fetch-mergir-sample
+on:
+  workflow_dispatch:
+    inputs:
+      when:
+        description: "UTC hour to fetch, YYYY-MM-DDTHH (default: Katrina peak)"
+        default: "2005-08-28T18"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download granule from GES DISC
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          WHEN: ${{ inputs.when }}
+        run: |
+          set -euo pipefail
+          Y=${WHEN:0:4}; DOY=$(date -u -d "${WHEN:0:10}" +%j); STAMP="${WHEN:0:4}${WHEN:5:2}${WHEN:8:2}${WHEN:11:2}"
+          URL="https://data.gesdisc.earthdata.nasa.gov/data/MERGED_IR/GPM_MERGIR.1/${Y}/${DOY}/merg_${STAMP}_4km-pixel.nc4"
+          echo "fetching ${URL}"
+          if [ -n "${EARTHDATA_TOKEN:-}" ]; then
+            curl -fSL -o merg_sample.nc4 -H "Authorization: Bearer ${EARTHDATA_TOKEN}" "$URL"
+          else
+            # URS redirect flow with basic auth (credentials only ever go to
+            # urs.earthdata.nasa.gov via curl's location-trusted handling)
+            curl -fSL -o merg_sample.nc4 --location-trusted \
+              -u "${EARTHDATA_USERNAME}:${EARTHDATA_PASSWORD}" \
+              -c /tmp/urs_cookies -b /tmp/urs_cookies "$URL"
+          fi
+          ls -la merg_sample.nc4
+      - uses: actions/upload-artifact@v6
+        with:
+          name: mergir-sample
+          path: merg_sample.nc4
+          retention-days: 1
