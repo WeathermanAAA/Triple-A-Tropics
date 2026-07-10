@@ -4,7 +4,81 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-10 ~00:15 UTC — objfix + MW/ASCAT-native BOTH SHIPPED + live-verified_
+_Last update: 2026-07-10 ~01:30 UTC — FULL HIMAWARI-9 SUITE SHIPPED (backend + cockpit + objfix real-BT cutover) + TC-Diagnostics mode scaffold_
+
+---
+
+## LANDED 2026-07-10 (overnight batch 2)
+
+### 0a. Himawari-9 as a FULL suite satellite — SHIPPED both repos, locally live-verified
+
+The roadmapped "BT feed → full Himawari suite" step. tsr `s2-sat-ingest`
+@ef3a983 + TAT @c8bba3e0 (+ products.js regen). "Add a satellite = registry
+rows" held: 28 wpac + 27 fd tiled products (all 16 AHI bands, B02 native
+green, NO fake cirrus; True Color/Sandwich/Air Mass/Dust/Ash/Day Convection/
+Natural Color/Snow-Fog/Fire Temp/Day Cloud Phase/Night Micro; BT raster per
+emissive band) over the EXISTING recipe engine/pyramid/Q7/prune plumbing.
+
+- **AHI recipes are first-class, JMA-verified** (17-agent verification pass
+  against JMA MSC Quick Guides Ver 1.0 + Tech Note 65): JMA RETUNED the AHI
+  thresholds (Murata & Shimizu 2017) — dust/ash/nightmicro/airmass/
+  dayconvection/daycloudphase/firetemp/daylandcloud all differ from BOTH
+  SEVIRI heritage and the ABI guides; every number test-locked
+  (`tests/test_s2_ahi.py`, 23 tests). Snow-Fog ships ABI-heritage renumbered
+  (JMA's exact blue gun is a derived 3.9 µm solar-reflectance product — a
+  documented departure, not forced). JMA's printed tables use flipped
+  difference orders — verifiers decoded sign conventions against the guides'
+  own imagery; do NOT re-transcribe naively.
+- **Infra:** AHI band-disk fetch off ONE complete FLDK slot (per-sector
+  strides keep a full-disk B03 at ~60 MB instead of ~1 GB), shared-trig
+  sampling with CHUNKED interpolation (one-shot scipy RGI = ~2 GB transient,
+  proven to thrash), antimeridian-aware webmerc (fd bbox 60→221°E, dual
+  x-ranges, wrap-aware sampling; MapLibre world copies on hw-fd).
+  `--suite himawari9-wpac|himawari9-fd`; emit-cron iterates `S2_CRON_SUITES`.
+  FD excludes truecolor (B03 disk budget, mirrors goes19-fd); wpac truecolor
+  renders at the 2 km-class raster (Rayleigh at 0.5 km class = minutes/GBs).
+- **Cockpit:** Himawari-9 satellite + W Pacific/Full Disk domains, FIELD rail
+  swaps to the AHI set, availability per-domain off its own products.json
+  (satellite/domain rows self-enable when the box emits — greyed until then).
+  C##↔B## field mapping on cross-sat switch; TM refuses himawari domains
+  honestly (GOES-East archive only, for now — see deep-archive spec below).
+- **objfix WP cutover:** WP storms consume the wpac suite's calibrated AHI
+  B13 `bt.png` (2560 px ≈ 3.7 km, `bt_px` registry knob); rainbow_ir LUT
+  inversion RETIRED for WP when the suite manifest is live (labeled fallback
+  until box emit + for CP). Anchors stay floater box centers. **BAVI
+  before/after** (real FLDK scans, local emit): center Δ ~7 km; calibrated
+  BT reads colder tops (−68.5 vs −65.0 °C cloud) → T# 3.5/~55 kt vs
+  3.3/~51 kt; ARCHER conf dropped (0.34→0.08 — 3.7 km input is coarser than
+  the 1.5 km floater pixels; honest tradeoff, both labeled low; bt_px can go
+  higher later if the box budget allows). Also fixed a LATENT fd-path decode
+  TypeError (`id.data.data`) that never fired live because every storm to
+  date had a floater. Shots: `_shots/himawari_wpac_truecolor_airmass.jpg`,
+  `_shots/objfix_bavi_before_lut.jpg` / `objfix_bavi_after_ahi_b13.jpg`.
+- **KNOWN SKEW (pre-existing, surfaced by verification):** tsr
+  `s2-sat-ingest` does NOT contain main @74f9298 (veg-green both sensors) —
+  suite truecolor renders the pre-veg-green look until main is merged into
+  the branch. Queue a `git merge main` on s2-sat-ingest as a follow-up.
+- **BOX STEP QUEUED** (lights everything): see the runbook line appended to
+  the queued-manual list — `git pull` on s2-sat-ingest, rebuild the tat-s2
+  image, set `S2_CRON_SUITES="conus fd himawari9-wpac himawari9-fd"` in
+  `.env`, restart emit-cron. The cockpit + objfix WP path self-enable off
+  the manifests the moment the first himawari suite emit completes.
+
+### 0b. TC-Diagnostics MODE scaffold + objfix panel polish — SHIPPED @827debc9 / @ac41d47c
+
+Third cockpit mode alongside Live/Time Machine: storm selector drives a
+per-storm dashboard; anchor pane frames the storm with the objective center
+marked; Obj Fix docks as card #1 (same DOM node, state survives); 8 greyed
+SOON cards (Sat Intensity Fixes, SATCON, DAV, WN-1, Eye/CDO, IR Hovmöller,
+Env Favorability, GLM) — scope visible, nothing faked. Panel fixes: scene
+header per the burned-in convention (provenance line + watermark + caveat
+badge, no stacking) + grouped stats (Center & Fix / Intensity / Scene &
+Structure). Live-verified on BAVI; shots in `_shots/`.
+
+### IN FLIGHT (next in this session): consolidated Time Machine spec
+Unified archive-grade burned-in header on ALL panes + multi-pane TM/TCD;
+then the DEEP ARCHIVE (GridSat-B1 to 1980 / MergIR 2000-17 / ABI 2017+,
+honest era labels, 12 h scrub windows, per-frame diagnostics, loop export).
 
 ---
 
