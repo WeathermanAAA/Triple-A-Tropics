@@ -30,6 +30,7 @@
   function makeWorker() {
     try {
       var src = "importScripts('" + location.origin + "/satellite/explorer/objfix.js');\n" +
+        "importScripts('" + location.origin + "/satellite/explorer/diag_core.js');\n" +
         "onmessage = function (e) {\n" +
         "  var d = e.data;\n" +
         "  try {\n" +
@@ -48,7 +49,13 @@
         "    var archer = self.ObjFix.archerFix(field, d.guess, d.opts);\n" +
         "    var center = archer.center || archer.weakCenter || { lat: d.guess.lat, lon: d.guess.lon };\n" +
         "    var rec = self.ObjFix.adtEstimate(field, center, d.timeMs, d.history, env);\n" +
-        "    postMessage({ id: d.id, archer: archer, rec: rec });\n" +
+        "    // per-frame diagnostics (Hovmöller column + DAV) computed HERE,\n" +
+        "    // while this frame's BT grid is alive -- only the small derived\n" +
+        "    // arrays go back (the loop-memory rule discards the grid).\n" +
+        "    var diag = self.TCDiagCore\n" +
+        "      ? self.TCDiagCore.frameDiagnostics(field, center, d.diagOpts || {})\n" +
+        "      : null;\n" +
+        "    postMessage({ id: d.id, archer: archer, rec: rec, diag: diag });\n" +
         "  } catch (err) {\n" +
         "    postMessage({ id: d.id, error: String(err && (err.stack || err.message) || err) });\n" +
         "  }\n" +
@@ -57,6 +64,10 @@
     } catch (e) { return null; }
   }
   var _mid = 0, _pending = {};
+  function diagOpts() {
+    return (window.TCPanels && window.TCPanels.diagOpts)
+      ? window.TCPanels.diagOpts() : null;
+  }
   function analyzeInWorker(field, guess, timeMs, history, env, opts) {
     if (!S.worker) S.worker = makeWorker();
     if (!S.worker) {
@@ -74,7 +85,10 @@
             var archer = window.ObjFix.archerFix(field, guess, opts);
             var center = archer.center || archer.weakCenter || { lat: guess.lat, lon: guess.lon };
             var rec = window.ObjFix.adtEstimate(field, center, timeMs, history, env);
-            res({ archer: archer, rec: rec });
+            var diag = window.TCDiagCore
+              ? window.TCDiagCore.frameDiagnostics(field, center, diagOpts() || {})
+              : null;
+            res({ archer: archer, rec: rec, diag: diag });
           } catch (e) { rej(e); }
         }, 20);
       });
@@ -93,7 +107,8 @@
         id: id,
         field: { latArr: field.latArr.buffer.slice(0), lonArr: field.lonArr.buffer.slice(0),
                  bt: field.bt.buffer.slice(0), nr: field.nr, nc: field.nc, resKm: field.resKm },
-        guess: guess, timeMs: timeMs, history: history, env: env, opts: opts
+        guess: guess, timeMs: timeMs, history: history, env: env, opts: opts,
+        diagOpts: diagOpts()
       };
       S.worker.postMessage(msg, [msg.field.latArr, msg.field.lonArr, msg.field.bt]);
     });
@@ -290,18 +305,27 @@
     };
   }
 
+  // field cut half-width: at least the ARCHER working box (±4°), widened so
+  // the Hovmöller's outer rings actually have data (maxKm at the storm's
+  // latitude), capped to keep worker transfers bounded.
+  function fieldHalf(lat) {
+    var o = (window.TCPanels && window.TCPanels.diagOpts) ? window.TCPanels.diagOpts() : null;
+    var maxKm = (o && o.radial && o.radial.maxKm) || 450;
+    var cos = Math.max(0.5, Math.cos((lat || 20) * Math.PI / 180));
+    return Math.min(8, Math.max(4, maxKm / (111 * cos) + 0.4));
+  }
   function frameField(frame) {
     var st = S.storm;
     if (st.source === 'archive')
-      return S.src.field(frame.stampIso, st.lat, st.lon, 4.0);
-    if (st.source === 'fd') return S.src.field(frame.stamp, st.lat, st.lon, 4.0);
+      return S.src.field(frame.stampIso, st.lat, st.lon, fieldHalf(st.lat));
+    if (st.source === 'fd') return S.src.field(frame.stamp, st.lat, st.lon, fieldHalf(st.lat));
     if (st.source === 'wp_bt') {
       // cut around THIS frame's official-track anchor (floater box center),
       // falling back to the feed position — a 26 h loop of a mover would
       // otherwise slide the storm out of a fixed window
       var la = frame.guessLat != null ? frame.guessLat : st.lat;
       var lo = frame.guessLon != null ? frame.guessLon : st.lon;
-      return S.src.field(frame.stamp, la, lo, 4.0);
+      return S.src.field(frame.stamp, la, lo, fieldHalf(la));
     }
     return S.src.field(frame);
   }
@@ -365,6 +389,10 @@
                 if (!loop || fi === frames.length - 1 || fi % 4 === 3) {
                   drawScene(r); renderStats(r); drawTrend(); paneMarkers(r);
                 }
+                // dashboard panels (Hovmöller/DAV) redraw per frame — the
+                // worksheet fills as the loop analyzes
+                if (window.TCDiag && window.TCDiag.onFrameResult)
+                  window.TCDiag.onFrameResult(S.results, { running: true });
               });
           }).catch(function (e) {
             // per-frame failure: skip, keep the loop honest about it
@@ -392,6 +420,8 @@
       publishTrack();
       note(S.results.length + ' frame' + (S.results.length === 1 ? '' : 's') + ' analyzed.');
     }
+    if (window.TCDiag && window.TCDiag.onFrameResult)
+      window.TCDiag.onFrameResult(S.results, { running: false });
   }
   function thinFrames(frames, minGapMs) {
     var out = [], lastT = -Infinity;
@@ -414,6 +444,7 @@
       input: S.results.length ? S.results[0].field.inputQuality : null,
       points: S.results.map(function (r) {
         var c = r.archer.center || r.archer.weakCenter;
+        var dv = r.diag && r.diag.dav;
         return {
           t: new Date(r.frame.timeMs).toISOString(),
           lat: c ? +c.lat.toFixed(3) : null,
@@ -425,9 +456,36 @@
           eye_prob_pct: r.archer.eyeProb == null ? null : Math.round(r.archer.eyeProb),
           scene: sceneName(r.rec),
           rawT: r.rec.TrawO, finalT: r.rec.Tfinal, CI: r.rec.CI,
-          vmax_kt: r.rec.vmax, mslp_mb: r.rec.mslp, land: r.rec.land
+          vmax_kt: r.rec.vmax, mslp_mb: r.rec.mslp, land: r.rec.land,
+          dav_deg2: (dv && dv.varDeg2 != null) ? Math.round(dv.varDeg2) : null,
+          dav_n: dv ? dv.nPix : null
         };
-      })
+      }),
+      // the Hovmöller data itself (azimuthal-mean BT per ring per frame) —
+      // Kossin-2002-style columns, objfix-centered; coverage rides along so
+      // consumers can gate incomplete rings like Ditchek et al. 2019
+      hovmoller: (function () {
+        var first = null;
+        for (var k = 0; k < S.results.length; k++) {
+          if (S.results[k].diag && S.results[k].diag.radial) { first = S.results[k].diag.radial; break; }
+        }
+        if (!first) return null;
+        return {
+          ring_km: first.ringKm, max_km: first.maxKm,
+          columns: S.results.map(function (r) {
+            var rad = r.diag && r.diag.radial;
+            return {
+              t: new Date(r.frame.timeMs).toISOString(),
+              fix: !!r.archer.center,
+              confidence_score: +r.archer.confidenceScore.toFixed(3),
+              meanC: rad ? rad.meanC.map(function (v) {
+                return v == null ? null : +v.toFixed(1); }) : null,
+              coverage: rad ? rad.coverage.map(function (v) {
+                return +v.toFixed(2); }) : null
+            };
+          })
+        };
+      })()
     };
   }
   function publishTrack() {
@@ -803,6 +861,9 @@
     },
     analyze: function (loop) { runAnalysis(!!loop); },
     running: function () { return S.running; },
+    stop: function () { S.running = false; },
+    downloadTrack: downloadTrack,
+    results: function () { return S.results; },
     // DEEP-ARCHIVE per-frame analysis (Time Machine): analyze the exact
     // scrubbed frame from GridSat-B1 calibrated BT. First guess = the active
     // pane's view center (the user frames the historical storm; there is no
@@ -811,24 +872,50 @@
     // only; the existing single-frame honesty warning stays active).
     analyzeArchive: function (stamp) {
       if (S.running || !window.ObjFixSources.ArchiveSource) return;
-      var CX = window.__cockpit;
-      var pane = CX && CX.panes[CX.active];
-      if (!pane || !pane.ready) return;
-      var c = pane.tv.map.getCenter();
-      var lon = ((c.lng + 180) % 360 + 360) % 360 - 180;
-      var iso = stamp.slice(0, 4) + '-' + stamp.slice(4, 6) + '-' + stamp.slice(6, 8) +
-                'T' + stamp.slice(9, 11) + ':' + stamp.slice(11, 13) + ':00Z';
-      var basin = lon > -100 && lon < -30 ? 'AL' : (lon <= -100 && lon > -180 ? 'EP' : 'WP');
-      S.storm = {
-        id: 'archive', name: 'ARCHIVE VIEW', basin: basin, slug: null,
-        lat: c.lat, lon: lon, vmax: 0, category: '',
-        source: 'archive',
-        domainID: basin === 'AL' ? 0 : 1,
-        basinID: basin === 'AL' ? 0 : (basin === 'EP' ? 2 : 1)
-      };
-      S.src = new window.ObjFixSources.ArchiveSource();
+      if (!archiveStormFromView()) return;
+      var iso = stampToIso(stamp);
       S.frames = [{ stamp: stamp, stampIso: iso, timeMs: Date.parse(iso) }];
       runAnalysis(false);
+    },
+    // ARCHIVE-WINDOW workup (Time Machine loop): run the per-frame pipeline
+    // over EVERY loaded TM frame — the Hovmöller/DAV time axes for a
+    // historical storm. Same anchor contract as analyzeArchive: the first
+    // guess for every frame is the pane's view center (the user frames the
+    // storm; there is no live feed) — stated in the panel, never implied
+    // otherwise. Frames come from the cockpit's loaded window (btpng fetches
+    // ride the same serialized backend the TM renders use).
+    analyzeArchiveLoop: function () {
+      if (S.running || !window.ObjFixSources.ArchiveSource) return;
+      var CX = window.__cockpit;
+      var frames = (CX && CX.tm && CX.tm.on && CX.tm.frames) || [];
+      if (frames.length < 2) { warn('load a Time Machine loop first'); return; }
+      if (!archiveStormFromView()) return;
+      S.frames = frames.map(function (f) {
+        var iso = stampToIso(f.stamp);
+        return { stamp: f.stamp, stampIso: iso, timeMs: Date.parse(iso) };
+      });
+      runAnalysis(true);
     }
   };
+  function stampToIso(stamp) {
+    return stamp.slice(0, 4) + '-' + stamp.slice(4, 6) + '-' + stamp.slice(6, 8) +
+           'T' + stamp.slice(9, 11) + ':' + stamp.slice(11, 13) + ':00Z';
+  }
+  function archiveStormFromView() {
+    var CX = window.__cockpit;
+    var pane = CX && CX.panes[CX.active];
+    if (!pane || !pane.ready) return null;
+    var c = pane.tv.map.getCenter();
+    var lon = ((c.lng + 180) % 360 + 360) % 360 - 180;
+    var basin = lon > -100 && lon < -30 ? 'AL' : (lon <= -100 && lon > -180 ? 'EP' : 'WP');
+    S.storm = {
+      id: 'archive', name: 'ARCHIVE VIEW', basin: basin, slug: null,
+      lat: c.lat, lon: lon, vmax: 0, category: '',
+      source: 'archive',
+      domainID: basin === 'AL' ? 0 : 1,
+      basinID: basin === 'AL' ? 0 : (basin === 'EP' ? 2 : 1)
+    };
+    S.src = new window.ObjFixSources.ArchiveSource();
+    return S.storm;
+  }
 })();

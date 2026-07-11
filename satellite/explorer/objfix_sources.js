@@ -201,15 +201,25 @@
     var S0 = Math.max(-70, lat - halfDeg), N = Math.min(70, lat + halfDeg);
     var key = stampIso + '|' + lat.toFixed(1) + '|' + lon.toFixed(1);
     if (this._cache[key]) return Promise.resolve(this._cache[key]);
-    return fetch(RENDER_API, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bbox: [W, S0, E, N], time: stampIso,
-                             channel: 'clean_ir', format: 'btpng' })
-    }).then(function (r) {
-      if (!r.ok) return r.json().catch(function () { return {}; })
-        .then(function (j) { throw new Error(j.detail || ('archive BT failed (' + r.status + ')')); });
-      return r.blob();
-    }).then(function (blob) {
+    // archive-window workups fetch one btpng per TM frame back-to-back —
+    // absorb 429s with backoff instead of dropping the frame
+    var post = function (tries) {
+      return fetch(RENDER_API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bbox: [W, S0, E, N], time: stampIso,
+                               channel: 'clean_ir', format: 'btpng' })
+      }).then(function (r) {
+        if (r.status === 429 && tries < 3) {
+          return new Promise(function (res) {
+            setTimeout(function () { res(post(tries + 1)); }, 7000 * (tries + 1));
+          });
+        }
+        if (!r.ok) return r.json().catch(function () { return {}; })
+          .then(function (j) { throw new Error(j.detail || ('archive BT failed (' + r.status + ')')); });
+        return r.blob();
+      });
+    };
+    return post(0).then(function (blob) {
       return loadImage(URL.createObjectURL(blob));
     }).then(function (im) {
       var id = imageData(im).data;
