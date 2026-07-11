@@ -50,10 +50,13 @@ import numpy as np
 
 from . import mwi
 
-# development levels EXCLUDED from training (extratropical / disturbance /
-# wave / low: best-track Vmax there is not a TC intensity in the Dvorak
-# sense). TC-PRIMED carries the raw best-track codes.
-EXCLUDE_DEV = {"EX", "ET", "DB", "LO", "WV", "MD", "IN", "DS", "XX"}
+# development levels EXCLUDED from training (extratropical / post-tropical /
+# disturbance / wave / low / fill: best-track Vmax there is not a TC
+# intensity in the Dvorak sense). TC-PRIMED carries the raw best-track codes
+# (DB/TD/TS/TY/ST/TC/HU/SD/SS/EX/PT/IN/DS/LO/WV/ET/MD/XX, fill UN);
+# subtropical SD/SS stay in (NHC counts them operationally).
+EXCLUDE_DEV = {"EX", "ET", "PT", "DB", "LO", "WV", "MD", "IN", "DS", "XX",
+               "UN"}
 
 VMAX_BINS = [(0, 34, "TD"), (34, 64, "TS"), (64, 83, "cat1"),
              (83, 96, "cat2"), (96, 113, "cat3"), (113, 137, "cat4"),
