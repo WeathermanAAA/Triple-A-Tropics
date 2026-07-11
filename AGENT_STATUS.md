@@ -62,6 +62,19 @@ the domain changed, then disable this stopgap's schedule. Until Railway is
 back, the explorer custom-zoom, objfix WP floater input, and loop export
 (the interactive `/render` API) stay down — Actions can't host those.
 
+**Also fixed (tsr main @ac28a2f): the Time-Machine archive render 500**
+("x and y arguments to pcolormesh cannot have non-finite values…",
+2017-09-05 GOES-16 CONUS). Early-ABI sectors (GOES-16's 89.5W checkout
+slot) carry masked lat/lon INSIDE the sector; the main scalar path passed
+them to pcolormesh unguarded while the backdrop path guarded. The backdrop
+guard is factored verbatim into `_guard_mesh_coords` and called at BOTH
+sites. True Color confirmed unaffected (RGB → imshow; pre-2017-03 archive
+truecolor 422s honestly — no silent scalar fallback). LIVE-VERIFIED
+locally against real 2017 data: Irma clean_ir 10:15Z + CONUS-edge box +
+day True Color all 200 (renders in scratchpad tm_*.png); 6 new regression
+tests, 43 render tests green. Deploys via the Actions stopgap's next
+checkout; Railway picks it up automatically on restore.
+
 ---
 
 ## IN PROGRESS — 2026-07-11 — MW-IMAGER INTENSITY + OBJECTIVE CONSENSUS
