@@ -1524,11 +1524,17 @@
     c10: { channel: 'wv_lower', enh: 'ir_gray' },
     c14: { channel: 'ir_window', enh: 'rainbow_ir' }
   };
-  // DEEP ARCHIVE (pre-2017): the backend serves GridSat-B1 — a single-channel
-  // 11 µm IR (+6.7 µm WV) geostationary composite, GLOBAL, 3-hourly, ~8 km.
-  // Only IR-based fields exist in that era; the backend bakes the honest era
-  // header ("GridSat-B1 · 11 µm IR window · 3-hourly · ~8 km").
+  // DEEP ARCHIVE eras (pre-2017): the backend serves, best-first per date,
+  //   1994-10..2017-03  GridSat-GOES — PER-SATELLITE GOES imager, ~4 km,
+  //                     HOURLY, with visible + 3.9 µm + WV + IR window
+  //                     (coverage = the GOES disks; elsewhere it falls back
+  //                     to the blended records below, header stays honest)
+  //   2000-02..2017-03  NASA MergIR 4 km/30-min IR (Earthdata-gated)
+  //   1980..            GridSat-B1 blended IR+WV, ~8 km, 3-hourly
+  // The backend bakes the honest era header; here we gate which FIELDS a
+  // date can serve and the loop cadence.
   var TM_ABI_START = Date.parse('2017-03-01T00:00:00Z');
+  var TM_GOES_START = Date.parse('1994-10-01T00:00:00Z');
   var TM_DEEP_MAP = {
     ir: { channel: 'clean_ir', enh: 'rainbow_ir' },
     irbd: { channel: 'clean_ir', enh: 'dvorak' },
@@ -1537,15 +1543,33 @@
     c14: { channel: 'clean_ir', enh: 'rainbow_ir' },
     c08: { channel: 'wv_upper', enh: 'ir_gray' }
   };
+  // GOES era adds visible + shortwave (GridSat-GOES ch1/ch2); the backend
+  // falls back to the blended records off-disk, where these two 422 honestly
+  var TM_GOES_MAP = {
+    ir: TM_DEEP_MAP.ir, irbd: TM_DEEP_MAP.irbd,
+    c14: TM_DEEP_MAP.c14, c08: TM_DEEP_MAP.c08,
+    c02: { channel: 'visible_red', enh: 'ir_gray' },
+    c07: { channel: 'shortwave_ir', enh: 'ir_gray' }
+  };
   function tmDeepEra(iso) { return Date.parse(iso) < TM_ABI_START; }
-  function tmMapFor(iso) { return tmDeepEra(iso) ? TM_DEEP_MAP : TM_MAP; }
+  function tmGoesEra(iso) {
+    var t = Date.parse(iso);
+    return t >= TM_GOES_START && t < TM_ABI_START;
+  }
+  function tmMapFor(iso) {
+    return !tmDeepEra(iso) ? TM_MAP : (tmGoesEra(iso) ? TM_GOES_MAP : TM_DEEP_MAP);
+  }
   function tmSyncEraUI() {
     var v = $('cx-tm-time').value;
     var deep = S.tm.on && v && tmDeepEra(v + ':00Z');
-    document.body.classList.toggle('cx-tm-deep', !!deep);
+    var goes = S.tm.on && v && tmGoesEra(v + ':00Z');
+    document.body.classList.toggle('cx-tm-deep', !!(deep && !goes));
+    document.body.classList.toggle('cx-tm-goes', !!goes);
     document.querySelectorAll('.cx-field[data-key]').forEach(function (el) {
       if (TM_DEEP_MAP[el.dataset.key]) el.dataset.tmDeep = '1';
       else delete el.dataset.tmDeep;
+      if (TM_GOES_MAP[el.dataset.key]) el.dataset.tmGoes = '1';
+      else delete el.dataset.tmGoes;
     });
   }
   var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
@@ -1663,8 +1687,9 @@
     tmClearLoop();
     S.tm.windowFor = t0;
     S.tm.windowBusy = true;
+    // era cadence: GridSat-B1 3-hourly · GridSat-GOES era hourly · ABI 90-min
     var deep = tmDeepEra(centerIso);
-    var stepMs = (deep ? 180 : 90) * 60e3;   // era cadence: GridSat 3-hourly
+    var stepMs = (deep ? (tmGoesEra(centerIso) ? 60 : 180) : 90) * 60e3;
     var half = 12 * 3600e3;
     var times = [];
     for (var t = t0 - half; t <= t0 + half; t += stepMs) times.push(t);

@@ -198,6 +198,9 @@
   /* deep archive (pre-2017, GridSat-B1): single-channel IR era — only the
      IR-based fields stay live; RGBs/visible grey honestly */
   body.cx-tm-deep .cx-field:not([data-tm-deep]){opacity:.4;pointer-events:none}
+  /* GOES era (1994-10..2017-03, GridSat-GOES): per-satellite ~4 km hourly —
+     visible + shortwave join the IR/WV set; RGBs still grey honestly */
+  body.cx-tm-goes .cx-field:not([data-tm-goes]){opacity:.4;pointer-events:none}
   body.cx-tm-mode #cx-tmbar{display:flex}
   #cx-tmbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;
     padding-top:8px;border-top:1px solid var(--cx-line-soft)}
