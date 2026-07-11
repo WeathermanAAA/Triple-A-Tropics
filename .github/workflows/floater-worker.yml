@@ -87,6 +87,11 @@ jobs:
           GLOBAL_GEOJSON_KEY: global_storms.geojson
           LOG_LEVEL: INFO
         run: |
+          # NO -e: Actions runs steps with an implicit `bash -e`, which would
+          # abort this step at the `timeout` line (its expected exit 124 IS
+          # the normal end of a poll window) before the rc check below ever
+          # runs — that mislabels every healthy window as a failed run.
+          set +e
           set -uo pipefail
           WINDOW="${{ github.event.inputs.poll_seconds || '2700' }}"
           # riders: the live-feed + guidance pollers (background, best-effort
