@@ -350,6 +350,36 @@ def _coldest_ring_radius(stats, name, r0_km, r1_km):
     return float((np.nanargmin(mean) + i0 + 0.5) * RING_KM)
 
 
+def _cold_area_frac(stats, name, r0_km, r1_km, thresh_k):
+    """Cell-count-weighted fraction of the annulus' valid cells whose
+    ring/sector-bin MEAN PCT <= thresh_k - the Cecil & Zipser 1999 '250
+    area' analogue evaluated at ~bin granularity (bins are near footprint
+    scale in the inner core; documented approximation)."""
+    _, sm, cn, _ = _ring_slice(stats, name, r0_km, r1_km)
+    n = cn.sum()
+    if n == 0:
+        return float("nan")
+    with np.errstate(invalid="ignore"):
+        mean = np.where(cn > 0, sm / np.maximum(cn, 1), np.nan)
+    cold = (mean <= thresh_k) & (cn > 0)
+    return float(cn[cold].sum() / n)
+
+
+def _stdqm(stats, name, r0_km, r1_km):
+    """Jones et al. 2006 Sec 2d STDQM: stdev of the four QUADRANT means
+    about the disk mean - their resolution-robust asymmetry metric
+    (quadrants = 6 adjacent 15-deg sectors each)."""
+    _, sm, cn, _ = _ring_slice(stats, name, r0_km, r1_km)
+    qmeans = []
+    for q in range(4):
+        s = sm[:, q * 6:(q + 1) * 6].sum()
+        c = cn[:, q * 6:(q + 1) * 6].sum()
+        if c == 0:
+            return float("nan")
+        qmeans.append(s / c)
+    return float(np.std(qmeans))
+
+
 # The fitted feature set (locked by the model JSON's `predictors` list; this
 # dict maps name -> extractor so training and runtime share ONE definition).
 # Radii per Jones et al. 2006 (0-100 inner core / 100-300 environment bands)
@@ -361,7 +391,18 @@ def compute_predictors(stats: dict) -> dict:
     """The full named predictor dict (superset; the model picks its subset).
     NaN values mean 'not observable in this overpass' - the gate decides."""
     p = {}
+    nan = float("nan")
     for name in ("pct89", "pct37"):
+        if f"{name}_min" not in stats:
+            # band missing (single-channel data gap) - NaN predictors, zero
+            # coverage; the gate reports it honestly
+            for suffix in ("min50", "mean50", "min100", "mean100",
+                           "eyewall_min", "eyewall_mean", "outer_mean",
+                           "cold250_100", "cold225_100", "stdqm100"):
+                p[f"{name}_{suffix}"] = nan
+            p[f"{name}_cov100"] = 0.0
+            p[f"{name}_cov_eyewall"] = 0.0
+            continue
         mn50, mean50, cov50 = _area_stats(stats, name, 0.0, 50.0)
         mn100, mean100, cov100 = _area_stats(stats, name, 0.0, 100.0)
         emn, emean, ecov = _area_stats(stats, name, 20.0, 80.0)
@@ -375,12 +416,26 @@ def compute_predictors(stats: dict) -> dict:
         p[f"{name}_outer_mean"] = omean
         p[f"{name}_cov100"] = cov100
         p[f"{name}_cov_eyewall"] = ecov
-    c89, o89 = _ring_closure(stats, "pct89", 20.0, 80.0, 220.0)
-    c37, o37 = _ring_closure(stats, "pct37", 20.0, 80.0, 260.0)
+        p[f"{name}_cold250_100"] = _cold_area_frac(stats, name, 0.0, 100.0,
+                                                   250.0)
+        p[f"{name}_cold225_100"] = _cold_area_frac(stats, name, 0.0, 100.0,
+                                                   225.0)
+        p[f"{name}_stdqm100"] = _stdqm(stats, name, 0.0, 100.0)
+    has89 = "pct89_min" in stats
+    has37 = "pct37_min" in stats
+    c89, o89 = _ring_closure(stats, "pct89", 20.0, 80.0, 220.0) \
+        if has89 else (nan, 0.0)
+    c37, o37 = _ring_closure(stats, "pct37", 20.0, 80.0, 260.0) \
+        if has37 else (nan, 0.0)
     p["ring89_closure"] = c89
     p["ring37_closure"] = c37
-    p["ring37_flag"] = 1.0 if (c37 >= 0.90 and o37 >= 0.90) else 0.0
-    p["cold_ring_radius89"] = _coldest_ring_radius(stats, "pct89", 10.0, 150.0)
+    p["pct89_closure260"] = _ring_closure(stats, "pct89", 20.0, 80.0,
+                                          260.0)[0] if has89 else nan
+    p["pct37_closure260"] = _ring_closure(stats, "pct37", 20.0, 80.0,
+                                          260.0)[0] if has37 else nan
+    p["ring37_flag"] = 1.0 if (has37 and c37 >= 0.90 and o37 >= 0.90) else 0.0
+    p["cold_ring_radius89"] = _coldest_ring_radius(stats, "pct89", 10.0,
+                                                   150.0) if has89 else nan
     # land fractions for the gate [n5]
     lf = stats["land_frac_ring"]
     p["land_frac100"] = float(lf[: int(100 / RING_KM)].mean())
@@ -416,7 +471,9 @@ def load_model(path: Optional[str] = None) -> Optional[dict]:
 
 def quality_gate(predictors: dict, model: dict) -> tuple[bool, list[str]]:
     """(usable, reasons[]) - the coverage/land screen (Jones et al. 2006-style).
-    Thresholds live in the model JSON so they version with the fit."""
+    Thresholds live in the model JSON so they version with the fit. Sensor
+    one-hots ("sensor:X") and declared derived features are exempt from the
+    finite check (one-hots default to 0; derived compute from their base)."""
     g = model.get("gate", {})
     reasons = []
     if predictors.get("pct89_cov100", 0.0) < g.get("min_cov100", 0.60):
@@ -425,12 +482,28 @@ def quality_gate(predictors: dict, model: dict) -> tuple[bool, list[str]]:
         reasons.append("partial eyewall-annulus coverage")
     if predictors.get("land_frac100", 1.0) > g.get("max_land_frac100", 0.25):
         reasons.append("inner core over land")
-    needed = [k for k in model.get("predictors", []) if k != "intercept"]
+    derived = set(model.get("derived", {}))
+    needed = [k for k in model.get("predictors", [])
+              if k != "intercept" and not k.startswith("sensor:")
+              and k not in derived]
     missing = [k for k in needed
                if not np.isfinite(predictors.get(k, float("nan")))]
     if missing:
         reasons.append("missing predictors: " + ", ".join(missing))
     return (len(reasons) == 0), reasons
+
+
+def _with_derived(predictors: dict, model: dict) -> dict:
+    """Evaluate the model JSON's declared derived features (e.g. the
+    saturation square of the leading mean-PCT term) from their base
+    predictors: kind 'square' -> ((base - center)^2) / scale."""
+    out = dict(predictors)
+    for name, spec in (model.get("derived") or {}).items():
+        base = out.get(spec.get("base"), float("nan"))
+        if spec.get("kind") == "square":
+            out[name] = ((float(base) - float(spec.get("center", 0.0))) ** 2
+                         / float(spec.get("scale", 1.0)))
+    return out
 
 
 def apply_model(predictors: dict, model: Optional[dict] = None) -> Optional[dict]:
@@ -444,13 +517,15 @@ def apply_model(predictors: dict, model: Optional[dict] = None) -> Optional[dict
     if not ok:
         return {"usable": False, "reasons": reasons,
                 "model_version": model["version"]}
+    feats = _with_derived(predictors, model)
 
     def _linear(coefs: dict) -> float:
+        # post-gate, every non-sensor feature is finite; absent sensor
+        # one-hots contribute 0 (the base-sensor case)
         v = coefs.get("intercept", 0.0)
         for k, c in coefs.items():
-            if k == "intercept":
-                continue
-            v += c * float(predictors[k])
+            if k != "intercept":
+                v += c * float(feats.get(k, 0.0))
         return v
 
     vmax = _linear(model["vmax"])
@@ -487,10 +562,17 @@ def intensity_record(meta: dict, *, model: Optional[dict] = None,
         model = model or load_model()
         if not model:
             return None
+        trained = model.get("provenance", {}).get("sensors")
+        if trained and meta.get("sensor") not in trained:
+            return {"usable": False, "model_version": model["version"],
+                    "reasons": [f"sensor {meta.get('sensor')} not in the "
+                                "training set"]}
         stats = ring_sector_stats(meta)
         if stats is None:
             return None
         preds = compute_predictors(stats)
+        preds["abs_lat"] = abs(float(meta["clat"]))
+        preds[f"sensor:{meta.get('sensor')}"] = 1.0
         est = apply_model(preds, model)
         if est is None:
             return None
