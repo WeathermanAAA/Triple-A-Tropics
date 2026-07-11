@@ -1,10 +1,14 @@
-# FLOATER FRAME PRODUCER — GH-Actions STOPGAP for the Railway outage of
-# 2026-07-11 (~15:08 UTC): the Railway project hosting BOTH the /render
-# service and the floater worker vanished (platform-level "Application not
-# found"), killing live floater production for every storm. This workflow
-# is the emit-geo-global pattern applied to the floater worker: check out
-# tat-satellite-render, boot the SAME FastAPI /render service on localhost,
-# and run the UNMODIFIED floater_poller.py against it for ~45 min per run.
+# LIVE-POLLER STOPGAP — GH-Actions replacement for the Railway outage of
+# 2026-07-11 (~15:08 UTC): the Railway project hosting the /render service
+# AND the always-on pollers vanished (platform-level "Application not
+# found"), freezing every live product at 15:0x — floater frames for all
+# storms, the home map's global_storms.geojson, the live ACE/tracks feeds,
+# and the CycloLab guidance JSONs. This workflow is the emit-geo-global
+# pattern applied to the worker fleet: check out tat-satellite-render,
+# boot the SAME FastAPI /render service on localhost, run the UNMODIFIED
+# floater_poller.py against it for ~45 min per run, with the (equally
+# unmodified) intensity_poller.py + cyclolab_guidance_poller.py riding
+# along in the background of the same window.
 #
 # Chained coverage: two staggered hourly crons (:07/:37 — non-round minutes
 # are load-bearing, GitHub drops :00-family crons under load) + a
@@ -71,7 +75,7 @@ jobs:
           echo "::error::render service failed to boot"; tail -50 uvicorn.log
           exit 1
 
-      - name: Run the floater poller (clean SIGINT shutdown at the window)
+      - name: Run the poller fleet (clean SIGINT shutdown at the window)
         env:
           RENDER_BASE_URL: http://127.0.0.1:8210
           RATE_MIN_SPACING_S: "1.0"   # localhost — no public rate limiter
@@ -82,18 +86,29 @@ jobs:
         run: |
           set -uo pipefail
           WINDOW="${{ github.event.inputs.poll_seconds || '2700' }}"
-          # SIGINT -> the poller's KeyboardInterrupt path (clean "shutting
-          # down"); timeout's own exit 124 is the EXPECTED end of a window.
+          # riders: the live-feed + guidance pollers (background, best-effort
+          # — a rider crash must never take down floater production; their
+          # writes are atomic per-key puts, so a mid-window kill is safe)
+          timeout --signal=INT --kill-after=60 "$WINDOW" \
+            python intensity_poller.py > intensity.log 2>&1 &
+          timeout --signal=INT --kill-after=60 "$WINDOW" \
+            python cyclolab_guidance_poller.py > guidance.log 2>&1 &
+          # SIGINT -> the floater poller's KeyboardInterrupt path (clean
+          # "shutting down"); timeout's exit 124 is the EXPECTED window end.
           timeout --signal=INT --kill-after=60 "$WINDOW" \
             python floater_poller.py
           rc=$?
+          wait || true
           if [ "$rc" = "124" ] || [ "$rc" = "0" ]; then
             echo "poll window complete (rc=$rc)"
           else
-            echo "::error::poller exited rc=$rc"
+            echo "::error::floater poller exited rc=$rc"
             exit "$rc"
           fi
 
-      - name: Render-service log tail (diagnostics)
+      - name: Log tails (diagnostics)
         if: always()
-        run: tail -80 uvicorn.log || true
+        run: |
+          echo "==== uvicorn ===="; tail -60 uvicorn.log || true
+          echo "==== intensity ===="; tail -40 intensity.log || true
+          echo "==== guidance ===="; tail -40 guidance.log || true
