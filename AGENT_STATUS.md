@@ -4,7 +4,51 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-11 ~02:30 UTC — WORLD VIEW FIXED + VERIFIED (fresh 3-sat frame live, shot in _shots/world_geo_ring_fixed_3sat.jpg); GridSat-GOES deep tier SHIPPED (Katrina at 4 km, comparison shots in _shots/); TC-Diag dashboard build resuming_
+_Last update: 2026-07-11 ~03:10 UTC — SESSION COMPLETE: TC-Diagnostics dashboard + IR Hovmöller + DAV SHIPPED + VERIFIED on BAVI (live) and Irma 2017 (archive workup, 17 frames); World composite FIXED; GridSat-GOES deep tier live; Meteosat creds-gated (Q13)_
+
+---
+
+## LANDED — 2026-07-11 ~03:10 UTC — TC-DIAGNOSTICS DASHBOARD + HOVMÖLLER + DAV
+
+**The headline feature is live** (TAT @82135cdb + wiring): TC-Diagnostics is
+now a full STORM-ANALYSIS WORKSHEET — stage splits imagery | board; picking
+a storm auto-runs the loop workup; §1 objfix docked wide (scene | stats), §2
+IR Hovmöller, §3 DAV, §4 honest SOON tiles (SATCON / WN-1 / eye-CDO /
+sat-intensity-fixes / env / GLM).
+
+- **IR Hovmöller** (Kossin 2002; Dunion et al. 2014; Ditchek et al. 2019):
+  azimuthal-mean BT per 10 km ring about each frame's OBJECTIVE center,
+  computed INSIDE the objfix worker while the BT grid is alive (loop-memory
+  rule intact). Coverage-gated rings (never interpolated), low-confidence
+  columns dimmed + amber-flagged, true time axis with honest gaps, PNG
+  export, TM-scrub column highlight. Rides Track JSON as a `hovmoller` block.
+- **DAV** (Piñeros/Ritchie/Tyo 2008/2011/2012/2014; Hu et al. 2020): Sobel
+  gradient DIRECTIONS vs radial, folded ±90°, sample variance deg² on a
+  ~10 km work grid; published regime bands + uniform-random 2700 line;
+  trailing 24-h mean; **no DAV→intensity sigmoid** (would overstate skill).
+  `dav_deg2` rides Track JSON per point.
+- **VERIFIED — Irma 2017 archive workup** (17 frames, 2017-09-05 ±12 h, via
+  the NEW native-era btpng): Hovmöller shows the cold inner core through the
+  cat-5 RI day; DAV mid-window ≈1000 deg² sits in the published
+  hurricane-typical band with the trailing mean FALLING (organizing) through
+  the RI — and the window-edge frames flag themselves low-confidence (the
+  archive anchor is the view center; a mover drifts off it at the edges —
+  known v1 limit, honestly flagged). Shots:
+  `_shots/tcd_irma17_hovmoller.jpg`, `_shots/tcd_irma17_dav.jpg`.
+- **VERIFIED — BAVI live**: worksheet + objfix workup render correctly
+  (`_shots/tcd_worksheet_bavi_live.jpg`); the LIVE loop time axis needs the
+  calibrated-BT series to accumulate — the hourly emit workflow now also
+  emits `himawari9-wpac-ir` + `goes19-fd-ir` (2 frames each already), so
+  Hovmöller/DAV on live storms fill in over the next hours automatically.
+- **format=btpng for the native ABI era** (tsr main @92d4483, live on
+  Railway): GOES `fetch_regular` regrids one band to a regular lat/lon grid
+  (the truecolor pattern) — per-frame objfix/Hovmöller/DAV now work for the
+  ENTIRE 2017+ archive (Irma verified end-to-end), not just pre-2017 tiers.
+- Unit tests: `node tests/test_diag_core.cjs` (axisym vortex → DAV≈0; noise
+  → ≈2700; eyewall-ring recovery; coverage honesty) — all green.
+- Gotcha for future sessions: the render service rate-limits 10 req/min/IP —
+  do NOT probe it while a TM window or archive workup is loading (that's
+  what emptied the first Irma attempt's window).
 
 ---
 
