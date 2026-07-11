@@ -135,8 +135,9 @@ def _mae(a, b):
 # names are RUNTIME names (mwi.compute_predictors emits every one of them).
 CANDIDATES = [
     "pct89_mean100", "pct89_cold250_100", "pct89_cold225_100",
-    "pct37_mean100", "pct89_min100", "pct37_min100",
+    "pct89_cold275_100", "pct37_mean100", "pct89_min100", "pct37_min100",
     "pct89_eyewall_min", "pct89_stdqm100", "pct37_stdqm100",
+    "kj_fracdark100", "kj_fracbright100", "kj_ring_closure",
     "ring37_closure", "pct37_closure260", "ring89_closure",
     "cold_ring_radius89", "abs_lat",
 ]

@@ -87,6 +87,14 @@ class TestRingSectorStats(unittest.TestCase):
         self.assertLessEqual(p["cold_ring_radius89"], 55.0)
         # warm-rain 37 closure: field IS below 260 in the ring -> closed too
         self.assertGreater(p["ring37_closure"], 0.95)
+        # K&J cyan+pink classes: with V=H the warm 280-K field has H >= 255
+        # (bright cyan) everywhere and the 200-K ring is pink -> the fitted
+        # annulus is fully closed and the flag trips
+        self.assertGreater(p["kj_fracdark100"], 0.95)
+        self.assertGreater(p["kj_ring_closure"], 0.95)
+        self.assertEqual(p["ring37_flag"], 1.0)
+        self.assertTrue(np.isfinite(p["kj_ring_radius_km"]))
+        self.assertLess(p["pct89_cold275_100"], 0.35)   # only the ring is cold
         # deep-ocean box: no land
         self.assertLess(p["land_frac100"], 0.01)
         self.assertGreater(p["pct89_cov100"], 0.95)

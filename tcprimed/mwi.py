@@ -29,11 +29,19 @@ consensus layer cites its own sources in satellite/explorer/satcon.js):
     85-92 GHz PCT spatial statistics (mean/min PCT and cold-pixel fractions in
     fixed radial bands about the interpolated center; their predictors use
     0-100 km and 0-300 km annuli) with land + coverage screening.
-  Kieper & Jiang 2012 (GRL 39, L13804): the 37-GHz "ring" - a closed/nearly
-    closed ring of warm-rain signal (cyan, PCT37 >= ~260 K AND Tb37H
-    depression) around the center precedes/accompanies intensification;
-    operationalized here as azimuthal closure fractions of the 37-GHz
-    warm-rain + convective classes in an eyewall-scale annulus.
+  Kieper & Jiang 2012 (GRL 39, L13804): the 37-GHz "ring" - a >=90%-closed
+    ring of the NRL 37color cyan+pink classes around the warm center is a
+    ~5x-climatology RI signal (their Table 3: P(RI|ring)=38% vs 9% climo;
+    74% with favorable environment). PCT37 = 2.18*V - 1.18*H (their exact
+    coefficients, after Cecil et al. 2002).
+  Jiang, Zagrodnik, Tao & Zipser 2018 (JGR-Atmos 123, Table 2 + Sec. 3):
+    the Kelvin bounds of the 37color pixel classes - GREEN (precip-free):
+    PCT37 > 270 K and H37 < 225 K; BRIGHT CYAN (shallow/warm rain):
+    PCT37 >= 275 K and H37 >= 255 K; PINK (deep convection): PCT37 <= 260 K.
+    Ring-eligible = everything except green (the JHT "fracDark" classes);
+    "bright" = bright cyan or pink (their "fracBright"). The JHT automated
+    detector fits free annuli about the ARCHER/official center and uses
+    closure tiers (IHC15/16 JHT decks).
 
 DESIGN NOTES (documented departures, none silent):
   n1 GRID: the swath is cropped (pps.crop_swath) then resampled with
@@ -255,6 +263,22 @@ def ring_sector_stats(meta: dict, *, bands=("89", "37")) -> Optional[dict]:
         out[f"{band}_tot"] = np.bincount(
             flat_rs, minlength=nbins).astype(np.int32).reshape(N_RINGS, N_SECTORS)
 
+        if band == "37":
+            # Kieper & Jiang ring classes (see header: K&J12 + Jiang et al.
+            # 2018 Table 2). Per-CELL joint (PCT37, H37) classification,
+            # reduced to ring/sector membership counts - closure and area
+            # fractions derive from these without keeping the grids.
+            pkj = 2.18 * gv - 1.18 * gh          # K&J12 exact coefficients
+            green = (pkj > 270.0) & (gh < 225.0)
+            eligible = valid_any & ~green         # cyan+pink ("fracDark")
+            bright = valid_any & ((gh >= 255.0) | (pkj <= 260.0))
+            for key, mask in (("kj_eligible", eligible), ("kj_bright", bright)):
+                sel = mask & inside
+                fsel = (ring * N_SECTORS + sector)[sel]
+                out[f"{key}_cnt"] = np.bincount(
+                    fsel, minlength=nbins).astype(np.int32).reshape(
+                    N_RINGS, N_SECTORS)
+
         # raw-swath native-footprint minima (per variant) [Cecil & Zipser 1999]
         cosc = math.cos(math.radians(clat))
         rlon = np.asarray(clo, dtype=float).copy()
@@ -433,9 +457,56 @@ def compute_predictors(stats: dict) -> dict:
                                           260.0)[0] if has89 else nan
     p["pct37_closure260"] = _ring_closure(stats, "pct37", 20.0, 80.0,
                                           260.0)[0] if has37 else nan
-    p["ring37_flag"] = 1.0 if (has37 and c37 >= 0.90 and o37 >= 0.90) else 0.0
     p["cold_ring_radius89"] = _coldest_ring_radius(stats, "pct89", 10.0,
                                                    150.0) if has89 else nan
+    # 89-GHz cold-area fraction at 275 K - the JHT standalone 85-GHz RII
+    # predictor (frac275 >= 0.69 within 100 km; IHC15 deck slide 10)
+    p["pct89_cold275_100"] = _cold_area_frac(stats, "pct89", 0.0, 100.0,
+                                             275.0) if has89 else nan
+
+    # Kieper & Jiang cyan+pink ring (class counts stored by extraction)
+    haskj = "kj_eligible_cnt" in stats and has37
+    if haskj:
+        elig = stats["kj_eligible_cnt"]
+        brig = stats["kj_bright_cnt"]
+        val = stats["pct37_cnt"]
+        i100 = int(100.0 / RING_KM)
+        v100 = val[:i100].sum()
+        p["kj_fracdark100"] = float(elig[:i100].sum() / v100) if v100 else nan
+        p["kj_fracbright100"] = float(brig[:i100].sum() / v100) if v100 else nan
+        # annulus fit (the JHT detector fits free annuli; IHC16 deck): pick
+        # the 30-km-wide annulus with inner radius 15-90 km maximizing the
+        # eligible fraction, then measure azimuthal closure there. A sector
+        # is closed when >=50% of its observed annulus cells are cyan+pink;
+        # K&J12 criterion (2): ring must be >= 90% closed.
+        best_frac, best_i = -1.0, None
+        w = int(30.0 / RING_KM)
+        for i0 in range(int(15.0 / RING_KM), int(90.0 / RING_KM) + 1):
+            v = val[i0:i0 + w].sum()
+            if v < 20:
+                continue
+            f = elig[i0:i0 + w].sum() / v
+            if f > best_frac:
+                best_frac, best_i = f, i0
+        if best_i is None:
+            p["kj_ring_closure"] = nan
+            p["kj_ring_radius_km"] = nan
+            p["ring37_flag"] = 0.0
+        else:
+            e_s = elig[best_i:best_i + w].sum(axis=0)
+            v_s = val[best_i:best_i + w].sum(axis=0)
+            observed = v_s > 0
+            closed = observed & (e_s >= 0.5 * np.maximum(v_s, 1))
+            p["kj_ring_closure"] = float(closed.sum() / N_SECTORS)
+            p["kj_ring_radius_km"] = float((best_i + w / 2.0) * RING_KM)
+            p["ring37_flag"] = 1.0 if (p["kj_ring_closure"] >= 0.90
+                                       and observed.mean() >= 0.90) else 0.0
+    else:
+        p["kj_fracdark100"] = nan
+        p["kj_fracbright100"] = nan
+        p["kj_ring_closure"] = nan
+        p["kj_ring_radius_km"] = nan
+        p["ring37_flag"] = 0.0
     # land fractions for the gate [n5]
     lf = stats["land_frac_ring"]
     p["land_frac100"] = float(lf[: int(100 / RING_KM)].mean())
