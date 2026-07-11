@@ -1,0 +1,99 @@
+# FLOATER FRAME PRODUCER — GH-Actions STOPGAP for the Railway outage of
+# 2026-07-11 (~15:08 UTC): the Railway project hosting BOTH the /render
+# service and the floater worker vanished (platform-level "Application not
+# found"), killing live floater production for every storm. This workflow
+# is the emit-geo-global pattern applied to the floater worker: check out
+# tat-satellite-render, boot the SAME FastAPI /render service on localhost,
+# and run the UNMODIFIED floater_poller.py against it for ~45 min per run.
+#
+# Chained coverage: two staggered hourly crons (:07/:37 — non-round minutes
+# are load-bearing, GitHub drops :00-family crons under load) + a
+# serializing concurrency group. With 45-min polls on a 30-min cron there
+# is always one queued run, so runs chain nearly back-to-back; a dropped
+# cron costs at most ~30 min. Restarts are safe by design: the poller
+# resyncs per-(storm, band) state from the R2 manifests and dedupes frames
+# by content hash, so overlapping/duplicate producers are idempotent —
+# including the moment the Railway worker comes back. WHEN RAILWAY IS
+# RESTORED: disable this workflow's schedule (keep workflow_dispatch for
+# emergencies) — see the QUEUED manual steps list.
+name: floater-worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      poll_seconds:
+        description: "Poll window before clean shutdown (s)"
+        default: "2700"
+  schedule:
+    - cron: "7 * * * *"
+    - cron: "37 * * * *"
+
+permissions:
+  contents: read            # R2-only producer; commits nothing to main
+
+concurrency:
+  group: floater-worker
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+    steps:
+      - name: Checkout tat-satellite-render (main — what Railway ran)
+        uses: actions/checkout@v6
+        with:
+          repository: WeathermanAAA/tat-satellite-render
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps (the render service's own requirements)
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet -r requirements.txt
+
+      - name: Boot the /render service on localhost
+        run: |
+          set -euo pipefail
+          nohup uvicorn app:app --host 127.0.0.1 --port 8210 --workers 1 \
+            > uvicorn.log 2>&1 &
+          echo "waiting for /health…"
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8210/health > /dev/null; then
+              echo "render service up after ~$((i*2))s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::render service failed to boot"; tail -50 uvicorn.log
+          exit 1
+
+      - name: Run the floater poller (clean SIGINT shutdown at the window)
+        env:
+          RENDER_BASE_URL: http://127.0.0.1:8210
+          RATE_MIN_SPACING_S: "1.0"   # localhost — no public rate limiter
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          LOG_LEVEL: INFO
+        run: |
+          set -uo pipefail
+          WINDOW="${{ github.event.inputs.poll_seconds || '2700' }}"
+          # SIGINT -> the poller's KeyboardInterrupt path (clean "shutting
+          # down"); timeout's own exit 124 is the EXPECTED end of a window.
+          timeout --signal=INT --kill-after=60 "$WINDOW" \
+            python floater_poller.py
+          rc=$?
+          if [ "$rc" = "124" ] || [ "$rc" = "0" ]; then
+            echo "poll window complete (rc=$rc)"
+          else
+            echo "::error::poller exited rc=$rc"
+            exit "$rc"
+          fi
+
+      - name: Render-service log tail (diagnostics)
+        if: always()
+        run: tail -80 uvicorn.log || true
