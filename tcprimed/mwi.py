@@ -102,8 +102,13 @@ PCT_VARIANTS = {
     "pct37":   ("37", 2.181, 1.181),
     "pct37cc": ("37", 2.150, 1.150),
 }
-# Physical clip (K), after hafs_render.compute_pct89's NRL range guard.
-PCT_CLIP_LO, PCT_CLIP_HI = 105.0, 320.0
+# Sanity clip (K): kill single-pixel overshoots only. Deliberately WIDER
+# than hafs_render.compute_pct89's display guard ([105, 290], a colorbar
+# range): extreme eyewalls reach PCT89 ~65-90 K (the Cat-5 signal the
+# minima predictors need) and warm dry-ocean PCT37 can exceed 320 K
+# (Jiang et al. 2018: ocean PCT37 ~270-300 K, polarization correction up
+# to ~50 K). [50, 350] brackets the TB valid_range [0, 350].
+PCT_CLIP_LO, PCT_CLIP_HI = 50.0, 350.0
 
 # Raw-swath (native-footprint) minima radii, km.
 RAW_MIN_RADII_KM = (25.0, 50.0, 75.0, 100.0, 150.0)
