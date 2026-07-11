@@ -37,7 +37,6 @@
   // the mode's remaining pipeline — greyed slots, never faked data
   var SOON = [
     { title: 'Sat Intensity Fixes', meta: 'agency + objective fix history on one timeline' },
-    { title: 'SATCON Consensus', meta: 'weighted multi-source intensity consensus' },
     { title: 'WN-1 Asymmetry', meta: 'wavenumber-1 cloud-top asymmetry' },
     { title: 'Eye / CDO Metrics', meta: 'eye diameter · CDO size · BT statistics' },
     { title: 'Environmental Favorability', meta: 'shear · SST/OHC · mid-level RH scorecard' },
@@ -177,8 +176,13 @@
       '      <span class="tcd-hmeta">IR axisymmetry index · time series</span></h5>' +
       '    <div class="tcd-phost" id="tcd-p-dav"></div>' +
       '  </div>' +
+      '  <div class="tcd-sec" id="tcd-sec-satcon">' +
+      '    <h5>4 · Objective Intensity Consensus <i class="cx-chip exp">experimental</i>' +
+      '      <span class="tcd-hmeta">SATCON-method blend · ADT-port + MW-imager</span></h5>' +
+      '    <div class="tcd-phost" id="tcd-p-satcon"></div>' +
+      '  </div>' +
       '  <div class="tcd-sec" id="tcd-sec-soon">' +
-      '    <h5>4 · Pipeline <i class="cx-chip">soon</i>' +
+      '    <h5>5 · Pipeline <i class="cx-chip">soon</i>' +
       '      <span class="tcd-hmeta">planned scope — nothing faked</span></h5>' +
       '    <div class="tcd-grid">' +
       SOON.map(function (d) {
@@ -216,6 +220,13 @@
   }
 
   function mountPanels() {
+    if (window.SatCon && window.SatCon.mount) {
+      window.SatCon.mount($('tcd-p-satcon'));
+      window.SatCon.setStorm(window.ObjFixPanel && window.ObjFixPanel.storm());
+    } else if ($('tcd-p-satcon')) {
+      $('tcd-p-satcon').innerHTML = '<div class="tcd-empty">SATCON-method consensus ' +
+        '(ADT-port + MW-imager members) — lands with satcon.js</div>';
+    }
     if (window.TCPanels && window.TCPanels.mount)
       window.TCPanels.mount($('tcd-p-hov'), $('tcd-p-dav'));
     else {
@@ -355,6 +366,10 @@
   function onFrameResult(results, state) {
     if (!S.on) return;
     if (window.TCPanels) window.TCPanels.update(results, state || {});
+    if (window.SatCon) {
+      window.SatCon.setStorm(window.ObjFixPanel && window.ObjFixPanel.storm());
+      window.SatCon.update(results);
+    }
     if (state && state.running) {
       status('analyzing — ' + results.length + ' frame' + (results.length === 1 ? '' : 's') + ' so far…');
       $('tcd-stop').disabled = false;
