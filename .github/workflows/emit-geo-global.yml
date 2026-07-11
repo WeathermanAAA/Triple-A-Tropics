@@ -1,0 +1,62 @@
+# GEO-RING global composite emitter — GH-Actions STOPGAP until the box's s2
+# emit-cron session is running (queued manual step). Emits the 3 geo-global
+# BT fields (ir / irbd / wv) off one pinned scan: GOES-19 + GOES-18 +
+# Himawari-9 (+ Meteosat 0°/IODC once the EUMETSAT_* secrets exist — the
+# members are creds-gated and degrade honestly to the labeled gap without
+# them). Writes tiles + bt.png + manifest straight to R2; commits NOTHING
+# to main (read-only contents, like update-hafs).
+#
+# Hourly at :23 (staggered non-round minute — GitHub drops :00-family crons
+# under load; the stagger is load-bearing, do not "clean it up"). A missed
+# hour self-heals: the next tick emits the then-newest scan. When the box
+# cron is live, BOTH writers stay idempotent per-frame (ready-marker dedup),
+# but disable this cron (workflow_dispatch stays for on-demand re-emits).
+name: emit-geo-global
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emit-geo-global
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout tat-satellite-render (s2-sat-ingest)
+        uses: actions/checkout@v6
+        with:
+          repository: WeathermanAAA/tat-satellite-render
+          ref: s2-sat-ingest
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps (box parity + Meteosat extra)
+        run: |
+          python -m pip install --quiet --upgrade pip
+          # full tsr set = exact box parity; requirements-s2-geo adds satpy so
+          # the Meteosat members light the moment the EUMETSAT_* secrets land
+          pip install --quiet -r requirements.txt -r requirements-s2-geo.txt
+
+      - name: Emit geo-global suite to R2
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # Meteosat members: absent secrets => honest transparent gap
+          EUMETSAT_CONSUMER_KEY: ${{ secrets.EUMETSAT_CONSUMER_KEY }}
+          EUMETSAT_CONSUMER_SECRET: ${{ secrets.EUMETSAT_CONSUMER_SECRET }}
+        run: |
+          set -euo pipefail
+          python s2_pyramid_emit.py --suite geo-global \
+            --store r2 --prefix shadow --max-zoom 5
