@@ -35,9 +35,26 @@ resync, content-hash dedupe, atomic per-key puts) — coexists with Railway
 whenever it returns. Floater production VERIFIED resumed 21:03Z (BAVI hot
 bands ir/irbd first, cold bands following).
 
+**Verified restored (21:03–21:18Z):** floater frames for ALL 4 storms
+(BAVI wp09 + cp90/wp97/wp98, GOES + Himawari paths, healthy ~5–8 min IR
+cadence, every sampled loop frame fetches 200); per-basin live feeds
+(`feeds/wp_tracks_data.json` fresh 21:10); CycloLab guidance
+(`cyclolab/JTWC_WP092026/guidance.json` fresh 21:18). The intensity
+rider's global-map key needed Railway-env parity
+(`GLOBAL_GEOJSON_KEY=global_storms.geojson` — the code default is the
+shadow-cutover key) @30d083a3; the home map heals on the current run.
+
+**Secondary (user-reported) also shipped:** solid-black coastlines mudded
+the storm on rainbow_ir — tsr main @ebcf004 restyles coast to light cyan +
+borders/state lines off-white, each over a thin near-black halo (legible
+on dark IR tops AND daytime scenes; 23 render-quality tests green). The
+Actions worker picks it up the same hour.
+
 **Andrew:** Q15 in the queued manual steps — restore the Railway project
 (or say the word and it stays on Actions), then re-point `RENDER_API` if
-the domain changed, then disable this stopgap's schedule.
+the domain changed, then disable this stopgap's schedule. Until Railway is
+back, the explorer custom-zoom, objfix WP floater input, and loop export
+(the interactive `/render` API) stay down — Actions can't host those.
 
 ---
 
