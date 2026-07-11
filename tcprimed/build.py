@@ -26,6 +26,7 @@ from . import fetch as fx
 from . import render as rnd
 from . import pps
 from . import storms as st
+from . import mwi
 
 
 def _now_iso() -> str:
@@ -186,6 +187,19 @@ def _write_manifest(out_dir, union, prior_ok, rendered_any, *, live=False) -> di
         # (cyclolab_map.js). Ignored by the existing /satellite/ viewer.
         "legends": rnd.mw_legends(),
     }
+    # ADDITIVE: the MW-imager intensity model card (version + validated error
+    # tables) so the consensus client (satellite/explorer/satcon.js) weights
+    # members from the SAME numbers the fit published - no JS-side copy to
+    # drift. Absent until a model JSON is committed. Ignored by the viewer.
+    model = mwi.load_model()
+    if model:
+        manifest["intensity_model"] = {
+            "version": model.get("version"),
+            "disclosure": model.get("disclosure"),
+            "error_overall": model.get("error_overall"),
+            "error_by_bin": model.get("error_by_bin"),
+            "error_by_sensor": model.get("error_by_sensor"),
+        }
     if not storms and not prior_ok:
         print("tcprimed: empty union AND prior manifest unavailable - NOT "
               "writing manifest (workflow keeps last-known-good live)",
@@ -256,6 +270,10 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
             # products holds whichever of {89pct, 37color} rendered (a data gap
             # in one channel publishes the other rather than dropping the pass).
             prod_paths = {k: f"{slug}/{v}" for k, v in products.items()}
+            # ADDITIVE: the EXPERIMENTAL MW-imager objective intensity estimate
+            # (tcprimed.mwi; committed model JSON). None until a model ships /
+            # when the swath fails the coverage-land gate hard. Never raises.
+            mwi_est = mwi.intensity_record(meta, source="archive")
             existing[oid] = {
                 "id": oid,
                 "sensor": meta["sensor"],
@@ -263,6 +281,7 @@ def _process_storm(out_dir, slug, atcf, basin, year, tier, ops, union, *,
                 "valid_utc": _iso(meta["valid"]),
                 "intensity_kt": int(meta["intensity_kt"]),
                 "dev_level": meta["dev_level"],
+                **({"intensity": mwi_est} if mwi_est else {}),
                 "products": prod_paths,
                 # ADDITIVE map-ready fields (ignored by the existing viewer):
                 "tiles": {k: f"{slug}/{v}" for k, v in tiles.items()},
@@ -431,11 +450,14 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     continue
                 products, tiles = res["products"], res["tiles"]
                 tiles_raw = res.get("tiles_raw", {})
+                # ADDITIVE: EXPERIMENTAL MW-imager objective intensity (mwi).
+                mwi_est = mwi.intensity_record(meta, source="live")
                 existing_by_slug[slug][oid] = {
                     "id": oid, "sensor": sensor, "platform": platform,
                     "valid_utc": _iso(meta["valid"]),
                     "intensity_kt": int(meta["intensity_kt"]),
                     "dev_level": meta["dev_level"],
+                    **({"intensity": mwi_est} if mwi_est else {}),
                     "products": {k: f"{slug}/{v}" for k, v in products.items()},
                     # ADDITIVE map-ready fields (ignored by the existing viewer):
                     "tiles": {k: f"{slug}/{v}" for k, v in tiles.items()},
