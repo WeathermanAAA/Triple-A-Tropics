@@ -142,10 +142,26 @@
     // settles, pin minZoom to that zoom so you can never zoom out into empty
     // global space (a regional product is never a tiny patch on the whole world).
     var self = this;
-    this.map.once('idle', function () {
-      self._fitZoom = self.map.getZoom();
-      self.map.setMinZoom(Math.max(0, self._fitZoom - 0.15));
-    });
+    this.map.once('idle', function () { self._pinMinZoom(); });
+  };
+
+  // Pin zoom-OUT to the CURRENT product's data footprint. Computed from the
+  // manifest bounds (cameraForBounds — no camera move), so a product switch
+  // re-derives it: CONUS→World must unlock the world fit, World→CONUS must
+  // re-lock it (a stale pin either blocks zooming out to the globe or lets a
+  // regional product shrink into empty space).
+  VP._pinMinZoom = function () {
+    var b = this.manifest && this.manifest.bounds;
+    var fitZ = null;
+    if (b) {
+      try {
+        var cam = this.map.cameraForBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 24 });
+        if (cam) fitZ = cam.zoom;
+      } catch (e) { /* degenerate container: keep the current pin */ }
+    }
+    if (fitZ == null) fitZ = this.map.getZoom();
+    this._fitZoom = fitZ;
+    this.map.setMinZoom(Math.max(0, fitZ - 0.15));
   };
 
   VP._addFurniture = function (geo) {
@@ -242,6 +258,8 @@
         if (s !== stamp && self._added[s] && self.map.getLayer(self._srcId(s)))
           self.map.setPaintProperty(self._srcId(s), 'raster-opacity', 0);
       }
+      self._hideRetired();   // the incoming product is on screen -- stop the
+                             // outgoing one showing through transparent pixels
       self.frameIdx = idx;
       self._evictBeyondWindow(stamp);   // bound texture residency on EVERY advance
       self._updateReadout();
@@ -267,24 +285,109 @@
   // survive; only the frame sources + probe + clock change. On a missing/failed
   // manifest the current product stays up (onStatus 'product-missing' lets the
   // page say "no data yet" -- products appear as the box emits them).
-  VP.setProduct = function (manifestUrl, meta) {
+  //
+  // NO-FLASH CONTRACT: the outgoing product's layers stay VISIBLE until the
+  // incoming product's frame actually has tiles (showFrame's reveal hides them)
+  // -- a switch never blanks to the background mid-fetch. The outgoing product
+  // is RETIRED, not destroyed: its sources/textures stay resident (hidden), so
+  // toggling straight back is instant. One retired product is kept; switching
+  // to a third tears the oldest down.
+  VP._manifestCached = function (url) {
+    // session manifest cache (45 s TTL): repeat switches skip the RTT; the
+    // CDN's own cache headers still bound real staleness.
+    this._mfCache = this._mfCache || {};
+    var hit = this._mfCache[url];
+    if (hit && (Date.now() - hit.t) < 45e3) return Promise.resolve(hit.m);
     var self = this;
-    return fetch(manifestUrl, { cache: 'no-cache' })
+    return fetch(url, { cache: 'no-cache' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (m) {
         if (!m || !m.tile) throw new Error('not a tiled manifest');
+        self._mfCache[url] = { m: m, t: Date.now() };
+        return m;
+      });
+  };
+  VP._retire = function () {
+    // hide the current product's layers and remember everything needed to
+    // resurrect it; drop any previously retired product for real.
+    if (this._retired) this._dropRetired();
+    var stamps = [];
+    // layers keep their exact on-screen state (current frame opaque, the
+    // rest transparent/hidden) -- the outgoing view must not change at all
+    // until the incoming product's tiles land
+    for (var s in this._added) stamps.push(s);
+    this._retired = {
+      manifestUrl: this.manifestUrl, manifest: this.manifest, base: this.base,
+      pfx: this._pfx, probe: this.probe, frames: this.frames,
+      frameIdx: this.frameIdx, added: this._added, stamps: stamps
+    };
+    this._added = {};
+  };
+  VP._dropRetired = function () {
+    var r = this._retired;
+    if (!r) return;
+    for (var i = 0; i < r.stamps.length; i++) {
+      var id = r.pfx + '-' + r.stamps[i];
+      if (this.map.getLayer(id)) this.map.removeLayer(id);
+      if (this.map.getSource(id)) this.map.removeSource(id);
+    }
+    this._retired = null;
+  };
+  VP._hideRetired = function () {
+    // called from showFrame's reveal: the new product is on screen, so the
+    // retired one must stop showing through the new product's transparent
+    // pixels (e.g. CONUS bleeding through the world composite's honest gap)
+    var r = this._retired;
+    if (!r) return;
+    for (var i = 0; i < r.stamps.length; i++) {
+      var id = r.pfx + '-' + r.stamps[i];
+      if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'none');
+    }
+  };
+  VP._adoptState = function (st) {
+    this.manifestUrl = st.manifestUrl;
+    this.manifest = st.manifest;
+    this.base = st.base;
+    this._pfx = st.pfx;
+    this.probe = st.probe;
+    this.frames = st.frames;
+    this.frameIdx = Math.min(st.frameIdx, Math.max(0, st.frames.length - 1));
+    this._added = st.added || {};
+    this.map.setMaxZoom(((st.manifest && st.manifest.maxzoom) || 5) + 1);
+    this._pinMinZoom();
+  };
+  VP.setProduct = function (manifestUrl, meta) {
+    var self = this;
+    // instant switch-back: the retired product resurrects without a fetch
+    // (its sources are still mounted); the manifest refreshes in background.
+    if (this._retired && this._retired.manifestUrl === manifestUrl) {
+      this.pause();
+      var back = this._retired;
+      this._retired = null;
+      this._retire();                       // current product retires in its place
+      this._adoptState(back);
+      // retired layers were hidden -- unhide via the normal reveal path
+      if (this.frames.length) this.showFrame(this.frameIdx);
+      this.onStatus('ready', this.manifest.latest);
+      this._updateReadout();
+      // background freshness: merge any frames emitted while it was retired
+      this._manifestCached(manifestUrl).then(function (m) {
+        if (self.manifestUrl !== manifestUrl || m.product !== self._pfx) return;
+        self.manifest = m;
+        self.frames = (m.times || []).slice();
+        self.frameIdx = Math.max(0, self.frames.length - 1);
+        self._updateReadout();
+      }).catch(function () {});
+      return Promise.resolve(this.manifest);
+    }
+    return this._manifestCached(manifestUrl)
+      .then(function (m) {
         self.pause();
-        // tear down the old product's frame layers/sources (probe GC's itself)
-        for (var s in self._added) {
-          var id = self._srcId(s);
-          if (self.map.getLayer(id)) self.map.removeLayer(id);
-          if (self.map.getSource(id)) self.map.removeSource(id);
-        }
-        self._added = {};
-        // detach in-flight showFrame listeners -- their sources are gone, so
-        // they could never resolve and would run on every future sourcedata.
+        // detach in-flight showFrame listeners for sources about to retire --
+        // they'd otherwise linger and run on every future sourcedata event.
         (self._pendingData || []).forEach(function (fn) { self.map.off('sourcedata', fn); });
         self._pendingData = [];
+        self._retire();                     // old product stays VISIBLE under the new
         self.manifestUrl = manifestUrl;
         self.manifest = m;
         self.base = manifestBase(manifestUrl, m.product);
@@ -293,9 +396,14 @@
         self.frames = (m.times || []).slice();
         self.frameIdx = Math.max(0, self.frames.length - 1);
         self.map.setMaxZoom((m.maxzoom || 5) + 1);   // per-product native zoom
+        self._pinMinZoom();
         if (self.frames.length) {
-          self._ensureFrame(self.frames[self.frameIdx], 1);
+          // showFrame holds the retired product on screen until the new
+          // frame's tiles land, then hides it (no black flash, ever)
+          self.showFrame(self.frameIdx);
           if (self.probe) self.probe.load(self.frames[self.frameIdx]).catch(function () {});
+        } else {
+          self._hideRetired();
         }
         self.onStatus('ready', m.latest);
         self._updateReadout();
@@ -387,6 +495,9 @@
   };
   VP.fitData = function () {
     var b = this.manifest.bounds;
+    // the data footprint always fits in ONE world -- world copies left on by
+    // an antimeridian region visit would tile duplicate earths side by side
+    this.map.setRenderWorldCopies(false);
     if (b) this.map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 24, duration: 500 });
   };
 

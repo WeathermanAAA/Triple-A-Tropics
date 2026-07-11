@@ -375,13 +375,20 @@
   function updateGapBadges() {
     S.panes.forEach(function (pane) {
       if (!pane || !pane.tv || !pane.tv.map) return;
-      if (S.domain === 'global' && !pane._gapBadge && window.maplibregl) {
+      // data-driven: once the composite's manifest lists a Meteosat member,
+      // the wedge is filled and the badge must go (checked per pane — panes
+      // can hold different frames mid-switch)
+      var mems = pane.tv.manifest && pane.tv.manifest.members;
+      var hasMet = !!(mems && mems.some(function (m) {
+        return /meteosat/i.test(String(m.name)); }));
+      var want = S.domain === 'global' && !hasMet;
+      if (want && !pane._gapBadge && window.maplibregl) {
         var el = document.createElement('div');
         el.className = 'cx-gap-badge';
         el.textContent = 'Meteosat sector — no ingest yet · coming';
         pane._gapBadge = new maplibregl.Marker({ element: el })
           .setLngLat([32, 12]).addTo(pane.tv.map);
-      } else if (S.domain !== 'global' && pane._gapBadge) {
+      } else if (!want && pane._gapBadge) {
         pane._gapBadge.remove();
         pane._gapBadge = null;
       }
@@ -631,6 +638,7 @@
         paneTag(i, data.stamp);
       } else if (kind === 'ready') {
         if (i === 0) { drawTimeline(); updateHeader(); }
+        if (S.domain === 'global') updateGapBadges();   // members-driven badge
       } else if (kind === 'probe') {
         var pp = $('cx-pp-' + i);
         if (!pp) return;
@@ -719,7 +727,21 @@
     $('cx-pht-' + i).textContent =
       di.satLabel + ' ' + di.sensor + ' · ' + p.title +
       (s ? ' · ' + fmtStamp(s).replace(/Z$/, '') + ' UTC' : '');
-    $('cx-phs-' + i).textContent = di.label;
+    // geo-ring composite: the sub-line carries each member's own valid time
+    // (honesty — Meteosat rides ~1 h behind by licence; never imply one
+    // synchronous scan). Other domains keep the plain sector label.
+    var mems = pane.tv && pane.tv.manifest && pane.tv.manifest.members;
+    if (mems && mems.length) {
+      $('cx-phs-' + i).textContent = mems.map(function (m) {
+        var nm = String(m.name)
+          .replace('GOES-East', 'GOES-E').replace('GOES-West', 'GOES-W')
+          .replace('Himawari-9', 'HW-9')
+          .replace('Meteosat-0deg', 'MET-0°').replace('Meteosat-IODC', 'MET-IODC');
+        return nm + (m.t ? ' ' + m.t.slice(11, 16) + 'Z' : '');
+      }).join(' · ');
+    } else {
+      $('cx-phs-' + i).textContent = di.label;
+    }
     $('cx-phg-' + i).textContent = di.scanProd + ' · ' + paletteTag(p);
     $('cx-phw-' + i).textContent =
       '@WeathermanAAA_  ·  ' + di.source + ' ' + di.satLabel + ' ' + di.sensor;
@@ -881,14 +903,32 @@
     }
     var av = availSet(S.domain);
     if (av && !av.has(p.id)) return;
-    flash('Loading ' + p.title + '…', true);
+    // busy toast only if the switch is actually slow — an instant swap (warm
+    // manifest + retained sources) must not blink UI at the user
+    var slow = setTimeout(function () { flash('Loading ' + p.title + '…', true); }, 450);
     pane.tv.setProduct(manifestUrlFor(p, S.domain), p).then(function () {
+      clearTimeout(slow);
       pane.product = p;
       paneTag(i);
       if (i === S.active) { updateHeader(); markFieldActive(); }
       if (i === 0) drawTimeline();
       flash('');
+      // lost-view guard on domain/satellite re-points: if the camera doesn't
+      // touch the new product's footprint (CONUS view -> Himawari pane), fit
+      // the data; otherwise KEEP the user's camera (field switches never move)
+      if (forceDomain && pane.ready) {
+        var b = pane.tv.manifest && pane.tv.manifest.bounds;
+        if (b) {
+          var c = pane.tv.map.getCenter();
+          var lon = ((c.lng + 180) % 360 + 360) % 360 - 180;
+          var inLon = (lon >= b[0] - 2 && lon <= b[2] + 2) ||
+                      (lon + 360 >= b[0] - 2 && lon + 360 <= b[2] + 2);
+          if (!inLon || c.lat < b[1] - 2 || c.lat > b[3] + 2) pane.tv.fitData();
+        }
+      }
     }).catch(function () {
+      clearTimeout(slow);
+      flash('');
       if (forceDomain) flash('no ' + domainInfo(S.domain).label + ' data yet for ' + p.title);
     });
   }
