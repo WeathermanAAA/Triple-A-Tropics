@@ -4,7 +4,31 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-11 ~03:10 UTC — SESSION COMPLETE: TC-Diagnostics dashboard + IR Hovmöller + DAV SHIPPED + VERIFIED on BAVI (live) and Irma 2017 (archive workup, 17 frames); World composite FIXED; GridSat-GOES deep tier live; Meteosat creds-gated (Q13)_
+_Last update: 2026-07-11 — IN PROGRESS: MW-imager intensity member + SATCON-method consensus (fills the dashboard's "SATCON Consensus" SOON tile)_
+
+---
+
+## IN PROGRESS — 2026-07-11 — MW-IMAGER INTENSITY + OBJECTIVE CONSENSUS
+
+Building consensus member #2 (PMW-imager intensity from 89/37-GHz PCT) +
+the SATCON-method blend (Velden & Herndon 2020) for the TC-Diagnostics board.
+
+- **Landed so far**: `tcprimed/mwi.py` — the SHARED predictor-extraction core
+  (crop → the render regrid → PCT ring/sector superset stats; identical in
+  training and the CI cron, so no train/serve skew) + `tcprimed/mwi_train.py`
+  (offline TC-PRIMED trainer: inventory → thin/stratify sample → parallel
+  extract → fit). Provenance headers cite Spencer 1989, Cecil & Chronis 2018,
+  Cecil & Zipser 1999, Jones et al. 2006 (SHIPS-MI), Kieper & Jiang 2012.
+- **Running now (Codespace)**: training extraction over 6,600 TC-PRIMED
+  final-tier overpasses (2014–2024, all basins, GMI/AMSR2/SSMIS, ~85 GB
+  streamed, shards restart-safe under /tmp/mwi) + a 12-agent primary-source
+  research workflow (SATCON weighting/bias/uncertainty; PCT–Vmax relations;
+  37-GHz ring; ADT per-scene errors; KZC wind–pressure).
+- **Next**: leave-one-year-out validated fit → committed
+  `tcprimed/mwi_model_v1.json` → runtime `intensity{}` in overpasses.json →
+  `satellite/explorer/satcon.js` + dashboard panel (honest labeling: TAT's own
+  objective consensus USING the published SATCON method — never implying the
+  CIMSS product).
 
 ---
 
