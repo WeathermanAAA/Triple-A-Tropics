@@ -605,6 +605,18 @@ def apply_model(predictors: dict, model: Optional[dict] = None) -> Optional[dict
         return v
 
     vmax = _linear(model["vmax"])
+    # published monotone calibration (isotonic lookup fit by mwi_fit) - undoes
+    # the linear fit's regression-to-the-mean compression of the intense tail;
+    # slope-1 extension outside the table's range
+    cal = model.get("calibration")
+    if cal:
+        cx, cy = cal["x"], cal["y"]
+        if vmax < cx[0]:
+            vmax = cy[0] + (vmax - cx[0])
+        elif vmax > cx[-1]:
+            vmax = cy[-1] + (vmax - cx[-1])
+        else:
+            vmax = float(np.interp(vmax, cx, cy))
     lo, hi = model.get("vmax_range", [15.0, 185.0])
     vmax = min(max(vmax, lo), hi)
     out = {
@@ -616,13 +628,17 @@ def apply_model(predictors: dict, model: Optional[dict] = None) -> Optional[dict
         mp = _linear(model["mslp"])
         plo, phi = model.get("mslp_range", [880.0, 1015.0])
         out["mslp_hpa"] = round(min(max(mp, plo), phi), 1)
-    # confidence tier from the validated by-bin error table
+    # confidence tier from the validated by-ESTIMATE-bin error table; an
+    # estimate beyond the table's ends clamps to the nearest end bin (never
+    # quote the (smaller) overall error for an out-of-table extreme)
     err = model.get("error_by_bin") or []
     mae = None
     for row in err:
         if row["lo"] <= vmax < row["hi"]:
             mae = row["mae"]
             break
+    if mae is None and err:
+        mae = err[-1]["mae"] if vmax >= err[-1]["hi"] else err[0]["mae"]
     out["mae_kt"] = mae
     out["confidence"] = ("moderate" if (mae is not None and mae <= model.get(
         "confidence_mae_cut", 13.0)) else "low")

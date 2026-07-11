@@ -118,13 +118,17 @@
     };
   }
 
-  // per-bin lookup in the model card's error tables
+  // per-bin lookup in the model card's error tables (bins are conditioned on
+  // the ESTIMATE — the fit publishes them that way). Out-of-table estimates
+  // clamp to the nearest END bin: never quote the (smaller) overall error
+  // for an extreme the table has no row for.
   function binRow(errByBin, vmax) {
-    if (!errByBin) return null;
+    if (!errByBin || !errByBin.length) return null;
     for (var i = 0; i < errByBin.length; i++) {
       if (vmax >= errByBin[i].lo && vmax < errByBin[i].hi) return errByBin[i];
     }
-    return null;
+    return vmax >= errByBin[errByBin.length - 1].hi
+      ? errByBin[errByBin.length - 1] : errByBin[0];
   }
 
   // MW-imager member from one microwave-manifest overpass record + the

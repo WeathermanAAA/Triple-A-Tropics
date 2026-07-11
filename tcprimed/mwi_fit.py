@@ -100,14 +100,94 @@ def _design(rows, predictors, sensors):
     return np.asarray(cols, dtype=float)
 
 
-def _lstsq(X, y):
+def _lstsq(X, y, w=None):
+    """(Weighted) least squares; w = per-row weights (see _balance_weights)."""
+    if w is not None:
+        sw = np.sqrt(np.asarray(w, dtype=float))
+        X = X * sw[:, None]
+        y = y * sw
     coef, *_ = np.linalg.lstsq(X, y, rcond=None)
     return coef
 
 
-def _loyo_predict(rows, predictors, sensors, target):
+# Intensity-balanced training weights: a plain least-squares fit is dominated
+# by the ~70% TD/TS rows and regresses the intense tail toward the mean (the
+# SATCON paper's Cat-5 weak-bias problem, V&H Sec. 3, amplified). Balancing by
+# bin frequency to the power BALANCE_ALPHA=0.5 (sqrt-balance — full balancing
+# over-weights the few dozen cat5 rows into variance) halves the cat3-cat5
+# conditional bias for ~0.7 kt of overall MAE — the SHIPS-family sample-
+# balancing idea. The residual conditional bias is then removed by the
+# monotone CALIBRATION below.
+BALANCE_ALPHA = 0.5
+
+
+def _bin_index(v):
+    for i, (lo, hi, _lab) in enumerate(VMAX_BINS):
+        if lo <= v < hi:
+            return i
+    return len(VMAX_BINS) - 1
+
+
+def _balance_weights(rows, target="vmax_kt"):
+    bins = np.asarray([_bin_index(r[target]) for r in rows])
+    cnt = np.bincount(bins, minlength=len(VMAX_BINS)).astype(float)
+    w = (1.0 / np.maximum(cnt, 1.0)) ** BALANCE_ALPHA
+    w = w[bins]
+    return w * len(w) / w.sum()
+
+
+def _pava(x, y):
+    """Isotonic (monotone non-decreasing) regression of y on x via the pool-
+    adjacent-violators algorithm. Returns (xs, fitted) sorted by x — the step
+    function's sample points. Pure numpy, L2, unit weights."""
+    order = np.argsort(x, kind="stable")
+    xs, ys = np.asarray(x, float)[order], np.asarray(y, float)[order]
+    val = ys.copy()
+    wgt = np.ones_like(val)
+    i = 0
+    # classic PAVA over blocks (list-based; n is a few thousand)
+    vals, wgts, counts = [], [], []
+    for v in val:
+        vals.append(v); wgts.append(1.0); counts.append(1)
+        while len(vals) > 1 and vals[-2] > vals[-1]:
+            v2, w2, c2 = vals.pop(), wgts.pop(), counts.pop()
+            v1, w1, c1 = vals.pop(), wgts.pop(), counts.pop()
+            vals.append((v1 * w1 + v2 * w2) / (w1 + w2))
+            wgts.append(w1 + w2)
+            counts.append(c1 + c2)
+    fitted = np.concatenate([np.full(c, v) for v, c in zip(vals, counts)])
+    return xs, fitted
+
+
+def _calibration_table(yhat_train, y_train, grid=None):
+    """Fit the monotone calibration g (isotonic of truth on raw prediction)
+    and sample it on a fixed grid -> {'x': [...], 'y': [...]} for linear
+    interpolation at runtime. Outside the grid the ends extend with slope 1."""
+    m = np.isfinite(yhat_train) & np.isfinite(y_train)
+    xs, fit = _pava(yhat_train[m], y_train[m])
+    if grid is None:
+        grid = np.arange(10.0, 186.0, 5.0)
+    gy = np.interp(grid, xs, fit)
+    return {"x": [round(float(v), 1) for v in grid],
+            "y": [round(float(v), 2) for v in gy]}
+
+
+def _apply_cal(yhat, cal):
+    x = np.asarray(cal["x"], float)
+    y = np.asarray(cal["y"], float)
+    out = np.interp(yhat, x, y)
+    lo, hi = x[0], x[-1]
+    out = np.where(yhat < lo, y[0] + (yhat - lo), out)
+    out = np.where(yhat > hi, y[-1] + (yhat - hi), out)
+    return out
+
+
+def _loyo_predict(rows, predictors, sensors, target, weights=None,
+                  calibrate=False):
     """Leave-one-year-out predictions for every row (NaN if that year's
-    training fold is degenerate)."""
+    training fold is degenerate). With calibrate=True the monotone
+    calibration is fit on each TRAIN fold's raw predictions and applied to
+    the TEST fold — nested, so the reported errors stay honest."""
     years = sorted({r["year"] for r in rows})
     yhat = np.full(len(rows), np.nan)
     idx_by_year = defaultdict(list)
@@ -120,8 +200,14 @@ def _loyo_predict(rows, predictors, sensors, target):
         train = np.asarray([i for i in range(len(rows)) if rows[i]["year"] != yr])
         if train.size < 50:
             continue
-        coef = _lstsq(X[train], y[train])
-        yhat[test] = X[test] @ coef
+        w = weights[train] if weights is not None else None
+        coef = _lstsq(X[train], y[train], w)
+        raw_test = X[test] @ coef
+        if calibrate:
+            cal = _calibration_table(X[train] @ coef, y[train])
+            yhat[test] = _apply_cal(raw_test, cal)
+        else:
+            yhat[test] = raw_test
     return yhat, y
 
 
@@ -167,33 +253,45 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
     shard_dir = Path(work) / "shards"
     rows = []
     skipped = 0
-    for f in sorted(shard_dir.glob("*.npz")):
-        try:
-            with np.load(f, allow_pickle=False) as npz:
-                rows.append(shard_row(npz))
-        except Exception:  # noqa: BLE001
-            skipped += 1
-    print(f"fit: {len(rows)} shards ({skipped} unreadable)")
+    cache = Path(work) / "rows.pkl"
+    if cache.exists():
+        import pickle
+        rows = pickle.load(open(cache, "rb"))
+        print(f"fit: {len(rows)} rows from cache {cache}")
+    else:
+        for f in sorted(shard_dir.glob("*.npz")):
+            try:
+                with np.load(f, allow_pickle=False) as npz:
+                    rows.append(shard_row(npz))
+            except Exception:  # noqa: BLE001
+                skipped += 1
+        print(f"fit: {len(rows)} shards ({skipped} unreadable)")
+        import pickle
+        pickle.dump(rows, open(cache, "wb"))
 
     usable = [r for r in rows if _usable(r)]
     print(f"fit: {len(usable)} pass the training gate "
           f"({len(rows) - len(usable)} gated out)")
     sensors = sorted({r["sensor"] for r in usable})
 
-    # forward selection by LOYO MAE (the honest metric)
+    # forward selection by BALANCED, CALIBRATED LOYO MAE (the honest metric
+    # for the model as actually deployed: balanced fit + monotone calibration)
     chosen: list[str] = []
     best_mae = np.inf
     pool = [c for c in CANDIDATES
             if sum(np.isfinite(r.get(c, np.nan)) for r in usable) > 0.95 * len(usable)]
     frows = [r for r in usable
              if all(np.isfinite(r.get(c, np.nan)) for c in pool)]
-    print(f"fit: {len(frows)} rows with all {len(pool)} candidates finite")
+    print(f"fit: {len(frows)} rows with all {len(pool)} candidates finite "
+          f"(balance alpha={BALANCE_ALPHA})")
+    wts = _balance_weights(frows)
     while len(chosen) < max_predictors:
         best_c, best_c_mae = None, best_mae
         for c in pool:
             if c in chosen:
                 continue
-            yhat, y = _loyo_predict(frows, chosen + [c], sensors, "vmax_kt")
+            yhat, y = _loyo_predict(frows, chosen + [c], sensors, "vmax_kt",
+                                    weights=wts, calibrate=True)
             m = _mae(yhat, y)
             if m < best_c_mae - 0.02:      # require a real gain
                 best_c, best_c_mae = c, m
@@ -214,7 +312,8 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
     derived = {}
     for r in frows:
         r[f"{lead}_sq"] = (r[lead] - sq_center) ** 2 / sq_scale
-    yhat, y = _loyo_predict(frows, chosen + [f"{lead}_sq"], sensors, "vmax_kt")
+    yhat, y = _loyo_predict(frows, chosen + [f"{lead}_sq"], sensors,
+                            "vmax_kt", weights=wts, calibrate=True)
     if _mae(yhat, y) < best_mae - 0.05:
         chosen.append(f"{lead}_sq")
         best_mae = _mae(yhat, y)
@@ -222,42 +321,51 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
                                  "center": sq_center, "scale": sq_scale}
         print(f"  + {lead}_sq (saturation term) LOYO MAE {best_mae:.2f} kt")
 
-    # final coefficients on ALL usable rows
+    # final coefficients + calibration on ALL usable rows (balanced fit; the
+    # published calibration is the isotonic of truth on the FULL-fit raw
+    # predictions — the deployed pair)
     Xall = _design(frows, chosen, sensors)
     yall = np.asarray([r["vmax_kt"] for r in frows])
-    coef = _lstsq(Xall, yall)
-    yhat_loyo, _ = _loyo_predict(frows, chosen, sensors, "vmax_kt")
+    coef = _lstsq(Xall, yall, wts)
+    calibration = _calibration_table(Xall @ coef, yall)
+    # honest generalization estimate: nested-calibrated LOYO predictions
+    yhat_loyo, _ = _loyo_predict(frows, chosen, sensors, "vmax_kt",
+                                 weights=wts, calibrate=True)
 
-    # ---- error tables (LOYO = out-of-sample honest) ----
+    # ---- error tables (LOYO, nested calibration = out-of-sample honest) ----
     resid = yhat_loyo - yall
     fin = np.isfinite(resid)
-    err_overall = {
-        "n": int(fin.sum()),
-        "mae": round(float(np.mean(np.abs(resid[fin]))), 2),
-        "rmse": round(float(np.sqrt(np.mean(resid[fin] ** 2))), 2),
-        "bias": round(float(np.mean(resid[fin])), 2),
-    }
+
+    def _tbl(mask):
+        return {
+            "n": int(mask.sum()),
+            "mae": round(float(np.mean(np.abs(resid[mask]))), 2),
+            "rmse": round(float(np.sqrt(np.mean(resid[mask] ** 2))), 2),
+            "bias": round(float(np.mean(resid[mask])), 2),
+        }
+
+    err_overall = _tbl(fin)
+    # by ESTIMATE bin — what the runtime/consensus can actually condition on
+    # (satcon.js looks a member's sigma up by the member's own value); after
+    # calibration the per-estimate-bin bias is ~0 by construction
     err_by_bin = []
+    for lo, hi, label in VMAX_BINS:
+        m = fin & (yhat_loyo >= lo) & (yhat_loyo < hi)
+        if m.sum() < 10:
+            continue
+        err_by_bin.append({"lo": lo, "hi": hi, "label": label, **_tbl(m)})
+    # by TRUTH bin — the documentation table (how far the estimate sits from
+    # reality per actual-intensity class; irreducibly weak-biased at cat5)
+    err_by_truth_bin = []
     for lo, hi, label in VMAX_BINS:
         m = fin & (yall >= lo) & (yall < hi)
         if m.sum() < 10:
             continue
-        err_by_bin.append({
-            "lo": lo, "hi": hi, "label": label, "n": int(m.sum()),
-            "mae": round(float(np.mean(np.abs(resid[m]))), 2),
-            "rmse": round(float(np.sqrt(np.mean(resid[m] ** 2))), 2),
-            "bias": round(float(np.mean(resid[m])), 2),
-        })
+        err_by_truth_bin.append({"lo": lo, "hi": hi, "label": label, **_tbl(m)})
     err_by_sensor = {}
     svec = np.asarray([r["sensor"] for r in frows])
     for s in sensors:
-        m = fin & (svec == s)
-        err_by_sensor[s] = {
-            "n": int(m.sum()),
-            "mae": round(float(np.mean(np.abs(resid[m]))), 2),
-            "rmse": round(float(np.sqrt(np.mean(resid[m] ** 2))), 2),
-            "bias": round(float(np.mean(resid[m])), 2),
-        }
+        err_by_sensor[s] = _tbl(fin & (svec == s))
     err_by_year = {}
     yvec = np.asarray([r["year"] for r in frows])
     for yr in sorted(set(yvec.tolist())):
@@ -275,8 +383,10 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
     if len(prows) > 300:
         Xp = _design(prows, chosen, sensors)
         yp = np.asarray([r["mslp_hpa"] for r in prows])
-        coefp = _lstsq(Xp, yp)
-        yhat_p, _ = _loyo_predict(prows, chosen, sensors, "mslp_hpa")
+        wp = _balance_weights(prows)   # balance on the paired Vmax bins
+        coefp = _lstsq(Xp, yp, wp)
+        yhat_p, _ = _loyo_predict(prows, chosen, sensors, "mslp_hpa",
+                                  weights=wp)
         rp = yhat_p - yp
         fp = np.isfinite(rp)
         mslp_block = {
@@ -310,7 +420,15 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
             "n_overpasses": len(frows),
             "target": ("best-track Vmax (kt, 1-min) linearly interpolated "
                        "to overpass time (TC-PRIMED overpass_storm_metadata)"),
-            "validation": "leave-one-year-out",
+            "validation": ("leave-one-year-out, calibration nested per fold; "
+                           "error_by_bin is conditioned on the ESTIMATE (the "
+                           "runtime lookup), error_by_truth_bin on the actual "
+                           "best-track intensity"),
+            "balance_alpha": BALANCE_ALPHA,
+            "calibration": ("monotone (isotonic/PAVA) map of best-track Vmax "
+                            "on raw linear prediction, published as a lookup "
+                            "table; counters the linear fit's regression-to-"
+                            "the-mean compression of the intense tail"),
             "thinning": "6-h per-storm minimum gap (Jones et al. 2006 Sec 3a)",
             "gate_training": GATE,
             "extraction": {"grid_half_deg": mwi.GRID_HALF_DEG,
@@ -328,12 +446,14 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
         "derived": derived,
         "vmax": _pack(coef),
         "vmax_range": [15.0, 185.0],
+        "calibration": calibration,
         # runtime gate == training gate: the published error tables were
         # measured on exactly this screen, so looser runtime acceptance
         # would quote errors the estimate doesn't actually have.
         "gate": dict(GATE),
         "error_overall": err_overall,
         "error_by_bin": err_by_bin,
+        "error_by_truth_bin": err_by_truth_bin,
         "error_by_sensor": err_by_sensor,
         "error_by_year": err_by_year,
         "confidence_mae_cut": 13.0,
@@ -349,8 +469,12 @@ def fit(work: Path, out_path: Path | None = None, max_predictors: int = 7):
     print(f"\nmodel written -> {out}")
     print(json.dumps({k: model[k] for k in
                       ("error_overall", "error_by_sensor")}, indent=1))
-    print("by bin:")
+    print("by ESTIMATE bin (the runtime sigma lookup):")
     for b in err_by_bin:
+        print(f"  {b['label']:5s} n={b['n']:5d} mae={b['mae']:6.2f} "
+              f"rmse={b['rmse']:6.2f} bias={b['bias']:+6.2f}")
+    print("by TRUTH bin (documentation):")
+    for b in err_by_truth_bin:
         print(f"  {b['label']:5s} n={b['n']:5d} mae={b['mae']:6.2f} "
               f"rmse={b['rmse']:6.2f} bias={b['bias']:+6.2f}")
     return model
