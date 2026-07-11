@@ -4,9 +4,27 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-11 ~01:40 UTC — core explorer fix pass IN FLIGHT (see below): World composite root-caused + fresh 3-sat emit running; Meteosat SEVIRI members built (creds-gated); viewer switching overhauled_
+_Last update: 2026-07-11 ~02:30 UTC — WORLD VIEW FIXED + VERIFIED (fresh 3-sat frame live, shot in _shots/world_geo_ring_fixed_3sat.jpg); GridSat-GOES deep tier SHIPPED (Katrina at 4 km, comparison shots in _shots/); TC-Diag dashboard build resuming_
 
 ---
+
+## LANDED — 2026-07-11 ~02:30 UTC
+
+- **World composite FIXED + LIVE-VERIFIED**: the emit-geo-global workflow's
+  first run succeeded — fresh frame `20260711T005020Z` with ALL THREE members
+  (GOES-E 00:50 · GOES-W 00:50 · HW-9 00:50, listed in the manifest's
+  `members[]` and shown in the pane header). Hourly cron keeps it fresh.
+  Shot: `_shots/world_geo_ring_fixed_3sat.jpg` — seamless Americas + WPac
+  (BAVI's eye visible), honest labeled Meteosat gap awaiting the Q13 key.
+  The stale half-world 07-10 frame stays in the loop honestly and ages out.
+- **GridSat-GOES deep tier SHIPPED** (tsr main `d11966b`, Railway
+  auto-deploys /render): Time Machine 1994-10..2017-12 is now PER-SATELLITE
+  ~4 km HOURLY with visible + 3.9 µm + WV + IR window — ordered tier ladder
+  (GridSat-GOES → MergIR → GridSat-B1) with resolve-time fall-through and
+  honest per-tier headers. Frontend era gating: TAT `2e423c3d` (hourly
+  windows + c02/c07 unlocked in the GOES era). Resolution proof:
+  `_shots/tm_katrina05_gridsat_goes_4km.jpg` (GOES-12 pinhole eye) vs
+  `_shots/tm_katrina05_gridsat_b1_8km.jpg`.
 
 ## IN FLIGHT — 2026-07-11 (core-fix pass per Andrew's priority messages)
 
