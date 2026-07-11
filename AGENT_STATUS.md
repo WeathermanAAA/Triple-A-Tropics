@@ -44,11 +44,17 @@ rider's global-map key needed Railway-env parity
 (`GLOBAL_GEOJSON_KEY=global_storms.geojson` — the code default is the
 shadow-cutover key) @30d083a3; the home map heals on the current run.
 
-**Secondary (user-reported) also shipped:** solid-black coastlines mudded
-the storm on rainbow_ir — tsr main @ebcf004 restyles coast to light cyan +
-borders/state lines off-white, each over a thin near-black halo (legible
-on dark IR tops AND daytime scenes; 23 render-quality tests green). The
-Actions worker picks it up the same hour.
+**Secondary (user-reported) also shipped + EYEBALL-VERIFIED:** solid-black
+coastlines mudded the storm on rainbow_ir — tsr main @ebcf004 restyles
+coast to light cyan + borders/state lines off-white, each over a thin
+near-black halo (23 render-quality tests green). Verified on the LIVE
+21:20Z BAVI landfall frame: the China coast reads crisply through the
+eyewall where the old black stroke vanished into the maroon cold tops
+(before/after in scratchpad bavi_{old,new}_coast.png).
+
+**Home map heal VERIFIED 21:22Z:** global_storms.geojson fresh + correct
+(BAVI 60 kt @ 28.7N 120.4E — moved/weakened vs the frozen snapshot; cp90
+dropped as a dissipated invest).
 
 **Andrew:** Q15 in the queued manual steps — restore the Railway project
 (or say the word and it stays on Actions), then re-point `RENDER_API` if
