@@ -13,22 +13,35 @@ _Last update: 2026-07-11 — IN PROGRESS: MW-imager intensity member + SATCON-me
 Building consensus member #2 (PMW-imager intensity from 89/37-GHz PCT) +
 the SATCON-method blend (Velden & Herndon 2020) for the TC-Diagnostics board.
 
-- **Landed so far**: `tcprimed/mwi.py` — the SHARED predictor-extraction core
-  (crop → the render regrid → PCT ring/sector superset stats; identical in
-  training and the CI cron, so no train/serve skew) + `tcprimed/mwi_train.py`
-  (offline TC-PRIMED trainer: inventory → thin/stratify sample → parallel
-  extract → fit). Provenance headers cite Spencer 1989, Cecil & Chronis 2018,
-  Cecil & Zipser 1999, Jones et al. 2006 (SHIPS-MI), Kieper & Jiang 2012.
+- **Landed so far** (all pushed to main, tests green):
+  - `tcprimed/mwi.py` @11355611 — SHARED predictor extraction (crop → render
+    regrid → PCT ring/sector superset; line-faithful Kieper & Jiang 37-GHz
+    ring via the Jiang et al. 2018 Table 2 cyan/pink classes + fitted
+    annulus + 90% closure; NE land gate; committed-model evaluator).
+    Identical in training and the CI cron — no train/serve skew.
+  - `tcprimed/mwi_train.py` + `mwi_fit.py` — offline TC-PRIMED trainer
+    (inventory → 6-h thin/stratify → parallel extract → forward-selected
+    linear fit, leave-one-YEAR-out validation, error tables by bin/sensor/
+    year, provenance-carrying model JSON).
+  - `tcprimed/build.py` @2d508db5 — both cron tiers write per-overpass
+    `intensity{}` records + a manifest `intensity_model` card (no-op until
+    the model JSON is committed; never sinks a render).
+  - `satellite/explorer/satcon.js` @3d2c8d86 — the SATCON-method consensus
+    (V&H 2020 verbatim 3-member equation, situational-RMSE weights, CIMSS
+    3→6 h MW age decay, ≥2-member rule, ±10 kt band floor, departures D1–D8
+    documented) + dashboard section 4 replacing the SOON stub; honest empty
+    states while the model isn't deployed. `SATCON-METHODS.md` = the
+    OBJFIX-METHODS-style provenance doc. Tests: tests/test_mwi.py (16),
+    tests/test_satcon.cjs (30+ assertions), tests/satcon_dom_smoke.cjs.
 - **Running now (Codespace)**: training extraction over 6,600 TC-PRIMED
   final-tier overpasses (2014–2024, all basins, GMI/AMSR2/SSMIS, ~85 GB
-  streamed, shards restart-safe under /tmp/mwi) + a 12-agent primary-source
-  research workflow (SATCON weighting/bias/uncertainty; PCT–Vmax relations;
-  37-GHz ring; ADT per-scene errors; KZC wind–pressure).
-- **Next**: leave-one-year-out validated fit → committed
-  `tcprimed/mwi_model_v1.json` → runtime `intensity{}` in overpasses.json →
-  `satellite/explorer/satcon.js` + dashboard panel (honest labeling: TAT's own
-  objective consensus USING the published SATCON method — never implying the
-  CIMSS product).
+  streamed, restart-safe shards) — restarted after two REAL catches: the
+  ring criterion needed per-pixel joint (PCT37, H37) classes, and the
+  inherited PCT display-clip [105,290] was flattening the Cat-5 minima
+  signal (widened to [50,350]). Plus the 12-agent research workflow
+  (4/6 topics reported; SATCON + SHIPS-MI + K&J + TC-PRIMED all verified).
+- **Next**: fit + validate → commit `tcprimed/mwi_model_v1.json` → force a
+  tcprimed re-render so intensity{} lands on R2 → live-verify the panel.
 
 ---
 
