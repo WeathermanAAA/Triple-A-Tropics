@@ -82,6 +82,9 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # the PROMOTED global-map key (the Railway deployment's setting;
+          # the poller's own default is the shadow key from the cutover era)
+          GLOBAL_GEOJSON_KEY: global_storms.geojson
           LOG_LEVEL: INFO
         run: |
           set -uo pipefail
