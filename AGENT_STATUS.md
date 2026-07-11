@@ -4,7 +4,40 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-11 — IN PROGRESS: MW-imager intensity member + SATCON-method consensus (fills the dashboard's "SATCON Consensus" SOON tile)_
+_Last update: 2026-07-11 ~21:10 UTC — 🔥 PRODUCTION OUTAGE handled: Railway project vanished 15:08Z (floaters + live feeds + guidance all frozen); GH-Actions stopgap worker restored floater production 21:03Z; see Q15 for Andrew's Railway steps_
+
+---
+
+## 🔥 OUTAGE — 2026-07-11 15:08 UTC — RAILWAY PROJECT GONE (mitigated 21:03 UTC)
+
+**Root cause:** the Railway project hosting the `/render` service
+(`web-production-b88d.up.railway.app`) AND the always-on workers returned
+platform-level "Application not found" from ~15:08 UTC — the app is gone
+from Railway's edge (deleted/suspended/billing; only the dashboard knows).
+NOT an R2 problem (every published frame fetches 200), NOT the player
+(unchanged for weeks), NOT upstream satellites (GOES + Himawari storms all
+froze at the same minute).
+
+**Blast radius (all frozen 15:02–15:08Z):** floater frames for every storm
+(the reported symptom — loops went stale/choppy/black); the home map's
+`global_storms.geojson`; live ACE/tracks feeds (`feeds/*` — basin pages
+degraded to their 6-h baked fallbacks by design); CycloLab guidance JSONs;
+plus the interactive `/render` API (explorer custom-zoom, objfix WP floater
+path, loop export) — the latter CANNOT be stopgapped from Actions.
+
+**Mitigation (live):** TAT workflow `floater-worker.yml` @cb93aca3+abd67735
+— chained GH-Actions runs (crons :07/:37, serializing concurrency) boot the
+UNMODIFIED FastAPI `/render` on localhost and run the UNMODIFIED
+`floater_poller.py` (foreground) + `intensity_poller.py` +
+`cyclolab_guidance_poller.py` (background riders) for ~45 min per run.
+Restart-safe + dual-writer-safe by the pollers' own design (R2 manifest
+resync, content-hash dedupe, atomic per-key puts) — coexists with Railway
+whenever it returns. Floater production VERIFIED resumed 21:03Z (BAVI hot
+bands ir/irbd first, cold bands following).
+
+**Andrew:** Q15 in the queued manual steps — restore the Railway project
+(or say the word and it stays on Actions), then re-point `RENDER_API` if
+the domain changed, then disable this stopgap's schedule.
 
 ---
 
