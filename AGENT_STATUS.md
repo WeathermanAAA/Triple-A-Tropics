@@ -4,7 +4,60 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-10 ~04:30 UTC — OVERNIGHT REPORT above: TM draw-box+queue accepted on Irma; main merged into s2 (veg-green verified); cron foolproofed_
+_Last update: 2026-07-11 ~01:40 UTC — core explorer fix pass IN FLIGHT (see below): World composite root-caused + fresh 3-sat emit running; Meteosat SEVIRI members built (creds-gated); viewer switching overhauled_
+
+---
+
+## IN FLIGHT — 2026-07-11 (core-fix pass per Andrew's priority messages)
+
+Order per Andrew: ① core explorer fixes ② Meteosat global-gap fill (URGENT)
+③ deep-archive native overhaul (research-first) — TC-Diagnostics dashboard
+build is PAUSED (WIP committed @7d0096ad, honest placeholders; Hovmöller+DAV
+research is done and banked).
+
+### World composite — ROOT-CAUSED, fix chain landed
+The "blob + duplicate coastlines" World view: **the data pipeline was
+correct** (proved: Andes anchor at −67.9/−68.7/−69.2 in the live bt.png;
+local tile-cutter reproduces the CDN tiles at IoU 0.998; mercator addresses
+exact). The real defects: the ONE frame on R2 (2026-07-10 03:40, emitted
+once — box cron not running) is missing its **Himawari lobe**: suite emits
+pin the scan to the GOES anchor, and the AHI loader TRUSTED the pin — a
+mid-upload/housekeeping FLDK slot failed the whole member (honest degrade →
+half a world). Fixes:
+- tsr `3ef26d1` — AHI pinned-slot fallback to the newest COMPLETE slot
+  (himawari-suite pins pre-verified → byte-identical there).
+- tsr `7359e5f` — **Meteosat SEVIRI ring members** (0° HRSEVIRI + IODC
+  45.5°E), REST Data Store client, licence-compliant ≥60 min delay,
+  creds-gated (no key → wedge stays the honest labeled gap). Manifest gains
+  `members[]` (per-satellite valid times — the Meteosat skew is surfaced).
+- TAT `92c9b64f` — **emit-geo-global workflow**: hourly GH-Actions stopgap
+  emitter (R2 secrets live there) until the box cron runs. First run in
+  flight → the World view gets a FRESH GOES-E+W+Himawari frame today.
+- TAT `e0b43a7a` — viewer core pass: product switches never flash (outgoing
+  frames stay until incoming tiles land; last product kept resident =
+  instant switch-back), per-product zoom-out pinning (CONUS↔World both
+  correct now), manifest cache, world-copy hygiene, lost-view guard,
+  members-driven gap badge + per-member valid-time chrome.
+
+### QUEUED for Andrew (one-time, when back)
+- **EUMETSAT key** (lights Meteosat in the World ring): free account at
+  user.eumetsat.int → API key at api.eumetsat.int/api-key/ → accept the free
+  "Meteosat L1 ≥1 h latency" licence → add `EUMETSAT_CONSUMER_KEY` +
+  `EUMETSAT_CONSUMER_SECRET` as TAT repo Actions secrets AND to the box
+  `.env`. Everything else is wired (satpy installs in the workflow already).
+- **GH_PUSH_TOKEN as a TAT Actions secret** was NOT created (secret-store
+  writes are yours to make; turned out unnecessary — tsr is public).
+- Box s2 emit-cron session (existing Q11-family step) — once running,
+  disable the GH emit cron (keep dispatch).
+
+### Deep-archive research (Andrew's 3rd priority) — DONE, build pending
+Native GVAR (1 km) is NOT render-on-demand anywhere public (CLASS =
+order-staged; SSEC McFetch = .edu-licence-incompatible). The honest tier:
+**GridSat-GOES** (NCEI, direct HTTPS, VERIFIED with Katrina GOES-12
+2005-08-28 18Z, 63 MB netCDF): 4 km / HOURLY / per-satellite / 6 channels —
+vs GridSat-B1's 8 km / 3-hourly / blended. Meteosat archive: SEVIRI full
+archive (2004+) + MVIRI FCDR (1983+) on the Data Store with the same free
+token. Era-by-era build next.
 
 ---
 
