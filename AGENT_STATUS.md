@@ -4,9 +4,108 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-11 ~21:10 UTC — 🔥 PRODUCTION OUTAGE handled: Railway project vanished 15:08Z (floaters + live feeds + guidance all frozen); GH-Actions stopgap worker restored floater production 21:03Z; see Q15 for Andrew's Railway steps_
+_Last update: 2026-07-12 ~04:3x UTC — Explorer loop strobe FIXED + LIVE (@e76bdedd, browser-verified); loop cadence → 10-min slot backfill (GH live, box via Q11 pull); RAILWAY MIGRATION: off Railway permanently, tat-render box stack built+pushed (tsr main e98fca9) — Andrew's bring-up = Q16 (box session + 1 DNS record + 1 optional secret)_
 
 ---
+
+## 2026-07-12 — Explorer loops fixed (strobe + cadence) · Railway → box migration authored
+
+### 1. Satellite Explorer strobe — FIXED, LIVE, browser-verified (TAT main `e76bdedd`)
+
+**What was broken:** every loop on /satellite/explorer/ strobed dark on
+playback and most product switches sat on a blank map. Root cause in
+`tiled_viewer.js` (the ONE engine every product runs through): the old
+keep-window eviction hid frames outside a 12-frame window, and a HIDDEN
+MapLibre source requests no tiles so `isSourceLoaded()` reports TRUE on an
+empty source — wrap-around "revealed" tile-less frames over the dark
+basemap. Switches kept only one retired product → cold refetch → blank.
+
+**The fix (PLAYBACK CONTRACT, documented in the file header):**
+① full-loop residency — every in-loop frame's source stays mounted
+(opacity 0) for the life of the loop, never hidden/evicted; ② the whole
+loop preloads up front (staggered, playback order) with a real
+"Loading loop N / M" state — pane overlay at boot, flash toast on
+switches; ③ reveals are gated — a frame shows ONLY once its tiles are
+event-confirmed loaded, the prior frame holds opaque until then, and an
+out-of-order token kills stale scrub reveals. Stamp-keyed state swaps
+with the product (two products can share stamps). Riders: MW overpass
+swaps in `cockpit_fields.js` now double-buffer (old image holds until the
+new one decodes); empty-manifest boot drops the overlay honestly; the
+loading toast is owner-keyed so pane switches can't strand it.
+
+**Verification:** new node harness `tests/tiled_viewer_playback_smoke.cjs`
+(27 checks: residency, gating, token, preload progress, product-switch
+readiness isolation) + a real-browser Playwright run against the LIVE CDN:
+global boot → conus ir **90-frame full lap** → ir→truecolor→airmass→ir.
+Hard gates all green: **zero reveals of unloaded sources, dark-pixel
+fraction never above the parked baseline in any phase**, loading toast on
+switches, instant switch-back. An adversarial review of the diff found 2
+issues (empty-manifest overlay hang, sticky toast) — both fixed pre-push.
+Full suite 509/513 (4 pre-existing `hafs_render` env errors in this
+codespace, unrelated). Pages deploys on push — **live now**.
+
+### 2. Loop cadence — frames were ~30–35 min apart (CONUS is 5-min native)
+
+Every emitter wrote ONE scan per pass, so frame spacing = pass duration,
+not the data. tsr `s2-sat-ingest@f6b0893` adds `--step MIN --backfill MIN`
+slot backfill to `s2_pyramid_emit.py`: each run fills EVERY missing
+10-min slot in the trailing window (covered slots skip via ready-marker
++ store re-check; per-slot failure isolation; no flags = old behavior;
+test-locked, 13 tests green incl. the legacy suite).
+- **LIVE now (GH side):** `emit-geo-global.yml` passes `--step 10
+  --backfill 90` + gained a `:53` backup cron (GitHub shed the 01–04Z
+  hourly ticks — 4 straight drops observed). Dispatched a run on the new
+  code (run 29179150313) — geo-global/wpac-ir/fd-ir loops densify to
+  10-min as it completes and self-heal every tick after.
+- **Needs the box (CONUS + full suites):** `docker-compose.s2.yml`
+  emit-cron now defaults `--step 10 --backfill 90` (knob
+  `S2_CRON_STEP_MIN`, `0`=legacy, `5` chases CONUS native if the box
+  keeps up). This rides the SAME Q11 box session already queued:
+  `git pull` + `--profile cron up -d --force-recreate emit-cron`.
+
+### 3. Railway → Hostinger box migration — authored, pushed, awaiting Andrew's bring-up (Q16)
+
+Railway paused all 6 tsr services at the $150 compute cap; per the
+decision we are OFF Railway permanently. Landed on tsr **main `e98fca9`**:
+- **`docker-compose.render.yml`** (project `tat-render`, mirrors the
+  S2/meso box pattern): `caddy` TLS edge → `render` (FastAPI /render +
+  /export; `Dockerfile.render` = the proven meso base **+ ffmpeg**, which
+  nixpacks had but Dockerfile.meso lacks — without it /export 503s) +
+  `floater-poller` / `intensity-poller` / `guidance-poller` /
+  `ens-watchdog` off one shared image and the box's existing `.env`
+  (R2 creds reused, nothing committed). Pollers reach the API over the
+  compose network (`http://render:8080`), `GLOBAL_GEOJSON_KEY` parity
+  baked in, healthcheck on /health, restart policies + log rotation.
+- **HAFS worker: profile-gated OFF by default** — it peaks ~23 GB and the
+  June telemetry verdict was "HAFS gets its own box". GH `update-hafs.yml`
+  (+ ens-watchdog dispatch once its token lands) stays the HAFS renderer.
+  Enable deliberately with `--profile hafs` (builds from the pinned
+  `hafs-render-worker` branch, NOT main — main carries the un-approved
+  v0.12 repin, Q9).
+- **`RUNBOOK-RENDER.md`** — the exact box session (§2), verification
+  (§3), stopgap retirement (§4), HAFS notes (§5), Railway teardown (§6).
+- **Frontend already repointed** (in `e76bdedd`): all 5 render-host
+  literals (`satellite/index.html` ×2, `cockpit.js`, `objfix_sources.js`,
+  `microwave.js`) now say `https://render.triple-a-tropics.com`. The four
+  dead features (custom-zoom draw-a-box, explorer Time Machine,
+  deep-archive objfix, mp4 export) light up the moment DNS + the box are
+  live — they are equally dead today either way.
+
+**ANDREW'S HAND-STEPS (Q16, ~15 min):** ① box session per
+RUNBOOK-RENDER.md §2 (`git pull` → `docker compose -p tat-render -f
+docker-compose.render.yml build && up -d`); ② Cloudflare DNS **A record
+`render.triple-a-tropics.com` → box IP, grey cloud/DNS-only** (Caddy does
+Let's Encrypt; ports 80+443 open); ③ optionally append
+`ENS_WATCHDOG_GH_TOKEN` (GitHub PAT, actions RW on this repo) to the box
+`.env` — watchdog logs-only without it; ④ ping Claude or run RUNBOOK §3 —
+the CDN-side checks are pollable from here; ⑤ then disable
+`floater-worker.yml`'s `schedule:` block (stopgap stays live + idempotent
+until then — no rush); ⑥ after a clean week, delete the Railway project.
+
+**Not verifiable from here:** the box bring-up itself (no box access from
+the Codespace) — compose validated with `docker compose config`, image
+recipe mirrors the proven Dockerfile.meso, but the first real `/render` +
+poller run needs the box session. Everything else above is live-verified.
 
 ## 🔥 OUTAGE — 2026-07-11 15:08 UTC — RAILWAY PROJECT GONE (mitigated 21:03 UTC)
 
