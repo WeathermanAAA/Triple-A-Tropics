@@ -206,6 +206,15 @@
     $('ofx-stop').onclick = function () { S.running = false; };
     $('ofx-dl').onclick = downloadTrack;
     $('ofx-storm').onchange = function () {
+      // STORM SWITCH KILLS THE RUN: a workup still in flight for the OLD
+      // storm must never feed the NEW storm's board — its late frames would
+      // land in the cleared results and §4 would blend one storm's ADT with
+      // the other's MW members (observed live 2026-07-12: a BAVI loop frame,
+      // inland, published under 98W). The generation token invalidates every
+      // pending chain step; finishRun re-enables the UI so the auto-run for
+      // the new storm starts immediately.
+      S.gen = (S.gen || 0) + 1;
+      if (S.running) finishRun();
       S.storm = S.storms[+this.value] || null;
       S.results = []; S.history = []; S.src = null;
       renderStats(null); drawTrend(); drawScene(null);
@@ -334,6 +343,7 @@
     if (S.running || !S.storm) return;
     var st = S.storm;
     if (st.lat == null) { warn('no first-guess position in the feed for ' + st.name); return; }
+    var myGen = S.gen || 0;   // a storm switch bumps S.gen -> this run is dead
     S.running = true;
     $('ofx-run').disabled = $('ofx-loop').disabled = true;
     $('ofx-stop').disabled = !loop;
@@ -357,6 +367,7 @@
       var chain = Promise.resolve();
       frames.forEach(function (frame, fi) {
         chain = chain.then(function () {
+          if ((S.gen || 0) !== myGen) return null;   // storm switched: dead run
           if (!S.running && loop) return null;
           note((loop ? 'analyzing frame ' + (fi + 1) + '/' + frames.length + ' — '
                      : 'analyzing ') + frame.stamp + ' …', true);
@@ -373,6 +384,7 @@
             var opts = { channelType: 'IR', searchRadiusDeg: loop ? 1.5 : 2.0 };
             return analyzeInWorker(field, guess, frame.timeMs, S.history, env, opts)
               .then(function (r) {
+                if ((S.gen || 0) !== myGen) return;  // switched mid-worker: drop
                 r.frame = frame; r.field = field;
                 // memory: only the NEWEST frame keeps its heavy field data
                 // (BT grids + decoded image); older results keep the numbers.
@@ -402,10 +414,9 @@
       });
       return chain;
     }).then(function () {
-      finishRun();
-    }).catch(function (e) {
-      warn(String(e && e.message || e));
-      finishRun();
+      if ((S.gen || 0) === myGen) finishRun();   // a dead run must not kill
+    }).catch(function (e) {                      // the successor's running flag
+      if ((S.gen || 0) === myGen) { warn(String(e && e.message || e)); finishRun(); }
     });
   }
   function finishRun() {
