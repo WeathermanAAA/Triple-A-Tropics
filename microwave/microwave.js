@@ -24,7 +24,7 @@
   var SITE = 'https://triple-a-tropics.com';
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
   var WATERMARK = '@WeathermanAAA_';
-  var EXPORT_API = 'https://web-production-b88d.up.railway.app/export';
+  var EXPORT_API = 'https://render.triple-a-tropics.com/export';
   var GIF_MAX_W = 900;
   var GLOBAL_WINDOW_H = 48;   // global view: overpasses within this many hours
   var GLOBAL_MAX = 80;        // cap tiles drawn in the global composite

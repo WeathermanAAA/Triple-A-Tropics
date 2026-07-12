@@ -618,9 +618,30 @@
   function paneStatus(i) {
     return function (kind, data) {
       var pane = S.panes[i];
-      if (kind === 'ready' || kind === 'frame' || kind === 'error') {
+      // the boot overlay drops on the first REAL pixels ('frame' fires from
+      // the gated reveal) or a hard error -- never on 'ready' (manifest OK
+      // but tiles still fetching would flash the dark basemap)
+      if (kind === 'frame' || kind === 'error') {
         var ld = $('cx-load-' + i);
         if (ld) ld.style.display = 'none';
+      }
+      if (kind === 'loading') {
+        var lo = $('cx-load-' + i);
+        var msg = 'Loading loop ' + data.done + ' / ' + data.total + '…';
+        if (lo && lo.style.display !== 'none') {
+          var sp = lo.querySelector('span');
+          if (sp) sp.textContent = msg;
+        } else if (i === S.active) {
+          flash(msg, true);
+          S._loadToast = i;   // toast ownership: only the owner clears it
+        }
+        return;
+      }
+      if (kind === 'loaded') {
+        // owner-keyed (not active-keyed): a pane whose preload finishes after
+        // the user activated another pane must still clear ITS sticky toast
+        if (S._loadToast === i) { flash(''); S._loadToast = null; }
+        return;
       }
       if (kind === 'error') {
         if (i === 0) {
@@ -639,6 +660,13 @@
       } else if (kind === 'ready') {
         if (i === 0) { drawTimeline(); updateHeader(); }
         if (S.domain === 'global') updateGapBadges();   // members-driven badge
+        // empty-but-valid manifest (product spinning up, times:[]): no
+        // 'frame' will ever fire, so the boot overlay must drop HERE or it
+        // spins forever over an honestly-empty product
+        if (pane && pane.tv && !pane.tv.frames.length) {
+          var lde = $('cx-load-' + i);
+          if (lde) lde.style.display = 'none';
+        }
       } else if (kind === 'probe') {
         var pp = $('cx-pp-' + i);
         if (!pp) return;
@@ -1513,7 +1541,7 @@
   // viewport, overlays = toggles, resolution = the ≤10MB/HQ toggle; the only
   // new control is TIME. Live tiles are untouched — Live mode = exit.
   // ========================================================================
-  var RENDER_API = 'https://web-production-b88d.up.railway.app/render';
+  var RENDER_API = 'https://render.triple-a-tropics.com/render';
   var TM_MAP = {   // cockpit field -> what the archive backend can serve
     truecolor: { channel: 'true_color' },
     ir: { channel: 'clean_ir', enh: 'rainbow_ir' },

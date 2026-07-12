@@ -944,7 +944,7 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
 (function() {
   document.getElementById('year').textContent = new Date().getFullYear();
 
-  const RENDER_API = "https://web-production-b88d.up.railway.app/render";
+  const RENDER_API = "https://render.triple-a-tropics.com/render";
   // Soft sanity cap — backend now auto-downsamples any bbox to a 16M-pixel
   // budget, so there's no hard size limit. 80° catches obviously-broken
   // input (e.g. someone dragging a rectangle across the entire disk by
@@ -1995,7 +1995,7 @@ function makeSatViewer(idPrefix, opts) {
   // network, non-2xx) we fall back to the client-side gif.js encoder below so
   // the button never breaks. Keeps the existing frames/fps/skip controls; adds a
   // Format select (mp4 default, gif optional).
-  var EXPORT_API = "https://web-production-b88d.up.railway.app/export";  // render svc /export
+  var EXPORT_API = "https://render.triple-a-tropics.com/export";  // render svc /export
   function satMakeGif() {
     var total = sat.frames.length;
     if (!total) return;

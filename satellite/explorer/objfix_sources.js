@@ -188,7 +188,7 @@
   // render backend's format=btpng (same u16 encoding as the suite bt.png).
   // ADT-HURSAT-style reanalysis input: honest ~8 km / 3-hourly, labeled.
   // ========================================================================
-  var RENDER_API = 'https://web-production-b88d.up.railway.app/render';
+  var RENDER_API = 'https://render.triple-a-tropics.com/render';
   function ArchiveSource() {
     this._cache = {};   // one decoded frame field per (stamp, anchor) key
   }

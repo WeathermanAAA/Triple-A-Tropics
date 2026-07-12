@@ -7,8 +7,11 @@
 # to main (read-only contents, like update-hafs).
 #
 # Hourly at :23 (staggered non-round minute — GitHub drops :00-family crons
-# under load; the stagger is load-bearing, do not "clean it up"). A missed
-# hour self-heals: the next tick emits the then-newest scan. When the box
+# under load; the stagger is load-bearing, do not "clean it up"). Each tick
+# BACKFILLS the trailing 90 min at 10-min slots (--step 10 --backfill 90):
+# loops step at the sats' native FD cadence instead of one frame per cron
+# tick, and a dropped hour self-heals on the next tick (already-covered
+# slots dedup via the ready markers, so re-runs are cheap). When the box
 # cron is live, BOTH writers stay idempotent per-frame (ready-marker dedup),
 # but disable this cron (workflow_dispatch stays for on-demand re-emits).
 name: emit-geo-global
@@ -17,6 +20,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "23 * * * *"
+    # backup tick (repo-standard pattern): GitHub sheds hourly crons under
+    # load (4 straight drops observed 2026-07-12 01-04Z); with --backfill 90
+    # either tick healing the window makes drops invisible. The concurrency
+    # group serializes if both fire.
+    - cron: "53 * * * *"
 
 permissions:
   contents: read
@@ -28,7 +36,11 @@ concurrency:
 jobs:
   emit:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    # backfill of a cold 90-min window (9 slots x 3 geo fields + 2 riders)
+    # can outrun an hour; the concurrency group serializes overlapping crons
+    # and a timeout kill loses nothing (per-slot emits are idempotent, the
+    # next tick resumes where this one stopped)
+    timeout-minutes: 110
     steps:
       - name: Checkout tat-satellite-render (s2-sat-ingest)
         uses: actions/checkout@v6
@@ -59,7 +71,8 @@ jobs:
         run: |
           set -euo pipefail
           python s2_pyramid_emit.py --suite geo-global \
-            --store r2 --prefix shadow --max-zoom 5
+            --store r2 --prefix shadow --max-zoom 5 \
+            --step 10 --backfill 90
           # the two calibrated-BT ir products the objfix / TC-Diagnostics
           # pipeline consumes (Hovmöller + DAV need a TIME SERIES; the box's
           # full-suite cron is down, so these single products ride along --
@@ -67,7 +80,9 @@ jobs:
           # don't fail the job: the geo emit above already succeeded.
           python s2_pyramid_emit.py --product himawari9-wpac-ir \
             --store r2 --prefix shadow --max-zoom 5 \
+            --step 10 --backfill 90 \
             || echo "wpac-ir emit failed (next tick retries)"
           python s2_pyramid_emit.py --product goes19-fd-ir \
             --store r2 --prefix shadow --max-zoom 5 \
+            --step 10 --backfill 90 \
             || echo "fd-ir emit failed (next tick retries)"

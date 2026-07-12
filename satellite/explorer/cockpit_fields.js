@@ -99,6 +99,7 @@
   function mwClearLayers(pane) {
     var map = pane.tv && pane.tv.map;
     if (!map) return;
+    if (pane._mwPending) { map.off('sourcedata', pane._mwPending); pane._mwPending = null; }
     (pane._mwLayers || []).forEach(function (id) {
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
@@ -116,9 +117,14 @@
       var o = ops[st.opIdx];
       var tr = MV.tileRel(o, st.product, st.raw);
       var b = MV.boundsOf(o);
-      mwClearLayers(pane);
-      if (!tr || !b) { H.flash(MW_LABELS[st.product] + ' not available for this pass'); mwChrome(pane, paneIdx); return; }
-      var id = 'ofmw-' + paneIdx;
+      if (!tr || !b) { mwClearLayers(pane); H.flash(MW_LABELS[st.product] + ' not available for this pass'); mwChrome(pane, paneIdx); return; }
+      // double-buffer the overpass swap: mount the NEW image under a versioned
+      // id and only tear the old one down once the new source has decoded --
+      // clearing first flashed the dark basemap on every clock-driven overpass
+      // change (raster-fade-duration:0, image still fetching).
+      if (pane._mwPending) { map.off('sourcedata', pane._mwPending); pane._mwPending = null; }
+      var prev = pane._mwLayers || [];
+      var id = 'ofmw-' + paneIdx + '-' + (pane._mwSeq = (pane._mwSeq || 0) + 1);
       map.addSource(id, {
         type: 'image', url: MW_BASE + '/' + tr.rel,
         coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]]
@@ -127,7 +133,30 @@
       map.addLayer({ id: id, type: 'raster', source: id,
         paint: { 'raster-opacity': 1, 'raster-fade-duration': 0,
                  'raster-resampling': st.raw ? 'nearest' : 'linear' } }, before);
-      pane._mwLayers = [id];
+      // _mwLayers lists EVERY mounted mw id (old + new) until the swap lands,
+      // so a mode exit mid-swap tears down both -- no ghost overpass.
+      pane._mwLayers = prev.concat([id]);
+      var dropPrev = function () {
+        prev.forEach(function (old) {
+          if (map.getLayer(old)) map.removeLayer(old);
+          if (map.getSource(old)) map.removeSource(old);
+        });
+        pane._mwLayers = (pane._mwLayers || []).filter(function (x) {
+          return prev.indexOf(x) < 0;
+        });
+      };
+      if (!prev.length) { dropPrev(); }
+      else {
+        var onData = function (e) {
+          if (e.sourceId !== id) return;
+          if (!map.isSourceLoaded(id)) return;
+          map.off('sourcedata', onData);
+          if (pane._mwPending === onData) pane._mwPending = null;
+          dropPrev();
+        };
+        pane._mwPending = onData;
+        map.on('sourcedata', onData);
+      }
       if (pane.kind === 'mw' && st.flyTo) {
         map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 30, duration: 500 });
         st.flyTo = false;
