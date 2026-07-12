@@ -16,10 +16,11 @@
 # is always one queued run, so runs chain nearly back-to-back; a dropped
 # cron costs at most ~30 min. Restarts are safe by design: the poller
 # resyncs per-(storm, band) state from the R2 manifests and dedupes frames
-# by content hash, so overlapping/duplicate producers are idempotent —
-# including the moment the Railway worker comes back. WHEN RAILWAY IS
-# RESTORED: disable this workflow's schedule (keep workflow_dispatch for
-# emergencies) — see the QUEUED manual steps list.
+# by content hash, so overlapping/duplicate producers are idempotent.
+# RETIRED 2026-07-12: the poller fleet migrated to the Hostinger box
+# (tsr main docker-compose.render.yml / RUNBOOK-RENDER.md — Railway kept
+# only as a dormant rollback target). Schedule disabled below;
+# workflow_dispatch remains the emergency lever.
 name: floater-worker
 
 on:
@@ -28,9 +29,15 @@ on:
       poll_seconds:
         description: "Poll window before clean shutdown (s)"
         default: "2700"
-  schedule:
-    - cron: "7 * * * *"
-    - cron: "37 * * * *"
+  # STOPGAP RETIRED 2026-07-12: the tat-render box stack (tsr main
+  # docker-compose.render.yml) now runs /render + the full poller fleet —
+  # render.triple-a-tropics.com healthy, feeds/floaters box-verified.
+  # workflow_dispatch stays for emergencies (a manual run coexists safely:
+  # per-frame content-hash dedup + R2 manifest resync). To re-enable in an
+  # outage, restore the schedule block:
+  #   schedule:
+  #     - cron: "7 * * * *"
+  #     - cron: "37 * * * *"
 
 permissions:
   contents: read            # R2-only producer; commits nothing to main
