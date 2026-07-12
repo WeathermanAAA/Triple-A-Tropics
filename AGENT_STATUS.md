@@ -4,7 +4,58 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-12 ~15:1x UTC — SATCON last mile IN PROGRESS: found + fixed the reason no MW overpasses landed since Jul 10 — NASA let the PPS NRT TLS cert expire (fix @8597c30f, live); forced 48h re-render running to put intensity{} on R2; panel live-verify next_
+_Last update: 2026-07-12 ~21:4x UTC — SATCON §4 CLOSED (live-verified real consensus on 98W); found+fixed a site-wide stale-JS hazard (un-bumped ?v= stamps behind a 4-h edge cache); now on the box floater-poller stall + the explorer strobe_
+
+---
+
+## 2026-07-12 (evening) — SATCON §4 CLOSED · stale-JS hazard fixed
+
+### 1. SATCON consensus tile — LIVE-VERIFIED end-to-end, DONE
+
+MW data is flowing again post-cert-fix (fresh BAVI AMSR2 17:32Z, 98W GMI
+20:09Z, all with mwi-v1.0 `intensity{}`; manifest `intensity_model` card
+live). Verified three ways:
+- **Unit + DOM suites green** (test_satcon.cjs, satcon_dom_smoke.cjs).
+- **Pure core against the LIVE CDN data** (node): 98W forms a real
+  2-member consensus, MW age-decay factor 0.20 at 4.2 h (curve correct),
+  97W near-cutoff at f=0.066, BAVI honestly refuses (every MW record
+  land-gated "inner core over land" — it's a dissipating inland TD).
+- **Real browser on the live site** (puppeteer, TC-Diag mode, storm
+  picker, Analyze loop): §4 rendered **~29 kt ±21 kt · "3 members ·
+  experimental"** on 98W — ADT-port 37% + fresh 54-min GMI 51% +
+  age-decayed 4.0 h SSMIS 13%, per-member σ/weight/age/caveats table,
+  ±10 kt floor respected, full automated/experimental/never-official
+  disclosure. BAVI: honest "no consensus" + the V&H §2c reason. Zero
+  page errors. Shots: scratchpad satcon_98w.png / satcon_bavi.png.
+- MAYSAK/DOUGLAS have no intensity{} — they're DEAD storms (last passes
+  Jul 3–5, pre-dating the model). Expected, not a gap.
+
+**Carried finding → the strobe task:** the ADT member's input workup
+analyzed only ONE stale frame on the invests ("1 frame analyzed", scene
+stamped 2026-07-11T21:03Z) even though the 98W floater manifest holds 70
+fresh frames — a loop/workup input-path defect in item-2 territory (the
+consensus math above it is verified correct and honest about its "as of").
+
+### 2. SITE-WIDE STALE-JS HAZARD — found + fixed (stamp bumps)
+
+`triple-a-tropics.com` is Cloudflare-proxied and serves JS with
+`cache-control: max-age=14400` (4 h, cf-cache-status HIT). Both e76bdedd
+(the strobe fix!) and 19fd6f2a (WP BT freshness gate) changed explorer JS
+**without bumping the `?v=` cache-bust stamps** — so real users (and my
+own headless verify) can run **hours-stale, mixed-version** explorer JS.
+That may be part of why Andrew still saw strobing after the "verified"
+fix. Bumped: tiled_viewer core1→core2, cockpit core1→core2,
+cockpit_fields mwsc1→mwsc2, objfix_sources ofx2→ofx3, microwave.js
+11→12 (explorer + standalone page aligned). **RULE REAFFIRMED: any edit
+to a `?v=`-stamped file MUST bump the stamp in the same commit.**
+
+### 3. Also observed (feeding the strobe investigation)
+
+- `emit-geo-global.yml` runs are being serially cancelled since 15:44Z
+  (concurrency group) — one run in_progress ~2 h. The himawari9-wpac BT
+  suite's newest frame is 04:00Z (17 h stale), so the WP BT path is
+  correctly gated off; the geo manifest keeps densifying mid-session via
+  the 10-min backfill (the prime strobe suspect).
 
 ---
 
