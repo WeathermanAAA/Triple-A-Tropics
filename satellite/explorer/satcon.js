@@ -439,6 +439,20 @@
         '≥2 members (V&H §2c)';
     }
     if (S.mwState === 'error') return 'MW manifest unavailable — consensus needs ≥2 members';
+    // results exist but the LATEST frame yields no ADT member: say WHY
+    // instead of a bare "no consensus" (observed live on an inland storm and
+    // on a sheared invest whose Dvorak chain honestly declined)
+    var rs = usableResults();
+    var last = rs[rs.length - 1];
+    if (last && !adtMember(last)) {
+      if (last.rec && last.rec.land === 1) {
+        return 'Dvorak-family estimates are suspended over land — the ADT ' +
+          'member is unavailable, so no consensus (V&H §2c needs ≥2 members)';
+      }
+      return 'the workup produced no usable Dvorak intensity at the latest ' +
+        'frame (weak / sheared scene) — the ADT member is unavailable, so ' +
+        'no consensus (V&H §2c needs ≥2 members)';
+    }
     return null;
   }
 
