@@ -31,6 +31,7 @@ Generators are grouped by data product. Each generator is a **self-contained, ba
 | `generate_armor3d_plots.py` | `update-armor3d.yml` | daily 14:43 UTC | `armor3d/*.png` (TCHP/D26/anom/cross-sections) |
 | `generate_season_gif.py --basin --year` | `update-season-gifs.yml` | daily 03:23 UTC | `{wpac,atl,epac}_{YEAR}_season.gif` |
 | `generate_hafs_plots.py` | `update-hafs.yml` | every 6h (00/06/12/18Z + :27 backup) | `models/hafs/{model}/{storm}/{domain}/f{FFF}.png` + `models/hafs/manifest.json` — **R2-only, not committed** |
+| `generate_mjo_rmm.py` + `generate_velocity_potential.py` | `update-subseasonal.yml` | daily 15:41 UTC (+16:11 backup) | `subseasonal/{mjo_*,chi_anom_*}.png` + meta JSONs — **R2-only, not committed** (chi solve = `subseasonal/chi_core.py` on pyshtools; climo = committed `subseasonal/chi_climo_1991_2020.nc`, rebuild via `subseasonal/build_chi_climatology.py`) |
 | `build_armor3d_climatology.py` | `build-armor3d-climatology.yml` | manual, resumable | `armor3d/armor3d_climatology.nc` (one-off, committed) |
 | `build_historical_tracks.py` | (local) | manual | `historical/{basin}/tracks/tracks_{YYYY}.json` |
 | `generate_pacific_tchp_gif.py` | `make-pacific-tchp-gif.yml` | manual, artifact only | GIF as artifact (not committed) |

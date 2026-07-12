@@ -103,3 +103,6 @@ package-lock.json
 
 # recon ingest output (R2-only, like models/enscenters)
 recon_build/
+
+# subseasonal render output (published to R2, never committed)
+subseasonal/out/

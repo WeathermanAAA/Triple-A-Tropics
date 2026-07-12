@@ -1,0 +1,66 @@
+# Subseasonal drivers — MJO RMM diagrams + velocity-potential anomaly maps.
+# R2-only (read-only contents, like update-hafs / emit-geo-global): renders to
+# subseasonal/out/ and syncs the PNGs + meta JSONs to the CDN bucket. Nothing
+# is committed to main (the repo is near its size quota; images live on R2).
+#
+# Daily at 15:41 UTC (staggered non-round minute — the repo-standard pattern;
+# GitHub sheds :00-family crons) + a :11 backup 30 min later. By 15Z the BoM
+# RMM file has that day's update and the GFS 06Z/12Z analysis is long since
+# on AWS; both generators also self-heal (RMM staleness gate + cache, GFS
+# cycle walk-back), so a missed day costs freshness, never correctness.
+name: update-subseasonal
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 15 * * *"
+    - cron: "11 16 * * *"   # backup tick; concurrency group serializes
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-subseasonal
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --quiet --upgrade pip
+          # pyshtools (wheeled) powers the chi spectral solve — pyspharm/
+          # windspharm have no wheels and their Fortran build breaks in CI
+          pip install --quiet numpy matplotlib xarray netCDF4 requests \
+            pyshtools herbie-data cfgrib eccodes
+
+      - name: Render MJO RMM products
+        run: python generate_mjo_rmm.py
+
+      - name: Render velocity-potential anomalies
+        run: python generate_velocity_potential.py
+
+      - name: Publish to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          # PNGs + meta only — never the RMM cache (server-side artifact)
+          rm -f subseasonal/out/_rmm_cache.json
+          aws s3 sync subseasonal/out/ s3://triple-a-tropics-media/subseasonal/ \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=600" \
+            --exclude "*" --include "*.png" --include "*.json"
+          echo "published:"
+          aws s3 ls s3://triple-a-tropics-media/subseasonal/ --endpoint-url "$R2_ENDPOINT"

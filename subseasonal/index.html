@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Subseasonal · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Subseasonal tropical drivers, rendered in-house daily: MJO phase-space (RMM) diagram and amplitude, and global 200/850-hPa velocity-potential anomalies with the divergent wind.">
+<meta property="og:title" content="Subseasonal · Triple-A-Tropics">
+<meta property="og:description" content="MJO RMM phase diagram + amplitude and global velocity-potential anomalies, updated daily.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, nav, header, footer {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
+  }
+  .ss-wrap { max-width: 1240px; margin: 0 auto; padding: 0 18px 48px; }
+  .ss-sec { margin-top: 34px; }
+  .ss-sec h2 { font-size: 20px; margin: 0 0 4px; }
+  .ss-sub { color: var(--muted, #8ea2bd); font-size: 13px; margin: 0 0 14px;
+    line-height: 1.55; }
+  .ss-grid { display: grid; gap: 18px; grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+    align-items: start; }
+  @media (max-width: 900px) { .ss-grid { grid-template-columns: 1fr; } }
+  .ss-card { background: var(--panel, #0a1324); border: 1px solid var(--border, #1c2b45);
+    border-radius: 10px; padding: 10px; }
+  .ss-card img { display: block; width: 100%; height: auto; border-radius: 6px; }
+  .ss-card figcaption { color: var(--muted, #8ea2bd); font-size: 11.5px;
+    padding: 8px 4px 2px; line-height: 1.5; }
+  .ss-asof { color: var(--muted, #8ea2bd); font-size: 12px; margin-top: 6px; }
+  .ss-note { color: var(--muted, #8ea2bd); font-size: 12px; line-height: 1.6;
+    border-top: 1px solid var(--border, #1c2b45); margin-top: 36px; padding-top: 14px; }
+  .ss-stack { display: grid; gap: 18px; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/" class="active">Subseasonal</a>
+      <a href="/recon/">Recon</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Subseasonal Drivers</h1>
+  <p>The planetary-scale background the tropics ride on — the MJO and the
+  large-scale divergent circulation — computed and rendered here daily.
+  Automated objective products; see official outlooks for forecasts.</p>
+</header>
+
+<div class="ss-wrap">
+
+  <section class="ss-sec" id="mjo">
+    <h2>Madden–Julian Oscillation (RMM)</h2>
+    <p class="ss-sub">Wheeler–Hendon (2004) real-time multivariate MJO index.
+    The track shows the last 40 days through phase space; eastward propagation
+    is counterclockwise, and points inside the unit circle are a weak MJO.
+    <span id="mjo-asof" class="ss-asof"></span></p>
+    <div class="ss-grid">
+      <figure class="ss-card">
+        <img id="img-mjo-phase" alt="MJO RMM phase-space diagram: RMM1 vs RMM2 with the 8 Wheeler-Hendon phases and the 40-day track">
+        <figcaption>RMM1/RMM2 phase space with the 8 WH04 phases. Labels mark
+        the calendar day along the 40-day track; the bright point is the most
+        recent analysis.</figcaption>
+      </figure>
+      <figure class="ss-card">
+        <img id="img-mjo-amp" alt="MJO RMM amplitude timeseries, last 180 days">
+        <figcaption>RMM amplitude, last 180 days. Above 1 (dashed) is
+        conventionally a significant MJO.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="ss-sec" id="vp">
+    <h2>Velocity-Potential Anomalies (χ′, T21)</h2>
+    <p class="ss-sub">Planetary-scale rising and sinking branches from the
+    latest GFS analysis: χ solved spectrally from the analyzed wind, truncated
+    at T21, and anomalized against a 1991–2020 reanalysis climatology.
+    At 200 hPa, green (negative χ′) marks upper-level divergence — enhanced
+    deep convection; brown marks the suppressed, sinking branch. The 850-hPa
+    panel shows the low-level return flow: enhanced convection sits over its
+    brown (convergent) centers. <span id="vp-asof" class="ss-asof"></span></p>
+    <div class="ss-stack">
+      <figure class="ss-card">
+        <img id="img-chi-200" alt="200-hPa velocity potential anomaly map, Pacific-centered, with divergent wind arrows">
+      </figure>
+      <figure class="ss-card">
+        <img id="img-chi-850" alt="850-hPa velocity potential anomaly map, Pacific-centered, with divergent wind arrows">
+      </figure>
+    </div>
+  </section>
+
+  <div class="ss-note">
+    <b>Method & data.</b> All graphics on this page are computed and rendered
+    by Triple-A-Tropics. MJO: RMM index values from the Australian Bureau of
+    Meteorology (Wheeler &amp; Hendon 2004). Velocity potential: NOAA NCEP GFS
+    analysis winds at 200/850 hPa; χ from a spherical-harmonic Poisson solve of
+    the analyzed divergence, triangular truncation T21; anomalies against a
+    1991–2020 monthly climatology built from NCEP/NCAR Reanalysis 1 (NOAA PSL),
+    interpolated to the analysis date. Automated objective diagnostics —
+    experimental, never official guidance. Updated daily.
+  </div>
+</div>
+
+<script>
+(function () {
+  var CDN = 'https://cdn.triple-a-tropics.com/subseasonal/';
+  var bust = '?t=' + Math.floor(Date.now() / 6e5);   // 10-min cache key
+  [['img-mjo-phase', 'mjo_phase.png'], ['img-mjo-amp', 'mjo_amplitude.png'],
+   ['img-chi-200', 'chi_anom_200.png'], ['img-chi-850', 'chi_anom_850.png']]
+    .forEach(function (p) {
+      var el = document.getElementById(p[0]);
+      if (el) el.src = CDN + p[1] + bust;
+    });
+  function asof(url, el, fmt) {
+    fetch(CDN + url + bust).then(function (r) { return r.json(); })
+      .then(function (m) {
+        var e = document.getElementById(el);
+        if (e) e.textContent = fmt(m);
+      }).catch(function () {});
+  }
+  asof('mjo_meta.json', 'mjo-asof', function (m) {
+    return 'Latest RMM value: ' + m.as_of + ' · phase ' + m.phase +
+      ' · amplitude ' + (+m.amp).toFixed(2) + '.';
+  });
+  asof('vp_meta.json', 'vp-asof', function (m) {
+    return 'Analysis cycle: ' + m.cycle + '.';
+  });
+})();
+</script>
+</body>
+</html>
