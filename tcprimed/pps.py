@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -159,15 +160,105 @@ def _auth_header(email: str) -> dict:
             "User-Agent": "tat-tcprimed-live/1.0"}
 
 
+# --- expired-cert contingency (observed 2026-07-12) -------------------------
+# At 2026-07-10T23:59:59Z the PPS NRT server's TLS certificate EXPIRED
+# (DigiCert/Thawte, CN=jsimpson.pps.eosdis.nasa.gov, SANs cover this host) and
+# NASA had not renewed it. Every list/download then died with
+# SSLCertVerificationError - swallowed per-dir - so the live tier reported
+# "0 candidate granules" while looking healthy. Fallback: when (and ONLY when)
+# the normal request fails certificate verification, retry with a context
+# that KEEPS full CA-chain and hostname verification and exempts only the
+# validity-time check (OpenSSL X509_V_FLAG_NO_CHECK_TIME), then additionally
+# requires the peer cert's SHA-256 fingerprint to be exactly a pinned one.
+# Nothing is disabled: the chain must still verify to the system trust store,
+# the hostname must still match a SAN, and only the one certificate NASA is
+# actually serving is accepted. The strict path is always tried first, so the
+# moment NASA deploys a renewed cert this fallback goes dormant and the pin
+# entries should be deleted.
+_PINNED_CERT_SHA256 = {
+    # jsimpson*.pps.eosdis.nasa.gov, notAfter=2026-07-10T23:59:59Z,
+    # fingerprint taken from the live server 2026-07-12:
+    "f24df0fa2b3ae581d59e61dba1070811b1a94fffe88fc96a3bb12429a618931b",
+}
+# OpenSSL x509_vfy.h X509_V_FLAG_NO_CHECK_TIME (stable since 1.0.2; not
+# exposed as an ssl-module constant): skip ONLY notBefore/notAfter.
+_X509_V_FLAG_NO_CHECK_TIME = 0x200000
+_PIN_WARNED = False
+
+
+def _pinned_get(url: str, headers: dict, timeout: float) -> bytes:
+    """GET with full certificate verification EXCEPT the validity window
+    (chain to system CAs + hostname check both enforced by the handshake),
+    plus an exact-fingerprint pin on the peer cert. Same-host redirects
+    followed (urllib did that transparently on the normal path); non-2xx
+    raises HTTPError like urlopen does."""
+    import hashlib
+    import http.client
+    import ssl
+    import urllib.error
+    import urllib.parse
+
+    global _PIN_WARNED
+    for _hop in range(4):
+        u = urllib.parse.urlsplit(url)
+        ctx = ssl.create_default_context()      # verify chain + hostname
+        ctx.verify_flags |= _X509_V_FLAG_NO_CHECK_TIME   # ...but not expiry
+        conn = http.client.HTTPSConnection(u.hostname, u.port or 443,
+                                           context=ctx, timeout=timeout)
+        try:
+            conn.connect()
+            der = conn.sock.getpeercert(binary_form=True) or b""
+            fp = hashlib.sha256(der).hexdigest()
+            if fp not in _PINNED_CERT_SHA256:
+                raise ssl.SSLError(
+                    f"pps: cert chain+hostname verified but the presented "
+                    f"cert (sha256 {fp}) is not the pinned expired PPS cert "
+                    f"- refusing (delete the fallback if NASA re-keyed)")
+            if not _PIN_WARNED:
+                _PIN_WARNED = True
+                print("pps: server TLS cert expired 2026-07-10; proceeding "
+                      "with chain+hostname-verified, time-exempt, PINNED "
+                      f"connection (sha256 {fp[:16]}...) - remove the pin "
+                      "once NASA renews", file=sys.stderr)
+            path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+            conn.request("GET", path, headers=headers)
+            r = conn.getresponse()
+            if 300 <= r.status < 400 and r.getheader("Location"):
+                nxt = urllib.parse.urljoin(url, r.getheader("Location"))
+                if urllib.parse.urlsplit(nxt).hostname != u.hostname:
+                    raise urllib.error.URLError(
+                        f"pps: pinned fallback refuses cross-host redirect "
+                        f"to {nxt}")
+                url = nxt
+                continue
+            if r.status >= 400:
+                raise urllib.error.HTTPError(url, r.status, r.reason,
+                                             r.headers, None)
+            return r.read()
+        finally:
+            conn.close()
+    raise urllib.error.URLError("pps: too many redirects in pinned fallback")
+
+
 def http_get(url: str, email: str, *, timeout: float = 60.0) -> bytes:
     """Authenticated GET -> raw bytes. Raises urllib HTTPError on auth/other
-    failure so the caller can distinguish a bad credential from 'no granules'."""
+    failure so the caller can distinguish a bad credential from 'no granules'.
+    On a certificate-verification failure ONLY, falls back to the pinned-cert
+    path above (the 2026-07 expired-cert contingency)."""
+    import ssl
+    import urllib.error
     import urllib.request
     if not url.startswith("http"):
         url = PPS_NRT_HOST + url
     req = urllib.request.Request(url, headers=_auth_header(email))
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-        return r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+            return r.read()
+    except urllib.error.URLError as e:
+        if not isinstance(getattr(e, "reason", None),
+                          ssl.SSLCertVerificationError):
+            raise
+        return _pinned_get(url, _auth_header(email), timeout)
 
 
 _GRANULE_RE = re.compile(r'(1C\.[A-Za-z0-9.\-]+\.(?:RT-)?(?:NC|H5|HDF5))',
@@ -202,7 +293,12 @@ def recent_granule_urls(email: str, since, *,
     for _sensor, d in PPS_1C_DIRS.items():
         try:
             names = list_dir(d, email)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # LOUD: a dead credential or TLS failure on every dir is
+            # indistinguishable from quiet skies without this line (the
+            # 2026-07 expired-cert outage hid behind a silent continue here).
+            print(f"pps: list {d} FAILED: {type(e).__name__}: {e}",
+                  file=sys.stderr)
             continue
         for n in names:
             if n in seen:
