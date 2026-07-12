@@ -4,7 +4,29 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-12 ~23:0x UTC — the whole priority block is LANDED: SATCON closed · box floater-poller stall root-caused+fixed (Q17 = pull+rebuild) · explorer strobe fixed FOR REAL (browser-verified incl. 4-pane + densifying manifest) · coastlines black · /subseasonal/ phase 1 live · emit-geo-global treadmill broken (wpac-ir healed after 17 h)_
+_Last update: 2026-07-13 ~00:1x UTC — the whole priority block is LANDED + two follow-on catches: SATCON closed · box floater-poller stall root-caused+fixed (Q17 = pull+rebuild) · explorer strobe fixed FOR REAL (browser-verified incl. 4-pane + densifying manifest) · coastlines black · /subseasonal/ phase 1 live · emit treadmill broken (wpac-ir healed) · cross-storm workup wiring killed @53dd0107 · §4 refusals now state their reason @cf73169a_
+
+---
+
+## 2026-07-13 (just past midnight) — two follow-on catches while re-verifying SATCON
+
+- **A storm switch now KILLS the in-flight workup** (`53dd0107`, ofx6).
+  Observed live: picking 98W while BAVI's auto-run loop was mid-flight let
+  BAVI's next frame land in the cleared results (the chain pushes into
+  whatever the array is at resolve time) — the TC-Diag board and §4 showed
+  ONE stale inland BAVI frame under 98W's name, and this morning's first
+  live verify actually blended BAVI's ADT with 98W's MW members. A
+  generation token (S.gen) invalidates every pending chain step on switch;
+  a dead run can't flip the successor's running flag; the new storm's
+  auto-loop starts immediately. Re-verified live: the 98W workup analyzes
+  8 real fresh frames (newest 21:50Z) at the correct mid-ocean anchor.
+- **§4 refusals state their reason** (`cf73169a`, sc2). A run whose latest
+  frame yields no ADT member showed a bare "no consensus". Both real cases
+  are honest — inland (Dvorak suspended) and a sheared invest whose Dvorak
+  chain declines a vmax — and the tile now says which. Live-verified on
+  98W. NOTE: the consensus itself was proven this morning with a real
+  3-member render; tonight's refusals are the data being honest, not a
+  regression (98W is a sheared 25-kt invest, BAVI is inland).
 
 ---
 
