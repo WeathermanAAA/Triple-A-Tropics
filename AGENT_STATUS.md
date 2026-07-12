@@ -52,11 +52,13 @@ slot backfill to `s2_pyramid_emit.py`: each run fills EVERY missing
 10-min slot in the trailing window (covered slots skip via ready-marker
 + store re-check; per-slot failure isolation; no flags = old behavior;
 test-locked, 13 tests green incl. the legacy suite).
-- **LIVE now (GH side):** `emit-geo-global.yml` passes `--step 10
-  --backfill 90` + gained a `:53` backup cron (GitHub shed the 01–04Z
-  hourly ticks — 4 straight drops observed). Dispatched a run on the new
-  code (run 29179150313) — geo-global/wpac-ir/fd-ir loops densify to
-  10-min as it completes and self-heal every tick after.
+- **LIVE now (GH side), CONFIRMED IN CI:** `emit-geo-global.yml` passes
+  `--step 10 --backfill 90` + gained a `:53` backup cron (GitHub shed the
+  01–04Z hourly ticks — 4 straight drops observed). Dispatched run
+  29179150313 verified mid-flight at 04:56Z: geo/global/ir manifest
+  growing (17→20 frames, fresh as_of, first 10-min steps in the tail) as
+  it walks the missing slots oldest-first. A cold window may outlive one
+  run — harmless, the next tick resumes (per-slot ready-marker dedup).
 - **Needs the box (CONUS + full suites):** `docker-compose.s2.yml`
   emit-cron now defaults `--step 10 --backfill 90` (knob
   `S2_CRON_STEP_MIN`, `0`=legacy, `5` chases CONUS native if the box
