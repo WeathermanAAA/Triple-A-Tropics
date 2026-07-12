@@ -4,9 +4,43 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-12 ~04:3x UTC — Explorer loop strobe FIXED + LIVE (@e76bdedd, browser-verified); loop cadence → 10-min slot backfill (GH live, box via Q11 pull); RAILWAY MIGRATION: off Railway permanently, tat-render box stack built+pushed (tsr main e98fca9) — Andrew's bring-up = Q16 (box session + 1 DNS record + 1 optional secret)_
+_Last update: 2026-07-12 ~15:1x UTC — SATCON last mile IN PROGRESS: found + fixed the reason no MW overpasses landed since Jul 10 — NASA let the PPS NRT TLS cert expire (fix @8597c30f, live); forced 48h re-render running to put intensity{} on R2; panel live-verify next_
 
 ---
+
+## 2026-07-12 (afternoon) — SATCON last mile: PPS cert outage found + fixed; forced re-render in flight
+
+### 0. WHY THE LIVE MW TIER WENT QUIET (root cause, fixed @`8597c30f`)
+
+No MW overpass had landed since **Jul 10 22:19Z** despite green 2-hourly
+runs. Root cause: **NASA let the PPS NRT server's TLS certificate expire
+at 2026-07-10T23:59:59Z** (jsimpsonhttps.pps.eosdis.nasa.gov). Every NRT
+list/download died with SSLCertVerificationError, which
+`pps.recent_granule_urls` swallowed per-dir → "0 candidate granules" on
+healthy-looking runs for ~40 h.
+
+Fix (tcprimed/pps.py): on a cert-verification failure ONLY, retry with a
+context that **keeps full CA-chain + hostname verification** and exempts
+only the validity-time check (OpenSSL `X509_V_FLAG_NO_CHECK_TIME`), then
+additionally requires the peer cert to match the **pinned SHA-256
+fingerprint** of the exact cert NASA is serving — anything else refused.
+Strict path always tried first, so the fallback self-retires when NASA
+renews (then delete the pin). Per-dir listing failures now print loudly.
+Verified locally against the live server (401 auth-challenge roundtrip
+through the pinned path; wrong-pin refused). Tests 59/59 + satcon suite
+green. **Remove the pin once NASA renews the cert.**
+
+### In flight
+
+Forced `update-tcprimed-live` run 29197070010 (window=48h, force=true) on
+the fixed commit: re-lists Jul 10 15Z→now, re-renders BAVI + 97W + 98W
+passes **with the mwi-v1.0 per-overpass intensity{}** (build.py computes
+it at render time; existing records lacked it because they pre-date the
+model landing). Manifest `intensity_model` card already confirmed live on
+R2 (14:18Z manifest). Next: verify intensity{} records on R2, then
+live-verify the §4 SATCON tile (real consensus if a fresh-enough pass
+exists; otherwise the honest awaiting-overpass state + archive-overpass
+end-to-end check).
 
 ## 2026-07-12 — Explorer loops fixed (strobe + cadence) · Railway → box migration authored
 
