@@ -14,23 +14,40 @@
  * Frozen renderer / zero-visual-change: pixels come from the pyramid the emitter
  * cut from the frozen render; this file only pans/zooms/loops + draws furniture.
  *
- * PLAYBACK CONTRACT (the no-strobe rules -- keep all three):
- *   1. FULL-LOOP RESIDENCY. Every frame in the CURRENT loop keeps its raster
- *      source mounted (opacity 0, visibility:visible) for the life of the loop;
- *      in-loop frames are never hidden or removed (hiding stops tile requests,
- *      which made isSourceLoaded() report true on an empty source -- the old
- *      keep-window eviction was the strobe). Sources are only dropped when a
- *      stamp leaves the manifest or the product is torn down.
+ * PLAYBACK CONTRACT (the no-strobe rules -- keep all five):
+ *   1. BOUNDED-LOOP RESIDENCY. The playback loop is the manifest's trailing
+ *      `loopCap` stamps (default 48; the cockpit scales it down per pane so a
+ *      4-pane compare never mounts 4x90 raster sources -- the 10-min backfill
+ *      grew manifests to 90+ frames and unbounded residency turned every
+ *      camera move into a 90-source tile-fetch storm that starved the visible
+ *      frame: seconds of partial-dark that reads as a strobe). Every in-loop
+ *      frame keeps its raster source MOUNTED for the life of the loop;
+ *      sources are only dropped when a stamp leaves the loop window or the
+ *      product is torn down.
  *   2. PRELOAD BEFORE PLAY. _preloadLoop mounts the whole loop (staggered, in
  *      playback order from the current frame) and reports progress via
  *      onStatus('loading', {done,total}) ... onStatus('loaded'). The page shows
- *      a real "loading loop N/M" state instead of a dark map.
+ *      a real "loading loop N/M" state instead of a dark map. Background
+ *      fills (manifest refresh, camera resume, cap changes) run QUIET -- no
+ *      toast churn mid-session.
  *   3. REVEAL ONLY DECODED FRAMES. showFrame never exposes a frame whose tiles
  *      aren't fully loaded at the current camera: the prior frame HOLDS opaque
  *      until the persistent sourcedata/idle handlers confirm the target source
  *      (readiness is event-confirmed, never inferred from a hidden source), and
  *      a request token (_wantStamp) kills out-of-order reveals from stale
  *      scrubs. The dark basemap can never flash through mid-loop.
+ *   4. CAMERA FETCH DISCIPLINE. During a camera move every resident frame
+ *      except the on-screen one is PARKED (visibility:none, readiness
+ *      revoked) so the visible frame owns the bandwidth; parked frames
+ *      resume STAGGERED after the camera rests and must re-confirm their
+ *      tiles through the same event gate before any reveal. Parking is the
+ *      one sanctioned use of hiding -- it always revokes _ready with it
+ *      (a hidden source's isSourceLoaded() is a lie; trusting it was the
+ *      original strobe).
+ *   5. LIVE MANIFESTS MERGE IN PLACE. A background refresh (90 s) picks up
+ *      emitter backfill/densification: the merge preserves the CURRENT
+ *      stamp (never remaps frameIdx under a playing loop), drops rolled-off
+ *      sources, and preloads new frames quietly.
  */
 (function () {
   'use strict';
@@ -94,10 +111,14 @@
     this.dwellNewest = 6;            // extra dwell on the latest frame
     this._added = {};                // stamp -> true once its raster source exists
     this._ready = {};                // stamp -> true once its tiles are event-confirmed loaded
-    this._mountQ = [];               // stamps awaiting a (staggered) preload mount
+    this._parked = {};               // stamp -> true while camera-parked (hidden, readiness revoked)
+    this._mountQ = [];               // stamps awaiting a (staggered) preload mount/resume
     this._wantStamp = null;          // reveal token: the stamp the LATEST showFrame wants
     this._wantIdx = 0;
     this._loadedEmitted = false;     // 'loaded' fires once per preload pass
+    this._announce = true;           // false = background fill (no loading toasts)
+    this.loopCap = opts.loopCap || 48;      // playback window (trailing stamps)
+    this.refreshS = (opts.refreshS != null) ? opts.refreshS : 90;  // manifest refresh; 0 = off
     this.showLayers = { coast: true, borders: true, states: true, grid: true };
     this._geo = null;
   }
@@ -118,7 +139,7 @@
     this._pfx = m.product;    // product-scoped source ids (setProduct teardown safety)
     // calibrated BT data raster probe (pixel/BT inspector), if the product ships one
     this.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, this.base) : null;
-    this.frames = (m.times || []).slice();
+    this.frames = this._deriveFrames();
     this.frameIdx = Math.max(0, this.frames.length - 1);
 
     var b = m.bounds; // [W,S,E,N]
@@ -141,6 +162,10 @@
     // pending reveals (no per-showFrame listeners to leak or fire stale).
     this.map.on('sourcedata', function (e) { self._onSourceData(e); });
     this.map.on('idle', function () { self._onIdle(); });
+
+    // camera fetch discipline (contract rule 4): park the loop while moving
+    this.map.on('movestart', function () { self._onCamStart(); });
+    this.map.on('moveend', function () { self._onCamEnd(); });
 
     this.map.on('load', function () { self._onLoad(); });
   };
@@ -173,6 +198,69 @@
     // global space (a regional product is never a tiny patch on the whole world).
     var self = this;
     this.map.once('idle', function () { self._pinMinZoom(); });
+    this._startRefresh();
+  };
+
+  // ---- live-manifest refresh (contract rule 5): the emitter backfills /
+  // densifies manifests mid-session (10-min slot backfill grew loops 17->90);
+  // without a refresh a live loop just goes stale, and any later merge that
+  // remapped indexes under a playing loop caused jumps into unloaded frames. ----
+  VP._startRefresh = function () {
+    if (this._refreshT || !this.refreshS) return;
+    var self = this;
+    this._refreshT = setInterval(function () { self._refreshManifest(); },
+                                 this.refreshS * 1000);
+    // node (tests): never keep the process alive for a background timer
+    if (this._refreshT && this._refreshT.unref) this._refreshT.unref();
+  };
+  VP._refreshManifest = function () {
+    var self = this, url = this.manifestUrl;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    fetch(url, { cache: 'no-cache' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (m) {
+        // a product switch may have raced the fetch: only adopt if this is
+        // still the current product's manifest
+        if (!m || !m.tile || self.manifestUrl !== url || m.product !== self._pfx) return;
+        var before = (self.manifest.times || []).join();
+        self.manifest = m;
+        if (self._mfCache) self._mfCache[url] = { m: m, t: Date.now() };
+        if ((m.times || []).join() !== before) self._remergeFrames();
+      })
+      .catch(function () {});   // transient fetch failure: keep the current loop
+  };
+
+  // Loop window: the trailing loopCap stamps of the manifest. The full
+  // manifest stays the SSOT; the cap bounds what playback keeps resident.
+  VP._deriveFrames = function () {
+    var t = (this.manifest && this.manifest.times) || [];
+    var cap = Math.max(2, this.loopCap | 0);
+    return t.slice(Math.max(0, t.length - cap));
+  };
+  // Re-derive frames from the (updated) manifest, PRESERVING the current
+  // stamp -- a merge must never remap frameIdx under a playing loop. Rolled-
+  // off sources drop, new frames preload QUIETLY (no toast mid-session).
+  VP._remergeFrames = function () {
+    var cur = this.frames[this.frameIdx];
+    this.frames = this._deriveFrames();
+    var idx = cur ? this.frames.indexOf(cur) : -1;
+    if (idx < 0 && cur) {
+      // current stamp rolled off (or cap shrank past it): nearest by time
+      var t = stampMs(cur), bd = Infinity;
+      for (var i = 0; i < this.frames.length; i++) {
+        var d = Math.abs(stampMs(this.frames[i]) - t);
+        if (d < bd) { bd = d; idx = i; }
+      }
+    }
+    this.frameIdx = Math.max(0, idx);
+    this._syncLoop(true);
+    this._updateReadout();
+  };
+  VP.setLoopCap = function (n) {
+    n = Math.max(2, n | 0);
+    if (n === this.loopCap) return;
+    this.loopCap = n;
+    if (this.map && this.manifest) this._remergeFrames();
   };
 
   // Pin zoom-OUT to the CURRENT product's data footprint. Computed from the
@@ -259,40 +347,54 @@
   // fully-loaded frames. Mounting is staggered (MOUNT_AHEAD unloaded sources
   // in flight) so 90 addSource calls don't land in one style update and the
   // 'loading N/M' progress reads monotonically in playback order. ----
-  VP._preloadLoop = function () {
+  VP._preloadLoop = function (quiet) {
     if (!this.map || !this.frames.length) return;
     var q = [], n = this.frames.length;
     for (var i = 1; i <= n; i++) {           // playback order from current+1
       var s = this.frames[(this.frameIdx + i) % n];
-      if (!this._added[s]) q.push(s);
+      if (!this._added[s] || this._parked[s]) q.push(s);
     }
     this._mountQ = q;
     this._loadedEmitted = false;
+    this._announce = !quiet;
     this._pumpMounts();
     this._emitLoading();
   };
   VP._pumpMounts = function () {
-    if (!this.map || this._imgHidden) return;  // hidden imagery fetches nothing:
-                                               // resume via setImageryVisible(true)
+    if (!this.map || this._imgHidden || this._camMoving) return;
+    // in flight = mounted, fetching, not yet confirmed (parked frames are
+    // hidden and fetch nothing, so they don't count against the stagger)
     var inflight = 0;
-    for (var s in this._added) if (!this._ready[s]) inflight++;
+    for (var s in this._added) if (!this._ready[s] && !this._parked[s]) inflight++;
     while (inflight < MOUNT_AHEAD && this._mountQ.length) {
       var st = this._mountQ.shift();
-      if (this._added[st] || this.frames.indexOf(st) < 0) continue;
+      if (this.frames.indexOf(st) < 0) continue;
+      if (this._added[st]) {
+        if (!this._parked[st]) continue;     // mounted + visible: nothing to do
+        // camera-parked frame: unhide so its tiles fetch, then the normal
+        // sourcedata/idle gate re-confirms it
+        delete this._parked[st];
+        var id = this._srcId(st);
+        if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'visible');
+        inflight++;
+        continue;
+      }
       this._ensureFrame(st, 0);
       inflight++;
     }
   };
   VP._frameReady = function (stamp) {
     // sticky event-confirmed flag AND a live check (a camera move needs new
-    // tiles even for a once-loaded source). Never trust a hidden source.
-    return !!this._ready[stamp] && this.map.isSourceLoaded(this._srcId(stamp));
+    // tiles even for a once-loaded source). Never trust a hidden source --
+    // parked frames are hidden by definition, so they can never be "ready".
+    return !this._parked[stamp] && !!this._ready[stamp] &&
+      this.map.isSourceLoaded(this._srcId(stamp));
   };
   VP._onSourceData = function (e) {
     var pfx = (this._pfx || 'ir') + '-';
     if (!e.sourceId || e.sourceId.indexOf(pfx) !== 0) return;
     var stamp = e.sourceId.slice(pfx.length);
-    if (!this._added[stamp]) return;
+    if (!this._added[stamp] || this._parked[stamp]) return;  // hidden = no evidence
     if (!this.map.isSourceLoaded(e.sourceId)) return;
     if (!this._ready[stamp]) { this._ready[stamp] = true; this._emitLoading(); }
     this._pumpMounts();
@@ -301,16 +403,78 @@
   VP._onIdle = function () {
     // idle = every visible source has all its tiles: confirm the lot at once
     // (belt-and-braces for any sourcedata event the per-source path missed).
+    // Parked frames are hidden -- idle says NOTHING about them, so they are
+    // excluded (blanket-confirming hidden sources was the original strobe).
     if (this._imgHidden) return;
     var changed = false;
-    for (var s in this._added) if (!this._ready[s]) { this._ready[s] = true; changed = true; }
+    for (var s in this._added)
+      if (!this._ready[s] && !this._parked[s]) { this._ready[s] = true; changed = true; }
     this._pumpMounts();
     if (this._wantStamp != null && this._added[this._wantStamp]) this._revealPending();
     if (changed) this._emitLoading();
   };
+
+  // ---- camera fetch discipline (contract rule 4) ----
+  VP._onCamStart = function () {
+    this._camMoving = true;
+    if (this._resumeT) { clearTimeout(this._resumeT); this._resumeT = null; }
+    if (this._imgHidden) return;   // field mode already owns visibility
+    var keep = {};
+    keep[this.frames[this.frameIdx]] = 1;
+    if (this._wantStamp != null) keep[this._wantStamp] = 1;
+    for (var s in this._added) {
+      if (keep[s] || this._parked[s]) continue;
+      var id = this._srcId(s);
+      if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'none');
+      this._parked[s] = true;
+      delete this._ready[s];   // a hidden source's readiness is a lie
+    }
+  };
+  VP._onCamEnd = function () {
+    var self = this;
+    if (this._resumeT) clearTimeout(this._resumeT);
+    // debounce: linked panes replay a drag as a burst of jumpTo moveends
+    this._resumeT = setTimeout(function () {
+      self._resumeT = null;
+      self._camMoving = false;
+      self._resumeParked();
+    }, 300);
+  };
+  VP._resumeParked = function () {
+    if (!this.map) return;
+    if (this._imgHidden) { this._parked = {}; return; }
+    // camera resumes are background fills: re-confirming half the loop must
+    // not re-run the 'loading N/M' toast on every pan. If a FOREGROUND fill
+    // was mid-flight (boot/switch), release its toast first -- a quiet fill
+    // never emits 'loaded', and the cockpit's toast is cleared by 'loaded'.
+    if (this._announce && !this._loadedEmitted) {
+      this._loadedEmitted = true;
+      this.onStatus('loaded', { total: this.frames.length });
+    }
+    this._announce = false;
+    this._loadedEmitted = true;
+    var q = [], n = this.frames.length, i, s;
+    for (i = 1; i <= n; i++) {               // playback order from current+1
+      s = this.frames[(this.frameIdx + i) % n];
+      if (this._parked[s]) q.push(s);
+    }
+    // a reveal requested mid-move resumes FIRST (the user is waiting on it)
+    if (this._wantStamp != null) {
+      var wi = q.indexOf(this._wantStamp);
+      if (wi > 0) { q.splice(wi, 1); q.unshift(this._wantStamp); }
+    }
+    // parked stamps no longer in the loop: leave them hidden; _syncLoop /
+    // _dropRetired own their teardown
+    this._mountQ = q.concat(this._mountQ.filter(function (x) {
+      return q.indexOf(x) < 0;
+    }));
+    this._pumpMounts();      // staggered unhide -> re-fetch -> re-confirm
+    this._revealPending();   // a reveal parked mid-move resumes through the gate
+  };
   VP._emitLoading = function () {
     if (this._imgHidden) return;   // field mode: imagery isn't fetching; a
                                    // frozen 'loading N/M' would read as a hang
+    if (!this._announce) return;   // background fill: no toast churn mid-session
     var total = this.frames.length, done = 0;
     for (var i = 0; i < total; i++) if (this._ready[this.frames[i]]) done++;
     if (done < total) { this.onStatus('loading', { done: done, total: total }); return; }
@@ -321,8 +485,15 @@
   };
 
   VP._reveal = function (idx, stamp) {
-    // flip: incoming frame is already opaque; zero every other in-loop frame.
-    // In-loop frames stay MOUNTED + VISIBLE at opacity 0 (full-loop residency).
+    // flip: raise the incoming frame, zero every other in-loop frame. The
+    // explicit raise matters for frames that were preloaded/resumed at
+    // opacity 0 -- zeroing the others around a still-transparent target
+    // would flash the basemap.
+    var tid = this._srcId(stamp);
+    if (this.map.getLayer(tid)) {
+      this.map.setPaintProperty(tid, 'raster-opacity', 1);
+      if (!this._imgHidden) this.map.setLayoutProperty(tid, 'visibility', 'visible');
+    }
     for (var i = 0; i < this.frames.length; i++) {
       var s = this.frames[i];
       if (s !== stamp && this._added[s] && this.map.getLayer(this._srcId(s)))
@@ -344,11 +515,16 @@
     if (!this.frames.length) return;
     idx = (idx + this.frames.length) % this.frames.length;
     var stamp = this.frames[idx], n = this.frames.length;
+    // mid-camera-move: park the request (newest wins); _resumeParked picks it
+    // up after the camera rests -- unparking frames during a drag would
+    // restart the loop-wide fetch storm the parking exists to prevent
+    if (this._camMoving) { this._wantStamp = stamp; this._wantIdx = idx; return; }
     if (this.probe) this.probe.load(stamp).catch(function () {});   // BT for the inspector
     // Mount/raise the target at full opacity but HOLD the prior frame opaque
     // underneath until the target's tiles are confirmed loaded -- the reveal
     // (zeroing the others) is what must never run early. Until then the new
     // layer just renders transparent-over-prior (raster-fade-duration:0).
+    if (this._parked[stamp]) delete this._parked[stamp];   // unhide via ensure
     this._ensureFrame(stamp, 1);
     // decode-ahead insurance for scrubs past the preload frontier (skip the
     // currently-displayed frame: zeroing it here would blank the hold).
@@ -407,6 +583,7 @@
     // so carried-over flags would fake readiness on the incoming loop.
     this._added = {};
     this._ready = {};
+    this._parked = {};
     this._mountQ = [];
     this._wantStamp = null;
   };
@@ -447,16 +624,22 @@
   // frames list changed in place (manifest refresh/merge): drop sources whose
   // stamp rolled off the loop, then preload whatever is new. The ONLY teardown
   // path for in-loop residency -- never runs mid-playback on a stable list.
-  VP._syncLoop = function () {
+  // quiet=true for background merges (manifest refresh / cap changes): the
+  // fill happens without 'loading N/M' toast churn.
+  VP._syncLoop = function (quiet) {
     for (var s in this._added) {
       if (this.frames.indexOf(s) >= 0) continue;
       var id = this._srcId(s);
-      if (this.map.getLayer(id)) this.map.removeLayer(id);
-      if (this.map.getSource(id)) this.map.removeSource(id);
+      // flags BEFORE map surgery: MapLibre fires sourcedata SYNCHRONOUSLY
+      // inside removeSource, and a stale flag would walk that event into
+      // isSourceLoaded() on the just-removed source (console error spam)
       delete this._added[s];
       delete this._ready[s];
+      delete this._parked[s];
+      if (this.map.getLayer(id)) this.map.removeLayer(id);
+      if (this.map.getSource(id)) this.map.removeSource(id);
     }
-    this._preloadLoop();
+    this._preloadLoop(quiet);
   };
   VP.setProduct = function (manifestUrl, meta) {
     var self = this;
@@ -468,14 +651,17 @@
       this._retired = null;
       this._retire();                       // current product retires in its place
       this._adoptState(back);
-      // retired layers were hidden -- unhide via the normal reveal path
+      // resurrected layers are HIDDEN (retire hid them): park them all so the
+      // pump unhides staggered and readiness re-confirms through the event
+      // gate -- adopted _ready flags describe a hidden source, i.e. nothing
+      for (var rs in this._added) { this._parked[rs] = true; delete this._ready[rs]; }
       if (this.frames.length) { this.showFrame(this.frameIdx); this._preloadLoop(); }
       this.onStatus('ready', this.manifest.latest);
       // background freshness: merge any frames emitted while it was retired
       this._manifestCached(manifestUrl).then(function (m) {
         if (self.manifestUrl !== manifestUrl || m.product !== self._pfx) return;
         self.manifest = m;
-        self.frames = (m.times || []).slice();
+        self.frames = self._deriveFrames();
         self._syncLoop();
         if (self.frames.length) self.showFrame(self.frames.length - 1);
       }).catch(function () {});
@@ -491,7 +677,7 @@
         self.base = manifestBase(manifestUrl, m.product);
         self._pfx = m.product;
         self.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, self.base) : null;
-        self.frames = (m.times || []).slice();
+        self.frames = self._deriveFrames();
         self.frameIdx = Math.max(0, self.frames.length - 1);
         self.map.setMaxZoom((m.maxzoom || 5) + 1);   // per-product native zoom
         self._pinMinZoom();
@@ -574,7 +760,10 @@
     }
     if (on) {
       // hidden sources fetched nothing (and hiding un-trusts their readiness),
-      // so restart the preload pump + any reveal that was parked while hidden
+      // so restart the preload pump + any reveal that was parked while hidden.
+      // Field-mode restore made every layer visible above, so camera-parking
+      // flags are void too.
+      this._parked = {};
       for (var s2 in this._ready) if (this.frames.indexOf(s2) >= 0) delete this._ready[s2];
       this._loadedEmitted = false;
       this._pumpMounts();

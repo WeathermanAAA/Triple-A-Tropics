@@ -578,6 +578,20 @@
     return el;
   }
 
+  // Playback-loop residency budget per pane: backfilled manifests run 90+
+  // frames; mounting all of them in every pane of a 4-pane compare is a
+  // GPU/tile-fetch blowup (the real-use strobe). The budget is a shared pool
+  // split across panes -- the viewer plays the manifest's trailing slice.
+  function loopCapFor(nPanes) {
+    return nPanes >= 4 ? 24 : nPanes === 2 ? 36 : 48;
+  }
+  function applyLoopCaps() {
+    var n = S.panes.filter(Boolean).length || 1;
+    S.panes.forEach(function (p) {
+      if (p && p.tv && p.tv.setLoopCap) p.tv.setLoopCap(loopCapFor(n));
+    });
+  }
+
   function makePane(i, product) {
     var el = paneShell(i);
     $('cx-panes').appendChild(el);
@@ -586,6 +600,7 @@
     var tv = new TiledViewer({
       container: 'cx-map-' + i,
       manifest: manifestUrlFor(product, S.domain),
+      loopCap: loopCapFor(Math.max(1, S.panes.filter(Boolean).length)),
       onStatus: paneStatus(i)
     });
     pane.tv = tv;
@@ -880,6 +895,7 @@
     document.querySelectorAll('[data-panes]').forEach(function (b) {
       b.classList.toggle('on', +b.dataset.panes === n);
     });
+    applyLoopCaps();   // residency budget scales with the pane count
     S.panes.forEach(function (p, k) { if (p) paneTag(k); });
     setActivePane(S.active < n ? S.active : 0);
   }

@@ -239,9 +239,81 @@ const { TiledViewer } = require(path.join(__dirname, "..", "satellite", "explore
   await tick();
   ok(v._pfx === "sat/g/conus/ir", "switch-back: ir re-adopted");
   ok(map.getLayer(irSid(stampFor(0))), "switch-back: retained ir sources still mounted");
+  // resurrected sources were HIDDEN by retirement -- their adopted readiness
+  // is revoked (parked) and must re-confirm through the event gate; each idle
+  // confirms the visible batch and unhides the next (staggered)
+  const settle = async () => {
+    for (let k = 0; k < 30; k++) { map.idle(); await tick(); }
+  };
+  await settle();
   // the background freshness merge jumps to the newest frame (same semantics
-  // as the pre-rewrite engine's frameIdx = len-1 on merge)
-  ok(v.frameIdx === N - 1, "switch-back: freshness merge lands on the newest frame");
+  // as the pre-rewrite engine's frameIdx = len-1 on merge), gated on tiles
+  ok(v.frameIdx === N - 1, "switch-back: freshness merge lands on the newest frame (post-gate)");
+
+  // ---- 7. camera fetch discipline (parking) ---------------------------------
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const visibleIr = () => MANIFESTS["https://x/sat/g/conus/ir/latest_times.json"].times
+    .filter((s) => map.getLayer(irSid(s)) && map.layout[irSid(s)] !== "none");
+  map.fire("movestart");
+  ok(visibleIr().length === 1 && visibleIr()[0] === newest,
+    "camera: movestart parks every frame except the on-screen one (visible: " +
+    visibleIr().join(",") + ")");
+  const parkedStamp = stampFor(3);
+  ok(!v._frameReady(parkedStamp), "camera: a parked frame is never 'ready'");
+  // scrub during the move: request parks, nothing unhides mid-drag
+  v.showFrame(3);
+  ok(map.layout[irSid(parkedStamp)] === "none",
+    "camera: a scrub during the move does not unpark mid-drag");
+  ok(v.frameIdx === N - 1, "camera: no reveal during the move (frameIdx holds)");
+  map.fire("moveend");
+  await wait(380);            // resume debounce (300 ms)
+  const evAfterMove = events.length;
+  // the scrubbed-to frame resumes FIRST
+  ok(map.layout[irSid(parkedStamp)] === "visible",
+    "camera: the mid-move scrub target resumes first after the camera rests");
+  const unhidden = visibleIr().length;
+  ok(unhidden <= 1 + 1 + 6,
+    "camera: resume is staggered, not a loop-wide unhide (visible: " + unhidden + ")");
+  await settle();
+  ok(v.frameIdx === 3, "camera: the parked reveal lands after re-confirmation");
+  ok(visibleIr().length === N, "camera: whole loop resident again after settle");
+  ok(!events.slice(evAfterMove).some((e) => e.kind === "loading"),
+    "camera: resume fill is QUIET (no loading-toast churn on pan)");
+
+  // ---- 8. live-manifest densification (the 10-min backfill) -----------------
+  // grow the ir manifest 20 -> 60 stamps mid-session; cap (48) bounds residency.
+  // Scrub to a stamp that SURVIVES the merge (60-48=12 oldest roll off): the
+  // preserve-current-stamp contract applies to in-window frames.
+  v.showFrame(15);
+  await settle();
+  ok(v.frameIdx === 15, "densify setup: scrubbed to a surviving stamp");
+  const curStamp = v.frames[v.frameIdx];
+  MANIFESTS["https://x/sat/g/conus/ir/latest_times.json"] = manifest("sat/g/conus/ir", 60);
+  const evBeforeDensify = events.length;
+  v._refreshManifest();
+  await tick(); await tick();
+  ok(v.frames.length === 48,
+    "densify: loop = trailing loopCap slice (48 of 60; got " + v.frames.length + ")");
+  ok(v.frames[v.frameIdx] === curStamp,
+    "densify: merge preserved the CURRENT stamp (no mid-play index remap)");
+  ok(map.removedLayers.some((id) => id === irSid(stampFor(0))),
+    "densify: sources outside the window were torn down");
+  await settle();
+  ok(!events.slice(evBeforeDensify).some((e) => e.kind === "loading" || e.kind === "loaded"),
+    "densify: background merge is QUIET (no toasts)");
+  const mountedNow = MANIFESTS["https://x/sat/g/conus/ir/latest_times.json"].times
+    .filter((s) => map.getLayer(irSid(s)));
+  ok(mountedNow.length === 48, "densify: all 48 in-window frames mounted after settle");
+
+  // ---- 9. loop cap ------------------------------------------------------------
+  const capStamp = v.frames[v.frameIdx];
+  v.setLoopCap(12);
+  await settle();
+  ok(v.frames.length === 12, "cap: setLoopCap(12) re-slices the loop");
+  ok(v.frames[v.frameIdx] === capStamp || v.frameIdx === 0,
+    "cap: current stamp preserved (or clamped to nearest surviving frame)");
+  const resident = Object.keys(map.sources).filter((id) => id.indexOf("sat/g/conus/ir-") === 0);
+  ok(resident.length === 12, "cap: residency shrank with the cap (got " + resident.length + ")");
 
   console.log("\n" + (failures ? "FAILED: " + failures + " check(s)" : "ALL CHECKS PASSED"));
   process.exit(failures ? 1 : 0);
