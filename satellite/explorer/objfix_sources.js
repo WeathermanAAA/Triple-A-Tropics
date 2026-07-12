@@ -412,9 +412,16 @@
   function listStorms() {
     var feed = fetchJson(CDN + '/global_storms.geojson').catch(function () { return null; });
     var flt = fetchJson(CDN + '/floaters/manifest.json').catch(function () { return null; });
-    // is the himawari9 wpac B13 suite live? (box emit) — decides the WP path
+    // is the himawari9 wpac B13 suite live? (box emit) — decides the WP path.
+    // LIVE means FRESH: a stale suite (box emit down, or the box cron not
+    // yet up) must not capture WP storms away from the floater fallback —
+    // 2026-07-12 an 11-h-stale 17-frame suite starved the TC-Diag loop
+    // workup down to a single (day-old) analyzable frame.
+    var WP_BT_FRESH_MS = 3 * 3600e3;
     var wp = fetchJson(WP_MANIFEST).then(function (m) {
-      return (m && m.bt && m.times && m.times.length) ? true : false;
+      if (!(m && m.bt && m.times && m.times.length)) return false;
+      var newest = stampMs(m.times[m.times.length - 1]);
+      return isFinite(newest) && (Date.now() - newest) <= WP_BT_FRESH_MS;
     }).catch(function () { return false; });
     return Promise.all([feed, flt, wp]).then(function (r) {
       var wpBtLive = r[2];

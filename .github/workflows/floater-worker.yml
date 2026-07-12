@@ -29,15 +29,18 @@ on:
       poll_seconds:
         description: "Poll window before clean shutdown (s)"
         default: "2700"
-  # STOPGAP RETIRED 2026-07-12: the tat-render box stack (tsr main
-  # docker-compose.render.yml) now runs /render + the full poller fleet —
-  # render.triple-a-tropics.com healthy, feeds/floaters box-verified.
-  # workflow_dispatch stays for emergencies (a manual run coexists safely:
-  # per-frame content-hash dedup + R2 manifest resync). To re-enable in an
-  # outage, restore the schedule block:
-  #   schedule:
-  #     - cron: "7 * * * *"
-  #     - cron: "37 * * * *"
+  # RE-ENABLED 2026-07-12 ~15:2x UTC: the box's FLOATER poller stalled at
+  # ~05:42Z — 22 min after the stopgap was retired on a green health check
+  # (the box itself is up: /render healthy, intensity poller writing a
+  # fresh global_storms.geojson; only floater production froze). Schedule
+  # restored per this file's own emergency instructions until Andrew
+  # restarts the box's floater-poller container and box-only freshness is
+  # RE-verified (QUEUED manual steps Q17) — then disable this block again.
+  # Coexistence with the recovering box poller is safe by design
+  # (per-frame content-hash dedup + R2 manifest resync).
+  schedule:
+    - cron: "7 * * * *"
+    - cron: "37 * * * *"
 
 permissions:
   contents: read            # R2-only producer; commits nothing to main
