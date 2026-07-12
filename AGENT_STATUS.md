@@ -4,7 +4,96 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-12 ~21:4x UTC — SATCON §4 CLOSED (live-verified real consensus on 98W); found+fixed a site-wide stale-JS hazard (un-bumped ?v= stamps behind a 4-h edge cache); now on the box floater-poller stall + the explorer strobe_
+_Last update: 2026-07-12 ~23:0x UTC — the whole priority block is LANDED: SATCON closed · box floater-poller stall root-caused+fixed (Q17 = pull+rebuild) · explorer strobe fixed FOR REAL (browser-verified incl. 4-pane + densifying manifest) · coastlines black · /subseasonal/ phase 1 live · emit-geo-global treadmill broken (wpac-ir healed after 17 h)_
+
+---
+
+## 2026-07-12 (late evening) — the rest of the block
+
+### 2. BOX FLOATER POLLER STALL — root-caused from code, fixed, tested (tsr main `dff79b1`)
+
+**Root cause (no box access needed):** the global-mosaic disk fetch ran in
+a `ProcessPoolExecutor` whose `future.result(timeout=...)` LOOKED bounded —
+but on timeout the child keeps running and the `with`-block exit calls
+`shutdown(wait=True)`, which blocks the MAIN POLLER LOOP forever behind the
+hung s3fs fetch (no total-timeout on a stalled TLS read). A hang is
+invisible to `restart:` policies; the container sat "healthy" while
+floaters went stale. The GH stopgap never hit it because its 45-min
+chained runs are externally reaped — an accidental watchdog the box lacks.
+
+**Fix:** (a) each disk now fetches in a spawned process that is KILLED at
+`PER_DISK_TIMEOUT_S` — queue-get with short polls, crashed children
+noticed in ~2 s, results racing the exit drained, no wait-on-exit path
+left; (b) a process-level stall **Watchdog** (`FLOATER_WATCHDOG_STALL_S`,
+default 900 s) hard-exits on any future wedge so `restart:` actually
+recovers it — beats at every loop turn, per tick() unit, per basin
+backdrop, between mosaic disks. Tests: 14 mosaic (kill-not-wait,
+crash-fast, 37 MB payload round-trip) + 32 poller (watchdog) green.
+**Q17 is now a pull+rebuild** (RUNBOOK-RENDER §4a), then stopgap retires.
+
+### 3. EXPLORER STROBE — fixed for real this time (TAT `8e81ea32`), verified like a user
+
+Why e76bdedd didn't hold: (a) it shipped behind **un-bumped ?v= stamps**
+(4-h Cloudflare edge cache -> users ran mixed stale JS — fixed earlier
+today); (b) its full-loop residency didn't survive the 10-min-backfill
+era — manifests grew 17→90 frames, so 4-pane mounted ~360 raster sources
+and EVERY camera move became a 90-source tile-fetch storm that starved
+the visible frame (seconds of partial dark = the strobe Andrew saw).
+
+The rewrite (playback contract rules 4+5, tiled_viewer.js header):
+**bounded-loop residency** (trailing 48 frames; 48/36/24 by pane count),
+**camera fetch discipline** (during a move all but the on-screen frame
+park — hidden with readiness REVOKED — then resume staggered through the
+event gate), **live-manifest merge** (90-s background refresh handles the
+densifying manifest: preserves the current stamp mid-play, quiet fill, and
+flags cleared BEFORE removeSource — MapLibre fires sourcedata
+synchronously inside it, the source of a console-error spam class).
+
+**Verified as a user** (real Chrome + live CDN, not one scripted lap):
+boot → play → timeline scrub-drag → world→conus domain switch → 3 field
+switches → **4-pane compare** → pan+zoom mid-play → **a manifest that
+densifies 17→48 MID-PLAY**. Zero un-ready reveals, zero page errors,
+dark-pixel fraction never above the parked baseline in any phase. Node
+harness extended to 40 checks. Also root-caused+fixed the SATCON
+"1 frame analyzed" carry-over: same stale-JS + a starved wp_bt suite.
+
+### 4. emit-geo-global TIMEOUT TREADMILL — broken (TAT `89e2a35c`); wpac-ir healed
+
+e76bdedd's `--step 10 --backfill 90` needed ~175 min/run (measured ~19.5
+min per geo slot) vs `timeout-minutes: 110` — every run since 04:03Z was
+killed, each successor re-walked an aged-out window, and the wpac/goes-fd
+rider emits (sequenced AFTER geo) never ran: **himawari9-wpac-ir froze at
+04:00Z for 17+ h** (why the WP BT gate was starving the TC-Diag workup).
+Fix: riders run FIRST in their own step (`--backfill 60`), geo gets
+30-min slots (the GH runner's real budget; 10-min cadence is the box's
+job, Q11), step-level timeouts, cadence arithmetic documented in the
+header. Stuck runs cancelled, fresh dispatch on the fixed config:
+**wpac-ir newest frame 21:50Z within 20 min** — series live again.
+
+### 5. Coastlines BLACK (tsr main `6dc8ee6`) — Andrew's call, overrides the cyan restyle
+
+COAST/BORDER/HALO all #000000 (constants-only; halo geometry kept so future
+restyles stay one-line). 23 render-quality tests green + live-rendered a
+China/Taiwan clean_ir frame locally to eyeball the black linework. Goes
+live via the stopgap's next tsr checkout and the box's Q17 rebuild.
+
+### 6. /subseasonal/ PHASE 1 — built, rendered, page live (TAT `0a42ae17`)
+
+MJO RMM (BoM; found the FRESH IDCKGEM000 path — the documented graphics/
+URL froze in 2024-02; staleness gate + daily cache + a WAF-safe UA):
+WH04 phase diagram (8 octants, region labels, 40-day dated track,
+eastward=CCW) + amplitude panel. Velocity potential: GFS 1° analysis →
+χ at T21 via a spherical-harmonic Poisson solve on pyshtools (pyspharm
+has no wheels; solver analytically validated — Y₃² recovery r>0.995 —
+and physics-checked: the July climo puts the χ200 min at 15N/132.5E,
+textbook monsoon outflow) → anomalies vs a committed 1991–2020 NCEP/NCAR
+R1 climatology → Pacific-centered 200/850 maps, BrBG diverging
+(green=−χ′), divergent-wind quiver, honest per-level reading lines.
+House-style page + daily workflow (15:41Z + backup, R2-only — repo is
+NEAR ITS SIZE QUOTA, so no rendered images are ever committed). First
+publish run dispatched; current state: phase 7, amplitude 2.15 — a
+strong W-Pac MJO consistent with the active season. Subseasonal is in
+the home nav; full site-nav sweep deferred. BSISO/QBO/Hovmöllers later.
 
 ---
 
