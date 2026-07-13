@@ -4,7 +4,56 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-13 ~15:5x UTC — CF token arrived: bug board LIVE (passcode-free, smoke loop proven, admin key in chat) · edge purge ACTIVE (styles.css push→live ~2.5 min, verified) · in flight: ERA5 χ-climo swap (task 3) + 90C/91C basin-letter fix + their scat passes (task 4)_
+_Last update: 2026-07-13 ~17:3x UTC — 90C/91C fix LANDED (ace-core-v0.8.3; EP feed + stopgap geojson verified live; **home map converges when Q17 box rebuild runs — one manual step**) · explorer ASCAT backdrop + barb tooltips SHIPPED · bug-board friendly numbers SHIPPED · ERA5 χ-climo building (supervised, APDRC stalls now auto-recover) · morning: bug board LIVE + edge purge ACTIVE_
+
+---
+
+## 2026-07-13 (~17:3x UTC) — 90C/91C letter fix landed · ASCAT backdrop + tooltips · friendly bug numbers
+
+- **90C/91C (ace-core-v0.8.3 @04f7574a, tag pushed):** the mislabel was
+  `merge_and_extract_storms` rebuilding invest/PTC `atcf_id` from the PAGE
+  basin's `invest_letter` ("E") — now it derives from the storm's OWN SID
+  token (`NHC_CP902026`→"C"; page letter only for token-less IBTrACS SIDs).
+  `parse_bdeck` keys SID + fallback name off each deck row's own basin
+  field (byte-identical no-op today). Also fixed the adversarially-confirmed
+  letter-blind SPAWNINVEST dedup ("…to ep902026" no longer retires an
+  unrelated 90C; letterless legacy feeds keep number-only semantics).
+  Gates: --no-live A/B byte-identical (EP+WP × ACE+tracks), 533-test suite,
+  adversarial review LAND, 9 new locked tests. **Verified live:** EP tracks
+  feed `atcf_id` 90C/91C ✓ (update-ace dispatched); poller repin+mirror
+  pushed to tat-satellite-render @ba5085c6 and the DISPATCHED stopgap run
+  wrote `designation` 90C/91C into global_storms.geojson ✓.
+- **🔥 HOME MAP still flaps** (Andrew's report: X-markers/labels come and
+  go): global_storms.geojson has TWO writers — the GH stopgap (:07/:37,
+  now fully corrected) and the BOX intensity poller (07-12 build:
+  pre-discovery-fix, drops CP invests entirely). They alternate ~every
+  minute; ~half of refreshes lack 90C/91C. **The already-queued Q17 box
+  pull+rebuild is the convergence step** — same requirements.txt now pins
+  ace-core-v0.8.3, so one rebuild fixes floaters AND the home map for good.
+- **Explorer scatterometer (@9abb33ac):** (1) satellite backdrop under the
+  barbs — SC controls gain Backdrop: None / **Clean IR (default)** / IR
+  color; Clean IR = native-gray C07/B07 3.9 µm, geo ring falls to pure-gray
+  Dvorak-BD C13 (availSet-honest chain; NO desaturated-rainbow hack — its
+  cold-top luminance is non-monotonic and would misrank tops); barbs get
+  the dark casing over imagery; exiting the field restores the user's own
+  tiles; chrome names the backdrop product. (2) barb hover tooltips —
+  thinned cells retained per frame (from the loaded wvc arrays; no raster
+  retention), 14 px nearest-cell scan, cursor tooltip with kt + FROM° +
+  lat/lon + sensor + pass time. Stamps mwsc3/core4 bumped in-commit; edge
+  purge had it live ~2 min after push. Programmatic verify done (smokes,
+  suite, manifest 200s, cp902026 passes present); **eyeball on a real
+  storm-locked view still worth 30 s of Andrew's time**.
+- **Bug board friendly numbers (@3ac8f3f3):** testers see #1, #2, … by
+  creation order (created-timestamp sort, GitHub-number tiebreak — closing
+  never renumbers); real issue number stays under the hood (links, admin
+  PATCH, "fixes #N"). Confirmed live at the edge.
+- **ERA5 χ-climo:** APDRC OPeNDAP randomly stalls responses ~50% of slabs
+  and libnetcdf honors no timeout (.dodsrc ignored) — a raw build hung
+  twice. Now running under a supervisor (scratchpad): each 5-yr slab in a
+  child process, 480 s hard-kill + fresh-connection retry, on-disk slab
+  resume, then the committed builder's own main() runs against the local
+  slabs (identical attrs/structure/sanity-check). Slabs 1-2 ok, slab 3
+  recovered from a stall as designed. Lands as .nc commit + re-render.
 
 ---
 
