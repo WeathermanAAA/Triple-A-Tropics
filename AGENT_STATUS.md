@@ -4,7 +4,41 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-13 ~00:1x UTC — the whole priority block is LANDED + two follow-on catches: SATCON closed · box floater-poller stall root-caused+fixed (Q17 = pull+rebuild) · explorer strobe fixed FOR REAL (browser-verified incl. 4-pane + densifying manifest) · coastlines black · /subseasonal/ phase 1 live · emit treadmill broken (wpac-ir healed) · cross-storm workup wiring killed @53dd0107 · §4 refusals now state their reason @cf73169a_
+_Last update: 2026-07-13 ~02:1x UTC — front-end polish batch: Subseasonal in EVERY nav (+ a nav canonicalization test that kills the missing-link bug class) · 8-item nav fits ONE row at all desktop widths (real-font measured) · /subseasonal/ full-bleed + 1.5x renders (browser + local-render verified) — plus the 00:1x block below_
+
+---
+
+## 2026-07-13 (~02 UTC) — front-end polish: nav sweep + one-line nav + full-bleed /subseasonal/
+
+- **Subseasonal link in EVERY page's nav** (15 files; it only existed on
+  Home + the page itself). Same slot everywhere: Models → Subseasonal →
+  Recon. New `tests/test_site_nav.py` globs every nav-bearing page and
+  asserts the canonical 8-link order + exactly-one-active — the
+  hand-duplicated-nav bug class (Satellite, Models, Recon, now
+  Subseasonal all went missing this way) now fails tests loudly instead
+  of shipping. 17/17 pages green.
+- **Nav wraps no more at desktop.** Measured with the real Metropolis
+  metrics: brand@28px + 8 links at the old 16px/26px-gap = ~1184px vs
+  the 1140px .nav-inner content cap — it wrapped at EVERY desktop
+  width. Now 15px/1.1px/18px-gap (~1085px, one line ≥1150px viewport) +
+  a new 980–1149 step (13px/22px brand) + retuned 761–979 band (12px).
+  Sizing budget documented in styles.css. Playwright-verified single
+  line at 1920/1280/1150/1024 with the real webfont.
+- **/subseasonal/ full-bleed**: 1240px cap → ~2vw gutters (18–40px);
+  page-head follows the same gutter (h1 and section heads share a left
+  edge); prose (intro/subs/method note) keeps a 1240px measure; MJO grid
+  goes 2fr/3fr with a 460px phase-diagram floor. Measured 1843px content
+  at 1920.
+- **Renders scaled to match, not CSS-upscaled**: both generators bumped
+  1.5x figsize at constant dpi/fonts (phase 1935², amplitude 2362×765,
+  χ′ 2835×1035) — same physical text size at the new display width,
+  ~2x pixel density. Phase-diagram subtitle offset retuned (1.022→1.012,
+  axes-fraction creep on the bigger canvas). Both generators run clean
+  locally (BoM RMM fresh 07-11; GFS 07-12 18Z via walk-back — 00Z hits
+  an unrelated data.rda.ucar.edu cert failure). Also swept the em-dashes
+  the new page/generators had reintroduced into RENDERED text (house
+  style). `update-subseasonal` dispatched post-push so R2 serves the
+  big renders immediately.
 
 ---
 

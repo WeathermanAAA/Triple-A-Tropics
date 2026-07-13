@@ -162,14 +162,19 @@ a:hover { text-decoration: underline; }
    every page rendered a quarter smaller than authored (nav ~9px). The
    wrap lets the links flow to a second right-aligned line instead, so
    the layout viewport holds the true device width. No-op on desktop
-   (one line fits). Do not remove. */
+   (one line fits). Do not remove.
+   SIZING BUDGET (8 links): brand@28px (~280px) + 16px inner gap + links
+   must fit the 1140px .nav-inner content cap. At 15px/1.1px letter-
+   spacing/18px gaps the row totals ~1085px (measured with the real
+   Metropolis metrics) - one line everywhere >=1150px viewport. The old
+   16px/26px values totalled ~1184px and wrapped at EVERY desktop width. */
 .nav-links {
-  display: flex; gap: 6px 26px;
+  display: flex; gap: 6px 18px;
   flex-wrap: wrap;
   justify-content: flex-end;
   font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
-  font-size: 16px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 1.2px;
+  font-size: 15px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1.1px;
 }
 .nav-links a {
   color: #c8d4e7;
@@ -186,13 +191,19 @@ a:hover { text-decoration: underline; }
   border-bottom: 2px solid var(--accent);
 }
 
-/* Tablet band: at 16px the link row + brand only fits on one line from
-   ~980px up, so without this the 761-979px band (iPad portrait, split
-   windows) wraps the nav to a tall second row. A small font step keeps
-   it to ONE line through the band. */
+/* Step-down bands, tuned for the 8-link row (real-font measurements):
+   980-1149px: base 15px links (~1085px row) overflow below ~1150px, so
+   drop to 13px links + 22px brand (~926px row) - one line through the
+   whole band. 761-979px: one more step (12px links, ~883px row) keeps a
+   single line down to ~925px; below that the mobile-unlock wrap takes
+   over gracefully (same behavior as before, just lower). */
+@media (min-width: 980px) and (max-width: 1149px) {
+  .brand { font-size: 22px; }
+  .nav-links { font-size: 13px; gap: 4px 14px; letter-spacing: 1px; }
+}
 @media (min-width: 761px) and (max-width: 979px) {
   .brand { font-size: 22px; }
-  .nav-links { font-size: 13px; gap: 4px 18px; letter-spacing: 1px; }
+  .nav-links { font-size: 12px; gap: 4px 14px; letter-spacing: 0.9px; }
 }
 @media (max-width: 760px) {
   .brand { font-size: 20px; gap: 8px; }

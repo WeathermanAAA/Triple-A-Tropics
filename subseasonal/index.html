@@ -15,12 +15,22 @@
   html, body, h1, h2, h3, p, a, span, div, nav, header, footer {
     font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
   }
-  .ss-wrap { max-width: 1240px; margin: 0 auto; padding: 0 18px 48px; }
+  /* Full-bleed: the maps are the subject, let them use the window.
+     ~2vw gutters (18-40px) instead of the old 1240px centered cap.
+     The page-head follows the same gutter so the h1 and the section
+     heads share a left edge (the 1180px centered head looked indented
+     against full-bleed sections). Prose keeps a 1240px measure. */
+  .page-head { max-width: none; padding: 36px clamp(18px, 2vw, 40px) 16px; }
+  .page-head p { max-width: 1240px; }
+  .ss-wrap { margin: 0 auto; padding: 0 clamp(18px, 2vw, 40px) 48px; }
   .ss-sec { margin-top: 34px; }
   .ss-sec h2 { font-size: 20px; margin: 0 0 4px; }
   .ss-sub { color: var(--muted, #8ea2bd); font-size: 13px; margin: 0 0 14px;
-    line-height: 1.55; }
-  .ss-grid { display: grid; gap: 18px; grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+    line-height: 1.55; max-width: 1240px; }
+  /* Phase diagram (square) takes 2/5 of the row, amplitude the rest;
+     the 460px floor keeps it from shrinking below the old fixed size. */
+  .ss-grid { display: grid; gap: 18px;
+    grid-template-columns: minmax(min(460px, 100%), 2fr) minmax(0, 3fr);
     align-items: start; }
   @media (max-width: 900px) { .ss-grid { grid-template-columns: 1fr; } }
   .ss-card { background: var(--panel, #0a1324); border: 1px solid var(--border, #1c2b45);
@@ -30,7 +40,8 @@
     padding: 8px 4px 2px; line-height: 1.5; }
   .ss-asof { color: var(--muted, #8ea2bd); font-size: 12px; margin-top: 6px; }
   .ss-note { color: var(--muted, #8ea2bd); font-size: 12px; line-height: 1.6;
-    border-top: 1px solid var(--border, #1c2b45); margin-top: 36px; padding-top: 14px; }
+    border-top: 1px solid var(--border, #1c2b45); margin-top: 36px; padding-top: 14px;
+    max-width: 1240px; /* prose stays readable; only the maps go full-bleed */ }
   .ss-stack { display: grid; gap: 18px; }
 </style>
 </head>
@@ -57,8 +68,8 @@
 
 <header class="page-head">
   <h1>Subseasonal Drivers</h1>
-  <p>The planetary-scale background the tropics ride on — the MJO and the
-  large-scale divergent circulation — computed and rendered here daily.
+  <p>The planetary-scale background the tropics ride on: the MJO and the
+  large-scale divergent circulation, computed and rendered here daily.
   Automated objective products; see official outlooks for forecasts.</p>
 </header>
 
@@ -90,7 +101,7 @@
     <p class="ss-sub">Planetary-scale rising and sinking branches from the
     latest GFS analysis: χ solved spectrally from the analyzed wind, truncated
     at T21, and anomalized against a 1991–2020 reanalysis climatology.
-    At 200 hPa, green (negative χ′) marks upper-level divergence — enhanced
+    At 200 hPa, green (negative χ′) marks upper-level divergence, enhanced
     deep convection; brown marks the suppressed, sinking branch. The 850-hPa
     panel shows the low-level return flow: enhanced convection sits over its
     brown (convergent) centers. <span id="vp-asof" class="ss-asof"></span></p>
@@ -111,7 +122,7 @@
     analysis winds at 200/850 hPa; χ from a spherical-harmonic Poisson solve of
     the analyzed divergence, triangular truncation T21; anomalies against a
     1991–2020 monthly climatology built from NCEP/NCAR Reanalysis 1 (NOAA PSL),
-    interpolated to the analysis date. Automated objective diagnostics —
+    interpolated to the analysis date. Automated objective diagnostics:
     experimental, never official guidance. Updated daily.
   </div>
 </div>

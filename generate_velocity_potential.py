@@ -138,7 +138,10 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     la = lats[sel]
     z = chi_anom[sel, :] / 1e6
 
-    fig, ax = plt.subplots(figsize=(12.6, 4.6), facecolor=BG_COLOR)
+    # 1.5x canvas at constant dpi/fonts: /subseasonal/ is full-bleed, so
+    # this map now displays ~1.5x wider - same point sizes keep the
+    # physical text size on screen while the pixel budget grows to match.
+    fig, ax = plt.subplots(figsize=(18.9, 6.9), facecolor=BG_COLOR)
     ax.set_facecolor(BG_COLOR)
     # symmetric integer-stepped levels (clean colorbar ticks)
     vmax = max(4.0, np.ceil(float(np.percentile(np.abs(z), 99)) / 2) * 2)
@@ -172,7 +175,7 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
 
     reading = ("green: upper-level divergence → enhanced deep convection"
                if level == 200 else
-               "green: LOW-level divergence — enhanced convection sits over "
+               "green: LOW-level divergence, enhanced convection sits over "
                "the brown (low-level convergence) centers")
     ax.set_title(f"{level}-hPa velocity potential anomaly (χ′, T21) · "
                  f"vs 1991–2020 · {valid:%Y-%m-%d %H} UTC analysis",

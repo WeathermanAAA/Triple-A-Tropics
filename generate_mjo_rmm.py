@@ -135,7 +135,10 @@ def _style_axes(ax):
 def render_phase(rows: list[dict], days: int, out: Path,
                  now: dt.date) -> dict:
     track = rows[-days:]
-    fig, ax = plt.subplots(figsize=(8.6, 8.6), facecolor=BG_COLOR)
+    # 1.5x canvas at constant dpi/fonts: the /subseasonal/ page went
+    # full-bleed, so the render must carry ~2x the pixels at its new
+    # display width. Same point sizes = same physical text on screen.
+    fig, ax = plt.subplots(figsize=(12.9, 12.9), facecolor=BG_COLOR)
     _style_axes(ax)
     lim = 4.0
     ax.set_xlim(-lim, lim)
@@ -200,7 +203,9 @@ def render_phase(rows: list[dict], days: int, out: Path,
     d0, d1 = dt.date(*track[0]["ymd"]), dt.date(*latest["ymd"])
     ax.set_title(f"MJO phase space (RMM)  ·  {d0:%d %b} – {d1:%d %b %Y}",
                  color=TEXT_COLOR, fontsize=13, fontweight="bold", pad=26)
-    ax.text(0.0, 1.022,
+    # 1.012 (not 1.022): axes-fraction offsets grew with the 1.5x canvas;
+    # this keeps the same physical clearance under the pad=26 title.
+    ax.text(0.0, 1.012,
             f"latest: phase {latest['phase']} · amplitude {latest['amp']:.2f}"
             f" · eastward propagation is counterclockwise",
             transform=ax.transAxes, color=MUTED_COLOR, fontsize=9)
@@ -220,11 +225,12 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180) -> None:
     seg = rows[-days:]
     d = [dt.date(*r["ymd"]) for r in seg]
     amp = np.array([r["amp"] for r in seg])
-    fig, ax = plt.subplots(figsize=(10.5, 3.4), facecolor=BG_COLOR)
+    # 1.5x canvas for the full-bleed page (see render_phase note)
+    fig, ax = plt.subplots(figsize=(15.75, 5.1), facecolor=BG_COLOR)
     _style_axes(ax)
     ax.grid(color=GRID, lw=0.5, alpha=0.6)
     ax.axhline(1.0, color=MUTED_COLOR, lw=1.0, ls=(0, (4, 3)), alpha=0.8)
-    ax.text(d[0], 1.04, "amplitude 1 — significant MJO", color=MUTED_COLOR,
+    ax.text(d[0], 1.04, "amplitude 1: significant MJO", color=MUTED_COLOR,
             fontsize=8, va="bottom")
     ax.plot(d, amp, color=ACCENT, lw=1.7)
     ax.fill_between(d, 0, amp, color=ACCENT, alpha=0.12, lw=0)
