@@ -164,7 +164,10 @@
 
   function card(item) {
     var d = el('div', 'bb-item' + (item.state === 'closed' ? ' closed' : ''));
-    var a = el('a', 't', '#' + item.number + ' ' + item.title);
+    // Testers see the friendly per-board number; the REAL GitHub issue
+    // number stays underneath (the link target + the admin PATCH id), so
+    // "fixes #<real>" in a commit and Mark-fixed keep working unchanged.
+    var a = el('a', 't', '#' + item.display + ' ' + item.title);
     a.href = item.html_url; a.target = '_blank'; a.rel = 'noopener';
     d.appendChild(a);
     if (item.severity) d.appendChild(el('span', 'bb-chip sev-' + item.severity, item.severity));
@@ -202,6 +205,13 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function (items) {
+      // Friendly sequential numbers, oldest report = #1. Ranked by creation
+      // timestamp (GitHub number as the same-second tiebreak) so closing or
+      // reopening never renumbers anything.
+      items.slice().sort(function (a, b) {
+        return (a.created < b.created) ? -1 : (a.created > b.created) ? 1
+          : (a.number - b.number);
+      }).forEach(function (i, idx) { i.display = idx + 1; });
       fill(document.getElementById('bb-open'),
         items.filter(function (i) { return i.state === 'open'; }),
         'Nothing open. Nice.');
@@ -239,9 +249,11 @@
         btn.disabled = false;
         if (res.j && res.j.ok) {
           msg.className = 'bb-msg ok';
+          // No number here: the board shows friendly sequential numbers,
+          // and quoting the raw GitHub number would read as a mismatch.
           msg.textContent = 'Filed';
           if (res.j.html_url) {
-            msg.textContent = 'Filed as issue #' + res.j.number + ' — ';
+            msg.textContent = 'Filed — ';
             var a = el('a', null, 'view it on GitHub');
             a.href = res.j.html_url; a.target = '_blank'; a.rel = 'noopener';
             msg.appendChild(a);
