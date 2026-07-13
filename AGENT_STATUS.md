@@ -4,26 +4,35 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-13 ~03:4x UTC — VP maps re-methoded: TIME-MEAN windows (pentad/30d/90d/MJO-band selector) off a rolling daily-χ archive, 60S–60N, acceptance dipole verified vs CPC · bug board built+tested (deploy = MORNING TO-DO: CF token) · edge-purge built (same token) · earlier: nav sweep + full-bleed batch_
+_Last update: 2026-07-13 ~15:5x UTC — CF token arrived: bug board LIVE (passcode-free, smoke loop proven, admin key in chat) · edge purge ACTIVE (styles.css push→live ~2.5 min, verified) · in flight: ERA5 χ-climo swap (task 3) + 90C/91C basin-letter fix + their scat passes (task 4)_
 
 ---
 
-## ☀️ MORNING TO-DO (Andrew's hands — everything else tonight is landed)
+## 2026-07-13 (~15:5x UTC) — CF-token morning batch: bug board LIVE · edge purge ACTIVE
 
-**ONE Cloudflare API token unblocks BOTH parked items** (Q18 in the queue
-file has full detail). Mint at dash.cloudflare.com/profile/api-tokens with:
-Account → Workers Scripts → Edit · Zone (triple-a-tropics.com) → Workers
-Routes → Edit · Zone → Cache Purge → Purge. Add as **Codespaces secret
-`CLOUDFLARE_API_TOKEN`** (repo access: Triple-A-Tropics), reload the
-Codespace, ping Claude. Then Claude (headless, ~5 min): deploys the bug
-board (`workers/deploy-bugs.sh`, smoke-tests the loop, hands you the
-tester passcode + admin URL in-chat), sets the purge Actions secrets via
-`gh secret set`, and verifies a CSS change propagates in ~1 min. I
-verified tonight the token truly isn't here (user Codespaces secrets =
-AWS×3 + GH_PUSH_TOKEN + PPS_EMAIL; no wrangler oauth on disk) — the
-cyclolab worker came from your own `wrangler login` machine. NOTHING was
-minted. Until then /bugs/ shows its honest "backend unreachable" state
-and styles.css changes ride the 4-h TTL.
+- **Bug board deployed passcode-free** (`bash workers/deploy-bugs.sh`,
+  token-auth, no login): Worker + route live, GITHUB_TOKEN/ADMIN_KEY wired,
+  TESTER_PASSCODE confirmed absent. Smoke loop proven on prod: POST filed
+  issue #30 → PATCH closed it with the fresh admin key → label stripped →
+  board GET returns 0 reports; `/bugs/` serves HTTP 200. **Admin key was
+  handed to Andrew in-chat only** (never in-repo). Deploy script hardened
+  (@ac116bd0): smoke POST now retries through the ~30 s secret-propagation
+  window that 503'd the first attempt ("board backend not configured yet"
+  = the pre-secret Worker version still serving), and the bogus
+  `wrangler secret delete --force` line is gone (no such flag in v4).
+- **Edge-cache purge ACTIVE**: zone id pulled via the API, purge permission
+  proven with a live single-URL purge, then `CLOUDFLARE_ZONE_ID` +
+  `CLOUDFLARE_PURGE_TOKEN` set via `gh secret set`. Acceptance run on the
+  real push @ac116bd0: workflow diffed the push, purged exactly
+  `styles.css` (skipped `workers/`), waited for the Pages build, and the
+  new bytes were serving at the edge ~2.5 min after `git push`
+  (cf-cache-status HIT on fresh body). The 4-h stale-asset window is dead.
+- In flight this session: (3) ERA5 χ-climatology swap — last night's build
+  died with the Codespace; re-running from the committed ERA5-ready
+  builder, then re-render + no mislabel left standing. (4) home-map
+  invests at ~150–160°W read 90E/91E but 140°W–180° is CPHC's basin →
+  must read 90C/91C; fixing the basin-letter assignment + keying their
+  ASCAT passes to the C ids. Diagnosis running.
 
 ---
 
