@@ -43,6 +43,17 @@
     border-top: 1px solid var(--border, #1c2b45); margin-top: 36px; padding-top: 14px;
     max-width: 1240px; /* prose stays readable; only the maps go full-bleed */ }
   .ss-stack { display: grid; gap: 18px; }
+  /* window selector: quiet segmented control, data-forward */
+  .ss-winsel { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+  .ss-winsel button { font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; padding: 5px 12px; border-radius: 6px;
+    cursor: pointer; color: var(--muted, #8ea2bd);
+    background: var(--panel, #0a1324); border: 1px solid var(--border, #1c2b45); }
+  .ss-winsel button:hover { color: var(--fg, #e5edf6); }
+  .ss-winsel button.on { color: var(--accent, #49b6c8);
+    border-color: var(--accent, #49b6c8); }
+  .ss-winnote { color: var(--muted, #8ea2bd); font-size: 12px;
+    margin: -6px 0 12px; }
 </style>
 </head>
 <body>
@@ -98,13 +109,18 @@
 
   <section class="ss-sec" id="vp">
     <h2>Velocity-Potential Anomalies (χ′, T21)</h2>
-    <p class="ss-sub">Planetary-scale rising and sinking branches from the
-    latest GFS analysis: χ solved spectrally from the analyzed wind, truncated
-    at T21, and anomalized against a 1991–2020 reanalysis climatology.
-    At 200 hPa, green (negative χ′) marks upper-level divergence, enhanced
-    deep convection; brown marks the suppressed, sinking branch. The 850-hPa
-    panel shows the low-level return flow: enhanced convection sits over its
-    brown (convergent) centers. <span id="vp-asof" class="ss-asof"></span></p>
+    <p class="ss-sub">Planetary-scale rising and sinking branches,
+    time-averaged the way velocity potential is meant to be read: daily GFS
+    analyses → χ solved spectrally (T21) → running means (or the 20–100-day
+    MJO-band filter) → anomalies against a 1991–2020 ERA5 climatology
+    computed with the identical solve. At 200 hPa, green (negative χ′)
+    marks anomalous upper-level divergence, enhanced deep convection;
+    brown marks the suppressed, sinking branch. The 850-hPa panel shows
+    the low-level return flow: enhanced convection sits over its brown
+    (convergent) centers. <span id="vp-asof" class="ss-asof"></span></p>
+    <div class="ss-winsel" id="vp-winsel" role="group"
+      aria-label="averaging window"></div>
+    <div class="ss-winnote" id="vp-winnote"></div>
     <div class="ss-stack">
       <figure class="ss-card">
         <img id="img-chi-200" alt="200-hPa velocity potential anomaly map, Pacific-centered, with divergent wind arrows">
@@ -118,12 +134,16 @@
   <div class="ss-note">
     <b>Method & data.</b> All graphics on this page are computed and rendered
     by Triple-A-Tropics. MJO: RMM index values from the Australian Bureau of
-    Meteorology (Wheeler &amp; Hendon 2004). Velocity potential: NOAA NCEP GFS
-    analysis winds at 200/850 hPa; χ from a spherical-harmonic Poisson solve of
-    the analyzed divergence, triangular truncation T21; anomalies against a
-    1991–2020 monthly climatology built from NCEP/NCAR Reanalysis 1 (NOAA PSL),
-    interpolated to the analysis date. Automated objective diagnostics:
-    experimental, never official guidance. Updated daily.
+    Meteorology (Wheeler &amp; Hendon 2004). Velocity potential: daily means
+    of NOAA NCEP GFS analysis winds at 200/850 hPa; χ from a
+    spherical-harmonic Poisson solve of the divergence, triangular truncation
+    T21; running means over the selected window (the MJO view is a
+    20–100-day Lanczos bandpass whose real-time endpoint is
+    amplitude-damped, as stated on the map); anomalies against a 1991–2020
+    monthly χ climatology built from ERA5 monthly-mean winds
+    (C3S/ECMWF, via the APDRC data server) with the identical solve.
+    Automated objective diagnostics: experimental, never official guidance.
+    Updated daily.
   </div>
 </div>
 
@@ -131,26 +151,65 @@
 (function () {
   var CDN = 'https://cdn.triple-a-tropics.com/subseasonal/';
   var bust = '?t=' + Math.floor(Date.now() / 6e5);   // 10-min cache key
-  [['img-mjo-phase', 'mjo_phase.png'], ['img-mjo-amp', 'mjo_amplitude.png'],
-   ['img-chi-200', 'chi_anom_200.png'], ['img-chi-850', 'chi_anom_850.png']]
+  [['img-mjo-phase', 'mjo_phase.png'], ['img-mjo-amp', 'mjo_amplitude.png']]
     .forEach(function (p) {
       var el = document.getElementById(p[0]);
       if (el) el.src = CDN + p[1] + bust;
     });
-  function asof(url, el, fmt) {
-    fetch(CDN + url + bust).then(function (r) { return r.json(); })
-      .then(function (m) {
-        var e = document.getElementById(el);
-        if (e) e.textContent = fmt(m);
-      }).catch(function () {});
+  fetch(CDN + 'mjo_meta.json' + bust).then(function (r) { return r.json(); })
+    .then(function (m) {
+      document.getElementById('mjo-asof').textContent =
+        'Latest RMM value: ' + m.as_of + ' · phase ' + m.phase +
+        ' · amplitude ' + (+m.amp).toFixed(2) + '.';
+    }).catch(function () {});
+
+  // VP window selector (meta-driven; falls back to the baked default
+  // filenames if the meta fetch fails)
+  function setChi(win) {
+    var suffix = win ? '_' + win : '';
+    document.getElementById('img-chi-200').src =
+      CDN + 'chi_anom_200' + suffix + '.png' + bust;
+    document.getElementById('img-chi-850').src =
+      CDN + 'chi_anom_850' + suffix + '.png' + bust;
   }
-  asof('mjo_meta.json', 'mjo-asof', function (m) {
-    return 'Latest RMM value: ' + m.as_of + ' · phase ' + m.phase +
-      ' · amplitude ' + (+m.amp).toFixed(2) + '.';
-  });
-  asof('vp_meta.json', 'vp-asof', function (m) {
-    return 'Analysis cycle: ' + m.cycle + '.';
-  });
+  fetch(CDN + 'vp_meta.json' + bust).then(function (r) { return r.json(); })
+    .then(function (m) {
+      if (!m.windows || !m.available || !m.available.length) {
+        setChi(null);
+        document.getElementById('vp-asof').textContent =
+          'Analysis: ' + (m.cycle || '') + '.';
+        return;
+      }
+      var sel = document.getElementById('vp-winsel');
+      var note = document.getElementById('vp-winnote');
+      var current = m.available.indexOf(m.default) >= 0
+        ? m.default : m.available[0];
+      function show(win) {
+        current = win;
+        setChi(win);
+        var w = m.windows[win];
+        var txt = w.label + ' ending ' + w.end;
+        if (w.retained != null) {
+          txt += ' · real-time filter endpoint: ~' +
+            Math.round(w.retained * 100) + '% amplitude retained';
+        }
+        note.textContent = txt + '.';
+        Array.prototype.forEach.call(sel.children, function (b) {
+          b.className = b.dataset.win === win ? 'on' : '';
+        });
+      }
+      m.available.forEach(function (win) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = m.windows[win].label;
+        b.dataset.win = win;
+        b.onclick = function () { show(win); };
+        sel.appendChild(b);
+      });
+      show(current);
+      document.getElementById('vp-asof').textContent =
+        'Daily GFS analyses through ' + m.windows[current].end + '.';
+    }).catch(function () { setChi(null); });
 })();
 </script>
 </body>

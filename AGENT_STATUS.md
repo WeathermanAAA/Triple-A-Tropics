@@ -4,7 +4,76 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-13 ~02:1x UTC — front-end polish batch: Subseasonal in EVERY nav (+ a nav canonicalization test that kills the missing-link bug class) · 8-item nav fits ONE row at all desktop widths (real-font measured) · /subseasonal/ full-bleed + 1.5x renders (browser + local-render verified) — plus the 00:1x block below_
+_Last update: 2026-07-13 ~03:4x UTC — VP maps re-methoded: TIME-MEAN windows (pentad/30d/90d/MJO-band selector) off a rolling daily-χ archive, 60S–60N, acceptance dipole verified vs CPC · bug board built+tested (deploy = MORNING TO-DO: CF token) · edge-purge built (same token) · earlier: nav sweep + full-bleed batch_
+
+---
+
+## ☀️ MORNING TO-DO (Andrew's hands — everything else tonight is landed)
+
+**ONE Cloudflare API token unblocks BOTH parked items** (Q18 in the queue
+file has full detail). Mint at dash.cloudflare.com/profile/api-tokens with:
+Account → Workers Scripts → Edit · Zone (triple-a-tropics.com) → Workers
+Routes → Edit · Zone → Cache Purge → Purge. Add as **Codespaces secret
+`CLOUDFLARE_API_TOKEN`** (repo access: Triple-A-Tropics), reload the
+Codespace, ping Claude. Then Claude (headless, ~5 min): deploys the bug
+board (`workers/deploy-bugs.sh`, smoke-tests the loop, hands you the
+tester passcode + admin URL in-chat), sets the purge Actions secrets via
+`gh secret set`, and verifies a CSS change propagates in ~1 min. I
+verified tonight the token truly isn't here (user Codespaces secrets =
+AWS×3 + GH_PUSH_TOKEN + PPS_EMAIL; no wrangler oauth on disk) — the
+cyclolab worker came from your own `wrangler login` machine. NOTHING was
+minted. Until then /bugs/ shows its honest "backend unreachable" state
+and styles.css changes ride the 4-h TTL.
+
+---
+
+## 2026-07-13 (~03:3x UTC) — VP MAPS RE-METHODED: time-mean windows, not snapshots (v2)
+
+**The product was wrong, not the pattern: a χ′ map from ONE fxx=0
+analysis is transient-wave noise (±16 bullseyes vs a real anomaly's ±5).
+v2 is a TIME-MEAN product** (TAT commit — see git log — generator +
+`subseasonal/vp_windows.py` + workflow + page):
+
+- **Rolling daily-χ archive.** Each day = mean of the day's 00/06/12/18Z
+  GFS 1° analyses (≥2 required) → ONE T21 solve. The solve is LINEAR in
+  wind, so mean-of-χ ≡ χ-of-mean-wind, window means, the bandpass, and
+  the divergent wind all derive from stored daily χ (~50 KB/day zlib) —
+  test-locked linearity in `tests/test_vp_windows.py` (7 tests). Archive
+  lives in R2 `_buildcache/chi_daily_archive.nc`, restored/saved around
+  each workflow run; missing days self-heal newest-first
+  (`--backfill-days`, dispatch input; 250 bootstraps cold in one run).
+  GOTCHA baked into the code: eccodes/cfgrib + pyshtools are NOT
+  thread-safe — day fetches run in SPAWNED PROCESSES (a ThreadPool
+  segfaulted).
+- **Window selector restored**: pentad / 30-day (default) / 90-day /
+  20–100-day MJO Lanczos bandpass (Duchon 1979, 121 taps; real-time
+  endpoint zero-padded with the retained amplitude fraction PRINTED ON
+  the map — 52% tonight; needs ≥61 archived days, refuses honestly
+  below). Filenames `chi_anom_{lvl}_{win}.png`; legacy
+  `chi_anom_{lvl}.png` = the 30-day default so cached pages keep
+  working. Meta-driven buttons on /subseasonal/ (browser-verified:
+  default on, swaps, retention note, 0 page errors; falls back to legacy
+  images if meta is old/unreachable).
+- **Map widened to 60S–60N** (45° clipped the subtropical centers) +
+  arrows are now the ANOMALOUS divergent wind (grad of the plotted χ′ —
+  linearity again), figsize (18.9, 8.6) for the full-bleed page.
+- **VERIFIED against the operational ground truth** (research agents
+  pulled CPC's current products; mid-July consensus: negative χ′200
+  centered ~130–110W, positive over Africa/IO/MC peaking ~60–90E,
+  monthly-mean magnitudes ±5): our 30-day map = ONE clean planetary
+  dipole, green cores near the dateline + 130–110W, brown cores ~55E and
+  ~120E (exactly CPC's June monthly pockets), NO bullseyes; pentad ±15.5
+  ≈ CPC's 5-day products; MJO panel correctly strips the standing El
+  Niño wave-1 leaving the weak suppressed-IO MJO CPC describes. 220-day
+  archive built locally (2025-12-05..2026-07-12).
+- **Climatology swap ERA5 (in flight tonight):** R1-vs-GFS is a
+  cross-model baseline mismatch (part of the inflation — 30-day peaks
+  ±7.9 on R1). `build_chi_climatology.py` rewritten to ERA5 TRUE monthly
+  means 1991–2020 (C3S via APDRC anonymous OPeNDAP — verified access, no
+  key needed; ~375 MB one-off), IDENTICAL T21 solve both sides. Build
+  running locally (~server-limited); lands as its own commit + re-render
+  tonight. If it dies, the shipped R1 fallback stays (a touch hot,
+  shape-correct) and the swap re-queues.
 
 ---
 
@@ -41,6 +110,23 @@ _Last update: 2026-07-13 ~02:1x UTC — front-end polish batch: Subseasonal in E
   reports.
 - `tests/test_site_nav.py` extended: nav-hidden utility pages (bugs/)
   must render the standard chrome with ZERO active link.
+- **~03:30Z UPDATE — deploy attempt per Andrew's ask: BLOCKED, token
+  truly absent.** Andrew asked for the end-to-end board deploy on the
+  premise the Codespace still had the cyclolab CF token. Verified NOT so:
+  the user Codespaces secrets are exactly AWS_ACCESS_KEY_ID /
+  AWS_DEFAULT_REGION / AWS_SECRET_ACCESS_KEY / GH_PUSH_TOKEN / PPS_EMAIL
+  (listed via the GitHub API), no CLOUDFLARE_* env, no wrangler oauth
+  config on disk — the cyclolab worker was deployed from Andrew's own
+  `wrangler login` machine (workers/README.md documents it as a user
+  action). NOT a missing-permission case; the token doesn't exist here.
+  **Q18 = mint ONE token** (Workers Scripts:Edit + zone Workers
+  Routes:Edit + zone Cache Purge:Purge) as Codespaces secret
+  `CLOUDFLARE_API_TOKEN` → Claude runs `bash workers/deploy-bugs.sh`
+  headlessly (no login needed with the env token) + activates the purge
+  workflow + reports the tester passcode/admin key in-chat. Done
+  meanwhile: passcode placeholder reworded; deploy script now de-boards
+  its own smoke issue (strips `tester-report`); capability-check issue
+  #29 stripped off the board — testers will see a clean slate.
 
 ---
 

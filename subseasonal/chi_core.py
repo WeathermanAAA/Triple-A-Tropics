@@ -107,8 +107,14 @@ def chi_from_uv(u: np.ndarray, v: np.ndarray, lats: np.ndarray,
                                     csphase=coeffs.csphase) \
         .expand(grid='DH2').to_array()
     chi = _from_dh2(chi_dh, dh_lat, dh_lon, lats, lons)
+    u_chi, v_chi = grad_chi(chi, lats, lons)
+    return chi, u_chi, v_chi
 
-    # divergent wind = grad(chi) on the (smooth, T21) synthesized field
+
+def grad_chi(chi: np.ndarray, lats: np.ndarray, lons: np.ndarray):
+    """Divergent wind = grad(chi) on the input grid. Linear in chi, so it
+    commutes with time means/filters — callers hand it a window-mean or
+    filtered chi and get the matching (anomalous) divergent wind."""
     phi = np.radians(lats)
     lam = np.radians(lons)
     cos = np.cos(phi)[:, None]
@@ -123,4 +129,4 @@ def chi_from_uv(u: np.ndarray, v: np.ndarray, lats: np.ndarray,
     if abs(lats[-1]) > 89.9:
         u_chi[-1, :] = 0.0
         v_chi[-1, :] = v_chi[-2, :]
-    return chi, u_chi, v_chi
+    return u_chi, v_chi

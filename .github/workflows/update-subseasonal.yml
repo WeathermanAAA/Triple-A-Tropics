@@ -8,10 +8,21 @@
 # RMM file has that day's update and the GFS 06Z/12Z analysis is long since
 # on AWS; both generators also self-heal (RMM staleness gate + cache, GFS
 # cycle walk-back), so a missed day costs freshness, never correctness.
+#
+# The VP product is TIME-MEAN (v2): it rides a rolling daily-chi archive in
+# R2 (_buildcache/chi_daily_archive.nc, ~50 KB/day) restored before and
+# saved after each render. A normal daily run tops up 1-2 missing days;
+# backfill_days=250 on a manual dispatch bootstraps a cold archive in one
+# run (~250 days x 4 GFS cycles, ~300 KB each — well inside the timeout).
 name: update-subseasonal
 
 on:
   workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "max missing archive days to fetch this run"
+        required: false
+        default: "45"
   schedule:
     - cron: "41 15 * * *"
     - cron: "11 16 * * *"   # backup tick; concurrency group serializes
@@ -26,7 +37,7 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
 
@@ -46,8 +57,38 @@ jobs:
       - name: Render MJO RMM products
         run: python generate_mjo_rmm.py
 
+      - name: Restore daily-chi archive from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          mkdir -p subseasonal/out
+          aws s3 cp \
+            s3://triple-a-tropics-media/_buildcache/chi_daily_archive.nc \
+            subseasonal/out/chi_daily_archive.nc \
+            --endpoint-url "$R2_ENDPOINT" \
+            || echo "no archive yet — cold start (bootstraps itself)"
+
       - name: Render velocity-potential anomalies
-        run: python generate_velocity_potential.py
+        run: |
+          python generate_velocity_potential.py \
+            --backfill-days "${{ inputs.backfill_days || '45' }}"
+
+      # runs even if the render step failed after backfill — a day's
+      # fetched analyses are never lost to a rendering bug
+      - name: Save daily-chi archive to R2
+        if: always()
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          test -f subseasonal/out/chi_daily_archive.nc || exit 0
+          aws s3 cp subseasonal/out/chi_daily_archive.nc \
+            s3://triple-a-tropics-media/_buildcache/chi_daily_archive.nc \
+            --endpoint-url "$R2_ENDPOINT"
 
       - name: Publish to R2
         env:
