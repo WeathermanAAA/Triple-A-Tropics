@@ -150,6 +150,7 @@ def _is_atcf_number_name(value) -> bool:
 _ATCF_BASIN_LETTER = {
     "AL": "L", "EP": "E", "CP": "C", "WP": "W", "IO": "I", "SH": "S",
 }
+_ATCF_LETTER_BASIN = {v: k for k, v in _ATCF_BASIN_LETTER.items()}
 
 
 def atcf_short_id(usa_atcf_id) -> Optional[str]:
@@ -164,6 +165,14 @@ def atcf_short_id(usa_atcf_id) -> Optional[str]:
     if n <= 0 or n >= 90:
         return None
     return f"{n:02d}{_ATCF_BASIN_LETTER[pre]}"
+
+
+def _sid_atcf_letter(sid) -> Optional[str]:
+    """'NHC_CP902026' -> 'C': the trailing ATCF letter implied by an agency
+    SID's own basin token. None when the SID carries no recognizable token
+    (IBTrACS-style numeric SIDs)."""
+    m = re.search(r"_([A-Z]{2})\d", str(sid or "").upper())
+    return _ATCF_BASIN_LETTER.get(m.group(1)) if m else None
 
 
 def short_id_from_storm_num(storm_num, basin_short) -> Optional[str]:
@@ -225,10 +234,12 @@ def designation_label(short_id, peak_wind_kt) -> str:
 
 
 # ATCF "SPAWNINVEST, alNN<year> to alMM<year>" trailing tag (any basin). The
-# DESTINATION (group 1, the MM digits) is the 90-99 invest the designated
-# system spawned — parse_bdeck records it per storm for the PTC->invest handoff.
+# DESTINATION (group 1 = its basin token, group 2 = the MM digits) is the
+# 90-99 invest the designated system spawned — parse_bdeck records both per
+# storm for the PTC->invest handoff. The token matters: the dedup must not
+# let "… to ep902026" drop an unrelated 90C (same number, different basin).
 _SPAWNINVEST_RE = re.compile(
-    r"SPAWNINVEST,\s*[A-Za-z]{2}\d{6}\s+to\s+[A-Za-z]{2}(\d{2})\d{4}")
+    r"SPAWNINVEST,\s*[A-Za-z]{2}\d{6}\s+to\s+([A-Za-z]{2})(\d{2})\d{4}")
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +489,11 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
     # lets merge_and_extract_storms RETIRE the invest marker so we never show
     # both 01L-X and 90L-X for one system. Storm-level (mirrors name_by_storm).
     spawn_by_storm: dict[int, int] = {}
+    # storm_num -> the spawned invest's OWN trailing letter ("C" from
+    # "… to cp902026"), so the handoff dedup is (letter, number)-keyed and a
+    # same-numbered invest in another basin sharing the page never gets
+    # dropped by mistake. Absent for unrecognized tokens (number-only match).
+    spawn_letter_by_storm: dict[int, str] = {}
     for line in text.splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 11:
@@ -494,7 +510,10 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             name_by_storm[storm_num] = name_col
         m_spawn = _SPAWNINVEST_RE.search(line)
         if m_spawn:
-            spawn_by_storm[storm_num] = int(m_spawn.group(1))
+            spawn_by_storm[storm_num] = int(m_spawn.group(2))
+            tok = m_spawn.group(1).upper()
+            if tok in _ATCF_BASIN_LETTER:
+                spawn_letter_by_storm[storm_num] = _ATCF_BASIN_LETTER[tok]
 
     # (storm_num, tstamp) -> index of that fix's record in ``rows``, so the
     # 50/64 kt (and a duplicate 34 kt) rows of the SAME observation merge their
@@ -557,12 +576,22 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
         nature = STATUS_TO_NATURE.get(devlvl_u, "")
         if not nature:
             nature = "TS" if (vmax and not _is_nan(vmax_f) and vmax_f > 0) else "DS"
+        # The row's OWN ATCF basin token (field 0: "CP" in a bcp deck) wins
+        # over the page basin for the SID + invest fallback name — the EP
+        # page also covers Central Pacific systems, which are "90C"/NHC_CP…,
+        # not "90E"/NHC_EP…. An unrecognized token keeps the page-basin
+        # behavior (today every deck token equals the page basin, so this is
+        # a byte-identical no-op until a cross-token deck is ever parsed).
+        deck_basin = parts[0].upper()
+        if deck_basin not in _ATCF_BASIN_LETTER:
+            deck_basin = basin_cfg["short"].upper()
         if storm_num >= 90:
-            fallback_name = f"{storm_num}{basin_cfg.get('invest_letter', '')}"
+            fallback_name = (f"{storm_num}"
+                             f"{_ATCF_BASIN_LETTER.get(deck_basin) or basin_cfg.get('invest_letter', '')}")
         else:
             fallback_name = f"#{storm_num:02d}"
         rec = {
-            "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
+            "SID": f"{basin_cfg['agency_name']}_{deck_basin}"
                    f"{storm_num:02d}{season}",
             "NAME": name_by_storm.get(storm_num, fallback_name),
             "season": season,
@@ -576,8 +605,11 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             "ace_nature": nature,
             "source": f"live-{basin_cfg['agency_name']}",
             "storm_num": storm_num,
-            # 90-99 invest this designated system spawned (None unless tagged).
+            # 90-99 invest this designated system spawned (None unless tagged),
+            # plus that invest's own trailing letter (None when untagged or
+            # the token was unrecognized -> number-only dedup fallback).
             "spawn_invest": spawn_by_storm.get(storm_num),
+            "spawn_invest_letter": spawn_letter_by_storm.get(storm_num),
         }
         # Radii columns default to None (threshold absent for this fix); the
         # first row's own threshold (if any) is recorded immediately.
@@ -1358,7 +1390,7 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     basin_short = basin_cfg["short"]
     storms: list[dict] = []
     # PTC->invest HANDOFF accumulators (filled in the loop, applied after it).
-    # superseding_invest_nums: the 90-99 invest numbers that ACTIVE DESIGNATED
+    # superseding_invests: the 90-99 invest (letter, number)s that ACTIVE DESIGNATED
     # storms SPAWNED (b-deck SPAWNINVEST tag); invest_candidates: every invest's
     # (sid, number). An invest is dropped iff its number is one a live
     # designation spawned — see the dedup below. (A coincident-position fallback
@@ -1368,8 +1400,11 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     # that pathological coincidence. The SPAWNINVEST link is authoritative and,
     # because it dedups by NUMBER, works even when the invest was sourced
     # outside parse_bdeck, e.g. the poller's knackwx invests.)
-    superseding_invest_nums: set[int] = set()
-    invest_candidates: list[tuple[str, "int | None"]] = []
+    # Superseding entries are (letter, number); letter is None when the
+    # producer didn't know it (legacy feeds, unrecognized tokens) and the
+    # match then falls back to number-only — the pre-letter behavior.
+    superseding_invests: set[tuple] = set()
+    invest_candidates: list[tuple[str, "int | None", "str | None"]] = []
     for sid, group in df.groupby("SID"):
         points = group.to_dict("records")
         # ACE + peak wind come from ace_core (the single authority), so they are
@@ -1502,13 +1537,20 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # red-X label. Only set for invests; numbered TCs surface their
         # name via the spinning-icon label instead.
         atcf_id = None
+        # The trailing letter comes from the storm's OWN SID basin token
+        # ("NHC_CP902026" -> "C"), NOT the page basin's invest_letter: the EP
+        # page also carries Central Pacific systems, which ATCF designates
+        # with a "C", and the page-level "E" mislabeled them (the 90E/91E
+        # home-map bug, 2026-07-13). IBTrACS-style SIDs (no basin token) keep
+        # the page-basin fallback.
+        own_letter = _sid_atcf_letter(sid) or basin_cfg.get("invest_letter", "")
         if is_invest and nums:
-            atcf_id = f"{int(nums[0])}{basin_cfg.get('invest_letter', '')}"
+            atcf_id = f"{int(nums[0])}{own_letter}"
         elif is_ptc and nums:
             # A PTC wears its REAL designation ("01L"): a designated number
             # (small, so zero-pad to 2 digits to keep the leading zero), NOT a
             # 90-99 invest. Drives the invest-X label + the /cyclolab/{sid}/ id.
-            atcf_id = f"{int(nums[0]):02d}{basin_cfg.get('invest_letter', '')}"
+            atcf_id = f"{int(nums[0]):02d}{own_letter}"
         # Current intensity = SSHWS of the most recent observation
         last_wind = points[-1]["wind_kt"] if points else float("nan")
         current_cls = sshs_class(last_wind)
@@ -1535,20 +1577,32 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # DESIGNATED storm contributes the invest numbers it spawned (b-deck
         # SPAWNINVEST tag -> point["spawn_invest"]); every invest registers its
         # number so the dedup can drop a superseded invest.
-        spawn_num = next((int(p["spawn_invest"]) for p in points
-                          if p.get("spawn_invest") is not None
-                          and not (isinstance(p["spawn_invest"], float)
-                                   and math.isnan(p["spawn_invest"]))), None)
+        spawn_pt = next((p for p in points
+                         if p.get("spawn_invest") is not None
+                         and not (isinstance(p["spawn_invest"], float)
+                                  and math.isnan(p["spawn_invest"]))), None)
+        spawn_num = int(spawn_pt["spawn_invest"]) if spawn_pt else None
+        # The spawned invest's own trailing letter, when the producer tagged
+        # it. Sanitized hard: DataFrame column alignment turns an absent field
+        # into NaN, and legacy producers never set it at all.
+        spawn_letter = None
+        if spawn_pt is not None:
+            raw = spawn_pt.get("spawn_invest_letter")
+            if isinstance(raw, str) and raw.strip().upper() in _ATCF_LETTER_BASIN:
+                spawn_letter = raw.strip().upper()
         if is_active and not is_invest and spawn_num is not None:
-            superseding_invest_nums.add(spawn_num)
+            superseding_invests.add((spawn_letter, spawn_num))
         if is_invest:
-            invest_candidates.append((sid, int(nums[0]) if nums else None))
+            invest_candidates.append(
+                (sid, int(nums[0]) if nums else None, _sid_atcf_letter(sid)))
         # The sid of the invest this designated system spawned (e.g. AL01 ->
         # "NHC_AL902026"). Surfaced so the PTC's CycloLab page can fall back to
         # its spawning invest's formation.json (the NHC TWO odds live under the
-        # invest area, not the designation). Same SID format as parse_bdeck.
+        # invest area, not the designation). Same SID format as parse_bdeck —
+        # including the invest's OWN basin token when the tag carried one.
         spawn_sid = (
-            f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
+            f"{basin_cfg['agency_name']}_"
+            f"{_ATCF_LETTER_BASIN.get(spawn_letter, basin_cfg['short'].upper())}"
             f"{spawn_num:02d}{int(points[0]['season'])}"
             if spawn_num is not None else None)
 
@@ -1585,10 +1639,16 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
     # one system. Drop an invest iff its number is one an ACTIVE DESIGNATED
     # storm spawned. Only ever drops an invest in favour of an active designated
     # system; never touches designated-vs-designated. Basin-scoped (per basin).
-    if superseding_invest_nums:
+    # (Letter-aware: "… to ep902026" drops 90E but never an unrelated 90C
+    # sharing the page. A None letter on either side falls back to the
+    # number-only match, i.e. exactly the pre-letter behavior.)
+    if superseding_invests:
         drop_invest_sids = {
-            sid_i for sid_i, num_i in invest_candidates
-            if num_i is not None and num_i in superseding_invest_nums}
+            sid_i for sid_i, num_i, letter_i in invest_candidates
+            if num_i is not None and any(
+                sn == num_i and (sl is None or letter_i is None
+                                 or sl == letter_i)
+                for sl, sn in superseding_invests)}
         if drop_invest_sids:
             storms = [s for s in storms if s["sid"] not in drop_invest_sids]
     # Drop stale invest cards. Numbered TCs (01-89) keep showing past

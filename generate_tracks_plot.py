@@ -507,15 +507,17 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
         else:
             name = f"{storm_num}{basin_letter}"
         # 92W->07W carry. knackwx gives the prior invest as transitioned_from
-        # ("92W"). Feed its NUMBER as spawn_invest so ace_core's existing
-        # number-keyed superseding-invest dedup (merge_and_extract_storms)
-        # retires the prior invest the cycle this designation appears.
+        # ("92W"). Feed its NUMBER + letter as spawn_invest(_letter) so
+        # ace_core's letter-aware superseding-invest dedup
+        # (merge_and_extract_storms) retires the prior invest the cycle this
+        # designation appears.
         # FRAME-COINCIDENT (recycle-safe, stateless): only carry while the
         # SAME knackwx payload STILL lists that 9x invest -- mirrors the
         # floater's "drop the invest the cycle the link appears". Once knackwx
         # stops listing 92W there is nothing to suppress, and a future RECYCLED
         # 92W (a different system) is never silently dropped.
         spawn_invest = None
+        spawn_invest_letter = None
         if is_designated:
             tf = (it.get("transitioned_from") or "").strip().upper()
             mtf = re.fullmatch(r"(\d{1,2})[A-Z]", tf)
@@ -527,6 +529,11 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
                         == f"{tf_num:02d}{tf_letter}"
                     for d in data):
                     spawn_invest = tf_num
+                    # The prior invest's OWN letter ("92W" -> W, "90C" -> C)
+                    # rides along so ace_core's dedup stays letter-aware and
+                    # can never retire a same-numbered invest in the other
+                    # basin sharing this page.
+                    spawn_invest_letter = tf_letter
         # SID basin token follows the row's OWN ATCF letter ("C" -> CP), not
         # the page basin, so 90C and a simultaneous 90E never share a SID.
         sid_basin = {"L": "AL", "E": "EP", "C": "CP", "W": "WP"}.get(
@@ -548,6 +555,7 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
             "source": "live-knackwx-designated" if is_designated else "live-knackwx",
             "storm_num": storm_num,
             "spawn_invest": spawn_invest,
+            "spawn_invest_letter": spawn_invest_letter,
         })
     out = pd.DataFrame(rows)
     if not out.empty:

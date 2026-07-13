@@ -215,8 +215,11 @@ class ParseBdeckSpawnTests(unittest.TestCase):
     )
 
     def test_spawn_regex(self):
+        # Captures the DESTINATION (the spawned invest), never the source:
+        # group 1 = its basin token, group 2 = its 90-99 number.
         m = _SPAWNINVEST_RE.search("SPAWNINVEST, al712026 to al902026,")
-        self.assertEqual(m.group(1), "90")
+        self.assertEqual(m.group(1), "al")
+        self.assertEqual(m.group(2), "90")
 
     def test_parse_captures_spawn_invest(self):
         df = parse_bdeck(self.SAMPLE, 2026, AL_CFG)
