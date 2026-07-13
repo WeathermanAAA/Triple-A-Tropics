@@ -4,7 +4,33 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-13 ~17:3x UTC — 90C/91C fix LANDED (ace-core-v0.8.3; EP feed + stopgap geojson verified live; **home map converges when Q17 box rebuild runs — one manual step**) · explorer ASCAT backdrop + barb tooltips SHIPPED · bug-board friendly numbers SHIPPED · ERA5 χ-climo building (supervised, APDRC stalls now auto-recover) · morning: bug board LIVE + edge purge ACTIVE_
+_Last update: 2026-07-13 ~18:4x UTC — ace-core-v0.8.4 LANDED (designated-CP bcp sweep + own-letter labels on BOTH feeds; EP feed re-verified under it) · earlier today: v0.8.3 90C/91C fix, ASCAT backdrop+tooltips, friendly bug numbers, bug board LIVE, edge purge ACTIVE · ERA5 χ-climo still downloading (APDRC stall roulette; supervisor now 2-wide + 120 s kills) · **Q17 box rebuild = the one manual step, now triple-payload**_
+
+---
+
+## 2026-07-13 (~18:4x UTC) — ace-core-v0.8.4: designated Central Pacific systems reach the live layer
+
+- **The gap v0.8.3 left open, closed the same day** (@bc531118 TAT +
+  @155276a2 tsr, tag ON main this time): if 90C designated (TD 01C, deck
+  `bcp012026`), it would have VANISHED from the live layer — the EP sweep
+  only fetched `bep` decks, while the historical basis already includes CP
+  (IBTrACS files CP under BASIN=EP; Ioke 2006 = CP01). Now: EP sweeps the
+  CPHC `bcp` chain (`atcf_patterns_extra`, both generators + feed-base
+  passthrough + intensity_poller per-chain mirror); `agency_sid_from_atcf_id`
+  maps CP-under-EP so the IBTrACS provisional row and the live designation
+  collapse onto ONE storm; `GENESIS###` name-column values are placeholders;
+  young-designation labels wear the storm's OWN letter on BOTH feeds
+  (tracks "01C" + ACE gantt "TD 01C" — the reviewer caught the gantt still
+  page-lettered and both FIX-FIRST findings were folded before the tag).
+- Gates: --no-live A/B byte-identical vs pristine 0.8.2; 545-test suite;
+  adversarial review with empirical evidence (archived Dora 2023 decks
+  prove crossers never alias into bcp → no double-count; measured sweep
+  cost = 6 extra requests/run when no CP storm exists). 11 new locked
+  tests. Poller repo: 31/31 green, repinned v0.8.4, GH stopgap picks it up
+  on its next run; **the Q17 box pull+rebuild now delivers floater fix +
+  v0.8.4 + the bcp sweep in one shot.**
+- Verified live post-land: update-ace re-ran under 0.8.4 → EP feed still
+  carries 90C/91C with correct atcf_ids.
 
 ---
 
