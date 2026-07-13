@@ -106,3 +106,7 @@ recon_build/
 
 # subseasonal render output (published to R2, never committed)
 subseasonal/out/
+
+# wrangler local-dev state + secrets (never commit)
+workers/.dev.vars
+workers/.wrangler/
