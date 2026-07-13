@@ -14,5 +14,4 @@ REPO = "WeathermanAAA/Triple-A-Tropics"
 
 # secrets (NOT here, NOT in the repo — deploy-bugs.sh wires them):
 #   GITHUB_TOKEN      durable classic PAT, repo scope (issues RW)
-#   TESTER_PASSCODE   shared passcode for the submit form
 #   ADMIN_KEY         PATCH auth + ratekey HMAC salt

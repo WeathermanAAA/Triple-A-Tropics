@@ -5,7 +5,8 @@
 # and GH_PUSH_TOKEN in the env (the durable classic PAT the Codespace
 # already uses — repo scope covers Issues RW; verified 2026-07-13).
 #
-# Rerunning is safe; it ROTATES the tester passcode + admin key.
+# Rerunning is safe; it ROTATES the admin key. (No tester passcode —
+# testers submit freely; honeypot + per-IP/day rate limit are the gate.)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -16,13 +17,13 @@ echo "== deploy worker =="
 # (needs Account->Workers Scripts:Edit + Zone->Workers Routes:Edit)
 npx wrangler deploy -c bugs-api.toml
 
-echo "== wire secrets (values never echoed except the two you must keep) =="
+echo "== wire secrets (values never echoed except the admin key you must keep) =="
 printf '%s' "$GH_PUSH_TOKEN" | npx wrangler secret put GITHUB_TOKEN -c bugs-api.toml
 
-PASSCODE=$(openssl rand -hex 4)
 ADMIN=$(openssl rand -hex 16)
-printf '%s' "$PASSCODE" | npx wrangler secret put TESTER_PASSCODE -c bugs-api.toml
-printf '%s' "$ADMIN"    | npx wrangler secret put ADMIN_KEY -c bugs-api.toml
+printf '%s' "$ADMIN" | npx wrangler secret put ADMIN_KEY -c bugs-api.toml
+# retired 2026-07-13: passcode gate removed; clear any stale secret
+npx wrangler secret delete TESTER_PASSCODE -c bugs-api.toml --force 2>/dev/null || true
 
 echo "== smoke test (files + closes one nit issue) =="
 sleep 5
@@ -31,7 +32,7 @@ RESP=$(curl -sf -X POST "$BASE/issues" -H 'content-type: application/json' -d "{
   \"tester\": \"deploy-smoke\", \"area\": \"Other\", \"severity\": \"nit\",
   \"title\": \"bug board deploy smoke test\",
   \"detail\": \"Filed and closed automatically by deploy-bugs.sh to prove the loop.\",
-  \"passcode\": \"$PASSCODE\", \"website\": \"\"}")
+  \"website\": \"\"}")
 echo "POST -> $RESP"
 NUM=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["number"])')
 curl -sf -X PATCH "$BASE/issues/$NUM" -H 'content-type: application/json' \
@@ -46,7 +47,6 @@ GH_TOKEN=$GH_PUSH_TOKEN gh api -X DELETE \
 
 echo
 echo "================================================================"
-echo " TESTER PASSCODE (share with testers):  $PASSCODE"
 echo " ADMIN KEY (yours; open /bugs/#admin=$ADMIN once to enable"
 echo " the Mark-fixed buttons; stored in that browser's localStorage)"
 echo "================================================================"

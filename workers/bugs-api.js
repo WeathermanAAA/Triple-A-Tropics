@@ -8,22 +8,20 @@
  *
  * Endpoints:
  *   POST  /bugs-api/issues            {tester?, area, severity, title,
- *                                      detail, passcode, website(honeypot)}
+ *                                      detail, website(honeypot)}
  *   GET   /bugs-api/issues            -> [{number,title,area,severity,
  *                                      tester,created,state,closed_at,
  *                                      html_url}] newest first
  *   PATCH /bugs-api/issues/{number}   {state: open|closed}, requires
  *                                      x-admin-key header
  *
- * Anti-spam (low-stakes by design): honeypot field, shared tester passcode
- * (secret TESTER_PASSCODE), and a per-IP/day + global/day rate limit that
- * uses GitHub itself as the counter — each issue body carries an invisible
- * HMAC(ip) tag, and POST counts the last 24 h of tester-report issues.
- * No KV/DO needed.
+ * Anti-spam (low-stakes by design): honeypot field plus a per-IP/day +
+ * global/day rate limit that uses GitHub itself as the counter — each
+ * issue body carries an invisible HMAC(ip) tag, and POST counts the last
+ * 24 h of tester-report issues. No passcode, no KV/DO needed.
  *
  * Secrets (wrangler secret put …, see deploy-bugs.sh — NEVER in the repo):
  *   GITHUB_TOKEN     durable classic PAT with repo scope (issues RW)
- *   TESTER_PASSCODE  shared passcode Andrew gives testers
  *   ADMIN_KEY        admin key for PATCH (and the ratekey HMAC salt)
  */
 
@@ -37,8 +35,8 @@ const AREAS = ["Satellite Explorer", "CycloLab", "Models", "Climatology",
   "SST", "Recon", "Subseasonal", "Other"];
 const SEVERITIES = ["blocker", "major", "minor", "nit"];
 
-const PER_IP_PER_DAY = 8;
-const GLOBAL_PER_DAY = 40;
+const PER_IP_PER_DAY = 5;
+const GLOBAL_PER_DAY = 30;
 
 const LABEL_COLORS = {
   [LABEL]: "5b6f8f",
@@ -128,11 +126,6 @@ async function handlePost(request, env, repo) {
 
   // honeypot: pretend success so bots don't adapt; file nothing
   if ((p.website || "").trim() !== "") return json({ ok: true });
-
-  const passcode = (p.passcode || "").trim();
-  if (!env.TESTER_PASSCODE || passcode !== env.TESTER_PASSCODE) {
-    return json({ error: "bad passcode" }, 401);
-  }
 
   const title = (p.title || "").trim();
   const detail = (p.detail || "").trim();

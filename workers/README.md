@@ -102,10 +102,10 @@ curl -sI "https://triple-a-tropics.com/satellite/explorer/?k=<TOKEN>" | head -5
 API for the nav-hidden `/bugs/` page. Testers submit anonymously; the
 Worker holds a durable GitHub PAT server-side and files reports as
 `tester-report`-labeled issues, so `fixes #N` in a commit crosses them off
-the board. Anti-spam: honeypot + shared passcode + per-IP/day rate limit
+the board. Anti-spam: honeypot + per-IP/day rate limit (no passcode)
 (GitHub itself is the counter via an invisible HMAC ratekey tag — no KV).
 
-Deploy (one-time; rotates passcode/admin key on rerun):
+Deploy (one-time; rotates the admin key on rerun):
 
 ```bash
 npx wrangler login          # browser OAuth, once per machine
@@ -114,6 +114,6 @@ bash workers/deploy-bugs.sh # deploys, wires secrets, smoke-tests the loop
 
 Local E2E without Cloudflare auth: `wrangler dev -c bugs-api.toml --local`
 with a `.dev.vars` (gitignored) pointing `GH_BASE` at a mock GitHub —
-the full suite (validation, honeypot, passcode, rate limit, PATCH guard)
+the full suite (validation, honeypot, rate limit, PATCH guard)
 was run that way at build time; real-PAT issue create/label/close was
 verified separately via `gh`.

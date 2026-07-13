@@ -120,8 +120,6 @@
       <label for="bb-detail">What happened? (steps, page, device/browser)</label>
       <textarea id="bb-detail" maxlength="6000"
         placeholder="What you did, what you expected, what you saw instead."></textarea>
-      <label for="bb-passcode">Tester passcode</label>
-      <input id="bb-passcode" maxlength="32" placeholder="code Andrew gave you">
       <div class="bb-hp">
         <label for="bb-website">Website</label>
         <input id="bb-website" tabindex="-1">
@@ -234,7 +232,6 @@
         severity: document.getElementById('bb-severity').value,
         title: document.getElementById('bb-title').value,
         detail: document.getElementById('bb-detail').value,
-        passcode: document.getElementById('bb-passcode').value,
         website: document.getElementById('bb-website').value
       })
     }).then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
