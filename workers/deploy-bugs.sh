@@ -22,17 +22,23 @@ printf '%s' "$GH_PUSH_TOKEN" | npx wrangler secret put GITHUB_TOKEN -c bugs-api.
 
 ADMIN=$(openssl rand -hex 16)
 printf '%s' "$ADMIN" | npx wrangler secret put ADMIN_KEY -c bugs-api.toml
-# retired 2026-07-13: passcode gate removed; clear any stale secret
-npx wrangler secret delete TESTER_PASSCODE -c bugs-api.toml --force 2>/dev/null || true
+# (TESTER_PASSCODE secret retired + deleted 2026-07-13; verified absent)
 
 echo "== smoke test (files + closes one nit issue) =="
-sleep 5
 BASE="https://triple-a-tropics.com/bugs-api"
-RESP=$(curl -sf -X POST "$BASE/issues" -H 'content-type: application/json' -d "{
-  \"tester\": \"deploy-smoke\", \"area\": \"Other\", \"severity\": \"nit\",
-  \"title\": \"bug board deploy smoke test\",
-  \"detail\": \"Filed and closed automatically by deploy-bugs.sh to prove the loop.\",
-  \"website\": \"\"}")
+# each `secret put` deploys a new Worker version; edge propagation can take
+# ~30 s, during which POST 503s "board backend not configured yet" — retry
+RESP=""
+for i in $(seq 1 12); do
+  RESP=$(curl -sf -X POST "$BASE/issues" -H 'content-type: application/json' -d "{
+    \"tester\": \"deploy-smoke\", \"area\": \"Other\", \"severity\": \"nit\",
+    \"title\": \"bug board deploy smoke test\",
+    \"detail\": \"Filed and closed automatically by deploy-bugs.sh to prove the loop.\",
+    \"website\": \"\"}") && break
+  echo "  POST not ready yet (attempt $i/12), waiting 10 s..."
+  sleep 10
+done
+[ -n "$RESP" ] || { echo "smoke POST never succeeded"; exit 1; }
 echo "POST -> $RESP"
 NUM=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["number"])')
 curl -sf -X PATCH "$BASE/issues/$NUM" -H 'content-type: application/json' \

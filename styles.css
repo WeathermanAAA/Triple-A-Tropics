@@ -1,5 +1,7 @@
 /* Triple-A-Tropics · shared site styles.
-   Edit this one file and every page's look updates. */
+   Edit this one file and every page's look updates.
+   (Edits propagate in ~1 min via the purge-edge-cache workflow — live
+   since 2026-07-13; before that, unstamped assets rode a 4 h edge TTL.) */
 
 /* Metropolis (geometric sans) — sole site font.
    The cdnfonts.com @import also includes local('Metropolis') fallbacks
