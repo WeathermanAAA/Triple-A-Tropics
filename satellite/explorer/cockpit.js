@@ -2198,7 +2198,15 @@
       window.CockpitFields.init(S, {
         flash: flash,
         renderPaneChrome: renderPaneChrome,
-        markFieldActive: markFieldActive
+        markFieldActive: markFieldActive,
+        // ASCAT backdrop plumbing: resolve products in the CURRENT domain and
+        // honor the per-domain emission honesty set (availSet)
+        productByKey: productByKey,
+        manifestUrlFor: function (p) { return manifestUrlFor(p, S.domain); },
+        productAvailable: function (p) {
+          var av = availSet(S.domain);
+          return !av || av.has(p.id);
+        }
       });
     }
     $('cx-speed').textContent = S.fps + ' fps';

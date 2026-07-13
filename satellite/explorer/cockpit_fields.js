@@ -182,11 +182,62 @@
   function scDefaults() {
     return { view: 'recent', passId: 'all', density: 'auto',
              style: 'highcontrast',        // per the integration brief: DEFAULT
+             backdrop: 'clean',            // satellite under the barbs; colored
+                                           // barbs need a calm gray stage
              pinned: false };
   }
   function scState(pane) {
     if (!pane.sc) pane.sc = scDefaults();
+    if (!pane.sc.backdrop) pane.sc.backdrop = 'clean';
     return pane.sc;
+  }
+  // Backdrop products per option, in preference order for the pane's domain:
+  // "clean" wants a NATIVE grayscale IR — C07/B07 3.9 µm shortwave (smooth
+  // gray ramp, day+night) where the domain ships it, else the geo ring's
+  // Dvorak-BD C13 (pure-gray stepped enhancement, the operational TC look).
+  // "ir" is the rainbow C13 every domain carries. NO desaturation hacks:
+  // rainbow_ir's cold-top luminance is non-monotonic, so a desaturated copy
+  // would lie about relative cloud-top height.
+  var SC_BACKDROP_PREFS = { clean: ['c07', 'b07', 'irbd'], ir: ['ir'] };
+  function scBackdropProduct(pane) {
+    var st = scState(pane);
+    if (st.backdrop === 'none' || !H.productByKey) return null;
+    var prefs = SC_BACKDROP_PREFS[st.backdrop] || SC_BACKDROP_PREFS.clean;
+    for (var i = 0; i < prefs.length; i++) {
+      var p = H.productByKey(prefs[i]);
+      if (p && (!H.productAvailable || H.productAvailable(p))) return p;
+    }
+    return H.productByKey('ir');
+  }
+  function scApplyBackdrop(pane) {
+    var tv = pane.tv;
+    if (!tv) return;
+    var p = scBackdropProduct(pane);
+    if (!p) {
+      // "none" (or helpers absent): the classic black stage
+      pane._scBackdrop = null;
+      if (pane._scSwapped && pane.product && H.manifestUrlFor) {
+        pane._scSwapped = false;
+        tv.setProduct(H.manifestUrlFor(pane.product), pane.product).catch(function () {});
+      }
+      tv.setImageryVisible(false);
+      scDraw(pane);
+      return;
+    }
+    pane._scBackdrop = p;
+    // Swap the pane's tiles to the backdrop product WITHOUT touching
+    // pane.product — clearPaneField restores the user's own field from it.
+    var showing = pane._scSwapped ? pane._scShownKey
+                                  : (pane.product && pane.product.key);
+    if (showing === p.key) { tv.setImageryVisible(true); scDraw(pane); return; }
+    pane._scSwapped = true;
+    (H.manifestUrlFor ? tv.setProduct(H.manifestUrlFor(p), p) : Promise.reject())
+      .then(function () {
+        pane._scShownKey = p.key;
+        tv.setImageryVisible(true);
+        scDraw(pane);
+      })
+      .catch(function () { tv.setImageryVisible(false); });
   }
   function scCanvas(pane) {
     if (pane._scCanvas) return pane._scCanvas;
@@ -223,6 +274,12 @@
       if (!pane._scWired) {
         pane._scWired = true;
         map.on('render', function () { scDraw(pane); });
+        // barb hover: the overlay canvas is pointer-events:none, so the map
+        // beneath still gets mousemove — nearest thinned cell within 14 px
+        map.on('mousemove', function (e) { scHover(pane, e); });
+        pane.el.addEventListener('mouseleave', function () {
+          if (pane._scTip) pane._scTip.style.display = 'none';
+        });
       }
       // storm view: frame the storm once
       if (pane.kind === 'sc' && st.flyTo) {
@@ -256,7 +313,11 @@
     var g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, box.width, box.height);
-    if (!active || !pane._scPasses.length) return;
+    pane._scCells = null;
+    if (!active || !pane._scPasses.length) {
+      if (pane._scTip) pane._scTip.style.display = 'none';
+      return;
+    }
 
     var style = AV.STYLES[st.style] || AV.STYLES.highcontrast;
     var scale = style.scale;
@@ -281,17 +342,61 @@
         var xy = map.project([lon, lat]);
         if (xy.x < -20 || xy.y < -20 || xy.x > box.width + 20 || xy.y > box.height + 20) continue;
         grid[(Math.floor(xy.x / step)) + ':' + (Math.floor(xy.y / step))] =
-          { x: xy.x, y: xy.y, kt: kt[i], dir: dr[i] };
+          { x: xy.x, y: xy.y, kt: kt[i], dir: dr[i], lat: la[i], lon: lo[i],
+            t: p.start_utc, sensor: p.sensor };
       }
     }
     g.lineJoin = 'round'; g.lineCap = 'round';
-    var halo = pane.kind !== 'sc';   // layered over imagery -> dark casing
+    // dark casing whenever imagery sits underneath: SC as a LAYER over any
+    // tile field, or the SC FIELD's own satellite backdrop
+    var halo = pane.kind !== 'sc' || st.backdrop !== 'none';
     var cells = Object.keys(grid);
+    var kept = [];
     for (var c = 0; c < cells.length; c++) {
       var cell = grid[cells[c]];
+      kept.push(cell);
       if (halo) AV.drawBarb(g, cell.x, cell.y, cell.kt, cell.dir, 'rgba(5,10,20,0.82)', style.barbLw + 2.4);
       AV.drawBarb(g, cell.x, cell.y, cell.kt, cell.dir, windColor(scale, cell.kt), style.barbLw);
     }
+    pane._scCells = kept;   // hover hit-test set (screen-space, this frame)
+  }
+  function scTip(pane) {
+    if (pane._scTip) return pane._scTip;
+    var d = document.createElement('div');
+    d.className = 'cx-sc-tip';
+    pane.el.appendChild(d);
+    pane._scTip = d;
+    return d;
+  }
+  function scHover(pane, e) {
+    var st = pane.sc;
+    var active = st && (pane.kind === 'sc' || st.on);
+    var cells = pane._scCells;
+    if (!active || !cells || !cells.length) {
+      if (pane._scTip) pane._scTip.style.display = 'none';
+      return;
+    }
+    var best = null, bd = 14 * 14;   // the legacy viewer's 14 px pick radius
+    for (var i = 0; i < cells.length; i++) {
+      var dx = cells[i].x - e.point.x, dy = cells[i].y - e.point.y;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < bd) { bd = d2; best = cells[i]; }
+    }
+    var tip = scTip(pane);
+    if (!best) { tip.style.display = 'none'; return; }
+    var ktS = (best.kt == null || isNaN(best.kt)) ? '—' : String(Math.round(best.kt));
+    var dirS = (best.dir == null || isNaN(best.dir)) ? '—' : String(Math.round(best.dir));
+    var lonN = best.lon;
+    while (lonN > 180) lonN -= 360;
+    while (lonN < -180) lonN += 360;
+    tip.innerHTML = '<b>' + ktS + ' kt</b> from ' + dirS + '°<br>' +
+      Math.abs(best.lat).toFixed(1) + '°' + (best.lat < 0 ? 'S' : 'N') + ' ' +
+      Math.abs(lonN).toFixed(1) + '°' + (lonN < 0 ? 'W' : 'E') +
+      ' · ' + (best.sensor || 'ASCAT') + '<br>' + fmtZ(best.t);
+    tip.style.display = 'block';
+    var box = pane.el.getBoundingClientRect();
+    tip.style.left = Math.max(0, Math.min(e.point.x + 14, box.width - 180)) + 'px';
+    tip.style.top = Math.max(0, Math.min(e.point.y + 14, box.height - 64)) + 'px';
   }
   function windColor(scale, kt) {
     if (kt == null || isNaN(kt)) return '#8ea2bd';
@@ -315,7 +420,10 @@
     var kind = key.slice(0, 2);           // 'mw' | 'sc'
     pane.kind = kind;
     pane.fieldKey = key;
-    pane.tv.setImageryVisible(false);
+    // MW blanks the tiles (the overpass cutout IS the imagery); SC keeps a
+    // satellite backdrop under the barbs per its backdrop setting
+    if (kind === 'mw') pane.tv.setImageryVisible(false);
+    else scApplyBackdrop(pane);
     if (kind === 'mw') {
       var st = mwState(pane);
       st.product = MW_KEYMAP[key] || st.product;
@@ -354,6 +462,14 @@
     if (!pane) return;
     pane.kind = 'tile';
     pane.fieldKey = pane.product ? pane.product.key : null;
+    // the SC backdrop swapped the tv's tiles without touching pane.product —
+    // put the user's own field back before re-showing imagery
+    if (pane._scSwapped && pane.product && pane.tv && H.manifestUrlFor) {
+      pane._scSwapped = false;
+      pane._scShownKey = null;
+      pane.tv.setProduct(H.manifestUrlFor(pane.product), pane.product).catch(function () {});
+    }
+    if (pane._scTip) pane._scTip.style.display = 'none';
     if (pane.tv) pane.tv.setImageryVisible(true);
     if (!(pane.mw && pane.mw.on)) mwClearLayers(pane);
     scDraw(pane);   // clears unless sc layer is on
@@ -431,10 +547,12 @@
     if (pane.kind === 'sc' && pane.sc) {
       var newest = scNewest(pane);
       var n = (pane._scPasses || []).length;
+      var bg = pane.sc.backdrop !== 'none' && pane._scBackdrop
+        ? ' · over ' + pane._scBackdrop.title : '';
       return {
         title: 'ASCAT Ocean Winds' + (pane.sc.view !== 'recent' ? ' · ' + pane.sc.view.toUpperCase() : ''),
         sub: newest ? ('Latest pass ' + fmtZ(newest.start_utc) + ' · ' + n + ' pass' + (n === 1 ? '' : 'es') +
-                       ' · barbs FROM · C-band underestimates extreme cores') : 'no passes',
+                       ' · barbs FROM · C-band underestimates extreme cores' + bg) : 'no passes',
         legend: scLegend(pane.sc.style),
         credit: '© EUMETSAT / OSI SAF / KNMI'
       };
@@ -512,7 +630,11 @@
         '  <option value="sparse">Sparse</option></select>' +
         '<label>Style</label><select id="cxsc-style">' +
         '  <option value="highcontrast">High contrast</option>' +
-        '  <option value="sshws">Classic SSHWS</option></select>';
+        '  <option value="sshws">Classic SSHWS</option></select>' +
+        '<label>Backdrop</label><select id="cxsc-bg">' +
+        '  <option value="clean">Clean IR (gray)</option>' +
+        '  <option value="ir">IR (color)</option>' +
+        '  <option value="none">None (black)</option></select>';
     }
     return d;
   }
@@ -568,6 +690,14 @@
     $('cxsc-style').onchange = function () {
       var p = activeWith('sc'); if (!p) return;
       p.pane.sc.style = this.value; scDraw(p.pane);
+      if (H.renderPaneChrome) H.renderPaneChrome(p.i);
+    };
+    $('cxsc-bg').onchange = function () {
+      var p = activeWith('sc'); if (!p) return;
+      p.pane.sc.backdrop = this.value;
+      // only meaningful when SC is the pane FIELD; as a layer the base tile
+      // field already is the imagery (select is disabled there)
+      if (p.pane.kind === 'sc') scApplyBackdrop(p.pane);
       if (H.renderPaneChrome) H.renderPaneChrome(p.i);
     };
   }
@@ -642,6 +772,11 @@
       pSel.value = sst.passId;
       $('cxsc-dens').value = sst.density;
       $('cxsc-style').value = sst.style;
+      var bgSel = $('cxsc-bg');
+      if (bgSel) {
+        bgSel.value = sst.backdrop || 'clean';
+        bgSel.disabled = pane.kind !== 'sc';
+      }
     }
     // overlay toggle reflection
     var ovMW = $('cx-ov-mw'), ovSC = $('cx-ov-sc');
@@ -711,7 +846,12 @@
       ' background:var(--cx-teal-soft)}' +
       '.cx-pane-lbadge{position:absolute;left:8px;top:44px;z-index:4;pointer-events:none;' +
       ' font-size:10px;font-weight:600;color:#bcdcff;background:rgba(10,13,18,.72);' +
-      ' border:1px solid rgba(43,156,255,.35);border-radius:6px;padding:3px 7px}';
+      ' border:1px solid rgba(43,156,255,.35);border-radius:6px;padding:3px 7px}' +
+      '.cx-sc-tip{position:absolute;z-index:5;pointer-events:none;display:none;' +
+      ' font-size:11px;line-height:1.45;white-space:nowrap;color:var(--cx-fg);' +
+      ' background:rgba(10,13,18,.88);border:1px solid var(--cx-line);' +
+      ' border-radius:7px;padding:5px 8px}' +
+      '.cx-sc-tip b{color:var(--cx-teal)}';
     document.head.appendChild(style);
   }
 
