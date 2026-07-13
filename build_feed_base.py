@@ -96,6 +96,10 @@ def _poller_cfg(basin: str) -> dict:
                           or ([t["invest_letter"]] if t.get("invest_letter")
                               else []),
         "atcf_patterns": a["atcf_patterns"],
+        # extra deck-prefix chains (EP sweeps CPHC's bcp decks for designated
+        # Central Pacific systems); pollers ignore the key until their fetch
+        # loop learns per-chain sweeps — absent/[] degrades to today's bep-only.
+        "atcf_patterns_extra": a.get("atcf_patterns_extra") or [],
     }
 
 

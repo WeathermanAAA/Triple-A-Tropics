@@ -120,6 +120,14 @@ BASINS: dict[str, dict] = {
             "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
             # NHC only (proxy -> ftp.nhc); natyphoon.top is WP/JTWC-only (see AL).
         ],
+        # Designated Central Pacific systems live in CPHC's own bcp decks
+        # (TD 01C = bcp01<year>) — swept separately so their live ACE counts
+        # here, matching the historical basis (IBTrACS files CP under
+        # BASIN=EP; NOAA's EP seasonal ACE includes the Central Pacific).
+        "atcf_patterns_extra": [[
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bcp{nn}{year}.dat",
+            "https://ftp.nhc.noaa.gov/atcf/btk/bcp{nn}{year}.dat",
+        ]],
         # Methodology lives in ace_core (NHC, same as Atlantic:
         # ac.ACE_NATURES["ep"] = {TS, SS}).
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.EP.list.v04r01.csv",
@@ -266,41 +274,46 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
 
     yy = season % 100
     frames = []
-    patterns = basin_cfg["atcf_patterns"]
-    pattern_stats: dict[str, dict] = {p: {"ok": 0, "errors": {}} for p in patterns}
+    # One sweep per deck-prefix chain: EP also sweeps the CPHC bcp decks
+    # via atcf_patterns_extra (designated Central Pacific systems).
+    pattern_sets = ([basin_cfg["atcf_patterns"]]
+                    + list(basin_cfg.get("atcf_patterns_extra") or []))
+    pattern_stats: dict[str, dict] = {
+        p: {"ok": 0, "errors": {}} for ps in pattern_sets for p in ps}
 
-    consecutive_misses = 0
-    for nn in range(1, 41):
-        hit = False
-        for pattern in patterns:
-            url = pattern.format(nn=f"{nn:02d}", yy=f"{yy:02d}", year=season)
-            err_key = None
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": FETCH_UA})
-                with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as r:
-                    if r.status != 200:
-                        err_key = f"http_{r.status}"
-                    else:
-                        text = r.read().decode("utf-8", errors="ignore")
-                        if "BEST" not in text:
-                            err_key = "no_BEST_lines"
+    for patterns in pattern_sets:
+        consecutive_misses = 0
+        for nn in range(1, 41):
+            hit = False
+            for pattern in patterns:
+                url = pattern.format(nn=f"{nn:02d}", yy=f"{yy:02d}", year=season)
+                err_key = None
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": FETCH_UA})
+                    with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as r:
+                        if r.status != 200:
+                            err_key = f"http_{r.status}"
                         else:
-                            # Shared parser (ace_core) so the live fix set per
-                            # named storm matches the tracks feed exactly.
-                            frames.append(ac.parse_bdeck(text, season, basin_cfg))
-                            pattern_stats[pattern]["ok"] += 1
-                            hit = True
-                            break
-            except urllib.error.HTTPError as e:
-                err_key = f"http_{e.code}"
-            except Exception as e:
-                err_key = type(e).__name__
-            if err_key:
-                pattern_stats[pattern]["errors"][err_key] = \
-                    pattern_stats[pattern]["errors"].get(err_key, 0) + 1
-        consecutive_misses = 0 if hit else consecutive_misses + 1
-        if consecutive_misses >= 3:
-            break
+                            text = r.read().decode("utf-8", errors="ignore")
+                            if "BEST" not in text:
+                                err_key = "no_BEST_lines"
+                            else:
+                                # Shared parser (ace_core) so the live fix set per
+                                # named storm matches the tracks feed exactly.
+                                frames.append(ac.parse_bdeck(text, season, basin_cfg))
+                                pattern_stats[pattern]["ok"] += 1
+                                hit = True
+                                break
+                except urllib.error.HTTPError as e:
+                    err_key = f"http_{e.code}"
+                except Exception as e:
+                    err_key = type(e).__name__
+                if err_key:
+                    pattern_stats[pattern]["errors"][err_key] = \
+                        pattern_stats[pattern]["errors"].get(err_key, 0) + 1
+            consecutive_misses = 0 if hit else consecutive_misses + 1
+            if consecutive_misses >= 3:
+                break
 
     total_hits = sum(s["ok"] for s in pattern_stats.values())
     print(f"{log_prefix}   live fetch: {total_hits} storm file(s) found")

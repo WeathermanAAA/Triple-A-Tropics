@@ -213,14 +213,21 @@ def agency_sid_from_atcf_id(usa_atcf_id, basin_cfg, year) -> Optional[str]:
     # The ATCF basin prefix must match THIS basin (WP<->wp, AL<->al, EP<->ep) so
     # the remapped sid matches what this basin's live fetch produces; a mismatch
     # (e.g. an EP-origin storm carried in the WP file) keeps the raw sid.
-    if not short or not agency or pre != short.upper():
+    # Exception: the EP page also carries the Central Pacific (IBTrACS files
+    # CP storms under BASIN=EP with USA_ATCF_ID "CP##...", e.g. Ioke = CP01),
+    # and the live bcp b-deck sweep emits NHC_CP##<year> for them — so a CP
+    # prefix under the EP page maps to the CP-token SID, keeping the
+    # provisional IBTrACS row and the live designation ONE storm.
+    if not short or not agency:
+        return None
+    if pre != short.upper() and not (pre == "CP" and short == "ep"):
         return None
     n = int(num_s)
     if n <= 0 or n >= 90:
         return None
     if int(yr_s) != int(year):
         return None
-    return f"{agency}_{short.upper()}{n:02d}{int(year)}"
+    return f"{agency}_{pre}{n:02d}{int(year)}"
 
 
 def designation_label(short_id, peak_wind_kt) -> str:
@@ -506,7 +513,11 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
             continue
         if tech != "BEST":
             continue
-        if name_col and name_col not in {"", "NAMELESS", "INVEST"}:
+        # GENESIS### is the ATCF genesis-area tag NHC/CPHC decks carry in the
+        # name column before a real name/cardinal lands — a placeholder, not
+        # a name (a young designation would otherwise briefly show it).
+        if (name_col and name_col not in {"", "NAMELESS", "INVEST"}
+                and not re.fullmatch(r"GENESIS\d+", name_col)):
             name_by_storm[storm_num] = name_col
         m_spawn = _SPAWNINVEST_RE.search(line)
         if m_spawn:
@@ -1122,9 +1133,15 @@ def current_year_storms(canon: pd.DataFrame, basin_cfg: dict,
                 name = str(p.get("NAME")).strip().upper()
                 break
         if not name:
+            # The designation letter follows the storm's OWN SID basin token
+            # (NHC_CP012026 -> "01C" on the EP page), page basin as fallback —
+            # mirrors the tracks-side own-letter rule so the two feeds never
+            # disagree on a young unnamed designation's label.
+            own = _sid_atcf_letter(_sid)
+            own_short = _ATCF_LETTER_BASIN.get(own, "").lower() or short
             short_id = None
             for p in pts:
-                short_id = short_id_from_storm_num(p.get("storm_num"), short)
+                short_id = short_id_from_storm_num(p.get("storm_num"), own_short)
                 if short_id:
                     break
             if not short_id:
@@ -1569,7 +1586,15 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # designation only replaces a non-name.
         if (not is_invest and not is_ptc and nums
                 and (not _is_real_name(name) or _is_atcf_number_name(name))):
-            desig = short_id_from_storm_num(nums[0], basin_short)
+            # own_letter (the storm's SID-token letter, page fallback) keeps a
+            # designated-but-unnamed CP system "01C" on the EP page — the same
+            # wrong-page-letter class the invest atcf_id fix above closed.
+            try:
+                n0 = int(nums[0])
+            except (TypeError, ValueError):
+                n0 = 0
+            desig = (f"{n0:02d}{own_letter}" if own_letter and 0 < n0 < 90
+                     else short_id_from_storm_num(nums[0], basin_short))
             if desig:
                 name = desig
 

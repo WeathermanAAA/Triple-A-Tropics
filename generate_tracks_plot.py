@@ -150,6 +150,17 @@ BASINS: dict[str, dict] = {
             "https://ftp.nhc.noaa.gov/atcf/btk/bep{nn}{year}.dat",
             # NHC only (proxy -> ftp.nhc); natyphoon.top is WP/JTWC-only (see AL).
         ],
+        # Second sweep for DESIGNATED Central Pacific systems: CPHC numbers
+        # its own bcp decks (TD 01C = bcp01<year>), which the bep sweep never
+        # touches — without this a 90C that designates VANISHES from the live
+        # layer until IBTrACS provisional backfills. Historical parity is
+        # already there (IBTrACS files CP storms under BASIN=EP, e.g. Ioke =
+        # CP01), and parse_bdeck keys the SID off each row's own basin field,
+        # so bcp rows land as NHC_CP##<year> — no collision with bep numbers.
+        "atcf_patterns_extra": [[
+            "https://triple-a-tropics-proxy.coloradoskier2018.workers.dev/atcf/btk/bcp{nn}{year}.dat",
+            "https://ftp.nhc.noaa.gov/atcf/btk/bcp{nn}{year}.dat",
+        ]],
         "wind_preference": [
             ("USA_WIND", 1.0),
             ("WMO_WIND", 1.0 / 0.88),
@@ -573,9 +584,8 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
 
     yy = season % 100
     frames: list[pd.DataFrame] = []
-    patterns = basin_cfg["atcf_patterns"]
 
-    def _try_fetch_one(nn: int) -> bool:
+    def _try_fetch_one(nn: int, patterns) -> bool:
         """Try the proxy chain for a single storm number. Append a parsed
         frame on success and return True; return False on any miss."""
         for pattern in patterns:
@@ -597,14 +607,18 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
                 continue
         return False
 
-    # Numbered TCs (01-40). Bail after 3 consecutive misses to keep the
-    # fetch fast — typical seasons have 1-3 active storms at a time.
-    consecutive_misses = 0
-    for nn in range(1, 41):
-        hit = _try_fetch_one(nn)
-        consecutive_misses = 0 if hit else consecutive_misses + 1
-        if consecutive_misses >= 3:
-            break
+    # Numbered TCs (01-40), once per deck-prefix chain (EP also sweeps the
+    # CPHC bcp decks via atcf_patterns_extra). Bail after 3 consecutive
+    # misses per chain to keep the fetch fast — typical seasons have 1-3
+    # active storms at a time.
+    for patterns in ([basin_cfg["atcf_patterns"]]
+                     + list(basin_cfg.get("atcf_patterns_extra") or [])):
+        consecutive_misses = 0
+        for nn in range(1, 41):
+            hit = _try_fetch_one(nn, patterns)
+            consecutive_misses = 0 if hit else consecutive_misses + 1
+            if consecutive_misses >= 3:
+                break
 
     # Invests (90-99) come from the knackwx API instead of the b-deck
     # mirror chain — see fetch_live_invests for why (mirror was 3 months
