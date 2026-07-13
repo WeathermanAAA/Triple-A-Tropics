@@ -8,6 +8,42 @@ _Last update: 2026-07-13 ~02:1x UTC — front-end polish batch: Subseasonal in E
 
 ---
 
+## 2026-07-13 (~03 UTC) — tester bug board (built + E2E-tested) · edge-cache purge on deploy (built, one token from live)
+
+- **Tester bug board `/bugs/`** (nav-hidden, noindex; direct link only):
+  house-chrome page (form + Open/Fixed board) + `workers/bugs-api.js`
+  (GitHub-issues-backed: POST files a `tester-report`-labeled issue via a
+  SERVER-side durable PAT — testers need no GitHub account; GET shapes the
+  board; PATCH close/reopen behind an admin key; `fixes #N` in a commit
+  crosses reports off). Anti-spam: honeypot + shared passcode + per-IP/day
+  rate limit that uses GitHub itself as the counter (invisible HMAC
+  ratekey tag — no KV). **Fully E2E-tested locally** (wrangler dev --local
+  against a mock GitHub: validation, honeypot files-nothing, 401s, PATCH
+  guard, 8/day limit → 9th refused) and the real PAT proven able to
+  create/label/close issues (issue #29, closed). The classifier rightly
+  blocked writing the PAT to a dev-vars file — tests ran with dummy
+  secrets + a GH_BASE mock override instead; the token only ever flows
+  env → `wrangler secret put` (deploy-bugs.sh). **Deploy = Q18** (one CF
+  token, or `wrangler login` + `bash workers/deploy-bugs.sh`). Until then
+  /bugs/ shows an honest "backend unreachable" and submissions are off.
+- **Edge-cache purge on deploy** (`purge-edge-cache.yml` +
+  `scripts/purge_edge_cache.py`): on every push to main, diff the push via
+  the compare API, map changed repo files to site URLs (index.html → both
+  URL forms), WAIT for the Pages build of that SHA, then purge exactly
+  those URLs (30/call). Deliberately NEVER `purge_everything` — data
+  workflows push to main several times a day and a full purge would flush
+  the cdn.* media cache each time. Dry-run verified on the real nav-batch
+  push range (35 URLs, correct mapping). INERT (green no-op with a
+  ::notice) until `CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_PURGE_TOKEN` exist —
+  same Q18 token covers it; acceptance check (~1 min propagation) runs
+  the moment it lands. Kills the stale-asset class behind the strobe saga
+  + the styles.css nav caveat, and pre-empts false "layout broken" tester
+  reports.
+- `tests/test_site_nav.py` extended: nav-hidden utility pages (bugs/)
+  must render the standard chrome with ZERO active link.
+
+---
+
 ## 2026-07-13 (~02 UTC) — front-end polish: nav sweep + one-line nav + full-bleed /subseasonal/
 
 - **Subseasonal link in EVERY page's nav** (15 files; it only existed on

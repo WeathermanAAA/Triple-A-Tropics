@@ -38,6 +38,9 @@ ACTIVE_FOR_SECTION = {
     "recon": "/recon/",
 }
 
+# nav-hidden utility pages: standard chrome, but NO section -> zero active
+NO_ACTIVE_SECTIONS = {"bugs"}
+
 NAV_BLOCK = re.compile(r'<div class="nav-links">(.*?)</div>', re.S)
 ANCHOR = re.compile(r'<a\s+href="([^"]+)"([^>]*)>([^<]+)</a>')
 
@@ -71,16 +74,23 @@ class TestSiteNav(unittest.TestCase):
                     f"{rel}: nav links differ from the canonical set/order",
                 )
                 actives = [h for h, attrs, _ in links if "active" in attrs]
-                self.assertEqual(
-                    len(actives), 1, f"{rel}: expected exactly one active link"
-                )
                 section = rel.parts[0] if len(rel.parts) > 1 else ""
-                expected = ACTIVE_FOR_SECTION.get(section)
-                if expected is not None:
+                if section in NO_ACTIVE_SECTIONS:
                     self.assertEqual(
-                        actives[0], expected,
-                        f"{rel}: active link should be {expected}",
+                        len(actives), 0,
+                        f"{rel}: nav-hidden page must mark nothing active",
                     )
+                else:
+                    self.assertEqual(
+                        len(actives), 1,
+                        f"{rel}: expected exactly one active link",
+                    )
+                    expected = ACTIVE_FOR_SECTION.get(section)
+                    if expected is not None:
+                        self.assertEqual(
+                            actives[0], expected,
+                            f"{rel}: active link should be {expected}",
+                        )
                 # The external link must not leak the opener.
                 tw_attrs = [a for h, a, _ in links if h.startswith("https://twitter")]
                 self.assertIn("noopener", tw_attrs[0], f"{rel}: Twitter rel=noopener")

@@ -1,0 +1,18 @@
+# wrangler config for the tester bug-board API (deploy: workers/deploy-bugs.sh)
+# One toml per worker is the wrangler-v4 model — same pattern as
+# explorer-gate.toml next door.
+name = "bugs-api"
+main = "bugs-api.js"
+compatibility_date = "2026-06-01"
+
+routes = [
+  { pattern = "triple-a-tropics.com/bugs-api/*", zone_name = "triple-a-tropics.com" }
+]
+
+[vars]
+REPO = "WeathermanAAA/Triple-A-Tropics"
+
+# secrets (NOT here, NOT in the repo — deploy-bugs.sh wires them):
+#   GITHUB_TOKEN      durable classic PAT, repo scope (issues RW)
+#   TESTER_PASSCODE   shared passcode for the submit form
+#   ADMIN_KEY         PATCH auth + ratekey HMAC salt

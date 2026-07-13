@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tester Bug Board · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Nav-hidden utility page: reachable only by direct link. -->
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Tester bug board for Triple-A-Tropics.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, nav, header, footer, label,
+  input, textarea, select, button {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
+  }
+  .bb-wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; }
+  .bb-cols { display: grid; gap: 22px; grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+    align-items: start; }
+  @media (max-width: 900px) { .bb-cols { grid-template-columns: 1fr; } }
+  .bb-card { background: var(--panel, #0a1324); border: 1px solid var(--border, #1c2b45);
+    border-radius: 10px; padding: 16px; }
+  .bb-card h2 { margin: 0 0 10px; font-size: 18px; }
+  .bb-form label { display: block; color: var(--muted, #8ea2bd); font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.8px; margin: 12px 0 4px; }
+  .bb-form input, .bb-form select, .bb-form textarea {
+    width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 14px;
+    color: var(--fg, #e5edf6); background: #0d1830;
+    border: 1px solid var(--border, #1c2b45); border-radius: 6px; }
+  .bb-form textarea { min-height: 120px; resize: vertical; }
+  .bb-form button { margin-top: 14px; padding: 9px 18px; font-size: 14px;
+    font-weight: 700; color: #071018; background: var(--accent, #49b6c8);
+    border: 0; border-radius: 6px; cursor: pointer; }
+  .bb-form button:disabled { opacity: 0.5; cursor: default; }
+  /* honeypot: visually gone, still in the DOM for bots */
+  .bb-hp { position: absolute; left: -9999px; width: 1px; height: 1px;
+    overflow: hidden; }
+  .bb-msg { margin-top: 12px; font-size: 13px; line-height: 1.5; display: none; }
+  .bb-msg.ok { display: block; color: #7fd6a4; }
+  .bb-msg.err { display: block; color: #e08a8a; }
+  .bb-sec h3 { font-size: 15px; color: var(--muted, #8ea2bd);
+    text-transform: uppercase; letter-spacing: 1px; margin: 22px 0 8px; }
+  .bb-item { display: flex; gap: 10px; align-items: baseline; padding: 10px 12px;
+    border: 1px solid var(--border, #1c2b45); border-radius: 8px; margin: 0 0 8px;
+    background: var(--panel, #0a1324); flex-wrap: wrap; }
+  .bb-item a.t { color: var(--fg, #e5edf6); font-weight: 600; }
+  .bb-item.closed a.t { text-decoration: line-through; color: var(--muted, #8ea2bd); }
+  .bb-item.closed { opacity: 0.62; }
+  .bb-meta { color: var(--muted, #8ea2bd); font-size: 12px; }
+  .bb-chip { font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px; padding: 2px 8px; border-radius: 10px;
+    border: 1px solid var(--border, #1c2b45); color: var(--muted, #8ea2bd); }
+  .bb-chip.sev-blocker { color: #ff9d94; border-color: #7a2a24; }
+  .bb-chip.sev-major   { color: #f4b26a; border-color: #7a5224; }
+  .bb-chip.sev-minor   { color: #e8d47f; border-color: #6e6224; }
+  .bb-chip.sev-nit     { color: #9fb6d4; border-color: #2a3c5c; }
+  .bb-admin { margin-left: auto; }
+  .bb-admin button { font-size: 11px; padding: 3px 10px; border-radius: 6px;
+    background: transparent; color: var(--muted, #8ea2bd);
+    border: 1px solid var(--border, #1c2b45); cursor: pointer; }
+  .bb-admin button:hover { color: var(--fg, #e5edf6); }
+  .bb-empty { color: var(--muted, #8ea2bd); font-size: 13px; padding: 6px 2px; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/recon/">Recon</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Tester Bug Board</h1>
+  <p>Spotted something broken? File it here; no account needed. Reports land
+  as GitHub issues and get crossed off when the fix ships.</p>
+</header>
+
+<div class="bb-wrap">
+  <div class="bb-cols">
+
+    <form class="bb-card bb-form" id="bb-form" autocomplete="off">
+      <h2>Report a bug</h2>
+      <label for="bb-tester">Name / handle (optional)</label>
+      <input id="bb-tester" maxlength="60" placeholder="anonymous">
+      <label for="bb-area">Area</label>
+      <select id="bb-area">
+        <option>Satellite Explorer</option>
+        <option>CycloLab</option>
+        <option>Models</option>
+        <option>Climatology</option>
+        <option>SST</option>
+        <option>Recon</option>
+        <option>Subseasonal</option>
+        <option>Other</option>
+      </select>
+      <label for="bb-severity">Severity</label>
+      <select id="bb-severity">
+        <option value="blocker">blocker: can't use the feature at all</option>
+        <option value="major" selected>major: wrong or badly broken</option>
+        <option value="minor">minor: annoying but works</option>
+        <option value="nit">nit: cosmetic / polish</option>
+      </select>
+      <label for="bb-title">Title</label>
+      <input id="bb-title" maxlength="140" placeholder="one line: what broke">
+      <label for="bb-detail">What happened? (steps, page, device/browser)</label>
+      <textarea id="bb-detail" maxlength="6000"
+        placeholder="What you did, what you expected, what you saw instead."></textarea>
+      <label for="bb-passcode">Tester passcode</label>
+      <input id="bb-passcode" maxlength="32" placeholder="from Andrew">
+      <div class="bb-hp">
+        <label for="bb-website">Website</label>
+        <input id="bb-website" tabindex="-1">
+      </div>
+      <button id="bb-submit" type="submit">File report</button>
+      <div class="bb-msg" id="bb-msg"></div>
+    </form>
+
+    <div>
+      <div class="bb-sec">
+        <h3>Open</h3>
+        <div id="bb-open"><div class="bb-empty">Loading the board…</div></div>
+        <h3>Fixed</h3>
+        <div id="bb-fixed"><div class="bb-empty">…</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var API = '/bugs-api/issues';
+  var ADMIN_LS = 'tat_bugs_admin';
+
+  // #admin=KEY -> localStorage (one-time enable per browser)
+  var hm = /[#&]admin=([\w-]+)/.exec(location.hash || '');
+  if (hm) {
+    try { localStorage.setItem(ADMIN_LS, hm[1]); } catch (e) {}
+    history.replaceState(null, '', location.pathname);
+  }
+  function adminKey() {
+    try { return localStorage.getItem(ADMIN_LS) || ''; } catch (e) { return ''; }
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text) n.textContent = text;
+    return n;
+  }
+
+  function card(item) {
+    var d = el('div', 'bb-item' + (item.state === 'closed' ? ' closed' : ''));
+    var a = el('a', 't', '#' + item.number + ' ' + item.title);
+    a.href = item.html_url; a.target = '_blank'; a.rel = 'noopener';
+    d.appendChild(a);
+    if (item.severity) d.appendChild(el('span', 'bb-chip sev-' + item.severity, item.severity));
+    if (item.area) d.appendChild(el('span', 'bb-chip', item.area));
+    var when = (item.created || '').slice(0, 10);
+    d.appendChild(el('span', 'bb-meta', (item.tester || 'anonymous') + ' · ' + when));
+    var key = adminKey();
+    if (key) {
+      var wrap = el('span', 'bb-admin');
+      var b = el('button', null, item.state === 'closed' ? 'Reopen' : 'Mark fixed');
+      b.onclick = function () {
+        b.disabled = true;
+        fetch(API + '/' + item.number, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json', 'x-admin-key': key },
+          body: JSON.stringify({ state: item.state === 'closed' ? 'open' : 'closed' })
+        }).then(function (r) { return r.json(); })
+          .then(function () { load(); })
+          .catch(function () { b.disabled = false; });
+      };
+      wrap.appendChild(b);
+      d.appendChild(wrap);
+    }
+    return d;
+  }
+
+  function fill(node, items, emptyText) {
+    node.textContent = '';
+    if (!items.length) { node.appendChild(el('div', 'bb-empty', emptyText)); return; }
+    items.forEach(function (i) { node.appendChild(card(i)); });
+  }
+
+  function load() {
+    fetch(API).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (items) {
+      fill(document.getElementById('bb-open'),
+        items.filter(function (i) { return i.state === 'open'; }),
+        'Nothing open. Nice.');
+      fill(document.getElementById('bb-fixed'),
+        items.filter(function (i) { return i.state !== 'open'; }),
+        'Nothing fixed yet.');
+    }).catch(function (e) {
+      document.getElementById('bb-open').textContent = '';
+      document.getElementById('bb-open').appendChild(
+        el('div', 'bb-empty', 'Board backend unreachable (' + e.message +
+          '). Submissions are down; tell Andrew.'));
+      document.getElementById('bb-fixed').textContent = '';
+    });
+  }
+
+  document.getElementById('bb-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var msg = document.getElementById('bb-msg');
+    var btn = document.getElementById('bb-submit');
+    msg.className = 'bb-msg';
+    btn.disabled = true;
+    fetch(API, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        tester: document.getElementById('bb-tester').value,
+        area: document.getElementById('bb-area').value,
+        severity: document.getElementById('bb-severity').value,
+        title: document.getElementById('bb-title').value,
+        detail: document.getElementById('bb-detail').value,
+        passcode: document.getElementById('bb-passcode').value,
+        website: document.getElementById('bb-website').value
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (res.j && res.j.ok) {
+          msg.className = 'bb-msg ok';
+          msg.textContent = 'Filed';
+          if (res.j.html_url) {
+            msg.textContent = 'Filed as issue #' + res.j.number + ' — ';
+            var a = el('a', null, 'view it on GitHub');
+            a.href = res.j.html_url; a.target = '_blank'; a.rel = 'noopener';
+            msg.appendChild(a);
+          }
+          document.getElementById('bb-title').value = '';
+          document.getElementById('bb-detail').value = '';
+          load();
+        } else {
+          msg.className = 'bb-msg err';
+          msg.textContent = (res.j && res.j.error) || ('Submit failed (HTTP ' + res.s + ')');
+        }
+      })
+      .catch(function () {
+        btn.disabled = false;
+        msg.className = 'bb-msg err';
+        msg.textContent = 'Submit failed: backend unreachable.';
+      });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

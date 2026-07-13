@@ -95,3 +95,25 @@ curl -sI "https://triple-a-tropics.com/satellite/explorer/?k=<TOKEN>" | head -5
 #   expect: HTTP/2 302 + set-cookie tat_explorer_preview=... -> clean URL
 #   then the cookie-carrying browser gets 200s on the page + assets
 ```
+
+## bugs-api.js
+
+`triple-a-tropics.com/bugs-api/*` — GitHub-issues-backed tester bug board
+API for the nav-hidden `/bugs/` page. Testers submit anonymously; the
+Worker holds a durable GitHub PAT server-side and files reports as
+`tester-report`-labeled issues, so `fixes #N` in a commit crosses them off
+the board. Anti-spam: honeypot + shared passcode + per-IP/day rate limit
+(GitHub itself is the counter via an invisible HMAC ratekey tag — no KV).
+
+Deploy (one-time; rotates passcode/admin key on rerun):
+
+```bash
+npx wrangler login          # browser OAuth, once per machine
+bash workers/deploy-bugs.sh # deploys, wires secrets, smoke-tests the loop
+```
+
+Local E2E without Cloudflare auth: `wrangler dev -c bugs-api.toml --local`
+with a `.dev.vars` (gitignored) pointing `GH_BASE` at a mock GitHub —
+the full suite (validation, honeypot, passcode, rate limit, PATCH guard)
+was run that way at build time; real-PAT issue create/label/close was
+verified separately via `gh`.

@@ -1,0 +1,54 @@
+# Purge the Cloudflare edge cache for the exact URLs a push changed, after
+# the Pages build deploys them. Kills the stale-asset class (unstamped
+# styles.css/.html riding a ~4 h edge TTL): changes go live in ~1 min.
+#
+# NEVER purge_everything — data workflows push to main several times a day
+# and a full purge would flush the cdn.* media cache (floater frames,
+# tiles) every time. scripts/purge_edge_cache.py purges URL lists only.
+#
+# INERT until two Actions secrets exist (queued for Andrew):
+#   CLOUDFLARE_ZONE_ID     zone id of triple-a-tropics.com (dashboard,
+#                          Overview sidebar)
+#   CLOUDFLARE_PURGE_TOKEN API token, permission Zone -> Cache Purge ->
+#                          Purge, scoped to the one zone
+# Without them each run prints a notice and exits green.
+name: purge-edge-cache
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      extra_paths:
+        description: "space-separated repo paths to purge (manual flush)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: purge-edge-cache
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # no checkout: the script works entirely through the GitHub API,
+      # except we need the script itself — fetch just that one file
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/purge_edge_cache.py
+          sparse-checkout-cone-mode: false
+
+      - name: Purge changed URLs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          EXTRA_PATHS: ${{ inputs.extra_paths }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          CLOUDFLARE_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
+        run: python scripts/purge_edge_cache.py
