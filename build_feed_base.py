@@ -90,6 +90,11 @@ def _poller_cfg(basin: str) -> dict:
         "short": a["short"],
         "agency_name": a["agency_name"],
         "invest_letter": t.get("invest_letter", ""),
+        # multi-letter basins (EP also accepts "C"/Central Pacific); pollers
+        # fall back to [invest_letter] when this key is absent (old bases).
+        "invest_letters": t.get("invest_letters")
+                          or ([t["invest_letter"]] if t.get("invest_letter")
+                              else []),
         "atcf_patterns": a["atcf_patterns"],
     }
 

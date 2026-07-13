@@ -135,6 +135,14 @@ BASINS: dict[str, dict] = {
         "ibtracs_basin_col": ["EP"],
         "atcf_prefix": "bep",
         "invest_letter": "E",
+        # The EP page/extent covers the whole NE Pacific INCLUDING the Central
+        # Pacific (extent runs to -180), and IBTrACS files CP storms under the
+        # EP basin — but ATCF designates CP systems with their own trailing
+        # letter ("90C") and b-deck prefix ("bcp"). Accept both letters here so
+        # CPHC invests (90C/91C, 2026-07-13) surface; a "C" row keeps its C in
+        # the display name and gets a CP-prefixed SID so it can never collide
+        # with a same-numbered simultaneous "E" invest.
+        "invest_letters": ["E", "C"],
         "agency_name": "NHC",
         "agency_url": "https://www.nhc.noaa.gov/",
         "atcf_patterns": [
@@ -404,8 +412,13 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
     except Exception:
         return pd.DataFrame()
 
-    letter = basin_cfg.get("invest_letter", "")
-    if not letter:
+    # Accepted ATCF trailing letters for this basin's map: the primary
+    # invest_letter, plus any extras (EP also takes "C" — the Central Pacific
+    # shares the EP page/extent but ATCF designates its systems 90C/bcp).
+    letters = {x.strip().upper() for x in
+               (basin_cfg.get("invest_letters")
+                or [basin_cfg.get("invest_letter", "")]) if x.strip()}
+    if not letters:
         return pd.DataFrame()
 
     try:
@@ -435,7 +448,7 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
         # usable trailing letter.
         id_letter = atcf_id[-1] if atcf_id[-1:].isalpha() else ""
         basin_letter = id_letter or (it.get("origin_basin") or "").strip().upper()
-        if basin_letter != letter:
+        if basin_letter not in letters:
             continue
         # "93E" -> 93 (drop the trailing basin letter).
         try:
@@ -492,7 +505,7 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
         if name_raw and name_raw not in {"INVEST", "NAMELESS", "UNNAMED"}:
             name = name_raw
         else:
-            name = f"{storm_num}{letter}"
+            name = f"{storm_num}{basin_letter}"
         # 92W->07W carry. knackwx gives the prior invest as transitioned_from
         # ("92W"). Feed its NUMBER as spawn_invest so ace_core's existing
         # number-keyed superseding-invest dedup (merge_and_extract_storms)
@@ -509,16 +522,20 @@ def fetch_live_invests(season: int, basin_cfg: dict, log_prefix: str
             if mtf:
                 tf_num = int(mtf.group(1))
                 tf_letter = tf[-1] if tf[-1:].isalpha() else ""
-                if 90 <= tf_num <= 99 and tf_letter == letter and any(
+                if 90 <= tf_num <= 99 and tf_letter in letters and any(
                     (str((d.get("atcf_id") or "")).strip().upper())
-                        == f"{tf_num:02d}{letter}"
+                        == f"{tf_num:02d}{tf_letter}"
                     for d in data):
                     spawn_invest = tf_num
+        # SID basin token follows the row's OWN ATCF letter ("C" -> CP), not
+        # the page basin, so 90C and a simultaneous 90E never share a SID.
+        sid_basin = {"L": "AL", "E": "EP", "C": "CP", "W": "WP"}.get(
+            basin_letter, basin_cfg["short"].upper())
         rows.append({
             # SID matches the b-deck path's SID format so a future
             # promotion to a numbered TC (with a real b-deck) doesn't
             # collide with this invest row.
-            "SID": f"{basin_cfg['agency_name']}_{basin_cfg['short'].upper()}"
+            "SID": f"{basin_cfg['agency_name']}_{sid_basin}"
                    f"{storm_num:02d}{season}",
             "NAME": name,
             "season": season,
