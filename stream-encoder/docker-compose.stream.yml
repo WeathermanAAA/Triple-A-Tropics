@@ -1,0 +1,34 @@
+# TAT stream encoder - its OWN instance (not the render box, not a
+# Codespace). See RUNBOOK-STREAM.md (repo root) for the bring-up.
+#
+#   docker compose -p tat-stream -f docker-compose.stream.yml --profile stream up -d --build
+#
+# .env next to this file must define YT_STREAM_KEY (never committed).
+services:
+  encoder:
+    profiles: ["stream"]
+    build: .
+    image: tat-stream-encoder
+    restart: unless-stopped
+    environment:
+      YT_STREAM_KEY: ${YT_STREAM_KEY:?set in .env}
+      STREAM_PAGE_URL: ${STREAM_PAGE_URL:-https://triple-a-tropics.com/stream/}
+      RTMP_URL: ${RTMP_URL:-rtmp://a.rtmp.youtube.com/live2}
+      VIDEO_BITRATE_K: ${VIDEO_BITRATE_K:-6000}
+      FPS: ${FPS:-30}
+      BROWSER_RECYCLE_S: ${BROWSER_RECYCLE_S:-43200}
+    # chromium in-container: bigger shm avoids renderer OOM crashes
+    shm_size: 1gb
+    healthcheck:
+      # both legs must be alive: an encoder without a browser streams
+      # the bare root window; a browser without an encoder streams nothing
+      test: ["CMD-SHELL", "pgrep -x ffmpeg >/dev/null && pgrep -f 'chromium.*kiosk' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

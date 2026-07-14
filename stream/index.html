@@ -720,7 +720,7 @@ function renderActive() {
     list.innerHTML = '<div class="empty">No active systems in the Atlantic or Pacific tracking areas right now.</div>';
     return;
   }
-  list.innerHTML = systems.slice(0, 7).map(function (s) {
+  list.innerHTML = systems.slice(0, 5).map(function (s) {
     var glyph = s.invest ? "×" : sshsLabel(s.cat);
     var kind = s.invest ? "Invest" : (s.ptc ? "PTC" : (/^C/.test(s.cat) ? "Hurricane / Typhoon" : (s.cat === "TS" ? "Tropical Storm" : "Tropical Depression")));
     return '<div class="sysrow">' +
@@ -729,8 +729,8 @@ function renderActive() {
       '<div class="where">' + esc(s.basinTag) + ' · ' + esc(kind) + ' · ' + fmtLat(s.lat) + ' ' + fmtLon(s.lon) + '</div></div>' +
       '<div class="kt"><div class="v">' + Math.round(s.kt) + '</div><div class="u">kt</div></div>' +
       '</div>';
-  }).join("") + (systems.length > 7 ?
-    '<div class="empty" style="padding:8px 22px">and ' + (systems.length - 7) + ' more</div>' : "");
+  }).join("") + (systems.length > 5 ?
+    '<div class="empty" style="padding:6px 22px 10px">and ' + (systems.length - 5) + ' more</div>' : "");
 }
 
 /* --------------------------------------------------------- carousel */
