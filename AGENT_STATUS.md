@@ -21,6 +21,37 @@ _Last update: 2026-07-14 ~21:1x UTC — RE-KICK in progress: 4-item queue (strea
 
 ---
 
+## 2026-07-14 (~23:1x UTC) — STREAM PAGE LIVE at /stream/ (item 1 done, built in-house)
+
+- **Andrew's stream.html never arrived** (no file/branch/PR, no
+  "AGENT: verify" marker anywhere) — so the page was BUILT to the spec
+  rather than blocking (@fb3d979): fixed 1920×1080 broadcast canvas,
+  TAT chrome (Metropolis + locked palette + logo bar), UTC clock, amber
+  TROPICS NOW ticker, active-systems rail, sidecard carousel (AL/EP/WP
+  names boards + season-ACE board) with chevron wipe, Pacific-centered
+  world map (house SSHWS colors, ace_core-mirroring D/S/1–5 glyphs,
+  invest ×), overview + Cat-1+ storm-focus modes with a full-frame
+  stinger. noindex, not in the nav (nav test unaffected — no nav-links
+  block). If Andrew's own stream.html shows up it can replace this
+  wholesale; wiring notes are all in the page header.
+- **Live wiring verified field-by-field** against the real feeds first
+  (schema documented in the page header): active systems are
+  `kind=="active_marker"`, invest = `marker_type=="invest_x"`, there is
+  NO basin/active/invest property — basin joins storm_id→track feature;
+  categories are TD/TS/C1..C5 so the focus trigger is /^C[1-5]$/ or
+  ≥64 kt. Hydrates CDN geojson + 3 ACE feeds every 5 min (CORS
+  verified); embedded fallback snapshot renders the FULL canvas
+  synchronously — never blanks; fetch failures keep last-good +
+  honest DATA DELAYED chip.
+- **Verified headless at 1920×1080** (tests/stream_smoke.cjs, 19 checks
+  green): fully-offline fallback render (zero blanks, zero page
+  errors), synthetic Cat-2 → stinger plays → focus engages with correct
+  name/chip/intensity → returns to overview; carousel wipe fires.
+  Shots in scratchpad (stream_offline/stream_stinger/stream_focus.png).
+  **Confirmed serving 200 at https://triple-a-tropics.com/stream/.**
+
+---
+
 ## 2026-07-14 (~22:4x UTC) — 3a + 3b LANDED + LIVE-VERIFIED: mislabel dead, coastlines legible
 
 - **3a (@7f23c48):** every rendered ERA5 credit reverted to honest
