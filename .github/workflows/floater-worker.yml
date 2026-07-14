@@ -29,18 +29,17 @@ on:
       poll_seconds:
         description: "Poll window before clean shutdown (s)"
         default: "2700"
-  # RE-ENABLED 2026-07-12 ~15:2x UTC: the box's FLOATER poller stalled at
-  # ~05:42Z — 22 min after the stopgap was retired on a green health check
-  # (the box itself is up: /render healthy, intensity poller writing a
-  # fresh global_storms.geojson; only floater production froze). Schedule
-  # restored per this file's own emergency instructions until Andrew
-  # restarts the box's floater-poller container and box-only freshness is
-  # RE-verified (QUEUED manual steps Q17) — then disable this block again.
-  # Coexistence with the recovering box poller is safe by design
-  # (per-frame content-hash dedup + R2 manifest resync).
-  schedule:
-    - cron: "7 * * * *"
-    - cron: "37 * * * *"
+  # RETIRED (again) 2026-07-14 ~04:1x UTC: Q17 box pull+rebuild is DONE —
+  # the box floater-poller now runs the stall-fixed code (spawned-process
+  # per-disk fetch + watchdog, tsr dff79b1) and is live + healthy, so the
+  # box is the SOLE floater writer from here. Two writers on one R2 key
+  # was the home-map flap trap (global_storms.geojson alternating between
+  # producers) — do not re-enable this schedule while the box poller is
+  # healthy. workflow_dispatch stays as the emergency lever; if the box
+  # dies again, re-add:
+  #   schedule:
+  #     - cron: "7 * * * *"
+  #     - cron: "37 * * * *"
 
 permissions:
   contents: read            # R2-only producer; commits nothing to main
