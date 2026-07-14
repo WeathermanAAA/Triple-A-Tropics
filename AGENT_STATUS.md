@@ -21,6 +21,29 @@ _Last update: 2026-07-14 ~21:1x UTC — RE-KICK in progress: 4-item queue (strea
 
 ---
 
+## 2026-07-14 (~22:4x UTC) — 3a + 3b LANDED + LIVE-VERIFIED: mislabel dead, coastlines legible
+
+- **3a (@7f23c48):** every rendered ERA5 credit reverted to honest
+  "NCEP/NCAR Reanalysis 1 1991–2020 (NOAA PSL)" — map footer
+  (generate_velocity_potential.py) + both page mentions
+  (subseasonal/index.html). Docstring now carries the rule: credits
+  flip back ONLY in the same commit that lands the ERA5 .nc.
+- **3b (same commit):** VP-map coastlines get a thin light casing
+  (#dce7f3 lw 1.6) under a crisp dark line (#0a0e15 lw 0.7) — verified
+  on a synthetic full-range render, legible over the darkest BrBG fills
+  at both ends.
+- **Live-verified:** dispatched update-subseasonal run 29372393918
+  (success); pulled chi_anom_200_30d.png fresh from the CDN — new
+  credit line + cased coastlines confirmed serving.
+- **ERA5 rebuild attempt #3 running** (this session's scratchpad):
+  supervisor with 300 s hard-kills per APDRC slab child, atomic .npz
+  slab resume, 2-wide; assembles via the committed builder's own
+  main(). If APDRC roulette blocks it again, next stop is an alternate
+  anonymous source (RDA/PSL probe) — CDS API needs an account key we
+  can't self-serve.
+
+---
+
 ## 2026-07-14 (~21:1x UTC) — RE-KICK: queue re-entered, state assessed
 
 - **IN PROGRESS.** Overnight session died after the stopgap retire; queue
