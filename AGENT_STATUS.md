@@ -4,7 +4,42 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-13 ~18:4x UTC — ace-core-v0.8.4 LANDED (designated-CP bcp sweep + own-letter labels on BOTH feeds; EP feed re-verified under it) · earlier today: v0.8.3 90C/91C fix, ASCAT backdrop+tooltips, friendly bug numbers, bug board LIVE, edge purge ACTIVE · ERA5 χ-climo still downloading (APDRC stall roulette; supervisor now 2-wide + 120 s kills) · **Q17 box rebuild = the one manual step, now triple-payload**_
+_Last update: 2026-07-14 ~21:1x UTC — RE-KICK in progress: 4-item queue (stream page · ASCAT-backdrop fixes · subseasonal 3a/3b/3c · RTMP pipeline). See the newest section + MORNING-TO-DO below._
+
+---
+
+## MORNING-TO-DO (Andrew) — running list, maintained by the agent
+
+1. **(carried) Q18 — Cloudflare token** for headless Worker deploys
+   (`CLOUDFLARE_API_TOKEN` Codespaces secret; Workers Scripts:Edit + zone
+   Workers Routes:Edit + Cache Purge:Purge). Bug board + purge already live
+   via your one-time deploy; this is only for future headless redeploys.
+2. **(carried) EUMETSAT key** (`EUMETSAT_CONSUMER_KEY`/`_SECRET` as TAT
+   Actions secrets + box `.env`) — lights the Meteosat wedge in the World
+   composite.
+3. _(agent appends new steps here as the re-kick queue lands)_
+
+---
+
+## 2026-07-14 (~21:1x UTC) — RE-KICK: queue re-entered, state assessed
+
+- **IN PROGRESS.** Overnight session died after the stopgap retire; queue
+  items 1–4 untouched. Findings on re-entry:
+  - **stream.html is NOT in the repo** (no file, no branch, no PR, no
+    "AGENT: verify" marker anywhere) — Andrew's add hasn't landed yet.
+    Plan: verify the live feed schemas now, keep polling for the file,
+    build to spec if it still hasn't arrived when the earlier items land.
+  - **Item 2 (ASCAT backdrop) was AUTHORED but left uncommitted in tsr**
+    by the dead session: app.py/render.py/satellites.py/floater_poller.py
+    diff + tests/test_antimeridian.py (antimeridian bbox + 429 backoff,
+    end-to-end). Verifying + landing it next — never leaving it stranded
+    again.
+  - **3a mislabel CONFIRMED**: committed chi_climo_1991_2020.nc attrs say
+    `source: NCEP/NCAR Reanalysis 1` while page + map credits say ERA5.
+    Fix order: revert credits to honest R1 + coastline casing (3b) in one
+    commit + one re-render dispatch NOW; ERA5 build re-attempt runs in
+    the background and flips credits back only when the file actually
+    lands (no mislabel at any instant).
 
 ---
 
