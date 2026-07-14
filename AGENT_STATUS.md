@@ -17,7 +17,56 @@ _Last update: 2026-07-14 ~21:1x UTC — RE-KICK in progress: 4-item queue (strea
 2. **(carried) EUMETSAT key** (`EUMETSAT_CONSUMER_KEY`/`_SECRET` as TAT
    Actions secrets + box `.env`) — lights the Meteosat wedge in the World
    composite.
-3. _(agent appends new steps here as the re-kick queue lands)_
+3. **BOX pull+rebuild for tsr @863d6df** (the ASCAT-backdrop fix chain:
+   antimeridian bboxes + 429 backoff + internal rate tier + the
+   dateline-backdrop antipode fix). Same session as RUNBOOK-RENDER §2:
+   `cd tsr && git pull && docker compose -p tat-render -f
+   docker-compose.render.yml build && docker compose -p tat-render -f
+   docker-compose.render.yml up -d`. Until then the box runs the old
+   code: swpac/wpac basin backdrops keep failing exactly as reported
+   (the GH stopgap schedule is retired, so ONLY the box delivers this).
+4. **Stream encoder go-live** (everything is built + container-tested,
+   RUNBOOK-STREAM.md §1): ① provision a small VPS of its own (2-4 vCPU,
+   4 GB, Docker), ② grab the YouTube stream key (YouTube Studio → Go
+   live → Streaming software), ③ three commands from the runbook. The
+   /stream/ page it broadcasts is already live and self-updating.
+5. _(agent appends new steps here as the re-kick queue lands)_
+
+---
+
+## 2026-07-14 (~23:3x UTC) — ITEM 2 LANDED (tsr @863d6df) · ITEM 4 BUILT (encoder stack)
+
+- **Item 2 (ASCAT-backdrop fixes) — the stranded diff verified, hardened,
+  landed.** The dead session had authored the whole fix chain but left it
+  uncommitted; on re-entry it was reviewed (3-lens adversarial workflow),
+  test-run, FIXED, and pushed to tsr main:
+  - 429s: own retry budget honoring Retry-After with a 15/30/60 s
+    exponential floor + the ROOT fix — co-located pollers (private peer,
+    no XFF) now get RATE_LIMIT_INTERNAL 600/min instead of sharing the
+    public 10/min that starved the 16-region sweep at wpac.
+  - swpac antimeridian: /render accepts unwrapped-E>180 and pre-wrapped
+    crossing bboxes, renders them correctly (crossing-aware cartopy
+    geometry, continuity unwrap, satellite routing).
+  - **Review catches fixed before landing** (all locked with tests, 17
+    groups green): forged-XFF "internal|" injection into the internal
+    rate bucket (critical), full-globe span % 360 == 0 pixel-budget
+    bypass (critical), widen_bbox_to_view midpointing a dateline storm
+    box to its ANTIPODE → wrong-side backdrop published (major, two
+    lenses found it independently), float-mod cache-key perturbation,
+    reversed-edge typos silently rendering near-world frames, RATE_429_*
+    vs RENDER_429_* env naming.
+  - Full suite: failure set identical to clean HEAD (82 pre-existing env
+    failures in test_cyclolab_shell.py only — cross-checked by stash).
+  - **Deploys ONLY via the box pull+rebuild → MORNING-TO-DO #3.**
+- **Item 4 (render→RTMP) — built + container-proven, NOT deployed
+  (@87f10fb):** stream-encoder/ Dockerfile + compose profile +
+  three-leg supervisor (Xvfb / kiosk-chromium with 12 h recycle /
+  ffmpeg 6 Mbps 2s-GOP with no-progress watchdog + backoff restarts),
+  RUNBOOK-STREAM.md. E2E-minus-ingest proven in a real container: the
+  LIVE page renders on the virtual display with live-hydrated data and
+  x11grab captures it (frame eyeballed; chromium single-launch after
+  fixing the docker-seccomp sandbox crash-loop with a documented
+  --no-sandbox). Only the YouTube leg awaits the key → MORNING-TO-DO #4.
 
 ---
 
