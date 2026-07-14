@@ -26,10 +26,13 @@ Products (window selector on the page; 30-day is the default):
           amplitude-damped — the retained fraction is PRINTED ON the map.
           Needs >=61 archived days; skipped honestly below that.
 
-Anomalies are vs the 1991-2020 ERA5 monthly chi climatology
-(subseasonal/chi_climo_1991_2020.nc, built by build_chi_climatology.py
-with the IDENTICAL T21 solve — like-vs-like; the old NCEP/NCAR R1
-baseline was a cross-model mismatch that distorted the anomaly).
+Anomalies are vs the 1991-2020 NCEP/NCAR R1 monthly chi climatology
+(subseasonal/chi_climo_1991_2020.nc, same T21 solve both sides).
+R1-vs-GFS is a cross-model baseline that runs a touch hot; the ERA5
+rebuild (build_chi_climatology.py) swaps in the moment its .nc lands.
+CREDITS MUST MATCH THE COMMITTED FILE — when the ERA5 .nc is committed,
+flip the credit strings here + subseasonal/index.html in the SAME
+commit, and never the other way around.
 Quiver arrows are the ANOMALOUS divergent wind (grad of the plotted
 anomaly chi). Maps span 60S-60N (the 45-deg band clipped the
 subtropical centers).
@@ -73,7 +76,9 @@ BG_COLOR = "#07101c"
 TEXT_COLOR = "#e5edf6"
 MUTED_COLOR = "#8ea2bd"
 GRID = "#22304a"
-COAST = "#10151d"
+COAST = "#0a0e15"          # crisp dark coastline stroke
+COAST_CASING = "#dce7f3"   # thin light casing UNDER it — keeps the line
+                           # legible over saturated BrBG fills at any lightness
 WATERMARK = "@WeathermanAAA_"
 
 LAT_BAND = 60.0            # map band: 60S-60N (45 clipped divergent centers)
@@ -283,8 +288,11 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     ax.contour(lons, la, z, levels=[0], colors=GRID, linewidths=0.7)
 
     for seg in coast:
-        ax.plot(seg[:, 0], seg[:, 1], color=COAST, lw=0.8, alpha=0.9,
-                zorder=4)
+        ax.plot(seg[:, 0], seg[:, 1], color=COAST_CASING, lw=1.6,
+                alpha=0.62, zorder=4, solid_capstyle="round")
+    for seg in coast:
+        ax.plot(seg[:, 0], seg[:, 1], color=COAST, lw=0.7, alpha=0.95,
+                zorder=4.01)
 
     # anomalous divergent-wind quiver: quiet annotation, never the subject
     st = QUIVER_STRIDE
@@ -329,8 +337,8 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     cb.outline.set_edgecolor(GRID)
     ax.text(0.0, -0.12,
             "Data: NOAA NCEP GFS analyses (daily means) · climatology: "
-            "ERA5 1991–2020 (C3S/ECMWF via APDRC), χ solved identically · "
-            "spectral solve truncated T21",
+            "NCEP/NCAR Reanalysis 1 1991–2020 (NOAA PSL), χ solved "
+            "identically · spectral solve truncated T21",
             transform=ax.transAxes, color=MUTED_COLOR, alpha=0.9, fontsize=8)
     fig.tight_layout()
     fig.savefig(out_png, dpi=150, facecolor=BG_COLOR)
