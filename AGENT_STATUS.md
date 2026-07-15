@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-14 ~21:1x UTC — RE-KICK in progress: 4-item queue (stream page · ASCAT-backdrop fixes · subseasonal 3a/3b/3c · RTMP pipeline). See the newest section + MORNING-TO-DO below._
+_Last update: 2026-07-15 ~21:3x UTC — SUBSEASONAL PHASE 2 LANDED + LIVE-VERIFIED (Hovmöllers + CCEW wave filtering; closes the subseasonal queue). MORNING-TO-DO unchanged._
 
 ---
 
@@ -31,6 +31,79 @@ _Last update: 2026-07-14 ~21:1x UTC — RE-KICK in progress: 4-item queue (strea
    live → Streaming software), ③ three commands from the runbook. The
    /stream/ page it broadcasts is already live and self-updating.
 5. _(agent appends new steps here as the re-kick queue lands)_
+
+---
+
+## 2026-07-15 (~20:5x UTC) — SUBSEASONAL PHASE 2 LANDED: Hovmöllers + equatorial-wave filtering (@42fcb5ef)
+
+The dead session's stranded Phase-2 files (subseasonal/wk_filter.py,
+generate_hovmollers.py, build_u_climatology.py + its built
+u_climo_1991_2020.nc, tests/test_wk_filter.py) were found uncommitted,
+**verified, hardened, and landed** — never stranded again:
+
+- **wk_filter**: plain-numpy WK99 space-time filter, direction convention
+  and dispersion masks test-locked (16/16); gained the **lowfreq band**
+  (>=120 d, |k|<=10, WW01 monitor) the selector spec calls for.
+  u_climo verified clean (ERA5 monthly u 200/850, 0 NaNs, July equatorial
+  easterlies at both levels).
+- **REAL catch while verifying: PSL THREDDS silently returns ALL-ZERO
+  data on large multi-timestep DAP subsets** of the OLR LTM aggregation
+  (365-step read = 0.0 everywhere, <=60-step slabs correct; no error).
+  The stranded draft would have shipped raw-OLR-as-anomaly (uniform
+  saturated panels — seen live before the fix). Now: slabbed loads +
+  `_guard_degenerate` refusing to render corrupt reads. Gotcha added to
+  CLAUDE.md.
+- **Genesis markers were double/triple-marking systems** — keyed by
+  (sid, name) while a system's tcvitals name evolves (INVEST → FIVE →
+  ELIDA, all 05E). Now keyed by ATCF id (60-day recycle window), marker
+  at the earliest fix, label wears the latest name.
+- Render layout rebuilt (explicit geometry, no tight_layout): three-row
+  header, colorbar label beside the bar, per-variable credits — the
+  draft's header/footer text collided everywhere. main() split into
+  per-section functions with fault isolation: a PSL outage can't blank
+  the u/chi panels; fails loudly only if everything failed.
+- **Rendered locally end-to-end: 240 panels** — OLR+waves (168 = 7 wave
+  sets x 4 bands x 3 days x 2 sectors), u850/u200 (48), chi200 (24, from
+  the real 223-day chi archive pulled via the CDN). u path proven against
+  live GFS via herbie (52-day local archive built; an rda.ucar.edu cert
+  failure walked past by design). Panels eyeballed: WP-enhanced OLR field
+  matches the known MJO state, chi200 dipole coherent, u850 dateline
+  westerly burst consistent with the season.
+- **/subseasonal/ gains the Hovmöller section**: hov_meta.json-driven
+  selector (field / waves / band / days / sector) with baked fallback;
+  new tests/hov_page_smoke.cjs **19/19 green** (build, panel swaps,
+  wave-row hiding off-OLR, fallback, zero page errors). Nav untouched.
+- **update-subseasonal.yml**: hovmöller render step AFTER the VP render
+  (chi200 reads the just-topped-up archive) bracketed by restore/save of
+  a new rolling `_buildcache/u_daily_archive.nc`; publish sync already
+  covers hov/*.png + hov_meta.json. Suite failure set byte-identical to
+  clean HEAD (11 env-dependent, verified via a HEAD worktree run).
+- **Landing fight worth recording (now in CLAUDE.md):** the Codespace
+  disk filled to 100% because `git fetch origin` (all-heads refspec)
+  re-downloads the SST **orphan branch** (multi-GB MP4s, disjoint
+  history) after every force-push, and each aborted fetch stranded a
+  multi-GB `tmp_pack_*` in .git — 12.4 GB of dead packs removed, refspec
+  narrowed to main-only, push landed clean (@26321b91 = origin/main).
+- **First publish LIVE-VERIFIED** (run 29451530427, backfill_days=250,
+  success): the u archive bootstrapped cold to **221 days on R2** in one
+  run; CDN meta fresh (generated 21:28Z; olr through 07-12, u/chi through
+  07-15; genesis markers 27 — the deduped count); sampled panels incl.
+  the lowfreq view all fetch 200 from cdn.triple-a-tropics.com; the page
+  section confirmed serving at triple-a-tropics.com/subseasonal/ (Pages
+  deployed the push). Daily 15:41Z crons now carry the product.
+- Also landed earlier today: **one-off analog composite** (@a4299410) —
+  TC frequency anomaly for analog seasons 1972/82/91/97/2015 vs 1979-2014
+  per 1°x1°, 3° Gaussian, analog tracks + current NHC GTWO MDR area
+  hatched (10% 7-day), house chrome — `analog_composite.png` at repo root.
+- **FOUND UNCOMMITTED, NOT MINE, NOT TOUCHED**: modified ace_core/
+  (__init__, pyproject), enscenters/anchors.py, generate_tracks_plot.py,
+  models/{enscenters.js,index.html}, stream/index.html,
+  tests/{stream_smoke.cjs,test_invest_x_anchor.py,
+  test_marker_type_agreement.py,test_ptc_activation.py} + untracked
+  tests/test_designated_marker_number_gate.py — looks like an
+  interrupted enscenters/marker-gate workstream. Auto-stashed around the
+  rebase and popped back byte-identical. Needs the usual verify-then-land
+  pass before anything wipes it.
 
 ---
 
