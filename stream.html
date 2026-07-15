@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Triple-A-Tropics — 24/7 Live</title>
+<!--
+  TAT 24/7 automated stream page.  Deploy at /stream/ (same origin as the CDN feeds + /logo.svg + fonts).
+  Rendered headless at 1920x1080 -> ffmpeg -> YouTube RTMP.  Auto-cycles, zero interaction.
+  Chrome matches the site design system exactly: styles.css :root tokens, the metallic nav gradient,
+  Metropolis, the dotted body texture, /logo.svg.  Data: /feeds/{basin}_ace_data.json + /global_storms.geojson.
+  Falls back to a built-in sample so the frame is NEVER blank on air.
+-->
+<style>
+  /* --- Metropolis (same as the site: local woff2 + cdnfonts fallback) --- */
+  @import url('https://fonts.cdnfonts.com/css/metropolis');
+  @font-face{font-family:'Metropolis';font-weight:400;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-400-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:500;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-500-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:600;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-600-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:700;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-700-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:800;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-800-normal.woff2') format('woff2')}
+  /* --- exact site tokens --- */
+  :root{--bg:#131519;--panel:#1b1e24;--border:#2a2e36;--fg:#e8ebef;--muted:#9199a4;--accent:#ffb83a;--accent-2:#5dd3ff;--accent-3:#c084fc;--grid-dim:#232730;--acc:var(--accent)}
+  *{margin:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden}
+  body{background-color:var(--bg);background-image:radial-gradient(circle,rgba(255,255,255,.055) 1.1px,transparent 1.5px);background-size:36px 36px;
+       font-family:"Metropolis","Helvetica Neue",Arial,sans-serif;font-weight:700}
+  #stage{position:absolute;top:50%;left:50%;width:1920px;height:1080px;transform:translate(-50%,-50%);
+         background-color:var(--bg);background-image:radial-gradient(circle,rgba(255,255,255,.055) 1.1px,transparent 1.5px);background-size:36px 36px;
+         color:var(--fg);display:flex;flex-direction:column;overflow:hidden}
+  /* ---- header: the site's metallic brand bar ---- */
+  .hdr{height:88px;display:flex;align-items:center;justify-content:space-between;padding:0 34px;
+       background:linear-gradient(180deg,#0a1a2e 0%,#1d3a5c 22%,#2b4976 50%,#1d3a5c 78%,#0a1a2e 100%);
+       border-bottom:1px solid #050a14;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 3px 10px rgba(0,0,0,.45)}
+  .brand{display:flex;align-items:center;gap:16px;color:#fff;font-weight:700;font-size:38px;line-height:1;letter-spacing:.5px;
+         text-shadow:0 1px 0 rgba(0,0,0,.55),0 2px 4px rgba(0,0,0,.55)}
+  .brand .logo{width:58px;height:58px;flex-shrink:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}
+  .live{font-weight:800;font-size:16px;letter-spacing:.1em;color:#131519;background:var(--accent);border-radius:6px;padding:4px 9px;
+        text-shadow:none;margin-left:2px}
+  .subm{font-size:15px;font-weight:600;letter-spacing:.16em;color:#c8d4e7;text-transform:uppercase}
+  .mtag{display:flex;align-items:center;gap:11px;font-weight:800;font-size:21px;letter-spacing:.1em;color:var(--acc);
+        text-shadow:0 1px 0 rgba(0,0,0,.55)}
+  .mtag i{width:14px;height:14px;border-radius:50%;background:var(--acc);animation:pulse 1.4s ease-in-out infinite}
+  /* ---- body ---- */
+  .body{flex:1;display:flex;min-height:0}
+  .side{position:relative;width:430px;background:var(--panel);border-right:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column}
+  .sideHd{font-weight:800;font-size:19px;letter-spacing:.12em;color:#131519;background:var(--acc);padding:14px 20px;text-align:center;text-transform:uppercase}
+  .sideBody{flex:1;padding:22px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:13px;font-size:22px;padding:10px 0;border-bottom:1px solid var(--border)}
+  .row .k{width:15px;height:15px;border-radius:50%}
+  .row b{font-weight:800}.row .m{margin-left:auto;color:var(--muted);font-weight:600;font-size:19px}
+  .bar{display:flex;align-items:center;gap:11px;font-weight:600;font-size:18px;color:var(--muted);margin:17px 0}
+  .bar .lab{width:74px}.bar .tr{flex:1;height:12px;background:var(--grid-dim);border-radius:6px;overflow:hidden}.bar .fl{height:100%;border-radius:6px}
+  .big{display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--border)}
+  .big .l{font-weight:700;font-size:16px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}.big .v{font-weight:800;font-size:32px}
+  .nmlist{display:flex;flex-direction:column;align-items:center;gap:2px;justify-content:center;height:100%}
+  .nm{font-weight:800;font-size:31px;letter-spacing:.02em;color:var(--muted);text-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .nm.u{color:var(--c);text-shadow:0 0 15px color-mix(in srgb,var(--c) 45%,transparent)}
+  /* chevron wipe over the sidecard (nav-matched blues) */
+  .chev{position:absolute;inset:0;z-index:6;transform:translateY(115%);background:#0a1a2e}
+  .chev.go{animation:sweepUp .9s cubic-bezier(.72,0,.2,1) forwards}
+  .chev svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .chev .scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.06) 0 2px,transparent 2px 9px)}
+  /* ---- main stage ---- */
+  .main{flex:1;position:relative;background:#0d0f13;overflow:hidden;min-width:0}
+  .satimg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.2s ease}
+  .satimg.on{opacity:.92}
+  .grid{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 79px,var(--grid-dim) 79px 80px),repeating-linear-gradient(90deg,transparent 0 105px,var(--grid-dim) 105px 106px);opacity:.5}
+  .kb{position:absolute;inset:0;display:grid;place-items:center;animation:kb 20s ease-in-out infinite alternate}
+  .cyc{width:46%;height:46%;filter:drop-shadow(0 0 42px color-mix(in srgb,var(--acc) 55%,transparent))}
+  .cyc .spin{transform-origin:100px 100px;animation:spin 26s linear infinite}
+  .cyc .arm{fill:none;stroke:var(--acc);stroke-width:9;stroke-linecap:round}.cyc .a2{opacity:.55}.cyc .a3{opacity:.3}
+  .cyc .eye{fill:#0d0f13;stroke:var(--fg);stroke-width:2.5}
+  .vign{position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 40%,transparent 55%,rgba(10,12,16,.78) 100%)}
+  .nowbar{position:absolute;left:34px;bottom:34px;display:flex;gap:16px;z-index:3}
+  .nowbar.anim{animation:l3in .6s cubic-bezier(.16,1,.3,1) both}
+  .nowbar .b{width:7px;border-radius:4px;background:var(--acc)}
+  .nowbar .k{font-weight:700;font-size:18px;letter-spacing:.14em;color:var(--acc);text-transform:uppercase}
+  .nowbar .t{font-weight:800;font-size:40px;margin-top:3px}
+  /* ---- footer ---- */
+  .foot{height:96px;display:flex;background:#0f1115;border-top:1px solid var(--border)}
+  .badge{width:430px;background:var(--acc);color:#131519;display:flex;flex-direction:column;justify-content:center;padding:0 24px}
+  .badge .clk{font-weight:800;font-size:42px;line-height:1}
+  .badge .hl{font-weight:800;font-size:18px;letter-spacing:.1em;margin-top:5px;text-transform:uppercase}
+  .crawlWrap{flex:1;overflow:hidden;display:flex;align-items:center}
+  .crawl{display:inline-flex;white-space:nowrap;animation:crawl 46s linear infinite;font-weight:600;font-size:26px;color:var(--fg)}
+  .crawl b{color:var(--acc);font-weight:800}.crawl .x{color:var(--muted);opacity:.6;padding:0 26px}
+  /* ---- full-frame mode-switch stinger ---- */
+  .stinger{position:absolute;inset:0;z-index:20;transform:translateY(102%);
+           background:linear-gradient(180deg,#0a1a2e 0%,#1d3a5c 40%,#2b4976 50%,#1d3a5c 60%,#0a1a2e 100%);
+           display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .stinger.go{animation:stingIn 2.2s cubic-bezier(.7,0,.2,1) forwards}
+  .stinger svg{position:absolute;inset:0;width:100%;height:100%}
+  .stinger .txt{position:relative;z-index:2;text-align:center;text-shadow:0 4px 20px rgba(0,0,0,.5)}
+  .stinger .k{font-weight:800;font-size:30px;letter-spacing:.28em;color:#bfe0ff}
+  .stinger .t{font-weight:800;font-size:112px;letter-spacing:-.01em;margin-top:8px;color:#fff}
+  .stinger .s{font-weight:700;font-size:30px;color:#dff0ff;margin-top:10px;opacity:.92}
+  .lofi{position:absolute;right:34px;top:104px;z-index:4;display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;letter-spacing:.1em;color:rgba(145,153,164,.75);text-transform:uppercase}
+  .lofi .eq{display:inline-flex;gap:3px;align-items:flex-end;height:16px}
+  .lofi .eq i{width:3px;background:var(--muted);animation:eq 1s ease-in-out infinite}
+  .lofi .eq i:nth-child(2){animation-delay:.2s}.lofi .eq i:nth-child(3){animation-delay:.4s}.lofi .eq i:nth-child(4){animation-delay:.1s}
+  @keyframes eq{0%,100%{height:4px}50%{height:16px}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+  @keyframes kb{from{transform:scale(1.03)}to{transform:scale(1.14)}}
+  @keyframes l3in{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+  @keyframes crawl{to{transform:translateX(-50%)}}
+  @keyframes sweepUp{0%{transform:translateY(115%)}100%{transform:translateY(-115%)}}
+  @keyframes stingIn{0%{transform:translateY(102%)}22%{transform:translateY(0)}70%{transform:translateY(0)}100%{transform:translateY(-102%)}}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="hdr">
+    <div class="brand">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span><span class="live">LIVE</span><span class="subm">24/7 Tropical Weather</span>
+    </div>
+    <div class="mtag"><i></i><span id="mtag">LIVE OVERVIEW</span></div>
+  </div>
+
+  <div class="body">
+    <div class="side">
+      <div class="sideHd" id="sideHd">Active Systems</div>
+      <div class="sideBody" id="sideBody"></div>
+      <div class="chev" id="chev"><svg id="chevsvg" viewBox="0 0 60 104" preserveAspectRatio="none"></svg><div class="scan"></div></div>
+    </div>
+    <div class="main" id="main">
+      <img class="satimg" id="satimg" alt="">
+      <div class="kb" id="cycWrap">
+        <svg class="cyc" viewBox="0 0 200 200"><g class="spin">
+          <path class="arm a1" d="M100 100 C 150 78, 168 128, 132 156"/><path class="arm a1" d="M100 100 C 50 122, 32 72, 68 44"/>
+          <path class="arm a2" d="M100 100 C 128 148, 78 172, 50 138"/><path class="arm a2" d="M100 100 C 72 52, 122 28, 150 62"/>
+          <path class="arm a3" d="M100 100 C 158 108, 150 158, 108 158"/><path class="arm a3" d="M100 100 C 42 92, 50 42, 92 42"/>
+        </g><circle class="eye" cx="100" cy="100" r="8.5"/></svg>
+      </div>
+      <div class="grid"></div><div class="vign"></div>
+      <div class="lofi"><span class="eq"><i></i><i></i><i></i><i></i></span>Lo-Fi · Tropical Radio</div>
+      <div class="nowbar anim" id="nowbar"><div class="b"></div><div><div class="k" id="nowk">Now Showing</div><div class="t" id="nowt">Global TC Tracks</div></div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="badge"><div class="clk" id="clk">--:--</div><div class="hl">Live Headlines</div></div>
+    <div class="crawlWrap"><div class="crawl" id="crawl"></div></div>
+  </div>
+
+  <div class="stinger" id="stinger">
+    <svg viewBox="0 0 60 104" preserveAspectRatio="none" id="stingsvg"></svg>
+    <div class="txt"><div class="k" id="stk">NOW TRACKING</div><div class="t" id="stt">BAVI</div><div class="s" id="sts">Western Pacific · Category 5</div></div>
+  </div>
+</div>
+
+<audio id="bed" loop></audio>
+
+<script>
+(function(){
+"use strict";
+var CDN="https://cdn.triple-a-tropics.com";
+var CAT=[{lo:137,n:"C5",c:"#c084fc"},{lo:113,n:"C4",c:"#ff5bd0"},{lo:96,n:"C3",c:"#ff5b5b"},{lo:83,n:"C2",c:"#ff9f3a"},{lo:64,n:"C1",c:"#ffb83a"},{lo:34,n:"TS",c:"#3ad07d"},{lo:0,n:"TD",c:"#5dd3ff"}];
+function cat(kt){for(var i=0;i<CAT.length;i++)if(kt>=CAT[i].lo)return CAT[i];return CAT[CAT.length-1];}
+var LISTS={
+ al:["ARTHUR","BERTHA","CRISTOBAL","DOLLY","EDOUARD","FAY","GONZALO","HANNA","ISAIAS","JOSEPHINE","KYLE","LEAH","MARCO","NANA","OMAR","PAULETTE","RENE","SARA","TEDDY","VICKY","WILFRED"],
+ ep:["AMANDA","BORIS","CRISTINA","DOUGLAS","ELIDA","FAUSTO","GENEVIEVE","HERNAN","ISELLE","JULIO","KARINA","LOWELL","MARIE","NORBERT","ODALYS","POLO","RACHEL","SIMON","TRUDY","VANCE","WINNIE","XAVIER","YOLANDA","ZEKE"],
+ wp_upcoming:["ATSANI","ETAU","VAMCO","KROVANH","DUJUAN","SURIGAE"]
+};
+var BASINS={al:"ATLANTIC",ep:"EAST PACIFIC",wp:"WEST PACIFIC"};
+var SAMPLE={
+ active:[{name:"BAVI",basin:"wp",kt:140,invest:false,mslp:927,move:"WNW 12",peak:155},{name:"97W",basin:"wp",kt:30,invest:true},{name:"99W",basin:"wp",kt:25,invest:true},{name:"90C",basin:"cp",kt:25,invest:true},{name:"91C",basin:"cp",kt:25,invest:true},{name:"96E",basin:"ep",kt:30,invest:true}],
+ ace:{al:{ace:0.4,pct:7,rank:"85/176"},ep:{ace:4.4,pct:20,rank:"67/83"},wp:{ace:126,pct:244,rank:"20/82"}},
+ storms:{al:[{name:"ARTHUR",kt:40}],ep:[{name:"AMANDA",kt:55},{name:"BORIS",kt:60},{name:"CRISTINA",kt:45},{name:"DOUGLAS",kt:40}],
+  wp:[{name:"NURI",kt:29},{name:"SINLAKU",kt:154},{name:"HAGUPIT",kt:39},{name:"JANGMI",kt:74},{name:"MEKKHALA",kt:50},{name:"HIGOS",kt:55},{name:"MAYSAK",kt:50},{name:"BAVI",kt:140}]}
+};
+var S=JSON.parse(JSON.stringify(SAMPLE));
+
+function j(u){return fetch(u,{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.json();});}
+function loadAce(){["al","ep","wp"].forEach(function(b){j(CDN+"/feeds/"+b+"_ace_data.json").then(function(d){
+  var sby=d.storms_by_year||{},yr=Object.keys(sby).sort().pop(),list=sby[yr]||[];
+  S.storms[b]=list.map(function(s){return {name:(s.name||"").toUpperCase(),kt:+s.peak_wind_kt||0};});
+  var tot=list.reduce(function(a,s){return a+(+s.ace_total||0);},0);
+  S.ace[b]=S.ace[b]||{};S.ace[b].ace=+tot.toFixed(1);
+  if(d.current_rank&&d.total_seasons)S.ace[b].rank=d.current_rank+"/"+d.total_seasons;
+}).catch(function(){});});}
+function loadActive(){j(CDN+"/global_storms.geojson").then(function(g){var seen={},out=[];
+  (g.features||[]).forEach(function(f){var p=f.properties||{}; // AGENT: verify prop names vs live feed
+    var nm=(p.name||p.storm_name||p.id||"").toString().toUpperCase();if(!nm||seen[nm])return;
+    var active=(p.is_active!==undefined)?p.is_active:(p.active!==undefined?p.active:true);if(!active)return;
+    var kt=+(p.intensity||p.vmax||p.wind_kt||p.current_wind||p.peak_wind_kt||0);
+    var inv=/^\d{2}[a-z]$/i.test(nm)||p.invest===true||p.kind==="invest";
+    seen[nm]=1;out.push({name:nm,basin:(p.basin||"").toLowerCase(),kt:kt,invest:inv,mslp:+p.mslp||null,move:p.motion||p.move||null,peak:+p.peak_wind_kt||kt});});
+  if(out.length)S.active=out;}).catch(function(){});}
+function refresh(){loadAce();loadActive();}
+
+function bLabel(b){return ({al:"ATL",ep:"E.PAC",wp:"W.PAC",cp:"C.PAC",sh:"S.HEM",io:"N.IND"}[b]||b||"").toUpperCase();}
+function fmtRow(s){var c=s.invest?"#5dd3ff":cat(s.kt).c;var lab=s.invest?"Invest":cat(s.kt).n;
+  return '<div class="row"><span class="k" style="background:'+c+'"></span><b>'+s.name+'</b> '+lab+'<span class="m">'+(s.invest?bLabel(s.basin):s.kt+"kt")+'</span></div>';}
+function significant(){return S.active.some(function(s){return !s.invest&&s.kt>=64;});}
+function topStorm(){var a=S.active.filter(function(s){return !s.invest;}).sort(function(x,y){return y.kt-x.kt;});return a[0]||S.active[0];}
+function pActive(){return S.active.slice(0,7).map(fmtRow).join("")||'<div class="row">No active systems</div>';}
+function pAce(){return '<div style="margin-top:6px">'+["al","ep","wp"].map(function(b){var a=S.ace[b]||{},pct=Math.min(100,a.pct||0),col=pct>=100?"#ffb83a":(pct>=50?"#3ad07d":"#5dd3ff");
+  return '<div class="bar"><span class="lab">'+bLabel(b)+'</span><span class="tr"><span class="fl" style="width:'+pct+'%;background:'+col+'"></span></span>'+(a.ace!=null?a.ace:"–")+'</div>';}).join("")+'</div>';}
+function pSeason(){var named=0,h=0,c5=0,ace=0;["al","ep","wp"].forEach(function(b){(S.storms[b]||[]).forEach(function(s){named++;if(s.kt>=64)h++;if(s.kt>=137)c5++;});ace+=(S.ace[b]&&S.ace[b].ace)||0;});
+  return [["NAMED",named],["HURR / TYPHOONS",h],["CAT 5s",c5],["GLOBAL ACE",Math.round(ace)]].map(function(r){return '<div class="big"><span class="l">'+r[0]+'</span><span class="v">'+r[1]+'</span></div>';}).join("");}
+function pNames(b){var u={};(S.storms[b]||[]).forEach(function(s){u[s.name]=s.kt;});
+  var list=(b==="wp")?(S.storms.wp||[]).map(function(s){return s.name;}).concat(LISTS.wp_upcoming):(LISTS[b]||[]).slice();
+  return {hd:"2026 "+(BASINS[b]||b.toUpperCase())+" NAMES",html:'<div class="nmlist">'+list.map(function(n){if(u[n]!=null){var c=cat(u[n]);return '<div class="nm u" style="--c:'+c.c+'">'+n+'</div>';}return '<div class="nm">'+n+'</div>';}).join("")+'</div>'};}
+function pVitals(){var s=topStorm()||{};return [["CATEGORY",s.kt?cat(s.kt).n.replace("C",""):"–"],["WIND",(s.kt||"–")+" kt"],["PRESSURE",(s.mslp||"–")+(s.mslp?" mb":"")],["MOTION",s.move||"–"],["PEAK",(s.peak||s.kt||"–")+" kt"]].map(function(r){return '<div class="big"><span class="l">'+r[0]+'</span><span class="v">'+r[1]+'</span></div>';}).join("");}
+function overviewPanels(){return [{hd:"Active Systems",html:pActive()},{hd:"Basin ACE vs Normal",html:pAce()},{hd:"2026 Season",html:pSeason()},pNames("al"),pNames("ep"),pNames("wp")];}
+function stormPanels(){var s=topStorm()||{name:"Storm"};return [{hd:s.name+" · Vitals",html:pVitals()},{hd:"Active Systems",html:pActive()},pNames(s.basin||"wp")];}
+var OV_STAGE=[["Global","2026 Global TC Tracks"],["Satellite","Full-disk Infrared"],["Ocean","SST Anomaly"],["Subseasonal","MJO · Velocity Potential"]];
+function stormStage(){var s=topStorm()||{name:"Storm"};return [["CycloLab",s.name],["Satellite",s.name+" · Infrared"],["Recon",s.name+" · HDOBS"],["Microwave",s.name+" · 89 GHz"],["Models","HAFS-A"]];}
+
+(function(){var blues=['#08182c','#0a1f38','#0e2c50','#123a63','#1a4e86','#2360a8','#2f7bd0','#559ce6','#84bef6','#b3daff','#eaf5ff'];
+ function field(){var W=60,N=blues.length,bh=104/(N-1),dep=bh*0.62,s='';for(var i=0;i<N;i++){var y=104-i*bh;var p=[[0,y+dep],[W/2,y],[W,y+dep],[W,y+bh+dep],[W/2,y+bh],[0,y+bh+dep]];s+='<polygon points="'+p.map(function(a){return a[0]+','+a[1]}).join(' ')+'" fill="'+blues[i]+'"/>';}return s;}
+ document.getElementById('chevsvg').innerHTML=field();document.getElementById('stingsvg').innerHTML=field();})();
+
+var st=document.getElementById('stage'),chev=document.getElementById('chev'),sideHd=document.getElementById('sideHd'),sideBody=document.getElementById('sideBody');
+var nowk=document.getElementById('nowk'),nowt=document.getElementById('nowt'),nowbar=document.getElementById('nowbar'),sg=document.getElementById('stinger');
+var mode="ov",panels=[],seq=[],pI=0,sI=0,pT,sT;
+function accFor(m){return m==="sf"?cat((topStorm()||{}).kt||0).c:"#ffb83a";}
+function applyMode(m){mode=m;st.style.setProperty('--acc',accFor(m));document.getElementById('mtag').textContent=m==="sf"?"STORM FOCUS":"LIVE OVERVIEW";
+  panels=(m==="sf")?stormPanels():overviewPanels();seq=(m==="sf")?stormStage():OV_STAGE;pI=0;sI=0;paintSide();paintStage();
+  clearInterval(pT);clearInterval(sT);pT=setInterval(cycleSide,7000);sT=setInterval(cycleStage,9000);}
+function paintSide(){var p=panels[pI]||{hd:"",html:""};sideHd.textContent=p.hd;sideBody.innerHTML=p.html;}
+function chevSwap(f){chev.classList.remove('go');void chev.offsetWidth;chev.classList.add('go');setTimeout(f,460);}
+function cycleSide(){pI=(pI+1)%panels.length;chevSwap(paintSide);}
+function paintStage(){var s=seq[sI]||["",""];nowk.textContent=s[0];nowt.textContent=s[1];nowbar.classList.remove('anim');void nowbar.offsetWidth;nowbar.classList.add('anim');}
+function cycleStage(){sI=(sI+1)%seq.length;paintStage();}
+function stinger(m){var a=accFor(m);document.documentElement.style.setProperty('--acc',a);
+  if(m==="sf"){var s=topStorm()||{name:"STORM"};document.getElementById('stk').textContent="NOW TRACKING";document.getElementById('stt').textContent=s.name;document.getElementById('sts').textContent=(bLabel(s.basin)||"")+" · "+(s.kt?cat(s.kt).n:"");}
+  else{document.getElementById('stk').textContent="RETURNING TO";document.getElementById('stt').textContent="Live Overview";document.getElementById('sts').textContent="Global tropics";}
+  sg.classList.remove('go');void sg.offsetWidth;sg.classList.add('go');setTimeout(function(){applyMode(m);},560);}
+function checkMode(){var want=significant()?"sf":"ov";if(want!==mode)stinger(want);}
+function buildCrawl(){var parts=[];S.active.forEach(function(s){parts.push([s.name,(s.invest?"INVEST · "+bLabel(s.basin):(s.kt+" KT · "+cat(s.kt).n+" · "+bLabel(s.basin)))]);});
+  ["al","ep","wp"].forEach(function(b){var a=S.ace[b]||{};if(a.ace!=null)parts.push([bLabel(b),"ACE "+a.ace+(a.pct?" · "+a.pct+"% OF NORMAL":"")]);});
+  var seg=parts.map(function(p){return '<b>'+p[0]+'</b> '+p[1]+'<span class="x">◆</span>';}).join("");document.getElementById('crawl').innerHTML='<span>'+seg+'</span><span>'+seg+'</span>';}
+function clock(){var d=new Date(),z=function(n){return String(n).padStart(2,'0')};document.getElementById('clk').textContent=z(d.getUTCHours())+':'+z(d.getUTCMinutes())+' UTC';}
+
+refresh();applyMode("ov");buildCrawl();clock();
+setInterval(clock,1000);
+setInterval(function(){refresh();buildCrawl();},5*60*1000);
+setInterval(checkMode,20000);
+setTimeout(function(){buildCrawl();applyMode(mode);checkMode();},4000);
+})();
+</script>
+</body>
+</html>
