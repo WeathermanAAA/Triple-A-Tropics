@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>Subseasonal · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Subseasonal tropical drivers, rendered in-house daily: MJO phase-space (RMM) diagram and amplitude, and global 200/850-hPa velocity-potential anomalies with the divergent wind.">
+<meta name="description" content="Subseasonal tropical drivers, rendered in-house daily: MJO phase-space (RMM) diagram and amplitude, global 200/850-hPa velocity-potential anomalies with the divergent wind, and time-longitude Hovmöller diagrams with Wheeler-Kiladis equatorial-wave overlays.">
 <meta property="og:title" content="Subseasonal · Triple-A-Tropics">
-<meta property="og:description" content="MJO RMM phase diagram + amplitude and global velocity-potential anomalies, updated daily.">
+<meta property="og:description" content="MJO RMM phase diagram + amplitude, velocity-potential anomalies, and wave-filtered Hovmöller diagrams, updated daily.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
@@ -54,6 +54,14 @@
     border-color: var(--accent, #49b6c8); }
   .ss-winnote { color: var(--muted, #8ea2bd); font-size: 12px;
     margin: -6px 0 12px; }
+  /* Hovmöller selector: labeled rows of the same quiet segmented control */
+  .ss-hovsel { display: grid; grid-template-columns: max-content 1fr;
+    gap: 8px 14px; align-items: start; margin: 0 0 14px; }
+  .ss-hovsel .lbl { color: var(--muted, #8ea2bd); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+    padding-top: 7px; }
+  .ss-hovsel .ss-winsel { margin: 0; }
+  .ss-hovcard { max-width: 780px; /* portrait panel; full-bleed would tower */ }
 </style>
 </head>
 <body>
@@ -131,6 +139,38 @@
     </div>
   </section>
 
+  <section class="ss-sec" id="hov">
+    <h2>Time-Longitude (Hovmöller) Diagrams</h2>
+    <p class="ss-sub">How the tropics are propagating: anomalies band-averaged
+    in latitude and drawn against time (down the page) and longitude. The OLR
+    view overlays Wheeler-Kiladis space-time-filtered contours for the
+    operational wave bands (MJO, Kelvin, equatorial Rossby, MRG/TD-type,
+    low-frequency) - negative (enhanced-convection) contours solid, positive
+    dashed. Circular markers are the first tcvitals fix of each designated
+    tropical cyclone. The newest ~2 weeks of the filtered contours are
+    amplitude-damped by the real-time filter, as each panel states.
+    <span id="hov-asof" class="ss-asof"></span></p>
+    <div class="ss-hovsel" id="hov-sel" hidden>
+      <span class="lbl">Field</span>
+      <div class="ss-winsel" id="hov-var" role="group" aria-label="field"></div>
+      <span class="lbl" id="hov-wave-lbl">Waves</span>
+      <div class="ss-winsel" id="hov-wave" role="group" aria-label="wave overlays"></div>
+      <span class="lbl">Band</span>
+      <div class="ss-winsel" id="hov-band" role="group" aria-label="latitude band"></div>
+      <span class="lbl">Days</span>
+      <div class="ss-winsel" id="hov-days" role="group" aria-label="days shown"></div>
+      <span class="lbl">Sector</span>
+      <div class="ss-winsel" id="hov-region" role="group" aria-label="longitude sector"></div>
+    </div>
+    <figure class="ss-card ss-hovcard">
+      <img id="img-hov" alt="Time-longitude Hovmöller diagram of tropical anomalies with equatorial-wave-filtered contours and TC genesis markers">
+      <figcaption id="hov-caption">Shading: the selected field's anomaly vs
+      its 1991-2020 climatology. OLR contours: wave-filtered anomalies,
+      color-coded by mode. Time runs down the page, newest at the bottom.
+      </figcaption>
+    </figure>
+  </section>
+
   <div class="ss-note">
     <b>Method & data.</b> All graphics on this page are computed and rendered
     by Triple-A-Tropics. MJO: RMM index values from the Australian Bureau of
@@ -142,8 +182,14 @@
     amplitude-damped, as stated on the map); anomalies against a 1991–2020
     monthly χ climatology built from ERA5 monthly-mean winds (ECMWF, via
     the University of Hawaiʻi APDRC) with the identical solve.
-    Automated objective diagnostics: experimental, never official guidance.
-    Updated daily.
+    Hovmöllers: OLR daily means from the NOAA CDR (via NOAA PSL), anomalies
+    vs the same dataset's 1991–2020 daily climatology (mean + first three
+    harmonics), space-time filtered per Wheeler &amp; Kiladis (1999) with the
+    Wheeler &amp; Weickmann (2001) real-time method; zonal wind from daily
+    GFS analyses vs an ERA5 1991–2020 monthly climatology; χ200 from the
+    velocity-potential product's own daily archive; TC-genesis markers from
+    tcvitals via UCAR/RAL. Automated objective diagnostics: experimental,
+    never official guidance. Updated daily.
   </div>
 </div>
 
@@ -210,6 +256,73 @@
       document.getElementById('vp-asof').textContent =
         'Daily GFS analyses through ' + m.windows[current].end + '.';
     }).catch(function () { setChi(null); });
+
+  // Hovmöller selector (meta-driven, like the VP windows; falls back to
+  // the baked default panel if the meta fetch fails)
+  var HOV_FALLBACK = 'hov/hov_olr_all_eq_60_glob.png';
+  var hovImg = document.getElementById('img-hov');
+  var VAR_ORDER = ['olr', 'u850', 'u200', 'chi200'];
+  var VAR_LABELS = { olr: 'OLR + waves', u850: 'u850', u200: 'u200',
+                     chi200: 'χ200' };
+  var WAVE_LABELS = { all: 'All waves', mjo: 'MJO', kelvin: 'Kelvin',
+                      er: 'ER', mrgtd: 'MRG-TD', lowfreq: 'Low-freq',
+                      none: 'None' };
+  fetch(CDN + 'hov_meta.json' + bust).then(function (r) { return r.json(); })
+    .then(function (m) {
+      var vars = VAR_ORDER.filter(function (v) { return m.vars && m.vars[v]; });
+      if (!vars.length || !m.template) { hovImg.src = CDN + HOV_FALLBACK + bust; return; }
+      var st = { v: vars[0], w: 'all', b: 'eq', d: m.days[0], r: 'glob' };
+      if (!(st.b in m.bands)) st.b = Object.keys(m.bands)[0];
+      if (!(st.r in m.regions)) st.r = Object.keys(m.regions)[0];
+      if (m.waves.indexOf(st.w) < 0) st.w = m.waves[0];
+      var rows = {
+        v: document.getElementById('hov-var'),
+        w: document.getElementById('hov-wave'),
+        b: document.getElementById('hov-band'),
+        d: document.getElementById('hov-days'),
+        r: document.getElementById('hov-region')
+      };
+      function buildRow(el, keys, labels, field) {
+        keys.forEach(function (k) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.dataset.k = String(k);
+          b.textContent = (labels && labels[String(k)]) || String(k);
+          b.onclick = function () { st[field] = k; render(); };
+          el.appendChild(b);
+        });
+      }
+      function mark(el, k) {
+        Array.prototype.forEach.call(el.children, function (b) {
+          b.className = b.dataset.k === String(k) ? 'on' : '';
+        });
+      }
+      buildRow(rows.v, vars, VAR_LABELS, 'v');
+      buildRow(rows.w, m.waves, WAVE_LABELS, 'w');
+      buildRow(rows.b, Object.keys(m.bands), m.bands, 'b');
+      buildRow(rows.d, m.days, null, 'd');
+      buildRow(rows.r, Object.keys(m.regions), m.regions, 'r');
+      function render() {
+        var isOlr = st.v === 'olr';
+        rows.w.style.display = isOlr ? '' : 'none';
+        document.getElementById('hov-wave-lbl').style.display =
+          isOlr ? '' : 'none';
+        var f = isOlr
+          ? m.template_olr.replace('{wave}', st.w).replace('{band}', st.b)
+              .replace('{days}', st.d).replace('{region}', st.r)
+          : m.template.replace('{var}', st.v).replace('{band}', st.b)
+              .replace('{days}', st.d).replace('{region}', st.r);
+        hovImg.src = CDN + f + bust;
+        Object.keys(rows).forEach(function (k) { mark(rows[k], st[k]); });
+        var info = m.vars[st.v] || {};
+        document.getElementById('hov-asof').textContent =
+          'Data through ' + (info.through || '?') +
+          (m.genesis_markers != null
+            ? ' · ' + m.genesis_markers + ' TC-genesis markers.' : '.');
+      }
+      document.getElementById('hov-sel').hidden = false;
+      render();
+    }).catch(function () { hovImg.src = CDN + HOV_FALLBACK + bust; });
 })();
 </script>
 </body>

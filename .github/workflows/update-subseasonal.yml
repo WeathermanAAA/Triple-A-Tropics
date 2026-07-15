@@ -14,6 +14,15 @@
 # saved after each render. A normal daily run tops up 1-2 missing days;
 # backfill_days=250 on a manual dispatch bootstraps a cold archive in one
 # run (~250 days x 4 GFS cycles, ~300 KB each — well inside the timeout).
+#
+# Phase 2 Hovmöllers (generate_hovmollers.py) run AFTER the VP render so
+# their chi200 panels read the chi archive the VP step just topped up.
+# Their zonal-wind panels ride an equivalent rolling daily-u archive
+# (_buildcache/u_daily_archive.nc, GFS 1p00 UGRD 200/850 over 22S-22N)
+# with the same restore/save bracketing; the same backfill_days input
+# bootstraps it cold. The OLR/wave panels need no archive (PSL OPeNDAP
+# each run) and the generator isolates each section, so one flaky
+# upstream never blanks the others.
 name: update-subseasonal
 
 on:
@@ -88,6 +97,38 @@ jobs:
           test -f subseasonal/out/chi_daily_archive.nc || exit 0
           aws s3 cp subseasonal/out/chi_daily_archive.nc \
             s3://triple-a-tropics-media/_buildcache/chi_daily_archive.nc \
+            --endpoint-url "$R2_ENDPOINT"
+
+      - name: Restore daily-u archive from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          aws s3 cp \
+            s3://triple-a-tropics-media/_buildcache/u_daily_archive.nc \
+            subseasonal/out/u_daily_archive.nc \
+            --endpoint-url "$R2_ENDPOINT" \
+            || echo "no u archive yet — cold start (bootstraps itself)"
+
+      - name: Render Hovmöllers (OLR + waves, u850/u200, chi200)
+        run: |
+          python generate_hovmollers.py \
+            --u-backfill-days "${{ inputs.backfill_days || '45' }}"
+
+      # runs even if the render step failed after backfill — a day's
+      # fetched analyses are never lost to a rendering bug
+      - name: Save daily-u archive to R2
+        if: always()
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          test -f subseasonal/out/u_daily_archive.nc || exit 0
+          aws s3 cp subseasonal/out/u_daily_archive.nc \
+            s3://triple-a-tropics-media/_buildcache/u_daily_archive.nc \
             --endpoint-url "$R2_ENDPOINT"
 
       - name: Publish to R2
