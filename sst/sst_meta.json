@@ -1,6 +1,6 @@
 {
-  "date": "2026-07-13",
-  "updated_utc": "2026-07-14 22:58 UTC",
+  "date": "2026-07-14",
+  "updated_utc": "2026-07-15 15:06 UTC",
   "climo_years": [
     1991,
     1992,
@@ -102,7 +102,7 @@
   "baseline_start": 1991,
   "baseline_end": 2020,
   "record_start": 1982,
-  "global_mean_ssta": 0.6751989028515761,
+  "global_mean_ssta": 0.6630992045329659,
   "change_periods": [
     7,
     15,
