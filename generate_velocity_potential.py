@@ -26,13 +26,13 @@ Products (window selector on the page; 30-day is the default):
           amplitude-damped — the retained fraction is PRINTED ON the map.
           Needs >=61 archived days; skipped honestly below that.
 
-Anomalies are vs the 1991-2020 NCEP/NCAR R1 monthly chi climatology
-(subseasonal/chi_climo_1991_2020.nc, same T21 solve both sides).
-R1-vs-GFS is a cross-model baseline that runs a touch hot; the ERA5
-rebuild (build_chi_climatology.py) swaps in the moment its .nc lands.
-CREDITS MUST MATCH THE COMMITTED FILE — when the ERA5 .nc is committed,
-flip the credit strings here + subseasonal/index.html in the SAME
-commit, and never the other way around.
+Anomalies are vs the 1991-2020 ERA5 monthly chi climatology
+(subseasonal/chi_climo_1991_2020.nc, built by build_chi_climatology.py:
+ERA5 monthly-mean winds subsampled to 1 deg, the SAME T21 solve both
+sides — like-vs-modern-like under the GFS analyses at the planetary
+scales this product keeps; the earlier NCEP/NCAR R1 baseline ran hot).
+CREDITS MUST MATCH THE COMMITTED FILE — the credit strings here +
+subseasonal/index.html flip together with the .nc, never separately.
 Quiver arrows are the ANOMALOUS divergent wind (grad of the plotted
 anomaly chi). Maps span 60S-60N (the 45-deg band clipped the
 subtropical centers).
@@ -337,7 +337,7 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     cb.outline.set_edgecolor(GRID)
     ax.text(0.0, -0.12,
             "Data: NOAA NCEP GFS analyses (daily means) · climatology: "
-            "NCEP/NCAR Reanalysis 1 1991–2020 (NOAA PSL), χ solved "
+            "ERA5 monthly means 1991–2020 (ECMWF, via UH APDRC), χ solved "
             "identically · spectral solve truncated T21",
             transform=ax.transAxes, color=MUTED_COLOR, alpha=0.9, fontsize=8)
     fig.tight_layout()
