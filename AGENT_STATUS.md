@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-16 ~18:0x UTC — GOES-19 outage handling landed (honest pause/resume + NOAA first-hour nav caveat; satellite already recovering — CONUS back 17:16Z). Full-site staleness audit in flight._
+_Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migration is the systemic cause (poller stall + unstarted emit crons); two GH roots fixed (analogs shapely, geo rider timeout); standing freshness monitor live (feeds/freshness.json, red-once alerting). GOES-19 handling landed earlier (@0c5bceac). Subseasonal Phase 3 in progress._
 
 ---
 
@@ -17,22 +17,114 @@ _Last update: 2026-07-16 ~18:0x UTC — GOES-19 outage handling landed (honest p
 2. **(carried) EUMETSAT key** (`EUMETSAT_CONSUMER_KEY`/`_SECRET` as TAT
    Actions secrets + box `.env`) — lights the Meteosat wedge in the World
    composite.
-3. **BOX pull+rebuild for tsr @863d6df** (the ASCAT-backdrop fix chain:
-   antimeridian bboxes + 429 backoff + internal rate tier + the
-   dateline-backdrop antipode fix). Same session as RUNBOOK-RENDER §2:
-   `cd tsr && git pull && docker compose -p tat-render -f
-   docker-compose.render.yml build && docker compose -p tat-render -f
-   docker-compose.render.yml up -d`. Until then the box runs the old
-   code: swpac/wpac basin backdrops keep failing exactly as reported
-   (the GH stopgap schedule is retired, so ONLY the box delivers this).
-4. **Stream encoder go-live** (everything is built + container-tested,
+3. **BOX pull+rebuild for tsr @863d6df — now URGENT** (2026-07-16 audit:
+   the floater poller has been STALLED since Jul 15 ~01:00Z, ~44 h — the
+   whole floaters/ tree frozen, every MW/ASCAT/recon backdrop + per-storm
+   floater with it; the stall predates the GOES-19 anomaly by ~19 h and
+   freezes Himawari regions too, so it is the box, not the satellite).
+   Same session as RUNBOOK-RENDER §2: `cd tsr && git pull && docker
+   compose -p tat-render -f docker-compose.render.yml build && docker
+   compose -p tat-render -f docker-compose.render.yml up -d` — then
+   confirm floaters/manifest.json `generated_utc` moves (or watch
+   feeds/freshness.json flip those rows fresh).
+4. **BOX: start the remaining emit suites** (audit: emit-cron runs ONLY
+   conus): set `S2_CRON_SUITES="conus fd himawari9-wpac himawari9-fd"` +
+   restart emit-cron. After the suites are emitting on cron, the
+   emit-geo-global.yml GH stopgap cron for fd-ir/wpac-ir can be disabled
+   per its own header (the final migration cutover).
+5. **BOX: post-restore band failures** — since the GOES-19 restore every
+   conus product needing C01–C06/C10–C12 fails each sweep while pure
+   longwave emits fine; upstream NODD verified complete for all bands.
+   Check the emit-cron logs for the per-band exception (likely fixed by
+   the same pull+rebuild; verify truecolor/sandwich refresh after ③).
+6. **BOX: CycloLab adv/cone sub-task stuck** — ELIDA still shows
+   advisory 1 (Jul 14 21:00Z) while the same poller's feeds are
+   minutes-fresh; check the intensity poller's adv fetch loop.
+7. **cyclolab/index.html decision** — the router maps /cyclolab/ root to
+   a lab index that was never published (branded 404 serves now): either
+   publish an index or drop the root mapping.
+8. **Stream encoder go-live** (everything is built + container-tested,
    RUNBOOK-STREAM.md §1): ① provision a small VPS of its own (2-4 vCPU,
    4 GB, Docker), ② grab the YouTube stream key (YouTube Studio → Go
    live → Streaming software), ③ three commands from the runbook. The
    /stream/ page it broadcasts is already live and self-updating.
-5. _(agent appends new steps here as the re-kick queue lands)_
+9. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-16 (~21:3x UTC) — FULL-SITE STALENESS AUDIT + REMEDIATION (the box migration IS the systemic cause)
+
+Andrew's read was right. A 181-row origin-freshness audit (8 parallel
+audit agents; every manifest fetched cache-busted at R2, committed
+products checked via git on origin/main, `gh run list` for every GH
+writer) found **nothing edge-cache-only — every stale product is stale at
+the origin**, and the root causes cluster almost entirely on the
+half-finished box migration.
+
+### Audit verdict by family (full row-level evidence in the session; the
+### standing monitor below now tracks all of it continuously)
+
+| family | state | root cause |
+| --- | --- | --- |
+| ACE + tracks pages (3 basins + global, committed) | FRESH (19:45Z run) | — |
+| live feeds (feeds/*_{ace,tracks}, global_storms.geojson) | FRESH (minutes old) | box intensity poller healthy |
+| SST statics / subsurface / ARMOR3D / season GIFs / SST MP4s | FRESH | — |
+| subseasonal (vp/hov/mjo metas) | FRESH (15:41Z run) | — |
+| MW / ASCAT / recon swaths (GH writers) | FRESH | — |
+| enscenters (5-workflow managed manifest) | FRESH (20:52Z) | — |
+| explorer goes19/conus IR+longwave | FRESH | box conus emit-cron healthy |
+| **explorer goes19/conus reflective+some-IR products** (truecolor, sandwich, RGBs, c01–c06/c10–c12) | **STALE since restore** | box-side per-band emit failure AFTER the GOES-19 restore — upstream NODD verified complete for ALL bands; pure-longwave products emit fine. Needs box logs. |
+| **explorer goes19/fd + himawari9/wpac full suites** | **STALE (one-shot emits Jul 9/10)** | box emit-cron runs ONLY the conus suite — the queued `S2_CRON_SUITES="conus fd himawari9-wpac himawari9-fd"` + restart was never executed |
+| **explorer himawari9/fd suite** | **NEVER EMITTED** | same queued box step |
+| explorer fd/ir + wpac/ir + geo world composite | FRESH (GH rider/stopgap) | rider timeouts post-restore starved the geo step twice — **fixed** (see below) |
+| **floater fleet + MW/ASCAT/recon backdrops** | **STALE since Jul 15 ~01:00Z (~44 h)** | box floater poller stalled — began ~19 h BEFORE the GOES-19 anomaly and froze Himawari-fed regions too, so NOT the satellite; consistent with the undeployed tsr 863d6df chain. Box restart needed. |
+| **HAFS manifest** | STALE (Jul 13) | known, fix in flight elsewhere — recorded only (RENDER_HAFS_ON_CRON gate) |
+| **CycloLab analogs** | was MISSING | **root-caused + FIXED here**: update-analogs ran green for days while every storm failed on `ModuleNotFoundError: shapely` and "wrote 0 storm(s)" |
+| CycloLab adv/cone (ELIDA) | STALE (advisory 1 of ~8) | box intensity poller's adv sub-task stuck while its other outputs are minutes-fresh — box-side look needed |
+| cyclolab/index.html (lab root) | missing | router maps the root but no index was ever published — Andrew's call: publish one or drop the mapping |
+
+### Fixes landed (root, not fix-forward)
+
+- **update-analogs.yml + generate_analogs.py (@e396bba4)**: `shapely`
+  added to the install; the generator now FAILS LOUDLY when every active
+  storm errors, so a systemic failure can never show green again.
+  Verifies itself on the next 6-h cron (dispatch needs actions:write this
+  Codespace token doesn't have).
+- **emit-geo-global.yml (@e396bba4)**: the diagnostics-rider step gets
+  `continue-on-error` + per-command 22-min timeouts — a step TIMEOUT
+  (which `|| echo` never catches) was killing the job before the geo
+  step, which starved the world composite ~2 h post-restore when NODD
+  reads slowed to ~7 min/file.
+- **GOES-19 anomaly handling (@0c5bceac)** — separate entry below.
+
+### Migration / single-writer verdict (task: "no two writers, one key")
+
+- feeds/* + global_storms.geojson: box poller is the SOLE writer —
+  verified in the run logs that update-ace.yml's upload steps are skipped
+  (`WRITE_LIVE_FEEDS=false`) and floater-worker.yml's schedule stays
+  retired (dispatch-only emergency lever). Correctly single-writer.
+- models/enscenters: five workflows, ONE manifest, managed by the CAS
+  merge script — safe by design, verified fresh.
+- models/hafs: designed dual-writer with never-regress If-Match merge —
+  current problem is the opposite (zero live writers; in-flight fix).
+- explorer `fd/ir`, `wpac/ir`, geo suite: GH rider + box suite both
+  writable BY DESIGN (ready-marker dedup) — the workflow header already
+  says to disable the GH cron once the box crons start. That cutover is
+  the remaining migration step and it is box-side (queued below).
+- MW/ASCAT/recon swaths: GH-only. Floater tree: box-only (that
+  single-writer decision is why the poller stall has no fallback).
+
+### Standing freshness monitor (@70e2760c) — Andrew stops eyeballing
+
+`scripts/freshness_probe.py` + `.github/workflows/freshness-monitor.yml`
+(half-hourly): probes 32 origin endpoints (every family above), compares
+age against each writer's cadence (stale > max(3×cadence, cadence+45 min)
+— the same margin the site's honesty gates use), publishes the rollup to
+`feeds/freshness.json`, and turns the run RED exactly once when a product
+NEWLY goes stale (GH failure email = the alert; known-down products
+report but never alarm). Live validation at build time: 6/32 stale, all
+with known causes (the box items + HAFS above). When the box work lands,
+prune the `known_down` notes in the registry so alerting re-arms.
 
 ## 2026-07-16 (~18:0x UTC) — GOES-19 ANOMALY HANDLING: honest pause/resume + first-hour nav caveat
 
