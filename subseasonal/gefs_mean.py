@@ -84,6 +84,105 @@ def newest_complete_init(now: dt.datetime | None = None) -> dt.datetime:
     return init
 
 
+MEMBERS = ["c00"] + [f"p{i:02d}" for i in range(1, 31)]
+_RMM_LONS = np.arange(0.0, 360.0, 2.5)
+
+
+def _band15_to_rmm(field: np.ndarray, lats: np.ndarray,
+                   lons: np.ndarray) -> np.ndarray:
+    """(lat, lon) -> 15S-15N cos-weighted mean on the 144-point RMM
+    longitudes (periodic interpolation)."""
+    sel = np.abs(lats) <= 15.0
+    w = np.cos(np.deg2rad(lats[sel]))
+    row = (field[sel] * w[:, None]).sum(axis=0) / w.sum()
+    ext_l = np.concatenate([lons, lons[:1] + 360.0])
+    ext = np.concatenate([row, row[:1]])
+    return np.interp(_RMM_LONS, ext_l, ext)
+
+
+def fetch_member_rmm_day(args):
+    """((init, member, dd)) -> (member, dd, date, olr[144], u850[144],
+    u200[144]) or None — the RMM-ready 15S-15N band rows for ONE member
+    forecast day. Daily proxies from TWO fxx per day (budget: 31 members
+    x 16 days already means ~1000 byte-ranged opens): winds instantaneous
+    at 12Z and the following 00Z; OLR from the 6-12 h and 18-24 h ULWRF
+    average buckets (ULWRF is a 6-h-resetting average and DOES NOT EXIST
+    at f000 — a naive from-0 loop breaks the OLR term only). Zheng et al.
+    2023 used full daily means; this 2-sample proxy is smoothed anyway by
+    the EOF projection's intraseasonal filtering."""
+    init, member, dd = args
+    from herbie import Herbie
+    warnings.filterwarnings("ignore")
+    got = {"olr": [], "u850": [], "u200": []}
+    for fxx in (24 * dd - 12, 24 * dd):
+        if fxx > MAX_LEAD_H or fxx <= 0:
+            continue
+        try:
+            h = Herbie(init, model="gefs", product="atmos.5",
+                       member=member, fxx=fxx, verbose=False)
+            if not h.grib:
+                continue
+            ds = h.xarray(":(UGRD|VGRD):(200|850) mb")
+            if isinstance(ds, list):
+                import xarray as xr
+                ds = xr.merge(ds, compat="override")
+            glats = ds.latitude.values.astype(float)
+            glons = ds.longitude.values.astype(float)
+            for lv, key in ((850.0, "u850"), (200.0, "u200")):
+                got[key].append(_band15_to_rmm(
+                    ds["u"].sel(isobaricInhPa=lv).values, glats, glons))
+            do = h.xarray(":ULWRF:top of atmosphere:")
+            if isinstance(do, list):
+                do = do[0]
+            var = [v for v in do.data_vars][0]
+            got["olr"].append(_band15_to_rmm(
+                do[var].values, do.latitude.values.astype(float),
+                do.longitude.values.astype(float)))
+        except Exception as e:  # noqa: BLE001 — a missing step is expected
+            print(f"    gefs {member} d{dd} f{fxx:03d}: {e}")
+    if not got["u850"] or not got["olr"]:
+        return None
+    date = (init + dt.timedelta(days=dd)).date()
+    return (member, dd, date, np.mean(got["olr"], axis=0),
+            np.mean(got["u850"], axis=0), np.mean(got["u200"], axis=0))
+
+
+def fetch_members_rmm(init: dt.datetime, days: int = MAX_DAYS,
+                      workers: int = 6, members=None):
+    """{member: (dates[], olr[nd,144], u850[nd,144], u200[nd,144])} for
+    every member's contiguous forecast tail (a hole ends that member's
+    tail). Spawned pool, ~2 opens per (member, day)."""
+    import multiprocessing as mp
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    members = members or MEMBERS
+    ctx = mp.get_context("spawn")
+    here = os.path.dirname(os.path.abspath(__file__))
+    jobs = [(init, m, dd) for m in members for dd in range(1, days + 1)]
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
+                             initializer=_worker_path_init,
+                             initargs=(here,)) as ex:
+        results = list(ex.map(fetch_member_rmm_day, jobs, chunksize=4))
+    by = {}
+    for r in results:
+        if r is not None:
+            by.setdefault(r[0], {})[r[1]] = r
+    out = {}
+    for m, per in by.items():
+        dates, olr, u850, u200 = [], [], [], []
+        for dd in range(1, days + 1):
+            if dd not in per:
+                break                  # contiguous tail per member
+            _, _, date, o, a, b = per[dd]
+            dates.append(date)
+            olr.append(o)
+            u850.append(a)
+            u200.append(b)
+        if dates:
+            out[m] = (dates, np.stack(olr), np.stack(u850), np.stack(u200))
+    return out
+
+
 def _worker_path_init(path: str) -> None:
     """Spawned workers re-import this module by name — subseasonal/ must
     be on THEIR sys.path too (the parent inserted it manually)."""

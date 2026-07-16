@@ -121,7 +121,9 @@
     time-averaged the way velocity potential is meant to be read: daily GFS
     analyses → χ solved spectrally (T21) → running means (or the 20–100-day
     MJO-band filter) → anomalies against a 1991–2020 ERA5
-    climatology computed with the identical solve. At 200 hPa, green (negative χ′)
+    climatology computed with the identical solve; the +7/+10-day map sets
+    and the Hovmöller tails use the NCEP GEFS ensemble-mean forecast,
+    always labeled with init and valid time. At 200 hPa, green (negative χ′)
     marks anomalous upper-level divergence, enhanced deep convection;
     brown marks the suppressed, sinking branch. The 850-hPa panel shows
     the low-level return flow: enhanced convection sits over its brown
@@ -176,7 +178,13 @@
   <div class="ss-note">
     <b>Method & data.</b> All graphics on this page are computed and rendered
     by Triple-A-Tropics. MJO: RMM index values from the Australian Bureau of
-    Meteorology (Wheeler &amp; Hendon 2004). Velocity potential: daily means
+    Meteorology (Wheeler &amp; Hendon 2004); the RMM forecast projects NOAA
+    NCEP GEFS ensemble members (OLR + u850 + u200, out to the model's
+    ~16-day limit) onto the published WH04 EOF structures with the
+    operational preprocessing (seasonal cycle and prior-120-day mean
+    removed on the observation+forecast concatenation), members thin and
+    the ensemble mean bold; the ensemble mean is smoothed by construction
+    and every forecast graphic says so. Velocity potential: daily means
     of NOAA NCEP GFS analysis winds at 200/850 hPa; χ from a
     spherical-harmonic Poisson solve of the divergence, triangular truncation
     T21; running means over the selected window (the MJO view is a

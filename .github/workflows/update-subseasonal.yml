@@ -67,8 +67,8 @@ jobs:
           pip install --quiet numpy matplotlib xarray netCDF4 requests \
             pyshtools herbie-data cfgrib eccodes
 
-      - name: Render MJO RMM products
-        run: python generate_mjo_rmm.py
+      # (the MJO render moved AFTER the u-archive restore — the GEFS RMM
+      # forecast's obs side reads the restored GFS wind archive)
 
       - name: Restore daily-chi archive from R2
         env:
@@ -115,7 +115,15 @@ jobs:
             --endpoint-url "$R2_ENDPOINT" \
             || echo "no u archive yet — cold start (bootstraps itself)"
 
-      - name: Render Hovmöllers (OLR + waves, u850/u200, chi200)
+      - name: Render MJO RMM products (+ GEFS member forecast)
+        # after the u restore on purpose: the RMM forecast's obs winds
+        # come from the restored archive; the forecast layer is additive
+        # (--forecast failure keeps the observed-only renders)
+        run: |
+          python generate_mjo_rmm.py --forecast \
+            --u-archive subseasonal/out/u_daily_archive.nc
+
+      - name: Render Hovmöllers (OLR + waves, u850/u200/v850, chi200 + GEFS tails)
         run: |
           python generate_hovmollers.py \
             --u-backfill-days "${{ inputs.backfill_days || '45' }}"

@@ -132,8 +132,12 @@ def _style_axes(ax):
     ax.tick_params(colors=MUTED_COLOR, labelsize=9)
 
 
+FC_COLOR = "#ffb83a"        # ensemble mean (amber; obs track stays teal)
+FC_MEMBER = "#8ea2bd"       # member spaghetti (muted)
+
+
 def render_phase(rows: list[dict], days: int, out: Path,
-                 now: dt.date) -> dict:
+                 now: dt.date, fc=None) -> dict:
     track = rows[-days:]
     # 1.5x canvas at constant dpi/fonts: the /subseasonal/ page went
     # full-bleed, so the render must carry ~2x the pixels at its new
@@ -200,14 +204,44 @@ def render_phase(rows: list[dict], days: int, out: Path,
                         zorder=7)
 
     latest = track[-1]
+
+    # GEFS-member forecast layer: spaghetti thin, ensemble mean bold,
+    # both joined onto the observed endpoint; dated labels on the mean
+    if fc:
+        ox, oy = xs[-1], ys[-1]
+        for m, (fd, p1, p2) in fc["members"].items():
+            ax.plot([ox] + list(p1), [oy] + list(p2), color=FC_MEMBER,
+                    lw=0.9, alpha=0.30, zorder=4)
+        m1, m2 = fc["mean"]
+        ax.plot([ox] + list(m1), [oy] + list(m2), color=FC_COLOR,
+                lw=2.4, zorder=6, solid_capstyle="round")
+        for k, d in enumerate(fc["dates"]):
+            if d.day % 5 == 0 or k == len(fc["dates"]) - 1:
+                ax.annotate(d.strftime("%-d %b") if k == len(fc["dates"]) - 1
+                            else d.strftime("%-d"),
+                            (m1[k], m2[k]), textcoords="offset points",
+                            xytext=(6, -9), fontsize=8, color=FC_COLOR,
+                            fontweight="bold" if k == len(fc["dates"]) - 1
+                            else "normal", zorder=7)
+        ax.scatter([m1[-1]], [m2[-1]], s=42, color=FC_COLOR,
+                   edgecolor=TEXT_COLOR, linewidth=1.0, zorder=7)
+
     d0, d1 = dt.date(*track[0]["ymd"]), dt.date(*latest["ymd"])
-    ax.set_title(f"MJO phase space (RMM)  ·  {d0:%d %b} – {d1:%d %b %Y}",
-                 color=TEXT_COLOR, fontsize=13, fontweight="bold", pad=26)
+    title = f"MJO phase space (RMM)  ·  {d0:%d %b} – {d1:%d %b %Y}"
+    if fc:
+        title += f"  + GEFS to {fc['dates'][-1]:%d %b}"
+    ax.set_title(title, color=TEXT_COLOR, fontsize=13, fontweight="bold",
+                 pad=26)
     # 1.012 (not 1.022): axes-fraction offsets grew with the 1.5x canvas;
     # this keeps the same physical clearance under the pad=26 title.
-    ax.text(0.0, 1.012,
-            f"latest: phase {latest['phase']} · amplitude {latest['amp']:.2f}"
-            f" · eastward propagation is counterclockwise",
+    sub = (f"latest: phase {latest['phase']} · amplitude "
+           f"{latest['amp']:.2f}"
+           f" · eastward propagation is counterclockwise")
+    if fc:
+        sub += (f" · forecast: GEFS members (thin) + ensemble mean "
+                f"(amber, smoothed), init {fc['init']:%Y-%m-%d} 00Z, "
+                f"~16-day limit")
+    ax.text(0.0, 1.012, sub,
             transform=ax.transAxes, color=MUTED_COLOR, fontsize=9)
     ax.text(0.995, 0.012, WATERMARK, transform=ax.transAxes, ha="right",
             color=MUTED_COLOR, alpha=0.7, fontsize=9)
@@ -221,7 +255,8 @@ def render_phase(rows: list[dict], days: int, out: Path,
             "as_of": d1.isoformat()}
 
 
-def render_amplitude(rows: list[dict], out: Path, days: int = 180) -> None:
+def render_amplitude(rows: list[dict], out: Path, days: int = 180,
+                     fc=None) -> None:
     seg = rows[-days:]
     d = [dt.date(*r["ymd"]) for r in seg]
     amp = np.array([r["amp"] for r in seg])
@@ -234,10 +269,41 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180) -> None:
             fontsize=8, va="bottom")
     ax.plot(d, amp, color=ACCENT, lw=1.7)
     ax.fill_between(d, 0, amp, color=ACCENT, alpha=0.12, lw=0)
-    ax.set_ylim(0, max(2.6, float(amp.max()) + 0.3))
-    ax.set_xlim(d[0], d[-1])
+    x_end, y_top = d[-1], float(amp.max())
+
+    # GEFS forecast extension: ensemble-mean amplitude (bold) + the
+    # member amplitude envelope past the labeled init line
+    if fc:
+        fd = fc["dates"]
+        m1, m2 = fc["mean"]
+        mean_amp = np.sqrt(np.array(m1) ** 2 + np.array(m2) ** 2)
+        env_lo = np.full(len(fd), np.inf)
+        env_hi = np.full(len(fd), -np.inf)
+        for _m, (mfd, p1, p2) in fc["members"].items():
+            a = np.sqrt(np.asarray(p1) ** 2 + np.asarray(p2) ** 2)
+            for k in range(min(len(fd), len(a))):
+                env_lo[k] = min(env_lo[k], a[k])
+                env_hi[k] = max(env_hi[k], a[k])
+        joined_d = [d[-1]] + list(fd)
+        ax.fill_between(fd, env_lo, env_hi, color=FC_COLOR, alpha=0.10,
+                        lw=0)
+        ax.plot(joined_d, [amp[-1]] + list(mean_amp), color=FC_COLOR,
+                lw=2.0)
+        ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
+                   alpha=0.8)
+        ax.text(d[-1], 0.06, "  GEFS ensemble mean + member envelope · "
+                f"init {fc['init']:%Y-%m-%d} 00Z · smoothed · ~16-day "
+                f"limit", color=FC_COLOR, fontsize=8, va="bottom")
+        x_end = fd[-1]
+        y_top = max(y_top, float(env_hi.max()))
+
+    ax.set_ylim(0, max(2.6, y_top + 0.3))
+    ax.set_xlim(d[0], x_end)
     ax.set_ylabel("RMM amplitude", color=MUTED_COLOR, fontsize=9.5)
-    ax.set_title(f"MJO amplitude · last {days} days", color=TEXT_COLOR,
+    title = f"MJO amplitude · last {days} days"
+    if fc:
+        title += f" + GEFS to {fc['dates'][-1]:%b %-d}"
+    ax.set_title(title, color=TEXT_COLOR,
                  fontsize=12, fontweight="bold", loc="left")
     ax.text(1.0, 1.02, WATERMARK, transform=ax.transAxes, ha="right",
             color=MUTED_COLOR, alpha=0.7, fontsize=8.5)
@@ -246,21 +312,232 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180) -> None:
     plt.close(fig)
 
 
+# --------------------------------------------------- GEFS RMM forecast
+# (Phase 3 Group B item 4 — every constant primary-source-verified; see
+# subseasonal/rmm_wh04.py's provenance header.)
+
+def _to_rmm_lons(series_lons, series):
+    """(t, nlon) on arbitrary lons -> (t, 144) periodic interp."""
+    import sys as _sys
+    _sys.path.insert(0, str(HERE / "subseasonal"))
+    import rmm_wh04
+    out = np.empty((series.shape[0], 144))
+    ext_l = np.concatenate([series_lons, series_lons[:1] + 360.0])
+    for t in range(series.shape[0]):
+        ext = np.concatenate([series[t], series[t][:1]])
+        out[t] = np.interp(rmm_wh04.RMM_LONS, ext_l, ext)
+    return out
+
+
+def build_forecast(out: Path, u_archive_path: Path, rows_obs: list[dict],
+                   fc_days: int = 16, workers: int = 6):
+    """GEFS-member RMM projection -> {init, dates, members{m:(pc1,pc2)},
+    mean(pc1,pc2), seam, olr_bridge_days, anchored} or None on failure.
+
+    Obs side: OLR anomalies from the PSL CDR (via the Hovmöller module's
+    fetch — same LTM 3-harmonic seasonal cycle), winds from the restored
+    GFS analysis archive vs the ERA5 monthly climatology. Forecast side:
+    per-member GEFS fields (subseasonal/gefs_mean.fetch_members_rmm).
+    Each member's series = obs anomalies + (OLR-lag bridge) + its own
+    forecast days, then the WH04 steps 2-6 run on the concat exactly per
+    Gottschalck et al. 2010 (the trailing 120-day mean at forecast day N
+    mixes analyses + the first N forecast days). Projection is done with
+    OUR obs pipeline; the seam between our obs-day PCs and BoM's official
+    RMM is measured against the newest common day and, when it exceeds
+    0.15, the whole forecast is anchored (constant offset) onto the BoM
+    endpoint so the plotted track joins the official one — the offset and
+    choice are disclosed in the meta."""
+    import sys as _sys
+    _sys.path.insert(0, str(HERE / "subseasonal"))
+    import importlib.util
+    import gefs_mean
+    import rmm_wh04
+
+    spec = importlib.util.spec_from_file_location(
+        "gh_for_rmm", HERE / "generate_hovmollers.py")
+    gh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gh)
+
+    # ---- obs winds (restored archive)
+    arch = gh.load_u_archive(u_archive_path)
+    if not arch:
+        print("rmm fc: no u archive — forecast skipped")
+        return None
+    times, levels, lats_u, lons_u, u, _v, _n = arch
+    import xarray as xr
+    uclim = xr.open_dataset(gh.U_CLIMO_NC)
+    full = [times[0] + dt.timedelta(days=i)
+            for i in range((times[-1] - times[0]).days + 1)]
+    idx = {d: i for i, d in enumerate(times)}
+    ua = {}
+    for li, lev in enumerate(gh.U_LEVELS):
+        a = np.full((len(full), lats_u.size, lons_u.size), np.nan)
+        for di, d in enumerate(full):
+            i = idx.get(d)
+            if i is not None:
+                a[di] = u[i, li] - gh.monthly_climo_for(
+                    uclim, "u", d, float(lev), lats_u, lons_u)
+        ua[int(lev)] = _to_rmm_lons(lons_u,
+                                    gh.band_mean(a, lats_u, -15, 15))
+
+    # ---- obs OLR (PSL CDR anomalies; lags realtime by ~3-5 days)
+    dates_o, lats_o, lons_o, anom_o, _nb = gh.fetch_olr()
+    olr_bm = _to_rmm_lons(lons_o, gh.band_mean(anom_o, lats_o, -15, 15))
+    o_idx = {d: i for i, d in enumerate(dates_o)}
+
+    # ---- member forecasts
+    init = gefs_mean.newest_complete_init()
+    members = gefs_mean.fetch_members_rmm(init, fc_days, workers)
+    if not members:
+        print("rmm fc: no GEFS members reachable — forecast skipped")
+        return None
+    print(f"rmm fc: {len(members)} member(s), init {init:%Y-%m-%d} 00Z")
+
+    # unified obs axis: from OLR/wind overlap start to the wind end
+    obs_days = [d for d in full if d in o_idx or d > dates_o[-1]]
+    obs_days = [d for d in obs_days if d <= times[-1]]
+    olr_end = dates_o[-1]
+    bridge_days = max(0, (times[-1] - olr_end).days)
+    eofs = rmm_wh04.load_eofs()
+
+    def obs_matrix(key):
+        if key == "olr":
+            return np.stack([olr_bm[o_idx[d]] if d in o_idx
+                             else np.full(144, np.nan) for d in obs_days])
+        src = ua[key]
+        return np.stack([src[full.index(d)] for d in obs_days])
+
+    olr_obs = obs_matrix("olr")
+    u850_obs = obs_matrix(850)
+    u200_obs = obs_matrix(200)
+
+    # per-DATE climatology rows (identical seasonal cycles to the obs
+    # side), precomputed once — the member loop is pure arithmetic
+    ltm_rmm = gh.fetch_olr_ltm_rmm()                     # (365, 144)
+    fc_date_set = sorted({d for v in members.values() for d in v[0]})
+    uclim_rmm = {}
+    for d in fc_date_set:
+        per = {}
+        for lev in (850.0, 200.0):
+            c = gh.monthly_climo_for(uclim, "u", d, lev, lats_u, lons_u)
+            per[int(lev)] = _to_rmm_lons(
+                lons_u, gh.band_mean(c[None], lats_u, -15, 15))[0]
+        uclim_rmm[d] = per
+
+    def olr_ltm_at(d):
+        return ltm_rmm[min(d.timetuple().tm_yday, 365) - 1]
+
+    out_members, obs_pc = {}, None
+    for m, (fdates, folr_raw, fu850, fu200) in sorted(members.items()):
+        folr = np.stack([folr_raw[k] - olr_ltm_at(fdates[k])
+                         for k in range(len(fdates))])
+        fu850a = np.stack([fu850[k] - uclim_rmm[fdates[k]][850]
+                           for k in range(len(fdates))])
+        fu200a = np.stack([fu200[k] - uclim_rmm[fdates[k]][200]
+                           for k in range(len(fdates))])
+
+        # OLR-lag bridge: linear from the last CDR day to member day 1
+        olr_m = olr_obs.copy()
+        if bridge_days:
+            last = olr_bm[o_idx[olr_end]]
+            first_fc = folr[0]
+            for bi in range(bridge_days):
+                w = (bi + 1) / (bridge_days + 1)
+                pos = obs_days.index(olr_end) + 1 + bi
+                if pos < olr_m.shape[0]:
+                    olr_m[pos] = (1 - w) * last + w * first_fc
+
+        cat = lambda a, b: np.vstack([a, b])  # noqa: E731
+        pc1, pc2, _amp, _ph = rmm_wh04.rmm_series(
+            cat(olr_m, folr), cat(u850_obs, fu850a),
+            cat(u200_obs, fu200a), eofs=eofs)
+        nfc = len(fdates)
+        out_members[m] = (fdates, pc1[-nfc:], pc2[-nfc:])
+        if obs_pc is None:
+            obs_pc = (obs_days, pc1[:-nfc], pc2[:-nfc])
+
+    uclim.close()
+
+    # ens mean over members per forecast day
+    all_dates = max((v[0] for v in out_members.values()), key=len)
+    mean1, mean2 = [], []
+    for k, d in enumerate(all_dates):
+        xs = [v[1][k] for v in out_members.values() if len(v[0]) > k]
+        ys = [v[2][k] for v in out_members.values() if len(v[0]) > k]
+        mean1.append(float(np.mean(xs)))
+        mean2.append(float(np.mean(ys)))
+
+    # seam vs BoM on the newest PURE-obs day (bridge days are excluded —
+    # their OLR is interpolated toward one member) + optional anchoring
+    bom = {tuple(r["ymd"]): r for r in rows_obs}
+    seam = (0.0, 0.0)
+    for k in range(len(obs_pc[0]) - 1, -1, -1):
+        d = obs_pc[0][k]
+        key = (d.year, d.month, d.day)
+        if d <= olr_end and key in bom and np.isfinite(obs_pc[1][k]):
+            seam = (float(bom[key]["rmm1"] - obs_pc[1][k]),
+                    float(bom[key]["rmm2"] - obs_pc[2][k]))
+            break
+    anchored = bool(max(abs(seam[0]), abs(seam[1])) > 0.15)
+    if anchored:
+        for m in out_members:
+            fd, p1, p2 = out_members[m]
+            out_members[m] = (fd, p1 + seam[0], p2 + seam[1])
+        mean1 = [x + seam[0] for x in mean1]
+        mean2 = [y + seam[1] for y in mean2]
+    print(f"rmm fc: seam vs BoM ({seam[0]:+.2f},{seam[1]:+.2f}) · "
+          f"anchored={anchored} · olr bridge {bridge_days} d")
+
+    return {"init": init, "dates": all_dates,
+            "members": out_members, "mean": (mean1, mean2),
+            "seam": seam, "anchored": anchored,
+            "olr_bridge_days": bridge_days}
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--days", type=int, default=40)
     p.add_argument("--out", default=str(HERE / "subseasonal" / "out"))
+    p.add_argument("--forecast", action="store_true",
+                   help="add the GEFS-member RMM forecast layer")
+    p.add_argument("--u-archive", default=None,
+                   help="restored GFS wind archive (forecast obs side)")
+    p.add_argument("--fc-days", type=int, default=16)
+    p.add_argument("--fc-workers", type=int, default=6)
     args = p.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
     rows, source = fetch_rmm(out / "_rmm_cache.json")
     print(f"RMM rows: {len(rows)} · newest {rows[-1]['ymd']} · {source}")
-    meta = render_phase(rows, args.days, out, dt.date.today())
-    render_amplitude(rows, out)
+
+    fc = None
+    if args.forecast:
+        try:
+            u_arch = Path(args.u_archive) if args.u_archive else \
+                out / "u_daily_archive.nc"
+            fc = build_forecast(out, u_arch, rows,
+                                args.fc_days, args.fc_workers)
+        except Exception as e:  # noqa: BLE001 — forecast is additive
+            print(f"rmm forecast failed ({type(e).__name__}: {e}) — "
+                  f"observed-only renders")
+            fc = None
+
+    meta = render_phase(rows, args.days, out, dt.date.today(), fc=fc)
+    render_amplitude(rows, out, fc=fc)
     meta.update({"generated_utc":
                  dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                  "source": "Australian Bureau of Meteorology RMM (WH04)"})
+    if fc:
+        meta["forecast"] = {
+            "init": fc["init"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": fc["dates"][-1].isoformat(),
+            "members": len(fc["members"]),
+            "seam": [round(x, 3) for x in fc["seam"]],
+            "anchored": fc["anchored"],
+            "olr_bridge_days": fc["olr_bridge_days"],
+            "source": "NOAA NCEP GEFS (members + ensemble mean), "
+                      "WH04 EOF projection"}
     (out / "mjo_meta.json").write_text(json.dumps(meta))
     print("wrote", out / "mjo_phase.png", "+ amplitude + meta")
 

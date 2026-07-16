@@ -245,6 +245,28 @@ def wave_filts(bm_full: np.ndarray, nf: int) -> dict:
     return {m: filter_realtime(fb, m) for m in WAVE_STYLE}
 
 
+def fetch_olr_ltm_rmm() -> np.ndarray:
+    """The CDR daily LTM seasonal cycle (mean + first 3 harmonics) as
+    15S-15N cos-weighted means on the 144 RMM longitudes -> (365, 144).
+    Feeds the GEFS RMM forecast (generate_mjo_rmm) with the IDENTICAL
+    seasonal cycle the obs-side OLR anomalies use."""
+    ltm_ds = _open_dods(OLR_LTM_URL)
+    sub = ltm_ds.olr.sel(lat=slice(-15, 15))
+    ltm = _load_slabbed(sub).values.astype(float)
+    lats = sub.lat.values.astype(float)
+    lons = sub.lon.values.astype(float)
+    ltm_ds.close()
+    _guard_degenerate("OLR LTM (RMM band)", ltm, 150.0)
+    bm = band_mean(smooth_climo_3harm(ltm), lats, -15, 15)   # (365, lon)
+    rmm_lons = np.arange(0.0, 360.0, 2.5)
+    ext_l = np.concatenate([lons, lons[:1] + 360.0])
+    out = np.empty((365, rmm_lons.size))
+    for t in range(365):
+        ext = np.concatenate([bm[t], bm[t][:1]])
+        out[t] = np.interp(rmm_lons, ext_l, ext)
+    return out
+
+
 # ---------------------------------------------- GEFS ensemble-mean tail
 
 def load_gefs_tail(path: Path):
