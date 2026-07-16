@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-15 ~21:3x UTC — SUBSEASONAL PHASE 2 LANDED + LIVE-VERIFIED (Hovmöllers + CCEW wave filtering; closes the subseasonal queue). MORNING-TO-DO unchanged._
+_Last update: 2026-07-16 ~18:0x UTC — GOES-19 outage handling landed (honest pause/resume + NOAA first-hour nav caveat; satellite already recovering — CONUS back 17:16Z). Full-site staleness audit in flight._
 
 ---
 
@@ -33,6 +33,75 @@ _Last update: 2026-07-15 ~21:3x UTC — SUBSEASONAL PHASE 2 LANDED + LIVE-VERIFI
 5. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-16 (~18:0x UTC) — GOES-19 ANOMALY HANDLING: honest pause/resume + first-hour nav caveat
+
+GOES-19 recovered FAST — CONUS scans resumed **17:16:15Z today** (verified in
+the conus manifest's scan list; a 20.9 h gap ends there), full disk still
+refilling as of ~17:50Z. Per Andrew's call the **multi-sat fallback build
+(Meteosat / GOES-16) was DROPPED** — nothing had been wired yet, so nothing
+was removed; not worth building for a ~1-day outage. What landed instead
+(this commit + the prior session's honesty pass it finishes):
+
+- **`/sat-health.js` v2** — the shared GOES-East health probe now watches
+  BOTH `goes19/fd/ir` + `goes19/conus/ir` `latest_times.json` (conus resumes
+  first after an outage; satellite-level truth = freshest of the two).
+  Three states, all data-age-driven so every transition is automatic, no
+  manual step: PAUSED (amber banner, with "imagery expected back ~19:00 UTC
+  16 Jul (NOAA)" while that ETA is still meaningful, generic afterwards) ·
+  RESUMED (NOAA first-hour nav-caveat note, clears itself ~90 min after the
+  restore boundary) · CLEAR.
+- **First-hour NAV CAVEAT (NOAA: navigation "slightly degraded" for ~1 h
+  after ABI restore)** — the restore boundary is detected in the DATA: a
+  >6 h gap in a manifest's scan list ending inside the configured anomaly
+  window (Jul 15 17:00Z – Jul 18 00:00Z; the window scoping is deliberate —
+  an ordinary producer stall also leaves a gap, and blaming satellite
+  navigation for a cron outage would be a lie; after Jul 18 the constant is
+  inert). Frames scanned within 70 min of a boundary answer
+  `TATSatHealth.navDegraded(scanMs)` = true and every quantitative surface
+  tags them: cockpit pane chrome/clock/exports ("NAV CAVEAT (scanned <1 h
+  after GOES-19 restore)"), floater/meso player time readouts (+ tooltip),
+  objfix ARCHER/ADT runs (counted on the final analyzed frame set, east
+  sources only), TC-diag completion line. Live right now: window
+  17:16–18:26Z, verified with a node harness against the REAL manifests
+  (6/6 assertions, correct resumed-notice copy).
+- **Prior session's feed-paused honesty pass rides along** (was uncommitted
+  in the tree, now verified + landed): cockpit FEED PAUSED tags +
+  paused rail chips + world-composite "GOES-East paused" wedge badge,
+  ascat/microwave BACKDROP STALE tags, recon chrome-free `bd_key` backdrop
+  adoption with a 3 h age gate, satellite-page outage attribution
+  (source-aware, never blames GOES for a producer stall) + friendlier 5xx
+  copy while the feed is down.
+- **Cache-bust bumps for every edited script** (?v= — the CDN edge masked a
+  fix once): sat-health v2, cockpit core5, objfix_panel ofx7, tc_diag tcd4,
+  microwave 13, ascat 0017, recon c4f45767b5.
+- **Auto-resume verified at the ingest level**: the box emit pipeline never
+  stopped — conus manifest `as_of` 17:21Z (fresh emit 5 min after the first
+  new scan). FD refills on its own as FD scans publish; the paused chrome
+  on FD panes is manifest-age-driven and clears itself. No manual step
+  anywhere.
+- Suite: `python -m unittest discover tests` green. A 4-lens adversarial
+  review workflow (17 agents) over the full diff CONFIRMED 16 real defects
+  before landing — all fixed + re-verified: archive/Time-Machine analyses
+  no longer get false "feed paused" stamps (objfix warn + canvas prov tag +
+  TC-diag completion line are live-source-gated); the East gate is now
+  longitude-aware (shared `eastFed`: AL always, EP only east of ~106°W —
+  a GOES-West-fed EP floater can no longer collect GOES-19 caveats); the
+  nav window anchors to the EARLIEST restore boundary only (an FD feed
+  resuming hours later is a late emit, not a second nav event); the
+  "GOES-19 anomaly (NOAA)" attribution copy is scoped to the anomaly
+  window everywhere (banner, cockpit wedge badge, floater inactive note,
+  5xx toast — future stalls state data age without inventing a cause);
+  the floater inactive note also requires the source's own stall to
+  overlap the outage (the pre-outage-dead-floater case, live-confirmed on
+  EP05); objfix honesty warns now survive renderStats rebuilds; the 5xx
+  outage toast fires only on time=latest renders; two em-dashes scrubbed.
+
+**Marker-gate (ace_core 0.8.5) + stream-page rewrites remain uncommitted in
+this Codespace on purpose** — they are separate in-flight threads (the
+ATCF-number marker gate is ACE/data-critical and still owes its byte-identical
+ACE gate; the stream re-point has its own smoke harness). Not mine to land
+from this session.
 
 ## 2026-07-15 (~20:5x UTC) — SUBSEASONAL PHASE 2 LANDED: Hovmöllers + equatorial-wave filtering (@42fcb5ef)
 

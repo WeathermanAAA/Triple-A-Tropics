@@ -626,6 +626,13 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
   <p>Draw a rectangle anywhere in GOES-East coverage (Americas, Atlantic, eastern Pacific to ~-105°W), GOES-West coverage (eastern Pacific west of ~-105°W, Hawaii, Alaska, central Pacific via GOES-18 + GOES-17 archive back to Feb 2019), or Himawari coverage (Western Pacific via Himawari-9 + Himawari-8 archive back to 2017). METEOSAT (Atlantic east / Africa / Europe) coming soon.</p>
 </header>
 
+<!-- GOES-East outage notice: renders only while the GOES-East feed is stale
+     (data-age-driven via /sat-health.js; clears itself on recovery).
+     Loaded WITHOUT defer: the inline player IIFEs below subscribe to
+     window.TATSatHealth at parse time, so the module must exist first. -->
+<div class="sat-health-wrap"></div>
+<script src="/sat-health.js?v=2"></script>
+
 <section class="chart-section" id="sat-zoom-section">
   <div class="chart-card">
     <div class="sat-grid">
@@ -1290,6 +1297,26 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
           showToast(detail);
           return;
         }
+        // 5xx on a LATEST-time GOES-East bbox while the anomaly-scoped
+        // pause is confirmed is the satellite outage, not a render bug:
+        // the "latest" resolver has no scan to serve. Historical-time
+        // renders (and any post-anomaly stall) keep the plain error — a
+        // transient backend 500 on an archive render has nothing to do
+        // with the satellite.
+        var gh = window.TATSatHealth && window.TATSatHealth.get();
+        var gn = window.TATSatHealth && window.TATSatHealth.notice &&
+                 window.TATSatHealth.notice();
+        if (resp.status >= 500 && body.time === 'latest' &&
+            gn && gn.kind === 'paused' && gh) {
+          var cLon = (currentBbox[0] + currentBbox[2]) / 2;
+          if (cLon > -106 && cLon < -4) {
+            showToast('GOES-East (GOES-19) is in safe mode after a satellite ' +
+              'anomaly (NOAA); no new imagery since ' + gh.latestLabel + '. ' +
+              'Live renders here resume automatically when the satellite ' +
+              'recovers. Times before the outage still work.');
+            return;
+          }
+        }
         throw new Error(detail || 'render failed (' + resp.status + ')');
       }
       const blob = await resp.blob();
@@ -1353,6 +1380,19 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
         if (sensorHdr) satLine += ' (' + sensorHdr + ')';
         if (satFamilyHdr) satLine += ' · ' + satFamilyHdr + ' family';
         metaText += '  ·  ' + satLine;
+      }
+      // X-Scan-Time is forward-compatible (newer backends only): surface the
+      // scan's true age so a "latest" render served from a stalled satellite
+      // can never pass as current. The burned-in title already carries the
+      // absolute time; this adds the machine comparison against now.
+      const scanHdr = resp.headers.get('X-Scan-Time');
+      const scanMs = scanHdr ? Date.parse(scanHdr) : NaN;
+      if (isFinite(scanMs) && body.time === 'latest') {
+        const scanAgeMin = (Date.now() - scanMs) / 60000;
+        if (scanAgeMin > 90) {
+          metaText += '  ·  STALE SCAN: ' + (scanAgeMin / 60).toFixed(1) +
+            ' h old (satellite feed interrupted)';
+        }
       }
       document.getElementById('sat-result-meta').textContent = metaText;
       document.getElementById('sat-result-section').style.display = 'block';
@@ -1597,7 +1637,16 @@ function makeSatViewer(idPrefix, opts) {
   function satReadout(i) {
     var f = sat.frames[i];
     satEl("scrub").value = String(i);
-    satEl("time").textContent = f.t.slice(0, 16).replace("T", " ") + "Z";
+    var label = f.t.slice(0, 16).replace("T", " ") + "Z";
+    // NOAA post-restore nav caveat (sat-health.js): a GOES-East frame
+    // scanned within ~1 h of the ABI restore may be geolocated slightly
+    // off — tag the readout so it never reads as pixel-accurate.
+    var nav = window.TATSatHealth && window.TATSatHealth.navDegraded &&
+      window.TATSatHealth.navDegraded(Date.parse(f.t)) && satCtxIsGoesEast();
+    var el = satEl("time");
+    el.textContent = label + (nav ? " · NAV CAVEAT" : "");
+    el.title = nav ? "Scanned within ~1 h of the GOES-19 restore · NOAA: " +
+      "navigation may be slightly degraded; geolocation can be slightly off." : "";
   }
   // ---- locked frame box ------------------------------------------------------
   // Pin the visible <img> to ONE fixed, centered box per loop, sized from the
@@ -2193,23 +2242,54 @@ function makeSatViewer(idPrefix, opts) {
   function satFmtTime(t) {
     return String(t).slice(0, 16).replace("T", " ") + "Z";
   }
+  // Is the current source GOES-East-fed? Sources stash outageCtx in resolve():
+  // meso sectors carry an explicit satellite; floaters only a basin + lon
+  // (AL is always GOES-East; EP east of ~-105 is; CP/WP never are).
+  function satCtxIsGoesEast() {
+    var ctx = SAT_SOURCES[0] && SAT_SOURCES[0].outageCtx;
+    if (!ctx) return false;
+    if (ctx.satellite) return /goes-?19/i.test(String(ctx.satellite));
+    if (ctx.basin === "AL") return true;
+    if (ctx.basin === "EP" && typeof ctx.lon === "number") return ctx.lon > -106;
+    return false;
+  }
   function satUpdateInactive(droppedFromIndex) {
+    sat.dropped = !!droppedFromIndex;   // persisted for render-only refreshes
     var note = satEl("inactive");
     if (!sat.frames.length) {
-      sat.inactive = !!droppedFromIndex;
+      sat.inactive = sat.dropped;
       if (note) { note.hidden = true; }
       return;
     }
     var newestT = sat.frames[sat.frames.length - 1].t;
-    var ageMin = (Date.now() - new Date(newestT).getTime()) / 60000;
-    sat.inactive = !!droppedFromIndex || !(ageMin <= SAT_STALE_MIN);
+    var newestMs = new Date(newestT).getTime();
+    var ageMin = (Date.now() - newestMs) / 60000;
+    sat.inactive = sat.dropped || !(ageMin <= SAT_STALE_MIN);
     if (note) {
       if (sat.inactive) {
-        note.textContent = "Inactive — last frame " +
-          satFmtTime(newestT);
+        // Attribute the pause to GOES-East ONLY when the probe confirms
+        // THE anomaly (notice kind 'paused', which is scoped to the NOAA
+        // event window), this source rides GOES-East, AND this source's
+        // own stall overlaps the outage — a floater that died hours
+        // before the satellite did was a producer stall, not the anomaly.
+        var gh = window.TATSatHealth && window.TATSatHealth.get();
+        var gn = window.TATSatHealth && window.TATSatHealth.notice &&
+                 window.TATSatHealth.notice();
+        var why = (gn && gn.kind === "paused" && satCtxIsGoesEast() &&
+                   gh && newestMs >= gh.latestMs - 3 * 3600e3)
+          ? "GOES-East paused · GOES-19 satellite anomaly (NOAA), recovery underway"
+          : "Imagery paused";
+        note.textContent = why + " · last frame " + satFmtTime(newestT);
         note.hidden = false;
       } else { note.hidden = true; note.textContent = ""; }
     }
+  }
+  // Re-render the note when the health probe lands/changes so the copy can
+  // gain or drop the GOES-East attribution without waiting for the next poll.
+  if (window.TATSatHealth) {
+    window.TATSatHealth.subscribe(function () {
+      if (sat.inactive) satUpdateInactive(sat.dropped);
+    });
   }
   function satRepollApply(bands) {
     if (sat.encoding) return;          // don't churn frames mid-GIF-encode
@@ -2529,6 +2609,8 @@ function makeSatViewer(idPrefix, opts) {
                || storms[0];
       if (!pick || !pick.manifest) return null;
       floaterSource.subSlug = pick.slug;   // for the GIF filename
+      // outage context for the inactive note (GOES-East attribution).
+      floaterSource.outageCtx = { basin: pick.basin, lon: pick.lon };
       return CDN + "/" + pick.manifest;
     }
   };
@@ -2606,6 +2688,8 @@ function makeSatViewer(idPrefix, opts) {
                || sectors[0];
       if (!pick || !pick.manifest) return null;
       mesoSource.subSlug = pick.slug;
+      // outage context for the inactive note (GOES-East attribution).
+      mesoSource.outageCtx = { satellite: pick.satellite || pick.slug };
       return CDN + "/" + pick.manifest;
     }
   };

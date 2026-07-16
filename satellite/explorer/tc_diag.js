@@ -374,7 +374,34 @@
       status('analyzing — ' + results.length + ' frame' + (results.length === 1 ? '' : 's') + ' so far…');
       $('tcd-stop').disabled = false;
     } else {
-      status(results.length + ' frame' + (results.length === 1 ? '' : 's') + ' analyzed.');
+      // a workup over a paused LIVE feed ends hours in the past — stamp the
+      // completion line with the newest analyzed frame's age so the board
+      // never implies a current fix (GOES-East safe mode 2026-07-15 lesson).
+      // Archive workups are historical on purpose and never get this stamp.
+      var doneMsg = results.length + ' frame' + (results.length === 1 ? '' : 's') + ' analyzed.';
+      var tdSt = window.ObjFixPanel && window.ObjFixPanel.storm();
+      var newest = results.length && results[results.length - 1].frame;
+      var ageMs = newest && newest.timeMs ? Date.now() - newest.timeMs : NaN;
+      if (tdSt && tdSt.source !== 'archive' &&
+          isFinite(ageMs) && ageMs > 3 * 3600e3) {
+        doneMsg += ' Feed paused: newest frame is ' + (ageMs / 3600e3).toFixed(1) +
+          ' h old · diagnostics are valid at frame time, not now.';
+      }
+      // NOAA post-restore nav caveat, East-fed sources only (the shared
+      // eastFed gate: AL always, EP only east of ~106°W, never WP/CP):
+      // diagnostics from frames scanned within ~1 h of the GOES-19 ABI
+      // restore ride slightly-degraded navigation.
+      if (window.TATSatHealth && window.TATSatHealth.navDegraded && tdSt &&
+          window.ObjFixPanel.eastFed && window.ObjFixPanel.eastFed(tdSt)) {
+        var navN = results.filter(function (r) {
+          return r.frame && window.TATSatHealth.navDegraded(r.frame.timeMs); }).length;
+        if (navN) {
+          doneMsg += ' Nav caveat: ' + navN + ' frame' + (navN === 1 ? '' : 's') +
+            ' scanned within ~1 h of the GOES-19 restore (NOAA: navigation ' +
+            'slightly degraded).';
+        }
+      }
+      status(doneMsg);
       $('tcd-stop').disabled = true;
     }
   }

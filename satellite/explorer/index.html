@@ -168,6 +168,14 @@
   .cx-gap-badge{font-size:10px;font-weight:600;color:#8ea2bd;background:rgba(10,13,18,.72);
     border:1px dashed rgba(142,162,189,.45);border-radius:6px;padding:4px 8px;
     white-space:nowrap;pointer-events:none}
+  /* GOES-East outage note (sat-health.js driven; removed on recovery) */
+  #cx-goese-note{position:absolute;top:8px;left:50%;transform:translateX(-50%);
+    z-index:7;max-width:min(92%,760px);padding:6px 12px;border-radius:6px;
+    background:rgba(20,16,6,.88);border:1px solid rgba(210,169,63,.5);
+    border-left:3px solid #d2a93f;color:#d2a93f;font-size:11.5px;font-weight:500;
+    letter-spacing:.25px;text-align:center;pointer-events:none}
+  #cx-goese-note b{color:#e6c968;font-weight:800}
+  .cx-chip-paused{color:#d2a93f;border-color:rgba(210,169,63,.5)}
   /* the old single view-level watermark is retired — every pane now carries
      the archive-style watermark + attribution itself */
   .cx-wm{display:none}
@@ -577,23 +585,24 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js"></script>
+<script src="/sat-health.js?v=2"></script>
 <script src="products.js?v=tm2"></script>
 <script src="bt_probe.js?v=tm2"></script>
 <script src="tiled_viewer.js?v=core3"></script>
 <!-- native MW/ASCAT fields: the legacy viewer engines (reused primitives) +
      the cockpit adapters — loaded BEFORE cockpit.js so boot can init them -->
-<script src="/microwave/microwave.js?v=12"></script>
-<script src="/ascat/ascat.js?v=0016"></script>
+<script src="/microwave/microwave.js?v=13"></script>
+<script src="/ascat/ascat.js?v=0017"></script>
 <script src="cockpit_fields.js?v=mwsc3"></script>
-<script src="cockpit.js?v=core4"></script>
+<script src="cockpit.js?v=core5"></script>
 <!-- objective center + intensity (ARCHER/ADT ports) — panel + compute -->
 <script src="objfix.js?v=ofx2"></script>
 <script src="objfix_sources.js?v=ofx3"></script>
-<script src="objfix_panel.js?v=ofx6"></script>
+<script src="objfix_panel.js?v=ofx7"></script>
 <!-- TC-Diagnostics: pure diagnostics math (worker-shared) + panels + the dashboard mode -->
 <script src="diag_core.js?v=tcd2"></script>
 <script src="tc_panels.js?v=tcd2"></script>
 <script src="satcon.js?v=sc2"></script>
-<script src="tc_diag.js?v=tcd3"></script>
+<script src="tc_diag.js?v=tcd4"></script>
 </body>
 </html>

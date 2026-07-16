@@ -762,8 +762,23 @@
         sub += '   ·   🛰 ' + this.bdFrame.sat + ' ' + String(this.bdFrame.product).toUpperCase() + ' ' + fmtZ(this.bdFrame.t);
       }
     }
+    // Backdrop-stale honesty (mirrors ascat.js): imagery under the swath must
+    // never read as current when its frame is hours old (producer stall or a
+    // satellite outage, e.g. the 2026-07-15 GOES-19 safe mode). Age from the
+    // frame's own t at draw time, so the marker clears when fresh frames land.
+    var bdStaleTag = false;
+    if (this.backdrop && this.bdImg && this.bdFrame && this.bdFrame.t) {
+      var bdAgeMs = Date.now() - (Date.parse(this.bdFrame.t) || 0);
+      if (isFinite(bdAgeMs) && bdAgeMs > 3 * 3600e3) {
+        bdStaleTag = true;
+        sub += ' · ⚠ BACKDROP STALE (' + (bdAgeMs >= 48 * 3600e3
+          ? Math.round(bdAgeMs / 86400e3) + ' d'
+          : (bdAgeMs / 3600e3).toFixed(1) + ' h') + ' old)';
+      }
+    }
     g.fillText(scope + '  ·  Passive Microwave', h.x, h.y + 18);
-    g.fillStyle = C.muted; g.font = '600 12.5px ' + FONT; g.fillText(sub, h.x, h.y + 38);
+    g.fillStyle = bdStaleTag ? '#ffb24d' : C.muted;
+    g.font = '600 12.5px ' + FONT; g.fillText(sub, h.x, h.y + 38);
     // product chip (right)
     var prodLabel = '';
     for (var i = 0; i < PRODUCTS.length; i++) if (PRODUCTS[i].key === this.product) prodLabel = PRODUCTS[i].label;

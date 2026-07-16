@@ -84,6 +84,44 @@
     return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + ' ' +
            s.slice(9, 11) + ':' + s.slice(11, 13) + 'Z';
   }
+  // Feed-pause honesty: a pane whose NEWEST frame is hours old must never
+  // read as live (2026-07-15 GOES-19 safe-mode lesson). Age is measured on
+  // the manifest's `latest` (scan time), so the tag appears for any stalled
+  // feed and clears itself the instant fresh scans land. 3 h matches the
+  // objfix WP freshness gate (hourly emit cadence + dropped-cron margin).
+  var FEED_PAUSED_MS = 3 * 3600e3;
+  function stampToMs(s) {
+    if (!s || s.length < 15) return NaN;
+    return Date.parse(
+      s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + 'T' +
+      s.slice(9, 11) + ':' + s.slice(11, 13) + ':' + s.slice(13, 15) + 'Z');
+  }
+  function stampAgeMs(s) { return Date.now() - stampToMs(s); }
+  // NOAA post-restore nav caveat (sat-health.js): a GOES-19 frame scanned
+  // within ~1 h of the ABI restore may be geolocated slightly off — tag it
+  // so it never reads as pixel-accurate. Per-frame + data-driven, so the
+  // tag follows the scrubbed frame and retires with the caveat window.
+  function navTag(stamp) {
+    if (S.tm.on) return '';
+    if (domainInfo(S.domain).sat !== 'goes19') return '';
+    var th = window.TATSatHealth;
+    if (!th || !th.navDegraded || !th.navDegraded(stampToMs(stamp))) return '';
+    return 'NAV CAVEAT (scanned <1 h after GOES-19 restore)';
+  }
+  function fmtAgeH(ms) {
+    var h = ms / 3600e3;
+    return h >= 48 ? Math.round(h / 24) + ' days'
+         : (h >= 9.95 ? Math.round(h) : h.toFixed(1)) + ' h';
+  }
+  // paused tag for a pane, from its manifest's newest stamp — never in Time
+  // Machine (old frames are the point there)
+  function pausedTag(pane) {
+    if (S.tm.on) return '';
+    var newest = pane && pane.tv && pane.tv.manifest && pane.tv.manifest.latest;
+    var age = stampAgeMs(newest);
+    if (!isFinite(age) || age <= FEED_PAUSED_MS) return '';
+    return 'FEED PAUSED (' + fmtAgeH(age) + ' old)';
+  }
 
   // ========================================================================
   // STATE
@@ -391,6 +429,33 @@
       } else if (!want && pane._gapBadge) {
         pane._gapBadge.remove();
         pane._gapBadge = null;
+      }
+      // GOES-East wedge, same honesty pattern: during a satellite outage the
+      // composite keeps emitting with the East member dropped, so the
+      // transparent Americas/Atlantic wedge needs a WHY. Member-driven, so
+      // it clears itself on the first slot that carries GOES-East again.
+      var hasEast = !!(mems && mems.some(function (m) {
+        return /goes-?east/i.test(String(m.name)); }));
+      var wantEast = S.domain === 'global' && !!(mems && mems.length) && !hasEast;
+      if (wantEast && !pane._eastBadge && window.maplibregl) {
+        var el2 = document.createElement('div');
+        el2.className = 'cx-gap-badge';
+        pane._eastBadge = new maplibregl.Marker({ element: el2 })
+          .setLngLat([-75, 15]).addTo(pane.tv.map);
+      } else if (!wantEast && pane._eastBadge) {
+        pane._eastBadge.remove();
+        pane._eastBadge = null;
+      }
+      if (pane._eastBadge) {
+        // name the NOAA anomaly ONLY while the health probe confirms that
+        // outage — a member missing for any other reason (producer slot
+        // miss, future stall) states the gap without inventing a cause
+        var gn = window.TATSatHealth && window.TATSatHealth.notice &&
+                 window.TATSatHealth.notice();
+        pane._eastBadge.getElement().textContent =
+          (gn && gn.kind === 'paused')
+            ? 'GOES-East paused · GOES-19 anomaly (NOAA)'
+            : 'GOES-East missing from this slot';
       }
     });
   }
@@ -767,9 +832,11 @@
     var s = stamp ||
       (pane.tv && pane.tv.frames && pane.tv.frames[pane.tv.frameIdx]) ||
       (pane.tv && pane.tv.manifest && pane.tv.manifest.latest);
+    var ptag = pausedTag(pane) || navTag(s);
     $('cx-pht-' + i).textContent =
       di.satLabel + ' ' + di.sensor + ' · ' + p.title +
-      (s ? ' · ' + fmtStamp(s).replace(/Z$/, '') + ' UTC' : '');
+      (s ? ' · ' + fmtStamp(s).replace(/Z$/, '') + ' UTC' : '') +
+      (ptag ? '  ·  ' + ptag : '');
     // geo-ring composite: the sub-line carries each member's own valid time
     // (honesty — Meteosat rides ~1 h behind by licence; never imply one
     // synchronous scan). Other domains keep the plain sector label.
@@ -1038,7 +1105,8 @@
   }
 
   function updateClockUI(data) {
-    $('cx-valid').textContent = fmtStamp(data.stamp);
+    var ptag = pausedTag(S.panes[0]) || navTag(data.stamp);
+    $('cx-valid').textContent = fmtStamp(data.stamp) + (ptag ? '  ·  ' + ptag : '');
     $('cx-count').textContent = (data.idx + 1) + ' / ' + data.n;
   }
 
@@ -1373,8 +1441,10 @@
     // watermark+attribution, bottom-left min/max BT
     var p = pane.product;
     var dinf = domainInfo(S.domain);
+    var xptag = pausedTag(pane) || navTag(stamp);
     var title = dinf.satLabel + ' ' + dinf.sensor + ' · ' + p.title +
-      (stamp ? ' · ' + fmtStamp(stamp).replace(/Z$/, '') + ' UTC' : '');
+      (stamp ? ' · ' + fmtStamp(stamp).replace(/Z$/, '') + ' UTC' : '') +
+      (xptag ? '  ·  ' + xptag : '');
     ctx.fillStyle = '#dbe3ec';
     ctx.font = '700 ' + f(13) + 'px Metropolis,system-ui,sans-serif';
     ctx.fillText(title, Math.max(f(12), (w - ctx.measureText(title).width) / 2), f(9));
@@ -2266,6 +2336,63 @@
   // dev hook: sibling explorer modules (objfix panel markers, MW/ASCAT
   // adapters) reach the pane list through this — read-only by convention.
   window.__cockpit = S;
+
+  // ---- GOES-East outage integration (/sat-health.js) -----------------------
+  // The shared probe measures the age of the newest GOES-East scan on the
+  // CDN; while stale it drives a stage note, rail chips on the GOES-19 rows,
+  // a pane-chrome refresh (FEED PAUSED tags), and the world-composite gap
+  // badges. Everything is data-age/member-driven, so the whole degraded
+  // state clears itself the moment GOES-19 resumes publishing.
+  function updateOutageNote() {
+    var err = $('cx-err');
+    var host = err && err.parentNode;
+    if (!host) return;
+    var el = $('cx-goese-note');
+    var n = window.TATSatHealth && window.TATSatHealth.notice &&
+            window.TATSatHealth.notice();
+    if (n && !el) {
+      el = document.createElement('div');
+      el.id = 'cx-goese-note';
+      host.appendChild(el);
+    }
+    if (el && n) {
+      el.innerHTML = '<b>' + n.headline + '</b> · ' + n.detail +
+        (n.kind === 'paused'
+          ? ' · GOES-West, Himawari and the archive are unaffected' : '');
+    } else if (el && !n) el.remove();
+  }
+  function updateGoesEastChips(h) {
+    var stale = !!(h && h.checked && h.stale);
+    ['#cx-sats [data-sat="goes19"]',
+     '#cx-domains [data-domain="fd"]',
+     '#cx-domains [data-domain="conus"]'].forEach(function (sel) {
+      var el = document.querySelector(sel);
+      if (!el) return;
+      var chip = el.querySelector('.cx-chip-paused');
+      if (stale && !chip) {
+        chip = document.createElement('i');
+        chip.className = 'cx-chip cx-chip-paused';
+        chip.textContent = 'paused';
+        var meta = el.querySelector('.cx-meta');
+        (meta || el).appendChild(document.createTextNode(' · '));
+        (meta || el).appendChild(chip);
+      } else if (!stale && chip) {
+        var sep = chip.previousSibling;
+        if (sep && sep.nodeType === 3) sep.parentNode.removeChild(sep);
+        chip.parentNode.removeChild(chip);
+      }
+    });
+  }
+  if (window.TATSatHealth) {
+    window.TATSatHealth.subscribe(function (h) {
+      updateOutageNote(h);
+      updateGoesEastChips(h);
+      updateGapBadges();
+      S.panes.forEach(function (pane, i) {
+        if (pane && pane.product) renderPaneChrome(i);
+      });
+    });
+  }
 
   if (document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', boot);

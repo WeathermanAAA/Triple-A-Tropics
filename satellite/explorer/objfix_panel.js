@@ -347,10 +347,28 @@
     S.running = true;
     $('ofx-run').disabled = $('ofx-loop').disabled = true;
     $('ofx-stop').disabled = !loop;
-    S.results = []; S.history = [];
+    S.results = []; S.history = []; S.stickyWarns = [];
     getSource().then(function () {
       var frames = S.frames.slice();
       if (!frames.length) throw new Error('no frames available for ' + st.name);
+      // input-feed honesty: when the newest available LIVE frame is hours
+      // old (satellite outage / emit stall) the analysis is still valid AT
+      // THE FRAME TIME — but it must never read as a current fix. Archive
+      // analyses are deliberately historical, so the check is live-only.
+      // Attribute to GOES-East only while the shared health probe confirms
+      // THE anomaly (notice kind 'paused'), and only for East-fed sources.
+      if (st.source !== 'archive') {
+        var feedAgeMs = Date.now() - frames[frames.length - 1].timeMs;
+        if (feedAgeMs > 3 * 3600e3) {
+          var gn = window.TATSatHealth && window.TATSatHealth.notice &&
+                   window.TATSatHealth.notice();
+          S.stickyWarns.push('input feed paused: newest frame is ' +
+            (feedAgeMs / 3600e3).toFixed(1) + ' h old' +
+            (eastFed(st) && gn && gn.kind === 'paused'
+              ? ' (GOES-East satellite anomaly, NOAA)' : '') +
+            ' · results are valid at the frame time shown, not now');
+        }
+      }
       if (!loop) frames = frames.slice(-1);
       // trend window: the trailing 26 h of frames, thinned to ~30 min cadence
       // (Rule 8/9 look back 24 h; finer cadence adds cost, not skill)
@@ -358,6 +376,27 @@
         var newest = frames[frames.length - 1].timeMs;
         frames = frames.filter(function (f) { return newest - f.timeMs <= 26 * 3600e3; });
         frames = thinFrames(frames, 30 * 60e3);
+      }
+      // NOAA post-restore nav caveat: ARCHER/ADT centers from frames scanned
+      // within ~1 h of the GOES-19 ABI restore ride slightly-degraded
+      // navigation — the position error lands directly in the fix. Counted
+      // on the FINAL analyzed set (after slice/thin), East-fed sources only
+      // (time-based, so it correctly also fires on a re-analysis of those
+      // frames later).
+      if (window.TATSatHealth && window.TATSatHealth.navDegraded &&
+          eastFed(st)) {
+        var navN = frames.filter(function (f) {
+          return window.TATSatHealth.navDegraded(f.timeMs); }).length;
+        if (navN) {
+          S.stickyWarns.push('nav caveat: ' + navN + ' frame' +
+            (navN === 1 ? '' : 's') +
+            ' scanned within ~1 h of the GOES-19 restore (NOAA: navigation ' +
+            'slightly degraded) · treat centers from those frames with caution');
+        }
+      }
+      if (S.stickyWarns.length) {
+        $('ofx-warn').style.display = 'block';
+        $('ofx-warn').innerHTML = S.stickyWarns.join('<br>');
       }
       var env = envFor(st);
       env.initStrengthTF = loop;         // ADT ops seed the FIRST loop frame
@@ -566,6 +605,22 @@
   // left + the watermark at right — drawn over any text baked into the source
   // frame's corner so nothing stacks — and the input caveat as its own badge
   // at bottom-left, never overlapping the provenance.
+  // GOES-East test for the honesty gates: AL is always East; EP only east
+  // of ~106°W (the GOES-19/GOES-18 nadir midpoint — mirrors the satellite
+  // page's satCtxIsGoesEast, which the floater producer's routing follows);
+  // WP/CP and unknown-lon storms never. source 'fd' reads the goes19
+  // pyramid directly, so it is East by construction.
+  function eastFed(st) {
+    if (!st) return false;
+    if (st.source === 'fd') return true;
+    if (st.basin === 'AL') return true;
+    if (st.basin === 'EP') {
+      return typeof st.lon === 'number' && isFinite(st.lon) &&
+             st.lon > -106;
+    }
+    return false;
+  }
+
   function sourceSat() {
     var st = S.storm;
     if (!st) return '';
@@ -587,7 +642,20 @@
     g.textBaseline = 'top';
     g.font = '700 15px Metropolis,system-ui,sans-serif';
     g.fillStyle = 'rgba(219,227,236,0.95)';
-    g.fillText(sourceSat() + ' · ' + r.frame.stamp.replace('T', ' ').replace(/Z$/, ' Z'), 12, 10);
+    // when the shown frame IS the LIVE feed's newest and it is hours old,
+    // tag the provenance line so a frozen feed can never pass as a live
+    // scene. Archive scenes are historical on purpose — never tagged.
+    var provTag = '';
+    var nf = S.frames && S.frames[S.frames.length - 1];
+    if (S.storm && S.storm.source !== 'archive' &&
+        nf && r.frame.timeMs === nf.timeMs) {
+      var provAge = Date.now() - r.frame.timeMs;
+      if (provAge > 3 * 3600e3) {
+        provTag = ' · FEED PAUSED (' + (provAge / 3600e3).toFixed(1) + ' h old)';
+      }
+    }
+    g.fillText(sourceSat() + ' · ' +
+      r.frame.stamp.replace('T', ' ').replace(/Z$/, ' Z') + provTag, 12, 10);
     g.font = '700 14px Metropolis,system-ui,sans-serif';
     g.fillStyle = 'rgba(255,255,255,0.48)';
     var brand = '@WeathermanAAA_';
@@ -700,7 +768,9 @@
       section('Scene & Structure', sceneRows);
 
     // honesty degradations — loud, before the numbers get quoted
-    var warns = [];
+    // the run-level honesty warns (feed paused / nav caveat) must survive
+    // every stats refresh — renderStats rebuilds this box on each frame
+    var warns = (S.stickyWarns || []).slice();
     if (!a.center) warns.push('POOR FIX — quality gates rejected the center; position shown is the weak-center candidate and the intensity below inherits that uncertainty.');
     if (rec.land === 1) warns.push('CENTER OVER LAND — Dvorak-family estimates are not valid over land; intensity is suspended (shown for continuity only).');
     if (a.confidenceScore < 0.4) warns.push('LOW CONFIDENCE SCENE — treat the estimate as indicative only.');
@@ -906,7 +976,8 @@
         return { stamp: f.stamp, stampIso: iso, timeMs: Date.parse(iso) };
       });
       runAnalysis(true);
-    }
+    },
+    eastFed: eastFed
   };
   function stampToIso(stamp) {
     return stamp.slice(0, 4) + '-' + stamp.slice(4, 6) + '-' + stamp.slice(6, 8) +

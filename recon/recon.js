@@ -749,13 +749,14 @@
   // ====================================================================
   // Satellite backdrop (best-effort, current LIVE mission only).
   //
-  // The floater frames on R2 are RAW cropped image tiles - the floater manifest
-  // exposes no per-frame geographic bounds (no lat/lon extent, no degree span),
-  // so a frame cannot be reliably georeferenced onto the recon map extent.
-  // Without bounds we DO NOT draw a stretched/misregistered image over the
-  // track; we fall back to the clean coastline basemap (which is always drawn).
-  // This stays here as a graceful hook: if the floater frame ever carries
-  // bounds (a `bounds`/`ext` field of [w,e,s,n]) we adopt them and redraw.
+  // The floater pipeline stamps IR frames with a chrome-free grayscale
+  // backdrop sibling (`bd_key`) georeferenced by WGS84 `bounds` [W,S,E,N]
+  // (the same contract ascat.js consumes). Only that sibling is painted -
+  // the CHROMED floater frame is never used: its true extent is the square
+  // floater box, not the backdrop bbox, and its burned-in chrome does not
+  // belong under barbs. Frames older than 3 h are skipped (a live mission
+  // must never fly over silently day-old imagery during a satellite outage
+  // or producer stall) - the clean coastline basemap is the honest fallback.
   // ====================================================================
   ReconViewer.prototype._maybeLoadSatBackdrop = function (m) {
     var self = this;
@@ -786,12 +787,17 @@
         var band = sm.bands.ir || sm.bands.truecolor || null;
         if (!band) return;
         var frames = band.frames || [];
-        var last = (band.latest) ? band.latest : (frames.length ? frames[frames.length - 1].key : null);
-        // bounds come from a frame-level `bounds`/`ext` field IF present; the
-        // current pipeline does not emit one, so this resolves to null and we
-        // keep the clean basemap.
-        var bounds = self._frameBounds(band, frames);
-        if (!last || !bounds) return;
+        // newest frame carrying the chrome-free backdrop sibling
+        var best = null;
+        for (var i = frames.length - 1; i >= 0; i--) {
+          if (frames[i] && frames[i].bd_key && frames[i].bounds) { best = frames[i]; break; }
+        }
+        if (!best) return;
+        // age gate: stale imagery under a live track misleads; basemap instead
+        var age = Date.now() - (Date.parse(best.t) || 0);
+        if (!isFinite(age) || age > 3 * 3600e3) return;
+        var bounds = self._frameBounds(best);
+        if (!bounds) return;
         var img = new Image();
         try { img.crossOrigin = 'anonymous'; } catch (e) {}
         img.onload = function () {
@@ -799,28 +805,22 @@
           if (self.mission === m) self._draw();
         };
         img.onerror = function () {};
-        img.src = CDN_ROOT + '/' + last;
+        img.src = CDN_ROOT + '/' + best.bd_key;
       })
       .catch(function () {});
   };
 
-  // Pull a [w,e,s,n] extent from a floater band/frame if the pipeline ever
-  // emits one. Returns null otherwise (the common case today).
-  ReconViewer.prototype._frameBounds = function (band, frames) {
-    function asExt(b) {
-      if (!b) return null;
-      if (Array.isArray(b) && b.length === 4 && b.every(function (v) { return typeof v === 'number'; })) {
-        return [b[0], b[1], b[2], b[3]];   // [w,e,s,n]
-      }
-      if (typeof b === 'object' && b.w != null && b.e != null && b.s != null && b.n != null) {
-        return [b.w, b.e, b.s, b.n];
-      }
-      return null;
+  // Producer bounds are WGS84 [W,S,E,N] (the floater backdrop-sibling
+  // contract, same as ascat.js). The recon draw path wants [w,e,s,n].
+  ReconViewer.prototype._frameBounds = function (frame) {
+    var b = frame && (frame.bounds || frame.ext || frame.extent);
+    if (Array.isArray(b) && b.length === 4 && b.every(function (v) { return typeof v === 'number'; })) {
+      return [b[0], b[2], b[1], b[3]];   // [W,S,E,N] -> [w,e,s,n]
     }
-    var b = asExt(band && (band.bounds || band.ext || band.extent));
-    if (b) return b;
-    var last = frames && frames.length ? frames[frames.length - 1] : null;
-    return asExt(last && (last.bounds || last.ext || last.extent));
+    if (b && typeof b === 'object' && b.w != null && b.e != null && b.s != null && b.n != null) {
+      return [b.w, b.e, b.s, b.n];
+    }
+    return null;
   };
 
   // ====================================================================

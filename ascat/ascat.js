@@ -621,6 +621,18 @@
     if (this.backdrop && this.bdImg && this.bdFrame) {
       sub += '   ·   🛰 ' + this.bdFrame.sat + ' ' + String(this.bdFrame.band).toUpperCase() +
         ' ' + fmtZ(this.bdFrame.t);
+      // Backdrop-stale honesty: imagery under the barbs must never read as
+      // current when its frame is hours old (producer stall or a satellite
+      // outage, e.g. the 2026-07-15 GOES-19 safe mode). Age is computed from
+      // the frame's own t at draw time, so the marker clears itself as soon
+      // as fresh frames land.
+      var bdAgeMs = this.bdFrame.t ? Date.now() - (Date.parse(this.bdFrame.t) || 0) : NaN;
+      if (isFinite(bdAgeMs) && bdAgeMs > 3 * 3600e3) {
+        g.fillStyle = '#ffb24d';
+        sub += ' · ⚠ BACKDROP STALE (' + (bdAgeMs >= 48 * 3600e3
+          ? Math.round(bdAgeMs / 86400e3) + ' d'
+          : (bdAgeMs / 3600e3).toFixed(1) + ' h') + ' old)';
+      }
     }
     if (feedStale) sub += '   ·   ⚠ FEED DELAYED';
     g.fillText(sub, h.x, h.y + 38);
