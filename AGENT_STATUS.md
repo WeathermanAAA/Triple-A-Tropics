@@ -92,10 +92,29 @@ the bigger matrix).
   solve is linear, so that IS the mean χ); anomalies vs the same ERA5
   climo; wave filter runs on the analysis+forecast concat; archive→tail
   holes stay honest NaN gap rows; OLR stays analysis-only per spec.
-- **Item 4 — GEFS-member RMM forecast: IN FLIGHT.** WH04 EOF loadings +
-  normalization constants + GEFS-projection methodology are being
-  verified against primary sources before any code (the objfix
-  precedent: accuracy-critical constants are never winged). Lands next.
+- **Item 4 — GEFS-member RMM forecast: SHIPPED (@20804e1c),
+  closure-verified.** Every constant traced to a primary source before
+  coding (research pass with cited URLs): the original WH04 combined EOF
+  structures are vendored (`subseasonal/wh04_eofs.txt`, cross-checked
+  byte-equal against the DTC/METplus reference copies), field norms
+  15.11623 / 1.81355 / 4.80978 ship in the file, PC stds 8.6184 / 8.4074
+  from the METplus reference (NOT sqrt-eigenvalues), preprocessing per
+  Gottschalck et al. 2010 verbatim (trailing-120-day mean removed on the
+  obs+forecast CONCAT per member; no ENSO step; no taper). **The
+  pipeline was validated by projecting 60 days of REAL obs through it
+  against BoM's official RMM: corr PC1 = 0.997, PC2 = 0.990, rmse
+  0.35/0.22.** The residual climatology-base bias is measured per run
+  (seam vs BoM's newest pure-obs day) and the forecast anchors onto the
+  official endpoint when it exceeds 0.15 — offset + choice + the CDR
+  OLR-lag bridge days all disclosed in mjo_meta.json. Phase space:
+  members thin, ensemble mean bold amber, dated to ~16 d; amplitude:
+  mean + member envelope past a labeled init line. ULWRF gotcha coded
+  around (6-h avg buckets, absent at f000). 5 unit tests + live 7-member
+  end-to-end smoke rendered + eyeballed.
+- **v850 climatology build**: the first APDRC attempt silently hung for
+  2 h (netCDF4 OPeNDAP reads have no socket timeout — noted); restarted
+  unbuffered and moving at ~85 s per 5-year slab. The .nc + v850
+  activation + credits commit lands when it completes.
 
 ## 2026-07-16 (~21:3x UTC) — FULL-SITE STALENESS AUDIT + REMEDIATION (the box migration IS the systemic cause)
 
