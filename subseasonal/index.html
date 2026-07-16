@@ -242,17 +242,33 @@
       var note = document.getElementById('vp-winnote');
       var current = m.available.indexOf(m.default) >= 0
         ? m.default : m.available[0];
+      function findLead(win) {
+        if (!m.forecast || !m.forecast.leads) return null;
+        for (var i = 0; i < m.forecast.leads.length; i++) {
+          if (m.forecast.leads[i].key === win) return m.forecast.leads[i];
+        }
+        return null;
+      }
       function show(win) {
         current = win;
         setChi(win);
-        var w = m.windows[win];
-        var txt = w.label + ' ending ' + w.end;
-        if (w.retained != null) {
-          txt += ' · real-time filter endpoint: ~' +
-            Math.round(w.retained * 100) + '% amplitude retained';
+        var lead = findLead(win);
+        var txt;
+        if (lead) {
+          txt = 'FORECAST: ' + lead.label + ' · valid ' + lead.valid +
+            ' · init ' + String(lead.init).slice(0, 10) + ' 00Z · ' +
+            'ensemble-mean-smoothed, ~16-day model limit';
+        } else {
+          var w = m.windows[win];
+          txt = w.label + ' ending ' + w.end;
+          if (w.retained != null) {
+            txt += ' · real-time filter endpoint: ~' +
+              Math.round(w.retained * 100) + '% amplitude retained';
+          }
         }
         if (vpWave !== 'none' && m.wave_valid) {
-          txt += ' · wave contours: WK-filtered χ′ at ' + m.wave_valid +
+          txt += ' · wave contours: WK-filtered χ′ at ' +
+            (lead ? lead.valid : m.wave_valid) +
             ', divergent solid / convergent dashed';
         }
         note.textContent = txt + '.';
@@ -271,6 +287,18 @@
         b.onclick = function () { show(win); };
         sel.appendChild(b);
       });
+      // GEFS ensemble-mean forecast leads (meta-driven; absent until the
+      // generator advertises files for both levels)
+      if (m.forecast && m.forecast.leads) {
+        m.forecast.leads.forEach(function (ld) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = ld.label;
+          b.dataset.win = ld.key;
+          b.onclick = function () { show(ld.key); };
+          sel.appendChild(b);
+        });
+      }
       // wave-contour toggle: meta-driven, absent until the generator
       // advertises the overlay files for BOTH levels
       if (m.template_wave && m.wave_modes && m.wave_modes.length) {
@@ -374,6 +402,11 @@
         var info = m.vars[st.v] || {};
         document.getElementById('hov-asof').textContent =
           'Data through ' + (info.through || '?') +
+          (info.fc_to
+            ? ' · GEFS ensemble-mean tail to ' + info.fc_to +
+              ' (init ' + String(info.fc_init || '').slice(0, 10) +
+              ' 00Z, smoothed)'
+            : '') +
           (m.genesis_markers != null
             ? ' · ' + m.genesis_markers + ' TC-genesis markers.' : '.');
       }

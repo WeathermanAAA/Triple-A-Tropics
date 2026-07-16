@@ -68,6 +68,7 @@ import numpy as np  # noqa: E402
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "subseasonal"))
 import chi_core  # noqa: E402
+import gefs_mean  # noqa: E402
 import vp_windows  # noqa: E402
 import wk_filter  # noqa: E402
 
@@ -109,6 +110,14 @@ WAVE_MODES = [             # (ui key, wk_filter mode, label, color)
     ("mrgtd", "mrg_td", "MRG–TD", "#ff7a8a"),
     ("lowfreq", "lowfreq", "Low-freq", "#b18ce8"),
 ]  # colors mirror generate_hovmollers.WAVE_STYLE — keep the two in sync
+
+# GEFS ensemble-MEAN forecast leads rendered as their own map set (Phase 3
+# Group B item 6). The full 16-day tail is fetched ONCE (subseasonal/
+# gefs_mean.py), the +7/+10-day maps come from it, the whole tail feeds
+# the wave-filter concat, and the tail is saved to <out>/gefs_tail.nc so
+# the Hovmöller generator (same workflow run, same out dir) reuses it
+# without re-fetching. Every forecast render says ensemble-mean-smoothed.
+FORECAST_DAYS = (7, 10)
 
 
 # ------------------------------------------------------------------ fetching
@@ -286,7 +295,7 @@ def load_coast() -> list[np.ndarray]:
 def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
                  lats: np.ndarray, lons: np.ndarray, level: int,
                  heading: str, extra_note: str, out_png: Path, coast,
-                 wave=None) -> None:
+                 wave=None, credit=None) -> None:
     sel = np.abs(lats) <= LAT_BAND
     la = lats[sel]
     z = chi_anom[sel, :] / 1e6
@@ -327,7 +336,7 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     # poleward of WAVE_LAT arrive NaN and never contour)
     wave_note = ""
     if wave is not None:
-        wlabel, wcolor, wfield, wvalid = wave
+        wlabel, wcolor, wfield, wvalid, wtail = wave
         wl = wfield[sel, :] / 1e6
         wneg = [-m * step for m in (4.0, 3.0, 2.0, 1.0)]
         wpos = [m * step for m in (1.0, 2.0, 3.0, 4.0)]
@@ -341,8 +350,7 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
                       inline_spacing=2)
         wave_note = (f"{wlabel} wave contours: WK-filtered χ′ at "
                      f"{wvalid} (25°S–25°N), divergent (−) solid / "
-                     f"convergent (+) dashed · newest ~2 weeks "
-                     f"amplitude-damped (WW01 real-time)")
+                     f"convergent (+) dashed · {wtail}")
 
     ax.set_xlim(0, 360)
     ax.set_ylim(-LAT_BAND, LAT_BAND)
@@ -380,6 +388,7 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     cb.ax.tick_params(colors=MUTED_COLOR, labelsize=8)
     cb.outline.set_edgecolor(GRID)
     ax.text(0.0, -0.12,
+            credit or
             "Data: NOAA NCEP GFS analyses (daily means) · climatology: "
             "ERA5 monthly means 1991–2020 (ECMWF, via UH APDRC), χ solved "
             "identically · spectral solve truncated T21",
@@ -415,29 +424,66 @@ def _fill_series(fb: np.ndarray) -> np.ndarray:
     return out
 
 
-def wave_overlays_latest(times, anom, lats, lons):
-    """{ui key: (lat, lon) map} — the NEWEST archived day's WK-filtered
-    chi anomaly, filtered per latitude row over the rolling archive on a
-    continuous daily axis. Rows poleward of WAVE_LAT stay NaN so the
-    contours never leave the tropics."""
-    full = [times[0] + dt.timedelta(days=i)
-            for i in range((times[-1] - times[0]).days + 1)]
-    idx = {d: i for i, d in enumerate(times)}
+def wave_overlays_for(times, anom, lats, lons, targets, fc=None):
+    """{ui key: {target date: (lat, lon) map}} — WK-filtered chi anomaly
+    at each requested date, filtered per latitude row over the rolling
+    archive on a continuous daily axis. When `fc = (fc_dates, fc_anom)`
+    is given the GEFS ensemble-mean anomaly tail is appended BEFORE
+    filtering (the Phase-3 obs+forecast concat: the analysis endpoint
+    then leans on forecast data instead of the zero pad, and forecast-day
+    targets become extractable). Rows poleward of WAVE_LAT stay NaN so
+    the contours never leave the tropics."""
+    all_times = list(times)
+    all_anom = [anom[i] for i in range(len(times))]
+    if fc:
+        fc_dates, fc_anom = fc
+        for k, d in enumerate(fc_dates):
+            if d > all_times[-1]:
+                all_times.append(d)
+                all_anom.append(fc_anom[k])
+    full = [all_times[0] + dt.timedelta(days=i)
+            for i in range((all_times[-1] - all_times[0]).days + 1)]
+    idx = {d: i for i, d in enumerate(all_times)}
     nf = min(len(full), WAVE_FILTER_DAYS)
     sel = np.where(np.abs(lats) <= WAVE_LAT)[0]
     cube = np.full((len(full), sel.size, lons.size), np.nan)
     for di, d in enumerate(full):
         i = idx.get(d)
         if i is not None:
-            cube[di] = anom[i][sel]
+            cube[di] = all_anom[i][sel]
+    tail = full[-nf:]
+    want = {d: tail.index(d) for d in targets if d in tail}
     out = {}
     for ukey, mode, _, _ in WAVE_MODES:
-        m = np.full((lats.size, lons.size), np.nan)
-        for rj, j in enumerate(sel):
+        per = {d: np.full((lats.size, lons.size), np.nan) for d in want}
+        for rj, jrow in enumerate(sel):
             fb = _fill_series(cube[-nf:, rj])
-            m[j] = wk_filter.filter_realtime(fb, mode)[-1]
-        out[ukey] = m
+            filt = wk_filter.filter_realtime(fb, mode)
+            for d, ti in want.items():
+                per[d][jrow] = filt[ti]
+        out[ukey] = per
     return out
+
+
+def save_gefs_tail(path: Path, init, dates, u, v, nsteps):
+    """Persist the fetched GEFS mean tail for the Hovmöller generator
+    (same workflow run, same out dir) — one fetch, two consumers."""
+    import xarray as xr
+    glats, glons = gefs_mean.grid()
+    ds = xr.Dataset(
+        {"u": (("day", "level", "lat", "lon"), u.astype(np.float32)),
+         "v": (("day", "level", "lat", "lon"), v.astype(np.float32)),
+         "nsteps": (("day",), np.asarray(nsteps, np.int8)),
+         "timeord": (("day",),
+                     np.array([d.toordinal() for d in dates], np.int32))},
+        coords={"day": np.arange(len(dates), dtype=np.int32),
+                "level": np.asarray(gefs_mean.LEVELS, np.float32),
+                "lat": glats.astype(np.float32),
+                "lon": glons.astype(np.float32)},
+        attrs={"init": init.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    tmp = Path(str(path) + ".tmp")
+    ds.to_netcdf(tmp)
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------- main
@@ -480,6 +526,32 @@ def main() -> None:
     meta = {"levels": list(LEVELS), "default": DEFAULT_WINDOW,
             "windows": {}, "available": []}
 
+    # ---- GEFS ensemble-mean forecast tail (Phase 3 Group B): one fetch
+    # feeds the +7/+10-day maps + the wave-filter concat here, and (via
+    # gefs_tail.nc) the Hovmöller forecast tails later in this same run.
+    fc_init, fc_dates, fc_u, fc_v = None, [], None, None
+    try:
+        fc_init = gefs_mean.newest_complete_init()
+        fc_dates, fc_u, fc_v, fc_ns = gefs_mean.fetch_tail(fc_init)
+        if fc_dates:
+            save_gefs_tail(out / "gefs_tail.nc", fc_init, fc_dates,
+                           fc_u, fc_v, fc_ns)
+            print(f"GEFS mean tail: {len(fc_dates)} day(s), "
+                  f"init {fc_init:%Y-%m-%d} 00Z")
+        else:
+            print("GEFS mean tail: nothing reachable — forecast maps skipped")
+    except Exception as e:  # noqa: BLE001 — forecast layer is additive
+        print(f"GEFS tail failed ({type(e).__name__}: {e}) — "
+              f"forecast maps skipped")
+        fc_dates = []
+
+    def _align_idx(src, dst):
+        """Exact-label index map between 1-deg grids (KeyError = grids
+        diverge, caught by the per-level forecast guard)."""
+        pos = {round(float(x), 3): i for i, x in enumerate(src)}
+        return np.array([pos[round(float(x), 3)] for x in dst])
+
+    fc_meta = {}
     waves_ok_levels = set()
     for li, level in enumerate(LEVELS):
         # daily anomaly stack once per level; every window derives from it
@@ -488,15 +560,53 @@ def main() -> None:
             anom[ti] = chi[ti, li] - climo_chi_for(t, float(level),
                                                    lats, lons)
 
-        # latest-day WK-filtered wave fields (per-lat rows, tropics only);
-        # a filter failure must never take down the base maps
+        # GEFS-mean chi anomaly tail at this level (solve is linear, so
+        # chi of the mean wind IS the mean chi); failure only drops the
+        # forecast layer, never the analysis maps
+        fc_anom, fc_map_days = None, []
+        if fc_dates:
+            try:
+                glats, glons = gefs_mean.grid()
+                li_g = list(gefs_mean.LEVELS).index(float(level))
+                ii = _align_idx(glats, lats)
+                jj = _align_idx(glons, lons)
+                fc_anom = np.empty((len(fc_dates), lats.size, lons.size))
+                for k, d in enumerate(fc_dates):
+                    chi_fc, _, _ = chi_core.chi_from_uv(
+                        fc_u[k, li_g], fc_v[k, li_g], glats, glons)
+                    fc_anom[k] = (chi_fc[np.ix_(ii, jj)]
+                                  - climo_chi_for(d, float(level),
+                                                  lats, lons))
+                for dd in FORECAST_DAYS:
+                    vd = (fc_init + dt.timedelta(days=dd)).date()
+                    if vd in fc_dates and vd > end:
+                        fc_map_days.append((dd, vd))
+            except Exception as e:  # noqa: BLE001 — forecast is additive
+                print(f"fc chi @{level} failed ({type(e).__name__}: {e}) "
+                      f"— forecast maps skipped at this level")
+                fc_anom, fc_map_days = None, []
+
+        # WK-filtered wave fields (per-lat rows, tropics only) at the
+        # newest analysis day + each forecast map day, filtered on the
+        # analysis(+GEFS-mean) concat; a filter failure must never take
+        # down the base maps
+        concat = fc_anom is not None
+        wtail_note = ("filtered on the analysis + GEFS-mean concat "
+                      "(forecast half ensemble-mean-smoothed)" if concat
+                      else "newest ~2 weeks amplitude-damped "
+                           "(WW01 real-time)")
         try:
-            waves = wave_overlays_latest(times, anom, lats, lons)
+            targets = [end] + [vd for _, vd in fc_map_days]
+            waves_by_date = wave_overlays_for(
+                times, anom, lats, lons, targets,
+                fc=(fc_dates, fc_anom) if concat else None)
+            waves = {k: per[end] for k, per in waves_by_date.items()
+                     if end in per}
             waves_ok_levels.add(level)
         except Exception as e:  # noqa: BLE001 — overlay is optional
             print(f"wave overlays @{level} failed "
                   f"({type(e).__name__}: {e}) — base maps only")
-            waves = {}
+            waves, waves_by_date = {}, {}
         wave_valid = end.isoformat()
 
         for key, label, days in WINDOWS:
@@ -517,7 +627,7 @@ def main() -> None:
                              heading, "",
                              out / f"chi_anom_{level}_{key}_w{ukey}.png",
                              coast, wave=(wlabel, wcolor, waves[ukey],
-                                          wave_valid))
+                                          wave_valid, wtail_note))
             print(f"chi'({level}) {key}: [{field.min() / 1e6:+.1f}, "
                   f"{field.max() / 1e6:+.1f}] x1e6 m2/s ({used} days)")
             if li == 0:
@@ -556,7 +666,7 @@ def main() -> None:
                                  f"{end:%Y-%m-%d}", note,
                                  out / f"chi_anom_{level}_mjo_w{ukey}.png",
                                  coast, wave=(wlabel, wcolor, waves[ukey],
-                                              wave_valid))
+                                              wave_valid, wtail_note))
                 print(f"chi'({level}) mjo: [{filt.min() / 1e6:+.1f}, "
                       f"{filt.max() / 1e6:+.1f}] x1e6 m2/s "
                       f"(retained {retained:.0%})")
@@ -574,6 +684,44 @@ def main() -> None:
             print(f"mjo@{level}: archive {len(times)} < {MJO_MIN_DAYS} "
                   f"days — skipped")
 
+        # ---- GEFS ensemble-mean forecast-lead maps (+7 / +10 d), same
+        # styling + wave contours as the analysis set; headers carry
+        # init + valid and say ensemble-mean-smoothed on the plot
+        for dd, vd in fc_map_days:
+            k = fc_dates.index(vd)
+            field = fc_anom[k] - fc_anom[k].mean()   # chi gauge constant
+            u_chi, v_chi = chi_core.grad_chi(field, lats, lons)
+            fkey = f"f{dd * 24}"
+            heading = (f"GEFS ensemble-mean forecast +{dd} d · valid "
+                       f"{vd:%Y-%m-%d} · init {fc_init:%Y-%m-%d} 00Z")
+            fnote = ("FORECAST: GEFS ensemble mean (NCEP), "
+                     "ensemble-mean-smoothed · ~16-day model limit")
+            fcredit = ("Data: NOAA NCEP GEFS ensemble-mean forecast · "
+                       "climatology: ERA5 monthly means 1991–2020 (ECMWF, "
+                       "via UH APDRC), χ solved identically · spectral "
+                       "solve truncated T21")
+            render_level(field, u_chi, v_chi, lats, lons, level, heading,
+                         fnote, out / f"chi_anom_{level}_{fkey}.png",
+                         coast, credit=fcredit)
+            for ukey, _, wlabel, wcolor in WAVE_MODES:
+                per = waves_by_date.get(ukey) or {}
+                if vd not in per:
+                    continue
+                render_level(field, u_chi, v_chi, lats, lons, level,
+                             heading, fnote,
+                             out / f"chi_anom_{level}_{fkey}_w{ukey}.png",
+                             coast, wave=(wlabel, wcolor, per[vd],
+                                          vd.isoformat(), wtail_note),
+                             credit=fcredit)
+            print(f"chi'({level}) {fkey}: [{field.min() / 1e6:+.1f}, "
+                  f"{field.max() / 1e6:+.1f}] x1e6 m2/s (valid {vd})")
+            ent = fc_meta.setdefault(fkey, {
+                "key": fkey, "label": f"+{dd} d GEFS mean",
+                "valid": vd.isoformat(),
+                "init": fc_init.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "levels": 0})
+            ent["levels"] += 1
+
     # legacy filenames = the default window (cached pages keep working)
     for level in LEVELS:
         src = out / f"chi_anom_{level}_{DEFAULT_WINDOW}.png"
@@ -587,6 +735,14 @@ def main() -> None:
                               for k, _, lbl, _ in WAVE_MODES]
         meta["template_wave"] = "chi_anom_{level}_{key}_w{mode}.png"
         meta["wave_valid"] = end.isoformat()
+
+    # forecast leads: advertised only where BOTH levels rendered
+    fc_leads = [{k2: v for k2, v in e.items() if k2 != "levels"}
+                for e in fc_meta.values() if e["levels"] == len(LEVELS)]
+    if fc_leads:
+        meta["forecast"] = {
+            "init": fc_init.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "leads": sorted(fc_leads, key=lambda e: e["key"])}
 
     dflt = meta["windows"].get(DEFAULT_WINDOW, {})
     meta["cycle"] = (f"{dflt.get('label', '30-day mean')} ending "

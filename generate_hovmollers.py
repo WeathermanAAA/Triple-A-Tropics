@@ -59,6 +59,7 @@ import numpy as np  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "subseasonal"))
+import gefs_mean  # noqa: E402
 import wk_filter  # noqa: E402
 
 # ------------------------------------------------------------------ config
@@ -242,6 +243,65 @@ def wave_filts(bm_full: np.ndarray, nf: int) -> dict:
     {mode: (nf, lon) array} for every mode in WAVE_STYLE."""
     fb = _fill_for_filter(bm_full[-nf:])
     return {m: filter_realtime(fb, m) for m in WAVE_STYLE}
+
+
+# ---------------------------------------------- GEFS ensemble-mean tail
+
+def load_gefs_tail(path: Path):
+    """(init, dates, u[nd,2,glat,glon], v, nsteps) from the tail the VP
+    generator saved earlier in this same workflow run, or None (missing,
+    unreadable, or from an old init)."""
+    import xarray as xr
+    if not Path(path).exists():
+        return None
+    try:
+        ds = xr.open_dataset(path)
+        init = dt.datetime.strptime(ds.attrs["init"], "%Y-%m-%dT%H:%M:%SZ")
+        dates = [dt.date.fromordinal(int(o)) for o in ds.timeord.values]
+        out = (init, dates, ds.u.values.copy(), ds.v.values.copy(),
+               [int(n) for n in ds.nsteps.values])
+        ds.close()
+    except Exception as e:  # noqa: BLE001 — a corrupt cache refetches
+        print(f"gefs tail cache unreadable ({e})")
+        return None
+    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    if (now - init).total_seconds() > 2 * 86400:
+        return None
+    return out
+
+
+def get_gefs_tail(out: Path):
+    """The GEFS ensemble-mean forecast tail: reuse the VP product's fetch
+    (gefs_tail.nc in the shared out dir) or fetch fresh; None on failure
+    (the Hovmöllers then render analysis-only, exactly as before)."""
+    t = load_gefs_tail(out / "gefs_tail.nc")
+    if t:
+        print(f"gefs tail: reusing VP fetch ({len(t[1])} day(s), "
+              f"init {t[0]:%Y-%m-%d} 00Z)")
+        return t
+    try:
+        init = gefs_mean.newest_complete_init()
+        dates, u, v, ns = gefs_mean.fetch_tail(init)
+        if dates:
+            print(f"gefs tail: fetched {len(dates)} day(s), "
+                  f"init {init:%Y-%m-%d} 00Z")
+            return init, dates, u, v, ns
+    except Exception as e:  # noqa: BLE001 — the forecast layer is additive
+        print(f"gefs tail fetch failed ({type(e).__name__}: {e})")
+    return None
+
+
+def gefs_fc_note(init: dt.datetime, nsteps: list,
+                 to_date=None) -> str:
+    """The on-plot init-line label (init + valid-to + smoothing + limit,
+    per the Phase-3 forecast-header spec)."""
+    note = (f"GEFS ensemble mean below"
+            + (f", valid to {to_date:%Y-%m-%d}" if to_date else "")
+            + f" · init {init:%Y-%m-%d} 00Z · "
+            f"ensemble-mean-smoothed · ~16-day limit")
+    if nsteps and nsteps[-1] == 1:
+        note += " · final day 00Z only"
+    return note
 
 
 # ------------------------------------------------------------------ OLR
@@ -500,7 +560,8 @@ def fetch_genesis(start: dt.date, end: dt.date):
 
 def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                title, band_label, note_a, note_b, credit, overlays,
-               genesis, region, out_png: Path, wave_step: float = 10.0):
+               genesis, region, out_png: Path, wave_step: float = 10.0,
+               fc_start=None, fc_note: str = ""):
     """One time-longitude panel: shading + wave contours + genesis marks.
     field is (time, lon) newest-last; time runs DOWN the page.
 
@@ -540,6 +601,18 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                     fontweight="bold", zorder=6,
                     path_effects=[matplotlib.patheffects.withStroke(
                         linewidth=2.2, foreground="#10131a")])
+
+    # labeled init line: analysis above, GEFS ensemble-mean tail below
+    # (time runs DOWN the page, so the forecast rows sit at the bottom)
+    if fc_start is not None:
+        yline = mdates.date2num(dt.datetime(fc_start.year, fc_start.month,
+                                            fc_start.day)) - 0.5
+        ax.axhline(yline, color=TEXT, lw=1.2, ls=(0, (6, 3)), zorder=5)
+        ax.text(lon_lo + 0.995 * (lon_hi - lon_lo), yline, fc_note + "  ",
+                color=TEXT, fontsize=8, fontweight="bold", ha="right",
+                va="top", zorder=6,
+                path_effects=[matplotlib.patheffects.withStroke(
+                    linewidth=2.2, foreground="#10131a")])
 
     ax.set_xlim(lon_lo, lon_hi)
     ax.set_ylim(t[-1], t[0])                     # newest at the BOTTOM
@@ -645,8 +718,23 @@ def do_olr(hov: Path, meta: dict, genesis: list) -> None:
     print("OLR panels done")
 
 
+def _fc_axis_for(full, fc_dates_kept, bm_fc):
+    """Continuous daily extension of `full` out to the last forecast day:
+    (fc_axis dates, rows) with unfetched days left NaN so the render shows
+    an honest gap row instead of silently compressing time."""
+    if not fc_dates_kept:
+        return [], None
+    ext_days = (fc_dates_kept[-1] - full[-1]).days
+    fc_axis = [full[-1] + dt.timedelta(days=i + 1) for i in range(ext_days)]
+    rows = np.full((len(fc_axis), bm_fc.shape[1]), np.nan)
+    fidx = {d: i for i, d in enumerate(fc_axis)}
+    for m2, d in enumerate(fc_dates_kept):
+        rows[fidx[d]] = bm_fc[m2]
+    return fc_axis, rows
+
+
 def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
-         target_depth: int, backfill_days: int) -> None:
+         target_depth: int, backfill_days: int, gefs_tail=None) -> None:
     import xarray as xr
     if not U_CLIMO_NC.exists():
         print("u climo missing — u panels skipped")
@@ -675,13 +763,53 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                 continue
             anom_full[di] = u[i, li] - monthly_climo_for(
                 uclim, "u", d, float(level), lats_u, lons_u)
-        nf = min(len(full), FILTER_DAYS)
+
+        # GEFS ensemble-mean forecast anomaly at this level (Phase 3):
+        # failure only drops the tail, never the analysis panels
+        fc_anom, fc_kept, fc_init, fc_ns = None, [], None, []
+        if gefs_tail:
+            try:
+                fc_init, fdates, fu, fv, fc_ns = gefs_tail
+                glats, glons = gefs_mean.grid()
+                li_g = list(gefs_mean.LEVELS).index(float(level))
+                ii = np.array([int(np.where(np.isclose(glats, x))[0][0])
+                               for x in lats_u])
+                jj = np.array([int(np.where(np.isclose(glons, x))[0][0])
+                               for x in lons_u])
+                keep = [k for k, d in enumerate(fdates) if d > full[-1]]
+                fc_kept = [fdates[k] for k in keep]
+                if fc_kept:
+                    fc_anom = np.empty((len(keep), lats_u.size,
+                                        lons_u.size))
+                    for m2, k in enumerate(keep):
+                        fc_anom[m2] = (fu[k, li_g][np.ix_(ii, jj)]
+                                       - monthly_climo_for(
+                                           uclim, "u", fdates[k],
+                                           float(level), lats_u, lons_u))
+            except Exception as e:  # noqa: BLE001 — tail is additive
+                print(f"{vkey} fc tail failed ({type(e).__name__}: {e}) "
+                      f"— analysis only")
+                fc_anom, fc_kept = None, []
+
+        nf = min(len(full) + len(fc_kept), FILTER_DAYS)
+        title = (f"{int(level)}-hPa zonal wind anomaly · through "
+                 f"{times[-1]:%Y-%m-%d}"
+                 + (" (+GEFS)" if fc_kept else ""))
         for bkey, (lo, hi, blabel) in BANDS.items():
             bm = band_mean(anom_full, lats_u, lo, hi)
-            filts = wave_filts(bm, nf)          # same WK path as OLR
+            bm_fc = (band_mean(fc_anom, lats_u, lo, hi)
+                     if fc_anom is not None else None)
+            fc_axis, fc_rows = _fc_axis_for(full, fc_kept, bm_fc) \
+                if bm_fc is not None else ([], None)
+            bm_ext = np.vstack([bm, fc_rows]) if fc_rows is not None else bm
+            nfc = len(fc_axis)
+            filts = wave_filts(bm_ext, nf)      # analysis+forecast concat
             for nd in DAYS:
                 d_sub, sl = region_days_slices(full, nd)
                 n = len(d_sub)
+                d_plot = d_sub + fc_axis
+                field_plot = (np.vstack([bm[sl], fc_rows])
+                              if fc_rows is not None else bm[sl])
                 shallow = int(np.isfinite(
                     bm[sl]).all(axis=1).sum())
                 arch_note = (f"{shallow} of {len(d_sub)} days "
@@ -689,31 +817,39 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                              + (" · archive still building"
                                 if shallow < len(d_sub) else ""))
                 for wkey, modes in WAVE_SETS.items():
-                    overlays = [(m, filts[m][-n:]) for m in modes]
+                    overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
                     note_b = arch_note if not overlays else (
                         arch_note + " · wave contours ±2 m s⁻¹ steps, "
-                        "− solid / + dashed · newest ~2 wk damped (WW01)")
+                        "− solid / + dashed · "
+                        + ("filtered on the analysis+forecast concat"
+                           if nfc else "newest ~2 wk damped (WW01)"))
                     for rkey in REGIONS:
                         out_png = hov / (f"hov_{vkey}_{wkey}_{bkey}_"
                                          f"{nd}_{rkey}.png")
                         render_hov(
-                            bm[sl], d_sub, lons_u,
+                            field_plot, d_plot, lons_u,
                             cmap="RdBu_r", vmax=12, step=2,
                             cb_label=f"u{int(level)} anomaly (m s⁻¹)",
-                            title=f"{int(level)}-hPa zonal wind anomaly"
-                                  f" · through {times[-1]:%Y-%m-%d}",
+                            title=title,
                             band_label=blabel,
                             note_a=("GFS 1p00 daily-mean analyses · "
                                     "anomalies vs ERA5 monthly "
                                     "climatology 1991–2020 · red = "
                                     "westerly anomaly"),
                             note_b=note_b,
-                            credit=("Data: NCEP GFS · climatology: ERA5 (via "
+                            credit=("Data: NCEP GFS + GEFS mean (fcst) · "
+                                    "climatology: ERA5 (via UH APDRC) · "
+                                    "○ genesis: tcvitals (UCAR/RAL)"
+                                    if nfc else
+                                    "Data: NCEP GFS · climatology: ERA5 (via "
                                     "UH APDRC) · ○ genesis: tcvitals "
                                     "(UCAR/RAL)"),
                             overlays=overlays, genesis=genesis,
                             region=rkey,
-                            out_png=out_png, wave_step=2.0)
+                            out_png=out_png, wave_step=2.0,
+                            fc_start=fc_axis[0] if fc_axis else None,
+                            fc_note=gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
+                            if fc_axis else "")
                         if wkey == "none":
                             # legacy wave-less name: kept one release cycle
                             # so a cached page (old JS) still resolves
@@ -722,7 +858,11 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                                                 f"{nd}_{rkey}.png"))
         meta["vars"][vkey] = {"through": times[-1].isoformat(),
                               "days_archived": len(times),
-                              "waves": True}
+                              "waves": True,
+                              **({"fc_to": fc_kept[-1].isoformat(),
+                                  "fc_init": fc_init.strftime(
+                                      "%Y-%m-%dT%H:%M:%SZ")}
+                                 if fc_kept else {})}
 
     # ---- v850: the MRG / TD-type home, same archive + climo + WK path.
     # Gated on the climatology carrying v (lands with the rebuilt .nc) and
@@ -743,13 +883,51 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                 continue
             anom_full[di] = v[i, li850] - monthly_climo_for(
                 uclim, "v", d, 850.0, lats_u, lons_u)
-        nf = min(len(full), FILTER_DAYS)
+
+        fc_anom, fc_kept, fc_init, fc_ns = None, [], None, []
+        if gefs_tail:
+            try:
+                fc_init, fdates, fu, fv, fc_ns = gefs_tail
+                glats, glons = gefs_mean.grid()
+                li_g = list(gefs_mean.LEVELS).index(850.0)
+                ii = np.array([int(np.where(np.isclose(glats, x))[0][0])
+                               for x in lats_u])
+                jj = np.array([int(np.where(np.isclose(glons, x))[0][0])
+                               for x in lons_u])
+                keep = [k for k, d in enumerate(fdates) if d > full[-1]]
+                fc_kept = [fdates[k] for k in keep]
+                if fc_kept:
+                    fc_anom = np.empty((len(keep), lats_u.size,
+                                        lons_u.size))
+                    for m2, k in enumerate(keep):
+                        fc_anom[m2] = (fv[k, li_g][np.ix_(ii, jj)]
+                                       - monthly_climo_for(
+                                           uclim, "v", fdates[k],
+                                           850.0, lats_u, lons_u))
+            except Exception as e:  # noqa: BLE001 — tail is additive
+                print(f"v850 fc tail failed ({type(e).__name__}: {e}) "
+                      f"— analysis only")
+                fc_anom, fc_kept = None, []
+
+        nf = min(len(full) + len(fc_kept), FILTER_DAYS)
+        title = (f"850-hPa meridional wind anomaly · through "
+                 f"{times[-1]:%Y-%m-%d}"
+                 + (" (+GEFS)" if fc_kept else ""))
         for bkey, (lo, hi, blabel) in BANDS.items():
             bm = band_mean(anom_full, lats_u, lo, hi)
-            filts = wave_filts(bm, nf)
+            bm_fc = (band_mean(fc_anom, lats_u, lo, hi)
+                     if fc_anom is not None else None)
+            fc_axis, fc_rows = _fc_axis_for(full, fc_kept, bm_fc) \
+                if bm_fc is not None else ([], None)
+            bm_ext = np.vstack([bm, fc_rows]) if fc_rows is not None else bm
+            nfc = len(fc_axis)
+            filts = wave_filts(bm_ext, nf)
             for nd in DAYS:
                 d_sub, sl = region_days_slices(full, nd)
                 n = len(d_sub)
+                d_plot = d_sub + fc_axis
+                field_plot = (np.vstack([bm[sl], fc_rows])
+                              if fc_rows is not None else bm[sl])
                 shallow = int(np.isfinite(
                     bm[sl]).all(axis=1).sum())
                 arch_note = (f"{shallow} of {len(d_sub)} days "
@@ -757,31 +935,39 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                              + (" · archive still building"
                                 if shallow < len(d_sub) else ""))
                 for wkey, modes in WAVE_SETS.items():
-                    overlays = [(m, filts[m][-n:]) for m in modes]
+                    overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
                     note_b = arch_note if not overlays else (
                         arch_note + " · wave contours ±2 m s⁻¹ steps, "
-                        "− solid / + dashed · newest ~2 wk damped (WW01)")
+                        "− solid / + dashed · "
+                        + ("filtered on the analysis+forecast concat"
+                           if nfc else "newest ~2 wk damped (WW01)"))
                     for rkey in REGIONS:
                         out_png = hov / (f"hov_v850_{wkey}_{bkey}_"
                                          f"{nd}_{rkey}.png")
                         render_hov(
-                            bm[sl], d_sub, lons_u,
+                            field_plot, d_plot, lons_u,
                             cmap="RdBu_r", vmax=10, step=2,
                             cb_label="v850 anomaly (m s⁻¹)",
-                            title=f"850-hPa meridional wind anomaly"
-                                  f" · through {times[-1]:%Y-%m-%d}",
+                            title=title,
                             band_label=blabel,
                             note_a=("GFS 1p00 daily-mean analyses · "
                                     "anomalies vs ERA5 monthly "
                                     "climatology 1991–2020 · red = "
                                     "southerly anomaly"),
                             note_b=note_b,
-                            credit=("Data: NCEP GFS · climatology: ERA5 (via "
+                            credit=("Data: NCEP GFS + GEFS mean (fcst) · "
+                                    "climatology: ERA5 (via UH APDRC) · "
+                                    "○ genesis: tcvitals (UCAR/RAL)"
+                                    if nfc else
+                                    "Data: NCEP GFS · climatology: ERA5 (via "
                                     "UH APDRC) · ○ genesis: tcvitals "
                                     "(UCAR/RAL)"),
                             overlays=overlays, genesis=genesis,
                             region=rkey,
-                            out_png=out_png, wave_step=2.0)
+                            out_png=out_png, wave_step=2.0,
+                            fc_start=fc_axis[0] if fc_axis else None,
+                            fc_note=gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
+                            if fc_axis else "")
                         if wkey == "none":
                             shutil.copyfile(
                                 out_png, hov / (f"hov_v850_{bkey}_"
@@ -789,13 +975,17 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
         meta["vars"]["v850"] = {"through": times[-1].isoformat(),
                                 "days_archived": int(np.isfinite(
                                     v[:, li850]).any(axis=(1, 2)).sum()),
-                                "waves": True}
+                                "waves": True,
+                                **({"fc_to": fc_kept[-1].isoformat(),
+                                    "fc_init": fc_init.strftime(
+                                        "%Y-%m-%dT%H:%M:%SZ")}
+                                   if fc_kept else {})}
         print("v850 panels done")
     uclim.close()
     print("u panels done")
 
 def do_chi(hov: Path, meta: dict, genesis: list,
-           chi_archive_path: Path) -> None:
+           chi_archive_path: Path, gefs_tail=None) -> None:
     import xarray as xr
     import vp_windows
     archive = vp_windows.load_archive(chi_archive_path)
@@ -820,44 +1010,93 @@ def do_chi(hov: Path, meta: dict, genesis: list,
             continue
         anom_full[di] = chi[i, li] - monthly_climo_for(
             cclim, "chi", d, 200.0, lats_c, lons_c)
+
+    # GEFS ensemble-mean chi tail: solve chi from the mean wind per
+    # forecast day (the solve is linear, so this IS the mean chi)
+    fc_anom, fc_kept, fc_init, fc_ns = None, [], None, []
+    if gefs_tail:
+        try:
+            import chi_core
+            fc_init, fdates, fu, fv, fc_ns = gefs_tail
+            glats, glons = gefs_mean.grid()
+            li_g = list(gefs_mean.LEVELS).index(200.0)
+            ii = np.array([int(np.where(np.isclose(glats, x))[0][0])
+                           for x in lats_c])
+            jj = np.array([int(np.where(np.isclose(glons, x))[0][0])
+                           for x in lons_c])
+            keep = [k for k, d in enumerate(fdates) if d > full[-1]]
+            fc_kept = [fdates[k] for k in keep]
+            if fc_kept:
+                fc_anom = np.empty((len(keep), lats_c.size, lons_c.size))
+                for m2, k in enumerate(keep):
+                    chi_fc, _, _ = chi_core.chi_from_uv(
+                        fu[k, li_g], fv[k, li_g], glats, glons)
+                    fc_anom[m2] = (chi_fc[np.ix_(ii, jj)]
+                                   - monthly_climo_for(
+                                       cclim, "chi", fdates[k], 200.0,
+                                       lats_c, lons_c))
+        except Exception as e:  # noqa: BLE001 — tail is additive
+            print(f"chi200 fc tail failed ({type(e).__name__}: {e}) "
+                  f"— analysis only")
+            fc_anom, fc_kept = None, []
     cclim.close()
-    nf = min(len(full), FILTER_DAYS)
+    nf = min(len(full) + len(fc_kept), FILTER_DAYS)
+    title = (f"200-hPa velocity potential anomaly · through "
+             f"{times[-1]:%Y-%m-%d}"
+             + (" (+GEFS)" if fc_kept else ""))
     for bkey, (lo, hi, blabel) in BANDS.items():
         bm = band_mean(anom_full, lats_c, lo, hi) / 1e6
-        filts = wave_filts(bm, nf)              # same WK path as OLR
+        bm_fc = (band_mean(fc_anom, lats_c, lo, hi) / 1e6
+                 if fc_anom is not None else None)
+        fc_axis, fc_rows = _fc_axis_for(full, fc_kept, bm_fc) \
+            if bm_fc is not None else ([], None)
+        bm_ext = np.vstack([bm, fc_rows]) if fc_rows is not None else bm
+        nfc = len(fc_axis)
+        filts = wave_filts(bm_ext, nf)          # analysis+forecast concat
         for nd in DAYS:
             d_sub, sl = region_days_slices(full, nd)
             n = len(d_sub)
+            d_plot = d_sub + fc_axis
+            field_plot = (np.vstack([bm[sl], fc_rows])
+                          if fc_rows is not None else bm[sl])
             vmax = max(4.0, float(np.ceil(np.nanpercentile(
                 np.abs(bm[sl]), 99) / 2) * 2))
             step = 1.0 if vmax <= 8 else 2.0
             for wkey, modes in WAVE_SETS.items():
-                overlays = [(m, filts[m][-n:]) for m in modes]
+                overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
                 note_b = ("green = negative χ′ = anomalous "
                           "upper-level divergence (enhanced "
                           "convection)")
                 if overlays:
                     note_b += (" · wave contours: divergent (−χ′) solid "
-                               "/ convergent dashed · ~2 wk damped (WW01)")
+                               "/ convergent dashed · "
+                               + ("analysis+forecast concat" if nfc
+                                  else "~2 wk damped (WW01)"))
                 for rkey in REGIONS:
                     out_png = hov / (f"hov_chi200_{wkey}_{bkey}_"
                                      f"{nd}_{rkey}.png")
                     render_hov(
-                        bm[sl], d_sub, lons_c,
+                        field_plot, d_plot, lons_c,
                         cmap="BrBG_r", vmax=vmax, step=step,
                         cb_label="χ200 anomaly (10⁶ m² s⁻¹)",
-                        title=f"200-hPa velocity potential anomaly · "
-                              f"through {times[-1]:%Y-%m-%d}",
+                        title=title,
                         band_label=blabel,
                         note_a=("daily T21 χ from GFS analyses (the χ "
                                 "product's archive) · anomalies vs "
                                 "ERA5 monthly climatology 1991–2020"),
                         note_b=note_b,
-                        credit=("Data: NCEP GFS · climatology: ERA5 (via "
+                        credit=("Data: NCEP GFS + GEFS mean (fcst) · "
+                                "climatology: ERA5 (via UH APDRC) · "
+                                "○ genesis: tcvitals (UCAR/RAL)"
+                                if nfc else
+                                "Data: NCEP GFS · climatology: ERA5 (via "
                                 "UH APDRC) · ○ genesis: tcvitals "
                                 "(UCAR/RAL)"),
                         overlays=overlays, genesis=genesis, region=rkey,
-                        out_png=out_png, wave_step=step)
+                        out_png=out_png, wave_step=step,
+                        fc_start=fc_axis[0] if fc_axis else None,
+                        fc_note=gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
+                        if fc_axis else "")
                     if wkey == "none":
                         # legacy wave-less name: kept one release cycle
                         # so a cached page (old JS) still resolves
@@ -866,7 +1105,11 @@ def do_chi(hov: Path, meta: dict, genesis: list,
                                             f"{nd}_{rkey}.png"))
     meta["vars"]["chi200"] = {"through": times[-1].isoformat(),
                               "days_archived": len(times),
-                              "waves": True}
+                              "waves": True,
+                              **({"fc_to": fc_kept[-1].isoformat(),
+                                  "fc_init": fc_init.strftime(
+                                      "%Y-%m-%dT%H:%M:%SZ")}
+                                 if fc_kept else {})}
     print("chi200 panels done")
 
 
@@ -908,6 +1151,11 @@ def main() -> None:
     genesis = fetch_genesis(today - dt.timedelta(days=max(DAYS) + 5), today)
     print(f"genesis markers: {len(genesis)}")
 
+    # GEFS ensemble-mean forecast tail (Phase 3 Group B): fetched once
+    # (or reused from the VP product's gefs_tail.nc in the same run) and
+    # threaded into the u/v/chi sections; None = analysis-only, as before
+    gefs_tail = None if args.skip_u and args.skip_chi else get_gefs_tail(out)
+
     # one flaky upstream (PSL THREDDS, AWS GFS, R2) must not take down
     # the other variables' panels — isolate each section, fail loudly
     # only if EVERYTHING failed (or nothing rendered at all)
@@ -917,10 +1165,12 @@ def main() -> None:
     if not args.skip_u:
         sections.append(("u", lambda: do_u(
             hov, meta, genesis, u_archive_path,
-            args.u_target_depth, args.u_backfill_days)))
+            args.u_target_depth, args.u_backfill_days,
+            gefs_tail=gefs_tail)))
     if not args.skip_chi:
         sections.append(("chi200", lambda: do_chi(
-            hov, meta, genesis, chi_archive_path)))
+            hov, meta, genesis, chi_archive_path,
+            gefs_tail=gefs_tail)))
     failed = []
     for name, fn in sections:
         try:
