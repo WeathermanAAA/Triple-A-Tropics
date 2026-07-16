@@ -46,6 +46,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import shutil
 import sys
 import warnings
 from pathlib import Path
@@ -90,10 +91,11 @@ REGIONS = {                # key -> (lon_lo, lon_hi, label)
     "glob": (0.0, 360.0, "Global"),
     "ipac": (40.0, 200.0, "Indo-Pacific"),
 }
-WAVE_SETS = {              # OLR overlay selector -> modes drawn
+WAVE_SETS = {              # wave-overlay selector -> modes drawn
     "all": ["mjo", "kelvin", "er", "mrg_td"],
     "mjo": ["mjo"], "kelvin": ["kelvin"], "er": ["er"],
-    "mrgtd": ["mrg_td"], "lowfreq": ["lowfreq"], "none": [],
+    "mrgtd": ["mrg_td"], "mrgtd_er": ["mrg_td", "er"],
+    "lowfreq": ["lowfreq"], "none": [],
 }
 WAVE_STYLE = {             # mode -> (label, color) on the dark canvas
     "mjo":    ("MJO", "#e5edf6"),
@@ -102,7 +104,11 @@ WAVE_STYLE = {             # mode -> (label, color) on the dark canvas
     "mrg_td": ("MRG–TD", "#ff7a8a"),
     "lowfreq": ("Low-freq", "#b18ce8"),
 }
-WAVE_CLEVS = [-40.0, -30.0, -20.0, -10.0, 10.0, 20.0, 30.0, 40.0]
+# wave-contour levels are +-(1..4) x wave_step, so each variable's
+# contours scale with its own shading step (OLR keeps its historic
+# +-10/20/30/40 W m^-2 via step 10; u
+# gets +-2..8 m s^-1; chi +-step..4*step x 1e6 m^2 s^-1)
+WAVE_CLEV_MULTS = (1.0, 2.0, 3.0, 4.0)
 
 BG = "#07101c"
 TEXT = "#e5edf6"
@@ -204,6 +210,40 @@ def filter_realtime(anom: np.ndarray, mode: str, obs_per_day: float = 1.0
     return filt[:nt]
 
 
+def _fill_for_filter(fb: np.ndarray) -> np.ndarray:
+    """Finite copy of a (time, lon) band-mean series for the FFT filter:
+    interior NaN days linearly interpolated per longitude, anything
+    outside the observed span zeroed (zero anomalies add no variance —
+    the WW01 pad is zeros anyway). The SHADING keeps its honest NaN
+    gaps; only the filter input is filled."""
+    out = fb.astype(float, copy=True)
+    nt = out.shape[0]
+    x = np.arange(nt, dtype=float)
+    for j in range(out.shape[1]):
+        col = out[:, j]
+        good = np.isfinite(col)
+        ngood = int(good.sum())
+        if ngood == 0:
+            out[:, j] = 0.0
+            continue
+        if ngood < nt:
+            filled = np.interp(x, x[good], col[good])
+            first = int(np.argmax(good))
+            last = nt - 1 - int(np.argmax(good[::-1]))
+            filled[:first] = 0.0
+            filled[last + 1:] = 0.0
+            out[:, j] = filled
+    return out
+
+
+def wave_filts(bm_full: np.ndarray, nf: int) -> dict:
+    """Per-mode WW01 real-time filtered fields for ONE band-mean series
+    (time, lon): filter the newest `nf` days after gap-filling. Returns
+    {mode: (nf, lon) array} for every mode in WAVE_STYLE."""
+    fb = _fill_for_filter(bm_full[-nf:])
+    return {m: filter_realtime(fb, m) for m in WAVE_STYLE}
+
+
 # ------------------------------------------------------------------ OLR
 
 def fetch_olr():
@@ -246,6 +286,10 @@ def fetch_olr():
 
 
 # ------------------------------------------------- GFS u archive (like chi)
+# Archive tuple: (times, levels, lats, lons, u, v, ncycles). The v field
+# was added for the v850 Hovmöller; archives written before it load with
+# v = all-NaN so old days simply read "archive still building" while the
+# rolling backfill fills v forward — no cold restart of the u history.
 
 def load_u_archive(path: Path):
     import xarray as xr
@@ -254,8 +298,10 @@ def load_u_archive(path: Path):
     try:
         ds = xr.open_dataset(path)
         times = [dt.date.fromordinal(int(o)) for o in ds.timeord.values]
+        v = (ds.v.values.copy() if "v" in ds
+             else np.full(ds.u.shape, np.nan, np.float32))
         out = (times, ds.level.values.copy(), ds.lat.values.copy(),
-               ds.lon.values.copy(), ds.u.values.copy(),
+               ds.lon.values.copy(), ds.u.values.copy(), v,
                ds.ncycles.values.copy())
         ds.close()
         return out
@@ -264,7 +310,7 @@ def load_u_archive(path: Path):
         return None
 
 
-def save_u_archive(path: Path, times, levels, lats, lons, u, ncycles):
+def save_u_archive(path: Path, times, levels, lats, lons, u, v, ncycles):
     import xarray as xr
     order = np.argsort([t.toordinal() for t in times])
     ds = xr.Dataset(
@@ -272,6 +318,11 @@ def save_u_archive(path: Path, times, levels, lats, lons, u, ncycles):
                u[order].astype(np.float32),
                {"units": "m s-1",
                 "long_name": "daily-mean zonal wind, GFS 1p00 analyses"}),
+         "v": (("time", "level", "lat", "lon"),
+               v[order].astype(np.float32),
+               {"units": "m s-1",
+                "long_name": "daily-mean meridional wind, GFS 1p00 "
+                             "analyses"}),
          "ncycles": (("time",), np.asarray(ncycles)[order].astype(np.int8),
                      {"long_name": "GFS analyses in the daily mean (of 4)"}),
          "timeord": (("time",),
@@ -283,16 +334,18 @@ def save_u_archive(path: Path, times, levels, lats, lons, u, ncycles):
                 "lat": np.asarray(lats, np.float32),
                 "lon": np.asarray(lons, np.float32)})
     tmp = Path(str(path) + ".tmp")
-    ds.to_netcdf(tmp, encoding={"u": {"zlib": True, "complevel": 4}})
+    ds.to_netcdf(tmp, encoding={"u": {"zlib": True, "complevel": 4},
+                                "v": {"zlib": True, "complevel": 4}})
     tmp.replace(path)
 
 
 def fetch_day_u(day: dt.date):
-    """Daily-mean u at U_LEVELS over the U_LATS rows -> (u[level,lat,lon],
-    ncycles) or None. Herbie GFS 1p00, AWS-first, byte-range subsets."""
+    """Daily-mean u AND v at U_LEVELS over the U_LATS rows ->
+    (u[level,lat,lon], v[level,lat,lon], ncycles) or None. Herbie GFS
+    1p00, AWS-first, byte-range subsets."""
     from herbie import Herbie
     warnings.filterwarnings("ignore")
-    got = []
+    got_u, got_v = [], []
     for hour in (0, 6, 12, 18):
         t = dt.datetime(day.year, day.month, day.day, hour)
         if t > dt.datetime.now(dt.timezone.utc).replace(tzinfo=None):
@@ -302,22 +355,26 @@ def fetch_day_u(day: dt.date):
                        verbose=False)
             if not h.grib:
                 continue
-            ds = h.xarray(":UGRD:(200|850) mb")
+            ds = h.xarray(":(UGRD|VGRD):(200|850) mb")
             if isinstance(ds, list):
                 import xarray as xr
                 ds = xr.merge(ds, compat="override")
-            sub = ds.u.sel(latitude=U_LATS, isobaricInhPa=list(U_LEVELS))
-            # (level, lat, lon), level order pinned to U_LEVELS
-            arr = np.stack([sub.sel(isobaricInhPa=lv).values
-                            for lv in U_LEVELS])
-            got.append(arr.astype(float))
+            arrs = []
+            for var in ("u", "v"):
+                sub = ds[var].sel(latitude=U_LATS,
+                                  isobaricInhPa=list(U_LEVELS))
+                # (level, lat, lon), level order pinned to U_LEVELS
+                arrs.append(np.stack([sub.sel(isobaricInhPa=lv).values
+                                      for lv in U_LEVELS]).astype(float))
+            got_u.append(arrs[0])
+            got_v.append(arrs[1])
         except Exception as e:  # noqa: BLE001 — a missing cycle is expected
             print(f"    u cycle {t:%Y-%m-%d %HZ}: {e}")
-    if len(got) < MIN_CYCLES_PER_DAY:
-        print(f"  u {day}: only {len(got)} cycles — skipped")
+    if len(got_u) < MIN_CYCLES_PER_DAY:
+        print(f"  u {day}: only {len(got_u)} cycles — skipped")
         return None
-    print(f"  u {day}: {len(got)} cycles ok")
-    return np.mean(got, axis=0), len(got)
+    print(f"  u {day}: {len(got_u)} cycles ok")
+    return np.mean(got_u, axis=0), np.mean(got_v, axis=0), len(got_u)
 
 
 def backfill_u(archive, target_depth: int, max_fetch: int, workers: int = 4):
@@ -331,15 +388,15 @@ def backfill_u(archive, target_depth: int, max_fetch: int, workers: int = 4):
     if archive is None:
         times, levels = [], np.array(U_LEVELS, float)
         lats, lons = U_LATS.copy(), np.arange(0.0, 360.0, 1.0)
-        u = None
+        u = v = None
         ncyc = np.zeros(0, np.int8)
     else:
-        times, levels, lats, lons, u, ncyc = archive
+        times, levels, lats, lons, u, v, ncyc = archive
     have = set(times)
     missing = [d for d in wanted if d not in have][:max_fetch]
     if not missing:
         print("u archive complete — no backfill needed")
-        return times, levels, lats, lons, u, ncyc
+        return times, levels, lats, lons, u, v, ncyc
     print(f"u backfill: {len(missing)} day(s), {workers} workers")
     ctx = mp.get_context("spawn")
     with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
@@ -347,13 +404,15 @@ def backfill_u(archive, target_depth: int, max_fetch: int, workers: int = 4):
     for day, r in zip(missing, results):
         if r is None:
             continue
-        day_u, n = r
+        day_u, day_v, n = r
         if u is None:
             u = day_u[None]
+            v = day_v[None]
             times = [day]
             ncyc = np.array([n], np.int8)
         else:
             u = np.concatenate([u, day_u[None]], axis=0)
+            v = np.concatenate([v, day_v[None]], axis=0)
             times.append(day)
             ncyc = np.append(ncyc, np.int8(n))
     if u is None:
@@ -362,7 +421,7 @@ def backfill_u(archive, target_depth: int, max_fetch: int, workers: int = 4):
             if (today - t).days <= max(400, target_depth)]
     order = sorted(keep, key=lambda i: times[i])
     return ([times[i] for i in order], levels, lats, lons,
-            u[order], ncyc[order])
+            u[order], v[order], ncyc[order])
 
 
 # ------------------------------------------------------------- tcvitals
@@ -441,7 +500,7 @@ def fetch_genesis(start: dt.date, end: dt.date):
 
 def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                title, band_label, note_a, note_b, credit, overlays,
-               genesis, region, out_png: Path):
+               genesis, region, out_png: Path, wave_step: float = 10.0):
     """One time-longitude panel: shading + wave contours + genesis marks.
     field is (time, lon) newest-last; time runs DOWN the page.
 
@@ -460,8 +519,8 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                      extend="both")
     for mode, filt in overlays:
         label, color = WAVE_STYLE[mode]
-        neg = [c for c in WAVE_CLEVS if c < 0]
-        pos = [c for c in WAVE_CLEVS if c > 0]
+        neg = [-m * wave_step for m in reversed(WAVE_CLEV_MULTS)]
+        pos = [m * wave_step for m in WAVE_CLEV_MULTS]
         ax.contour(lons, t, filt, levels=neg, colors=color,
                    linewidths=1.4, linestyles="solid")
         ax.contour(lons, t, filt, levels=pos, colors=color,
@@ -595,10 +654,10 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
     archive = load_u_archive(u_archive_path)
     if archive:
         print(f"u archive: {len(archive[0])} days")
-    times, levels, lats_u, lons_u, u, ncyc = backfill_u(
+    times, levels, lats_u, lons_u, u, v, ncyc = backfill_u(
         archive, target_depth, backfill_days)
     save_u_archive(u_archive_path, times, levels, lats_u, lons_u,
-                   u, ncyc)
+                   u, v, ncyc)
     print(f"u archive saved: {len(times)} days "
           f"({times[0]} .. {times[-1]})")
     uclim = xr.open_dataset(U_CLIMO_NC)
@@ -616,38 +675,122 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                 continue
             anom_full[di] = u[i, li] - monthly_climo_for(
                 uclim, "u", d, float(level), lats_u, lons_u)
+        nf = min(len(full), FILTER_DAYS)
         for bkey, (lo, hi, blabel) in BANDS.items():
             bm = band_mean(anom_full, lats_u, lo, hi)
+            filts = wave_filts(bm, nf)          # same WK path as OLR
             for nd in DAYS:
                 d_sub, sl = region_days_slices(full, nd)
+                n = len(d_sub)
                 shallow = int(np.isfinite(
                     bm[sl]).all(axis=1).sum())
-                note_b = (f"{shallow} of {len(d_sub)} days "
-                          f"archived"
-                          + (" · archive still building"
-                             if shallow < len(d_sub) else ""))
-                for rkey in REGIONS:
-                    render_hov(
-                        bm[sl], d_sub, lons_u,
-                        cmap="RdBu_r", vmax=12, step=2,
-                        cb_label=f"u{int(level)} anomaly (m s⁻¹)",
-                        title=f"{int(level)}-hPa zonal wind anomaly"
-                              f" · through {times[-1]:%Y-%m-%d}",
-                        band_label=blabel,
-                        note_a=("GFS 1p00 daily-mean analyses · "
-                                "anomalies vs ERA5 monthly "
-                                "climatology 1991–2020 · red = "
-                                "westerly anomaly"),
-                        note_b=note_b,
-                        credit=("Data: NCEP GFS · climatology: ERA5 (via "
-                                "UH APDRC) · ○ genesis: tcvitals "
-                                "(UCAR/RAL)"),
-                        overlays=[], genesis=genesis,
-                        region=rkey,
-                        out_png=hov / (f"hov_{vkey}_{bkey}_"
-                                       f"{nd}_{rkey}.png"))
+                arch_note = (f"{shallow} of {len(d_sub)} days "
+                             f"archived"
+                             + (" · archive still building"
+                                if shallow < len(d_sub) else ""))
+                for wkey, modes in WAVE_SETS.items():
+                    overlays = [(m, filts[m][-n:]) for m in modes]
+                    note_b = arch_note if not overlays else (
+                        arch_note + " · wave contours ±2 m s⁻¹ steps, "
+                        "− solid / + dashed · newest ~2 wk damped (WW01)")
+                    for rkey in REGIONS:
+                        out_png = hov / (f"hov_{vkey}_{wkey}_{bkey}_"
+                                         f"{nd}_{rkey}.png")
+                        render_hov(
+                            bm[sl], d_sub, lons_u,
+                            cmap="RdBu_r", vmax=12, step=2,
+                            cb_label=f"u{int(level)} anomaly (m s⁻¹)",
+                            title=f"{int(level)}-hPa zonal wind anomaly"
+                                  f" · through {times[-1]:%Y-%m-%d}",
+                            band_label=blabel,
+                            note_a=("GFS 1p00 daily-mean analyses · "
+                                    "anomalies vs ERA5 monthly "
+                                    "climatology 1991–2020 · red = "
+                                    "westerly anomaly"),
+                            note_b=note_b,
+                            credit=("Data: NCEP GFS · climatology: ERA5 (via "
+                                    "UH APDRC) · ○ genesis: tcvitals "
+                                    "(UCAR/RAL)"),
+                            overlays=overlays, genesis=genesis,
+                            region=rkey,
+                            out_png=out_png, wave_step=2.0)
+                        if wkey == "none":
+                            # legacy wave-less name: kept one release cycle
+                            # so a cached page (old JS) still resolves
+                            shutil.copyfile(
+                                out_png, hov / (f"hov_{vkey}_{bkey}_"
+                                                f"{nd}_{rkey}.png"))
         meta["vars"][vkey] = {"through": times[-1].isoformat(),
-                              "days_archived": len(times)}
+                              "days_archived": len(times),
+                              "waves": True}
+
+    # ---- v850: the MRG / TD-type home, same archive + climo + WK path.
+    # Gated on the climatology carrying v (lands with the rebuilt .nc) and
+    # on any finite v in the archive (old archives load v as all-NaN and
+    # backfill forward) — until both hold, the section skips honestly.
+    if "v" not in uclim:
+        print("v850 skipped: u climo has no v yet "
+              "(rebuild build_u_climatology.py + commit the .nc)")
+    elif not np.isfinite(v).any():
+        print("v850 skipped: no v days in the archive yet")
+    else:
+        li850 = list(U_LEVELS).index(850.0)
+        anom_full = np.full((len(full), lats_u.size, lons_u.size),
+                            np.nan)
+        for di, d in enumerate(full):
+            i = index.get(d)
+            if i is None or not np.isfinite(v[i, li850]).any():
+                continue
+            anom_full[di] = v[i, li850] - monthly_climo_for(
+                uclim, "v", d, 850.0, lats_u, lons_u)
+        nf = min(len(full), FILTER_DAYS)
+        for bkey, (lo, hi, blabel) in BANDS.items():
+            bm = band_mean(anom_full, lats_u, lo, hi)
+            filts = wave_filts(bm, nf)
+            for nd in DAYS:
+                d_sub, sl = region_days_slices(full, nd)
+                n = len(d_sub)
+                shallow = int(np.isfinite(
+                    bm[sl]).all(axis=1).sum())
+                arch_note = (f"{shallow} of {len(d_sub)} days "
+                             f"archived"
+                             + (" · archive still building"
+                                if shallow < len(d_sub) else ""))
+                for wkey, modes in WAVE_SETS.items():
+                    overlays = [(m, filts[m][-n:]) for m in modes]
+                    note_b = arch_note if not overlays else (
+                        arch_note + " · wave contours ±2 m s⁻¹ steps, "
+                        "− solid / + dashed · newest ~2 wk damped (WW01)")
+                    for rkey in REGIONS:
+                        out_png = hov / (f"hov_v850_{wkey}_{bkey}_"
+                                         f"{nd}_{rkey}.png")
+                        render_hov(
+                            bm[sl], d_sub, lons_u,
+                            cmap="RdBu_r", vmax=10, step=2,
+                            cb_label="v850 anomaly (m s⁻¹)",
+                            title=f"850-hPa meridional wind anomaly"
+                                  f" · through {times[-1]:%Y-%m-%d}",
+                            band_label=blabel,
+                            note_a=("GFS 1p00 daily-mean analyses · "
+                                    "anomalies vs ERA5 monthly "
+                                    "climatology 1991–2020 · red = "
+                                    "southerly anomaly"),
+                            note_b=note_b,
+                            credit=("Data: NCEP GFS · climatology: ERA5 (via "
+                                    "UH APDRC) · ○ genesis: tcvitals "
+                                    "(UCAR/RAL)"),
+                            overlays=overlays, genesis=genesis,
+                            region=rkey,
+                            out_png=out_png, wave_step=2.0)
+                        if wkey == "none":
+                            shutil.copyfile(
+                                out_png, hov / (f"hov_v850_{bkey}_"
+                                                f"{nd}_{rkey}.png"))
+        meta["vars"]["v850"] = {"through": times[-1].isoformat(),
+                                "days_archived": int(np.isfinite(
+                                    v[:, li850]).any(axis=(1, 2)).sum()),
+                                "waves": True}
+        print("v850 panels done")
     uclim.close()
     print("u panels done")
 
@@ -678,35 +821,52 @@ def do_chi(hov: Path, meta: dict, genesis: list,
         anom_full[di] = chi[i, li] - monthly_climo_for(
             cclim, "chi", d, 200.0, lats_c, lons_c)
     cclim.close()
+    nf = min(len(full), FILTER_DAYS)
     for bkey, (lo, hi, blabel) in BANDS.items():
         bm = band_mean(anom_full, lats_c, lo, hi) / 1e6
+        filts = wave_filts(bm, nf)              # same WK path as OLR
         for nd in DAYS:
             d_sub, sl = region_days_slices(full, nd)
+            n = len(d_sub)
             vmax = max(4.0, float(np.ceil(np.nanpercentile(
                 np.abs(bm[sl]), 99) / 2) * 2))
             step = 1.0 if vmax <= 8 else 2.0
-            for rkey in REGIONS:
-                render_hov(
-                    bm[sl], d_sub, lons_c,
-                    cmap="BrBG_r", vmax=vmax, step=step,
-                    cb_label="χ200 anomaly (10⁶ m² s⁻¹)",
-                    title=f"200-hPa velocity potential anomaly · "
-                          f"through {times[-1]:%Y-%m-%d}",
-                    band_label=blabel,
-                    note_a=("daily T21 χ from GFS analyses (the χ "
-                            "product's archive) · anomalies vs "
-                            "ERA5 monthly climatology 1991–2020"),
-                    note_b=("green = negative χ′ = anomalous "
-                            "upper-level divergence (enhanced "
-                            "convection)"),
-                    credit=("Data: NCEP GFS · climatology: ERA5 (via "
-                            "UH APDRC) · ○ genesis: tcvitals "
-                            "(UCAR/RAL)"),
-                    overlays=[], genesis=genesis, region=rkey,
-                    out_png=hov / (f"hov_chi200_{bkey}_"
-                                   f"{nd}_{rkey}.png"))
+            for wkey, modes in WAVE_SETS.items():
+                overlays = [(m, filts[m][-n:]) for m in modes]
+                note_b = ("green = negative χ′ = anomalous "
+                          "upper-level divergence (enhanced "
+                          "convection)")
+                if overlays:
+                    note_b += (" · wave contours: divergent (−χ′) solid "
+                               "/ convergent dashed · ~2 wk damped (WW01)")
+                for rkey in REGIONS:
+                    out_png = hov / (f"hov_chi200_{wkey}_{bkey}_"
+                                     f"{nd}_{rkey}.png")
+                    render_hov(
+                        bm[sl], d_sub, lons_c,
+                        cmap="BrBG_r", vmax=vmax, step=step,
+                        cb_label="χ200 anomaly (10⁶ m² s⁻¹)",
+                        title=f"200-hPa velocity potential anomaly · "
+                              f"through {times[-1]:%Y-%m-%d}",
+                        band_label=blabel,
+                        note_a=("daily T21 χ from GFS analyses (the χ "
+                                "product's archive) · anomalies vs "
+                                "ERA5 monthly climatology 1991–2020"),
+                        note_b=note_b,
+                        credit=("Data: NCEP GFS · climatology: ERA5 (via "
+                                "UH APDRC) · ○ genesis: tcvitals "
+                                "(UCAR/RAL)"),
+                        overlays=overlays, genesis=genesis, region=rkey,
+                        out_png=out_png, wave_step=step)
+                    if wkey == "none":
+                        # legacy wave-less name: kept one release cycle
+                        # so a cached page (old JS) still resolves
+                        shutil.copyfile(
+                            out_png, hov / (f"hov_chi200_{bkey}_"
+                                            f"{nd}_{rkey}.png"))
     meta["vars"]["chi200"] = {"through": times[-1].isoformat(),
-                              "days_archived": len(times)}
+                              "days_archived": len(times),
+                              "waves": True}
     print("chi200 panels done")
 
 
@@ -739,7 +899,12 @@ def main() -> None:
             "days": list(DAYS),
             "regions": {k: v[2] for k, v in REGIONS.items()},
             "template_olr": "hov/hov_olr_{wave}_{band}_{days}_{region}.png",
-            "template": "hov/hov_{var}_{band}_{days}_{region}.png"}
+            "template": "hov/hov_{var}_{band}_{days}_{region}.png",
+            # every variable carries the wave overlays now; the wave-less
+            # `template` stays (plus legacy-name copies) so a cached page
+            # running the previous JS keeps resolving for one cycle
+            "template_wave":
+                "hov/hov_{var}_{wave}_{band}_{days}_{region}.png"}
     genesis = fetch_genesis(today - dt.timedelta(days=max(DAYS) + 5), today)
     print(f"genesis markers: {len(genesis)}")
 

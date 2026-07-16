@@ -46,7 +46,11 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 200: the Phase-3 wave overlays multiply the Hovmöller panel matrix
+    # (every variable × 8 wave sets) and add per-band VP map variants —
+    # measured locally at ~1.2 s/panel, but leave headroom for cold
+    # archives + slow upstreams. Revisit after the first few runs.
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v6
 

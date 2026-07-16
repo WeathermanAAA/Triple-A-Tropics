@@ -1,10 +1,10 @@
 """build_u_climatology.py — ONE-OFF builder for the 1991-2020 monthly
-ZONAL-WIND climatology the /subseasonal/ Hovmöller product anomalizes
-against. Downloads ERA5 MONTHLY-MEAN u (true 'moda' means) from the
-APDRC (Univ. Hawaii) anonymous OPeNDAP server, subsamples to 1 deg,
+WIND climatology the /subseasonal/ Hovmöller product anomalizes
+against. Downloads ERA5 MONTHLY-MEAN u AND v (true 'moda' means) from
+the APDRC (Univ. Hawaii) anonymous OPeNDAP server, subsamples to 1 deg,
 averages 1991-2020 per calendar month at 200 & 850 hPa over the
 35S-35N tropics band, and writes subseasonal/u_climo_1991_2020.nc
-(committed, ~2 MB).
+(committed, ~4 MB; vars u + v — v added for the v850 Hovmöller).
 
 Same source + method family as build_chi_climatology.py (ERA5 monthly
 means, like-vs-modern-like under the daily GFS analyses the live side
@@ -44,7 +44,7 @@ def fetch_monthlies():
     warnings.filterwarnings("ignore")   # GrADS 'days since 1-1-1' calendar
 
     ds = xr.open_dataset(APDRC, engine="netcdf4")
-    sub = ds[["u"]].sel(lev=list(LEVELS)).isel(
+    sub = ds[["u", "v"]].sel(lev=list(LEVELS)).isel(
         lat=slice(0, None, STRIDE), lon=slice(0, None, STRIDE))
     sub = sub.sel(lat=slice(-LAT_BAND, LAT_BAND)) \
         if float(sub.lat[0]) < float(sub.lat[-1]) \
@@ -83,27 +83,31 @@ def main() -> None:
     lons = data.lon.values.astype(float)
 
     months = np.arange(1, 13)
-    u_climo = np.zeros((len(LEVELS), 12, lats.size, lons.size), np.float32)
-    for li, lev in enumerate(LEVELS):
-        mc = data.u.sel(lev=lev).groupby("time.month").mean("time")
-        for mi, m in enumerate(months):
-            u_climo[li, mi] = mc.sel(month=m).values.astype(np.float32)
-        print(f"  level {lev:.0f}: u range "
-              f"[{u_climo[li].min():+.1f}, {u_climo[li].max():+.1f}] m/s")
+    climos = {}
+    for var, long_name in (("u", "zonal wind"), ("v", "meridional wind")):
+        c = np.zeros((len(LEVELS), 12, lats.size, lons.size), np.float32)
+        for li, lev in enumerate(LEVELS):
+            mc = data[var].sel(lev=lev).groupby("time.month").mean("time")
+            for mi, m in enumerate(months):
+                c[li, mi] = mc.sel(month=m).values.astype(np.float32)
+            print(f"  level {lev:.0f}: {var} range "
+                  f"[{c[li].min():+.1f}, {c[li].max():+.1f}] m/s")
+        climos[var] = (c, long_name)
 
     out = xr.Dataset(
-        {"u": (("level", "month", "lat", "lon"), u_climo,
+        {var: (("level", "month", "lat", "lon"), c,
                {"units": "m s-1",
-                "long_name": ("zonal wind, monthly climatology "
+                "long_name": (f"{long_name}, monthly climatology "
                               f"{YEARS[0]}-{YEARS[1]}, {LAT_BAND:.0f}S-"
                               f"{LAT_BAND:.0f}N band"),
                 "source": ("ERA5 monthly-mean winds (C3S/ECMWF via APDRC "
-                           "OPeNDAP, 1 deg subsample)")})},
+                           "OPeNDAP, 1 deg subsample)")})
+         for var, (c, long_name) in climos.items()},
         coords={"level": np.array(LEVELS, np.float32),
                 "month": months.astype(np.int32),
                 "lat": lats.astype(np.float32),
                 "lon": lons.astype(np.float32)})
-    enc = {"u": {"zlib": True, "complevel": 6}}
+    enc = {var: {"zlib": True, "complevel": 6} for var in climos}
     out.to_netcdf(OUT + ".new", encoding=enc)
 
     # sanity: July 200-hPa tropical easterlies / 850 trades signature

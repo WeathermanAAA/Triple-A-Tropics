@@ -190,3 +190,16 @@ def filter_mode(data: np.ndarray, obs_per_day: float, mode: str) -> np.ndarray:
                      t_min=spec["t"][0], t_max=spec["t"][1],
                      k_min=spec["k"][0], k_max=spec["k"][1],
                      h_min=h_min, h_max=h_max, wave=spec["wave"])
+
+
+def filter_realtime(anom: np.ndarray, mode: str, obs_per_day: float = 1.0,
+                    pad_to: int = 1024) -> np.ndarray:
+    """WW01 real-time filtering of ONE (time, lon) anomaly series: zero-pad
+    the time axis out to `pad_to`, filter, return the original span. Any
+    non-finite input is zeroed (zeros add no variance — the pad is zeros).
+    The newest ~1-2 weeks come back amplitude-damped (worst for the
+    low-frequency bands); callers must surface that caveat on the plot."""
+    nt = anom.shape[0]
+    padded = np.zeros((pad_to, anom.shape[1]), float)
+    padded[:nt] = np.where(np.isfinite(anom), anom, 0.0)
+    return filter_mode(padded, obs_per_day, mode)[:nt]

@@ -128,6 +128,8 @@
     (convergent) centers. <span id="vp-asof" class="ss-asof"></span></p>
     <div class="ss-winsel" id="vp-winsel" role="group"
       aria-label="averaging window"></div>
+    <div class="ss-winsel" id="vp-wavesel" role="group"
+      aria-label="wave-contour overlay"></div>
     <div class="ss-winnote" id="vp-winnote"></div>
     <div class="ss-stack">
       <figure class="ss-card">
@@ -184,12 +186,15 @@
     the University of Hawaiʻi APDRC) with the identical solve.
     Hovmöllers: OLR daily means from the NOAA CDR (via NOAA PSL), anomalies
     vs the same dataset's 1991–2020 daily climatology (mean + first three
-    harmonics), space-time filtered per Wheeler &amp; Kiladis (1999) with the
-    Wheeler &amp; Weickmann (2001) real-time method; zonal wind from daily
-    GFS analyses vs an ERA5 1991–2020 monthly climatology; χ200 from the
-    velocity-potential product's own daily archive; TC-genesis markers from
-    tcvitals via UCAR/RAL. Automated objective diagnostics: experimental,
-    never official guidance. Updated daily.
+    harmonics); wind from daily GFS analyses vs an ERA5 1991–2020 monthly
+    climatology; χ200 from the velocity-potential product's own daily
+    archive. Every Hovmöller variable (and, as an optional map overlay,
+    χ′ itself) is space-time filtered per Wheeler &amp; Kiladis (1999)
+    with the Wheeler &amp; Weickmann (2001) real-time method; the newest
+    ~2 weeks of any filtered contour are amplitude-damped, as stated on
+    each panel. TC-genesis markers from tcvitals via UCAR/RAL. Automated
+    objective diagnostics: experimental, never official guidance. Updated
+    daily.
   </div>
 </div>
 
@@ -211,15 +216,21 @@
 
   // VP window selector (meta-driven; falls back to the baked default
   // filenames if the meta fetch fails)
+  var vpMeta = null, vpWave = 'none';
   function setChi(win) {
-    var suffix = win ? '_' + win : '';
-    document.getElementById('img-chi-200').src =
-      CDN + 'chi_anom_200' + suffix + '.png' + bust;
-    document.getElementById('img-chi-850').src =
-      CDN + 'chi_anom_850' + suffix + '.png' + bust;
+    function name(level) {
+      if (win && vpWave !== 'none' && vpMeta && vpMeta.template_wave) {
+        return vpMeta.template_wave.replace('{level}', level)
+          .replace('{key}', win).replace('{mode}', vpWave);
+      }
+      return 'chi_anom_' + level + (win ? '_' + win : '') + '.png';
+    }
+    document.getElementById('img-chi-200').src = CDN + name('200') + bust;
+    document.getElementById('img-chi-850').src = CDN + name('850') + bust;
   }
   fetch(CDN + 'vp_meta.json' + bust).then(function (r) { return r.json(); })
     .then(function (m) {
+      vpMeta = m;
       if (!m.windows || !m.available || !m.available.length) {
         setChi(null);
         document.getElementById('vp-asof').textContent =
@@ -227,6 +238,7 @@
         return;
       }
       var sel = document.getElementById('vp-winsel');
+      var wsel = document.getElementById('vp-wavesel');
       var note = document.getElementById('vp-winnote');
       var current = m.available.indexOf(m.default) >= 0
         ? m.default : m.available[0];
@@ -239,9 +251,16 @@
           txt += ' · real-time filter endpoint: ~' +
             Math.round(w.retained * 100) + '% amplitude retained';
         }
+        if (vpWave !== 'none' && m.wave_valid) {
+          txt += ' · wave contours: WK-filtered χ′ at ' + m.wave_valid +
+            ', divergent solid / convergent dashed';
+        }
         note.textContent = txt + '.';
         Array.prototype.forEach.call(sel.children, function (b) {
           b.className = b.dataset.win === win ? 'on' : '';
+        });
+        Array.prototype.forEach.call(wsel.children, function (b) {
+          b.className = b.dataset.wave === vpWave ? 'on' : '';
         });
       }
       m.available.forEach(function (win) {
@@ -252,6 +271,19 @@
         b.onclick = function () { show(win); };
         sel.appendChild(b);
       });
+      // wave-contour toggle: meta-driven, absent until the generator
+      // advertises the overlay files for BOTH levels
+      if (m.template_wave && m.wave_modes && m.wave_modes.length) {
+        [{ key: 'none', label: 'No wave contours' }]
+          .concat(m.wave_modes).forEach(function (o) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = o.label;
+            b.dataset.wave = o.key;
+            b.onclick = function () { vpWave = o.key; show(current); };
+            wsel.appendChild(b);
+          });
+      }
       show(current);
       document.getElementById('vp-asof').textContent =
         'Daily GFS analyses through ' + m.windows[current].end + '.';
@@ -261,12 +293,15 @@
   // the baked default panel if the meta fetch fails)
   var HOV_FALLBACK = 'hov/hov_olr_all_eq_60_glob.png';
   var hovImg = document.getElementById('img-hov');
-  var VAR_ORDER = ['olr', 'u850', 'u200', 'chi200'];
-  var VAR_LABELS = { olr: 'OLR + waves', u850: 'u850', u200: 'u200',
-                     chi200: 'χ200' };
+  var VAR_ORDER = ['olr', 'u850', 'v850', 'u200', 'chi200'];
+  var VAR_LABELS = { olr: 'OLR + waves', u850: 'u850', v850: 'v850',
+                     u200: 'u200', chi200: 'χ200' };
   var WAVE_LABELS = { all: 'All waves', mjo: 'MJO', kelvin: 'Kelvin',
-                      er: 'ER', mrgtd: 'MRG-TD', lowfreq: 'Low-freq',
-                      none: 'None' };
+                      er: 'ER', mrgtd: 'MRG-TD', mrgtd_er: 'MRG-TD + ER',
+                      lowfreq: 'Low-freq', none: 'None' };
+  // per-variable wave default (applied until the user picks a wave):
+  // v850 is the MRG / TD-type home, so it opens on those bands
+  var WAVE_DEFAULT = { v850: 'mrgtd_er' };
   fetch(CDN + 'hov_meta.json' + bust).then(function (r) { return r.json(); })
     .then(function (m) {
       var vars = VAR_ORDER.filter(function (v) { return m.vars && m.vars[v]; });
@@ -302,16 +337,38 @@
       buildRow(rows.b, Object.keys(m.bands), m.bands, 'b');
       buildRow(rows.d, m.days, null, 'd');
       buildRow(rows.r, Object.keys(m.regions), m.regions, 'r');
+      // per-variable wave default: the buttons' own onclick runs first
+      // (sets st.v + renders), then this bubbled handler applies the
+      // variable's preferred wave set unless the user has picked one
+      var wTouched = false;
+      rows.w.addEventListener('click', function () { wTouched = true; },
+                              true);
+      rows.v.addEventListener('click', function () {
+        if (wTouched) return;
+        var d = WAVE_DEFAULT[st.v] || 'all';
+        if (m.waves.indexOf(d) >= 0 && st.w !== d) { st.w = d; render(); }
+      });
       function render() {
-        var isOlr = st.v === 'olr';
-        rows.w.style.display = isOlr ? '' : 'none';
+        // waves are per-variable + meta-driven: a variable advertises
+        // waves:true once its wave-ful panels exist on the CDN, and the
+        // wave-less template stays as the skew-safe fallback (old meta /
+        // old panels). OLR keeps its dedicated template on old meta.
+        var hasWaves = !!(m.template_wave && m.vars[st.v] &&
+                          m.vars[st.v].waves);
+        var showWaves = hasWaves || st.v === 'olr';
+        rows.w.style.display = showWaves ? '' : 'none';
         document.getElementById('hov-wave-lbl').style.display =
-          isOlr ? '' : 'none';
-        var f = isOlr
-          ? m.template_olr.replace('{wave}', st.w).replace('{band}', st.b)
-              .replace('{days}', st.d).replace('{region}', st.r)
-          : m.template.replace('{var}', st.v).replace('{band}', st.b)
-              .replace('{days}', st.d).replace('{region}', st.r);
+          showWaves ? '' : 'none';
+        var f = hasWaves
+          ? m.template_wave.replace('{var}', st.v).replace('{wave}', st.w)
+              .replace('{band}', st.b).replace('{days}', st.d)
+              .replace('{region}', st.r)
+          : (st.v === 'olr'
+              ? m.template_olr.replace('{wave}', st.w)
+                  .replace('{band}', st.b).replace('{days}', st.d)
+                  .replace('{region}', st.r)
+              : m.template.replace('{var}', st.v).replace('{band}', st.b)
+                  .replace('{days}', st.d).replace('{region}', st.r));
         hovImg.src = CDN + f + bust;
         Object.keys(rows).forEach(function (k) { mark(rows[k], st[k]); });
         var info = m.vars[st.v] || {};

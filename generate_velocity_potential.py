@@ -69,6 +69,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "subseasonal"))
 import chi_core  # noqa: E402
 import vp_windows  # noqa: E402
+import wk_filter  # noqa: E402
 
 CLIMO_NC = HERE / "subseasonal" / "chi_climo_1991_2020.nc"
 
@@ -92,6 +93,22 @@ WINDOWS = [("pentad", "5-day mean", 5),
            ("90d", "90-day mean", 90)]
 DEFAULT_WINDOW = "30d"
 MJO_MIN_DAYS = 61          # half-window + 1: below this the filter is fiction
+
+# WK-filtered wave-contour overlay (per-band toggle on the page): the
+# space-time filter runs per LATITUDE row on the rolling daily-chi
+# anomaly (WW01 real-time window, zero-padded), and the NEWEST day's
+# filtered field is contoured over the selected window's shading — the
+# note on the plot carries that valid date. Equatorial wave theory only
+# means anything near the equator, so contours stay inside WAVE_LAT.
+WAVE_LAT = 25.0
+WAVE_FILTER_DAYS = 365
+WAVE_MODES = [             # (ui key, wk_filter mode, label, color)
+    ("mjo", "mjo", "MJO", "#e5edf6"),
+    ("kelvin", "kelvin", "Kelvin", "#56c8ff"),
+    ("er", "er", "ER", "#ffb83a"),
+    ("mrgtd", "mrg_td", "MRG–TD", "#ff7a8a"),
+    ("lowfreq", "lowfreq", "Low-freq", "#b18ce8"),
+]  # colors mirror generate_hovmollers.WAVE_STYLE — keep the two in sync
 
 
 # ------------------------------------------------------------------ fetching
@@ -268,7 +285,8 @@ def load_coast() -> list[np.ndarray]:
 
 def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
                  lats: np.ndarray, lons: np.ndarray, level: int,
-                 heading: str, extra_note: str, out_png: Path, coast) -> None:
+                 heading: str, extra_note: str, out_png: Path, coast,
+                 wave=None) -> None:
     sel = np.abs(lats) <= LAT_BAND
     la = lats[sel]
     z = chi_anom[sel, :] / 1e6
@@ -303,6 +321,29 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
               color="#0c1118", scale=90, width=0.0012, headwidth=4.5,
               alpha=0.7, zorder=5)
 
+    # optional WK-filtered wave contours (labeled): solid = divergent
+    # (negative chi'), dashed = convergent — drawn at the same
+    # scale-aware levels as the shading step, tropics only (the rows
+    # poleward of WAVE_LAT arrive NaN and never contour)
+    wave_note = ""
+    if wave is not None:
+        wlabel, wcolor, wfield, wvalid = wave
+        wl = wfield[sel, :] / 1e6
+        wneg = [-m * step for m in (4.0, 3.0, 2.0, 1.0)]
+        wpos = [m * step for m in (1.0, 2.0, 3.0, 4.0)]
+        cs_n = ax.contour(lons, la, wl, levels=wneg, colors=wcolor,
+                          linewidths=1.5, linestyles="solid", zorder=6)
+        cs_p = ax.contour(lons, la, wl, levels=wpos, colors=wcolor,
+                          linewidths=1.0, linestyles="dashed",
+                          alpha=0.75, zorder=6)
+        for cs in (cs_n, cs_p):
+            ax.clabel(cs, fontsize=7, fmt="%+.0f", colors=wcolor,
+                      inline_spacing=2)
+        wave_note = (f"{wlabel} wave contours: WK-filtered χ′ at "
+                     f"{wvalid} (25°S–25°N), divergent (−) solid / "
+                     f"convergent (+) dashed · newest ~2 weeks "
+                     f"amplitude-damped (WW01 real-time)")
+
     ax.set_xlim(0, 360)
     ax.set_ylim(-LAT_BAND, LAT_BAND)
     ax.set_xticks(np.arange(0, 361, 60))
@@ -323,12 +364,15 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     ax.set_title(f"{level}-hPa velocity potential anomaly (χ′, T21) · "
                  f"{heading} · vs 1991–2020",
                  color=TEXT_COLOR, fontsize=12.5, fontweight="bold",
-                 loc="left", pad=24)
+                 loc="left", pad=42 if wave_note else 24)
     note = reading + " · arrows: anomalous divergent wind"
     if extra_note:
         note += " · " + extra_note
     ax.text(0.0, 1.018, note, transform=ax.transAxes, color=MUTED_COLOR,
             fontsize=9)
+    if wave_note:
+        ax.text(0.0, 1.052, wave_note, transform=ax.transAxes,
+                color=MUTED_COLOR, fontsize=9)
     ax.text(1.0, 1.018, WATERMARK, transform=ax.transAxes, ha="right",
             color=MUTED_COLOR, alpha=0.7, fontsize=9)
     cb = fig.colorbar(cf, ax=ax, pad=0.012, fraction=0.035)
@@ -343,6 +387,57 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     fig.tight_layout()
     fig.savefig(out_png, dpi=150, facecolor=BG_COLOR)
     plt.close(fig)
+
+
+# ------------------------------------------------------- wave overlays
+
+def _fill_series(fb: np.ndarray) -> np.ndarray:
+    """Finite copy of a (time, lon) series for the FFT filter: interior
+    NaN days linearly interpolated per longitude, anything outside the
+    observed span zeroed (matches generate_hovmollers._fill_for_filter)."""
+    out = fb.astype(float, copy=True)
+    nt = out.shape[0]
+    x = np.arange(nt, dtype=float)
+    for j in range(out.shape[1]):
+        col = out[:, j]
+        good = np.isfinite(col)
+        ngood = int(good.sum())
+        if ngood == 0:
+            out[:, j] = 0.0
+            continue
+        if ngood < nt:
+            filled = np.interp(x, x[good], col[good])
+            first = int(np.argmax(good))
+            last = nt - 1 - int(np.argmax(good[::-1]))
+            filled[:first] = 0.0
+            filled[last + 1:] = 0.0
+            out[:, j] = filled
+    return out
+
+
+def wave_overlays_latest(times, anom, lats, lons):
+    """{ui key: (lat, lon) map} — the NEWEST archived day's WK-filtered
+    chi anomaly, filtered per latitude row over the rolling archive on a
+    continuous daily axis. Rows poleward of WAVE_LAT stay NaN so the
+    contours never leave the tropics."""
+    full = [times[0] + dt.timedelta(days=i)
+            for i in range((times[-1] - times[0]).days + 1)]
+    idx = {d: i for i, d in enumerate(times)}
+    nf = min(len(full), WAVE_FILTER_DAYS)
+    sel = np.where(np.abs(lats) <= WAVE_LAT)[0]
+    cube = np.full((len(full), sel.size, lons.size), np.nan)
+    for di, d in enumerate(full):
+        i = idx.get(d)
+        if i is not None:
+            cube[di] = anom[i][sel]
+    out = {}
+    for ukey, mode, _, _ in WAVE_MODES:
+        m = np.full((lats.size, lons.size), np.nan)
+        for rj, j in enumerate(sel):
+            fb = _fill_series(cube[-nf:, rj])
+            m[j] = wk_filter.filter_realtime(fb, mode)[-1]
+        out[ukey] = m
+    return out
 
 
 # ---------------------------------------------------------------- main
@@ -385,12 +480,24 @@ def main() -> None:
     meta = {"levels": list(LEVELS), "default": DEFAULT_WINDOW,
             "windows": {}, "available": []}
 
+    waves_ok_levels = set()
     for li, level in enumerate(LEVELS):
         # daily anomaly stack once per level; every window derives from it
         anom = np.empty_like(chi[:, li])
         for ti, t in enumerate(times):
             anom[ti] = chi[ti, li] - climo_chi_for(t, float(level),
                                                    lats, lons)
+
+        # latest-day WK-filtered wave fields (per-lat rows, tropics only);
+        # a filter failure must never take down the base maps
+        try:
+            waves = wave_overlays_latest(times, anom, lats, lons)
+            waves_ok_levels.add(level)
+        except Exception as e:  # noqa: BLE001 — overlay is optional
+            print(f"wave overlays @{level} failed "
+                  f"({type(e).__name__}: {e}) — base maps only")
+            waves = {}
+        wave_valid = end.isoformat()
 
         for key, label, days in WINDOWS:
             try:
@@ -403,6 +510,14 @@ def main() -> None:
             heading = f"{label} ending {end:%Y-%m-%d}"
             render_level(field, u_chi, v_chi, lats, lons, level, heading,
                          "", out / f"chi_anom_{level}_{key}.png", coast)
+            for ukey, _, wlabel, wcolor in WAVE_MODES:
+                if ukey not in waves:
+                    continue
+                render_level(field, u_chi, v_chi, lats, lons, level,
+                             heading, "",
+                             out / f"chi_anom_{level}_{key}_w{ukey}.png",
+                             coast, wave=(wlabel, wcolor, waves[ukey],
+                                          wave_valid))
             print(f"chi'({level}) {key}: [{field.min() / 1e6:+.1f}, "
                   f"{field.max() / 1e6:+.1f}] x1e6 m2/s ({used} days)")
             if li == 0:
@@ -433,6 +548,15 @@ def main() -> None:
                              f"20–100-day (MJO band) filtered · "
                              f"{end:%Y-%m-%d}", note,
                              out / f"chi_anom_{level}_mjo.png", coast)
+                for ukey, _, wlabel, wcolor in WAVE_MODES:
+                    if ukey not in waves:
+                        continue
+                    render_level(filt, u_chi, v_chi, lats, lons, level,
+                                 f"20–100-day (MJO band) filtered · "
+                                 f"{end:%Y-%m-%d}", note,
+                                 out / f"chi_anom_{level}_mjo_w{ukey}.png",
+                                 coast, wave=(wlabel, wcolor, waves[ukey],
+                                              wave_valid))
                 print(f"chi'({level}) mjo: [{filt.min() / 1e6:+.1f}, "
                       f"{filt.max() / 1e6:+.1f}] x1e6 m2/s "
                       f"(retained {retained:.0%})")
@@ -455,6 +579,14 @@ def main() -> None:
         src = out / f"chi_anom_{level}_{DEFAULT_WINDOW}.png"
         if src.exists():
             shutil.copyfile(src, out / f"chi_anom_{level}.png")
+
+    # advertise the wave overlay only when EVERY level rendered it, so the
+    # template never promises files a partial failure didn't write
+    if len(waves_ok_levels) == len(LEVELS):
+        meta["wave_modes"] = [{"key": k, "label": lbl}
+                              for k, _, lbl, _ in WAVE_MODES]
+        meta["template_wave"] = "chi_anom_{level}_{key}_w{mode}.png"
+        meta["wave_valid"] = end.isoformat()
 
     dflt = meta["windows"].get(DEFAULT_WINDOW, {})
     meta["cycle"] = (f"{dflt.get('label', '30-day mean')} ending "
