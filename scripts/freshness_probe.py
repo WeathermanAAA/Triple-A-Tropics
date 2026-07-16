@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""freshness_probe.py — standing origin-freshness monitor for every live
+TAT data product (built from the 2026-07-16 full-site staleness audit, so
+Andrew stops eyeballing products one by one).
+
+For each registered product the probe fetches the ORIGIN (cache-busted CDN
+read straight through to R2, or the GitHub API for committed/orphan-branch
+products — never the browser/edge path), extracts the newest data
+timestamp, and compares its age against the writer's expected cadence:
+
+    stale  <=>  age_min > max(3 * cadence_min, cadence_min + 45)
+
+(the same 3x-cadence-plus-slack margin the site's own honesty gates use —
+objfix's WP gate, sat-health.js). Output is ONE rollup JSON written to
+`feeds/freshness.json` on R2:
+
+    {generated_utc, n, n_stale, stale: [names...], products: [
+        {name, writer, cadence_min, last_utc, age_min, stale, note}]}
+
+plus a nonzero exit when a product NEWLY went stale versus the previous
+rollup (read back from the CDN), so the workflow run goes red exactly once
+per new incident — GH's failure email is the alert channel; an
+already-known-stale product does not re-fail every run.
+
+KNOWN-DOWN list: products the audit left waiting on QUEUED BOX STEPS
+(fd/wpac/himawari-fd emit suites, floater fleet) carry known_down=True so
+they report+count but never fail the run — they go back to normal alerting
+the moment they first turn fresh (the CDN prior shows them fresh).
+
+Registry notes live next to each entry. Timestamps come from each
+product's own manifest fields (generated_utc / as_of / latest / cycle),
+never from HTTP Date headers, except where Last-Modified IS the write
+time (R2 object PUT time) and the manifest carries no stamp.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+
+CDN = "https://cdn.triple-a-tropics.com/"
+API = "https://api.github.com/repos/WeathermanAAA/Triple-A-Tropics"
+UA = {"User-Agent": "tat-freshness-probe"}
+
+OUT = os.environ.get("FRESHNESS_OUT", "./freshness_build/freshness.json")
+PRIOR_URL = CDN + "feeds/freshness.json"
+
+
+def _get(url: str, timeout: int = 30):
+    req = urllib.request.Request(url, headers=UA)
+    tok = os.environ.get("GITHUB_TOKEN")
+    if url.startswith("https://api.github.com") and tok:
+        req.add_header("Authorization", f"Bearer {tok}")
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _json(url: str):
+    with _get(url) as r:
+        return json.load(r)
+
+
+def _cdn_json(path: str):
+    return _json(CDN + path + ("&" if "?" in path else "?") +
+                 f"t={int(time.time())}")
+
+
+def _parse_any(ts):
+    """ISO / compact-stamp / epoch -> aware datetime, else None."""
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        return dt.datetime.fromtimestamp(ts, dt.timezone.utc)
+    s = str(ts).strip()
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$", s)
+    if m:
+        return dt.datetime(*map(int, m.groups()), tzinfo=dt.timezone.utc)
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})(\d{2})$", s)  # HAFS cycle 2026071606
+    if m:
+        return dt.datetime(*map(int, m.groups()), tzinfo=dt.timezone.utc)
+    try:
+        d = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+# ---- extractors: each returns the newest DATA timestamp (aware dt) --------
+
+def j(path: str, *keys):
+    """CDN JSON -> first parseable of the given (possibly dotted) keys."""
+    def fn():
+        doc = _cdn_json(path)
+        for k in keys:
+            cur = doc
+            for part in k.split("."):
+                cur = cur.get(part) if isinstance(cur, dict) else None
+                if cur is None:
+                    break
+            t = _parse_any(cur)
+            if t:
+                return t
+        return None
+    return fn
+
+
+def jlist_max(path: str, list_key: str, item_key: str):
+    """CDN JSON -> max timestamp over doc[list_key][*][item_key]."""
+    def fn():
+        doc = _cdn_json(path)
+        best = None
+        for it in (doc.get(list_key) or []):
+            t = _parse_any(it.get(item_key) if isinstance(it, dict) else it)
+            if t and (best is None or t > best):
+                best = t
+        return best
+    return fn
+
+
+def head_lm(path: str):
+    """CDN object Last-Modified (R2 PUT time) — for stampless binaries."""
+    def fn():
+        req = urllib.request.Request(
+            CDN + path + f"?t={int(time.time())}", headers=UA, method="HEAD")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return _parse_any_http(r.headers.get("Last-Modified"))
+    return fn
+
+
+def _parse_any_http(s):
+    if not s:
+        return None
+    try:
+        import email.utils
+        return email.utils.parsedate_to_datetime(s)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def git_path(path: str):
+    """Newest commit on origin/main touching path (GitHub API)."""
+    def fn():
+        doc = _json(f"{API}/commits?path={path}&per_page=1&sha=main")
+        return _parse_any(doc[0]["commit"]["committer"]["date"]) if doc else None
+    return fn
+
+
+def git_branch(branch: str):
+    """Tip-commit time of a branch (the SST orphan media branch)."""
+    def fn():
+        doc = _json(f"{API}/branches/{branch}")
+        return _parse_any(doc["commit"]["commit"]["committer"]["date"])
+    return fn
+
+
+# ---- the registry ----------------------------------------------------------
+# (name, writer, cadence_min, extractor, known_down_note-or-None)
+# cadence = how often NEW DATA should land at origin under normal operation.
+
+REGISTRY = [
+    # live feeds (box intensity poller, ~2 min; alert margin comes from the
+    # formula floor of cadence+45)
+    ("feeds/al_ace_data.json", "box intensity poller", 2,
+     j("feeds/al_ace_data.json", "generated_utc"), None),
+    ("feeds/ep_ace_data.json", "box intensity poller", 2,
+     j("feeds/ep_ace_data.json", "generated_utc"), None),
+    ("feeds/wp_ace_data.json", "box intensity poller", 2,
+     j("feeds/wp_ace_data.json", "generated_utc"), None),
+    ("feeds/al_tracks_data.json", "box intensity poller", 2,
+     j("feeds/al_tracks_data.json", "generated_utc"), None),
+    ("feeds/ep_tracks_data.json", "box intensity poller", 2,
+     j("feeds/ep_tracks_data.json", "generated_utc"), None),
+    ("feeds/wp_tracks_data.json", "box intensity poller", 2,
+     j("feeds/wp_tracks_data.json", "generated_utc"), None),
+    ("global_storms.geojson", "box intensity poller", 2,
+     j("global_storms.geojson", "generated_utc"), None),
+
+    # committed chart pages (GH Action update-ace.yml, 6 h)
+    ("al_ace.html (page)", "GH update-ace.yml", 360,
+     git_path("al_ace.html"), None),
+    ("wp_tracks.html (page)", "GH update-ace.yml", 360,
+     git_path("wp_tracks.html"), None),
+
+    # SST family (GH Actions, daily)
+    ("sst statics (sst/)", "GH update-sst.yml", 1440,
+     git_path("sst"), None),
+    ("subsurface (subsurface/)", "GH update-subsurface.yml", 1440,
+     git_path("subsurface"), None),
+    ("armor3d (armor3d/)", "GH update-armor3d.yml", 1440,
+     git_path("armor3d"), None),
+    ("season gif wpac (R2)", "GH update-season-gifs.yml", 1440,
+     head_lm(f"wpac_{dt.date.today().year}_season.gif"), None),
+    ("sst animations (mp4-artifacts branch)", "GH update-sst.yml job 2", 1440,
+     git_branch("mp4-artifacts"), None),
+
+    # models
+    ("models/hafs/manifest.json", "GH update-hafs.yml", 360,
+     j("models/hafs/manifest.json", "generated_at", "cycle"),
+     "gated off via RENDER_HAFS_ON_CRON; manifest fix in flight"),
+    ("models/enscenters/manifest.json", "GH enscenters workflows", 360,
+     j("models/enscenters/manifest.json", "generated_at"), None),
+
+    # CycloLab
+    ("cyclolab analogs (manifest)", "GH update-analogs.yml", 360,
+     j("cyclolab/manifest.json", "generated_utc"), None),
+
+    # subseasonal (GH update-subseasonal.yml, daily)
+    ("subseasonal vp_meta.json", "GH update-subseasonal.yml", 1440,
+     j("subseasonal/vp_meta.json", "generated_utc"), None),
+    ("subseasonal hov_meta.json", "GH update-subseasonal.yml", 1440,
+     j("subseasonal/hov_meta.json", "generated_utc"), None),
+    ("subseasonal mjo_meta.json", "GH update-subseasonal.yml", 1440,
+     j("subseasonal/mjo_meta.json", "generated_utc"), None),
+
+    # explorer sat suites (box s2 emit-cron / GH riders). Scan time is the
+    # honest signal (as_of refreshes only on new data).
+    ("explorer goes19/conus/ir", "box s2 emit-cron (conus)", 60,
+     j("shadow/sat/goes19/conus/ir/latest_times.json", "latest"), None),
+    ("explorer goes19/fd/ir", "GH emit-geo-global rider (box fd cron queued)",
+     60, j("shadow/sat/goes19/fd/ir/latest_times.json", "latest"), None),
+    ("explorer himawari9/wpac/ir", "GH emit-geo-global rider (box cron queued)",
+     60, j("shadow/sat/himawari9/wpac/ir/latest_times.json", "latest"), None),
+    ("explorer geo/global/ir", "GH emit-geo-global.yml", 60,
+     j("shadow/sat/geo/global/ir/latest_times.json", "latest"), None),
+    ("explorer goes19/conus/truecolor", "box s2 emit-cron (conus)", 60,
+     j("shadow/sat/goes19/conus/truecolor/latest_times.json", "latest"),
+     "box post-restore band failure under investigation (2026-07-16)"),
+    ("explorer goes19/fd suite (sandwich)", "box s2 emit-cron fd — CRON NOT STARTED",
+     60, j("shadow/sat/goes19/fd/sandwich/latest_times.json", "latest"),
+     "queued box step: S2_CRON_SUITES + emit-cron restart"),
+    ("explorer himawari9/wpac suite (sandwich)",
+     "box s2 emit-cron wpac — CRON NOT STARTED", 60,
+     j("shadow/sat/himawari9/wpac/sandwich/latest_times.json", "latest"),
+     "queued box step: S2_CRON_SUITES + emit-cron restart"),
+
+    # floater fleet + backdrops (box floater poller)
+    ("floaters fleet manifest", "box floater poller", 15,
+     j("floaters/manifest.json", "generated_utc", "generated", "as_of"),
+     "box floater poller stalled 2026-07-15 ~01Z; restart queued"),
+    ("floater backdrops", "box floater poller", 60,
+     j("floaters/backdrops.json", "generated_utc", "generated", "as_of"),
+     "box floater poller stalled 2026-07-15 ~01Z; restart queued"),
+
+    # MW / ASCAT / recon swaths (GH Actions)
+    ("microwave manifest", "GH update-tcprimed tiers", 180,
+     j("microwave/manifest.json", "generated_utc", "generated"), None),
+    ("ascat manifest", "GH ascat workflow", 180,
+     j("ascat/manifest.json", "generated_utc", "generated"), None),
+    ("recon manifest", "GH recon workflow", 180,
+     j("recon/manifest.json", "generated_utc", "generated"), None),
+]
+
+
+def main() -> None:
+    now = dt.datetime.now(dt.timezone.utc)
+    rows, stale_names = [], []
+    for name, writer, cadence, extract, known_down in REGISTRY:
+        last = age_min = None
+        note = known_down or ""
+        try:
+            last = extract()
+        except Exception as e:  # noqa: BLE001 — a probe error IS a finding
+            note = (note + " · " if note else "") + \
+                f"probe error: {type(e).__name__}: {e}"
+        if last is not None:
+            age_min = (now - last).total_seconds() / 60.0
+        stale_at = max(3 * cadence, cadence + 45)
+        stale = age_min is None or age_min > stale_at
+        if stale:
+            stale_names.append(name)
+        rows.append({
+            "name": name, "writer": writer, "cadence_min": cadence,
+            "last_utc": last.strftime("%Y-%m-%dT%H:%M:%SZ") if last else None,
+            "age_min": round(age_min, 1) if age_min is not None else None,
+            "stale_after_min": stale_at, "stale": stale,
+            "known_down": bool(known_down), "note": note,
+        })
+        print(f"{'STALE ' if stale else 'fresh '} {name}: "
+              f"age={rows[-1]['age_min']} min (limit {stale_at})"
+              + (f" · {note}" if note else ""))
+
+    doc = {"schema": "tat-freshness/1",
+           "generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "n": len(rows), "n_stale": len(stale_names),
+           "stale": stale_names, "products": rows}
+    os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
+    with open(OUT, "w", encoding="utf-8") as f:
+        json.dump(doc, f, separators=(",", ":"))
+    print(f"wrote {OUT}: {len(stale_names)}/{len(rows)} stale")
+
+    # red-once alerting: fail only when a NOT-known-down product is stale
+    # now but was fresh in the prior published rollup
+    try:
+        prior = _json(PRIOR_URL + f"?t={int(time.time())}")
+        prior_stale = set(prior.get("stale") or [])
+    except Exception:  # noqa: BLE001 — first run / CDN hiccup: no alerting
+        prior_stale = set(stale_names)  # treat everything as already known
+    newly = [r["name"] for r in rows
+             if r["stale"] and not r["known_down"]
+             and r["name"] not in prior_stale]
+    if newly:
+        raise SystemExit("NEWLY STALE since last rollup: " + ", ".join(newly))
+
+
+if __name__ == "__main__":
+    main()

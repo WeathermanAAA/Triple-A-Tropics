@@ -1,0 +1,64 @@
+name: freshness-monitor
+
+# Standing origin-freshness monitor (2026-07-16 staleness audit follow-up).
+# Probes every registered product's ORIGIN (cache-busted R2 reads + the
+# GitHub API for committed products), writes the rollup to
+# feeds/freshness.json on R2, and FAILS (red run = GH failure email) only
+# when a product NEWLY goes stale versus the previous rollup — known-down
+# products (queued box steps) report but never alarm. R2-only: commits
+# nothing to main.
+
+on:
+  schedule:
+    - cron: "19,49 * * * *"   # half-hourly, offset minutes (load-bearing)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freshness-monitor
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Probe origins
+        id: probe
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FRESHNESS_OUT: ./freshness_build/freshness.json
+        # capture the exit code so the rollup still publishes on a red run
+        # (the alert must not hide the data that explains it)
+        run: |
+          set +e
+          python scripts/freshness_probe.py
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Publish rollup to R2
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          test -f freshness_build/freshness.json || exit 0
+          aws s3 cp freshness_build/freshness.json \
+            s3://triple-a-tropics-media/feeds/freshness.json \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            --content-type application/json \
+            --cache-control "public, max-age=60"
+
+      - name: Surface new staleness
+        if: steps.probe.outputs.code != '0'
+        run: |
+          echo "A product NEWLY went stale — see the probe step log."
+          exit 1
