@@ -52,6 +52,51 @@ _Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migr
 
 ---
 
+## 2026-07-16 (~22:2x UTC) — SUBSEASONAL PHASE 3: Group A shipped (@7ea5eae5), Group B items 5+6 shipped (@6f469a88), RMM forecast in flight
+
+Andrew's Phase-3 queue, reusing the Phase-2 stack as specced. Everything
+smoke-tested offline end-to-end (synthetic archives + REAL GEFS fetches)
+with panels eyeballed before each push; the live run lands at the next
+update-subseasonal cron (15:41Z daily; job timeout raised 120→200 min for
+the bigger matrix).
+
+- **Item 1 — WK wave overlays on every Hovmöller variable**: u850/u200/
+  χ200 run the same wk_filter real-time path as OLR; wave selector
+  ungated (meta-driven `template_wave`, wave-less names + legacy copies
+  kept one cycle for cached pages — both deploy-skew directions safe);
+  contour levels are ±(1..4)×each variable's shading step, which
+  reproduces OLR's historic ±10..40 exactly; new `mrgtd_er` combined set.
+- **Item 2 — v850**: archive schema widened to carry v (old u-only
+  archives load v=NaN and backfill forward — no cold restart); fetch
+  grabs UGRD+VGRD in one byte-range; v850 section gates itself off until
+  the rebuilt u+v ERA5 climatology lands (build running locally against
+  APDRC as of this entry — the .nc + credits flip commit together, per
+  the house rule); v850 defaults its overlay to MRG-TD + ER.
+- **Item 3 — VP wave contours**: optional per-band WK overlay on the χ′
+  maps (filter runs per LATITUDE row on the daily-chi archive; contours
+  tropics-only 25°S–25°N, labeled, divergent solid / convergent dashed);
+  band toggle on the page; advertised in vp_meta only when both levels
+  rendered.
+- **Item 6 — VP forecast maps**: +7/+10-day GEFS ENSEMBLE-MEAN χ′ map
+  sets (`subseasonal/gefs_mean.py`: geavg via Herbie/AWS, daily means of
+  the 00/06/12/18Z valid instants, verified live against the real
+  2026-07-16 00Z cycle); heading carries init + valid, on-plot
+  FORECAST/ensemble-mean-smoothed note, GEFS-named credit line; the
+  16-day tail is fetched ONCE, feeds the wave-filter concat, and is
+  saved to gefs_tail.nc for the Hovmöller step (one fetch, two
+  consumers).
+- **Item 5 — Hovmöller forecast tails**: u850/u200/v850/χ200 extend
+  below a labeled dashed init line with the GEFS ens-mean tail (init +
+  valid-to + smoothed + ~16-day limit burned onto the line; title tags
+  "(+GEFS)"); χ tail solved from the ens-mean wind via chi_core (the
+  solve is linear, so that IS the mean χ); anomalies vs the same ERA5
+  climo; wave filter runs on the analysis+forecast concat; archive→tail
+  holes stay honest NaN gap rows; OLR stays analysis-only per spec.
+- **Item 4 — GEFS-member RMM forecast: IN FLIGHT.** WH04 EOF loadings +
+  normalization constants + GEFS-projection methodology are being
+  verified against primary sources before any code (the objfix
+  precedent: accuracy-critical constants are never winged). Lands next.
+
 ## 2026-07-16 (~21:3x UTC) — FULL-SITE STALENESS AUDIT + REMEDIATION (the box migration IS the systemic cause)
 
 Andrew's read was right. A 181-row origin-freshness audit (8 parallel
