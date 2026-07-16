@@ -74,6 +74,15 @@ jobs:
 
       - name: Emit the diagnostics IR feeds FIRST (objfix / TC-Diag time series)
         timeout-minutes: 50
+        # continue-on-error: the || echo guards only command FAILURE — a
+        # step TIMEOUT still failed the whole job and starved the geo step
+        # (live 2026-07-16: post-GOES-19-restore NODD reads ran ~7 min/file,
+        # the fd-ir rider blew the 50-min step budget twice and the world
+        # composite sat stale for 2 h). The riders are per-slot idempotent,
+        # so a killed rider loses nothing; the geo suite must always get
+        # its turn. Per-command `timeout 22m` keeps one slow rider from
+        # eating the other's share of the step budget.
+        continue-on-error: true
         env:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -84,15 +93,15 @@ jobs:
           # slot — minutes each). These feed objfix's WP wp_bt path and the
           # Hovmöller/DAV time series, so they run BEFORE the heavyweight geo
           # composite and never wait behind it. Per-command isolation: one
-          # feed failing must not block the other or the geo step.
-          python s2_pyramid_emit.py --product himawari9-wpac-ir \
+          # feed failing or stalling must not block the other or the geo step.
+          timeout 22m python s2_pyramid_emit.py --product himawari9-wpac-ir \
             --store r2 --prefix shadow --max-zoom 5 \
             --step 10 --backfill 60 \
-            || echo "wpac-ir emit failed (next tick retries)"
-          python s2_pyramid_emit.py --product goes19-fd-ir \
+            || echo "wpac-ir emit failed/timed out (next tick retries)"
+          timeout 22m python s2_pyramid_emit.py --product goes19-fd-ir \
             --store r2 --prefix shadow --max-zoom 5 \
             --step 10 --backfill 60 \
-            || echo "fd-ir emit failed (next tick retries)"
+            || echo "fd-ir emit failed/timed out (next tick retries)"
 
       - name: Emit geo-global suite to R2 (30-min slots — the GH-runner budget)
         timeout-minutes: 75

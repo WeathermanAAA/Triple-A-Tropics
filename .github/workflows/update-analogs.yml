@@ -45,9 +45,15 @@ jobs:
         # matplotlib). setuptools<81 restores pkg_resources, which tropycal's
         # version probe imports (removed in newer setuptools) - without it the
         # import fails on the runner.
+        # shapely is a REQUIRED runtime dep of the analog build (tropycal's
+        # track geometry path imports it lazily, so `import tropycal` alone
+        # doesn't prove it) — without it every storm fails with
+        # ModuleNotFoundError and, before the fail-loudly guard in
+        # generate_analogs.py, the run still showed green (found 2026-07-16:
+        # 'wrote 0 storm(s)' for days).
         run: |
           python -m pip install --upgrade pip
-          pip install "setuptools<81" tropycal
+          pip install "setuptools<81" tropycal shapely
       - name: Build analogs
         env:
           ANALOGS_ENABLED: ${{ vars.ANALOGS_ENABLED || '1' }}

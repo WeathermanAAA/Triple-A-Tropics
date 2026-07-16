@@ -107,9 +107,13 @@ def _write(out_dir, relpath, doc):
 
 
 def process_active(out_dir):
-    """Active storms -> lead-time analogs.json, keyed by canonical sid."""
-    n = 0
+    """Active storms -> lead-time analogs.json, keyed by canonical sid.
+    Returns (written, attempted) so the caller can fail LOUDLY when every
+    active storm errored — a green run that wrote 0 of N storms hid a
+    missing dependency for days (shapely, found 2026-07-16)."""
+    n = attempted = 0
     for sid, feed in active_storms():
+        attempted += 1
         try:
             tp = feed_target_points(feed)               # authoritative live track
             doc = A.build_analogs_json(
@@ -126,7 +130,7 @@ def process_active(out_dir):
             n += 1
         except Exception as e:  # noqa: BLE001 - per-storm isolation
             print(f"analogs: {sid} failed: {type(e).__name__}: {e}", file=sys.stderr)
-    return n
+    return n, attempted
 
 
 def process_archive(out_dir, sids):
@@ -205,7 +209,16 @@ def main():
 
     total, idx_rows = 0, []
     if args.active:
-        total += process_active(args.out_dir)
+        n_active, attempted = process_active(args.out_dir)
+        if attempted and not n_active:
+            # every active storm failed: almost certainly systemic (missing
+            # dep, dead upstream) — fail loudly so the workflow goes red
+            # instead of silently publishing nothing. Last-known-good on R2
+            # stays live because the sync step never runs on failure.
+            raise SystemExit(
+                f"analogs: all {attempted} active storm(s) failed — "
+                "failing loudly (see per-storm errors above)")
+        total += n_active
     if args.storm:
         rows, n = process_archive(args.out_dir, args.storm)
         idx_rows += rows
