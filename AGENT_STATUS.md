@@ -10,6 +10,15 @@ _Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migr
 
 ## MORNING-TO-DO (Andrew) — running list, maintained by the agent
 
+0. **BOX SSH KEY (unblocks the whole box takeover)** — the Codespace has
+   no working key for root@2.25.183.231 (the old
+   "tat-radar-render-deploy@codespace" key is not in this Codespace).
+   Add this public key in hPanel → Settings → SSH keys → "+ SSH key":
+   `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKskgEnqGvXSoOIZjJ4B7M8DsaWqClk8khee9ndM+WV8 tat-box-agent@codespace`
+   The agent polls connectivity every 5 min and starts the takeover
+   (floater-poller rebuild → S2_CRON_SUITES → watchdog → GH-stopgap
+   cutover → CycloLab adv chase) the moment it connects — no further
+   action needed from you beyond the key add.
 1. **(carried) Q18 — Cloudflare token** for headless Worker deploys
    (`CLOUDFLARE_API_TOKEN` Codespaces secret; Workers Scripts:Edit + zone
    Workers Routes:Edit + Cache Purge:Purge). Bug board + purge already live
