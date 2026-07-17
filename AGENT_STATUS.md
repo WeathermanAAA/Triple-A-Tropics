@@ -10,15 +10,12 @@ _Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migr
 
 ## MORNING-TO-DO (Andrew) — running list, maintained by the agent
 
-0. **BOX SSH KEY (unblocks the whole box takeover)** — the Codespace has
-   no working key for root@2.25.183.231 (the old
-   "tat-radar-render-deploy@codespace" key is not in this Codespace).
-   Add this public key in hPanel → Settings → SSH keys → "+ SSH key":
-   `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKskgEnqGvXSoOIZjJ4B7M8DsaWqClk8khee9ndM+WV8 tat-box-agent@codespace`
-   The agent polls connectivity every 5 min and starts the takeover
-   (floater-poller rebuild → S2_CRON_SUITES → watchdog → GH-stopgap
-   cutover → CycloLab adv chase) the moment it connects — no further
-   action needed from you beyond the key add.
+0. **PUSH THE BOX'S TSR COMMITS** (key added ✓, takeover executed ✓ —
+   see the 2026-07-17 02:4x entry): the box clone has 3 local commits
+   this Codespace cannot push (no tsr write auth). One command with your
+   auth: `cd /root/tat-satellite-render && git push origin main`
+   (R2_PREFIX pin + CYCLOLAB_PREFIX pin + RUNBOOK §7). Until pushed they
+   live only on the box — the SERVICES already run them.
 1. **(carried) Q18 — Cloudflare token** for headless Worker deploys
    (`CLOUDFLARE_API_TOKEN` Codespaces secret; Workers Scripts:Edit + zone
    Workers Routes:Edit + Cache Purge:Purge). Bug board + purge already live
@@ -26,29 +23,20 @@ _Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migr
 2. **(carried) EUMETSAT key** (`EUMETSAT_CONSUMER_KEY`/`_SECRET` as TAT
    Actions secrets + box `.env`) — lights the Meteosat wedge in the World
    composite.
-3. **BOX pull+rebuild for tsr @863d6df — now URGENT** (2026-07-16 audit:
-   the floater poller has been STALLED since Jul 15 ~01:00Z, ~44 h — the
-   whole floaters/ tree frozen, every MW/ASCAT/recon backdrop + per-storm
-   floater with it; the stall predates the GOES-19 anomaly by ~19 h and
-   freezes Himawari regions too, so it is the box, not the satellite).
-   Same session as RUNBOOK-RENDER §2: `cd tsr && git pull && docker
-   compose -p tat-render -f docker-compose.render.yml build && docker
-   compose -p tat-render -f docker-compose.render.yml up -d` — then
-   confirm floaters/manifest.json `generated_utc` moves (or watch
-   feeds/freshness.json flip those rows fresh).
-4. **BOX: start the remaining emit suites** (audit: emit-cron runs ONLY
-   conus): set `S2_CRON_SUITES="conus fd himawari9-wpac himawari9-fd"` +
-   restart emit-cron. After the suites are emitting on cron, the
-   emit-geo-global.yml GH stopgap cron for fd-ir/wpac-ir can be disabled
-   per its own header (the final migration cutover).
-5. **BOX: post-restore band failures** — since the GOES-19 restore every
-   conus product needing C01–C06/C10–C12 fails each sweep while pure
-   longwave emits fine; upstream NODD verified complete for all bands.
-   Check the emit-cron logs for the per-band exception (likely fixed by
-   the same pull+rebuild; verify truecolor/sandwich refresh after ③).
-6. **BOX: CycloLab adv/cone sub-task stuck** — ELIDA still shows
-   advisory 1 (Jul 14 21:00Z) while the same poller's feeds are
-   minutes-fresh; check the intensity poller's adv fetch loop.
+3. ~~BOX pull+rebuild for tsr @863d6df~~ **DONE 2026-07-17** (agent,
+   direct SSH): 863d6df deployed, floaters/ moving again (root cause was
+   the R2_PREFIX env-parity bug, not a hang — see the 02:4x entry).
+4. ~~BOX: start the remaining emit suites~~ **DONE 2026-07-17**: s2
+   emit-cron recreated from the s2-sat-ingest tip in /root/tsr-s2 —
+   suites `conus fd himawari9-wpac himawari9-fd geo-global`. GH-stopgap
+   schedule cutover happens as soon as the fd/wpac first emits verify
+   (in flight).
+5. **BOX: post-restore band failures — VERIFY ONLY**: 863d6df is
+   deployed; confirm goes19/conus/truecolor + sandwich refresh on the
+   next sweeps (agent watches; escalate only if still failing).
+6. ~~BOX: CycloLab adv/cone stuck~~ **DONE 2026-07-17**: CYCLOLAB_PREFIX
+   parity bug — adv 9 was landing in shadow/cyclolab; promoted pin in
+   compose, verification in flight.
 7. **cyclolab/index.html decision** — the router maps /cyclolab/ root to
    a lab index that was never published (branded 404 serves now): either
    publish an index or drop the root mapping.
@@ -60,6 +48,62 @@ _Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migr
 9. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-17 (~02:4x UTC) — BOX TAKEOVER: the "44-hour poller hang" was never a hang — two migration env-parity bugs found + fixed at the root
+
+Direct SSH access live (key added by Andrew, `~/.ssh/tat_box` in this
+Codespace). Everything below executed on the box per the takeover
+directive; repo-side tsr changes are committed ON THE BOX (no tsr push
+auth from this Codespace) — **Andrew: one `cd /root/tat-satellite-render
+&& git push` publishes 4 commits** (R2_PREFIX pin, CYCLOLAB_PREFIX pin,
+RUNBOOK §7, + the pull already applied 863d6df).
+
+### The headline: floaters/ froze because NOBODY was writing it
+
+The audit's "box floater poller stalled ~44 h" was misdiagnosed (by me).
+The truth found with box access: the shared box `.env` carries
+`R2_PREFIX=meso` (for the MESO stack), `env_file:` inheritance pointed
+the render-stack floater-poller at `meso/*` from its 2026-07-14 bring-up
+(double-writing the meso poller's keys, never writing `floaters/*` at
+all), and `floaters/*` stayed alive only through the GH stopgap
+`floater-worker.yml` — whose retired schedule's LAST run is the exact
+freeze timestamp (Jul 15 01:03Z). Nothing hung; the process was healthy
+and writing the wrong keys. **Fix: `R2_PREFIX: floaters` pinned in
+`docker-compose.render.yml` (environment beats env_file) — floaters/
+manifest advanced within minutes (02:18:07Z after 49 h frozen).**
+
+### Same bug, second instance: CycloLab adv/cones
+
+The "stuck adv sub-task" (ELIDA on adv 1) was the same class:
+`CYCLOLAB_PREFIX` defaults to `shadow/cyclolab` (promote = set the env),
+Railway had the promoted value, the box migration never carried it — so
+the poller wrote adv 9 to the shadow tree while the site's
+`cyclolab/adv/` froze at the last promoted write. **Fix:
+`CYCLOLAB_PREFIX: cyclolab` pinned in the compose (the block even
+documents this exact trap for GLOBAL_GEOJSON_KEY — this var was missed
+in the parity list).** Swept the codebase for further `shadow/` prefix
+defaults: no other instances.
+
+### Also done on the box
+
+- **RUNBOOK §2/§4a rebuild executed**: tsr `863d6df` (antimeridian
+  bboxes + 429 backoff + internal rate tier) now deployed; render
+  healthy; all pollers recreated; the stall watchdog armed.
+- **s2 emit-cron now runs ALL suites** — recreated from the
+  `s2-sat-ingest` tip (its default: `conus fd himawari9-wpac
+  himawari9-fd geo-global`) in a dedicated worktree `/root/tsr-s2`
+  (`--profile cron`; the two compose projects no longer share one
+  checkout on the wrong branch). fd/wpac/himawari-fd first-emit
+  verification in flight → the GH stopgap schedules (emit-geo-global +
+  floater-worker) get disabled the moment those manifests advance.
+- **Output watchdog installed** (systemd `tat-floater-watchdog.timer`,
+  10-min cadence): restarts the floater-poller when the floaters
+  manifest is >30 min stale, one restart per 30 min max (a config
+  failure like this one can't restart-loop it — repeated stale findings
+  in `/var/log/tat-floater-watchdog.log` are then the alert). Documented
+  as RUNBOOK-RENDER §7: restart policies and in-process watchdogs are
+  both blind to a healthy process writing the wrong keys — watch the
+  PRODUCT.
 
 ## 2026-07-16 (~22:2x UTC) — SUBSEASONAL PHASE 3: Group A shipped (@7ea5eae5), Group B items 5+6 shipped (@6f469a88), RMM forecast in flight
 
