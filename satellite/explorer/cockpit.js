@@ -407,6 +407,92 @@
     });
   }
 
+  // ========================================================================
+  // NADIR AUTO-SWITCH — zooming into an area follows the nadir-nearest
+  // satellite; zooming back out to the domain's fit floor returns to the
+  // GEO ring. It only ever moves BETWEEN auto states: a hand-picked domain
+  // (rail click) suppresses auto until the user is back on the world, so it
+  // never fights an explicit choice. GOES-18 joins NADIR when it has data.
+  // ========================================================================
+  var NADIR = { goes19: -75.2, himawari9: 140.7 };
+  var AUTO_ZOOM_IN = 3.0;     // map zoom where a "region" is clearly framed
+  function rowOK(d) {
+    var row = document.querySelector('[data-domain="' + d + '"]');
+    return !!(row && !row.classList.contains('coming'));
+  }
+  // nadir-nearest satellite with data, then its tightest domain holding the
+  // viewport center (CONUS / WPAC when inside their footprints, else FD)
+  function autoDomainFor(c) {
+    var lon = ((c.lng + 540) % 360) - 180, lat = c.lat;
+    var sat = null, bd = 1e9;
+    Object.keys(NADIR).forEach(function (s) {
+      var dd = Math.abs(((lon - NADIR[s] + 540) % 360) - 180);
+      if (dd < bd) { bd = dd; sat = s; }
+    });
+    if (sat === 'goes19') {
+      if (lon >= -130 && lon <= -60 && lat >= 20 && lat <= 55 && rowOK('conus')) return 'conus';
+      return rowOK('fd') ? 'fd' : null;
+    }
+    if (lon >= 95 && lat >= -5 && lat <= 45 && rowOK('hw-wpac')) return 'hw-wpac';
+    return rowOK('hw-fd') ? 'hw-fd' : null;
+  }
+  function autoGo(d, msg) {
+    S._autoAt = Date.now();
+    S._autoDomain = (d === 'global') ? null : d;
+    S._touched = true;          // the boot global-retry must not refire
+    var tv = S.panes[0] && S.panes[0].tv;
+    var cam = (d !== 'global' && tv && tv.map)
+      ? { c: tv.map.getCenter(), z: tv.map.getZoom() } : null;
+    setDomain(d);
+    // entering a region keeps the user's camera; returning to the ring
+    // re-frames the world (staying zoomed would instantly re-enter). The
+    // world fit must wait for the GLOBAL manifest to adopt — setProduct is
+    // async, and fitData on the outgoing regional bounds frames the region
+    // (tryGlobal's poll pattern).
+    if (tv && tv.map) {
+      if (cam) { tv.map.jumpTo({ center: cam.c, zoom: cam.z }); }
+      else {
+        var tries = 0;
+        (function fitWorld() {
+          var mp = tv.manifest && tv.manifest.product;
+          if (mp && mp.indexOf('sat/geo/') === 0) { tv.fitData(); return; }
+          if (++tries < 20) setTimeout(fitWorld, 250);
+        })();
+      }
+    }
+    flash(msg);
+  }
+  function autoSatCheck(pane) {
+    if (S.tm.on || document.body.classList.contains('cx-tcd-mode')) return;
+    if (pane.kind && pane.kind !== 'tile') return;   // MW/ASCAT own the pane
+    if (Date.now() - (S._autoAt || 0) < 2000) return; // settle after a switch
+    var tv = pane.tv;
+    if (!tv || !tv.map) return;
+    var z = tv.map.getZoom(), c = tv.map.getCenter();
+    if (S.domain === 'global') {
+      if (z < AUTO_ZOOM_IN) return;
+      var d = autoDomainFor(c);
+      if (d) autoGo(d, '→ ' + domainInfo(d).satLabel + ' · ' + domainInfo(d).label +
+                       ' (nadir-nearest) — zoom out for the world');
+    } else if (S._autoDomain === S.domain) {
+      // zoomed out to (or under) the domain's own fit floor: back to the ring
+      if (z <= (tv._fitZoom != null ? tv._fitZoom + 0.1 : 2.0)) {
+        autoGo('global', '→ GEO ring · world view');
+        return;
+      }
+      // panned across to the other satellite's hemisphere: follow the nadir
+      var d2 = autoDomainFor(c);
+      if (d2 && d2 !== S.domain && domainInfo(d2).sat !== domainInfo(S.domain).sat)
+        autoGo(d2, '→ ' + domainInfo(d2).satLabel + ' · ' + domainInfo(d2).label +
+                    ' (nadir-nearest)');
+    }
+  }
+  function wireAutoSat(pane, i) {
+    if (i !== 0 || pane._autoWired) return;   // lead camera only
+    pane._autoWired = true;
+    pane.tv.map.on('moveend', function () { autoSatCheck(pane); });
+  }
+
   // The Meteosat sector (~10°W–75°E) has no ingested satellite: the global
   // composite leaves it transparent, and this badge says WHY on the map —
   // never stretch a neighboring disk across it.
@@ -683,6 +769,7 @@
         renderPaneChrome(i);
         wireCameraSync(pane);
         wireDrawBox(pane);    // shift+drag must work from boot on every pane
+        wireAutoSat(pane, i); // nadir-nearest auto-switch follows the lead camera
         updateGapBadges();
         tv.map.on('moveend', function () { paneMinMax(i); });   // header min/max readout
       });
