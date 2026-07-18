@@ -113,12 +113,26 @@
         var self = this;
         if (!t) return Promise.resolve(this.doc);
         if (this._frames[t]) return this._frames[t];
-        this._frames[t] = fetch(base + '/' + t + '.json')
+        var p = fetch(base + '/' + t + '.json')
           .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-          .catch(function () { delete self._frames[t]; return null; });
-        this._order.push(t);
-        while (this._order.length > lru) delete this._frames[this._order.shift()];
-        return this._frames[t];
+          .catch(function () {
+            // forget BOTH maps on failure so a later join retries cleanly —
+            // leaving t in _order accumulated ghost entries that could
+            // evict the entry just inserted and return undefined into the
+            // playback clock (review-caught crash; reproduced in sim)
+            delete self._frames[t];
+            var oi = self._order.indexOf(t);
+            if (oi >= 0) self._order.splice(oi, 1);
+            return null;
+          });
+        this._frames[t] = p;
+        if (this._order.indexOf(t) < 0) this._order.push(t);
+        while (this._order.length > lru) {
+          var ev = this._order.shift();
+          if (ev === t) { this._order.push(ev); break; }  // never evict the newcomer
+          delete this._frames[ev];
+        }
+        return p;
       },
       nearest: function (satStamp, skewMs) {
         var m = this.manifest;
@@ -1076,7 +1090,10 @@
     Promise.all([NHCData.load(), GSData.load().catch(function () { return null; })])
       .then(function (rs) {
         var doc = rs[0];
-        if (!doc) return;
+        // the fetch outlives a quick toggle-off (or a pane teardown):
+        // re-check before mounting or ghost layers render with the button
+        // off (review-caught)
+        if (!doc || !st.on || !pane.tv || !pane.tv.map) return;
         var sid = 'ofnhc-' + paneIdx;
         var before = map.getLayer('grat') ? 'grat' : undefined;
         if (!map.getSource(sid)) {

@@ -170,6 +170,13 @@ const { TiledViewer } = require(path.join(__dirname, "..", "satellite", "explore
   // residency cap and doubles per fully-loaded idle pass — settle by
   // iterating load->idle until the mounted set stops growing. The ramp
   // itself is asserted below.
+  // the initial burst (before ANY tile confirmation) is the real-world
+  // bound: growth is confirmation-paced, which this fixture's synchronous
+  // loadSource storm collapses into one pass
+  const preMounted = Object.keys(map.sources)
+    .filter((id) => id.indexOf("sat/g/conus/ir-") === 0).length;
+  ok(preMounted <= 9,
+    "ramp: initial burst capped before any tile confirms (got " + preMounted + ")");
   let rampSizes = [];
   for (let pass = 0; pass < 10; pass++) {
     const before = Object.keys(map.sources)
@@ -183,11 +190,7 @@ const { TiledViewer } = require(path.join(__dirname, "..", "satellite", "explore
   }
   map.loadAllPending("sat/g/conus/ir-");
   map.idle();
-  // the fixture's synchronous loadSource storm can slip one growth step in
-  // during section 1; the contract is "never the whole loop in one burst"
-  ok(rampSizes[0] < N,
-    "ramp: first pass mounted a capped subset, not the whole loop (got " +
-    rampSizes[0] + " of " + N + ")");
+
   ok(rampSizes.every((n, i) => i === 0 || n >= rampSizes[i - 1]),
     "ramp: residency grows monotonically (" + rampSizes.join(",") + ")");
   const loadedEvents = events.filter((e) => e.kind === "loaded");

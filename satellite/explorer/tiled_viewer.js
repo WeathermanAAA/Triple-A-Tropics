@@ -490,19 +490,23 @@
     var ahead = (bb && (bb[2] - bb[0]) >= 300) ? 3 : MOUNT_AHEAD;
     var resid = this._residCap || Infinity;
     while (inflight < ahead && this._mountQ.length) {
-      if (this._mountedInLoop() >= resid) return;   // ramp gate: idle grows it
       var st = this._mountQ.shift();
       if (this.frames.indexOf(st) < 0) continue;
       if (this._added[st]) {
         if (!this._parked[st]) continue;     // mounted + visible: nothing to do
         // camera-parked frame: unhide so its tiles fetch, then the normal
-        // sourcedata/idle gate re-confirms it
+        // sourcedata/idle gate re-confirms it. NOT ramp-gated: parked
+        // frames are already mounted, so unparking adds zero residency —
+        // gating them wedged every camera-move resume during a cold ramp
+        // (review-caught).
         delete this._parked[st];
         var id = this._srcId(st);
         if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'visible');
         inflight++;
         continue;
       }
+      // only NEW mounts consume residency; requeue and stop when capped
+      if (this._mountedInLoop() >= resid) { this._mountQ.unshift(st); break; }
       this._ensureFrame(st, 0);
       inflight++;
     }
@@ -522,6 +526,7 @@
     if (!this.map.isSourceLoaded(e.sourceId)) return;
     if (!this._ready[stamp]) { this._ready[stamp] = true; this._emitLoading(); }
     this._pumpMounts();
+    this._growRamp();
     if (this._wantStamp === stamp) this._revealPending();
   };
   VP._onIdle = function () {
@@ -536,26 +541,30 @@
     this._pumpMounts();
     if (this._wantStamp != null && this._added[this._wantStamp]) this._revealPending();
     if (changed) this._emitLoading();
-    // ramp growth: every mounted frame is confirmed -> double the residency
-    // cap and pump the next slice QUIETLY. Idle-paced growth means a new
-    // slice only streams after the previous one is fully resident — the
-    // hard working-set bound that keeps a cold heavy switch from mounting
-    // everything at once.
-    if (this._residCap && !this._camMoving) {
-      var mounted = this._mountedInLoop();
-      if (mounted >= this.frames.length) { this._residCap = null; return; }
-      var allMountedReady = true;
-      for (var i = 0; i < this.frames.length; i++) {
-        var st = this.frames[i];
-        if (this._added[st] && !this._ready[st] && !this._parked[st]) {
-          allMountedReady = false;
-          break;
-        }
+    this._growRamp();
+  };
+  // ramp growth: every mounted frame is confirmed -> double the residency
+  // cap and pump the next slice QUIETLY. Growth-paced-by-load is the hard
+  // working-set bound that keeps a cold heavy switch from mounting
+  // everything at once. Checked from idle AND sourcedata AND camera-resume:
+  // a no-new-tiles camera move can consume the only idle inside the resume
+  // debounce, and growth must not depend on an event that never re-fires
+  // (review-caught wedge).
+  VP._growRamp = function () {
+    if (!this._residCap || this._camMoving) return;
+    var mounted = this._mountedInLoop();
+    if (mounted >= this.frames.length) { this._residCap = null; return; }
+    var allMountedReady = true;
+    for (var i = 0; i < this.frames.length; i++) {
+      var st = this.frames[i];
+      if (this._added[st] && !this._ready[st] && !this._parked[st]) {
+        allMountedReady = false;
+        break;
       }
-      if (allMountedReady && mounted) {
-        this._residCap = Math.min(this.frames.length, this._residCap * 2);
-        this._pumpMounts();
-      }
+    }
+    if (allMountedReady && mounted) {
+      this._residCap = Math.min(this.frames.length, this._residCap * 2);
+      this._pumpMounts();
     }
   };
 
@@ -614,6 +623,7 @@
       return q.indexOf(x) < 0;
     }));
     this._pumpMounts();      // staggered unhide -> re-fetch -> re-confirm
+    this._growRamp();        // a no-new-tiles move may never idle again
     this._revealPending();   // a reveal parked mid-move resumes through the gate
   };
   VP._emitLoading = function () {

@@ -37,10 +37,16 @@ UTC = dt.timezone.utc
 CACHE = "public, max-age=300"
 
 
-def _http(url, timeout=60):
-    req = urllib.request.Request(url, headers={"User-Agent": "triple-a-tropics-nhc"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+def _http(url, timeout=60, tries=2):
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "triple-a-tropics-nhc"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except Exception as e:                    # noqa: BLE001
+            last = e
+    raise last
 
 
 def _shp_reader(z: zipfile.ZipFile, base: str):
@@ -172,6 +178,15 @@ def main() -> int:
         feats.extend(storm_features(sid, s))
     areas = gtwo_features()
     feats.extend(areas)
+    # honest-gate parity with the sibling emitters (metar station floor,
+    # MRMS coverage ceiling, sfc parse floor): active storms with ZERO
+    # cone/track features fetched = an upstream GIS outage, not a quiet
+    # season — refuse to replace a good doc with an empty one.
+    if storms and not any(f["properties"].get("kind") in ("cone", "track")
+                          for f in feats):
+        raise RuntimeError(
+            f"{len(storms)} active storm(s) but zero cone/track features "
+            "fetched — refusing to publish an empty overlay")
     doc = {
         "type": "FeatureCollection",
         "as_of": now.isoformat(timespec="seconds"),

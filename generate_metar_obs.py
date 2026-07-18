@@ -138,8 +138,15 @@ class R2Store:
         try:
             r = self.c.get_object(Bucket=self.bucket, Key=key)
             return json.loads(r["Body"].read())
-        except Exception:
-            return None
+        except Exception as e:
+            code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
+            if code in ("NoSuchKey", "NotFound", "404"):
+                return None            # genuinely no manifest yet
+            # a TRANSIENT read failure must fail the run — treating it as
+            # "no manifest" silently collapsed the rolling series to one
+            # frame and orphaned every pruned-but-listed object
+            # (review-caught); failing keeps the last good manifest live.
+            raise RuntimeError(f"manifest read failed ({key}): {e}")
 
     def delete(self, key):
         self.c.delete_object(Bucket=self.bucket, Key=key)
