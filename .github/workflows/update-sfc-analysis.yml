@@ -1,0 +1,45 @@
+# WPC surface analysis overlay feed (tester item #13 — fronts + centers).
+# Parses the free public CODSUS coded bulletin (NWS text, no creds) into
+# sfc/analysis/latest.json for the explorer's canvas layer. R2-only:
+# permissions contents:read, commits NOTHING. WPC issues 3-hourly; the
+# hourly staggered pair picks each new analysis up promptly and no-ops
+# in between (same JSON, 5-min manifest cache).
+name: update-sfc-analysis
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+    - cron: "47 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-sfc-analysis
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet boto3
+
+      - name: Emit surface analysis feed to R2
+        timeout-minutes: 4
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python generate_sfc_analysis.py --store r2
