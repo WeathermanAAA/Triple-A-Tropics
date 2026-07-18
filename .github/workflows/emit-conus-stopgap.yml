@@ -11,26 +11,32 @@
 # and drops the stray stamp FROM THE MANIFEST ONLY (no R2 object is deleted;
 # the z6 tiles age out via the prune's TTL).
 #
-# IT MUST STAY HOURLY (not one-shot) until the box is fixed: the box cron
-# recomputes frame geometry from R2 REALITY each pass, so it keeps refusing
-# as long as the stray frames exist. Durable fix = Andrew, ONE of:
-#   (a) box: add --allow-geometry-change to the emit-cron command in
-#       /root/tsr-s2/docker-compose.s2.yml (one line) and recreate, OR
-#   (b) delete the 19 stray-stamp prefixes
-#       shadow/sat/goes19/conus/<band>/20260715T202117Z/ from R2.
-# After either, DISABLE this schedule (workflow_dispatch stays for re-emits).
-# Bonus while it runs: CONUS gets an hourly newest-slot refresh on top of the
-# box's slow multi-hour suite pass.
+# The geometry-freeze half is RESOLVED (box cron carries
+# --allow-geometry-change since tsr-s2 @4afdee9); what this workflow provides
+# now is CADENCE — a newest-slot conus refresh on top of the box's slow
+# multi-hour all-suites rotation. Disable the schedule once the box gives
+# conus its own emit lane (see the un-retire note below).
 #
 # Staggered non-round minutes (repo standard — GitHub sheds :00-family crons).
 name: emit-conus-stopgap
 
-# RETIRED 2026-07-18 ~17:2x: the box emit-cron now carries
-# --allow-geometry-change itself (tsr-s2 @4afdee9, deployed) — the freeze
-# cannot recur and conus freshness is back on the box's 10-min cadence.
-# workflow_dispatch kept for on-demand re-emits.
+# UN-RETIRED 2026-07-18 ~21:3x: the 17:2x retirement assumed the box cron
+# gives conus a 10-min cadence. It does not — the box emit-cron runs ALL
+# FIVE suites (conus fd himawari9-wpac himawari9-fd geo-global) in ONE
+# sequential loop at ~3.5 min/product, so a full rotation takes 4+ h and
+# conus refreshes once per rotation (verified in the box logs 21:19Z:
+# 4 h into a pass, still inside the fd suite; conus manifests frozen at
+# 17:01Z — the LAST stopgap run's slot). The geometry-freeze part IS fixed
+# on the box (--allow-geometry-change deployed), but this workflow remains
+# the conus CADENCE until the box gets a per-suite lane (queued for Andrew:
+# split conus into its own emit-cron service in docker-compose.s2.yml).
+# Two staggered crons/hour + no-cancel concurrency ≈ 2 runs/hour after
+# GitHub load-shedding (each run ~22-31 min, newest-slot only).
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "14 * * * *"
+    - cron: "44 * * * *"
 
 permissions:
   contents: read

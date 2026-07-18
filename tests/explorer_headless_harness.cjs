@@ -1,6 +1,7 @@
 // Headless harness for the satellite explorer — boots the real page against
 // the live CDN, then runs a named scenario. Usage:
 //   node explorer_harness.cjs <scenario> [outdir]
+//   LIVE=1 node explorer_harness.cjs <scenario> [outdir]   # deployed site, no local routes
 // Scenarios: boot | drawbox | shiftdrag
 "use strict";
 const { chromium } = require("playwright");
@@ -33,17 +34,20 @@ function serve() {
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const scenario = process.argv[2] || "boot";
-  const srv = await serve();
-  const base = "http://127.0.0.1:" + srv.address().port;
+  const LIVE = process.env.LIVE === "1";   // deployed site as-is: no local page, no feed aliases
+  const srv = LIVE ? null : await serve();
+  const base = LIVE ? "https://triple-a-tropics.com" : "http://127.0.0.1:" + srv.address().port;
   const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   const errors = [];
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 300)); });
   page.on("pageerror", (e) => errors.push("PAGEERROR " + String(e).slice(0, 300)));
+  page.on("requestfailed", (r) => errors.push("REQFAIL " + ((r.failure() || {}).errorText || "?") + " " + r.url().slice(0, 160)));
+  page.on("response", (r) => { if (r.status() >= 400) errors.push("HTTP" + r.status() + " " + r.url().slice(0, 160)); });
 
   // the CDN's CORS allowlist doesn't cover localhost: re-serve its responses
   // with permissive headers so the page behaves as it does on the real origin
-  await page.route("https://cdn.triple-a-tropics.com/**", async (route) => {
+  if (!LIVE) await page.route("https://cdn.triple-a-tropics.com/**", async (route) => {
     try {
       const r = await route.fetch();
       const headers = Object.assign({}, r.headers(),
@@ -53,14 +57,19 @@ function serve() {
     } catch (e) { await route.abort(); }
   });
 
-  // MRMS scenario: the R2 emit hasn't run yet — serve the locally-emitted
-  // overlay files for its prefix so the full client path exercises for real
-  const MRMS_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/mrms/";
+  // Local-feed aliases (non-LIVE only, and only when a locally-emitted dir
+  // exists): stand a not-yet-launched R2 prefix in with local emitter output
+  // so the full client path exercises for real. Once a feed is live on R2
+  // the alias dir is simply absent and the CDN route above serves it.
+  const aliasDir = (p) => !LIVE && fs.existsSync(p) ? p : null;
+  const SCRATCH = process.env.HARNESS_FEEDS ||
+    "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad";
+  const MRMS_LOCAL = aliasDir(SCRATCH + "/mrms/");
   // bench aliasing (mrmszoom only): present the freshest local scan under a
   // stamp near the cached sat loop so the nearest-join + skew gate exercise
   // normally while displaying the NEW pipeline's frame
-  const MRMS_ALIAS = scenario === "mrmszoom" ? { bench: "20260718T170000Z", real: "20260718T190440Z" } : null;
-  await page.route("https://cdn.triple-a-tropics.com/radar/mrms/**", async (route) => {
+  const MRMS_ALIAS = scenario === "mrmszoom" && MRMS_LOCAL ? { bench: "20260718T170000Z", real: "20260718T190440Z" } : null;
+  if (MRMS_LOCAL) await page.route("https://cdn.triple-a-tropics.com/radar/mrms/**", async (route) => {
     let rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
     try {
       if (MRMS_ALIAS && rel.includes(MRMS_ALIAS.bench)) rel = rel.replace(MRMS_ALIAS.bench, MRMS_ALIAS.real);
@@ -73,19 +82,8 @@ function serve() {
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
-
-  const OBS_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/metar/";
-  await page.route("https://cdn.triple-a-tropics.com/obs/metar/**", async (route) => {
-    const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
-    try {
-      const body = fs.readFileSync(path.join(OBS_LOCAL, rel));
-      await route.fulfill({ status: 200, body, headers: {
-        "content-type": "application/json", "access-control-allow-origin": "*" } });
-    } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
-  });
-
-  const SFC_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/sfc/";
-  await page.route("https://cdn.triple-a-tropics.com/sfc/**", async (route) => {
+  const SFC_LOCAL = aliasDir(SCRATCH + "/sfc/");
+  if (SFC_LOCAL) await page.route("https://cdn.triple-a-tropics.com/sfc/**", async (route) => {
     const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
     try {
       const body = fs.readFileSync(path.join(SFC_LOCAL, rel));
@@ -94,8 +92,8 @@ function serve() {
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
-  const NHC_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/nhc/";
-  await page.route("https://cdn.triple-a-tropics.com/nhc/**", async (route) => {
+  const NHC_LOCAL = aliasDir(SCRATCH + "/nhc/");
+  if (NHC_LOCAL) await page.route("https://cdn.triple-a-tropics.com/nhc/**", async (route) => {
     const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
     try {
       const body = fs.readFileSync(path.join(NHC_LOCAL, rel));
@@ -103,24 +101,28 @@ function serve() {
         "content-type": "application/json", "access-control-allow-origin": "*" } });
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
+
   // metar series bench-alias: present the single local frame near the cached
   // sat loop so the nearest-join exercises (sfc's 15Z frame joins for real)
-  const OBS_ALIAS = { bench: "20260718T170000Z", real: null };
-  try {
-    const m = JSON.parse(fs.readFileSync(path.join(OBS_LOCAL, "obs/metar/latest_times.json")));
-    OBS_ALIAS.real = m.latest;
-  } catch (e) {}
-  await page.route("https://cdn.triple-a-tropics.com/obs/metar/**", async (route) => {
-    let rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+  const OBS_LOCAL = aliasDir(SCRATCH + "/metar/");
+  if (OBS_LOCAL) {
+    const OBS_ALIAS = { bench: "20260718T170000Z", real: null };
     try {
-      if (OBS_ALIAS.real && rel.includes(OBS_ALIAS.bench)) rel = rel.replace(OBS_ALIAS.bench, OBS_ALIAS.real);
-      let body = fs.readFileSync(path.join(OBS_LOCAL, rel));
-      if (OBS_ALIAS.real && rel.endsWith("latest_times.json"))
-        body = Buffer.from(body.toString().split(OBS_ALIAS.real).join(OBS_ALIAS.bench));
-      await route.fulfill({ status: 200, body, headers: {
-        "content-type": "application/json", "access-control-allow-origin": "*" } });
-    } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
-  });
+      const m = JSON.parse(fs.readFileSync(path.join(OBS_LOCAL, "obs/metar/latest_times.json")));
+      OBS_ALIAS.real = m.latest;
+    } catch (e) {}
+    await page.route("https://cdn.triple-a-tropics.com/obs/metar/**", async (route) => {
+      let rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+      try {
+        if (OBS_ALIAS.real && rel.includes(OBS_ALIAS.bench)) rel = rel.replace(OBS_ALIAS.bench, OBS_ALIAS.real);
+        let body = fs.readFileSync(path.join(OBS_LOCAL, rel));
+        if (OBS_ALIAS.real && rel.endsWith("latest_times.json"))
+          body = Buffer.from(body.toString().split(OBS_ALIAS.real).join(OBS_ALIAS.bench));
+        await route.fulfill({ status: 200, body, headers: {
+          "content-type": "application/json", "access-control-allow-origin": "*" } });
+      } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
+    });
+  }
 
   const qs = scenario === "coldgeo" ? "?domain=conus&product=ir" : "";
   await page.goto(base + "/satellite/explorer/" + qs, { waitUntil: "domcontentloaded" });
@@ -550,5 +552,5 @@ function serve() {
 
   console.log("CONSOLE ERRORS:", errors.length ? JSON.stringify(errors.slice(0, 10), null, 1) : "none");
   await browser.close();
-  srv.close();
+  if (srv) srv.close();
 })();
