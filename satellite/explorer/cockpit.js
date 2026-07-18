@@ -1849,7 +1849,11 @@
     });
   }
   var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
-  var TM_PACE_MS = 6500;
+  var TM_PACE_MS = 6500;       // default, sized to the public 10/min limit
+  // ADAPTIVE pace: the render backend advertises a faster inter-request gap
+  // via X-Archive-Pace-Ms once its fast path + a raised rate limit are live
+  // (no frontend redeploy needed). Absent header = keep the safe default.
+  var tmPace = TM_PACE_MS;
   // ---- archive render queue + cache -------------------------------------
   // Every archive render goes through ONE serialized queue with de-dupe:
   // identical band+time+box renders resolve to the SAME cached object URL
@@ -1879,7 +1883,7 @@
     tmFetch(job.body).then(function (blob) {
       TMRQ.active--;
       job.res(URL.createObjectURL(blob));
-      setTimeout(tmrqPump, TM_PACE_MS);          // pace under the rate limit
+      setTimeout(tmrqPump, tmPace);              // pace under the rate limit
     }).catch(function (e) {
       TMRQ.active--;
       var msg = String(e && e.message || e);
@@ -1887,12 +1891,13 @@
         job.tries++;
         // back off harder each attempt, then re-queue at the FRONT so the
         // pane that hit the limit fills before new work starts
+        tmPace = TM_PACE_MS;   // a 429 revokes any advertised faster pace
         setTimeout(function () { TMRQ.queue.unshift(job); tmrqPump(); },
                    TM_PACE_MS * (1 + job.tries));
       } else {
         delete TMRQ.cache[job.key];              // real failures retry on demand
         job.rej(e);
-        setTimeout(tmrqPump, TM_PACE_MS);
+        setTimeout(tmrqPump, tmPace);
       }
     });
   }
@@ -2106,6 +2111,8 @@
     }).then(function (r) {
       if (!r.ok) return r.json().catch(function () { return {}; })
         .then(function (j) { throw new Error(j.detail || ('render failed (' + r.status + ')')); });
+      var hint = parseInt(r.headers.get('X-Archive-Pace-Ms') || '', 10);
+      if (isFinite(hint)) tmPace = Math.min(20000, Math.max(2500, hint));
       return r.blob();
     });
   }
