@@ -1896,6 +1896,7 @@
         // back off harder each attempt, then re-queue at the FRONT so the
         // pane that hit the limit fills before new work starts
         tmPace = TM_PACE_MS;   // a 429 revokes any advertised faster pace
+        TMRQ.MAX = 1;          // ...and the second lane with it
         setTimeout(function () { TMRQ.queue.unshift(job); tmrqPump(); },
                    TM_PACE_MS * (1 + job.tries));
       } else {
@@ -2116,7 +2117,14 @@
       if (!r.ok) return r.json().catch(function () { return {}; })
         .then(function (j) { throw new Error(j.detail || ('render failed (' + r.status + ')')); });
       var hint = parseInt(r.headers.get('X-Archive-Pace-Ms') || '', 10);
-      if (isFinite(hint)) tmPace = Math.min(20000, Math.max(2500, hint));
+      if (isFinite(hint)) {
+        tmPace = Math.min(20000, Math.max(1200, hint));
+        // a fast advertised pace also unlocks the second request lane (the
+        // backend's Semaphore(2) is the real concurrency bound); without the
+        // hint the single 6.5 s lane stays — 2 lanes at the default pace
+        // would blow the public 10/min limit
+        TMRQ.MAX = tmPace <= 2000 ? 2 : 1;
+      }
       return r.blob();
     });
   }
