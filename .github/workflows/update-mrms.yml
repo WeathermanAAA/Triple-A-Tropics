@@ -1,0 +1,53 @@
+# MRMS radar overlay for the Satellite Explorer (tester item #11).
+# Ingests NOAA's free public MergedReflectivityQCComposite (AWS Open Data
+# noaa-mrms-pds, anonymous), colorizes with assets/TAT-radar.pal via the
+# hafs_render .pal parser (one palette, every radar product), warps to
+# web-mercator, and writes radar/mrms/conus/{stamp}.webp + latest_times.json
+# to R2. R2-only like update-hafs: permissions contents:read, commits NOTHING.
+# The explorer's MRMS toggle un-greys the moment the first manifest lands
+# (cockpit_fields.checkAvailability — the honesty chip flips live).
+#
+# MRMS publishes ~2-min scans; GH cron floors us at ~10 min with the usual
+# shed risk, hence the two staggered offsets (non-round minutes — repo
+# standard, load-bearing). The emitter no-ops when its newest scan is
+# already published, so overlapping runs are cheap. The box s2 cron is the
+# eventual higher-cadence home (queued).
+name: update-mrms
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "3,13,23,33,43,53 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-mrms
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet numpy Pillow pygrib boto3 matplotlib
+
+      - name: Emit newest MRMS composite to R2
+        timeout-minutes: 8
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python generate_mrms_overlay.py --store r2
