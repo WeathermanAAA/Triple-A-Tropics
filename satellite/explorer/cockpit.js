@@ -43,6 +43,24 @@
                  sensor: 'multi-sat', source: 'NOAA + JMA', scanProd: 'GEO-RING' }
   };
   function domainInfo(d) { return DOMAINS[d] || DOMAINS.conus; }
+  // The pane's ACTUAL domain — derived from the manifest it renders, never
+  // from the selection: a failed or mid-flight switch must not relabel
+  // imagery that never switched (the "GOES-19 selected, ring rendered"
+  // desync). Falls back to the selection while nothing is mounted yet.
+  function paneDomainKey(pane) {
+    var mp = pane && pane.tv && pane.tv.manifest && pane.tv.manifest.product;
+    if (mp) {
+      var seg = mp.split('/');            // 'sat/goes19/conus/ir'
+      for (var d in DOMAINS) {
+        if (seg[1] === DOMAINS[d].sat && seg[2] === DOMAINS[d].sector) return d;
+      }
+    }
+    return null;
+  }
+  function paneDomainInfo(pane) {
+    var d = paneDomainKey(pane);
+    return d ? DOMAINS[d] : domainInfo(S.domain);
+  }
   // palette tag for the unified header's product·palette slot (archive
   // parity: "CMIPC · rainbow_ir"); scalar products name their frozen
   // enhancement, composites/RGBs name themselves honestly
@@ -807,15 +825,32 @@
     } catch (e) {}
     try { pane.tv.map.remove(); } catch (e) {}
     if (pane.el && pane.el.parentNode) pane.el.parentNode.removeChild(pane.el);
+    // carry what a rebuild must not silently drop: the cockpit clock's
+    // driving flag (a fresh tv without it re-enables the per-frame BT
+    // fetches playback suppresses) and the on-state of every overlay
+    // layer (their buttons stay lit; the layers must come back too).
+    // MW/ASCAT FIELD-mode panes rebuild as tile panes (accepted gap: the
+    // field key isn't stored; gl-loss with tiles hidden is also unlikely).
+    var carry = {
+      rad: !!(pane.rad && pane.rad.on), obs: !!(pane.obs && pane.obs.on),
+      sfc: !!(pane.sfc && pane.sfc.on), mw: !!(pane.mw && pane.mw.on),
+      sc: !!(pane.sc && pane.sc.on)
+    };
     S.panes[i] = null;
     var np = makePane(i, product);
     if (next) $('cx-panes').insertBefore(np.el, next);
+    np.tv._extPlaying = !!S.playing;
     try { np.tv.map && np.tv.map.resize(); } catch (e) {}
     var tries = 0;
     (function waitReady() {
       var p = S.panes[i];
       if (p && p.ready && p.tv && p.tv.map) {
         if (cam) p.tv.map.jumpTo({ center: cam.c, zoom: cam.z });
+        if (window.CockpitFields) {
+          Object.keys(carry).forEach(function (k) {
+            if (carry[k]) window.CockpitFields.setLayer(i, k, true);
+          });
+        }
         renderPaneChrome(i);
         return;
       }
@@ -872,6 +907,8 @@
             '<br>The tile feed may still be spinning up — try again shortly.</span></div>';
         }
       } else if (kind === 'frame') {
+        if (i === 0 && !S.tm.on && window.CockpitFields && data && data.stamp)
+          window.CockpitFields.timeSync(data.stamp);
         if (i === 0) { updateClockUI(data); drawTimeline(); }
         paneTag(i, data.stamp);
       } else if (kind === 'ready') {
@@ -965,7 +1002,7 @@
     // UNIFIED header (archive-render parity): centered SAT·INSTRUMENT·
     // CHANNEL·VALID title, right product·palette tag, per-pane watermark +
     // source attribution, min/max BT readout, colorbar right.
-    var di = domainInfo(S.domain);
+    var di = paneDomainInfo(pane);
     var s = stamp ||
       (pane.tv && pane.tv.frames && pane.tv.frames[pane.tv.frameIdx]) ||
       (pane.tv && pane.tv.manifest && pane.tv.manifest.latest);
@@ -1108,6 +1145,7 @@
   function setPaneProduct(i, p, forceDomain) {
     var pane = S.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
+    var wantDomain = S.domain;   // the selection this switch serves (SSOT token)
     if (S.tm.on) {
       // Time Machine: the field only changes what THIS pane renders — the
       // box + time stay shared/time-locked; the switch re-renders just this
@@ -1179,7 +1217,27 @@
     }).catch(function () {
       clearTimeout(slow);
       flash('');
-      if (forceDomain) flash('no ' + domainInfo(S.domain).label + ' data yet for ' + p.title);
+      if (forceDomain) {
+        flash('no ' + domainInfo(S.domain).label + ' data yet for ' + p.title);
+        // SSOT repair: the LEAD pane never switched — snap the selection
+        // back to what it actually renders so rail + header + tiles agree
+        // (leaving them split was the tester desync). TOKENED: only when
+        // the failure belongs to the CURRENT selection — a stale failure
+        // from a superseded switch must not stomp a newer one (that wedge
+        // left the rail highlighting a dead row).
+        if (i === 0 && S.domain === wantDomain) {
+          var act = paneDomainKey(S.panes[0]);
+          if (act && act !== S.domain) {
+            var backCross = domainInfo(act).sat !== domainInfo(S.domain).sat;
+            S.domain = act;
+            markDomain();
+            updateGapBadges();
+            if (backCross) rebuildProductRows();
+            applyAvailability();
+            updateHeader();
+          }
+        }
+      }
     });
   }
 
@@ -1219,19 +1277,35 @@
       return;
     }
     S.playing = true; S.last = 0;
+    S.panes.forEach(function (p) { if (p && p.tv) p.tv._extPlaying = true; });
     $('cx-play').classList.add('playing', 'on');
     function step(t) {
       if (!S.playing) return;
       if (!S.last) S.last = t;
       var iv = 1000 / S.fps;
       if (S.dwell && clockIdx() === framesList().length - 1) iv *= 6;
-      if (t - S.last >= iv) { S.last = t; clockShow(clockIdx() + 1); }
+      if (t - S.last >= iv) {
+        S.last = t;
+        // advance to the next READY frame (skip, don't stall — cadence over
+        // completeness; unready frames fill quietly and join next lap)
+        var tvL = lead();
+        clockShow(S.tm.on || !tvL ? clockIdx() + 1 : tvL.nextReadyIdx(clockIdx()));
+      }
       S.raf = requestAnimationFrame(step);
     }
     S.raf = requestAnimationFrame(step);
   }
   function stopClock() {
     S.playing = false;
+    S.panes.forEach(function (p) {
+      if (p && p.tv) {
+        p.tv._extPlaying = false;
+        // restore the inspector BT raster for the frame we stopped on
+        // (playback skipped the per-frame loads)
+        if (p.tv.probe && p.tv.frames.length)
+          p.tv.probe.load(p.tv.frames[p.tv.frameIdx]).catch(function () {});
+      }
+    });
     if (S.raf) cancelAnimationFrame(S.raf);
     $('cx-play').classList.remove('playing', 'on');
   }

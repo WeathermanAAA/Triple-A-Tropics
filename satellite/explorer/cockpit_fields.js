@@ -549,56 +549,81 @@
       if (map.getSource(id)) map.removeSource(id);
     });
     pane._radLayers = [];
-    pane.rad && (pane.rad.stamp = null);
+    if (pane.rad) { pane.rad.stamp = null; pane.rad.shown = null; }
   }
   function radRender(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    MRMSData.load().then(function () {
+      radSyncTo(pane, paneIdx, radPaneStamp(pane));
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }).catch(function () { H.flash('radar data unavailable'); });
+  }
+  // the sat stamp this pane currently displays (fallback: newest scan)
+  function radPaneStamp(pane) {
+    var tv = pane.tv;
+    return (tv && tv.frames && tv.frames[tv.frameIdx]) ||
+           (MRMSData.manifest && MRMSData.manifest.latest) || null;
+  }
+  function radStampMs(s) {
+    return Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+                    +s.slice(9, 11), +s.slice(11, 13), +s.slice(13, 15) || 0);
+  }
+  var RAD_MAX_SKEW_MS = 45 * 60e3;
+  // TIME-LOCK: show the MRMS scan nearest the displayed sat frame. ONE
+  // stable image source per pane driven by ImageSource.updateImage — the
+  // sanctioned image-animation idiom (no per-frame source add/remove churn;
+  // the old texture holds until the new image decodes, so swaps never
+  // flash). Scans land ~10-min so frames repeat between updates — correct.
+  // A sat frame with no scan within 45 min hides the layer for that frame
+  // (honest: no radar existed "then" as far as the series knows).
+  function radSyncTo(pane, paneIdx, satStamp) {
     var st = radState(pane);
     var map = pane.tv && pane.tv.map;
-    if (!map || !st.on) return;
-    MRMSData.load().then(function (m) {
-      if (!m || !m.latest || !m.bounds) { H.flash('radar data unavailable'); return; }
-      if (st.stamp === m.latest && (pane._radLayers || []).length) return;
-      var b = m.bounds;   // [W,S,E,N]; image already web-mercator warped
-      var url = CDN + '/' + m.image.replace('{t}', m.latest);
-      // double-buffer the scan swap exactly like MW overpasses: mount the
-      // new image under a versioned id, tear the old down once decoded.
-      if (pane._radPending) { map.off('sourcedata', pane._radPending); pane._radPending = null; }
-      var prev = pane._radLayers || [];
-      var id = 'ofrad-' + paneIdx + '-' + (pane._radSeq = (pane._radSeq || 0) + 1);
-      map.addSource(id, {
-        type: 'image', url: url,
-        coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]]
-      });
+    var m = MRMSData.manifest;
+    if (!st.on || !map || !m || !m.times || !m.times.length || !satStamp) return;
+    var t = radStampMs(satStamp), best = null, bd = Infinity;
+    for (var i = 0; i < m.times.length; i++) {
+      var d = Math.abs(radStampMs(m.times[i]) - t);
+      if (d < bd) { bd = d; best = m.times[i]; }
+    }
+    var id = 'ofrad-' + paneIdx;
+    var lyr = map.getLayer(id);
+    if (best == null || bd > RAD_MAX_SKEW_MS) {
+      if (lyr) map.setLayoutProperty(id, 'visibility', 'none');
+      st.shown = null;
+      return;
+    }
+    var b = m.bounds;   // [W,S,E,N]; image web-mercator warped
+    var coords = [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]];
+    var url = CDN + '/' + m.image.replace('{t}', best);
+    if (!map.getSource(id)) {
+      map.addSource(id, { type: 'image', url: url, coordinates: coords });
       var before = map.getLayer('grat') ? 'grat' : undefined;
       map.addLayer({ id: id, type: 'raster', source: id,
         paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 0,
                  'raster-opacity-transition': { duration: 0, delay: 0 },
-                 'raster-resampling': 'nearest' } }, before);
-      pane._radLayers = prev.concat([id]);
-      st.stamp = m.latest;
-      var dropPrev = function () {
-        prev.forEach(function (old) {
-          if (map.getLayer(old)) map.removeLayer(old);
-          if (map.getSource(old)) map.removeSource(old);
-        });
-        pane._radLayers = (pane._radLayers || []).filter(function (x) {
-          return prev.indexOf(x) < 0;
-        });
-      };
-      if (!prev.length) { dropPrev(); }
-      else {
-        var onData = function (e) {
-          if (e.sourceId !== id) return;
-          if (!map.isSourceLoaded(id)) return;
-          map.off('sourcedata', onData);
-          if (pane._radPending === onData) pane._radPending = null;
-          dropPrev();
-        };
-        pane._radPending = onData;
-        map.on('sourcedata', onData);
-      }
+                 'raster-resampling': 'linear' } }, before);
+      pane._radLayers = [id];
+    } else if (st.shown !== best) {
+      try { map.getSource(id).updateImage({ url: url, coordinates: coords }); }
+      catch (e) { /* source mid-teardown: next sync remounts */ }
+    }
+    if (lyr || map.getLayer(id)) {
+      map.setLayoutProperty(id, 'visibility', 'visible');
+      // RE-RAISE: imagery frame layers also insert before 'grat', so every
+      // frame mounted after the radar lands ABOVE it — without this, the
+      // radar is buried within one manifest refresh (and instantly on a
+      // product switch) while its badge still claims it shows. The old
+      // versioned-id path self-healed by re-adding per scan; the stable-id
+      // lifecycle must re-raise explicitly. Cheap + idempotent per sync.
+      try { if (map.getLayer('grat')) map.moveLayer(id, 'grat'); } catch (e) {}
+    }
+    if (st.shown !== best) {
+      st.shown = best;
+      st.stamp = best;                     // badge shows the displayed scan
       if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
-    }).catch(function () { H.flash('radar data unavailable'); });
+    }
   }
   // freshness poll: ONE timer for all panes; only fetches while some pane
   // shows the layer, so an untoggled cockpit costs nothing.
@@ -611,7 +636,9 @@
       (CX && CX.panes || []).forEach(function (p) { if (p && p.rad && p.rad.on) any = true; });
       if (!any) return;
       MRMSData.reload().then(function () {
-        CX.panes.forEach(function (p, i) { if (p && p.rad && p.rad.on) radRender(p, i); });
+        CX.panes.forEach(function (p, i) {
+          if (p && p.rad && p.rad.on) radSyncTo(p, i, radPaneStamp(p));
+        });
       }).catch(function () {});
     }, 60e3);
     if (_radT && _radT.unref) _radT.unref();
@@ -956,6 +983,8 @@
         }
         if (best !== pane.mw.opIdx) { pane.mw.opIdx = best; mwRender(pane, i); }
       }
+      // MRMS rides the same clock: nearest scan per displayed frame
+      if (pane.rad && pane.rad.on) radSyncTo(pane, i, stamp);
     });
   }
 

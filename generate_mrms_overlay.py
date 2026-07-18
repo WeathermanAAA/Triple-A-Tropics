@@ -108,6 +108,48 @@ def load_grid(key: str):
     return dbz, lat1, lon1
 
 
+FLOOR_DBZ = MIN_DBZ - 5.0    # echo-free fill: lets smoothing/bilinear fade
+                             # edges naturally instead of -999 poisoning them
+
+
+def smooth_warp_webmerc(dbz: np.ndarray, lat1: np.ndarray, lon1: np.ndarray):
+    """Light Gaussian on the native FIELD, then a FIELD-SPACE bilinear
+    resample onto the web-mercator output grid (rows: mercator-y -> input
+    lat; cols: linear). Smoothing + interpolating the dBZ field FIRST and
+    colorizing at output resolution keeps the discrete TAT palette's bin
+    boundaries as smooth contours instead of 2-4 km blocks (the tester
+    "blocky" report — nearest-resampled pre-colorized pixels), while a
+    small sigma (~1.5 native cells ≈ 1.5 km) preserves core structure.
+    Returns (dbz_out, bounds W,S,E,N)."""
+    from scipy.ndimage import gaussian_filter, map_coordinates
+    field = np.where(np.isfinite(dbz) & (dbz > -900), dbz, FLOOR_DBZ)
+    field = np.maximum(field, FLOOR_DBZ).astype(np.float32)
+    # MAX-PRESERVING smoothing: plain gaussian at display-friendly sigma
+    # measurably erased small intense cores against the floor fill (a
+    # 1-cell 65 dBZ echo smoothed below the 10 dBZ cutoff = invisible; a
+    # ~3 km 60 dBZ core displayed 4+ bins weak). Blend the smoothed field
+    # back with the original via max: surroundings pick up the smooth
+    # gradient, every native pixel keeps at least its true value — cores
+    # stay honest, edges stop being blocky. sigma 0.8 is ample
+    # anti-aliasing for the 2x downsample.
+    field = np.maximum(gaussian_filter(field, sigma=0.8, mode="nearest"), field)
+
+    lat_n, lat_s = float(lat1.max()), float(lat1.min())
+    lon_w, lon_e = float(lon1.min()), float(lon1.max())
+
+    def merc_y(lat):
+        return np.log(np.tan(np.pi / 4.0 + np.radians(lat) / 2.0))
+
+    y = np.linspace(merc_y(lat_n), merc_y(lat_s), OUT_H)
+    lat_out = np.degrees(2.0 * (np.arctan(np.exp(y)) - np.pi / 4.0))
+    # fractional input coords: lat1 descends (north row 0); lons are uniform
+    rows = (lat1[0] - lat_out) / (lat1[0] - lat1[-1]) * (len(lat1) - 1)
+    cols = np.linspace(0.0, dbz.shape[1] - 1.0, OUT_W)
+    rr, cc = np.meshgrid(rows, cols, indexing="ij")
+    out = map_coordinates(field, [rr, cc], order=1, mode="nearest")
+    return out.astype(np.float32), [lon_w, lat_s, lon_e, lat_n]
+
+
 def colorize(dbz: np.ndarray) -> np.ndarray:
     """RGBA via the house TAT-radar.pal (discrete 5-dBZ bins, HAFS parity)."""
     from hafs_render.hafs_plot import _refl_pal
@@ -116,30 +158,6 @@ def colorize(dbz: np.ndarray) -> np.ndarray:
     rgba = (rgba * 255).astype(np.uint8)
     rgba[dbz < MIN_DBZ] = 0                          # fully transparent
     return rgba
-
-
-def warp_webmerc(rgba: np.ndarray, lat1: np.ndarray, lon1: np.ndarray):
-    """Nearest-row resample lat -> web-mercator y; columns pass through
-    (regular lons map linearly in mercator x). Returns (out, bounds W,S,E,N)."""
-    lat_n, lat_s = float(lat1.max()), float(lat1.min())
-    lon_w, lon_e = float(lon1.min()), float(lon1.max())
-
-    def merc_y(lat):
-        return np.log(np.tan(np.pi / 4.0 + np.radians(lat) / 2.0))
-
-    y_n, y_s = merc_y(lat_n), merc_y(lat_s)
-    # output rows: uniform in mercator y from north edge to south edge
-    y = np.linspace(y_n, y_s, OUT_H)
-    lat_out = np.degrees(2.0 * (np.arctan(np.exp(y)) - np.pi / 4.0))
-    # input rows: lat1 is descending (north row 0) on the MRMS grid
-    src_rows = np.clip(
-        np.round((lat1[0] - lat_out) / (lat1[0] - lat1[-1]) * (len(lat1) - 1)),
-        0, len(lat1) - 1).astype(np.int32)
-    src_cols = np.clip(
-        np.round(np.linspace(0, rgba.shape[1] - 1, OUT_W)), 0,
-        rgba.shape[1] - 1).astype(np.int32)
-    out = rgba[src_rows][:, src_cols]
-    return out, [lon_w, lat_s, lon_e, lat_n]
 
 
 def encode_webp(rgba: np.ndarray) -> bytes:
@@ -163,6 +181,11 @@ class LocalStore:
         p = self.root / key
         return json.loads(p.read_text()) if p.exists() else None
 
+    def delete(self, key: str):
+        p = self.root / key
+        if p.exists():
+            p.unlink()
+
 
 class R2Store:
     def __init__(self):
@@ -184,12 +207,15 @@ class R2Store:
         except Exception:
             return None
 
+    def delete(self, key: str):
+        self.c.delete_object(Bucket=self.bucket, Key=key)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", default="local:/tmp/tat-mrms")
     ap.add_argument("--prefix", default="", help="key prefix (e.g. shadow)")
-    ap.add_argument("--keep", type=int, default=12)
+    ap.add_argument("--keep", type=int, default=18)
     args = ap.parse_args()
 
     store = R2Store() if args.store == "r2" else LocalStore(args.store.split(":", 1)[1])
@@ -208,8 +234,8 @@ def main() -> int:
     print(f"[mrms] grid {dbz.shape[1]}x{dbz.shape[0]}  "
           f"lat {lat1.min():.2f}..{lat1.max():.2f} lon {lon1.min():.2f}..{lon1.max():.2f}  "
           f"max {float(np.nanmax(dbz)):.0f} dBZ")
-    rgba = colorize(dbz)
-    out, bounds = warp_webmerc(rgba, lat1, lon1)
+    dbz_out, bounds = smooth_warp_webmerc(dbz, lat1, lon1)
+    out = colorize(dbz_out)
     webp = encode_webp(out)
     cover = float((out[..., 3] > 0).mean())
     print(f"[mrms] webp {len(webp)//1024} KB  echo coverage {cover:.1%}  bounds {bounds}")
@@ -221,18 +247,37 @@ def main() -> int:
     store.put(f"{base}/{stamp}.webp", webp, CACHE_IMMUTABLE, "image/webp")
     times = [t for t in manifest.get("times", []) if t != stamp]
     times.append(stamp)
-    times = sorted(times)[-args.keep:]
+    times = sorted(times)
+    rolled = times[:-args.keep] if len(times) > args.keep else []
+    times = times[-args.keep:]
+    # DEFERRED prune: frames that rolled off THIS run are only queued
+    # (prune_next); the actual deletes happen on the NEXT run, AFTER that
+    # run publishes its manifest. Deleting immediately raced live readers:
+    # the old manifest (still at origin until the put below, and cached in
+    # clients up to a poll tick) listed the frame being deleted — a
+    # time-locked pane then 404'd and showed blank radar under a badge
+    # claiming the scan. A publish failure after deletes was worse (a full
+    # cadence of 404s). One-cadence deferral means nothing referenced by
+    # the current OR previous manifest is ever deleted.
+    prune_now = [t for t in manifest.get("prune_next", []) if t not in times]
     manifest = {
         "product": "mrms/conus/reflectivity",
         "image": base + "/{t}.webp",
         "times": times, "latest": stamp,
+        "prune_next": rolled,
         "bounds": bounds, "projection": "webmercator",
         "units": "dBZ", "palette": "TAT-radar.pal",
         "source": "NOAA MRMS MergedReflectivityQCComposite (noaa-mrms-pds)",
         "as_of": dt.datetime.now(UTC).isoformat(timespec="seconds"),
     }
     store.put(mkey, json.dumps(manifest).encode(), CACHE_MANIFEST, "application/json")
-    print(f"[mrms] wrote {base}/{stamp}.webp + manifest ({len(times)} times)")
+    for t in prune_now:
+        try:
+            store.delete(f"{base}/{t}.webp")
+        except Exception:
+            pass
+    print(f"[mrms] wrote {base}/{stamp}.webp + manifest ({len(times)} times, "
+          f"pruned {len(prune_now)}, queued {len(rolled)})")
     return 0
 
 

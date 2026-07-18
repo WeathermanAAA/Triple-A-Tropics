@@ -617,7 +617,11 @@
     // up after the camera rests -- unparking frames during a drag would
     // restart the loop-wide fetch storm the parking exists to prevent
     if (this._camMoving) { this._wantStamp = stamp; this._wantIdx = idx; return; }
-    if (this.probe) this.probe.load(stamp).catch(function () {});   // BT for the inspector
+    // BT raster for the inspector — NOT during playback: fetching+decoding
+    // a few-hundred-KB PNG per frame advance was a real stutter source; a
+    // paused/scrubbed frame still loads it for hover/pin sampling.
+    if (this.probe && !this.playing && !this._extPlaying)
+      this.probe.load(stamp).catch(function () {});
     // Mount/raise the target at full opacity but HOLD the prior frame opaque
     // underneath until the target's tiles are confirmed loaded -- the reveal
     // (zeroing the others) is what must never run early. Until then the new
@@ -741,6 +745,22 @@
   };
   VP.setProduct = function (manifestUrl, meta) {
     var self = this;
+    // Request epoch: every setProduct call — including the no-op guard —
+    // supersedes any in-flight switch. Without it, A->B->A inside B's
+    // manifest RTT no-ops on the guard (manifestUrl still A) and then B's
+    // stale .then lands and stomps the selection (tiles B, rail A — the
+    // desync class this file exists to prevent).
+    this._prodReq = (this._prodReq || 0) + 1;
+    var prodReq = this._prodReq;
+    // RE-SELECTING the current product is a freshness no-op, never a
+    // teardown/remount: retiring a product into ITSELF collides the
+    // stamp-keyed source ids ("source already exists" — the GEO-ring
+    // re-select crash) and there is nothing to switch anyway.
+    if (manifestUrl === this.manifestUrl && this.manifest) {
+      this._refreshManifest();
+      this.onStatus('ready', this.manifest.latest);
+      return Promise.resolve(this.manifest);
+    }
     // instant switch-back: the retired product resurrects without a fetch
     // (its sources are still mounted); the manifest refreshes in background.
     if (this._retired && this._retired.manifestUrl === manifestUrl) {
@@ -767,6 +787,7 @@
     }
     return this._manifestCached(manifestUrl)
       .then(function (m) {
+        if (prodReq !== self._prodReq) return self.manifest;  // superseded
         self.pause();
         self._retire();                     // old product stays VISIBLE under the new
                                             // (retire also kills any pending reveal)
@@ -794,7 +815,9 @@
         return m;
       })
       .catch(function (e) {
-        self.onStatus('product-missing', { url: manifestUrl, meta: meta, err: e.message });
+        // a superseded request's failure is not the CURRENT product's news
+        if (prodReq === self._prodReq)
+          self.onStatus('product-missing', { url: manifestUrl, meta: meta, err: e.message });
         throw e;
       });
   };
@@ -839,7 +862,28 @@
   VP.pause = function () {
     this.playing = false;
     if (this._raf) cancelAnimationFrame(this._raf);
+    // playback skipped the per-frame BT loads; restore the inspector's
+    // raster for the frame we stopped on
+    if (this.probe && this.frames.length)
+      this.probe.load(this.frames[this.frameIdx]).catch(function () {});
     this.onStatus('pause');
+  };
+
+  // Playback advance policy: keep CADENCE, not completeness. If the next
+  // frame's tiles aren't event-confirmed yet, skip ahead to the next READY
+  // frame — unready frames fill in quietly and get picked up next lap —
+  // instead of stalling the clock on a fetch and jump-cutting when it
+  // lands (the residual "stutter" testers still saw). When nothing ahead
+  // is ready (boot, camera-resume refill), fall back to +1: showFrame's
+  // hold keeps the current frame up, which is the old behavior.
+  VP.nextReadyIdx = function (from) {
+    var n = this.frames.length;
+    if (!n) return 0;
+    for (var k = 1; k <= n; k++) {
+      var idx = (from + k) % n;
+      if (this._frameReady(this.frames[idx])) return idx;
+    }
+    return (from + 1) % n;
   };
   VP.toggle = function () { this.playing ? this.pause() : this.play(); };
 

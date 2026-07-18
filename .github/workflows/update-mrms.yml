@@ -41,7 +41,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --quiet --upgrade pip
-          pip install --quiet numpy Pillow pygrib boto3 matplotlib
+          pip install --quiet numpy Pillow pygrib boto3 matplotlib scipy
 
       - name: Emit newest MRMS composite to R2
         timeout-minutes: 8
