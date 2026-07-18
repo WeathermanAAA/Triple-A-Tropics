@@ -10,12 +10,10 @@ _Last update: 2026-07-18 ~16:2x UTC — SATELLITE EXPLORER OVERNIGHT: all 10 tes
 
 ## MORNING-TO-DO (Andrew) — running list, maintained by the agent
 
--2. **MERGE `sat-explorer-fixes` → main** (the whole tester-bug sweep +
-   the MRMS/METAR/Sfc-analysis client layers — every commit verified
-   headless, screenshots described in the 07-18 entry; overlay INGESTS
-   are already live on main, so the feeds are warm the moment the UI
-   merges). `git merge sat-explorer-fixes` — no conflicts expected (the
-   branch only touches satellite/explorer/*, tests, workflows).
+-2. ~~MERGE `sat-explorer-fixes` → main~~ **DONE 2026-07-18 ~16:5x**
+   (Andrew gave the go-ahead mid-session; merged clean @a53aeee9 — the 7
+   explorer client files + boundary-lines geojson + the headless harness;
+   ingests were already live via cherry-picks).
 -1. **BOX, 2 one-liners (the durable #2 fix)** — the Codespace's permission
    layer allows read-only SSH but blocks mutations, so these are yours:
    ① conus geometry unblock: in `/root/tsr-s2/docker-compose.s2.yml` add
