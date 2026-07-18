@@ -405,6 +405,93 @@
         setPaneProduct(i, p, true);
       }
     });
+    persistURL();
+  }
+
+  // ========================================================================
+  // NADIR AUTO-SWITCH — zooming into an area follows the nadir-nearest
+  // satellite; zooming back out to the domain's fit floor returns to the
+  // GEO ring. It only ever moves BETWEEN auto states: a hand-picked domain
+  // (rail click) suppresses auto until the user is back on the world, so it
+  // never fights an explicit choice. GOES-18 joins NADIR when it has data.
+  // ========================================================================
+  var NADIR = { goes19: -75.2, himawari9: 140.7 };
+  var AUTO_ZOOM_IN = 3.0;     // map zoom where a "region" is clearly framed
+  function rowOK(d) {
+    var row = document.querySelector('[data-domain="' + d + '"]');
+    return !!(row && !row.classList.contains('coming'));
+  }
+  // nadir-nearest satellite with data, then its tightest domain holding the
+  // viewport center (CONUS / WPAC when inside their footprints, else FD)
+  function autoDomainFor(c) {
+    var lon = ((c.lng + 540) % 360) - 180, lat = c.lat;
+    var sat = null, bd = 1e9;
+    Object.keys(NADIR).forEach(function (s) {
+      var dd = Math.abs(((lon - NADIR[s] + 540) % 360) - 180);
+      if (dd < bd) { bd = dd; sat = s; }
+    });
+    if (sat === 'goes19') {
+      if (lon >= -130 && lon <= -60 && lat >= 20 && lat <= 55 && rowOK('conus')) return 'conus';
+      return rowOK('fd') ? 'fd' : null;
+    }
+    if (lon >= 95 && lat >= -5 && lat <= 45 && rowOK('hw-wpac')) return 'hw-wpac';
+    return rowOK('hw-fd') ? 'hw-fd' : null;
+  }
+  function autoGo(d, msg) {
+    S._autoAt = Date.now();
+    S._autoDomain = (d === 'global') ? null : d;
+    S._touched = true;          // the boot global-retry must not refire
+    var tv = S.panes[0] && S.panes[0].tv;
+    var cam = (d !== 'global' && tv && tv.map)
+      ? { c: tv.map.getCenter(), z: tv.map.getZoom() } : null;
+    setDomain(d);
+    // entering a region keeps the user's camera; returning to the ring
+    // re-frames the world (staying zoomed would instantly re-enter). The
+    // world fit must wait for the GLOBAL manifest to adopt — setProduct is
+    // async, and fitData on the outgoing regional bounds frames the region
+    // (tryGlobal's poll pattern).
+    if (tv && tv.map) {
+      if (cam) { tv.map.jumpTo({ center: cam.c, zoom: cam.z }); }
+      else {
+        var tries = 0;
+        (function fitWorld() {
+          var mp = tv.manifest && tv.manifest.product;
+          if (mp && mp.indexOf('sat/geo/') === 0) { tv.fitData(); return; }
+          if (++tries < 20) setTimeout(fitWorld, 250);
+        })();
+      }
+    }
+    flash(msg);
+  }
+  function autoSatCheck(pane) {
+    if (S.tm.on || document.body.classList.contains('cx-tcd-mode')) return;
+    if (pane.kind && pane.kind !== 'tile') return;   // MW/ASCAT own the pane
+    if (Date.now() - (S._autoAt || 0) < 2000) return; // settle after a switch
+    var tv = pane.tv;
+    if (!tv || !tv.map) return;
+    var z = tv.map.getZoom(), c = tv.map.getCenter();
+    if (S.domain === 'global') {
+      if (z < AUTO_ZOOM_IN) return;
+      var d = autoDomainFor(c);
+      if (d) autoGo(d, '→ ' + domainInfo(d).satLabel + ' · ' + domainInfo(d).label +
+                       ' (nadir-nearest) — zoom out for the world');
+    } else if (S._autoDomain === S.domain) {
+      // zoomed out to (or under) the domain's own fit floor: back to the ring
+      if (z <= (tv._fitZoom != null ? tv._fitZoom + 0.1 : 2.0)) {
+        autoGo('global', '→ GEO ring · world view');
+        return;
+      }
+      // panned across to the other satellite's hemisphere: follow the nadir
+      var d2 = autoDomainFor(c);
+      if (d2 && d2 !== S.domain && domainInfo(d2).sat !== domainInfo(S.domain).sat)
+        autoGo(d2, '→ ' + domainInfo(d2).satLabel + ' · ' + domainInfo(d2).label +
+                    ' (nadir-nearest)');
+    }
+  }
+  function wireAutoSat(pane, i) {
+    if (i !== 0 || pane._autoWired) return;   // lead camera only
+    pane._autoWired = true;
+    pane.tv.map.on('moveend', function () { autoSatCheck(pane); });
   }
 
   // The Meteosat sector (~10°W–75°E) has no ingested satellite: the global
@@ -596,7 +683,8 @@
     // MW pass / ASCAT winds layer over the ACTIVE pane's base field (per-pane
     // settings; the same layer path model/MRMS/obs overlays will use). The
     // buttons enable off their manifests (cockpit_fields.checkAvailability).
-    [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc']].forEach(function (pair) {
+    [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc'], ['rad', 'cx-ov-mrms'],
+     ['obs', 'cx-ov-metar'], ['sfc', 'cx-ov-sfc']].forEach(function (pair) {
       var b = $(pair[1]);
       if (!b) return;
       b.onclick = function () {
@@ -604,16 +692,19 @@
         var pane = S.panes[S.active];
         if (!pane) return;
         if (pane.kind === pair[0]) { flash('already the pane field — pick a base field first'); return; }
-        var st = pair[0] === 'mw' ? pane.mw : pane.sc;
+        var st = pair[0] === 'mw' ? pane.mw : pair[0] === 'sc' ? pane.sc
+               : pair[0] === 'rad' ? pane.rad : pair[0] === 'obs' ? pane.obs : pane.sfc;
         var on = !(st && st.on);
         window.CockpitFields.setLayer(S.active, pair[0], on);
         b.classList.toggle('on', on);
         window.CockpitFields.syncControls();
       };
     });
-    // MRMS / METAR / model-field toggles are STUBS on purpose: each needs its
-    // own ingest pipeline (separate builds). The buttons exist, disabled, so
-    // the panel shows the plan without faking data.
+    // Model-field toggle is a STUB on purpose: each needs its own
+    // ingest pipeline (separate builds). The buttons exist, disabled, so the
+    // panel shows the plan without faking data. MRMS + METAR went live
+    // 2026-07-18 (update-mrms.yml/update-metar.yml + rad/obs layers in
+    // cockpit_fields.js).
   }
 
   // ========================================================================
@@ -682,8 +773,10 @@
         applyOverlayState(tv);
         renderPaneChrome(i);
         wireCameraSync(pane);
+        wireDrawBox(pane);    // shift+drag must work from boot on every pane
+        wireAutoSat(pane, i); // nadir-nearest auto-switch follows the lead camera
         updateGapBadges();
-        tv.map.on('moveend', function () { paneMinMax(i); });   // header min/max readout
+        tv.map.on('moveend', function () { paneMinMax(i); if (i === 0) persistURL(); });   // header min/max readout + URL state
       });
     });
     return pane;
@@ -693,6 +786,42 @@
     ['coast', 'borders', 'states', 'grid'].forEach(function (k) {
       tv.setLayer(k, $('cx-ov-' + k).classList.contains('on'));
     });
+  }
+
+  // WebGL context loss (GPU memory pressure) used to leave a dead black
+  // stage — "the site crashed". The viewer reports 'gl-lost' after degrading
+  // its perf profile; the cockpit's recovery is a full pane rebuild: same
+  // product, same camera, fresh GL context, smaller loop. DOM position is
+  // preserved so the 2/4-pane grid never reflows.
+  function rebuildPane(i) {
+    var pane = S.panes[i];
+    if (!pane || pane._rebuilding) return;
+    pane._rebuilding = true;
+    var product = pane.product;
+    var cam = null, next = pane.el ? pane.el.nextSibling : null;
+    try { cam = { c: pane.tv.map.getCenter(), z: pane.tv.map.getZoom() }; } catch (e) {}
+    try { pane.tv.pause(); } catch (e) {}
+    try { if (pane.tv._refreshT) clearInterval(pane.tv._refreshT); } catch (e) {}
+    try {
+      if (pane.tv._visT) document.removeEventListener('visibilitychange', pane.tv._visT);
+    } catch (e) {}
+    try { pane.tv.map.remove(); } catch (e) {}
+    if (pane.el && pane.el.parentNode) pane.el.parentNode.removeChild(pane.el);
+    S.panes[i] = null;
+    var np = makePane(i, product);
+    if (next) $('cx-panes').insertBefore(np.el, next);
+    try { np.tv.map && np.tv.map.resize(); } catch (e) {}
+    var tries = 0;
+    (function waitReady() {
+      var p = S.panes[i];
+      if (p && p.ready && p.tv && p.tv.map) {
+        if (cam) p.tv.map.jumpTo({ center: cam.c, zoom: cam.z });
+        renderPaneChrome(i);
+        return;
+      }
+      if (++tries < 50) setTimeout(waitReady, 200);
+    })();
+    flash('display reset after a graphics stall — imagery reloading (smaller loop)');
   }
 
   function paneStatus(i) {
@@ -721,6 +850,14 @@
         // owner-keyed (not active-keyed): a pane whose preload finishes after
         // the user activated another pane must still clear ITS sticky toast
         if (S._loadToast === i) { flash(''); S._loadToast = null; }
+        return;
+      }
+      if (kind === 'gl-lost') {
+        // dead GL context: rebuild the pane (fresh context, degraded loop).
+        // Under Time Machine the pane shows the archive <img>, and a rebuild
+        // would tear that DOM out — defer to TM exit instead.
+        if (S.tm.on) { if (pane) pane._glPending = true; return; }
+        rebuildPane(i);
         return;
       }
       if (kind === 'error') {
@@ -965,6 +1102,7 @@
     applyLoopCaps();   // residency budget scales with the pane count
     S.panes.forEach(function (p, k) { if (p) paneTag(k); });
     setActivePane(S.active < n ? S.active : 0);
+    persistURL();
   }
 
   function setPaneProduct(i, p, forceDomain) {
@@ -1023,6 +1161,7 @@
       paneTag(i);
       if (i === S.active) { updateHeader(); markFieldActive(); }
       if (i === 0) drawTimeline();
+      persistURL();
       flash('');
       // lost-view guard on domain/satellite re-points: if the camera doesn't
       // touch the new product's footprint (CONUS view -> Himawari pane), fit
@@ -1321,25 +1460,35 @@
     });
   }
 
+  // Wired at pane creation (makePane 'load') — NOT lazily on first arm: the
+  // enableDrawBox listener owns the shift+drag gesture, so a pane without it
+  // silently pans instead of drawing (the tester "draw box doesn't work"
+  // bug). The Box button is passed for armed-state display; arming itself
+  // stays here.
+  function wireDrawBox(pane) {
+    if (pane._drawWired) return;
+    pane._drawWired = true;
+    pane.tv.enableDrawBox($('cx-box'), function (box) {
+      // in Time Machine the drawn box IS the archive crop (box the
+      // storm -> scrub its archive); live keeps the plain camera fit
+      if (S.tm.on) tmSetBox(box);
+    });
+  }
   function armDrawBox() {
     var pane = S.panes[S.active];
     if (pane && pane.ready) {
-      if (!pane._drawWired) {
-        pane._drawWired = true;
-        pane.tv.enableDrawBox(null, function (box) {
-          // in Time Machine the drawn box IS the archive crop (box the
-          // storm -> scrub its archive); live keeps the plain camera fit
-          if (S.tm.on) tmSetBox(box);
-        });
-      }
+      wireDrawBox(pane);
       pane.tv._armed = true;
+      $('cx-box').classList.add('on');   // cleared by the viewer on drag end
       flash(S.tm.on ? 'drag a box — the archive renders just that crop'
                     : 'drag a box to frame it (or shift-drag anytime)');
+    } else {
+      flash('imagery still loading — try the Box again in a moment');
     }
   }
 
   // -- share: permalink = URL state ------------------------------------------
-  function shareURL() {
+  function stateURL() {
     var u = new URL(location.href.split('?')[0]);
     var tv = lead();
     var names = S.panes.filter(Boolean).map(function (p) { return p.product.key; });
@@ -1352,10 +1501,27 @@
       u.searchParams.set('cam', c.lng.toFixed(3) + ',' + c.lat.toFixed(3) + ',' + z.toFixed(2));
     }
     if (tv && tv.frames[tv.frameIdx]) u.searchParams.set('t', tv.frames[tv.frameIdx]);
-    var s = u.toString();
+    return u.toString();
+  }
+  function shareURL() {
+    var s = stateURL();
     (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject())
       .then(function () { flash('link copied'); })
       .catch(function () { prompt('Permalink:', s); });
+  }
+  // Keep the address bar current with the LIVE view (debounced replaceState;
+  // never during TM — archive sessions are not linkable). A reload or a Back
+  // that re-enters the page then restores the user's panes/domain/camera via
+  // applyURLState instead of dumping them at the boot default — the second
+  // half of the "Back after Time Machine loses everything" fix.
+  function persistURL() {
+    if (S.tm.on || !S.panes[0] || !S.panes[0].ready) return;
+    if (S._urlT) clearTimeout(S._urlT);
+    S._urlT = setTimeout(function () {
+      S._urlT = null;
+      if (S.tm.on) return;
+      try { history.replaceState(history.state, '', stateURL()); } catch (e) {}
+    }, 800);
   }
   function applyURLState() {
     var cam = params.get('cam');
@@ -1687,7 +1853,11 @@
     });
   }
   var TM_MAX_LOOP = 12;        // archive renders are rate-limited (~10/min)
-  var TM_PACE_MS = 6500;
+  var TM_PACE_MS = 6500;       // default, sized to the public 10/min limit
+  // ADAPTIVE pace: the render backend advertises a faster inter-request gap
+  // via X-Archive-Pace-Ms once its fast path + a raised rate limit are live
+  // (no frontend redeploy needed). Absent header = keep the safe default.
+  var tmPace = TM_PACE_MS;
   // ---- archive render queue + cache -------------------------------------
   // Every archive render goes through ONE serialized queue with de-dupe:
   // identical band+time+box renders resolve to the SAME cached object URL
@@ -1717,7 +1887,7 @@
     tmFetch(job.body).then(function (blob) {
       TMRQ.active--;
       job.res(URL.createObjectURL(blob));
-      setTimeout(tmrqPump, TM_PACE_MS);          // pace under the rate limit
+      setTimeout(tmrqPump, tmPace);              // pace under the rate limit
     }).catch(function (e) {
       TMRQ.active--;
       var msg = String(e && e.message || e);
@@ -1725,12 +1895,13 @@
         job.tries++;
         // back off harder each attempt, then re-queue at the FRONT so the
         // pane that hit the limit fills before new work starts
+        tmPace = TM_PACE_MS;   // a 429 revokes any advertised faster pace
         setTimeout(function () { TMRQ.queue.unshift(job); tmrqPump(); },
                    TM_PACE_MS * (1 + job.tries));
       } else {
         delete TMRQ.cache[job.key];              // real failures retry on demand
         job.rej(e);
-        setTimeout(tmrqPump, TM_PACE_MS);
+        setTimeout(tmrqPump, tmPace);
       }
     });
   }
@@ -1944,6 +2115,8 @@
     }).then(function (r) {
       if (!r.ok) return r.json().catch(function () { return {}; })
         .then(function (j) { throw new Error(j.detail || ('render failed (' + r.status + ')')); });
+      var hint = parseInt(r.headers.get('X-Archive-Pace-Ms') || '', 10);
+      if (isFinite(hint)) tmPace = Math.min(20000, Math.max(2500, hint));
       return r.blob();
     });
   }
@@ -1951,13 +2124,18 @@
     if (!body) return Promise.reject(new Error('view is outside GOES-East coverage — pan east'));
     return tmFetch(body);
   }
-  function enterTM() {
+  function enterTM(fromHistory) {
     if (domainInfo(S.domain).sat !== 'goes19') {
       flash('Time Machine covers the GOES-East archive — switch to a GOES-19 domain first');
       return;
     }
     stopClock(); disarmTools();
     S.tm.on = true;
+    // ONE history entry per archive session: the browser Back button then
+    // closes Time Machine (popstate -> exitTM) instead of leaving the page
+    // and dumping the user at the boot default with the session lost.
+    // fromHistory = re-entry via Forward: the entry already exists.
+    if (!fromHistory) { try { history.pushState({ cxTM: 1 }, ''); } catch (e) {} }
     document.body.classList.add('cx-tm-mode');
     $('cx-tm').classList.add('on');
     $('cx-tm').querySelector('.lbl').textContent = 'Time Machine';
@@ -1969,6 +2147,12 @@
     flash('Time Machine: set a UTC time, then Render — the current field, view and overlays apply');
   }
   function exitTM() {
+    // direct exits (Reset, the toggle's fallback) leave our pushed entry on
+    // the stack — neutralize it so a later Back is a plain no-op pop, never
+    // a page-leave surprise. Back-button exits already popped it.
+    try {
+      if (history.state && history.state.cxTM) history.replaceState(null, '');
+    } catch (e) {}
     S.tm.on = false; S.tm.busy = false;
     document.body.classList.remove('cx-tm-mode');
     document.body.classList.remove('cx-tm-deep');
@@ -1988,6 +2172,10 @@
     var tv = lead();
     if (tv) { updateClockUI({ stamp: tv.frames[tv.frameIdx], idx: tv.frameIdx, n: tv.frames.length }); }
     flash('');
+    // a GL context lost while archiving deferred its pane rebuild to now
+    S.panes.forEach(function (p, i) {
+      if (p && p._glPending) { p._glPending = false; rebuildPane(i); }
+    });
   }
   // HONEST per-pane archive gating: a pane whose field the archive cannot
   // serve at this date is BLOCKED (dark cover + reason) — it must never keep
@@ -2235,7 +2423,18 @@
       $('cx-link').classList.toggle('on', S.linked);
       flash(S.linked ? 'panes linked — pan/zoom moves all' : 'panes independent');
     };
-    $('cx-tm').onclick = function () { S.tm.on ? exitTM() : enterTM(); };
+    $('cx-tm').onclick = function () {
+      if (!S.tm.on) { enterTM(); return; }
+      // prefer the history route out so the stack stays balanced; popstate
+      // runs exitTM. Fallback direct when our entry isn't on top.
+      if (history.state && history.state.cxTM) history.back();
+      else exitTM();
+    };
+    window.addEventListener('popstate', function (e) {
+      var tm = !!(e.state && e.state.cxTM);
+      if (S.tm.on && !tm) exitTM();          // Back out of the archive
+      else if (!S.tm.on && tm) enterTM(true); // Forward back into it
+    });
     $('cx-tm-render').onclick = tmRenderOnce;
     $('cx-tm-time').addEventListener('change', tmSyncEraUI);
     $('cx-tm-loop').onclick = tmLoadLoop;

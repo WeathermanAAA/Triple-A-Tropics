@@ -55,6 +55,24 @@
   var DEFAULT_MANIFEST =
     'https://cdn.triple-a-tropics.com/shadow/sat/goes19/conus/ir/latest_times.json';
 
+  // ---- device perf profile (the GEO-ring lag/crash + blurry-IR fixes) ----
+  // Two coupled knobs, derived once:
+  //   hiDpi -> declare the 512-px tiles at HALF size so MapLibre pulls one
+  //     pyramid level deeper and a device pixel gets a source pixel (the
+  //     §4.2 "a 512 CSS tile = an @2x asset" intent; the emitter ships
+  //     512-px tiles, so the declaration is where the @2x happens). Costs
+  //     4x the tile fetches + textures, hence the cap interplay below.
+  //   lowMem -> smaller loop caps and NO @2x: a world-spanning frame stack
+  //     on an integrated GPU is exactly what blew the WebGL context for
+  //     testers. Stability beats crisp. A live context loss flips the
+  //     profile to lowMem for the rest of the session (see _initMap).
+  var PERF = (function () {
+    var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    var mem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 8;
+    var lowMem = mem <= 4;
+    return { hiDpi: dpr > 1.5 && !lowMem, lowMem: lowMem };
+  })();
+
   // ---- minimal dark base style (no external basemap; imagery IS the base) ----
   function darkStyle() {
     return {
@@ -158,6 +176,22 @@
     // box-zoom so the two don't both fire (double camera move) on shift-drag.
     this.map.boxZoom.disable();
 
+    // GPU memory pressure (a big frame stack on an integrated GPU) can kill
+    // the WebGL context -- previously a dead black stage that read as "the
+    // site crashed". preventDefault signals the browser we want a restore;
+    // the 'gl-lost' status lets the cockpit rebuild the pane outright; and
+    // the profile degrades to lowMem so the rebuilt loop mounts a smaller,
+    // cheaper frame stack for the rest of the session.
+    var glCanvas = (typeof this.map.getCanvas === 'function') ? this.map.getCanvas() : null;
+    if (glCanvas && glCanvas.addEventListener) {
+      glCanvas.addEventListener('webglcontextlost', function (ev) {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        PERF.lowMem = true;
+        PERF.hiDpi = false;
+        self.onStatus('gl-lost');
+      }, false);
+    }
+
     // ONE persistent pair of listeners drives readiness, the preload pump and
     // pending reveals (no per-showFrame listeners to leak or fire stale).
     this.map.on('sourcedata', function (e) { self._onSourceData(e); });
@@ -185,9 +219,25 @@
     this.map.addLayer({ id: 'grat', type: 'line', source: 'grat',
       paint: { 'line-color': '#ffffff', 'line-opacity': 0.14, 'line-width': 0.6 } });
 
-    // 3) ne_* vector furniture (white, CycloLab canon) via the shared loader.
+    // 3) ne_* vector furniture (white, CycloLab canon) via the shared loader,
+    // PLUS the boundary-LINES files (fetched here, not via loadGeo -- they are
+    // a MapLibre-line-furniture concern; canvas viewers keep the polygons for
+    // land fill). Guarded: a failed lines fetch falls back to polygon outlines.
+    var geoLine = function (u) {
+      return fetch(u).then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; });
+    };
     var loader = (window.TATRegions && window.TATRegions.loadGeo)
-      ? window.TATRegions.loadGeo({})
+      ? Promise.all([
+          window.TATRegions.loadGeo({}),
+          geoLine('/ne_50m_admin_0_boundary_lines_land.geojson'),
+          geoLine('/ne_50m_admin_1_states_provinces_lines.geojson')
+        ]).then(function (r) {
+          var geo = r[0] || {};
+          geo.borderLines = r[1];
+          geo.stateLines = r[2];
+          return geo;
+        })
       : Promise.resolve(null);
     loader.then(function (geo) { self._addFurniture(geo); }).catch(function () {});
 
@@ -212,6 +262,14 @@
                                  this.refreshS * 1000);
     // node (tests): never keep the process alive for a background timer
     if (this._refreshT && this._refreshT.unref) this._refreshT.unref();
+    // _refreshManifest skips hidden tabs; without a catch-up, a returning tab
+    // shows its accrued staleness for up to another full tick. Refresh the
+    // moment the tab is visible again.
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function'
+        && !this._visT) {
+      this._visT = function () { if (!document.hidden) self._refreshManifest(); };
+      document.addEventListener('visibilitychange', this._visT);
+    }
   };
   VP._refreshManifest = function () {
     var self = this, url = this.manifestUrl;
@@ -232,9 +290,23 @@
 
   // Loop window: the trailing loopCap stamps of the manifest. The full
   // manifest stays the SSOT; the cap bounds what playback keeps resident.
+  // The requested cap is CLAMPED by product footprint + device profile:
+  // a world-spanning product's every frame covers the whole viewport at
+  // every camera, so its texture residency is the worst case (48 world
+  // frames was the tester-reported GPU crash); @2x tiles quadruple the
+  // per-frame cost, so hiDpi shaves the regional cap too.
+  VP._loopCapFor = function () {
+    var cap = Math.max(2, this.loopCap | 0);
+    var b = this.manifest && this.manifest.bounds;
+    var wide = b && (b[2] - b[0]) >= 300;
+    if (wide) cap = Math.min(cap, PERF.lowMem ? 10 : 20);
+    else if (PERF.lowMem) cap = Math.min(cap, 24);
+    else if (PERF.hiDpi) cap = Math.min(cap, 36);
+    return cap;
+  };
   VP._deriveFrames = function () {
     var t = (this.manifest && this.manifest.times) || [];
-    var cap = Math.max(2, this.loopCap | 0);
+    var cap = this._loopCapFor();
     return t.slice(Math.max(0, t.length - cap));
   };
   // Re-derive frames from the (updated) manifest, PRESERVING the current
@@ -242,6 +314,7 @@
   // off sources drop, new frames preload QUIETLY (no toast mid-session).
   VP._remergeFrames = function () {
     var cur = this.frames[this.frameIdx];
+    var wasTail = this.frames.length > 0 && this.frameIdx === this.frames.length - 1;
     this.frames = this._deriveFrames();
     var idx = cur ? this.frames.indexOf(cur) : -1;
     if (idx < 0 && cur) {
@@ -254,6 +327,13 @@
     }
     this.frameIdx = Math.max(0, idx);
     this._syncLoop(true);
+    // FOLLOW LIVE: a viewer on the loop's newest frame is watching "now" --
+    // when a merge brings newer stamps, advance to the new tail via the gated
+    // showFrame path (the hold keeps the current frame up until the new tiles
+    // land, so this can never flash or land on an unloaded frame). A viewer
+    // scrubbed back mid-loop stays put; only the live edge follows the feed.
+    var tail = this.frames.length - 1;
+    if (wasTail && tail >= 0 && this.frameIdx !== tail) this.showFrame(tail);
     this._updateReadout();
   };
   VP.setLoopCap = function (n) {
@@ -291,20 +371,26 @@
     if (geo.coast) {
       map.addSource('coast', { type: 'geojson', data: geo.coast });
       map.addLayer({ id: 'coast-case', type: 'line', source: 'coast',
-        paint: { 'line-color': '#000000', 'line-opacity': 0.45,
-                 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 1.4, 4, 2.0, 8, 3.0] } });
+        paint: { 'line-color': '#000000', 'line-opacity': 0.5,
+                 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 1.2, 4, 1.8, 8, 2.6] } });
       map.addLayer({ id: 'coast', type: 'line', source: 'coast',
-        paint: { 'line-color': '#ffffff', 'line-opacity': 0.9,
+        paint: { 'line-color': '#ffffff', 'line-opacity': 0.92,
                  'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 4, 0.9, 8, 1.4] } });
     }
-    if (geo.countries) {
-      map.addSource('adm0', { type: 'geojson', data: geo.countries });
+    // Borders/states MUST be boundary-LINES, not admin-polygon outlines:
+    // polygon rings re-trace every coastline (50m, offset from the 10m
+    // coast) -- the doubled fuzzy coastal edge testers reported. Polygon
+    // fallback only when the lines files failed to fetch.
+    var borderSrc = geo.borderLines || geo.countries;
+    if (borderSrc) {
+      map.addSource('adm0', { type: 'geojson', data: borderSrc });
       map.addLayer({ id: 'borders', type: 'line', source: 'adm0',
-        paint: { 'line-color': '#ffffff', 'line-opacity': 0.55,
+        paint: { 'line-color': '#ffffff', 'line-opacity': 0.5,
                  'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 4, 0.7, 8, 1.1] } });
     }
-    if (geo.states) {
-      map.addSource('adm1', { type: 'geojson', data: geo.states });
+    var stateSrc = geo.stateLines || geo.states;
+    if (stateSrc) {
+      map.addSource('adm1', { type: 'geojson', data: stateSrc });
       map.addLayer({ id: 'states', type: 'line', source: 'adm1', minzoom: 3,
         paint: { 'line-color': '#ffffff', 'line-opacity': 0.28,
                  'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.8] } });
@@ -327,15 +413,27 @@
     }
     var m = this.manifest;
     var url = frameTiles(this.base, m.tile, stamp);
+    // @2x on HiDPI: declaring the physical 512-px tile at half size pulls
+    // one pyramid level deeper -- native-res pixels instead of the 2x
+    // upsample testers read as "blurry at the default view". The pyramid
+    // itself is unchanged; requests past its maxzoom just over-zoom the
+    // deepest level exactly as before.
     this.map.addSource(sid, {
-      type: 'raster', tiles: [url], tileSize: m.tile_size || 512,
+      type: 'raster', tiles: [url],
+      tileSize: PERF.hiDpi ? (m.tile_size || 512) / 2 : (m.tile_size || 512),
       minzoom: m.minzoom || 0, maxzoom: m.maxzoom || 5,
       bounds: m.bounds || undefined, scheme: 'xyz'
     });
     // insert imagery BELOW the first furniture layer (grat/coast) if present
     var before = this.map.getLayer('grat') ? 'grat' : undefined;
+    // raster-fade-duration:0 kills the per-TILE fade-in, but raster-opacity is
+    // a TRANSITIONABLE paint property: without an explicit zero transition,
+    // every setPaintProperty flip in _reveal animates through MapLibre's
+    // default 300 ms ease -- the exact ghost/crossfade the no-strobe contract
+    // forbids. Both zeros are required for a clean cut.
     this.map.addLayer({ id: sid, type: 'raster', source: sid,
       paint: { 'raster-opacity': opacity, 'raster-fade-duration': 0,
+               'raster-opacity-transition': { duration: 0, delay: 0 },
                'raster-resampling': 'linear' } }, before);
     if (this._imgHidden) this.map.setLayoutProperty(sid, 'visibility', 'none');
     this._added[stamp] = true;
@@ -799,20 +897,40 @@
   };
 
   // A drag-rectangle AOI over the map -> fitBounds. Reusable across MapLibre
-  // viewers (satellite/models/TAW). Shift+drag to draw (so plain drag still pans).
+  // viewers (satellite/models/TAW). Shift+drag to draw (so plain drag still
+  // pans); the caller can also arm one drag via tv._armed (the cockpit's Box
+  // button — the touch path, since touch has no shift). MUST be wired at pane
+  // creation, not lazily: this listener OWNS the shift+drag gesture, and a
+  // pane without it silently pans instead (the tester "draw box doesn't
+  // work" bug — it was only wired on the first Box-button click). Pointer
+  // events cover mouse + touch in one path; mouse events are the fallback.
+  // buttonEl is display-only (armed state cleanup) — arming stays with the
+  // caller.
   VP.enableDrawBox = function (buttonEl, onBox) {
     var self = this, map = this.map, canvas = map.getCanvasContainer();
     var start = null, box = null, active = false;
+    var PTR = (typeof window !== 'undefined') && ('PointerEvent' in window);
+    var MOVE = PTR ? 'pointermove' : 'mousemove';
+    var UP = PTR ? 'pointerup' : 'mouseup';
     function mousePos(e) {
       var rect = canvas.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     }
     function onDown(e) {
       if (!active || !(e.shiftKey || self._armed)) return;
-      e.preventDefault(); map.dragPan.disable();
+      // left button or touch only — right/middle clicks keep their meaning
+      if (e.button != null && e.button !== 0) return;
+      // capture phase on the canvas CONTAINER: stopping propagation here
+      // means MapLibre (listening on the canvas below) never sees this
+      // gesture at all — no competing pan start, and no synthesized map
+      // 'click' on release to drop a stray BT pin. dragPan.disable() stays
+      // as belt-and-braces for the mouse-event fallback path.
+      e.preventDefault();
+      if (e.stopPropagation) e.stopPropagation();
+      map.dragPan.disable();
       start = mousePos(e);
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      document.addEventListener(MOVE, onMove);
+      document.addEventListener(UP, onUp);
     }
     function onMove(e) {
       var cur = mousePos(e);
@@ -823,8 +941,8 @@
       box.style.width = (maxX - minX) + 'px'; box.style.height = (maxY - minY) + 'px';
     }
     function onUp(e) {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener(MOVE, onMove);
+      document.removeEventListener(UP, onUp);
       map.dragPan.enable();
       var end = mousePos(e);
       if (box) { box.parentNode.removeChild(box); box = null; }
@@ -838,10 +956,7 @@
       if (onBox) onBox([w, s, e2, n]);   // consumers (Time Machine AOI) get the box
     }
     active = true;
-    canvas.addEventListener('mousedown', onDown, true);
-    if (buttonEl) buttonEl.addEventListener('click', function () {
-      self._armed = !self._armed; buttonEl.classList.toggle('on', self._armed);
-    });
+    canvas.addEventListener(PTR ? 'pointerdown' : 'mousedown', onDown, true);
   };
 
   VP._updateReadout = function () {
