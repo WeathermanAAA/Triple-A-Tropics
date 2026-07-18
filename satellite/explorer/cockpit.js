@@ -405,6 +405,7 @@
         setPaneProduct(i, p, true);
       }
     });
+    persistURL();
   }
 
   // ========================================================================
@@ -771,7 +772,7 @@
         wireDrawBox(pane);    // shift+drag must work from boot on every pane
         wireAutoSat(pane, i); // nadir-nearest auto-switch follows the lead camera
         updateGapBadges();
-        tv.map.on('moveend', function () { paneMinMax(i); });   // header min/max readout
+        tv.map.on('moveend', function () { paneMinMax(i); if (i === 0) persistURL(); });   // header min/max readout + URL state
       });
     });
     return pane;
@@ -1097,6 +1098,7 @@
     applyLoopCaps();   // residency budget scales with the pane count
     S.panes.forEach(function (p, k) { if (p) paneTag(k); });
     setActivePane(S.active < n ? S.active : 0);
+    persistURL();
   }
 
   function setPaneProduct(i, p, forceDomain) {
@@ -1155,6 +1157,7 @@
       paneTag(i);
       if (i === S.active) { updateHeader(); markFieldActive(); }
       if (i === 0) drawTimeline();
+      persistURL();
       flash('');
       // lost-view guard on domain/satellite re-points: if the camera doesn't
       // touch the new product's footprint (CONUS view -> Himawari pane), fit
@@ -1481,7 +1484,7 @@
   }
 
   // -- share: permalink = URL state ------------------------------------------
-  function shareURL() {
+  function stateURL() {
     var u = new URL(location.href.split('?')[0]);
     var tv = lead();
     var names = S.panes.filter(Boolean).map(function (p) { return p.product.key; });
@@ -1494,10 +1497,27 @@
       u.searchParams.set('cam', c.lng.toFixed(3) + ',' + c.lat.toFixed(3) + ',' + z.toFixed(2));
     }
     if (tv && tv.frames[tv.frameIdx]) u.searchParams.set('t', tv.frames[tv.frameIdx]);
-    var s = u.toString();
+    return u.toString();
+  }
+  function shareURL() {
+    var s = stateURL();
     (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject())
       .then(function () { flash('link copied'); })
       .catch(function () { prompt('Permalink:', s); });
+  }
+  // Keep the address bar current with the LIVE view (debounced replaceState;
+  // never during TM — archive sessions are not linkable). A reload or a Back
+  // that re-enters the page then restores the user's panes/domain/camera via
+  // applyURLState instead of dumping them at the boot default — the second
+  // half of the "Back after Time Machine loses everything" fix.
+  function persistURL() {
+    if (S.tm.on || !S.panes[0] || !S.panes[0].ready) return;
+    if (S._urlT) clearTimeout(S._urlT);
+    S._urlT = setTimeout(function () {
+      S._urlT = null;
+      if (S.tm.on) return;
+      try { history.replaceState(history.state, '', stateURL()); } catch (e) {}
+    }, 800);
   }
   function applyURLState() {
     var cam = params.get('cam');
@@ -2093,13 +2113,18 @@
     if (!body) return Promise.reject(new Error('view is outside GOES-East coverage — pan east'));
     return tmFetch(body);
   }
-  function enterTM() {
+  function enterTM(fromHistory) {
     if (domainInfo(S.domain).sat !== 'goes19') {
       flash('Time Machine covers the GOES-East archive — switch to a GOES-19 domain first');
       return;
     }
     stopClock(); disarmTools();
     S.tm.on = true;
+    // ONE history entry per archive session: the browser Back button then
+    // closes Time Machine (popstate -> exitTM) instead of leaving the page
+    // and dumping the user at the boot default with the session lost.
+    // fromHistory = re-entry via Forward: the entry already exists.
+    if (!fromHistory) { try { history.pushState({ cxTM: 1 }, ''); } catch (e) {} }
     document.body.classList.add('cx-tm-mode');
     $('cx-tm').classList.add('on');
     $('cx-tm').querySelector('.lbl').textContent = 'Time Machine';
@@ -2111,6 +2136,12 @@
     flash('Time Machine: set a UTC time, then Render — the current field, view and overlays apply');
   }
   function exitTM() {
+    // direct exits (Reset, the toggle's fallback) leave our pushed entry on
+    // the stack — neutralize it so a later Back is a plain no-op pop, never
+    // a page-leave surprise. Back-button exits already popped it.
+    try {
+      if (history.state && history.state.cxTM) history.replaceState(null, '');
+    } catch (e) {}
     S.tm.on = false; S.tm.busy = false;
     document.body.classList.remove('cx-tm-mode');
     document.body.classList.remove('cx-tm-deep');
@@ -2381,7 +2412,18 @@
       $('cx-link').classList.toggle('on', S.linked);
       flash(S.linked ? 'panes linked — pan/zoom moves all' : 'panes independent');
     };
-    $('cx-tm').onclick = function () { S.tm.on ? exitTM() : enterTM(); };
+    $('cx-tm').onclick = function () {
+      if (!S.tm.on) { enterTM(); return; }
+      // prefer the history route out so the stack stays balanced; popstate
+      // runs exitTM. Fallback direct when our entry isn't on top.
+      if (history.state && history.state.cxTM) history.back();
+      else exitTM();
+    };
+    window.addEventListener('popstate', function (e) {
+      var tm = !!(e.state && e.state.cxTM);
+      if (S.tm.on && !tm) exitTM();          // Back out of the archive
+      else if (!S.tm.on && tm) enterTM(true); // Forward back into it
+    });
     $('cx-tm-render').onclick = tmRenderOnce;
     $('cx-tm-time').addEventListener('change', tmSyncEraUI);
     $('cx-tm-loop').onclick = tmLoadLoop;
