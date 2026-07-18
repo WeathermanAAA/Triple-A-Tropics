@@ -4,18 +4,42 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migration is the systemic cause (poller stall + unstarted emit crons); two GH roots fixed (analogs shapely, geo rider timeout); standing freshness monitor live (feeds/freshness.json, red-once alerting). GOES-19 handling landed earlier (@0c5bceac). Subseasonal Phase 3 in progress._
+_Last update: 2026-07-18 ~16:2x UTC — SATELLITE EXPLORER OVERNIGHT: all 10 tester bugs fixed (branch `sat-explorer-fixes`, headless-verified), both #2 staleness ROOTS found + fixed on main (oldest-first slot walk; 19 conus manifests frozen by a stray deep-zoom frame's geometry guard), MRMS + METAR + surface-analysis overlays BUILT and verified (ingests live on main). tsr render 3× archive fast-path committed (deploy queued). See the 2026-07-18 entry._
 
 ---
 
 ## MORNING-TO-DO (Andrew) — running list, maintained by the agent
 
-0. **PUSH THE BOX'S TSR COMMITS** (key added ✓, takeover executed ✓ —
-   see the 2026-07-17 02:4x entry): the box clone has 3 local commits
-   this Codespace cannot push (no tsr write auth). One command with your
-   auth: `cd /root/tat-satellite-render && git push origin main`
-   (R2_PREFIX pin + CYCLOLAB_PREFIX pin + RUNBOOK §7). Until pushed they
-   live only on the box — the SERVICES already run them.
+-2. **MERGE `sat-explorer-fixes` → main** (the whole tester-bug sweep +
+   the MRMS/METAR/Sfc-analysis client layers — every commit verified
+   headless, screenshots described in the 07-18 entry; overlay INGESTS
+   are already live on main, so the feeds are warm the moment the UI
+   merges). `git merge sat-explorer-fixes` — no conflicts expected (the
+   branch only touches satellite/explorer/*, tests, workflows).
+-1. **BOX, 2 one-liners (the durable #2 fix)** — the Codespace's permission
+   layer allows read-only SSH but blocks mutations, so these are yours:
+   ① conus geometry unblock: in `/root/tsr-s2/docker-compose.s2.yml` add
+   `--allow-geometry-change \` to the emit-cron python line and
+   `docker compose -p tat-s2 -f docker-compose.s2.yml up -d emit-cron`
+   (OR delete the 19 stray `shadow/sat/goes19/conus/*/20260715T202117Z/`
+   prefixes from R2 — a prior session's deep-zoom cut at a different
+   pyramid geometry; the guard refuses every conus manifest rebuild while
+   they exist). Then DISABLE the emit-conus-stopgap workflow schedule.
+   ② newest-first on the box: `cd /root/tsr-s2 && git fetch origin
+   s2-sat-ingest && git pull` AFTER step 0 pushes it (or apply the
+   one-line change from tsr-s2 c5da203: `_backfill_slots` return `slots`
+   instead of `list(reversed(slots))`), then rebuild emit-cron. Until
+   then the GH lanes carry freshness (they self-patch newest-first).
+0. **PUSH THE TSR COMMITS — now TWO clones** (key added ✓): ① the box
+   clone still has its 3 commits (`cd /root/tat-satellite-render && git
+   push origin main`). ② this Codespace now ALSO has unpushable commits:
+   `/workspaces/tsr` @7283267 (render 3× archive fast-path + MergIR
+   granule cache + X-Archive-Pace-Ms, 8/8 new tests green) and
+   `/workspaces/tsr-s2` @c5da203 (backfill newest-first) — push both from
+   any tsr-authed checkout, then box pull + rebuild render. After the
+   render deploy, OPTIONAL knob: set `TM_PACE_MS_HINT=3200` +
+   `RATE_LIMIT=20/minute` on the render service and every Time Machine
+   client speeds up its window fill with no frontend redeploy.
 1. **(carried) Q18 — Cloudflare token** for headless Worker deploys
    (`CLOUDFLARE_API_TOKEN` Codespaces secret; Workers Scripts:Edit + zone
    Workers Routes:Edit + Cache Purge:Purge). Bug board + purge already live
@@ -48,6 +72,176 @@ _Last update: 2026-07-16 ~21:4x UTC — FULL-SITE STALENESS AUDIT done: box migr
 9. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-18 (~08:0x–16:2x UTC) — SATELLITE EXPLORER OVERNIGHT: 10/10 tester bugs fixed + 3 new overlays built, all headless-verified
+
+Everything on branch `sat-explorer-fixes` (12 commits) except the emit
+workflows + overlay ingests, which run only from main and were
+cherry-picked there (b0749723, aafa182c, e4d3fef7, 4a1c41e6, 543f9e63).
+Every viewer fix was verified in a real headless Chromium against the
+live CDN (`tests/explorer_headless_harness.cjs` — 8 scenarios, console
+errors captured, screenshots eyeballed). `python -m unittest discover
+tests` green apart from the two PRE-EXISTING env/stranded-work failures
+(ecmwf-dep imports; the un-stamped models hashes from the uncommitted
+invest-marker work sitting in this Codespace's tree — untouched, still
+uncommitted, NOT mine to land).
+
+### The tester-bug matrix (Discord list → status)
+
+1. **GEO-ring lags/crashes — FIXED (viewer)**: 48 world-covering raster
+   sources was unbounded GPU texture residency (integrated GPUs lost the
+   WebGL context = "site crashed"). World-spanning products now clamp
+   the playback loop (20 frames; 10 on ≤4 GB devices), and a lost GL
+   context self-heals: the viewer degrades its perf profile, the cockpit
+   rebuilds the pane in place (same product/camera, smaller loop) instead
+   of leaving a dead black stage.
+2. **Viewer behind live (1630Z vs 1750Z) — FIXED, three roots**:
+   ① viewer: the manifest merge deliberately never advanced a paused
+   viewer — now a viewer sitting on the live edge follows the feed to the
+   new tail through the gated reveal path, and hidden tabs refresh the
+   moment they're visible again. ② emit ordering: `_backfill_slots`
+   walked slots OLDEST-first — the newest geo slot rendered ~40 min after
+   run start and died first on timeout kills (the §11-H enscenters lesson,
+   unapplied). Fixed in tsr-s2 c5da203 + self-patched in the GH lanes.
+   ③ emit structure: the geo composite ran hourly BEHIND ~56 min of
+   setup+riders in one workflow — split into `emit-geo-global` (:23/:53,
+   geo only) + `emit-diag-riders` (:13/:43). Verified live: world
+   composite went from 2h+ behind to **latest 15:20Z at an 16:02Z check
+   (as_of 16:02)** — steady-state ~25–55 min on GH, 10-min cadence
+   returns with the box (queued).
+   **PLUS the big one — 19 conus products frozen since 07-17 02:5x**:
+   read from the box's emit-cron logs (SSH read-only): a prior session's
+   on-demand deep-zoom cut left ONE frame at a different pyramid geometry
+   (20260715T202117Z) in the cron prefix, and the emitter's geometry
+   guard correctly REFUSES every manifest rebuild that would drop it —
+   truecolor/sandwich/RGBs/channels all froze while ir/irbd (unaffected
+   products) merely crawled. `emit-conus-stopgap.yml` (hourly :07/:37)
+   now runs the emitter's own remediation (`--allow-geometry-change`,
+   manifest-only, deletes nothing) — heals the manifests every run AND
+   gives conus an hourly newest-slot refresh. Durable fix = box one-liner
+   (morning-TODO −1).
+3. **Fade/crossfade on frame switch — FIXED**: `raster-fade-duration:0`
+   never governed the reveal's `setPaintProperty` opacity flips — MapLibre
+   animates every paint change through a default **300 ms transition**
+   unless `raster-opacity-transition {duration:0}` is set. It never was.
+   One paint entry per frame layer; swaps cut clean now.
+4. **Playback lag / Time Machine ~2+ min — FIXED where deployable,
+   3× server fix queued**: the 25-frame window's floor is the client's
+   own 6.5 s pacing (sized to the render box's public 10/min limit) plus
+   seconds-per-frame server renders. Server: the archive tiers are
+   REGULAR lat/lon grids being pushed through pcolormesh as millions of
+   meshgridded quad vertices — tsr @7283267 adds a separability-detected
+   imshow fast path (**0.70 s vs 2.06 s measured** at GridSat-GOES scale;
+   floater/meso geos path provably can't take the branch; 8/8 new tests
+   incl. both-paths pixel parity) + a 2-entry MergIR granule cache (each
+   hourly file was re-downloaded for its second half-hour slot) + an
+   `X-Archive-Pace-Ms` response hint. Client (deployed): adopts the pace
+   hint when the backend advertises it, revokes on any 429 — deploy-order
+   safe. Live playback also benefits from #1's caps + #3's clean swaps.
+5. **IR blurry at default view — FIXED (viewer)**: the pyramid ships
+   512-px tiles declared `tileSize:512` — every HiDPI screen displayed
+   them 2× upsampled (the re-arch's "@2x asset" intent was never wired).
+   HiDPI now declares tiles at 256 so MapLibre pulls one pyramid level
+   deeper = native-res pixels; low-memory devices keep the cheap path
+   (crisp isn't worth an OOM). Note: geo-global's native maxzoom is 4
+   (8192 px raster) — deeper world sharpness is an emitter pyramid_px
+   decision, logged, not a viewer bug.
+6. **GEO ring VIS — SCOPED, deliberately not built** (stability first per
+   the brief, and it's not a stitch extension): geo-global is BT-only by
+   design (BT is BT on every sensor; the blend is per-pixel BT-weighted).
+   VIS needs: a reflectance branch in `produce_global_composite` (the
+   Kelvin-normed `_colorize_bt` is meaningless for 0–1 reflectance), a
+   solar-zenith night mask (a world mosaic always holds a night
+   hemisphere), `SEVIRI_DATASETS` vis entries (else the Meteosat member
+   KeyErrors to a silent gap), products-index day/bt flag fixes
+   (hardcoded for geo rows), and BT-inspector gating. ~a day's careful
+   work on tsr-s2; the 8192-px grid (~22.8 px/deg) is the resolution
+   ceiling either way.
+7. **Coastlines look bad — FIXED**: the coast was already ne_10m — but
+   borders/states drew admin POLYGON outlines, whose rings re-trace every
+   coastline at 50m slightly offset from the 10m coast = a doubled fuzzy
+   edge on every shoreline. Furniture now uses the Natural Earth
+   boundary-LINES files (land borders only; vendored same-origin), coast
+   casing lightened.
+8. **Drag-a-box broken — FIXED, root cause reproduced headless**:
+   `enableDrawBox` owns the shift+drag gesture but was only wired on the
+   first Box-button click — every pane booted with NO draw listener, so
+   shift+drag just panned (reproduced: no rectangle, camera pans). Now
+   wired at pane creation on every pane; Box button shows its armed
+   state; pointer events cover touch (armed-drag path — no shift key on
+   mobile); capture-phase stopPropagation means MapLibre never sees the
+   gesture (kills the competing pan AND the stray click-to-pin after
+   every box). Verified: both paths draw + fitBounds land.
+9. **Nadir-nearest auto-switch — BUILT**: zooming into an area from the
+   GEO ring switches to the nadir-nearest satellite's tightest domain
+   (CONUS/WPAC inside their footprints, else FD; availability-gated),
+   panning across the Pacific follows the nadir, zooming out to the
+   domain's fit floor returns to the ring at the WORLD fit. Auto only
+   moves between auto states — hand-picked domains suppress it. Verified
+   headless: ring → 135E z4 → hw-wpac (fresh 15:00Z AHI); pan 95W →
+   conus; zoom out → ring.
+10. **Time Machine back-button — FIXED**: no history management existed;
+    Back left the page and a return rebooted to the default. Entering TM
+    now pushes ONE history entry; Back closes the archive session with
+    every pane/field/camera/frame intact (Forward re-enters; direct exits
+    neutralize the entry). Live view state also persists in the URL via
+    debounced replaceState → a full reload restores the prior view
+    through the existing applyURLState path. Verified headless.
+
+### New overlays (11–13) — all three BUILT, not just started
+
+11. **MRMS radar — LIVE end-to-end**: `generate_mrms_overlay.py` +
+    `update-mrms.yml` (every 10 min): newest MergedReflectivityQCComposite
+    from anonymous `noaa-mrms-pds`, pygrib decode, colorized with
+    `assets/TAT-radar.pal` via the hafs_render pal parser (one palette,
+    every radar product), **web-mercator warped** (pure per-row resample —
+    an equirect image-source would misregister tens of km at CONUS
+    latitudes), ~260 KB q90 WebP + manifest to `radar/mrms/conus/`.
+    Client: new `rad` layer (MW's double-buffered image-source
+    discipline), 60 s freshness poll, scan-time badge, honest-gated
+    toggle (un-greys when the manifest exists). Headless-verified: echoes
+    register exactly inside the IR cloud canopies.
+12. **METAR surface obs — LIVE end-to-end, GLOBAL**: `generate_metar_obs
+    .py` + `update-metar.yml` (every 10 min): the free aviationweather.gov
+    global cache → one compact rank-sorted JSON (5183 stations at build
+    time, 182 in the WPAC box, ~250 KB). Client: new `obs` canvas layer
+    reusing the ASCAT camera-sync + legacy `drawBarb` painter — standard
+    station model (T upper-left, Td lower-left, coded SLP upper-right,
+    halo'd barb, ID at z≥5.5), zoom-scaled declutter keeping the
+    fullest ob per cell, export-composited. Headless-verified over CONUS
+    IR and over Himawari-9 (Korean/Japanese stations).
+13. **Surface analysis — LIVE end-to-end (fronts + centers)**:
+    `generate_sfc_analysis.py` + `update-sfc-analysis.yml` (hourly;
+    WPC issues 3-hourly): parses the coded CODSUS bulletin (38 centers +
+    46 fronts on the live 12Z test) → `sfc/analysis/latest.json`.
+    Client: new `sfc` canvas layer — smoothed fronts with pips (cold
+    blue triangles / warm red semis / occluded purple alternating /
+    stationary alternating red-blue on alternating sides / troughs
+    dashed amber; pips straddle the line — the coded bulletin carries no
+    movement side and asserting one would be fabrication), H/L letters
+    with pressures, valid-time badge, honest-gated toggle. Isobars =
+    noted follow-on (RTMA/GFS MSLP contouring; CODSUS has none).
+    Headless-verified: the 12Z chart over CONUS IR + METAR reads as a
+    proper synoptic analysis.
+
+    First cron fires for all three were due 16:03–16:17Z; the toggles
+    un-grey themselves the moment each feed lands (honest gate — no
+    reload needed for later scans, one reload to enable).
+
+### Also known / notes
+
+- **This Codespace's permission layer** allows read-only box SSH but
+  blocks box mutations, `gh` CLI, and some compound commands — hence the
+  GH-workflow route for everything emit-side and the queued box
+  one-liners. If you want the agent deploying to the box next session,
+  an allow rule for `ssh -i ~/.ssh/tat_box root@2.25.183.231 *` does it.
+- The uncommitted invest-marker/stream work predating this session is
+  still uncommitted in this Codespace (11 files + 1 new test) — carried
+  carefully around every commit, never staged.
+- `?manifest=` dev override race + `SCData.storms()` dup-count quirk
+  noted during recon (pre-existing, unfixed, low-priority).
+- Emit lanes tonight also self-patch newest-first idempotently and
+  no-op with a delete-me notice once c5da203 is pushed upstream.
 
 ## 2026-07-17 (~02:4x UTC) — BOX TAKEOVER: the "44-hour poller hang" was never a hang — two migration env-parity bugs found + fixed at the root
 
