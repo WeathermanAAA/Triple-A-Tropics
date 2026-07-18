@@ -585,8 +585,24 @@
     <span>the existing floater/meso loops, custom snapshots and daily true-color —
       mounted as-is</span>
   </div>
-  <iframe id="cx-legacy-frame" src="/satellite/?embed=1" loading="lazy"
+  <!-- The legacy page mounts only when actually scrolled near: loading=lazy
+       still fetched it (and its own multi-MB basemap geojson set) inside
+       Chromium's distance threshold — a full duplicate basemap download on
+       every cockpit visit that never scrolled down. -->
+  <iframe id="cx-legacy-frame" data-src="/satellite/?embed=1"
     title="Satellite loops and daily imagery"></iframe>
+  <script>
+    (function () {
+      var fr = document.getElementById('cx-legacy-frame');
+      if (!fr) return;
+      var mount = function () { if (!fr.src) fr.src = fr.dataset.src; };
+      if (!('IntersectionObserver' in window)) { mount(); return; }
+      var io = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { mount(); io.disconnect(); } });
+      }, { rootMargin: '400px' });
+      io.observe(fr);
+    })();
+  </script>
 </section>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
