@@ -93,6 +93,24 @@
       return this.load();
     }
   };
+  // WPC surface analysis (tester item #13): fronts + pressure centers from
+  // the coded CODSUS bulletin, emitted by update-sfc-analysis.yml.
+  var SFC_BASE = CDN + '/sfc/analysis';
+  var SFCData = {
+    doc: null, _p: null,
+    load: function () {
+      var self = this;
+      if (this._p) return this._p;
+      this._p = fetch(SFC_BASE + '/latest.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (d) { self.doc = d; return d; });
+      return this._p;
+    },
+    reload: function () {
+      this._p = null;
+      return this.load();
+    }
+  };
   var SCData = {
     manifest: null, loaded: {}, _p: null,
     load: function () {
@@ -711,9 +729,175 @@
     if (_obsT && _obsT.unref) _obsT.unref();
   }
 
+  // ========================================================================
+  // Surface-analysis layer (canvas overlay): fronts drawn as smoothed
+  // polylines with alternating pips + H/L pressure centers, TAT dark-theme
+  // colors. Pips straddle the line (the coded bulletin does not carry the
+  // frontal-movement side; asserting one would be fabrication — stationary
+  // fronts alternate sides per the standard convention, which the coded
+  // points DO support).
+  // ========================================================================
+  var SFC_COLORS = { cold: '#4da3ff', warm: '#ff6d7a', ocfnt: '#c58cff',
+                     stnry: null, trof: '#ffc94d' };
+  function sfcState(pane) {
+    if (!pane.sfc) pane.sfc = { on: false };
+    return pane.sfc;
+  }
+  function sfcCanvas(pane) {
+    if (pane._sfcCanvas) return pane._sfcCanvas;
+    var cv = document.createElement('canvas');
+    cv.className = 'cx-sfc-overlay';
+    cv.style.cssText = 'position:absolute;inset:0;z-index:3;pointer-events:none;width:100%;height:100%';
+    pane.el.appendChild(cv);
+    pane._sfcCanvas = cv;
+    return cv;
+  }
+  function sfcRender(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    SFCData.load().then(function () {
+      sfcCanvas(pane);
+      if (!pane._sfcWired) {
+        pane._sfcWired = true;
+        map.on('render', function () { sfcDraw(pane); });
+      }
+      sfcDraw(pane);
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }).catch(function () { H.flash('surface analysis unavailable'); });
+  }
+  function sfcPip(g, x, y, ang, type, color) {
+    // type 'tri' (cold) | 'semi' (warm); ang = perpendicular direction
+    var s = 5.5;
+    g.save();
+    g.translate(x, y); g.rotate(ang);
+    g.beginPath();
+    if (type === 'tri') {
+      g.moveTo(-s, 0); g.lineTo(s, 0); g.lineTo(0, -s * 1.5); g.closePath();
+    } else {
+      g.arc(0, 0, s, Math.PI, 0, false); g.closePath();
+    }
+    g.fillStyle = color; g.fill();
+    g.restore();
+  }
+  function sfcDraw(pane) {
+    var st = pane.sfc;
+    var cv = pane._sfcCanvas;
+    var map = pane.tv && pane.tv.map;
+    var doc = SFCData.doc;
+    if (!st || !cv || !map) return;
+    var box = pane.el.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+    var g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, box.width, box.height);
+    if (!st.on || !doc) return;
+    var bounds = map.getBounds();
+    var w = bounds.getWest(), e = bounds.getEast(), s = bounds.getSouth(), n = bounds.getNorth();
+    var margin = 12;   // deg slack so a front reaching in from off-screen draws
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    (doc.fronts || []).forEach(function (f) {
+      var pts = [], any = false;
+      (f.points || []).forEach(function (p) {
+        var lat = p[0], lon = p[1];
+        if (lat > s - margin && lat < n + margin &&
+            lon > w - margin && lon < e + margin) any = true;
+        var xy = map.project([lon, lat]);
+        pts.push([xy.x, xy.y]);
+      });
+      if (!any || pts.length < 2) return;
+      // smoothed path (midpoint quadratics) + dark casing for legibility
+      var path = function () {
+        g.beginPath();
+        g.moveTo(pts[0][0], pts[0][1]);
+        for (var i = 1; i < pts.length - 1; i++) {
+          var mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+          g.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+        }
+        g.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+      };
+      var color = SFC_COLORS[f.kind] || '#dfe8f2';
+      path();
+      g.setLineDash(f.kind === 'trof' ? [7, 6] : []);
+      g.lineWidth = 4; g.strokeStyle = 'rgba(5,10,20,0.8)'; g.stroke();
+      path();
+      g.lineWidth = 2;
+      if (f.kind === 'stnry') {
+        // alternating red/blue segments read as the stationary couplet
+        g.strokeStyle = '#4da3ff';
+      } else {
+        g.strokeStyle = color;
+      }
+      g.stroke();
+      g.setLineDash([]);
+      if (f.kind === 'trof') return;    // troughs carry no pips
+      // pips: walk the polyline, one every SP px; stationary/occluded
+      // alternate triangle/semicircle (+ side for stationary)
+      var SP = 30, acc = SP * 0.5, k = 0;
+      for (var i2 = 1; i2 < pts.length; i2++) {
+        var ax = pts[i2 - 1][0], ay = pts[i2 - 1][1];
+        var bx = pts[i2][0], by = pts[i2][1];
+        var seg = Math.hypot(bx - ax, by - ay);
+        var dir = Math.atan2(by - ay, bx - ax);
+        while (acc < seg) {
+          var px = ax + (bx - ax) * (acc / seg), py = ay + (by - ay) * (acc / seg);
+          var alt = (k++ % 2) === 0;
+          if (f.kind === 'cold') sfcPip(g, px, py, dir, 'tri', color);
+          else if (f.kind === 'warm') sfcPip(g, px, py, dir, 'semi', color);
+          else if (f.kind === 'ocfnt') sfcPip(g, px, py, dir, alt ? 'tri' : 'semi', color);
+          else if (f.kind === 'stnry')
+            sfcPip(g, px, py, dir + (alt ? 0 : Math.PI),
+                   alt ? 'tri' : 'semi', alt ? '#4da3ff' : '#ff6d7a');
+          acc += SP;
+        }
+        acc -= seg;
+      }
+    });
+    // H / L pressure centers
+    g.font = 'bold 17px "Segoe UI", system-ui, sans-serif';
+    g.textAlign = 'center';
+    (doc.centers || []).forEach(function (c) {
+      if (c.lat < s - 2 || c.lat > n + 2 || c.lon < w - 4 || c.lon > e + 4) return;
+      var xy = map.project([c.lon, c.lat]);
+      if (xy.x < -20 || xy.y < -20 || xy.x > box.width + 20 || xy.y > box.height + 20) return;
+      var col = c.kind === 'high' ? '#6db4ff' : '#ff6d7a';
+      g.lineWidth = 4; g.strokeStyle = 'rgba(5,10,20,0.85)';
+      var letter = c.kind === 'high' ? 'H' : 'L';
+      g.strokeText(letter, xy.x, xy.y + 6);
+      g.fillStyle = col; g.fillText(letter, xy.x, xy.y + 6);
+      g.font = '10px "Segoe UI", system-ui, sans-serif';
+      g.lineWidth = 3;
+      g.strokeText(String(c.mb), xy.x, xy.y + 18);
+      g.fillStyle = '#dfe8f2'; g.fillText(String(c.mb), xy.x, xy.y + 18);
+      g.font = 'bold 17px "Segoe UI", system-ui, sans-serif';
+    });
+  }
+  var _sfcT = null;
+  function sfcStartPoll() {
+    if (_sfcT) return;
+    _sfcT = setInterval(function () {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      var any = false;
+      (CX && CX.panes || []).forEach(function (p) { if (p && p.sfc && p.sfc.on) any = true; });
+      if (!any) return;
+      SFCData.reload().then(function () {
+        CX.panes.forEach(function (p, i) { if (p && p.sfc && p.sfc.on) { sfcDraw(p); if (H.renderPaneChrome) H.renderPaneChrome(i); } });
+      }).catch(function () {});
+    }, 600e3);
+    if (_sfcT && _sfcT.unref) _sfcT.unref();
+  }
+
   function setLayer(i, kind, on) {
     var pane = CX.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
+    if (kind === 'sfc') {
+      var fst = sfcState(pane);
+      fst.on = on;
+      if (on) { sfcRender(pane, i); sfcStartPoll(); }
+      else if (pane._sfcCanvas) { sfcDraw(pane); }
+      if (H.renderPaneChrome) H.renderPaneChrome(i);
+      return;
+    }
     if (kind === 'obs') {
       var ost = obsState(pane);
       ost.on = on;
@@ -819,6 +1003,10 @@
       var nw = scNewest(pane);
       extra.push('ASCAT winds' + (nw ? ' · ' + fmtZ(nw.start_utc) : ''));
     }
+    if (pane.sfc && pane.sfc.on) {
+      var sd = SFCData.doc;
+      extra.push('Sfc analysis' + (sd && sd.valid ? ' \u00b7 valid ' + fmtZ(sd.valid) : ''));
+    }
     if (pane.obs && pane.obs.on) {
       var od = OBSData.doc;
       extra.push('METAR obs' + (od && od.as_of ? ' \u00b7 ' + fmtZ(od.as_of) : ''));
@@ -867,6 +1055,9 @@
     }
     if (pane._obsCanvas && pane.obs && pane.obs.on) {
       try { ctx.drawImage(pane._obsCanvas, 0, 0, w, h); } catch (e) {}
+    }
+    if (pane._sfcCanvas && pane.sfc && pane.sfc.on) {
+      try { ctx.drawImage(pane._sfcCanvas, 0, 0, w, h); } catch (e) {}
     }
   }
 
@@ -1089,6 +1280,15 @@
     // METAR obs: same honest gate off its own feed
     OBSData.load().then(function () {
       var ov = $('cx-ov-metar');
+      if (ov) {
+        ov.disabled = false;
+        var chip = ov.querySelector('.cx-chip');
+        if (chip) chip.remove();
+      }
+    }).catch(function () {});
+    // surface analysis: same honest gate
+    SFCData.load().then(function () {
+      var ov = $('cx-ov-sfc');
       if (ov) {
         ov.disabled = false;
         var chip = ov.querySelector('.cx-chip');
