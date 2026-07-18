@@ -219,9 +219,25 @@
     this.map.addLayer({ id: 'grat', type: 'line', source: 'grat',
       paint: { 'line-color': '#ffffff', 'line-opacity': 0.14, 'line-width': 0.6 } });
 
-    // 3) ne_* vector furniture (white, CycloLab canon) via the shared loader.
+    // 3) ne_* vector furniture (white, CycloLab canon) via the shared loader,
+    // PLUS the boundary-LINES files (fetched here, not via loadGeo -- they are
+    // a MapLibre-line-furniture concern; canvas viewers keep the polygons for
+    // land fill). Guarded: a failed lines fetch falls back to polygon outlines.
+    var geoLine = function (u) {
+      return fetch(u).then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; });
+    };
     var loader = (window.TATRegions && window.TATRegions.loadGeo)
-      ? window.TATRegions.loadGeo({})
+      ? Promise.all([
+          window.TATRegions.loadGeo({}),
+          geoLine('/ne_50m_admin_0_boundary_lines_land.geojson'),
+          geoLine('/ne_50m_admin_1_states_provinces_lines.geojson')
+        ]).then(function (r) {
+          var geo = r[0] || {};
+          geo.borderLines = r[1];
+          geo.stateLines = r[2];
+          return geo;
+        })
       : Promise.resolve(null);
     loader.then(function (geo) { self._addFurniture(geo); }).catch(function () {});
 
@@ -355,20 +371,26 @@
     if (geo.coast) {
       map.addSource('coast', { type: 'geojson', data: geo.coast });
       map.addLayer({ id: 'coast-case', type: 'line', source: 'coast',
-        paint: { 'line-color': '#000000', 'line-opacity': 0.45,
-                 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 1.4, 4, 2.0, 8, 3.0] } });
+        paint: { 'line-color': '#000000', 'line-opacity': 0.5,
+                 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 1.2, 4, 1.8, 8, 2.6] } });
       map.addLayer({ id: 'coast', type: 'line', source: 'coast',
-        paint: { 'line-color': '#ffffff', 'line-opacity': 0.9,
+        paint: { 'line-color': '#ffffff', 'line-opacity': 0.92,
                  'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 4, 0.9, 8, 1.4] } });
     }
-    if (geo.countries) {
-      map.addSource('adm0', { type: 'geojson', data: geo.countries });
+    // Borders/states MUST be boundary-LINES, not admin-polygon outlines:
+    // polygon rings re-trace every coastline (50m, offset from the 10m
+    // coast) -- the doubled fuzzy coastal edge testers reported. Polygon
+    // fallback only when the lines files failed to fetch.
+    var borderSrc = geo.borderLines || geo.countries;
+    if (borderSrc) {
+      map.addSource('adm0', { type: 'geojson', data: borderSrc });
       map.addLayer({ id: 'borders', type: 'line', source: 'adm0',
-        paint: { 'line-color': '#ffffff', 'line-opacity': 0.55,
+        paint: { 'line-color': '#ffffff', 'line-opacity': 0.5,
                  'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 4, 0.7, 8, 1.1] } });
     }
-    if (geo.states) {
-      map.addSource('adm1', { type: 'geojson', data: geo.states });
+    var stateSrc = geo.stateLines || geo.states;
+    if (stateSrc) {
+      map.addSource('adm1', { type: 'geojson', data: stateSrc });
       map.addLayer({ id: 'states', type: 'line', source: 'adm1', minzoom: 3,
         paint: { 'line-color': '#ffffff', 'line-opacity': 0.28,
                  'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.8] } });
