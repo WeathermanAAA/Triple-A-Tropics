@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-18 ~18:3x UTC — box ops now handled directly (Andrew's standing directive): tsr fast-path DEPLOYED (archive frames ~3x + pace 1.5s/90min advertised), s2 emit-cron self-heals geometry + emits newest-first (conus current to ~10 min), all three overlay feeds LIVE, sat-explorer-fixes MERGED and serving. Second batch shipped: MRMS animates time-locked + smooth, selector SSOT (re-select crash killed), playback cadence fixes — adversarially reviewed (6 majors caught + fixed). See the two 07-18 entries._
+_Last update: 2026-07-18 ~21:3x UTC — THIRD wave shipped: consolidated overlay batch (persistence+toggle truth, progressive cold GEO load, front-pip geometry, NHC cones/positions/formation-areas overlay, METAR+sfc animated series, modern-radar MRMS) @3aa28a0b + 5 review-confirmed majors fixed forward @4e9ad623; site-perf pass (basemap geojson −38%, explorer duplicate-basemap kill) @6fe7b8bb. All headless-verified. See the 21:3x entry._
 
 ---
 
@@ -60,6 +60,88 @@ _Last update: 2026-07-18 ~18:3x UTC — box ops now handled directly (Andrew's s
 9. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-18 (~18:4x–21:3x UTC) — THIRD WAVE: consolidated overlay batch + NHC overlay + site-perf pass
+
+### Consolidated tester batch (@3aa28a0b, fix-forwards @4e9ad623)
+
+1. **Overlay persistence + toggle truth**: reproduced headless — overlays
+   already survive channel/sat/domain switches post-re-raise; the REAL
+   bugs were (a) manual sat/domain clicks never disengaged nadir-auto
+   ("clicked GOES-19" could bounce to the GEO ring via the fit floor —
+   verified, fixed) and (b) overlay buttons showed pane-agnostic state
+   (syncControls now derives every toggle from the ACTIVE pane).
+2. **Progressive cold load (the GEO-ring OOM)**: cold product mounts start
+   at a 6-source residency cap that grows as each slice CONFIRMS (frame
+   list stays full — playback order/followers/newest unchanged; the
+   next-ready clock plays the resident subset). Verified: cold GEO switch
+   mounts 3→9→20 sources paced, zero errors; contract smoke extended.
+3. **Front pips**: line and pips now share ONE densely-sampled smoothed
+   curve — symbols sit ON the line, spaced along it, oriented by the local
+   tangent; stationary alternates type AND side. (They floated off at
+   every bend before: the line was smoothed, the pip-walk wasn't.)
+4. **NHC overlay — live**: generate_nhc_overlay.py + update-nhc-overlay
+   (30-min): forecast cones + track lines per storm (official per-storm
+   GIS zips via the public storm index) + 2/7-day formation areas
+   (graphical outlook shapefile); positions REUSE global_storms.geojson
+   (home-map marker classification — one truth). Client: in-GL vectors
+   (cones white, areas colored by 7-day chance) + canvas SSHWS glyphs
+   (D/S/1-5, invest red X, names at zoom), honest-gated, re-raise
+   discipline, export-composited. AL/EP/CP; honestly blank elsewhere.
+5. **METAR + sfc ANIMATE with the loop**: both emit rolling timestamped
+   series + manifests (MRMS deferred-prune discipline; metar 10-min keep
+   18, sfc keyed on analysis VALID keep 10; legacy latest.json kept in
+   sync for deploy order). Client seriesStore (manifest + LRU frames +
+   nearest-join + legacy fallback) joins per displayed sat frame through
+   the same clock as MRMS; stale frame holds until the join lands (no
+   stutter); honest skew gates (75 min obs / 4.5 h sfc). Verified joins +
+   skew drops headless.
+6. **MRMS modern-radar quality** (Andrew's mid-batch directive): NATIVE
+   7000-px output, row-wise BICUBIC mercator warp (clip kills ringing),
+   CONTINUOUS color ramp interpolated between the TAT-radar.pal anchors
+   (same identity, no hard 5-dBZ bands, feathered echo edge), linear GPU
+   sampling client-side. Max-preserving smoothing keeps cores honest
+   (synthetic 1-cell 65 dBZ survives at 63.7). Verified zoomed through
+   the real client: smooth continuous gradients, no blocky cells.
+
+**Post-ship adversarial review caught 5 real majors** (one reproduced in a
+Node simulation), all fixed forward @4e9ad623: a seriesStore LRU-ghost
+crash that could freeze the playback clock; the residency-ramp gate
+wedging camera-move resumes during cold ramps; an NHC toggle-off race
+mounting ghost layers; all three series generators collapsing their
+rolling series on a single transient R2 manifest-read error (now
+fail-loudly); the NHC emitter lacking honest-gate parity (GIS outage
+during active storms published a cone-less doc — now retries + refuses).
+
+### Site-perf pass (@6fe7b8bb) — measured first, fixed what the numbers said
+
+Headless-Chromium traces (per-page isolated browsers) + curl cross-checks:
+**documents are fast site-wide** (TTFB 39–55 ms every page — an early
+4–20 s reading was harness contention, disproven by curl ×2 per doc). The
+real weight was vectors: models moved **40.6 MB decompressed** (ne_10m
+coastline 10.1 MB + admin polygons, all cf-DYNAMIC = uncacheable at the
+edge by extension; LCP 3.0 s), and the explorer **83.8 MB** — the same
+basemap set fetched TWICE because loading=lazy still mounts the below-fold
+legacy iframe inside Chromium's distance threshold.
+
+- scripts/quantize_geojson.py: coords→3 decimals + strip unread attribute
+  tables across the committed ne_* set — **19.7 → 12.2 MB decompressed**
+  (coastline 10.1→7.2, countries 3.1→1.7, states 2.3→1.2, lines halved);
+  idempotent, rerun after upstream re-downloads. No consumer reads
+  properties (verified); furniture renders identically (headless).
+- Explorer legacy iframe now mounts via IntersectionObserver (400 px
+  margin) — the duplicate basemap + the whole legacy page cost nothing
+  until genuinely scrolled toward.
+- Verified live post-deploy via curl: quantized coastline serves at
+  1.97 MB wire (stable ×3, TTFB 50–90 ms). Honest note: after-timings from
+  this Codespace were unusable (its own network congested mid-run —
+  untouched pages read 15 s); the SIZE wins are curl-proven, the timing
+  delta follows from bytes-on-wire.
+- **Flagged for the parked Cloudflare token** (asset-level fixes only
+  tonight): an edge cache rule for .geojson (every models/explorer visitor
+  still pulls ~2 MB wire from origin per visit — the single biggest
+  remaining lever), fonts (woff→woff2 + preload or self-host), the SST
+  global_actual.png/jpg double-load audit, maplibre self-host.
 
 ## 2026-07-18 (~16:4x–18:3x UTC) — BOX OPS EXECUTED + SECOND TESTER BATCH (MRMS animation/smoothing, selector SSOT, playback cadence)
 
