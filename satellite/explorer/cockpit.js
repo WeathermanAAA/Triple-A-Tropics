@@ -695,6 +695,42 @@
     });
   }
 
+  // WebGL context loss (GPU memory pressure) used to leave a dead black
+  // stage — "the site crashed". The viewer reports 'gl-lost' after degrading
+  // its perf profile; the cockpit's recovery is a full pane rebuild: same
+  // product, same camera, fresh GL context, smaller loop. DOM position is
+  // preserved so the 2/4-pane grid never reflows.
+  function rebuildPane(i) {
+    var pane = S.panes[i];
+    if (!pane || pane._rebuilding) return;
+    pane._rebuilding = true;
+    var product = pane.product;
+    var cam = null, next = pane.el ? pane.el.nextSibling : null;
+    try { cam = { c: pane.tv.map.getCenter(), z: pane.tv.map.getZoom() }; } catch (e) {}
+    try { pane.tv.pause(); } catch (e) {}
+    try { if (pane.tv._refreshT) clearInterval(pane.tv._refreshT); } catch (e) {}
+    try {
+      if (pane.tv._visT) document.removeEventListener('visibilitychange', pane.tv._visT);
+    } catch (e) {}
+    try { pane.tv.map.remove(); } catch (e) {}
+    if (pane.el && pane.el.parentNode) pane.el.parentNode.removeChild(pane.el);
+    S.panes[i] = null;
+    var np = makePane(i, product);
+    if (next) $('cx-panes').insertBefore(np.el, next);
+    try { np.tv.map && np.tv.map.resize(); } catch (e) {}
+    var tries = 0;
+    (function waitReady() {
+      var p = S.panes[i];
+      if (p && p.ready && p.tv && p.tv.map) {
+        if (cam) p.tv.map.jumpTo({ center: cam.c, zoom: cam.z });
+        renderPaneChrome(i);
+        return;
+      }
+      if (++tries < 50) setTimeout(waitReady, 200);
+    })();
+    flash('display reset after a graphics stall — imagery reloading (smaller loop)');
+  }
+
   function paneStatus(i) {
     return function (kind, data) {
       var pane = S.panes[i];
@@ -721,6 +757,14 @@
         // owner-keyed (not active-keyed): a pane whose preload finishes after
         // the user activated another pane must still clear ITS sticky toast
         if (S._loadToast === i) { flash(''); S._loadToast = null; }
+        return;
+      }
+      if (kind === 'gl-lost') {
+        // dead GL context: rebuild the pane (fresh context, degraded loop).
+        // Under Time Machine the pane shows the archive <img>, and a rebuild
+        // would tear that DOM out — defer to TM exit instead.
+        if (S.tm.on) { if (pane) pane._glPending = true; return; }
+        rebuildPane(i);
         return;
       }
       if (kind === 'error') {
@@ -1988,6 +2032,10 @@
     var tv = lead();
     if (tv) { updateClockUI({ stamp: tv.frames[tv.frameIdx], idx: tv.frameIdx, n: tv.frames.length }); }
     flash('');
+    // a GL context lost while archiving deferred its pane rebuild to now
+    S.panes.forEach(function (p, i) {
+      if (p && p._glPending) { p._glPending = false; rebuildPane(i); }
+    });
   }
   // HONEST per-pane archive gating: a pane whose field the archive cannot
   // serve at this date is BLOCKED (dark cover + reason) — it must never keep
