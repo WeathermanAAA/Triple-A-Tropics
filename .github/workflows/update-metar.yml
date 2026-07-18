@@ -1,0 +1,48 @@
+# Surface-observation (METAR) feed for the Satellite Explorer (tester #12).
+# Pulls the free public aviationweather.gov METAR cache (GLOBAL — WPAC
+# stations included, no creds) and emits one compact obs/metar/latest.json
+# to R2 for the explorer's station-plot canvas layer. R2-only: permissions
+# contents:read, commits NOTHING. The METAR toggle un-greys the moment the
+# first feed lands (honesty chip flips live).
+#
+# Obs are minutely upstream; 10-min GH cadence is plenty for a synoptic
+# overlay (staleness is disclosed per-ob via age_min). Staggered non-round
+# minutes per repo standard.
+name: update-metar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "9,19,29,39,49,59 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-metar
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet boto3
+
+      - name: Emit METAR obs feed to R2
+        timeout-minutes: 5
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python generate_metar_obs.py --store r2
