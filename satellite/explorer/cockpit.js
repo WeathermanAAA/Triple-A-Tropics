@@ -682,6 +682,7 @@
         applyOverlayState(tv);
         renderPaneChrome(i);
         wireCameraSync(pane);
+        wireDrawBox(pane);    // shift+drag must work from boot on every pane
         updateGapBadges();
         tv.map.on('moveend', function () { paneMinMax(i); });   // header min/max readout
       });
@@ -1365,20 +1366,30 @@
     });
   }
 
+  // Wired at pane creation (makePane 'load') — NOT lazily on first arm: the
+  // enableDrawBox listener owns the shift+drag gesture, so a pane without it
+  // silently pans instead of drawing (the tester "draw box doesn't work"
+  // bug). The Box button is passed for armed-state display; arming itself
+  // stays here.
+  function wireDrawBox(pane) {
+    if (pane._drawWired) return;
+    pane._drawWired = true;
+    pane.tv.enableDrawBox($('cx-box'), function (box) {
+      // in Time Machine the drawn box IS the archive crop (box the
+      // storm -> scrub its archive); live keeps the plain camera fit
+      if (S.tm.on) tmSetBox(box);
+    });
+  }
   function armDrawBox() {
     var pane = S.panes[S.active];
     if (pane && pane.ready) {
-      if (!pane._drawWired) {
-        pane._drawWired = true;
-        pane.tv.enableDrawBox(null, function (box) {
-          // in Time Machine the drawn box IS the archive crop (box the
-          // storm -> scrub its archive); live keeps the plain camera fit
-          if (S.tm.on) tmSetBox(box);
-        });
-      }
+      wireDrawBox(pane);
       pane.tv._armed = true;
+      $('cx-box').classList.add('on');   // cleared by the viewer on drag end
       flash(S.tm.on ? 'drag a box — the archive renders just that crop'
                     : 'drag a box to frame it (or shift-drag anytime)');
+    } else {
+      flash('imagery still loading — try the Box again in a moment');
     }
   }
 

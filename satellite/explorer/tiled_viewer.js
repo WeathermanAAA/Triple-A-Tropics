@@ -897,20 +897,40 @@
   };
 
   // A drag-rectangle AOI over the map -> fitBounds. Reusable across MapLibre
-  // viewers (satellite/models/TAW). Shift+drag to draw (so plain drag still pans).
+  // viewers (satellite/models/TAW). Shift+drag to draw (so plain drag still
+  // pans); the caller can also arm one drag via tv._armed (the cockpit's Box
+  // button — the touch path, since touch has no shift). MUST be wired at pane
+  // creation, not lazily: this listener OWNS the shift+drag gesture, and a
+  // pane without it silently pans instead (the tester "draw box doesn't
+  // work" bug — it was only wired on the first Box-button click). Pointer
+  // events cover mouse + touch in one path; mouse events are the fallback.
+  // buttonEl is display-only (armed state cleanup) — arming stays with the
+  // caller.
   VP.enableDrawBox = function (buttonEl, onBox) {
     var self = this, map = this.map, canvas = map.getCanvasContainer();
     var start = null, box = null, active = false;
+    var PTR = (typeof window !== 'undefined') && ('PointerEvent' in window);
+    var MOVE = PTR ? 'pointermove' : 'mousemove';
+    var UP = PTR ? 'pointerup' : 'mouseup';
     function mousePos(e) {
       var rect = canvas.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     }
     function onDown(e) {
       if (!active || !(e.shiftKey || self._armed)) return;
-      e.preventDefault(); map.dragPan.disable();
+      // left button or touch only — right/middle clicks keep their meaning
+      if (e.button != null && e.button !== 0) return;
+      // capture phase on the canvas CONTAINER: stopping propagation here
+      // means MapLibre (listening on the canvas below) never sees this
+      // gesture at all — no competing pan start, and no synthesized map
+      // 'click' on release to drop a stray BT pin. dragPan.disable() stays
+      // as belt-and-braces for the mouse-event fallback path.
+      e.preventDefault();
+      if (e.stopPropagation) e.stopPropagation();
+      map.dragPan.disable();
       start = mousePos(e);
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      document.addEventListener(MOVE, onMove);
+      document.addEventListener(UP, onUp);
     }
     function onMove(e) {
       var cur = mousePos(e);
@@ -921,8 +941,8 @@
       box.style.width = (maxX - minX) + 'px'; box.style.height = (maxY - minY) + 'px';
     }
     function onUp(e) {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener(MOVE, onMove);
+      document.removeEventListener(UP, onUp);
       map.dragPan.enable();
       var end = mousePos(e);
       if (box) { box.parentNode.removeChild(box); box = null; }
@@ -936,10 +956,7 @@
       if (onBox) onBox([w, s, e2, n]);   // consumers (Time Machine AOI) get the box
     }
     active = true;
-    canvas.addEventListener('mousedown', onDown, true);
-    if (buttonEl) buttonEl.addEventListener('click', function () {
-      self._armed = !self._armed; buttonEl.classList.toggle('on', self._armed);
-    });
+    canvas.addEventListener(PTR ? 'pointerdown' : 'mousedown', onDown, true);
   };
 
   VP._updateReadout = function () {
