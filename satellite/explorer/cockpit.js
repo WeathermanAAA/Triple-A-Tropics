@@ -362,6 +362,7 @@
         var d = el.dataset.domain;
         if (el.classList.contains('coming')) return;
         S._touched = true;
+        S._autoDomain = null;   // an explicit choice disengages nadir-auto
         if (d === 'drawbox') { armDrawBox(); return; }
         if (d === 'selectmap') { armTool('selectmap', el); return; }
         setDomain(d);
@@ -373,6 +374,11 @@
       el.onclick = function () {
         if (el.classList.contains('coming')) return;
         var sat = el.dataset.sat;
+        S._touched = true;
+        // an explicit sat pick disengages nadir-auto: without this, the
+        // fit-floor bounce could turn "clicked GOES-19" into the GEO ring
+        // moments later (verified headless) — the selector-surprise class
+        S._autoDomain = null;
         if (sat === domainInfo(S.domain).sat) return;
         var first = null;
         Object.keys(DOMAINS).forEach(function (d) {
@@ -702,7 +708,8 @@
     // settings; the same layer path model/MRMS/obs overlays will use). The
     // buttons enable off their manifests (cockpit_fields.checkAvailability).
     [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc'], ['rad', 'cx-ov-mrms'],
-     ['obs', 'cx-ov-metar'], ['sfc', 'cx-ov-sfc']].forEach(function (pair) {
+     ['obs', 'cx-ov-metar'], ['sfc', 'cx-ov-sfc'],
+     ['nhc', 'cx-ov-nhc']].forEach(function (pair) {
       var b = $(pair[1]);
       if (!b) return;
       b.onclick = function () {
@@ -711,7 +718,8 @@
         if (!pane) return;
         if (pane.kind === pair[0]) { flash('already the pane field — pick a base field first'); return; }
         var st = pair[0] === 'mw' ? pane.mw : pair[0] === 'sc' ? pane.sc
-               : pair[0] === 'rad' ? pane.rad : pair[0] === 'obs' ? pane.obs : pane.sfc;
+               : pair[0] === 'rad' ? pane.rad : pair[0] === 'obs' ? pane.obs
+               : pair[0] === 'sfc' ? pane.sfc : pane.nhc;
         var on = !(st && st.on);
         window.CockpitFields.setLayer(S.active, pair[0], on);
         b.classList.toggle('on', on);
@@ -833,8 +841,8 @@
     // field key isn't stored; gl-loss with tiles hidden is also unlikely).
     var carry = {
       rad: !!(pane.rad && pane.rad.on), obs: !!(pane.obs && pane.obs.on),
-      sfc: !!(pane.sfc && pane.sfc.on), mw: !!(pane.mw && pane.mw.on),
-      sc: !!(pane.sc && pane.sc.on)
+      sfc: !!(pane.sfc && pane.sfc.on), nhc: !!(pane.nhc && pane.nhc.on),
+      mw: !!(pane.mw && pane.mw.on), sc: !!(pane.sc && pane.sc.on)
     };
     S.panes[i] = null;
     var np = makePane(i, product);

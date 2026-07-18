@@ -55,8 +55,12 @@ BUCKET = "https://noaa-mrms-pds.s3.amazonaws.com"
 PRODUCT = "CONUS/MergedReflectivityQCComposite_00.50"
 UTC = dt.timezone.utc
 
-# output grid: ~0.02 deg (2 km class) over the MRMS CONUS domain
-OUT_W, OUT_H = 3500, 1750
+# output grid: NATIVE ~0.01 deg over the MRMS CONUS domain — emitting at a
+# coarser grid read as chunky cells at normal zoom no matter how the field
+# was smoothed; modern-radar smoothness needs native width + smooth
+# resampling at every later stage (bicubic warp here, linear GPU sampling
+# in the client)
+OUT_W, OUT_H = 7000, 3500
 MIN_DBZ = 10.0          # below = transparent (palette 'under')
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
 CACHE_MANIFEST = "public, max-age=30"
@@ -121,17 +125,15 @@ def smooth_warp_webmerc(dbz: np.ndarray, lat1: np.ndarray, lon1: np.ndarray):
     "blocky" report — nearest-resampled pre-colorized pixels), while a
     small sigma (~1.5 native cells ≈ 1.5 km) preserves core structure.
     Returns (dbz_out, bounds W,S,E,N)."""
-    from scipy.ndimage import gaussian_filter, map_coordinates
+    from scipy.ndimage import gaussian_filter
+    from scipy.interpolate import interp1d
     field = np.where(np.isfinite(dbz) & (dbz > -900), dbz, FLOOR_DBZ)
     field = np.maximum(field, FLOOR_DBZ).astype(np.float32)
     # MAX-PRESERVING smoothing: plain gaussian at display-friendly sigma
     # measurably erased small intense cores against the floor fill (a
-    # 1-cell 65 dBZ echo smoothed below the 10 dBZ cutoff = invisible; a
-    # ~3 km 60 dBZ core displayed 4+ bins weak). Blend the smoothed field
-    # back with the original via max: surroundings pick up the smooth
-    # gradient, every native pixel keeps at least its true value — cores
-    # stay honest, edges stop being blocky. sigma 0.8 is ample
-    # anti-aliasing for the 2x downsample.
+    # 1-cell 65 dBZ echo smoothed below the 10 dBZ cutoff = invisible).
+    # Blend the smoothed field back via max: surroundings pick up the
+    # smooth gradient, every native pixel keeps at least its true value.
     field = np.maximum(gaussian_filter(field, sigma=0.8, mode="nearest"), field)
 
     lat_n, lat_s = float(lat1.max()), float(lat1.min())
@@ -142,21 +144,63 @@ def smooth_warp_webmerc(dbz: np.ndarray, lat1: np.ndarray, lon1: np.ndarray):
 
     y = np.linspace(merc_y(lat_n), merc_y(lat_s), OUT_H)
     lat_out = np.degrees(2.0 * (np.arctan(np.exp(y)) - np.pi / 4.0))
-    # fractional input coords: lat1 descends (north row 0); lons are uniform
+    # fractional input rows: lat1 descends (north row 0); lons are uniform
     rows = (lat1[0] - lat_out) / (lat1[0] - lat1[-1]) * (len(lat1) - 1)
-    cols = np.linspace(0.0, dbz.shape[1] - 1.0, OUT_W)
-    rr, cc = np.meshgrid(rows, cols, indexing="ij")
-    out = map_coordinates(field, [rr, cc], order=1, mode="nearest")
-    return out.astype(np.float32), [lon_w, lat_s, lon_e, lat_n]
+    rows = np.clip(rows, 0.0, len(lat1) - 1.0)
+    # BICUBIC along the only resampled axis. Columns are identity at native
+    # width, so the warp is a row-wise cubic — vastly cheaper than a full
+    # 2-D bicubic and exactly as smooth. Clip kills cubic overshoot at
+    # sharp echo edges (ringing above cores / below the floor).
+    fmax = float(field.max())
+    out = interp1d(np.arange(field.shape[0], dtype=np.float64), field,
+                   kind="cubic", axis=0, copy=False,
+                   assume_sorted=True)(rows).astype(np.float32)
+    if OUT_W != field.shape[1]:
+        cols = np.linspace(0.0, field.shape[1] - 1.0, OUT_W)
+        out = interp1d(np.arange(out.shape[1], dtype=np.float64), out,
+                       kind="cubic", axis=1, copy=False,
+                       assume_sorted=True)(cols).astype(np.float32)
+    out = np.clip(out, FLOOR_DBZ, fmax)
+    return out, [lon_w, lat_s, lon_e, lat_n]
+
+
+def _smooth_ramp():
+    """Continuous colormap from the house TAT-radar.pal anchors: the SAME
+    color identity (every solidcolor stop keeps its exact color at its
+    exact dBZ) but linearly interpolated BETWEEN stops, so gradients read
+    as smooth continuous radar instead of hard 5-dBZ blocks. Returns
+    (cmap, vmin, vmax)."""
+    from matplotlib.colors import LinearSegmentedColormap
+    stops = []
+    for ln in (HERE / "assets" / "TAT-radar.pal").read_text().splitlines():
+        ln = ln.strip()
+        if not ln.startswith("solidcolor:"):
+            continue
+        parts = ln.split(":", 1)[1].split()
+        stops.append((float(parts[0]),
+                      (int(parts[1]) / 255, int(parts[2]) / 255, int(parts[3]) / 255)))
+    stops.sort()
+    vmin, vmax = stops[0][0], 75.0        # >=75 is the palette's white cap
+    stops = [s for s in stops if s[0] <= vmax]
+    pos = [(d - vmin) / (vmax - vmin) for d, _ in stops]
+    cmap = LinearSegmentedColormap.from_list(
+        "tat_radar_smooth", list(zip(pos, [c for _, c in stops])))
+    return cmap, vmin, vmax
 
 
 def colorize(dbz: np.ndarray) -> np.ndarray:
-    """RGBA via the house TAT-radar.pal (discrete 5-dBZ bins, HAFS parity)."""
-    from hafs_render.hafs_plot import _refl_pal
-    pal = _refl_pal()
-    rgba = pal.cmap(pal.norm(dbz))                  # float 0..1, HxWx4
-    rgba = (rgba * 255).astype(np.uint8)
+    """RGBA via the smooth TAT-radar ramp (continuous; sub-cutoff clear)."""
+    cmap, vmin, vmax = _smooth_ramp()
+    t = np.clip((dbz - vmin) / (vmax - vmin), 0.0, 1.0)
+    rgba = (cmap(t) * 255).astype(np.uint8)
     rgba[dbz < MIN_DBZ] = 0                          # fully transparent
+    # feathered edge: fade alpha over the first 3 dBZ above the cutoff so
+    # the echo boundary is a soft edge, not a hard mask line
+    edge = (dbz >= MIN_DBZ) & (dbz < MIN_DBZ + 3.0)
+    if edge.any():
+        a = rgba[..., 3].astype(np.float32)
+        a[edge] *= ((dbz[edge] - MIN_DBZ) / 3.0)
+        rgba[..., 3] = a.astype(np.uint8)
     return rgba
 
 

@@ -3,10 +3,13 @@
 (tester item #12).
 
 Pulls the FREE public aviationweather.gov METAR cache (GLOBAL, no creds,
-updated every minute), and emits ONE compact JSON the explorer's
-station-plot canvas layer reads:
+updated every minute), and emits a ROLLING TIMESTAMPED SERIES the
+explorer's station-plot canvas layer time-locks to the playback clock:
 
-    obs/metar/latest.json   (max-age 60)
+    obs/metar/{YYYYMMDDTHHMMSSZ}.json   (immutable frames)
+    obs/metar/latest_times.json         (manifest: times/latest/frame tmpl)
+    obs/metar/latest.json               (legacy static-latest, kept in sync
+                                         for deploy-order safety)
 
 Schema (arrays keep it small — ~5k stations ≈ 250 KB raw, ~60 KB gzipped
 at the CDN edge):
@@ -108,6 +111,15 @@ class LocalStore:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
 
+    def get_json(self, key):
+        p = self.root / key
+        return json.loads(p.read_text()) if p.exists() else None
+
+    def delete(self, key):
+        p = self.root / key
+        if p.exists():
+            p.unlink()
+
 
 class R2Store:
     def __init__(self):
@@ -121,6 +133,16 @@ class R2Store:
     def put(self, key, data, cache, ctype):
         self.c.put_object(Bucket=self.bucket, Key=key, Body=data,
                           CacheControl=cache, ContentType=ctype)
+
+    def get_json(self, key):
+        try:
+            r = self.c.get_object(Bucket=self.bucket, Key=key)
+            return json.loads(r["Body"].read())
+        except Exception:
+            return None
+
+    def delete(self, key):
+        self.c.delete_object(Bucket=self.bucket, Key=key)
 
 
 def main() -> int:
@@ -144,8 +166,38 @@ def main() -> int:
         "stations": stations,
     }
     body = json.dumps(doc, separators=(",", ":")).encode()
-    store.put("obs/metar/latest.json", body, CACHE_MANIFEST, "application/json")
-    print(f"[metar] {len(stations)} stations  {len(body)//1024} KB  as_of {doc['as_of']}")
+    base = "obs/metar"
+    stamp = now.replace(second=0, microsecond=0).strftime("%Y%m%dT%H%M%SZ")
+    manifest = store.get_json(f"{base}/latest_times.json") or {}
+    times = [t for t in manifest.get("times", []) if t != stamp]
+    times.append(stamp)
+    times = sorted(times)
+    keep = 18                                # ~3 h at the 10-min cadence
+    rolled = times[:-keep] if len(times) > keep else []
+    times = times[-keep:]
+    prune_now = [t for t in manifest.get("prune_next", []) if t not in times]
+    store.put(f"{base}/{stamp}.json", body,
+              "public, max-age=31536000, immutable", "application/json")
+    mdoc = {
+        "product": "obs/metar", "frame": base + "/{t}.json",
+        "times": times, "latest": stamp, "prune_next": rolled,
+        "as_of": doc["as_of"], "count": doc["count"],
+        "source": doc["source"],
+    }
+    store.put(f"{base}/latest_times.json",
+              json.dumps(mdoc, separators=(",", ":")).encode(),
+              CACHE_MANIFEST, "application/json")
+    # legacy static-latest stays in sync (older clients + deploy-order)
+    store.put(f"{base}/latest.json", body, CACHE_MANIFEST, "application/json")
+    # DEFERRED prune (the MRMS discipline): delete only frames that rolled
+    # off a full cadence ago, AFTER this run's manifest is published
+    for t in prune_now:
+        try:
+            store.delete(f"{base}/{t}.json")
+        except Exception:
+            pass
+    print(f"[metar] {len(stations)} stations  {len(body)//1024} KB  frame {stamp}  "
+          f"({len(times)} times, pruned {len(prune_now)})")
     return 0
 
 

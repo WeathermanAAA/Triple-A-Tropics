@@ -166,8 +166,30 @@ const { TiledViewer } = require(path.join(__dirname, "..", "satellite", "explore
   let inflight = Object.keys(map.sources)
     .filter((id) => id.indexOf("sat/g/conus/ir-") === 0 && !map.loaded[id]).length;
   ok(inflight <= 6, "preload: <= MOUNT_AHEAD (6) unloaded sources in flight (got " + inflight + ")");
+  // PROGRESSIVE COLD LOAD (2026-07-18): a cold mount starts at a small
+  // residency cap and doubles per fully-loaded idle pass — settle by
+  // iterating load->idle until the mounted set stops growing. The ramp
+  // itself is asserted below.
+  let rampSizes = [];
+  for (let pass = 0; pass < 10; pass++) {
+    const before = Object.keys(map.sources)
+      .filter((id) => id.indexOf("sat/g/conus/ir-") === 0).length;
+    map.loadAllPending("sat/g/conus/ir-");
+    map.idle();
+    const after = Object.keys(map.sources)
+      .filter((id) => id.indexOf("sat/g/conus/ir-") === 0).length;
+    rampSizes.push(after);
+    if (after === before && pass > 0) break;
+  }
   map.loadAllPending("sat/g/conus/ir-");
   map.idle();
+  // the fixture's synchronous loadSource storm can slip one growth step in
+  // during section 1; the contract is "never the whole loop in one burst"
+  ok(rampSizes[0] < N,
+    "ramp: first pass mounted a capped subset, not the whole loop (got " +
+    rampSizes[0] + " of " + N + ")");
+  ok(rampSizes.every((n, i) => i === 0 || n >= rampSizes[i - 1]),
+    "ramp: residency grows monotonically (" + rampSizes.join(",") + ")");
   const loadedEvents = events.filter((e) => e.kind === "loaded");
   ok(loadedEvents.length === 1, "preload: exactly one 'loaded' event (got " + loadedEvents.length + ")");
   const dones = events.filter((e) => e.kind === "loading").map((e) => e.data.done);
@@ -229,8 +251,10 @@ const { TiledViewer } = require(path.join(__dirname, "..", "satellite", "explore
   map.loadSource(tcSid(newest));
   ok(map.layout[irSid(stampFor(9))] === "none",
     "switch: outgoing product hidden only AFTER the incoming frame revealed");
-  map.loadAllPending("sat/g/conus/truecolor-");
-  map.idle();
+  for (let pass = 0; pass < 10; pass++) {
+    map.loadAllPending("sat/g/conus/truecolor-");
+    map.idle();
+  }
   ok(events.filter((e) => e.kind === "loaded").length === 2,
     "switch: incoming loop preloaded to its own 'loaded'");
 

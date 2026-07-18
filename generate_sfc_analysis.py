@@ -3,9 +3,12 @@
 
 Parses the WPC CODED SURFACE FRONTAL POSITIONS bulletin (CODSUS — free
 public NWS text, no creds) into GeoJSON-ish features the explorer's canvas
-layer draws in TAT style:
+layer draws in TAT style — a ROLLING SERIES keyed on the analysis VALID
+time so the layer time-locks to the playback clock:
 
-    sfc/analysis/latest.json
+    sfc/analysis/{YYYYMMDDTHHMMSSZ}.json   (immutable frames, stamp = valid)
+    sfc/analysis/latest_times.json         (manifest)
+    sfc/analysis/latest.json               (legacy static-latest, kept in sync)
     { "valid": iso, "as_of": iso, "source": "WPC CODSUS",
       "centers": [{"kind":"high","mb":1023,"lat":38.4,"lon":-106.8}, ...],
       "fronts":  [{"kind":"cold","points":[[lat,lon],...]}, ...] }
@@ -123,6 +126,15 @@ class LocalStore:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
 
+    def get_json(self, key):
+        p = self.root / key
+        return json.loads(p.read_text()) if p.exists() else None
+
+    def delete(self, key):
+        p = self.root / key
+        if p.exists():
+            p.unlink()
+
 
 class R2Store:
     def __init__(self):
@@ -136,6 +148,16 @@ class R2Store:
     def put(self, key, data, cache, ctype):
         self.c.put_object(Bucket=self.bucket, Key=key, Body=data,
                           CacheControl=cache, ContentType=ctype)
+
+    def get_json(self, key):
+        try:
+            r = self.c.get_object(Bucket=self.bucket, Key=key)
+            return json.loads(r["Body"].read())
+        except Exception:
+            return None
+
+    def delete(self, key):
+        self.c.delete_object(Bucket=self.bucket, Key=key)
 
 
 def main() -> int:
@@ -158,7 +180,32 @@ def main() -> int:
         "fronts": fronts,
     }
     body = json.dumps(doc, separators=(",", ":")).encode()
-    store.put("sfc/analysis/latest.json", body, CACHE, "application/json")
+    base = "sfc/analysis"
+    stamp = valid.strftime("%Y%m%dT%H%M%SZ")
+    manifest = store.get_json(f"{base}/latest_times.json") or {}
+    times = [t for t in manifest.get("times", []) if t != stamp]
+    times.append(stamp)
+    times = sorted(times)
+    keep = 10                               # ~30 h of 3-hourly analyses
+    rolled = times[:-keep] if len(times) > keep else []
+    times = times[-keep:]
+    prune_now = [t for t in manifest.get("prune_next", []) if t not in times]
+    store.put(f"{base}/{stamp}.json", body,
+              "public, max-age=31536000, immutable", "application/json")
+    mdoc = {
+        "product": "sfc/analysis", "frame": base + "/{t}.json",
+        "times": times, "latest": stamp, "prune_next": rolled,
+        "as_of": doc["as_of"], "source": doc["source"],
+    }
+    store.put(f"{base}/latest_times.json",
+              json.dumps(mdoc, separators=(",", ":")).encode(),
+              CACHE, "application/json")
+    store.put(f"{base}/latest.json", body, CACHE, "application/json")
+    for t in prune_now:                     # deferred prune (MRMS discipline)
+        try:
+            store.delete(f"{base}/{t}.json")
+        except Exception:
+            pass
     kinds = {}
     for f in fronts:
         kinds[f["kind"]] = kinds.get(f["kind"], 0) + 1

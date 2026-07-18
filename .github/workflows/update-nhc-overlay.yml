@@ -1,0 +1,45 @@
+# NHC products overlay feed (explorer): forecast cones + track lines per
+# active storm (official per-storm GIS zips via CurrentStorms.json) and the
+# graphical Tropical Weather Outlook formation areas. Free public NHC
+# endpoints, no creds. R2-only: contents:read, commits NOTHING. Positions
+# come from the site's existing global_storms.geojson — not emitted here.
+# 30-min staggered cadence rides the NHC advisory/outlook cycle; the doc
+# only changes when an advisory or outlook does.
+name: update-nhc-overlay
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "11,41 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-nhc-overlay
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet boto3 pyshp
+
+      - name: Emit NHC overlay feed to R2
+        timeout-minutes: 5
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python generate_nhc_overlay.py --store r2

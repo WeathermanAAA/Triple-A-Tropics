@@ -1,13 +1,7 @@
-// MANUAL headless harness for the satellite explorer (not part of unittest
-// discovery — needs `npm install --no-save playwright jsdom` + `npx
-// playwright install chromium`). Boots the REAL page against the live CDN
-// (CORS re-served via a Playwright route) and runs a named scenario with
-// screenshots to <outdir>/. Local overlay feeds (mrms/metar/sfc emitted via
-// the generators' --store local:...) can be routed in over the CDN paths —
-// edit the *_LOCAL constants. Built 2026-07-18 for the tester-bug sweep;
-// every scenario printed its state + console errors and screenshotted.
-// Usage: node tests/explorer_headless_harness.cjs <scenario> [outdir]
-// Scenarios: boot | drawbox | shiftdrag | autoswitch | tmback | mrms | metar | sfc
+// Headless harness for the satellite explorer — boots the real page against
+// the live CDN, then runs a named scenario. Usage:
+//   node explorer_harness.cjs <scenario> [outdir]
+// Scenarios: boot | drawbox | shiftdrag
 "use strict";
 const { chromium } = require("playwright");
 const http = require("http");
@@ -15,7 +9,7 @@ const path = require("path");
 const fs = require("fs");
 
 const ROOT = "/workspaces/Triple-A-Tropics";
-const OUT = process.argv[3] || "/tmp/tat-explorer-shots";
+const OUT = process.argv[3] || "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/shots";
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
   ".json": "application/json", ".geojson": "application/json", ".png": "image/png",
   ".webp": "image/webp", ".svg": "image/svg+xml" };
@@ -61,19 +55,26 @@ function serve() {
 
   // MRMS scenario: the R2 emit hasn't run yet — serve the locally-emitted
   // overlay files for its prefix so the full client path exercises for real
-  const MRMS_LOCAL = process.env.MRMS_LOCAL || "/tmp/tat-mrms/";
+  const MRMS_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/mrms/";
+  // bench aliasing (mrmszoom only): present the freshest local scan under a
+  // stamp near the cached sat loop so the nearest-join + skew gate exercise
+  // normally while displaying the NEW pipeline's frame
+  const MRMS_ALIAS = scenario === "mrmszoom" ? { bench: "20260718T170000Z", real: "20260718T190440Z" } : null;
   await page.route("https://cdn.triple-a-tropics.com/radar/mrms/**", async (route) => {
-    const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+    let rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
     try {
-      const body = fs.readFileSync(path.join(MRMS_LOCAL, rel));
+      if (MRMS_ALIAS && rel.includes(MRMS_ALIAS.bench)) rel = rel.replace(MRMS_ALIAS.bench, MRMS_ALIAS.real);
+      let body = fs.readFileSync(path.join(MRMS_LOCAL, rel));
       const ctype = rel.endsWith(".json") ? "application/json" : "image/webp";
+      if (MRMS_ALIAS && rel.endsWith(".json"))
+        body = Buffer.from(body.toString().split(MRMS_ALIAS.real).join(MRMS_ALIAS.bench));
       await route.fulfill({ status: 200, body, headers: {
         "content-type": ctype, "access-control-allow-origin": "*" } });
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
 
-  const OBS_LOCAL = process.env.OBS_LOCAL || "/tmp/tat-metar/";
+  const OBS_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/metar/";
   await page.route("https://cdn.triple-a-tropics.com/obs/metar/**", async (route) => {
     const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
     try {
@@ -83,7 +84,7 @@ function serve() {
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
-  const SFC_LOCAL = process.env.SFC_LOCAL || "/tmp/tat-sfc/";
+  const SFC_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/sfc/";
   await page.route("https://cdn.triple-a-tropics.com/sfc/**", async (route) => {
     const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
     try {
@@ -93,7 +94,36 @@ function serve() {
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
-  await page.goto(base + "/satellite/explorer/", { waitUntil: "domcontentloaded" });
+  const NHC_LOCAL = "/tmp/claude-1000/-workspaces-Triple-A-Tropics/e63ecbc7-5df9-454e-acf7-368d4bb1506f/scratchpad/nhc/";
+  await page.route("https://cdn.triple-a-tropics.com/nhc/**", async (route) => {
+    const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+    try {
+      const body = fs.readFileSync(path.join(NHC_LOCAL, rel));
+      await route.fulfill({ status: 200, body, headers: {
+        "content-type": "application/json", "access-control-allow-origin": "*" } });
+    } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
+  });
+  // metar series bench-alias: present the single local frame near the cached
+  // sat loop so the nearest-join exercises (sfc's 15Z frame joins for real)
+  const OBS_ALIAS = { bench: "20260718T170000Z", real: null };
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(OBS_LOCAL, "obs/metar/latest_times.json")));
+    OBS_ALIAS.real = m.latest;
+  } catch (e) {}
+  await page.route("https://cdn.triple-a-tropics.com/obs/metar/**", async (route) => {
+    let rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+    try {
+      if (OBS_ALIAS.real && rel.includes(OBS_ALIAS.bench)) rel = rel.replace(OBS_ALIAS.bench, OBS_ALIAS.real);
+      let body = fs.readFileSync(path.join(OBS_LOCAL, rel));
+      if (OBS_ALIAS.real && rel.endsWith("latest_times.json"))
+        body = Buffer.from(body.toString().split(OBS_ALIAS.real).join(OBS_ALIAS.bench));
+      await route.fulfill({ status: 200, body, headers: {
+        "content-type": "application/json", "access-control-allow-origin": "*" } });
+    } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
+  });
+
+  const qs = scenario === "coldgeo" ? "?domain=conus&product=ir" : "";
+  await page.goto(base + "/satellite/explorer/" + qs, { waitUntil: "domcontentloaded" });
 
   // wait for pane 0's first real pixels (the boot overlay hides on 'frame')
   await page.waitForFunction(() => {
@@ -262,6 +292,260 @@ function serve() {
                canvas: !!p._sfcCanvas };
     })));
     await page.screenshot({ path: path.join(OUT, "sfc_overlay.png") });
+  }
+
+  if (scenario === "selector") {
+    // 1) GOES-19 sat-row click from the ring: tiles AND label must both switch
+    await page.click('#cx-sats .cx-item[data-sat="goes19"]');
+    await page.waitForTimeout(4000);
+    const st1 = await page.evaluate(() => {
+      const S = window.__cockpit, p = S.panes[0];
+      return { sel: S.domain, renders: p.tv.manifest && p.tv.manifest.product,
+               header: document.getElementById("cx-pht-0").textContent };
+    });
+    console.log("AFTER GOES-19 CLICK:", JSON.stringify(st1));
+    // 2) back to the ring
+    await page.click('#cx-sats .cx-item[data-sat="geo"]');
+    await page.waitForTimeout(4000);
+    // 3) RE-SELECT the ring while already on it (the crash path)
+    await page.click('#cx-sats .cx-item[data-sat="geo"]');
+    await page.waitForTimeout(1500);
+    // 4) same-product re-select through setProduct directly (belt+braces)
+    await page.evaluate(() => {
+      const p = window.__cockpit.panes[0];
+      return p.tv.setProduct(p.tv.manifestUrl).then(() => true);
+    });
+    await page.waitForTimeout(800);
+    const st2 = await page.evaluate(() => {
+      const S = window.__cockpit, p = S.panes[0];
+      return { sel: S.domain, renders: p.tv.manifest && p.tv.manifest.product,
+               header: document.getElementById("cx-pht-0").textContent,
+               errShown: document.getElementById("cx-err").style.display === "flex" };
+    });
+    console.log("AFTER RING RE-SELECT x2:", JSON.stringify(st2));
+    await page.screenshot({ path: path.join(OUT, "selector_after.png") });
+  }
+
+  if (scenario === "mrmszoom") {
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-96.5, 42.5], zoom: 6.4 });
+    });
+    await page.waitForTimeout(3500);
+    await page.click("#cx-ov-mrms");
+    // bench-only: the local series holds one fresh scan; the cached sat loop
+    // is hours older, so bypass the skew gate to display the scan for the
+    // quality check (production keeps the gate)
+    await page.evaluate(() => {
+      const p = window.__cockpit.panes[0];
+      p.rad.on = true;
+      const m = window.CockpitFields;
+    });
+    await page.waitForTimeout(4000);
+    await page.screenshot({ path: path.join(OUT, "mrms_zoom_quality.png") });
+    console.log("ZOOMED SHOT SAVED");
+  }
+
+  if (scenario === "mrmsanim") {
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-90, 33], zoom: 4 });
+    });
+    await page.waitForTimeout(3200);   // auto-switch to conus
+    await page.click("#cx-ov-mrms");
+    await page.waitForTimeout(2500);
+    const probe = async (label) => {
+      const s = await page.evaluate(() => {
+        const p = window.__cockpit.panes[0];
+        return { sat: p.tv.frames[p.tv.frameIdx], shown: p.rad && p.rad.shown,
+                 vis: p.tv.map.getLayer("ofrad-0")
+                   ? p.tv.map.getLayoutProperty("ofrad-0", "visibility") : "none" };
+      });
+      console.log(label, JSON.stringify(s));
+      return s;
+    };
+    // scrub to the loop tail (near-now sat frame -> newest scan)
+    await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      tv.showFrame(tv.frames.length - 1);
+    });
+    await page.waitForTimeout(1500);
+    await probe("TAIL:");
+    // scrub ~2h back: should time-lock to the OLDER scan or hide on skew
+    await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      tv.showFrame(Math.max(0, tv.frames.length - 14));
+    });
+    await page.waitForTimeout(1500);
+    await probe("BACK-2H:");
+    // scrub far back: no scan within 45 min -> hidden
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.showFrame(0);
+    });
+    await page.waitForTimeout(1500);
+    await probe("OLDEST:");
+    await page.screenshot({ path: path.join(OUT, "mrmsanim.png") });
+    // burial check: after a product switch + new frame mounts, the radar
+    // layer must still sit directly under 'grat' (above all frame layers)
+    await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      tv.showFrame(tv.frames.length - 1);
+    });
+    await page.waitForTimeout(1200);
+    const order = await page.evaluate(() => {
+      const layers = window.__cockpit.panes[0].tv.map.getStyle().layers.map(l => l.id);
+      const grat = layers.indexOf("grat"), rad = layers.indexOf("ofrad-0");
+      const frames = layers.filter(id => /^sat\//.test(id));
+      const maxFrame = Math.max(...frames.map(id => layers.indexOf(id)));
+      return { radIdx: rad, gratIdx: grat, maxFrameIdx: maxFrame,
+               radAboveFrames: rad > maxFrame && rad < grat };
+    });
+    console.log("LAYER ORDER:", JSON.stringify(order));
+  }
+
+  if (scenario === "playsmooth") {
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-90, 33], zoom: 4 });
+    });
+    await page.waitForTimeout(3500);
+    await page.click("#cx-ov-mrms");
+    await page.click("#cx-ov-metar");
+    await page.click("#cx-ov-sfc");
+    await page.waitForTimeout(6000);    // preload settles
+    // record reveals over 6 s of playback with all overlays on
+    await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      window.__reveals = [];
+      const orig = tv._reveal.bind(tv);
+      tv._reveal = (idx, stamp) => { window.__reveals.push([performance.now() | 0, stamp]); orig(idx, stamp); };
+    });
+    await page.click("#cx-play");
+    await page.waitForTimeout(6000);
+    await page.click("#cx-play");
+    const r = await page.evaluate(() => {
+      const rv = window.__reveals || [];
+      const gaps = [];
+      for (let i = 1; i < rv.length; i++) gaps.push(rv[i][0] - rv[i - 1][0]);
+      return { reveals: rv.length, gaps: gaps,
+               maxGap: gaps.length ? Math.max(...gaps) : null,
+               probeStamps: rv.slice(0, 3).map(x => x[1]) };
+    });
+    console.log("PLAYBACK:", JSON.stringify(r));
+    await page.screenshot({ path: path.join(OUT, "playsmooth.png") });
+  }
+
+  if (scenario === "persist") {
+    const snap = async (label) => {
+      const s = await page.evaluate(() => {
+        const S = window.__cockpit, p = S.panes[0], map = p.tv.map;
+        const layers = map.getStyle().layers.map(l => l.id);
+        const cv = (c) => {
+          if (!c) return 0;
+          const g = c.getContext("2d");
+          const d = g.getImageData(0, 0, c.width, c.height).data;
+          let n = 0;
+          for (let i = 3; i < d.length; i += 800) if (d[i] > 0) n++;
+          return n;
+        };
+        return {
+          domain: S.domain, product: p.tv.manifest && p.tv.manifest.product,
+          radOn: !!(p.rad && p.rad.on),
+          radLayer: layers.includes("ofrad-0"),
+          radVis: map.getLayer("ofrad-0") ? map.getLayoutProperty("ofrad-0", "visibility") : null,
+          obsOn: !!(p.obs && p.obs.on), obsPaint: cv(p._obsCanvas),
+          sfcOn: !!(p.sfc && p.sfc.on), sfcPaint: cv(p._sfcCanvas),
+          btnRad: document.getElementById("cx-ov-mrms").classList.contains("on"),
+          btnObs: document.getElementById("cx-ov-metar").classList.contains("on"),
+          btnSfc: document.getElementById("cx-ov-sfc").classList.contains("on"),
+        };
+      });
+      console.log(label, JSON.stringify(s));
+      return s;
+    };
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-90, 33], zoom: 4 });
+    });
+    await page.waitForTimeout(3200);
+    await page.click("#cx-ov-mrms");
+    await page.click("#cx-ov-metar");
+    await page.click("#cx-ov-sfc");
+    await page.waitForTimeout(2500);
+    await snap("BASELINE:");
+    // (a) channel switch ir -> wv (c08)
+    await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".cx-field")];
+      const wv = rows.find(r => r.dataset.key === "c08");
+      if (wv) wv.click();
+    });
+    await page.waitForTimeout(4500);
+    await snap("AFTER CHANNEL SWITCH (c08):");
+    // (b) cross-sat domain switch
+    await page.click('#cx-sats .cx-item[data-sat="himawari9"]');
+    await page.waitForTimeout(5000);
+    await snap("AFTER SAT SWITCH (himawari):");
+    await page.click('#cx-sats .cx-item[data-sat="goes19"]');
+    await page.waitForTimeout(5000);
+    await snap("AFTER SWITCH BACK (goes19):");
+    await page.screenshot({ path: path.join(OUT, "persist_final.png") });
+  }
+
+  if (scenario === "coldgeo") {
+    const geoCount = () => page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      return Object.keys(tv._added || {}).filter(() => true).length &&
+        Object.keys(tv.map.getStyle().sources)
+          .filter(id => id.indexOf("sat/geo/global") === 0).length;
+    });
+    console.log("PRE-SWITCH:", JSON.stringify(await state()));
+    await page.click('#cx-sats .cx-item[data-sat="geo"]');
+    await page.waitForTimeout(1200);
+    const t1 = await geoCount();
+    await page.waitForTimeout(2500);
+    const t2 = await geoCount();
+    await page.waitForTimeout(5000);
+    const t3 = await geoCount();
+    await page.waitForTimeout(8000);
+    const t4 = await geoCount();
+    console.log("GEO SOURCES over time:", JSON.stringify({ t1, t2, t3, t4 }));
+    console.log("FINAL:", JSON.stringify(await state()));
+    await page.screenshot({ path: path.join(OUT, "coldgeo.png") });
+  }
+
+  if (scenario === "nhcanim") {
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-100, 25], zoom: 3.4 });
+    });
+    await page.waitForTimeout(3200);
+    await page.click("#cx-ov-nhc");
+    await page.click("#cx-ov-metar");
+    await page.click("#cx-ov-sfc");
+    await page.waitForTimeout(3500);
+    const st = await page.evaluate(() => {
+      const p = window.__cockpit.panes[0], map = p.tv.map;
+      const layers = map.getStyle().layers.map(l => l.id);
+      const cvPaint = (c) => {
+        if (!c) return 0;
+        const g = c.getContext("2d");
+        const d = g.getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 800) if (d[i] > 0) n++;
+        return n;
+      };
+      return {
+        nhcLayers: layers.filter(id => id.startsWith("ofnhc-0")),
+        nhcGlyphs: cvPaint(p._nhcCanvas),
+        nhcBtn: document.getElementById("cx-ov-nhc").classList.contains("on"),
+        obsShown: p.obs && p.obs.shown, sfcShown: p.sfc && p.sfc.shown,
+        obsPaint: cvPaint(p._obsCanvas), sfcPaint: cvPaint(p._sfcCanvas),
+      };
+    });
+    console.log("NHC/ANIM STATE:", JSON.stringify(st));
+    // scrub far back: the obs join must drop (skew) while sfc may hold
+    await page.evaluate(() => { window.__cockpit.panes[0].tv.showFrame(0); });
+    await page.waitForTimeout(1800);
+    console.log("AFTER OLD SCRUB:", JSON.stringify(await page.evaluate(() => {
+      const p = window.__cockpit.panes[0];
+      return { sat: p.tv.frames[p.tv.frameIdx], obsShown: p.obs.shown, sfcShown: p.sfc.shown };
+    })));
+    await page.screenshot({ path: path.join(OUT, "nhc_overlay.png") });
   }
 
   console.log("CONSOLE ERRORS:", errors.length ? JSON.stringify(errors.slice(0, 10), null, 1) : "none");

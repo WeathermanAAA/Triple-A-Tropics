@@ -157,6 +157,7 @@
     this._pfx = m.product;    // product-scoped source ids (setProduct teardown safety)
     // calibrated BT data raster probe (pixel/BT inspector), if the product ships one
     this.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, this.base) : null;
+    this._startRamp();               // boot is always a cold load
     this.frames = this._deriveFrames();
     this.frameIdx = Math.max(0, this.frames.length - 1);
 
@@ -308,6 +309,24 @@
     var t = (this.manifest && this.manifest.times) || [];
     var cap = this._loopCapFor();
     return t.slice(Math.max(0, t.length - cap));
+  };
+  // PROGRESSIVE COLD LOAD: a cold product mount starts with a small
+  // RESIDENCY cap (how many loop frames may be mounted at all) and grows
+  // it stepwise as each slice finishes loading (_onIdle) — mounting a
+  // heavy product's whole loop at once (world-covering rasters x 20
+  // frames, tiles fetched+decoded+uploaded in one burst) was the cold
+  // GEO-ring switch OOM. The frame LIST stays full (playback order,
+  // follower joins and the newest pointer are unchanged); playback's
+  // next-ready advance plays the resident subset while the rest streams
+  // in. Warm resurrects skip the ramp (sources already resident).
+  VP._startRamp = function () {
+    this._residCap = Math.min(6, this._loopCapFor());
+  };
+  VP._mountedInLoop = function () {
+    var n = 0;
+    for (var i = 0; i < this.frames.length; i++)
+      if (this._added[this.frames[i]]) n++;
+    return n;
   };
   // Re-derive frames from the (updated) manifest, PRESERVING the current
   // stamp -- a merge must never remap frameIdx under a playing loop. Rolled-
@@ -464,7 +483,14 @@
     // hidden and fetch nothing, so they don't count against the stagger)
     var inflight = 0;
     for (var s in this._added) if (!this._ready[s] && !this._parked[s]) inflight++;
-    while (inflight < MOUNT_AHEAD && this._mountQ.length) {
+    // world-spanning products: every source fetches viewport-covering tiles,
+    // so halve the in-flight stagger (the per-source cost is ~4x a regional
+    // frame's at the same camera)
+    var bb = this.manifest && this.manifest.bounds;
+    var ahead = (bb && (bb[2] - bb[0]) >= 300) ? 3 : MOUNT_AHEAD;
+    var resid = this._residCap || Infinity;
+    while (inflight < ahead && this._mountQ.length) {
+      if (this._mountedInLoop() >= resid) return;   // ramp gate: idle grows it
       var st = this._mountQ.shift();
       if (this.frames.indexOf(st) < 0) continue;
       if (this._added[st]) {
@@ -510,6 +536,27 @@
     this._pumpMounts();
     if (this._wantStamp != null && this._added[this._wantStamp]) this._revealPending();
     if (changed) this._emitLoading();
+    // ramp growth: every mounted frame is confirmed -> double the residency
+    // cap and pump the next slice QUIETLY. Idle-paced growth means a new
+    // slice only streams after the previous one is fully resident — the
+    // hard working-set bound that keeps a cold heavy switch from mounting
+    // everything at once.
+    if (this._residCap && !this._camMoving) {
+      var mounted = this._mountedInLoop();
+      if (mounted >= this.frames.length) { this._residCap = null; return; }
+      var allMountedReady = true;
+      for (var i = 0; i < this.frames.length; i++) {
+        var st = this.frames[i];
+        if (this._added[st] && !this._ready[st] && !this._parked[st]) {
+          allMountedReady = false;
+          break;
+        }
+      }
+      if (allMountedReady && mounted) {
+        this._residCap = Math.min(this.frames.length, this._residCap * 2);
+        this._pumpMounts();
+      }
+    }
   };
 
   // ---- camera fetch discipline (contract rule 4) ----
@@ -769,6 +816,7 @@
       this._retired = null;
       this._retire();                       // current product retires in its place
       this._adoptState(back);
+      this._residCap = null;                // warm resurrect: already resident
       // resurrected layers are HIDDEN (retire hid them): park them all so the
       // pump unhides staggered and readiness re-confirms through the event
       // gate -- adopted _ready flags describe a hidden source, i.e. nothing
@@ -796,6 +844,7 @@
         self.base = manifestBase(manifestUrl, m.product);
         self._pfx = m.product;
         self.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, self.base) : null;
+        self._startRamp();               // full-fetch switch = cold mount
         self.frames = self._deriveFrames();
         self.frameIdx = Math.max(0, self.frames.length - 1);
         self.map.setMaxZoom((m.maxzoom || 5) + 1);   // per-product native zoom
