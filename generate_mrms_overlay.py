@@ -266,7 +266,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", default="local:/tmp/tat-mrms")
     ap.add_argument("--prefix", default="", help="key prefix (e.g. shadow)")
-    ap.add_argument("--keep", type=int, default=18)
+    ap.add_argument("--keep", type=int, default=30)   # ~5 h at the 10-min
+    # cadence — must outrun the deepest sat loop (48 x 5-min conus = 4 h)
+    # or the time-locked join blanks the loop's old tail
     args = ap.parse_args()
 
     store = R2Store() if args.store == "r2" else LocalStore(args.store.split(":", 1)[1])
@@ -298,9 +300,19 @@ def main() -> int:
     store.put(f"{base}/{stamp}.webp", webp, CACHE_IMMUTABLE, "image/webp")
     times = [t for t in manifest.get("times", []) if t != stamp]
     times.append(stamp)
+    # RENDER-EPOCH floor: frames emitted before the smooth-render pipeline
+    # (native 7000x3500 grid, bicubic, continuous ramp) landed are visually
+    # blocky AND immutable-cached — evict them from the series instead of
+    # letting the time-lock keep joining them for another retention cycle.
+    # Bump the epoch on any future render-quality change; safe to remove
+    # once the window has rolled past it.
+    RENDER_EPOCH = "20260718T192500Z"
+    epoch_dropped = [t for t in times if t < RENDER_EPOCH]
+    times = [t for t in times if t >= RENDER_EPOCH]
     times = sorted(times)
     rolled = times[:-args.keep] if len(times) > args.keep else []
     times = times[-args.keep:]
+    rolled += epoch_dropped        # epoch-evicted frames prune next run too
     # DEFERRED prune: frames that rolled off THIS run are only queued
     # (prune_next); the actual deletes happen on the NEXT run, AFTER that
     # run publishes its manifest. Deleting immediately raced live readers:

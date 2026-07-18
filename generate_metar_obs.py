@@ -15,8 +15,13 @@ Schema (arrays keep it small — ~5k stations ≈ 250 KB raw, ~60 KB gzipped
 at the CDN edge):
 
     { "as_of": iso, "count": n,
-      "fields": ["id","lat","lon","t","td","slp","wdir","wspd","gust","rank","age_min"],
-      "stations": [["KMIA", 25.79, -80.32, 29.4, 24.1, 1016.2, 120, 9, null, 5, 12], ...] }
+      "fields": ["id","lat","lon","t","td","slp","wdir","wspd","gust","rank","age_min","plat"],
+      "stations": [["KMIA", 25.79, -80.32, 29.4, 24.1, 1016.2, 120, 9, null, 5, 12, 0], ...] }
+
+plat: 0 = land METAR, 1 = moving VOS ship, 2 = buoy/C-MAN (marine platforms
+come from the NDBC latest-obs + ship listings, same no-creds tier; the
+client draws marine stations with a distinct symbol). Wind arrives m/s on
+the marine side and is converted to kt so one barb painter serves all.
 
 rank = how complete the ob is (t/td/slp/wind present) — the client's
 declutter keeps the highest-rank station per screen cell, so sparse-data
@@ -39,9 +44,18 @@ import urllib.request
 from pathlib import Path
 
 SOURCE = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
+# marine companions (same free/no-creds tier): fixed platforms (moored
+# buoys + coastal C-MAN) and moving VOS ships. Both hourly-ish; both feed
+# the same station-plot schema with a plat flag so the client can mark
+# marine platforms with a distinct symbol.
+MARINE_SOURCE = "https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt"
+SHIP_SOURCE = "https://www.ndbc.noaa.gov/ship_obs.php?uom=M&time=2"
+MS_TO_KT = 1.94384
 UTC = dt.timezone.utc
 MAX_AGE_MIN = 75
 CACHE_MANIFEST = "public, max-age=60"
+# plat codes (fields[11]): 0 = land METAR, 1 = moving ship, 2 = buoy/C-MAN
+PLAT_LAND, PLAT_SHIP, PLAT_BUOY = 0, 1, 2
 
 
 def _http(url: str, timeout: int = 90) -> bytes:
@@ -95,11 +109,108 @@ def parse_cache(raw: bytes, now: dt.datetime):
               int(wdir) if wdir is not None else None,
               int(wspd) if wspd is not None else None,
               int(gust) if gust is not None else None,
-              rank, int(round(age_min))]
+              rank, int(round(age_min)), PLAT_LAND]
         cur = best.get(sid)
         if cur is None or ob[10] < cur[10]:      # newest ob per station
             best[sid] = ob
-    return sorted(best.values(), key=lambda o: (-o[9], o[10]))
+    return best
+
+
+def _num(tok, scale=1.0):
+    """NDBC token -> rounded number (MM / '-' are missing)."""
+    if tok in ("MM", "-", "", None):
+        return None
+    try:
+        return round(float(tok) * scale, 1)
+    except ValueError:
+        return None
+
+
+def parse_marine(raw: bytes, now: dt.datetime):
+    """NDBC latest_obs.txt -> fixed marine platforms (buoys + C-MAN).
+    Columns: STN LAT LON YYYY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD
+    PRES PTDY ATMP WTMP DEWP VIS TIDE (wind in m/s -> kt)."""
+    best = {}
+    for ln in raw.decode("utf-8", "replace").splitlines():
+        if ln.startswith("#"):
+            continue
+        c = ln.split()
+        if len(c) < 20:
+            continue
+        try:
+            lat, lon = round(float(c[1]), 1), round(float(c[2]), 1)
+            t_obs = dt.datetime(int(c[3]), int(c[4]), int(c[5]),
+                                int(c[6]), int(c[7]), tzinfo=UTC)
+        except ValueError:
+            continue
+        age_min = (now - t_obs).total_seconds() / 60.0
+        if age_min < -10 or age_min > MAX_AGE_MIN:
+            continue
+        wdir = _num(c[8])
+        wspd = _num(c[9], MS_TO_KT)
+        gust = _num(c[10], MS_TO_KT)
+        slp, atmp, dewp = _num(c[15]), _num(c[17]), _num(c[19])
+        rank = sum(x is not None for x in (atmp, dewp, slp, wdir, wspd))
+        if rank == 0:
+            continue
+        ob = [c[0], lat, lon, atmp, dewp, slp,
+              int(wdir) if wdir is not None else None,
+              int(round(wspd)) if wspd is not None else None,
+              int(round(gust)) if gust is not None else None,
+              rank, int(round(age_min)), PLAT_BUOY]
+        cur = best.get(c[0])
+        if cur is None or ob[10] < cur[10]:
+            best[c[0]] = ob
+    return best
+
+
+def parse_ships(page: bytes, now: dt.datetime):
+    """VOS ship listing -> moving-ship obs. The listing is an HTML page with
+    one <pre class="wide-content"> block: ID HOUR LAT LON WDIR WSPD GST WVHT
+    DPD PRES PTDY ATMP WTMP DEWP ... ('-' missing; metric units; anonymous
+    ships all report as 'SHIP', so the dedup key includes position)."""
+    import html as _html
+    import re
+    m = re.search(rb'<pre class="wide-content">(.*?)</pre>', page, re.S)
+    if not m:
+        raise RuntimeError("ship listing: data block not found")
+    body = _html.unescape(re.sub(r"<[^>]+>", "", m.group(1).decode(
+        "utf-8", "replace")))
+    best = {}
+    for ln in body.splitlines():
+        c = ln.split()
+        if len(c) < 14:
+            continue
+        try:                       # header/divider lines fail the parse
+            hour = int(c[1])
+            lat, lon = round(float(c[2]), 1), round(float(c[3]), 1)
+        except ValueError:
+            continue
+        if not (0 <= hour <= 23 and -90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        t_obs = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if t_obs > now + dt.timedelta(minutes=10):
+            t_obs -= dt.timedelta(days=1)
+        age_min = (now - t_obs).total_seconds() / 60.0
+        if age_min > MAX_AGE_MIN:
+            continue
+        wdir = _num(c[4])
+        wspd = _num(c[5], MS_TO_KT)
+        gust = _num(c[6], MS_TO_KT)
+        slp, atmp, dewp = _num(c[9]), _num(c[11]), _num(c[13])
+        rank = sum(x is not None for x in (atmp, dewp, slp, wdir, wspd))
+        if rank == 0:
+            continue
+        ob = [c[0], lat, lon, atmp, dewp, slp,
+              int(wdir) if wdir is not None else None,
+              int(round(wspd)) if wspd is not None else None,
+              int(round(gust)) if gust is not None else None,
+              rank, int(round(age_min)), PLAT_SHIP]
+        key = (c[0], lat, lon)
+        cur = best.get(key)
+        if cur is None or ob[10] < cur[10]:
+            best[key] = ob
+    return list(best.values())
 
 
 class LocalStore:
@@ -159,17 +270,39 @@ def main() -> int:
     store = R2Store() if args.store == "r2" else LocalStore(args.store.split(":", 1)[1])
 
     now = dt.datetime.now(UTC)
-    stations = parse_cache(_http(SOURCE), now)
-    if len(stations) < 500:
+    land = parse_cache(_http(SOURCE), now)
+    if len(land) < 500:
         # a healthy global cycle carries thousands; a tiny parse is a source/
         # schema failure — refuse to overwrite a good feed with a broken one
-        raise RuntimeError(f"only {len(stations)} stations parsed — refusing to publish")
+        raise RuntimeError(f"only {len(land)} stations parsed — refusing to publish")
+    # marine platforms degrade honestly: a fetch failure drops that class of
+    # obs for the cycle (disclosed in the log), never the whole feed
+    marine, ships = {}, []
+    try:
+        marine = parse_marine(_http(MARINE_SOURCE), now)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[metar] marine platforms unavailable this cycle: {e}")
+    try:
+        ships = parse_ships(_http(SHIP_SOURCE), now)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[metar] ship obs unavailable this cycle: {e}")
+    n_buoy = 0
+    for sid, ob in marine.items():
+        if sid in land:            # C-MAN/buoys that also file METAR: keep
+            land[sid][11] = PLAT_BUOY   # the METAR ob, mark it marine
+        else:
+            land[sid] = ob
+            n_buoy += 1
+    # ONE rank-desc sort across classes — the client declutter is first-claim
+    # -wins, so a full ship model can still beat a wind-only land ob
+    stations = sorted(list(land.values()) + ships,
+                      key=lambda o: (-o[9], o[10]))
     doc = {
         "as_of": now.isoformat(timespec="seconds"),
         "count": len(stations),
         "fields": ["id", "lat", "lon", "t", "td", "slp",
-                   "wdir", "wspd", "gust", "rank", "age_min"],
-        "source": "aviationweather.gov METAR cache",
+                   "wdir", "wspd", "gust", "rank", "age_min", "plat"],
+        "source": "aviationweather.gov METAR cache + NDBC marine/ship obs",
         "stations": stations,
     }
     body = json.dumps(doc, separators=(",", ":")).encode()
@@ -179,7 +312,9 @@ def main() -> int:
     times = [t for t in manifest.get("times", []) if t != stamp]
     times.append(stamp)
     times = sorted(times)
-    keep = 18                                # ~3 h at the 10-min cadence
+    keep = 30       # ~5 h at the 10-min cadence — MUST outrun the deepest
+    #                 sat loop (48 x 5-min conus frames = 4 h) or the
+    #                 time-locked join honestly blanks the loop's old tail
     rolled = times[:-keep] if len(times) > keep else []
     times = times[-keep:]
     prune_now = [t for t in manifest.get("prune_next", []) if t not in times]
@@ -203,7 +338,8 @@ def main() -> int:
             store.delete(f"{base}/{t}.json")
         except Exception:
             pass
-    print(f"[metar] {len(stations)} stations  {len(body)//1024} KB  frame {stamp}  "
+    print(f"[metar] {len(stations)} stations ({n_buoy} buoy/C-MAN, "
+          f"{len(ships)} ship)  {len(body)//1024} KB  frame {stamp}  "
           f"({len(times)} times, pruned {len(prune_now)})")
     return 0
 

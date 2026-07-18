@@ -235,6 +235,18 @@
       });
     });
     var set = productSet(S.domain);
+    // the GEO ring carries BT fields ONLY by design (RGBs/channels stay
+    // per-satellite — a cross-sensor composite of them would fabricate).
+    // But an empty Channels tab on the boot view reads as "channels went
+    // missing": list the single-sat catalog too, chipped 'per-sat', and let
+    // the routed click (below) jump to the nadir-nearest satellite for it.
+    if (S.domain === 'global') {
+      var have = {};
+      set.forEach(function (p) { have[p.key] = 1; });
+      productSet('conus').forEach(function (p) {
+        if (!have[p.key]) { have[p.key] = 1; set = set.concat([p]); }
+      });
+    }
     var tmOK = domainInfo(S.domain).sat === 'goes19';   // archive backend is GOES-East
     // CHANNEL REGISTER ordering: group by spectral region, then by band
     // (ir/irbd ride with their 10.3/10.4 µm slot inside INFRARED)
@@ -306,7 +318,24 @@
         row.appendChild(dots);
       }
       row.onclick = function () {
-        if (row.classList.contains('coming')) return;
+        if (row.classList.contains('coming')) {
+          // the GEO ring (and FD) carry BT-only sets BY DESIGN — RGBs and
+          // channels stay per-satellite (a cross-sensor composite of them
+          // would fabricate). A field that exists on a single-sat domain
+          // routes there instead of dead-ending: the channels/True Color
+          // are one click away, honestly labeled, same recipes.
+          var dest = fieldRouteFor(p.key);
+          if (!dest) return;
+          var k2 = mapKeyAcross(p.key, dest);
+          var p2 = k2 && productByKey(k2, dest);
+          if (!p2) return;
+          S._touched = true;
+          autoGo(dest, '→ ' + domainInfo(dest).satLabel + ' · ' +
+                       domainInfo(dest).label + ' — this field is per-satellite');
+          if (window.CockpitFields) window.CockpitFields.clearPaneField(S.active);
+          setPaneProduct(S.active, p2);
+          return;
+        }
         S._touched = true;
         if (window.CockpitFields) window.CockpitFields.clearPaneField(S.active);
         setPaneProduct(S.active, p);
@@ -333,6 +362,27 @@
     if (domain === 'conus') return S.available;
     return S.avail[domain] || null;
   }
+  // nadir-first single-sat domain that can serve this field key (null when
+  // nothing can — the honest "no data yet" case)
+  function fieldRouteFor(key) {
+    var cand = [];
+    var tv = S.panes[0] && S.panes[0].tv;
+    if (tv && tv.map) {
+      var d = autoDomainFor(tv.map.getCenter());
+      if (d) cand.push(d);
+    }
+    ['conus', 'hw-wpac', 'fd', 'hw-fd'].forEach(function (d) {
+      if (cand.indexOf(d) < 0 && rowOK(d)) cand.push(d);
+    });
+    for (var i = 0; i < cand.length; i++) {
+      var k2 = mapKeyAcross(key, cand[i]);
+      var p2 = k2 && productByKey(k2, cand[i]);
+      if (!p2) continue;
+      var set = availSet(cand[i]);
+      if (!set || set.has(p2.id)) return cand[i];
+    }
+    return null;
+  }
   function applyAvailability() {
     var set = availSet(S.domain);
     if (!set) return;
@@ -342,13 +392,16 @@
       var ok = p && set.has(p.id);
       el.classList.toggle('coming', !ok);
       var meta = el.querySelector('.cx-meta');
-      if (!ok && meta && meta.textContent.indexOf('no data yet') < 0) {
-        meta.innerHTML += ' · <i class="cx-chip">no data yet</i>';
-      } else if (ok && meta) {
-        var chip = meta.querySelector('.cx-chip');
-        if (chip && chip.textContent === 'no data yet') {
-          meta.innerHTML = meta.innerHTML.replace(/ · <i class="cx-chip">no data yet<\/i>/, '');
-        }
+      if (!meta) return;
+      var chip = meta.querySelector('.cx-chip');
+      if (!ok) {
+        // per-satellite fields (routable from this view) say so — "no data
+        // yet" would be a lie when the data is one routed click away
+        var label = fieldRouteFor(el.dataset.key) ? 'per-sat' : 'no data yet';
+        if (chip && chip.textContent !== label) { chip.remove(); chip = null; }
+        if (!chip) meta.innerHTML += ' · <i class="cx-chip">' + label + '</i>';
+      } else if (chip && (chip.textContent === 'no data yet' || chip.textContent === 'per-sat')) {
+        meta.innerHTML = meta.innerHTML.replace(/ · <i class="cx-chip">[^<]*<\/i>/, '');
       }
     });
   }
@@ -1285,7 +1338,15 @@
       return;
     }
     S.playing = true; S.last = 0;
-    S.panes.forEach(function (p) { if (p && p.tv) p.tv._extPlaying = true; });
+    S.panes.forEach(function (p) {
+      if (p && p.tv) {
+        p.tv._extPlaying = true;
+        // explicit play = the user wants the whole loop now, not the
+        // progressive cold-load ration (the ramp's skip-advance is the
+        // "choppy loop" a cold page plays)
+        if (p.tv.finishRamp) p.tv.finishRamp();
+      }
+    });
     $('cx-play').classList.add('playing', 'on');
     function step(t) {
       if (!S.playing) return;
@@ -1297,7 +1358,20 @@
         // advance to the next READY frame (skip, don't stall — cadence over
         // completeness; unready frames fill quietly and join next lap)
         var tvL = lead();
-        clockShow(S.tm.on || !tvL ? clockIdx() + 1 : tvL.nextReadyIdx(clockIdx()));
+        if (S.tm.on || !tvL) { clockShow(clockIdx() + 1); }
+        else {
+          var ni = tvL.nextReadyIdx(clockIdx());
+          if (ni <= clockIdx()) {
+            // wrap seam: apply any manifest merge deferred during playback
+            // here, where the tail->head jump hides the source surgery —
+            // often the merge extends the tail and the wrap never happens
+            S.panes.forEach(function (p) {
+              if (p && p.tv && p.tv.applyPendingRemerge) p.tv.applyPendingRemerge();
+            });
+            ni = tvL.nextReadyIdx(clockIdx());
+          }
+          clockShow(ni);
+        }
       }
       S.raf = requestAnimationFrame(step);
     }
@@ -1308,6 +1382,7 @@
     S.panes.forEach(function (p) {
       if (p && p.tv) {
         p.tv._extPlaying = false;
+        if (p.tv.applyPendingRemerge) p.tv.applyPendingRemerge();
         // restore the inspector BT raster for the frame we stopped on
         // (playback skipped the per-frame loads)
         if (p.tv.probe && p.tv.frames.length)
@@ -1339,9 +1414,12 @@
     var dpr = window.devicePixelRatio || 1;
     var w = cv.clientWidth, h = cv.clientHeight;
     if (!w) return;
-    cv.width = w * dpr; cv.height = h * dpr;
+    // resizing a canvas reallocates its backing store — only do it when the
+    // dims actually changed (this runs on every frame advance)
+    if (cv.width !== Math.round(w * dpr)) cv.width = Math.round(w * dpr);
+    if (cv.height !== Math.round(h * dpr)) cv.height = Math.round(h * dpr);
     var ctx = cv.getContext('2d');
-    ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
     var n = frames.length;
     ctx.fillStyle = '#141b25'; ctx.fillRect(0, h / 2 - 3, w, 6);
     if (!n) return;

@@ -146,11 +146,13 @@
       }
     };
   }
-  var OBSData = seriesStore(OBS_BASE, 8);
+  var OBSData = seriesStore(OBS_BASE, 24);   // >= a full playback lap of the
+  // 30-frame server series — an LRU smaller than the loop's join set
+  // refetches+reparses every frame JSON at each wrap (stutter fuel)
   // WPC surface analysis (tester item #13): fronts + pressure centers from
   // the coded CODSUS bulletin, emitted by update-sfc-analysis.yml.
   var SFC_BASE = CDN + '/sfc/analysis';
-  var SFCData = seriesStore(SFC_BASE, 6);
+  var SFCData = seriesStore(SFC_BASE, 12);
   // NHC products overlay: cones + formation areas from the emitted feed;
   // current-position icons REUSE the site's global storm feed (the same
   // marker classification the home map renders — one truth, every map)
@@ -689,8 +691,23 @@
     if (st.shown !== best) {
       st.shown = best;
       st.stamp = best;                     // badge shows the displayed scan
+      radPrefetch(m, best);
       if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
     }
+  }
+  // warm the displayed scan's temporal neighbors into the HTTP cache so the
+  // NEXT join boundary's updateImage is a disk hit, not a network fetch —
+  // the scans are immutable-cached, so one warm fetch serves every replay
+  var _radWarm = {};
+  function radPrefetch(m, shown) {
+    var i = m.times.indexOf(shown);
+    [i - 1, i + 1].forEach(function (j) {
+      if (j < 0 || j >= m.times.length) return;
+      var u = CDN + '/' + m.image.replace('{t}', m.times[j]);
+      if (_radWarm[u]) return;
+      _radWarm[u] = 1;
+      try { fetch(u, { mode: 'cors' }).catch(function () {}); } catch (e) {}
+    });
   }
   // freshness poll: ONE timer for all panes; only fetches while some pane
   // shows the layer, so an untoggled cockpit costs nothing.
@@ -743,6 +760,15 @@
       if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
     }).catch(function () { H.flash('surface obs unavailable'); });
   }
+  // camera+size fingerprint for the overlay canvases: their 'render'-driven
+  // redraws are full projection loops (thousands of map.project calls), and
+  // playback fires 'render' on every opacity flip — skip when neither the
+  // camera nor the joined doc changed since the last draw
+  function camKey(map, box, dpr) {
+    var c = map.getCenter();
+    return map.getZoom().toFixed(5) + ':' + c.lng.toFixed(5) + ',' + c.lat.toFixed(5) +
+      ':' + map.getBearing() + ':' + box.width + 'x' + box.height + ':' + dpr;
+  }
   function obsDraw(pane) {
     var AV = window.AscatViewer;
     var st = pane.obs;
@@ -752,7 +778,11 @@
     if (!st || !cv || !map) return;
     var box = pane.el.getBoundingClientRect();
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+    var ck = camKey(map, box, dpr) + ':' + (st.on ? 1 : 0);
+    if (pane._obsDrawDoc === doc && pane._obsDrawCam === ck) return;
+    pane._obsDrawDoc = doc; pane._obsDrawCam = ck;
+    if (cv.width !== Math.round(box.width * dpr)) cv.width = Math.round(box.width * dpr);
+    if (cv.height !== Math.round(box.height * dpr)) cv.height = Math.round(box.height * dpr);
     var g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, box.width, box.height);
@@ -788,11 +818,22 @@
     };
     Object.keys(grid).forEach(function (k) {
       var cell = grid[k], o = cell.o, x = cell.x, y = cell.y;
+      // marine platforms get a distinct center symbol under the barb:
+      // filled diamond = moving ship (VOS), open diamond = moored buoy/C-MAN
+      var plat = o[11] || 0;
+      if (plat) {
+        g.beginPath();
+        g.moveTo(x, y - 5); g.lineTo(x + 5, y);
+        g.lineTo(x, y + 5); g.lineTo(x - 5, y); g.closePath();
+        g.lineWidth = 3; g.strokeStyle = 'rgba(5,10,20,0.85)'; g.stroke();
+        if (plat === 1) { g.fillStyle = '#5bc8d5'; g.fill(); }
+        else { g.lineWidth = 1.5; g.strokeStyle = '#5bc8d5'; g.stroke(); }
+      }
       // barb: white over the SC dark-halo discipline; calm ring is built in
       if (o[7] != null && o[6] != null) {
         AV.drawBarb(g, x, y, o[7], o[6], 'rgba(5,10,20,0.82)', 3.4);
         AV.drawBarb(g, x, y, o[7], o[6], '#dfe8f2', 1.1);
-      } else {
+      } else if (!plat) {
         g.beginPath(); g.arc(x, y, 2.2, 0, Math.PI * 2);
         g.strokeStyle = '#dfe8f2'; g.lineWidth = 1.1; g.stroke();
       }
@@ -909,7 +950,11 @@
     if (!st || !cv || !map) return;
     var box = pane.el.getBoundingClientRect();
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+    var ck = camKey(map, box, dpr) + ':' + (st.on ? 1 : 0);
+    if (pane._sfcDrawDoc === doc && pane._sfcDrawCam === ck) return;
+    pane._sfcDrawDoc = doc; pane._sfcDrawCam = ck;
+    if (cv.width !== Math.round(box.width * dpr)) cv.width = Math.round(box.width * dpr);
+    if (cv.height !== Math.round(box.height * dpr)) cv.height = Math.round(box.height * dpr);
     var g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, box.width, box.height);
@@ -1069,7 +1114,7 @@
   function nhcLayerIds(i) {
     var b = 'ofnhc-' + i;
     return [b + '-area-fill', b + '-area-line', b + '-cone-fill',
-            b + '-cone-line', b + '-track'];
+            b + '-cone-line', b + '-track-case', b + '-track'];
   }
   function nhcClearLayers(pane, paneIdx) {
     var map = pane.tv && pane.tv.map;
@@ -1081,6 +1126,11 @@
     if (pane._nhcCanvas) {
       var g = pane._nhcCanvas.getContext('2d');
       g.clearRect(0, 0, pane._nhcCanvas.width, pane._nhcCanvas.height);
+    }
+    nhcDialogHide(pane);
+    if (pane._nhcCursor) {
+      pane._nhcCursor = false;
+      if (map.getCanvas()) map.getCanvas().style.cursor = '';
     }
   }
   function nhcRender(pane, paneIdx) {
@@ -1104,11 +1154,11 @@
                            '#ffcf5c', 40, '#ff9a2f', 60, '#f5333c'];
           map.addLayer({ id: sid + '-area-fill', type: 'fill', source: sid,
             filter: ['==', ['get', 'kind'], 'area'],
-            paint: { 'fill-color': areaColor, 'fill-opacity': 0.14 } }, before);
+            paint: { 'fill-color': areaColor, 'fill-opacity': 0.24 } }, before);
           map.addLayer({ id: sid + '-area-line', type: 'line', source: sid,
             filter: ['==', ['get', 'kind'], 'area'],
-            paint: { 'line-color': areaColor, 'line-opacity': 0.7,
-                     'line-width': 1.4, 'line-dasharray': [5, 3] } }, before);
+            paint: { 'line-color': areaColor, 'line-opacity': 0.95,
+                     'line-width': 2.2, 'line-dasharray': [5, 3] } }, before);
           map.addLayer({ id: sid + '-cone-fill', type: 'fill', source: sid,
             filter: ['==', ['get', 'kind'], 'cone'],
             paint: { 'fill-color': '#dfe8f2', 'fill-opacity': 0.10 } }, before);
@@ -1116,10 +1166,17 @@
             filter: ['==', ['get', 'kind'], 'cone'],
             paint: { 'line-color': '#dfe8f2', 'line-opacity': 0.8,
                      'line-width': 1.4 } }, before);
+          // forecast track: solid, cased for contrast over any imagery —
+          // the cone alone hides the forecast; positions ride the glyph
+          // canvas (timed, intensity-lettered) in nhcDraw
+          map.addLayer({ id: sid + '-track-case', type: 'line', source: sid,
+            filter: ['==', ['get', 'kind'], 'track'],
+            paint: { 'line-color': 'rgba(5,10,20,0.8)', 'line-opacity': 0.8,
+                     'line-width': 3.4 } }, before);
           map.addLayer({ id: sid + '-track', type: 'line', source: sid,
             filter: ['==', ['get', 'kind'], 'track'],
-            paint: { 'line-color': '#dfe8f2', 'line-opacity': 0.55,
-                     'line-width': 1.0, 'line-dasharray': [2, 2] } }, before);
+            paint: { 'line-color': '#dfe8f2', 'line-opacity': 0.9,
+                     'line-width': 1.6 } }, before);
         } else {
           map.getSource(sid).setData(doc);
         }
@@ -1133,10 +1190,75 @@
         if (!pane._nhcWired) {
           pane._nhcWired = true;
           map.on('render', function () { nhcDraw(pane); });
+          // AOI click -> genesis-chance dialog. The glyph canvas is
+          // pointer-events:none, so the map still owns the pointer; hit-test
+          // the real GL area layer (same pattern as select-on-map)
+          map.on('click', function (ev) { nhcAreaClick(pane, paneIdx, ev); });
+          map.on('mousemove', function (ev) {
+            var s2 = pane.nhc, fill = 'ofnhc-' + paneIdx + '-area-fill';
+            if (!s2 || !s2.on || !map.getLayer(fill) || (pane.tv && pane.tv._armed)) return;
+            var hit = map.queryRenderedFeatures(ev.point, { layers: [fill] }).length > 0;
+            // only touch the cursor we set — never clobber another tool's
+            if (hit && !pane._nhcCursor) { pane._nhcCursor = true; map.getCanvas().style.cursor = 'pointer'; }
+            else if (!hit && pane._nhcCursor) { pane._nhcCursor = false; map.getCanvas().style.cursor = ''; }
+          });
         }
         nhcDraw(pane);
         if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
       }).catch(function () { H.flash('NHC products unavailable'); });
+  }
+  function nhcTierColor(p) {
+    return p >= 60 ? '#f5333c' : p >= 40 ? '#ff9a2f' : '#ffcf5c';
+  }
+  function nhcDialogHide(pane) {
+    if (pane._nhcDialog) pane._nhcDialog.style.display = 'none';
+  }
+  function nhcAreaClick(pane, paneIdx, ev) {
+    var st = pane.nhc;
+    var map = pane.tv && pane.tv.map;
+    var fill = 'ofnhc-' + paneIdx + '-area-fill';
+    if (!st || !st.on || !map || !map.getLayer(fill)) return;
+    if (pane.tv && pane.tv._armed) return;   // draw-a-box owns this click
+    var fs = map.queryRenderedFeatures(ev.point, { layers: [fill] });
+    if (!fs.length) { nhcDialogHide(pane); return; }
+    var esc = function (s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, function (ch) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+      });
+    };
+    var p = fs[0].properties || {};
+    var el = pane._nhcDialog;
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'cx-nhc-dialog';
+      el.style.cssText = 'position:absolute;z-index:6;min-width:200px;max-width:250px;' +
+        'background:rgba(10,13,18,.94);border:1px solid rgba(90,110,140,.45);' +
+        'border-radius:8px;padding:8px 10px;color:#dfe8f2;' +
+        'font:12px "Segoe UI",system-ui,sans-serif;display:none';
+      pane.el.appendChild(el);
+      pane._nhcDialog = el;
+    }
+    var row = function (label, prob, risk) {
+      var v = typeof prob === 'number' ? prob : parseInt(prob, 10) || 0;
+      return '<div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0">' +
+        '<span style="color:#8ea2bd">' + label + '</span>' +
+        '<b style="color:' + nhcTierColor(v) + '">' + v + '%' +
+        (risk ? ' · ' + esc(risk) : '') + '</b></div>';
+    };
+    var as = (NHCData.doc && NHCData.doc.as_of) ? fmtZ(NHCData.doc.as_of) : '';
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">' +
+        '<b style="flex:1">Formation area' + (p.basin ? ' · ' + esc(p.basin) : '') + '</b>' +
+        '<span class="cx-nhc-dlg-x" style="cursor:pointer;color:#8ea2bd;padding:0 3px">✕</span></div>' +
+      row('2-day chance', p.prob2, p.risk2) +
+      row('7-day chance', p.prob7, p.risk7) +
+      '<div style="margin-top:6px;color:#8ea2bd;font-size:10.5px">Tropical cyclone formation · NHC outlook' +
+        (as ? ' · ' + as : '') + '</div>';
+    el.querySelector('.cx-nhc-dlg-x').onclick = function () { nhcDialogHide(pane); };
+    var box = pane.el.getBoundingClientRect();
+    el.style.left = Math.max(4, Math.min(ev.point.x + 12, box.width - 260)) + 'px';
+    el.style.top = Math.max(4, Math.min(ev.point.y + 12, box.height - 120)) + 'px';
+    el.style.display = 'block';
   }
   function nhcRaise(pane, paneIdx) {
     var map = pane.tv && pane.tv.map;
@@ -1152,16 +1274,64 @@
     if (!st || !cv || !map) return;
     var box = pane.el.getBoundingClientRect();
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+    var ck = camKey(map, box, dpr) + ':' + (st.on ? 1 : 0);
+    if (pane._nhcDrawN === NHCData.doc && pane._nhcDrawG === GSData.doc &&
+        pane._nhcDrawCam === ck) return;
+    pane._nhcDrawN = NHCData.doc; pane._nhcDrawG = GSData.doc;
+    pane._nhcDrawCam = ck;
+    if (cv.width !== Math.round(box.width * dpr)) cv.width = Math.round(box.width * dpr);
+    if (cv.height !== Math.round(box.height * dpr)) cv.height = Math.round(box.height * dpr);
     var g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, box.width, box.height);
     if (!st.on) return;
-    var gs = GSData.doc;
-    if (!gs || !gs.features) return;
     var bounds = map.getBounds();
     var w = bounds.getWest(), e = bounds.getEast(), s = bounds.getSouth(), n = bounds.getNorth();
     var z = map.getZoom();
+    var proj = function (c) {
+      var lon = c[0], lat = c[1];
+      if (lat < s - 2 || lat > n + 2) return null;
+      if (lon < w && lon + 360 <= e) lon += 360;
+      if (lon < w - 2 || lon > e + 2) return null;
+      var xy = map.project([lon, lat]);
+      if (xy.x < -20 || xy.y < -20 || xy.x > box.width + 20 || xy.y > box.height + 20) return null;
+      return xy;
+    };
+    // forecast positions (from the NHC feed): timed, intensity-lettered
+    // points along the track inside the cone. Drawn BEFORE the live markers
+    // so the current-position glyph always wins the overlap.
+    var nd = NHCData.doc;
+    if (nd && nd.features) {
+      g.textAlign = 'center'; g.lineJoin = 'round';
+      nd.features.forEach(function (f) {
+        var p = f.properties || {};
+        if (p.kind !== 'point') return;
+        if (p.tau === 0) return;   // current position: the live marker owns it
+        var c = f.geometry && f.geometry.coordinates;
+        var xy = c && proj(c);
+        if (!xy) return;
+        var kt = typeof p.maxwind === 'number' ? p.maxwind : null;
+        var cat = kt == null || kt < 34 ? 'TD' : kt < 64 ? 'TS' : kt < 83 ? 'C1' :
+                  kt < 96 ? 'C2' : kt < 113 ? 'C3' : kt < 137 ? 'C4' : 'C5';
+        var letter = cat === 'TD' ? 'D' : cat === 'TS' ? 'S' : cat.slice(1);
+        g.beginPath(); g.arc(xy.x, xy.y, 7, 0, Math.PI * 2);
+        g.fillStyle = 'rgba(5,10,20,0.85)'; g.fill();
+        g.beginPath(); g.arc(xy.x, xy.y, 5.6, 0, Math.PI * 2);
+        g.fillStyle = SSHS_COLORS[cat]; g.fill();
+        g.font = 'bold 9px "Segoe UI", system-ui, sans-serif';
+        g.fillStyle = '#0a0d12';
+        g.fillText(letter, xy.x, xy.y + 3);
+        if (z >= 4 && p.datelbl) {
+          g.font = '9px "Segoe UI", system-ui, sans-serif';
+          g.lineWidth = 3; g.strokeStyle = 'rgba(5,10,20,0.85)';
+          g.strokeText(p.datelbl, xy.x, xy.y + 17);
+          g.fillStyle = '#c6d2e2';
+          g.fillText(p.datelbl, xy.x, xy.y + 17);
+        }
+      });
+    }
+    var gs = GSData.doc;
+    if (!gs || !gs.features) return;
     g.font = 'bold 11px "Segoe UI", system-ui, sans-serif';
     g.textAlign = 'center'; g.lineJoin = 'round';
     gs.features.forEach(function (f) {
@@ -1364,7 +1534,7 @@
     }
     if (pane.obs && pane.obs.on) {
       var od = pane._obsDoc || OBSData.doc;
-      extra.push('METAR obs' + (od && od.as_of ? ' \u00b7 ' + fmtZ(od.as_of) : ''));
+      extra.push('Surface obs' + (od && od.as_of ? ' \u00b7 ' + fmtZ(od.as_of) : ''));
     }
     if (pane.nhc && pane.nhc.on) {
       var nd = NHCData.doc;

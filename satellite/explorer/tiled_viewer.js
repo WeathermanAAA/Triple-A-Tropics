@@ -284,9 +284,20 @@
         var before = (self.manifest.times || []).join();
         self.manifest = m;
         if (self._mfCache) self._mfCache[url] = { m: m, t: Date.now() };
-        if ((m.times || []).join() !== before) self._remergeFrames();
+        if ((m.times || []).join() !== before) {
+          // mid-PLAYBACK a remerge is synchronous source surgery under a
+          // running clock (a visible hitch) — defer it to the loop's wrap
+          // seam (or pause), where the tail->head jump hides it
+          if (self.playing || self._extPlaying) self._pendingRemerge = true;
+          else self._remergeFrames();
+        }
       })
       .catch(function () {});   // transient fetch failure: keep the current loop
+  };
+  VP.applyPendingRemerge = function () {
+    if (!this._pendingRemerge) return;
+    this._pendingRemerge = false;
+    this._remergeFrames();
   };
 
   // Loop window: the trailing loopCap stamps of the manifest. The full
@@ -566,6 +577,16 @@
       this._residCap = Math.min(this.frames.length, this._residCap * 2);
       this._pumpMounts();
     }
+  };
+  // explicit play = the user wants the WHOLE loop: drop the progressive
+  // residency cap so the remaining frames stream in now (still bounded by
+  // the MOUNT_AHEAD fetch stagger + the loop cap itself). The ramp exists
+  // to soften a cold background mount, not to ration an active playback —
+  // rationing it is exactly the "choppy loop" testers see on a cold page.
+  VP.finishRamp = function () {
+    if (!this._residCap) return;
+    this._residCap = null;
+    this._pumpMounts();
   };
 
   // ---- camera fetch discipline (contract rule 4) ----
@@ -902,6 +923,7 @@
   VP.play = function () {
     if (this.playing || this.frames.length < 2) return;
     this.playing = true; this._last = 0; this._dwell = 0;
+    this.finishRamp();
     var self = this;
     var step = function (t) {
       if (!self.playing) return;
@@ -911,6 +933,7 @@
       if (atNewest) interval *= self.dwellNewest;   // 6x dwell on the latest frame
       if (t - self._last >= interval) {
         self._last = t;
+        if (self.frameIdx + 1 >= self.frames.length) self.applyPendingRemerge();
         self.showFrame(self.frameIdx + 1);
       }
       self._raf = requestAnimationFrame(step);
@@ -920,6 +943,7 @@
   };
   VP.pause = function () {
     this.playing = false;
+    this.applyPendingRemerge();
     if (this._raf) cancelAnimationFrame(this._raf);
     // playback skipped the per-frame BT loads; restore the inspector's
     // raster for the frame we stopped on

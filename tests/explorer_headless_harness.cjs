@@ -420,14 +420,23 @@ function serve() {
       tv._reveal = (idx, stamp) => { window.__reveals.push([performance.now() | 0, stamp]); orig(idx, stamp); };
     });
     await page.click("#cx-play");
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(16000);
     await page.click("#cx-play");
     const r = await page.evaluate(() => {
       const rv = window.__reveals || [];
       const gaps = [];
       for (let i = 1; i < rv.length; i++) gaps.push(rv[i][0] - rv[i - 1][0]);
-      return { reveals: rv.length, gaps: gaps,
+      // split: first 8 s = cold fill, last 8 s = steady-state cadence (what
+      // a settled loop feels like). jitter = p95-ish spread of warm gaps.
+      const t0 = rv.length ? rv[0][0] : 0;
+      const warm = [];
+      for (let i = 1; i < rv.length; i++)
+        if (rv[i][0] - t0 >= 8000) warm.push(rv[i][0] - rv[i - 1][0]);
+      const sorted = warm.slice().sort((a, b) => a - b);
+      return { reveals: rv.length,
                maxGap: gaps.length ? Math.max(...gaps) : null,
+               warmGaps: warm, warmMax: warm.length ? Math.max(...warm) : null,
+               warmMedian: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null,
                probeStamps: rv.slice(0, 3).map(x => x[1]) };
     });
     console.log("PLAYBACK:", JSON.stringify(r));
@@ -548,6 +557,109 @@ function serve() {
       return { sat: p.tv.frames[p.tv.frameIdx], obsShown: p.obs.shown, sfcShown: p.sfc.shown };
     })));
     await page.screenshot({ path: path.join(OUT, "nhc_overlay.png") });
+  }
+
+  if (scenario === "fieldroute") {
+    // boot lands on the GEO ring (3 BT fields); clicking a per-satellite
+    // field (True Color, a channel) must ROUTE to the nadir-nearest single
+    // sat + select it there — not dead-end on a "no data yet" chip
+    const chipTxt = await page.evaluate(() => {
+      const row = [...document.querySelectorAll(".cx-field")].find(r => r.dataset.key === "truecolor");
+      return row ? row.textContent.replace(/\s+/g, " ") : null;
+    });
+    console.log("RING TRUECOLOR ROW:", JSON.stringify(chipTxt));
+    await page.evaluate(() => {
+      const row = [...document.querySelectorAll(".cx-field")].find(r => r.dataset.key === "truecolor");
+      if (row) row.click();
+    });
+    await page.waitForTimeout(4500);
+    const st1 = await page.evaluate(() => {
+      const S = window.__cockpit, p = S.panes[0];
+      return { domain: S.domain, product: p.product && p.product.key,
+               renders: p.tv.manifest && p.tv.manifest.product };
+    });
+    console.log("AFTER TRUECOLOR CLICK:", JSON.stringify(st1));
+    await page.screenshot({ path: path.join(OUT, "fieldroute_truecolor.png") });
+    // channel from the ring: switch back to global first
+    await page.click('#cx-sats .cx-item[data-sat="geo"]');
+    await page.waitForTimeout(3000);
+    await page.evaluate(() => {
+      const tabs = [...document.querySelectorAll(".cx-tab")];
+      const ch = tabs.find(t => /channel/i.test(t.textContent));
+      if (ch) ch.click();
+      const row = [...document.querySelectorAll(".cx-field")].find(r => r.dataset.key === "c02");
+      if (row) row.click();
+    });
+    await page.waitForTimeout(4500);
+    const st2 = await page.evaluate(() => {
+      const S = window.__cockpit, p = S.panes[0];
+      return { domain: S.domain, product: p.product && p.product.key,
+               renders: p.tv.manifest && p.tv.manifest.product };
+    });
+    console.log("AFTER C02 CLICK FROM RING:", JSON.stringify(st2));
+    await page.screenshot({ path: path.join(OUT, "fieldroute_channel.png") });
+  }
+
+  if (scenario === "nhcpolish") {
+    // needs a local NHC feed alias (HARNESS_FEEDS) or the live feed; reads
+    // the doc to find a cone + an AOI, then exercises the forecast glyphs
+    // and the click dialog for real
+    const feed = NHC_LOCAL
+      ? JSON.parse(fs.readFileSync(path.join(NHC_LOCAL, "nhc/overlay/latest.json")))
+      : await (await fetch("https://cdn.triple-a-tropics.com/nhc/overlay/latest.json")).json();
+    const centroid = (coords) => {
+      const ring = coords[0];
+      let sx = 0, sy = 0;
+      ring.forEach(([x, y]) => { sx += x; sy += y; });
+      return [sx / ring.length, sy / ring.length];
+    };
+    const cone = feed.features.find((f) => f.properties.kind === "cone");
+    const area = feed.features.find((f) => f.properties.kind === "area");
+    await page.click("#cx-ov-nhc");
+    await page.waitForTimeout(2000);
+    if (cone) {
+      const [cx, cy] = centroid(cone.geometry.coordinates);
+      await page.evaluate(([lng, lat]) => {
+        window.__cockpit.panes[0].tv.map.jumpTo({ center: [lng, lat], zoom: 4.4 });
+      }, [cx, cy]);
+      await page.waitForTimeout(3500);
+      const st = await page.evaluate(() => {
+        const p = window.__cockpit.panes[0], map = p.tv.map;
+        const layers = map.getStyle().layers.map(l => l.id);
+        const cv = p._nhcCanvas;
+        let painted = 0;
+        if (cv) {
+          const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+          for (let i = 3; i < d.length; i += 400) if (d[i] > 0) painted++;
+        }
+        return { trackCase: layers.includes("ofnhc-0-track-case"),
+                 track: layers.includes("ofnhc-0-track"), painted };
+      });
+      console.log("CONE/FORECAST:", JSON.stringify(st));
+      await page.screenshot({ path: path.join(OUT, "nhc_cone_forecast.png") });
+    } else console.log("CONE/FORECAST: no active storm in feed");
+    if (area) {
+      const [ax, ay] = centroid(area.geometry.coordinates);
+      await page.evaluate(([lng, lat]) => {
+        window.__cockpit.panes[0].tv.map.jumpTo({ center: [lng, lat], zoom: 4.2 });
+      }, [ax, ay]);
+      await page.waitForTimeout(3500);
+      const pt = await page.evaluate(([lng, lat]) => {
+        const p = window.__cockpit.panes[0];
+        const xy = p.tv.map.project([lng, lat]);
+        return { x: xy.x, y: xy.y };
+      }, [ax, ay]);
+      const mapBox = await page.locator("#cx-map-0").boundingBox();
+      await page.mouse.click(mapBox.x + pt.x, mapBox.y + pt.y);
+      await page.waitForTimeout(900);
+      const dlg = await page.evaluate(() => {
+        const el = window.__cockpit.panes[0]._nhcDialog;
+        return { shown: !!(el && el.style.display === "block"),
+                 text: el ? el.textContent.replace(/\s+/g, " ").slice(0, 160) : null };
+      });
+      console.log("AOI DIALOG:", JSON.stringify(dlg));
+      await page.screenshot({ path: path.join(OUT, "nhc_aoi_dialog.png") });
+    } else console.log("AOI DIALOG: no formation areas in feed");
   }
 
   console.log("CONSOLE ERRORS:", errors.length ? JSON.stringify(errors.slice(0, 10), null, 1) : "none");

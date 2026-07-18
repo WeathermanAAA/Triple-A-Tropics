@@ -99,6 +99,36 @@ def storm_features(sid: str, meta: dict):
                     "geometry": {"type": "LineString", "coordinates": line},
                     "properties": dict(props, kind="track"),
                 })
+    # forecast POSITIONS (same zip, third shapefile): the cone envelope alone
+    # hides the forecast — emit each advisory point so the client can draw
+    # the track with timed, intensity-labeled positions inside the cone
+    pts = next((n[:-4] for n in names if n.endswith("_5day_pts.shp")), None)
+    if pts:
+        r = _shp_reader(z, pts)
+        for sr in r.shapeRecords():
+            rec = sr.record.as_dict()
+            if not sr.shape.points:
+                continue
+            x, y = sr.shape.points[0]
+
+            def num(key):
+                try:
+                    v = rec.get(key)
+                    return None if v in (None, "") else int(float(v))
+                except (TypeError, ValueError):
+                    return None
+            out.append({
+                "type": "Feature",
+                "geometry": {"type": "Point",
+                             "coordinates": [round(x, 3), round(y, 3)]},
+                "properties": dict(
+                    props, kind="point",
+                    tau=num("TAU"), maxwind=num("MAXWIND"), gust=num("GUST"),
+                    mslp=num("MSLP"),
+                    dvlbl=rec.get("DVLBL"), tcdvlp=rec.get("TCDVLP"),
+                    validtime=rec.get("VALIDTIME"), datelbl=rec.get("DATELBL"),
+                ),
+            })
     return out
 
 
