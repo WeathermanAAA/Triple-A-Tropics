@@ -21,6 +21,7 @@
   var CDN = 'https://cdn.triple-a-tropics.com';
   var MW_BASE = CDN + '/microwave';
   var SC_BASE = CDN + '/ascat';
+  var UHR_BASE = CDN + '/ascat/uhr';
   var $ = function (id) { return document.getElementById(id); };
 
   var CX = null;           // cockpit state (window.__cockpit)
@@ -185,15 +186,30 @@
     load: function () {
       var self = this;
       if (this._p) return this._p;
-      this._p = fetch(SC_BASE + '/manifest.json?t=' + Date.now(), { cache: 'no-store' })
+      var main = fetch(SC_BASE + '/manifest.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); });
+      // UHR companion feed (~2 km-class storm cuts, same schema + uhr flag).
+      // Optional by design: its absence must never gate the operational feed.
+      var uhr = fetch(UHR_BASE + '/manifest.json?t=' + Date.now(), { cache: 'no-store' })
         .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-        .then(function (m) { self.manifest = m; return m; });
+        .catch(function () { return null; });
+      this._p = Promise.all([main, uhr]).then(function (ms) {
+        var m = ms[0], u = ms[1];
+        if (u && u.passes && u.passes.length) {
+          m.passes = (m.passes || []).concat(u.passes).sort(function (a, b) {
+            return String(b.start_utc || '').localeCompare(String(a.start_utc || ''));
+          });
+        }
+        self.manifest = m;
+        return m;
+      });
       return this._p;
     },
     pass: function (id) {
       var self = this;
       if (this.loaded[id]) return Promise.resolve(this.loaded[id]);
-      return fetch(SC_BASE + '/' + id + '.json', { cache: 'default' })
+      var base = String(id).indexOf('uhr_') === 0 ? UHR_BASE : SC_BASE;
+      return fetch(base + '/' + id + '.json', { cache: 'default' })
         .then(function (r) { if (!r.ok) throw 0; return r.json(); })
         .then(function (p) { self.loaded[id] = p; return p; });
     },
@@ -397,6 +413,7 @@
       return Promise.all(metas.map(function (m) { return SCData.pass(m.id).catch(function () { return null; }); }));
     }).then(function (passes) {
       pane._scPasses = passes.filter(Boolean);
+      scFieldSync(pane);                    // UHR ~2 km field rasters
       scCanvas(pane);                       // ensure the overlay canvas exists
       if (!pane._scWired) {
         pane._scWired = true;
@@ -426,6 +443,55 @@
       scDraw(pane);
       if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
     }).catch(function () { H.flash('ASCAT data unavailable'); });
+  }
+  // UHR passes carry a baked ~2 km wind-speed FIELD (same stepped kt classes
+  // as the barbs/legend) — mounted as in-GL image rasters under the barbs,
+  // one per drawn UHR pass, torn down when the pass leaves the drawn set or
+  // the layer goes off. Operational passes have no field: barbs only.
+  function scFieldSync(pane) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    var paneIdx = (CX && CX.panes) ? CX.panes.indexOf(pane) : 0;
+    var st = pane.sc;
+    var active = pane.kind === 'sc' || (st && st.on);
+    var want = {};
+    if (active && pane._scPasses) {
+      pane._scPasses.forEach(function (p) {
+        if (p && p.uhr && p.field && p.field.bounds && p.field.file) {
+          want['ofscf-' + paneIdx + '-' + p.id] = p;
+        }
+      });
+    }
+    var cur = pane._scFieldLayers || [];
+    cur.forEach(function (id) {
+      if (!want[id]) {
+        if (map.getLayer(id)) map.removeLayer(id);
+        if (map.getSource(id)) map.removeSource(id);
+      }
+    });
+    var kept = cur.filter(function (id) { return !!want[id]; });
+    Object.keys(want).forEach(function (id) {
+      if (kept.indexOf(id) >= 0) return;
+      var p = want[id], b = p.field.bounds;   // [W,S,E,N]
+      var base = String(p.id).indexOf('uhr_') === 0 ? UHR_BASE : SC_BASE;
+      try {
+        map.addSource(id, { type: 'image', url: base + '/' + p.field.file,
+          coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]] });
+        var before = map.getLayer('grat') ? 'grat' : undefined;
+        map.addLayer({ id: id, type: 'raster', source: id,
+          paint: { 'raster-opacity': 0.82, 'raster-fade-duration': 0,
+                   'raster-resampling': 'linear' } }, before);
+        kept.push(id);
+      } catch (e) { /* map mid-teardown: next render re-syncs */ }
+    });
+    pane._scFieldLayers = kept;
+  }
+  function scFieldRaise(pane) {
+    var map = pane.tv && pane.tv.map;
+    if (!map || !map.getLayer('grat')) return;
+    (pane._scFieldLayers || []).forEach(function (id) {
+      try { if (map.getLayer(id)) map.moveLayer(id, 'grat'); } catch (e) {}
+    });
   }
   function scDraw(pane) {
     var AV = window.AscatViewer;
@@ -600,6 +666,7 @@
     if (pane.tv) pane.tv.setImageryVisible(true);
     if (!(pane.mw && pane.mw.on)) mwClearLayers(pane);
     scDraw(pane);   // clears unless sc layer is on
+    scFieldSync(pane);
     if (H.renderPaneChrome) H.renderPaneChrome(i);
   }
   // ========================================================================
@@ -1450,7 +1517,7 @@
       var sst = scState(pane);
       sst.on = on;
       if (on) scRender(pane, i);
-      else scDraw(pane);
+      else { scDraw(pane); scFieldSync(pane); }
       if (H.renderPaneChrome) H.renderPaneChrome(i);
     }
   }
@@ -1481,6 +1548,7 @@
       if (pane.sfc && pane.sfc.on) sfcSyncTo(pane, i, stamp);
       // NHC vector layers share the frame-layer burial problem: re-raise
       if (pane.nhc && pane.nhc.on) nhcRaise(pane, i);
+      if (pane._scFieldLayers && pane._scFieldLayers.length) scFieldRaise(pane);
     });
   }
 

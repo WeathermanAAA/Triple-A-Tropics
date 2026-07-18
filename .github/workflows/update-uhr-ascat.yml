@@ -1,0 +1,44 @@
+# UHR scatterometer feed for the Satellite Explorer (2 km-class ASCAT storm
+# cuts, anonymous NOAA/STAR HTTPS — no creds). R2-only: permissions
+# contents:read, commits NOTHING. Files are ~110 MB each; the generator caps
+# downloads per run (--max-new) and catches up across ticks, idempotent by
+# pass id against the prior manifest. Staggered non-round minutes per repo
+# standard (GitHub sheds :00-family crons).
+name: update-uhr-ascat
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "18,48 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-uhr-ascat
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet boto3 netCDF4 numpy Pillow
+
+      - name: Emit UHR scatterometer feed to R2
+        timeout-minutes: 20
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python generate_uhr_ascat.py --store r2 --max-new 4

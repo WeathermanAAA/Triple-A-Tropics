@@ -92,6 +92,17 @@ function serve() {
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
+  const UHR_LOCAL = aliasDir(SCRATCH + "/uhr/");
+  if (UHR_LOCAL) await page.route("https://cdn.triple-a-tropics.com/ascat/uhr/**", async (route) => {
+    const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+    try {
+      const body = fs.readFileSync(path.join(UHR_LOCAL, rel));
+      const ctype = rel.endsWith(".webp") ? "image/webp" : "application/json";
+      await route.fulfill({ status: 200, body, headers: {
+        "content-type": ctype, "access-control-allow-origin": "*" } });
+    } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
+  });
+
   const NHC_LOCAL = aliasDir(SCRATCH + "/nhc/");
   if (NHC_LOCAL) await page.route("https://cdn.triple-a-tropics.com/nhc/**", async (route) => {
     const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
@@ -557,6 +568,40 @@ function serve() {
       return { sat: p.tv.frames[p.tv.frameIdx], obsShown: p.obs.shown, sfcShown: p.sfc.shown };
     })));
     await page.screenshot({ path: path.join(OUT, "nhc_overlay.png") });
+  }
+
+  if (scenario === "uhr") {
+    // Scatterometer layer with the UHR companion feed: passes must appear in
+    // the pass list (sensor-labelled), the ~2 km field raster must mount
+    // under the barbs, and the barbs must draw from the decimated wvc set.
+    const um = JSON.parse(fs.readFileSync(path.join(
+      process.env.HARNESS_FEEDS, "uhr/ascat/uhr/manifest.json")));
+    const up = um.passes[0];
+    const [ux, uy] = [(up.bbox[0] + up.bbox[2]) / 2, (up.bbox[1] + up.bbox[3]) / 2];
+    await page.evaluate(([lng, lat]) => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [lng, lat], zoom: 4.6 });
+    }, [ux, uy]);
+    await page.waitForTimeout(3200);
+    await page.click("#cx-ov-sc");
+    await page.waitForTimeout(4000);
+    const st = await page.evaluate(() => {
+      const p = window.__cockpit.panes[0], map = p.tv.map;
+      const layers = map.getStyle().layers.map(l => l.id);
+      const cv = p._scCanvas;
+      let painted = 0;
+      if (cv) {
+        const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+        for (let i = 3; i < d.length; i += 400) if (d[i] > 0) painted++;
+      }
+      return {
+        passes: (p._scPasses || []).map(x => x.id),
+        uhrLoaded: (p._scPasses || []).some(x => x.uhr),
+        fieldLayers: layers.filter(id => id.startsWith("ofscf-")),
+        barbsPainted: painted,
+      };
+    });
+    console.log("UHR STATE:", JSON.stringify(st));
+    await page.screenshot({ path: path.join(OUT, "uhr_overlay.png") });
   }
 
   if (scenario === "fieldroute") {
