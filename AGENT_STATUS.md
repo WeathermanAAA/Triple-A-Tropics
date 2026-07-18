@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-18 ~21:3x UTC — THIRD wave shipped: consolidated overlay batch (persistence+toggle truth, progressive cold GEO load, front-pip geometry, NHC cones/positions/formation-areas overlay, METAR+sfc animated series, modern-radar MRMS) @3aa28a0b + 5 review-confirmed majors fixed forward @4e9ad623; site-perf pass (basemap geojson −38%, explorer duplicate-basemap kill) @6fe7b8bb. All headless-verified. See the 21:3x entry._
+_Last update: 2026-07-18 ~23:3x UTC — FOURTH wave shipped: live-testing round 2 all eight items root-caused + live-verified (conus feed freeze was the common root — stopgap un-retired @47755eb1 AND a dedicated box conus emit lane, tsr @25abacb), surface obs w/ ships+buoys, NHC dialog+forecast points, per-sat field routing from the ring, MRMS epoch purge + live zoomed proof, playback smoothing, and a NEW UHR 2-km scatterometer source @aed3c37f. See the 23:3x entry._
 
 ---
 
@@ -58,6 +58,85 @@ _Last update: 2026-07-18 ~21:3x UTC — THIRD wave shipped: consolidated overlay
    live → Streaming software), ③ three commands from the runbook. The
    /stream/ page it broadcasts is already live and self-updating.
 9. _(agent appends new steps here as the re-kick queue lands)_
+
+---
+
+## 2026-07-18 (~21:3x–23:3x UTC) — FOURTH WAVE: live-testing round 2 (regressions + still-brokens) + UHR scatterometer
+
+All eight reported items root-caused and live-verified with real deployed-site
+captures (`LIVE=1` harness mode, screenshots in the session scratchpad).
+Commits @47755eb1 (ops), @b5bd1275 (main batch), @aed3c37f (UHR).
+
+1. **"METAR disappeared" — root cause was the CONUS sat feed freeze, not the
+   obs layer.** The 17:2x stopgap retirement assumed the box emit-cron gives
+   conus a 10-min cadence; the box actually runs ONE sequential pass over
+   all five suites (~3.5 min/product, 4+ h/rotation — verified in its logs),
+   so conus froze at the stopgap's last slot (17:01Z) and every time-locked
+   join starved: obs blanked (75-min skew), MRMS pinned to pre-fix scans,
+   loops lurched across a 5-h gap. Fixes, all live: stopgap schedule
+   un-retired (2/hr, @47755eb1) AND a **dedicated conus emit lane on the
+   box** (`docker-compose.s2.conus-lane.yml`, second compose project pinned
+   to `S2_CRON_SUITES=conus` interval 300 s — running as
+   `tat-s2-conus-emit-cron-1`, committed to tsr @25abacb). Once the lane
+   proves out over ~a day, the GH stopgap schedule can retire again.
+2. **Surface obs upgraded (was "METAR obs")**: NDBC buoy/C-MAN + VOS ship
+   obs merged into the same rolling series with a `plat` field — ships =
+   filled teal diamond, moored platforms = open diamond, land unchanged;
+   one rank-desc declutter across classes; series keep 18→30 (must outrun
+   the 4-h conus loop), client LRU 8→24. Live-verified global (WPAC
+   station plots over Himawari-9 at 22:20Z). Ship/buoy symbols land with
+   the first post-@b5bd1275 update-metar run (crons were shedding at
+   check time; the generator is proven against the live sources locally).
+3. **NHC overlay polish, all live-verified**: AOI click → genesis dialog
+   (2-day/7-day % + risk words off the feed's prob2/risk2/prob7/risk7);
+   AOI contrast fill .14→.24 + line .7→.95/2.2 (canonical tier colors
+   kept); forecast POINTS emitted from the cone zip's pts shapefile
+   (tau/maxwind/validtime/datelbl) → timed intensity-lettered discs along
+   a cased solid track inside the cone.
+4. **True Color / "channels went missing"**: nothing was ever deleted —
+   the boot default moved to the GEO ring (@b96a187b), which is BT-only
+   BY DESIGN (cross-sensor RGB/channel composites would fabricate; so
+   documented in the tsr registry). The ring's rail now lists the whole
+   single-sat catalog chipped `per-sat`; clicking ROUTES to the
+   nadir-nearest satellite and selects the field there (live-verified:
+   ring→True Color lands on conus truecolor, ring→C02 on conus c02).
+   True color itself verified ONE shared frozen recipe everywhere it
+   renders (tsr branches in sync @4afdee9, tile pixels checked — real
+   RGB, not IR). FD truecolor remains registry-excluded (path collision
+   + disk-scale C02 budget) — Andrew decision, queued below.
+5. **MRMS "still blocky"**: the smooth renderer WAS live but unreachable —
+   stale sat frames joined pre-fix immutable-cached scans. Fixed by the
+   freshness work above + a RENDER_EPOCH floor in the generator that
+   evicts pre-19:25Z frames from the series (keep 18→30). Live zoomed
+   proof: continuously-graded cells over the Chesapeake at z7.6 on the
+   22:26Z scan — no visible pixels.
+6. **Choppy loops**: explicit play now releases the progressive residency
+   ramp; manifest remerges defer to the wrap seam/pause (no mid-play
+   source surgery); MRMS scan neighbors prefetch into HTTP cache; overlay
+   canvases skip redraws when camera+doc unchanged and stop reallocating
+   per advance. Live A/B (same harness, same machine): max reveal gap
+   1240→672 ms, worst warm gap 1240→535 ms; median flat at the
+   software-GL bench floor (real GPUs sit well under it).
+7. **UHR scatterometer source (new)**: NOAA/STAR 2 km-class ASCAT-B/C
+   storm cuts → `ascat/uhr/` riding the operational feed contract
+   (manifest + wvc pass JSONs at ~14 km barb stride + a baked ~2 km
+   wind-speed FIELD webp on the same stepped HC kt classes). Decode traps
+   documented in the generator (broken valid_range; raw −32767 =
+   no-retrieval sentinel == number_ambiguities 0). Explorer merges the
+   UHR manifest (optional, never gates the operational feed), mounts the
+   field under the barbs per drawn UHR pass. Harness-verified over ELIDA
+   (passes storm-tagged 97E/ELIDA by the existing associator);
+   `update-uhr-ascat.yml` 2×/hr — first R2 emit pending its cron.
+
+**QUEUED manual steps (Andrew)** — appended to the running list above:
+- **FD truecolor decision** (item 4): un-exclude `goes19-fd-truecolor` /
+  `himawari9-fd-truecolor` in tsr `s2_registry.py` needs the Phase-1
+  `goes19-fd-mcmip` placeholder row retired (product_path collision) and
+  a fetch-budget call on disk-scale 0.5-km C02/B03. Everything else about
+  ring vs per-sat truecolor is working-as-designed.
+- **Stopgap retirement check (~a day out)**: if `tat-s2-conus-emit-cron-1`
+  keeps conus manifests ≤15 min stale through 2026-07-19, re-retire the
+  `emit-conus-stopgap.yml` schedule (workflow_dispatch stays).
 
 ---
 

@@ -340,9 +340,20 @@ function serve() {
   }
 
   if (scenario === "mrmszoom") {
-    await page.evaluate(() => {
-      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-96.5, 42.5], zoom: 6.4 });
-    });
+    // MRMS_ZOOM="lon,lat,zoom" picks the target (default Upper Midwest) —
+    // point it at wherever the live composite has echoes
+    const zt = (process.env.MRMS_ZOOM || "-96.5,42.5,6.4").split(",").map(Number);
+    await page.evaluate(([lng, lat, z]) => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [lng, lat], zoom: z });
+    }, zt);
+    if (process.env.MRMS_FIELD) {   // e.g. irbd — a gray base reads radar best
+      await page.waitForTimeout(3200);
+      await page.evaluate((key) => {
+        const row = [...document.querySelectorAll(".cx-field")].find(r => r.dataset.key === key);
+        if (row) row.click();
+      }, process.env.MRMS_FIELD);
+      await page.waitForTimeout(4000);
+    }
     await page.waitForTimeout(3500);
     await page.click("#cx-ov-mrms");
     // bench-only: the local series holds one fresh scan; the cached sat loop
