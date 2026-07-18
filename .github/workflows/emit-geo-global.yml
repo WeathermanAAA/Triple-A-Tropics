@@ -6,35 +6,39 @@
 # them). Writes tiles + bt.png + manifest straight to R2; commits NOTHING
 # to main (read-only contents, like update-hafs).
 #
-# Hourly at :23 (staggered non-round minute — GitHub drops :00-family crons
-# under load; the stagger is load-bearing, do not "clean it up"). Each tick
-# backfills a trailing window at fixed slots; already-covered slots dedup
-# via the ready markers, so re-runs are cheap and a dropped hour self-heals.
-# When the box cron is live, BOTH writers stay idempotent per-frame
-# (ready-marker dedup), but disable this cron (workflow_dispatch stays for
-# on-demand re-emits).
+# Every 30 min at :23/:53 (staggered non-round minutes — GitHub drops
+# :00-family crons under load; the stagger is load-bearing, do not "clean
+# it up"). GEO ONLY: the wpac-ir/fd-ir diagnostic riders moved to their own
+# workflow (emit-diag-riders.yml) — sequencing them BEFORE geo in this job
+# put up to ~56 min of setup+riders in front of the world composite every
+# run, which (with the old oldest-first slot walk) is exactly the tester
+# report "viewer shows 1630Z when 1750Z is live". Two lanes = two runners;
+# both are per-slot idempotent via the ready markers.
+#
+# NEWEST-FIRST: tsr-s2 commit c5da203 makes _backfill_slots render the
+# newest slot FIRST, so freshness is independent of --backfill depth (older
+# holes heal with whatever budget remains; a timeout kill costs only
+# old-slot work). Until that commit is pushed to s2-sat-ingest (needs
+# Andrew's tsr auth), the "newest-first" step below applies the same
+# one-line change idempotently: once upstream carries the fix the step
+# no-ops with a delete-me notice, and any OTHER divergence fails loudly.
 #
 # CADENCE BUDGET (2026-07-12 incident — do not tighten without re-measuring):
 # one geo-global slot = 3 products ≈ 19–20 MEASURED minutes on a GH runner
-# (AHI FLDK segments + 2x GOES CMIPF + composite + tiles). The 07-12 config
-# (--step 10 --backfill 90 = 9 slots ≈ 175 min) could never fit the job
-# timeout: every run was timeout-killed, each successor re-walked an
-# aged-out window ("9/9 slots missing" forever), and the wpac/fd rider
-# emits — sequenced AFTER geo in the same step — never ran again (wpac-ir
-# froze at 04:00Z for 17 h). A GH runner sustains ~3 geo slots/hour, so the
-# STOPGAP world cadence is 30-min slots; the box s2 cron (Q11) is the
-# 10-min home. Riders now run FIRST in their own step so a geo overrun can
-# never starve the TC-Diagnostics IR series again.
+# (AHI FLDK segments + 2x GOES CMIPF + composite + tiles). A GH runner
+# sustains ~3 geo slots/hour, so the STOPGAP world cadence is 30-min slots;
+# the box s2 cron (Q11) is the 10-min home. With newest-first, steady-state
+# staleness of the newest visible slot ≈ scan→run gap (0–30 min) + setup
+# (~6 min) + one slot render (~20 min) ≈ 25–55 min, vs 75–105+ before.
+# When the box cron is live, BOTH writers stay idempotent per-frame
+# (ready-marker dedup), but disable this cron (workflow_dispatch stays for
+# on-demand re-emits).
 name: emit-geo-global
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "23 * * * *"
-    # backup tick (repo-standard pattern): GitHub sheds hourly crons under
-    # load (4 straight drops observed 2026-07-12 01-04Z); with --backfill 90
-    # either tick healing the window makes drops invisible. The concurrency
-    # group serializes if both fire.
     - cron: "53 * * * *"
 
 permissions:
@@ -47,18 +51,37 @@ concurrency:
 jobs:
   emit:
     runs-on: ubuntu-latest
-    # budget: setup ~6 + riders ≤50 + geo ≤75 (see the step timeouts; the
-    # cadence-budget note in the header has the per-slot arithmetic). The
-    # concurrency group serializes overlapping crons and a timeout kill
-    # loses nothing (per-slot emits are idempotent, the next tick resumes
-    # where this one stopped).
-    timeout-minutes: 140
+    # budget: setup ~6 + geo ≤75 (newest slot first; overlapping crons
+    # serialize on the concurrency group and a timeout kill loses nothing —
+    # per-slot emits are idempotent, the next tick resumes).
+    timeout-minutes: 85
     steps:
       - name: Checkout tat-satellite-render (s2-sat-ingest)
         uses: actions/checkout@v6
         with:
           repository: WeathermanAAA/tat-satellite-render
           ref: s2-sat-ingest
+
+      - name: Backfill newest-first (stopgap for unpushed tsr-s2 c5da203)
+        run: |
+          python - <<'EOF'
+          import sys
+          p = 's2_pyramid_emit.py'
+          src = open(p).read()
+          old = "    return list(reversed(slots))"
+          if old not in src:
+              if "return slots" in src:
+                  # c5da203 landed upstream: patch is obsolete but harmless —
+                  # succeed so the emit still runs; remove this step at leisure
+                  print("upstream already newest-first (c5da203) — "
+                        "this patch step can be deleted")
+                  sys.exit(0)
+              sys.exit("_backfill_slots return not recognized — upstream "
+                       "diverged; re-check before emitting in wrong order")
+          src = src.replace(old, "    return slots  # NEWEST first (c5da203)")
+          open(p, 'w').write(src)
+          print("patched: _backfill_slots emits newest-first")
+          EOF
 
       - uses: actions/setup-python@v5
         with:
@@ -72,38 +95,7 @@ jobs:
           # the Meteosat members light the moment the EUMETSAT_* secrets land
           pip install --quiet -r requirements.txt -r requirements-s2-geo.txt
 
-      - name: Emit the diagnostics IR feeds FIRST (objfix / TC-Diag time series)
-        timeout-minutes: 50
-        # continue-on-error: the || echo guards only command FAILURE — a
-        # step TIMEOUT still failed the whole job and starved the geo step
-        # (live 2026-07-16: post-GOES-19-restore NODD reads ran ~7 min/file,
-        # the fd-ir rider blew the 50-min step budget twice and the world
-        # composite sat stale for 2 h). The riders are per-slot idempotent,
-        # so a killed rider loses nothing; the geo suite must always get
-        # its turn. Per-command `timeout 22m` keeps one slow rider from
-        # eating the other's share of the step budget.
-        continue-on-error: true
-        env:
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: |
-          set -euo pipefail
-          # single-product calibrated-BT emits (one band fetch + pyramid per
-          # slot — minutes each). These feed objfix's WP wp_bt path and the
-          # Hovmöller/DAV time series, so they run BEFORE the heavyweight geo
-          # composite and never wait behind it. Per-command isolation: one
-          # feed failing or stalling must not block the other or the geo step.
-          timeout 22m python s2_pyramid_emit.py --product himawari9-wpac-ir \
-            --store r2 --prefix shadow --max-zoom 5 \
-            --step 10 --backfill 60 \
-            || echo "wpac-ir emit failed/timed out (next tick retries)"
-          timeout 22m python s2_pyramid_emit.py --product goes19-fd-ir \
-            --store r2 --prefix shadow --max-zoom 5 \
-            --step 10 --backfill 60 \
-            || echo "fd-ir emit failed/timed out (next tick retries)"
-
-      - name: Emit geo-global suite to R2 (30-min slots — the GH-runner budget)
+      - name: Emit geo-global suite to R2 (30-min slots, newest first)
         timeout-minutes: 75
         env:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
@@ -114,9 +106,9 @@ jobs:
           EUMETSAT_CONSUMER_SECRET: ${{ secrets.EUMETSAT_CONSUMER_SECRET }}
         run: |
           set -euo pipefail
-          # 3 slots x ~19.5 min ≈ 58 min cold, ~39 warm — fits the step
-          # timeout with margin. 10-min world cadence comes from the box
-          # (Q11), not from here; see the header's cadence-budget note.
+          # newest slot lands first (~20 min in); the rest of the budget
+          # heals the trailing 90-min window. 10-min world cadence comes
+          # from the box (Q11), not from here.
           python s2_pyramid_emit.py --suite geo-global \
             --store r2 --prefix shadow --max-zoom 5 \
             --step 30 --backfill 90

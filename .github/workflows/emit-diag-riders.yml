@@ -1,0 +1,94 @@
+# Diagnostics IR feed emitters ("riders") — GH-Actions STOPGAP until the
+# box's s2 emit-cron covers them. Two single-product calibrated-BT emits per
+# tick: himawari9-wpac-ir (objfix's WP wp_bt input) and goes19-fd-ir (the
+# Hovmöller/DAV time series). Split OUT of emit-geo-global.yml (2026-07-18):
+# sequencing these BEFORE the geo suite in one job put up to ~56 min of
+# setup+riders in front of the world composite every run — the two lanes now
+# run on their own runners and neither can starve the other. Writes tiles +
+# bt.png + manifest straight to R2; commits NOTHING to main.
+#
+# Hourly at :13/:43 (staggered non-round minutes, offset from geo's :23/:53
+# so the lanes' setup phases don't contend; GitHub drops :00-family crons
+# under load — the stagger is load-bearing). Per-slot emits are idempotent
+# (ready-marker dedup): a dropped tick self-heals on the next one.
+#
+# NEWEST-FIRST: same stopgap patch as emit-geo-global.yml — see the header
+# there; remove both patch steps once tsr-s2 c5da203 is pushed.
+name: emit-diag-riders
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "13 * * * *"
+    - cron: "43 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emit-diag-riders
+  cancel-in-progress: false
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout tat-satellite-render (s2-sat-ingest)
+        uses: actions/checkout@v6
+        with:
+          repository: WeathermanAAA/tat-satellite-render
+          ref: s2-sat-ingest
+
+      - name: Backfill newest-first (stopgap for unpushed tsr-s2 c5da203)
+        run: |
+          python - <<'EOF'
+          import sys
+          p = 's2_pyramid_emit.py'
+          src = open(p).read()
+          old = "    return list(reversed(slots))"
+          if old not in src:
+              if "return slots" in src:
+                  # c5da203 landed upstream: patch is obsolete but harmless —
+                  # succeed so the emit still runs; remove this step at leisure
+                  print("upstream already newest-first (c5da203) — "
+                        "this patch step can be deleted")
+                  sys.exit(0)
+              sys.exit("_backfill_slots return not recognized — upstream "
+                       "diverged; re-check before emitting in wrong order")
+          src = src.replace(old, "    return slots  # NEWEST first (c5da203)")
+          open(p, 'w').write(src)
+          print("patched: _backfill_slots emits newest-first")
+          EOF
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps (box parity)
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet -r requirements.txt
+
+      - name: Emit the diagnostics IR feeds (objfix / TC-Diag time series)
+        timeout-minutes: 48
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          # Per-command isolation + timeout: one slow/failed feed must not
+          # eat the other's share (live 2026-07-16: post-GOES-19-restore
+          # NODD reads ran ~7 min/file and one rider blew the whole budget).
+          # Newest-first means even a timeout kill has already landed the
+          # current slot.
+          timeout 22m python s2_pyramid_emit.py --product himawari9-wpac-ir \
+            --store r2 --prefix shadow --max-zoom 5 \
+            --step 10 --backfill 60 \
+            || echo "wpac-ir emit failed/timed out (next tick retries)"
+          timeout 22m python s2_pyramid_emit.py --product goes19-fd-ir \
+            --store r2 --prefix shadow --max-zoom 5 \
+            --step 10 --backfill 60 \
+            || echo "fd-ir emit failed/timed out (next tick retries)"
