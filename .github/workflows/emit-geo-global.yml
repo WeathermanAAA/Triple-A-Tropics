@@ -62,27 +62,6 @@ jobs:
           repository: WeathermanAAA/tat-satellite-render
           ref: s2-sat-ingest
 
-      - name: Backfill newest-first (stopgap for unpushed tsr-s2 c5da203)
-        run: |
-          python - <<'EOF'
-          import sys
-          p = 's2_pyramid_emit.py'
-          src = open(p).read()
-          old = "    return list(reversed(slots))"
-          if old not in src:
-              if "return slots" in src:
-                  # c5da203 landed upstream: patch is obsolete but harmless —
-                  # succeed so the emit still runs; remove this step at leisure
-                  print("upstream already newest-first (c5da203) — "
-                        "this patch step can be deleted")
-                  sys.exit(0)
-              sys.exit("_backfill_slots return not recognized — upstream "
-                       "diverged; re-check before emitting in wrong order")
-          src = src.replace(old, "    return slots  # NEWEST first (c5da203)")
-          open(p, 'w').write(src)
-          print("patched: _backfill_slots emits newest-first")
-          EOF
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

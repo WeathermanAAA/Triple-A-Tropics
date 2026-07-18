@@ -25,11 +25,12 @@
 # Staggered non-round minutes (repo standard — GitHub sheds :00-family crons).
 name: emit-conus-stopgap
 
+# RETIRED 2026-07-18 ~17:2x: the box emit-cron now carries
+# --allow-geometry-change itself (tsr-s2 @4afdee9, deployed) — the freeze
+# cannot recur and conus freshness is back on the box's 10-min cadence.
+# workflow_dispatch kept for on-demand re-emits.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "7 * * * *"
-    - cron: "37 * * * *"
 
 permissions:
   contents: read
