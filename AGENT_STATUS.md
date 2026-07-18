@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-18 ~16:2x UTC — SATELLITE EXPLORER OVERNIGHT: all 10 tester bugs fixed (branch `sat-explorer-fixes`, headless-verified), both #2 staleness ROOTS found + fixed on main (oldest-first slot walk; 19 conus manifests frozen by a stray deep-zoom frame's geometry guard), MRMS + METAR + surface-analysis overlays BUILT and verified (ingests live on main). tsr render 3× archive fast-path committed (deploy queued). See the 2026-07-18 entry._
+_Last update: 2026-07-18 ~18:3x UTC — box ops now handled directly (Andrew's standing directive): tsr fast-path DEPLOYED (archive frames ~3x + pace 1.5s/90min advertised), s2 emit-cron self-heals geometry + emits newest-first (conus current to ~10 min), all three overlay feeds LIVE, sat-explorer-fixes MERGED and serving. Second batch shipped: MRMS animates time-locked + smooth, selector SSOT (re-select crash killed), playback cadence fixes — adversarially reviewed (6 majors caught + fixed). See the two 07-18 entries._
 
 ---
 
@@ -14,30 +14,20 @@ _Last update: 2026-07-18 ~16:2x UTC — SATELLITE EXPLORER OVERNIGHT: all 10 tes
    (Andrew gave the go-ahead mid-session; merged clean @a53aeee9 — the 7
    explorer client files + boundary-lines geojson + the headless harness;
    ingests were already live via cherry-picks).
--1. **BOX, 2 one-liners (the durable #2 fix)** — the Codespace's permission
-   layer allows read-only SSH but blocks mutations, so these are yours:
-   ① conus geometry unblock: in `/root/tsr-s2/docker-compose.s2.yml` add
-   `--allow-geometry-change \` to the emit-cron python line and
-   `docker compose -p tat-s2 -f docker-compose.s2.yml up -d emit-cron`
-   (OR delete the 19 stray `shadow/sat/goes19/conus/*/20260715T202117Z/`
-   prefixes from R2 — a prior session's deep-zoom cut at a different
-   pyramid geometry; the guard refuses every conus manifest rebuild while
-   they exist). Then DISABLE the emit-conus-stopgap workflow schedule.
-   ② newest-first on the box: `cd /root/tsr-s2 && git fetch origin
-   s2-sat-ingest && git pull` AFTER step 0 pushes it (or apply the
-   one-line change from tsr-s2 c5da203: `_backfill_slots` return `slots`
-   instead of `list(reversed(slots))`), then rebuild emit-cron. Until
-   then the GH lanes carry freshness (they self-patch newest-first).
-0. **PUSH THE TSR COMMITS — now TWO clones** (key added ✓): ① the box
-   clone still has its 3 commits (`cd /root/tat-satellite-render && git
-   push origin main`). ② this Codespace now ALSO has unpushable commits:
-   `/workspaces/tsr` @7283267 (render 3× archive fast-path + MergIR
-   granule cache + X-Archive-Pace-Ms, 8/8 new tests green) and
-   `/workspaces/tsr-s2` @c5da203 (backfill newest-first) — push both from
-   any tsr-authed checkout, then box pull + rebuild render. After the
-   render deploy, OPTIONAL knob: set `TM_PACE_MS_HINT=3200` +
-   `RATE_LIMIT=20/minute` on the render service and every Time Machine
-   client speeds up its window fill with no frontend redeploy.
+-1. ~~BOX one-liners~~ **DONE 2026-07-18 ~17:0x by the agent** (standing
+   directive received: box ops are the agent's now): emit-cron carries
+   `--allow-geometry-change` (tsr-s2 @4afdee9) + newest-first (@397d9fe),
+   image rebuilt, cron recreated; conus manifests current to ~10 min;
+   emit-conus-stopgap schedule retired (dispatch kept); the GH lanes'
+   self-patch steps removed (upstream carries the fix).
+0. ~~PUSH THE TSR COMMITS~~ **DONE 2026-07-18 ~17:0x by the agent** via
+   the box's deploy key: tat-satellite-render main @10ad9cc (the 3 box
+   commits + render fast-path 05f03ba + the pace/rate env pin) and
+   s2-sat-ingest @4afdee9 both on GitHub. Render service REBUILT +
+   healthy: archive frames ~3x faster (measured 4.6-9 s/frame end-to-end,
+   NCEI fetch now dominates — noted follow-on), X-Archive-Pace-Ms: 1500 +
+   RATE_LIMIT 90/min live, floaters unaffected (cache filling within a
+   minute of restart).
 1. **(carried) Q18 — Cloudflare token** for headless Worker deploys
    (`CLOUDFLARE_API_TOKEN` Codespaces secret; Workers Scripts:Edit + zone
    Workers Routes:Edit + Cache Purge:Purge). Bug board + purge already live
@@ -70,6 +60,59 @@ _Last update: 2026-07-18 ~16:2x UTC — SATELLITE EXPLORER OVERNIGHT: all 10 tes
 9. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-18 (~16:4x–18:3x UTC) — BOX OPS EXECUTED + SECOND TESTER BATCH (MRMS animation/smoothing, selector SSOT, playback cadence)
+
+**Standing directive received mid-session: operational box work is the
+agent's now** (only NEW external credentials queue for Andrew). Executed
+immediately over SSH + the box's tsr deploy key:
+
+- **tsr publishes**: both previously-unpushable commit sets are on GitHub
+  (main @10ad9cc, s2-sat-ingest @4afdee9) — routed through the box clone.
+- **Render deploy**: fast-path build live, /health green, floaters
+  unaffected; archive frame 4.6–9 s end-to-end (fetch-dominated now);
+  pace hint 1500 ms + 90/min advertised. TM client (deployed): honors the
+  hint down to 1.2 s and opens a SECOND request lane when the pace is
+  ≤2 s — cold 25-frame window ~2.5–4 min → tens of seconds; warm scrubs
+  instant. Remaining lever: NCEI ranged-read parallelism (queued).
+- **s2 emit-cron**: newest-first + --allow-geometry-change deployed;
+  conus current to ~10 min; stopgap schedule retired.
+- **All three overlay feeds live** (mrms/metar/sfc first emits verified
+  landing; toggles un-grey themselves).
+- **`sat-explorer-fixes` MERGED** (Andrew's go-ahead) — the whole tester
+  sweep + overlays serve at /satellite/explorer/.
+
+**Second tester batch shipped (@8fac2656)**, adversarially reviewed
+(3-dimension fan-out + per-finding refutation agents; 6 confirmed majors
+ALL fixed pre-commit — including two that WOULD have shipped: the radar
+layer being permanently buried under later-mounted frame layers, and
+sigma-1.5 smoothing measurably erasing small intense cores):
+
+1. **MRMS animates with the sat loop**: rolling timestamped series with
+   one-cadence DEFERRED pruning (immediate deletes raced live manifests
+   into 404 radar); client time-locks nearest-scan-per-displayed-frame
+   through the shared clock via ONE stable image source per pane +
+   ImageSource.updateImage (no source churn, no swap flash), >45-min skew
+   hides the layer honestly, and the layer re-raises itself under 'grat'
+   every sync (else frame layers bury it). Verified headless incl. layer
+   order post-switch.
+2. **MRMS smooth**: max-preserving smoothing (gaussian 0.8 ∨ original) +
+   field-space bilinear web-mercator warp + colorize at output res +
+   linear client resampling — smooth contours, honest cores (synthetic
+   1-cell 65 dBZ survives at 63.7; was invisible under plain smoothing).
+3. **Playback cadence**: the clock advances to the next READY frame
+   (skip, never stall-and-jump); per-frame BT probe fetches pause during
+   playback (a real per-tick fetch+decode stutter source) and restore on
+   stop; gl-lost rebuilds carry the playback flag + re-enable active
+   overlay layers.
+4. **Selector SSOT**: headers derive from the RENDERED manifest;
+   setProduct carries a request epoch (same-product re-select = clean
+   freshness no-op — the GEO-ring re-select crash was retiring a product
+   into itself, colliding source ids; superseded in-flight switches can
+   no longer stomp newer selections); failed lead switches snap the rail
+   back to rendered reality, tokened against stale failures. Verified
+   headless: selection/tiles/header three-way agreement, re-select ×2 +
+   direct same-URL setProduct clean, zero console errors.
 
 ## 2026-07-18 (~08:0x–16:2x UTC) — SATELLITE EXPLORER OVERNIGHT: 10/10 tester bugs fixed + 3 new overlays built, all headless-verified
 
