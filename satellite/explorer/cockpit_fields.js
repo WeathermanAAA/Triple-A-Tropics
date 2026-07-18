@@ -74,6 +74,25 @@
       return this.load();
     }
   };
+  // METAR surface obs (tester item #12): one compact global JSON emitted by
+  // update-metar.yml (aviationweather.gov cache — free, global, no creds).
+  // Same honest-gate + poll model as MRMS.
+  var OBS_BASE = CDN + '/obs/metar';
+  var OBSData = {
+    doc: null, _p: null,
+    load: function () {
+      var self = this;
+      if (this._p) return this._p;
+      this._p = fetch(OBS_BASE + '/latest.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (d) { self.doc = d; return d; });
+      return this._p;
+    },
+    reload: function () {
+      this._p = null;
+      return this.load();
+    }
+  };
   var SCData = {
     manifest: null, loaded: {}, _p: null,
     load: function () {
@@ -580,9 +599,129 @@
     if (_radT && _radT.unref) _radT.unref();
   }
 
+  // ========================================================================
+  // METAR station-plot layer (canvas overlay; the ASCAT camera-sync model:
+  // per-pane pointer-events:none canvas redrawn on map 'render', projected
+  // per station, screen-space declutter — the barb painter is the legacy
+  // AscatViewer one)
+  // ========================================================================
+  function obsState(pane) {
+    if (!pane.obs) pane.obs = { on: false };
+    return pane.obs;
+  }
+  function obsCanvas(pane) {
+    if (pane._obsCanvas) return pane._obsCanvas;
+    var cv = document.createElement('canvas');
+    cv.className = 'cx-obs-overlay';
+    cv.style.cssText = 'position:absolute;inset:0;z-index:3;pointer-events:none;width:100%;height:100%';
+    pane.el.appendChild(cv);
+    pane._obsCanvas = cv;
+    return cv;
+  }
+  function obsRender(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    OBSData.load().then(function () {
+      obsCanvas(pane);
+      if (!pane._obsWired) {
+        pane._obsWired = true;
+        map.on('render', function () { obsDraw(pane); });
+      }
+      obsDraw(pane);
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }).catch(function () { H.flash('surface obs unavailable'); });
+  }
+  function obsDraw(pane) {
+    var AV = window.AscatViewer;
+    var st = pane.obs;
+    var cv = pane._obsCanvas;
+    var map = pane.tv && pane.tv.map;
+    var doc = OBSData.doc;
+    if (!st || !cv || !map) return;
+    var box = pane.el.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+    var g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, box.width, box.height);
+    if (!st.on || !doc || !doc.stations) return;
+    var z = map.getZoom();
+    // one full station model needs ~64x48 px; coarser cells zoomed out.
+    // stations arrive rank-desc sorted, so FIRST claim wins a cell — a full
+    // model always beats a wind-only ob for the same space.
+    var step = z < 4 ? 120 : z < 5.5 ? 88 : 64;
+    var bounds = map.getBounds();
+    var w = bounds.getWest(), e = bounds.getEast(), s = bounds.getSouth(), n = bounds.getNorth();
+    var grid = {};
+    var rows = doc.stations;   // [id,lat,lon,t,td,slp,wdir,wspd,gust,rank,age]
+    for (var i = 0; i < rows.length; i++) {
+      var o = rows[i], lat = o[1];
+      if (lat < s || lat > n) continue;
+      var lon = o[2];
+      if (lon < w && lon + 360 <= e) lon += 360;   // antimeridian nudge (SC parity)
+      if (lon < w || lon > e) continue;
+      var xy = map.project([lon, lat]);
+      if (xy.x < -30 || xy.y < -30 || xy.x > box.width + 30 || xy.y > box.height + 30) continue;
+      var key = Math.floor(xy.x / step) + ':' + Math.floor(xy.y / step);
+      if (!grid[key]) grid[key] = { x: xy.x, y: xy.y, o: o };
+    }
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    var ids = z >= 5.5;
+    g.font = '10px "Segoe UI", system-ui, sans-serif';
+    var txt = function (str, tx, ty, color, align) {
+      g.textAlign = align || 'right';
+      g.lineWidth = 3; g.strokeStyle = 'rgba(5,10,20,0.85)';
+      g.strokeText(str, tx, ty);
+      g.fillStyle = color; g.fillText(str, tx, ty);
+    };
+    Object.keys(grid).forEach(function (k) {
+      var cell = grid[k], o = cell.o, x = cell.x, y = cell.y;
+      // barb: white over the SC dark-halo discipline; calm ring is built in
+      if (o[7] != null && o[6] != null) {
+        AV.drawBarb(g, x, y, o[7], o[6], 'rgba(5,10,20,0.82)', 3.4);
+        AV.drawBarb(g, x, y, o[7], o[6], '#dfe8f2', 1.1);
+      } else {
+        g.beginPath(); g.arc(x, y, 2.2, 0, Math.PI * 2);
+        g.strokeStyle = '#dfe8f2'; g.lineWidth = 1.1; g.stroke();
+      }
+      // the standard station model: T upper-left, Td lower-left, coded SLP
+      // upper-right (last 3 digits of mb*10), ID lower-right at high zoom
+      if (o[3] != null) txt(Math.round(o[3]) + '\u00b0', x - 6, y - 8, '#ff9d5c');
+      if (o[4] != null) txt(Math.round(o[4]) + '\u00b0', x - 6, y + 14, '#3fcf6f');
+      if (o[5] != null) {
+        var code = String(Math.round(o[5] * 10) % 1000);
+        while (code.length < 3) code = '0' + code;
+        txt(code, x + 6, y - 8, '#dfe8f2', 'left');
+      }
+      if (ids) txt(o[0], x + 6, y + 14, '#8ea2bd', 'left');
+    });
+  }
+  var _obsT = null;
+  function obsStartPoll() {
+    if (_obsT) return;
+    _obsT = setInterval(function () {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      var any = false;
+      (CX && CX.panes || []).forEach(function (p) { if (p && p.obs && p.obs.on) any = true; });
+      if (!any) return;
+      OBSData.reload().then(function () {
+        CX.panes.forEach(function (p, i) { if (p && p.obs && p.obs.on) { obsDraw(p); if (H.renderPaneChrome) H.renderPaneChrome(i); } });
+      }).catch(function () {});
+    }, 300e3);
+    if (_obsT && _obsT.unref) _obsT.unref();
+  }
+
   function setLayer(i, kind, on) {
     var pane = CX.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
+    if (kind === 'obs') {
+      var ost = obsState(pane);
+      ost.on = on;
+      if (on) { obsRender(pane, i); obsStartPoll(); }
+      else if (pane._obsCanvas) { obsDraw(pane); }
+      if (H.renderPaneChrome) H.renderPaneChrome(i);
+      return;
+    }
     if (kind === 'rad') {
       var rst = radState(pane);
       rst.on = on;
@@ -680,6 +819,10 @@
       var nw = scNewest(pane);
       extra.push('ASCAT winds' + (nw ? ' · ' + fmtZ(nw.start_utc) : ''));
     }
+    if (pane.obs && pane.obs.on) {
+      var od = OBSData.doc;
+      extra.push('METAR obs' + (od && od.as_of ? ' \u00b7 ' + fmtZ(od.as_of) : ''));
+    }
     if (pane.rad && pane.rad.on) {
       var rs = pane.rad.stamp;
       extra.push('MRMS radar' + (rs
@@ -721,6 +864,9 @@
   function compositeOverlays(ctx, pane, w, h) {
     if (pane._scCanvas && (pane.kind === 'sc' || (pane.sc && pane.sc.on))) {
       try { ctx.drawImage(pane._scCanvas, 0, 0, w, h); } catch (e) {}
+    }
+    if (pane._obsCanvas && pane.obs && pane.obs.on) {
+      try { ctx.drawImage(pane._obsCanvas, 0, 0, w, h); } catch (e) {}
     }
   }
 
@@ -934,6 +1080,15 @@
     // on R2 (honesty chip flips live via the workflow's first emit)
     MRMSData.load().then(function () {
       var ov = $('cx-ov-mrms');
+      if (ov) {
+        ov.disabled = false;
+        var chip = ov.querySelector('.cx-chip');
+        if (chip) chip.remove();
+      }
+    }).catch(function () {});
+    // METAR obs: same honest gate off its own feed
+    OBSData.load().then(function () {
+      var ov = $('cx-ov-metar');
       if (ov) {
         ov.disabled = false;
         var chip = ov.querySelector('.cx-chip');
