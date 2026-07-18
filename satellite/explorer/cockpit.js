@@ -683,7 +683,7 @@
     // MW pass / ASCAT winds layer over the ACTIVE pane's base field (per-pane
     // settings; the same layer path model/MRMS/obs overlays will use). The
     // buttons enable off their manifests (cockpit_fields.checkAvailability).
-    [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc']].forEach(function (pair) {
+    [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc'], ['rad', 'cx-ov-mrms']].forEach(function (pair) {
       var b = $(pair[1]);
       if (!b) return;
       b.onclick = function () {
@@ -691,16 +691,17 @@
         var pane = S.panes[S.active];
         if (!pane) return;
         if (pane.kind === pair[0]) { flash('already the pane field — pick a base field first'); return; }
-        var st = pair[0] === 'mw' ? pane.mw : pane.sc;
+        var st = pair[0] === 'mw' ? pane.mw : pair[0] === 'sc' ? pane.sc : pane.rad;
         var on = !(st && st.on);
         window.CockpitFields.setLayer(S.active, pair[0], on);
         b.classList.toggle('on', on);
         window.CockpitFields.syncControls();
       };
     });
-    // MRMS / METAR / model-field toggles are STUBS on purpose: each needs its
-    // own ingest pipeline (separate builds). The buttons exist, disabled, so
-    // the panel shows the plan without faking data.
+    // METAR / model-field toggles are STUBS on purpose: each needs its own
+    // ingest pipeline (separate builds). The buttons exist, disabled, so the
+    // panel shows the plan without faking data. MRMS went live 2026-07-18
+    // (update-mrms.yml + the rad layer in cockpit_fields.js).
   }
 
   // ========================================================================

@@ -53,6 +53,27 @@
         });
     }
   };
+  // MRMS radar overlay (tester item #11): a single web-mercator-warped RGBA
+  // WebP of the newest MergedReflectivityQCComposite scan, emitted by
+  // update-mrms.yml (NOAA noaa-mrms-pds, TAT-radar.pal), CONUS to start.
+  // Same honest-gate as MW/ASCAT: the toggle un-greys iff this manifest
+  // fetch succeeds; reload() drives the 60 s freshness poll.
+  var MRMS_BASE = CDN + '/radar/mrms/conus';
+  var MRMSData = {
+    manifest: null, _p: null,
+    load: function () {
+      var self = this;
+      if (this._p) return this._p;
+      this._p = fetch(MRMS_BASE + '/latest_times.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (m) { self.manifest = m; return m; });
+      return this._p;
+    },
+    reload: function () {
+      this._p = null;
+      return this.load();
+    }
+  };
   var SCData = {
     manifest: null, loaded: {}, _p: null,
     load: function () {
@@ -475,9 +496,101 @@
     scDraw(pane);   // clears unless sc layer is on
     if (H.renderPaneChrome) H.renderPaneChrome(i);
   }
+  // ========================================================================
+  // MRMS radar layer (maplibre image source; MW's double-buffer discipline)
+  // ========================================================================
+  function radState(pane) {
+    if (!pane.rad) pane.rad = { on: false, stamp: null };
+    return pane.rad;
+  }
+  function radClearLayers(pane) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    if (pane._radPending) { map.off('sourcedata', pane._radPending); pane._radPending = null; }
+    (pane._radLayers || []).forEach(function (id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+      if (map.getSource(id)) map.removeSource(id);
+    });
+    pane._radLayers = [];
+    pane.rad && (pane.rad.stamp = null);
+  }
+  function radRender(pane, paneIdx) {
+    var st = radState(pane);
+    var map = pane.tv && pane.tv.map;
+    if (!map || !st.on) return;
+    MRMSData.load().then(function (m) {
+      if (!m || !m.latest || !m.bounds) { H.flash('radar data unavailable'); return; }
+      if (st.stamp === m.latest && (pane._radLayers || []).length) return;
+      var b = m.bounds;   // [W,S,E,N]; image already web-mercator warped
+      var url = CDN + '/' + m.image.replace('{t}', m.latest);
+      // double-buffer the scan swap exactly like MW overpasses: mount the
+      // new image under a versioned id, tear the old down once decoded.
+      if (pane._radPending) { map.off('sourcedata', pane._radPending); pane._radPending = null; }
+      var prev = pane._radLayers || [];
+      var id = 'ofrad-' + paneIdx + '-' + (pane._radSeq = (pane._radSeq || 0) + 1);
+      map.addSource(id, {
+        type: 'image', url: url,
+        coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]]
+      });
+      var before = map.getLayer('grat') ? 'grat' : undefined;
+      map.addLayer({ id: id, type: 'raster', source: id,
+        paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 0,
+                 'raster-opacity-transition': { duration: 0, delay: 0 },
+                 'raster-resampling': 'nearest' } }, before);
+      pane._radLayers = prev.concat([id]);
+      st.stamp = m.latest;
+      var dropPrev = function () {
+        prev.forEach(function (old) {
+          if (map.getLayer(old)) map.removeLayer(old);
+          if (map.getSource(old)) map.removeSource(old);
+        });
+        pane._radLayers = (pane._radLayers || []).filter(function (x) {
+          return prev.indexOf(x) < 0;
+        });
+      };
+      if (!prev.length) { dropPrev(); }
+      else {
+        var onData = function (e) {
+          if (e.sourceId !== id) return;
+          if (!map.isSourceLoaded(id)) return;
+          map.off('sourcedata', onData);
+          if (pane._radPending === onData) pane._radPending = null;
+          dropPrev();
+        };
+        pane._radPending = onData;
+        map.on('sourcedata', onData);
+      }
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }).catch(function () { H.flash('radar data unavailable'); });
+  }
+  // freshness poll: ONE timer for all panes; only fetches while some pane
+  // shows the layer, so an untoggled cockpit costs nothing.
+  var _radT = null;
+  function radStartPoll() {
+    if (_radT) return;
+    _radT = setInterval(function () {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      var any = false;
+      (CX && CX.panes || []).forEach(function (p) { if (p && p.rad && p.rad.on) any = true; });
+      if (!any) return;
+      MRMSData.reload().then(function () {
+        CX.panes.forEach(function (p, i) { if (p && p.rad && p.rad.on) radRender(p, i); });
+      }).catch(function () {});
+    }, 60e3);
+    if (_radT && _radT.unref) _radT.unref();
+  }
+
   function setLayer(i, kind, on) {
     var pane = CX.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
+    if (kind === 'rad') {
+      var rst = radState(pane);
+      rst.on = on;
+      if (on) { radRender(pane, i); radStartPoll(); }
+      else { radClearLayers(pane); }
+      if (H.renderPaneChrome) H.renderPaneChrome(i);
+      return;
+    }
     if (kind === 'mw') {
       var st = mwState(pane);
       st.on = on;
@@ -566,6 +679,13 @@
     if (pane.sc && pane.sc.on) {
       var nw = scNewest(pane);
       extra.push('ASCAT winds' + (nw ? ' · ' + fmtZ(nw.start_utc) : ''));
+    }
+    if (pane.rad && pane.rad.on) {
+      var rs = pane.rad.stamp;
+      extra.push('MRMS radar' + (rs
+        ? ' · ' + rs.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') +
+          ' ' + rs.slice(9, 11) + ':' + rs.slice(11, 13) + 'Z'
+        : ''));
     }
     return extra.length ? { layerBadge: extra.join('  +  ') } : null;
   }
@@ -809,6 +929,16 @@
     MWData.load().then(function () {
       var ov = $('cx-ov-mw');
       if (ov) ov.disabled = false;
+    }).catch(function () {});
+    // MRMS: the stub button enables the moment the emitter's manifest exists
+    // on R2 (honesty chip flips live via the workflow's first emit)
+    MRMSData.load().then(function () {
+      var ov = $('cx-ov-mrms');
+      if (ov) {
+        ov.disabled = false;
+        var chip = ov.querySelector('.cx-chip');
+        if (chip) chip.remove();
+      }
     }).catch(function () {});
   }
   function unGrey(el) {
