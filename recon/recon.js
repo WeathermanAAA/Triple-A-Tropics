@@ -1140,6 +1140,16 @@
     // cache projected pts for hover (map-local coords)
     this._pts = pts;
 
+    // OBSTACLE REGISTRY (map-local coords) for the aircraft popover's
+    // collision-aware placement: every data mark registers its footprint as
+    // it draws; the popover then searches for a rect that overlaps none of
+    // them. r 17 around each track point covers the barb comb (14 px shaft
+    // + flags) and the spine between the ~10 px-spaced roots.
+    var obst = this._obst = [];
+    for (i = 0; i < pts.length; i++) {
+      if (pts[i]) obst.push({ x: pts[i].x, y: pts[i].y, r: 17 });
+    }
+
     // ---- 6) wind barbs, dense along-track sampling (~16 px spacing, TT-style)
     this._drawBarbs(g, pts, S);
 
@@ -1149,6 +1159,7 @@
       var sla = num(sondes[i].lat), slo = num(sondes[i].lon);
       if (sla == null || slo == null) continue;
       var sp = proj(slo, sla);
+      obst.push({ x: sp[0], y: sp[1], r: 7 });
       g.save();
       g.translate(sp[0], sp[1]); g.rotate(Math.PI / 4);
       g.fillStyle = 'rgba(233,241,250,0.92)'; g.strokeStyle = '#10203a'; g.lineWidth = 1;
@@ -1347,6 +1358,7 @@
     }
     cross('rgba(7,16,28,0.9)', 4);
     cross('#ffffff', 1.8);
+    if (this._obst) this._obst.push({ x: x, y: y, r: 12 });
     // MSLP label on a dark pill
     var mslp = num(v.mslp_hpa);
     if (mslp != null) {
@@ -1360,6 +1372,7 @@
       g.fillStyle = 'rgba(7,16,28,0.85)'; g.fill();
       g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.stroke();
       g.textAlign = 'left'; g.fillStyle = '#ffffff'; g.fillText(txt, bx + padx, by + bh / 2 + 0.5);
+      if (this._obst) this._obst.push({ x0: bx, y0: by, x1: bx + bw, y1: by + bh });
     }
     g.restore();
   };
@@ -1379,6 +1392,10 @@
     var boxW = barW + pad * 2;
     var boxH = pad * 2 + barH + 4 + labH + 5 + capH;
     var x = L.x + 10, y = L.y + L.h - boxH - 9;
+    if (this._obst) {
+      this._obst.push({ x0: x - L.x, y0: y - L.y,
+                        x1: x - L.x + boxW, y1: y - L.y + boxH });
+    }
     g.save();
     roundRectPath(g, x, y, boxW, boxH, 6);
     g.fillStyle = 'rgba(7,16,28,0.86)'; g.fill();
@@ -1423,6 +1440,10 @@
     var ky = L.y + 8, kx = L.x + 8;
     g.save();
     var keyW = 184, keyRows = 4, keyH = pad * 2 + keyRows * 13;
+    if (this._obst) {
+      this._obst.push({ x0: kx - L.x, y0: ky - L.y,
+                        x1: kx - L.x + keyW, y1: ky - L.y + keyH });
+    }
     roundRectPath(g, kx, ky, keyW, keyH, 5);
     g.fillStyle = 'rgba(7,16,28,0.82)'; g.fill();
     g.strokeStyle = C.border; g.lineWidth = 1; g.stroke();
@@ -1461,6 +1482,9 @@
     g.fillStyle = 'rgba(233,241,250,0.5)';
     g.fillText(WATERMARK, L.x + L.w - 10, L.y + 9);
     g.restore();
+    if (this._obst) {
+      this._obst.push({ x0: L.w - 140, y0: 0, x1: L.w, y1: 26 });
+    }
   };
 
   // ====================================================================
@@ -1830,6 +1854,25 @@
     return null;
   };
 
+  // Top-down aircraft silhouette (the WC-130 shape that actually flies these
+  // missions: slender fuselage, straight wings with four engine nacelles,
+  // tailplane), nose along the track heading. Filled polygons over a dark
+  // casing so it reads on ocean, land, or bright cloud; muted house
+  // foreground, no glow/pulse.
+  var PLANE_SHAPE = [
+    // straight wing, slight forward position (leading edge toward the nose)
+    [[-12.6, -3.1], [12.6, -3.1], [12.6, -0.8], [-12.6, -0.8]],
+    // engine nacelles: two per wing, protruding ahead of the leading edge
+    [[-9.2, -5.5], [-7.6, -5.5], [-7.6, -1.2], [-9.2, -1.2]],
+    [[-5.5, -5.9], [-3.9, -5.9], [-3.9, -1.2], [-5.5, -1.2]],
+    [[3.9, -5.9], [5.5, -5.9], [5.5, -1.2], [3.9, -1.2]],
+    [[7.6, -5.5], [9.2, -5.5], [9.2, -1.2], [7.6, -1.2]],
+    // tailplane
+    [[-5.4, 7.2], [5.4, 7.2], [5.4, 9.3], [-5.4, 9.3]],
+    // fuselage: pointed nose, tapered tail (drawn last, over the wing roots)
+    [[0, -11.8], [1.9, -8.4], [1.9, 8.6], [0.9, 10.6], [-0.9, 10.6],
+     [-1.9, 8.6], [-1.9, -8.4]]
+  ];
   ReconViewer.prototype._drawPlaneMarker = function (g, proj, L) {
     this._planeHit = null;
     var fix = this._lastFix();
@@ -1840,21 +1883,21 @@
     g.translate(pt[0], pt[1]);
     g.rotate(fix.hdg);
     g.lineCap = 'round'; g.lineJoin = 'round';
-    // dark casing first so the glyph reads on any backdrop, then the glyph:
-    // fuselage, straight wings, tailplane. Muted house foreground.
-    var passes = [
-      { c: 'rgba(7,16,28,0.85)', w: 4.6 },
-      { c: 'rgba(229,237,246,0.95)', w: 2.2 }
-    ];
-    for (var i = 0; i < passes.length; i++) {
-      g.strokeStyle = passes[i].c; g.lineWidth = passes[i].w;
+    function trace(poly) {
       g.beginPath();
-      g.moveTo(0, -8); g.lineTo(0, 7);          // fuselage (nose up)
-      g.moveTo(-7.5, -1.5); g.lineTo(7.5, -1.5); // wings
-      g.moveTo(-3.5, 6); g.lineTo(3.5, 6);       // tail
-      g.stroke();
+      g.moveTo(poly[0][0], poly[0][1]);
+      for (var k = 1; k < poly.length; k++) g.lineTo(poly[k][0], poly[k][1]);
+      g.closePath();
     }
+    var i;
+    // pass 1: dark casing around every part (union silhouette outline)
+    g.strokeStyle = 'rgba(7,16,28,0.9)'; g.lineWidth = 3.2;
+    for (i = 0; i < PLANE_SHAPE.length; i++) { trace(PLANE_SHAPE[i]); g.stroke(); }
+    // pass 2: the airframe fill
+    g.fillStyle = 'rgba(231,239,248,0.96)';
+    for (i = 0; i < PLANE_SHAPE.length; i++) { trace(PLANE_SHAPE[i]); g.fill(); }
     g.restore();
+    if (this._obst) this._obst.push({ x: pt[0], y: pt[1], r: 20 });
     this._planeHit = { x: pt[0], y: pt[1], ob: fix.ob, hdg: fix.hdg };
   };
 
@@ -1886,7 +1929,7 @@
     var my = (ev.clientY - rect.top) * sx - L.y;
     if (hit) {
       var dx = mx - hit.x, dy = my - hit.y;
-      if (dx * dx + dy * dy <= 15 * 15) {
+      if (dx * dx + dy * dy <= 17 * 17) {
         if (this._planePanel) this._closePlanePanel();
         else this._openPlanePanel();
         return;
@@ -1900,27 +1943,131 @@
       this._planePanel.parentNode.removeChild(this._planePanel);
     }
     this._planePanel = null;
+    if (this._planeLeader && this._planeLeader.parentNode) {
+      this._planeLeader.parentNode.removeChild(this._planeLeader);
+    }
+    this._planeLeader = null;
+    // the Esc handler lives only while a panel is open (removeEventListener is
+    // a no-op when it is not registered), so no document listener is left
+    // pinning this instance after close — matters for the embedded mounts
+    if (this._planeEsc) document.removeEventListener('keydown', this._planeEsc);
   };
 
   ReconViewer.prototype._openPlanePanel = function () {
     this._closePlanePanel();
     if (!this._planeHit || !this.dom.mapframe) return;
-    var d = document.createElement('div');
-    d.style.cssText =
-      'position:absolute;z-index:6;width:248px;max-width:70%;' +
-      'background:rgba(10,19,36,0.96);border:1px solid #2a3e5c;' +
-      'border-radius:8px;padding:10px 12px;color:#e5edf6;' +
-      'font-size:12px;line-height:1.45;box-shadow:0 4px 18px rgba(0,0,0,0.45);';
-    this._planePanel = d;
-    this.dom.mapframe.appendChild(d);
+    this._planePanel = document.createElement('div');
+    this.dom.mapframe.appendChild(this._planePanel);
     this._updatePlanePanel();
     var self = this;
     if (!this._planeEsc) {
       this._planeEsc = function (e) {
         if (e.key === 'Escape') self._closePlanePanel();
       };
-      document.addEventListener('keydown', this._planeEsc);
     }
+    document.addEventListener('keydown', this._planeEsc);
+  };
+
+  // COLLISION-AWARE placement: find the panel-sized rect inside the map that
+  // overlaps none of the registered data footprints (_obst) and sits nearest
+  // the marker. Occupancy grid + integral image, so the scan is O(cells).
+  // All units are map-local FIGURE px; returns {x, y} (panel top-left) or
+  // null when no clear rect exists (caller docks the panel off-map).
+  ReconViewer.prototype._findClearRect = function (pwF, phF, mark) {
+    var L = this.layout && this.layout.map;
+    if (!L) return null;
+    var obst = this._obst || [];
+    var cell = 14, padF = 5;
+    // inner margins: generous on the left/bottom where the graticule edge
+    // labels live, tight elsewhere
+    var mL = 26, mR = 10, mT = 10, mB = 22;
+    var gw = Math.max(1, Math.floor(L.w / cell));
+    var gh = Math.max(1, Math.floor(L.h / cell));
+    var occ = new Uint8Array(gw * gh);
+    function markRect(x0, y0, x1, y1) {
+      var c0 = Math.max(0, Math.floor(x0 / cell)), c1 = Math.min(gw - 1, Math.floor(x1 / cell));
+      var r0 = Math.max(0, Math.floor(y0 / cell)), r1 = Math.min(gh - 1, Math.floor(y1 / cell));
+      for (var r = r0; r <= r1; r++) {
+        for (var c = c0; c <= c1; c++) occ[r * gw + c] = 1;
+      }
+    }
+    for (var i = 0; i < obst.length; i++) {
+      var o = obst[i];
+      if (o.r != null) markRect(o.x - o.r, o.y - o.r, o.x + o.r, o.y + o.r);
+      else markRect(o.x0, o.y0, o.x1, o.y1);
+    }
+    var W1 = gw + 1;
+    var ii = new Int32Array(W1 * (gh + 1));
+    for (var r = 0; r < gh; r++) {
+      var rowSum = 0;
+      for (var c = 0; c < gw; c++) {
+        rowSum += occ[r * gw + c];
+        ii[(r + 1) * W1 + (c + 1)] = ii[r * W1 + (c + 1)] + rowSum;
+      }
+    }
+    function blockSum(c0, r0, c1, r1) {
+      return ii[(r1 + 1) * W1 + (c1 + 1)] - ii[r0 * W1 + (c1 + 1)] -
+             ii[(r1 + 1) * W1 + c0] + ii[r0 * W1 + c0];
+    }
+    var needW = pwF + 2 * padF, needH = phF + 2 * padF;
+    var cw = Math.ceil(needW / cell), ch = Math.ceil(needH / cell);
+    var cx0 = Math.ceil(mL / cell), cy0 = Math.ceil(mT / cell);
+    var cx1 = Math.floor((L.w - mR) / cell) - cw;
+    var cy1 = Math.floor((L.h - mB) / cell) - ch;
+    var best = null, bestD = Infinity;
+    for (var cy = cy0; cy <= cy1; cy++) {
+      for (var cx = cx0; cx <= cx1; cx++) {
+        if (blockSum(cx, cy, cx + cw - 1, cy + ch - 1)) continue;
+        var dx = cx * cell + needW / 2 - mark.x;
+        var dy = cy * cell + needH / 2 - mark.y;
+        var d2 = dx * dx + dy * dy;
+        if (d2 < bestD) {
+          bestD = d2;
+          best = { x: cx * cell + padF, y: cy * cell + padF };
+        }
+      }
+    }
+    return best;
+  };
+
+  // Leader line from the marker to the floating panel's nearest edge — an
+  // SVG overlay (NOT drawn on the canvas, so PNG exports stay clean).
+  ReconViewer.prototype._syncPlaneLeader = function (panelRect, markCss) {
+    var fr = this.dom.mapframe;
+    if (!fr) return;
+    var nx = Math.max(panelRect.left, Math.min(panelRect.right, markCss.x));
+    var ny = Math.max(panelRect.top, Math.min(panelRect.bottom, markCss.y));
+    var dx = markCss.x - nx, dy = markCss.y - ny;
+    var len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 14) {                       // adjacent: no leader needed
+      if (this._planeLeader) this._planeLeader.style.display = 'none';
+      return;
+    }
+    var svg = this._planeLeader;
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.style.cssText =
+        'position:absolute;left:0;top:0;z-index:5;pointer-events:none;overflow:visible';
+      svg.innerHTML =
+        '<line data-lead-case stroke="rgba(7,16,28,0.85)" stroke-width="2.8" stroke-linecap="round"/>' +
+        '<line data-lead stroke="rgba(176,196,222,0.9)" stroke-width="1.2" stroke-linecap="round"/>' +
+        '<circle data-lead-dot r="2.2" fill="rgba(176,196,222,0.9)" stroke="rgba(7,16,28,0.85)" stroke-width="1"/>';
+      fr.appendChild(svg);
+      this._planeLeader = svg;
+    }
+    svg.style.display = 'block';
+    svg.setAttribute('width', fr.clientWidth);
+    svg.setAttribute('height', fr.clientHeight);
+    // stop the line short of the marker so it never crosses the aircraft
+    var ux = dx / len, uy = dy / len;
+    var ex = markCss.x - ux * 12, ey = markCss.y - uy * 12;
+    var set = function (sel, at) {
+      var n = svg.querySelector(sel);
+      for (var k in at) n.setAttribute(k, at[k]);
+    };
+    set('[data-lead-case]', { x1: nx, y1: ny, x2: ex, y2: ey });
+    set('[data-lead]', { x1: nx, y1: ny, x2: ex, y2: ey });
+    set('[data-lead-dot]', { cx: nx, cy: ny });
   };
 
   ReconViewer.prototype._updatePlanePanel = function () {
@@ -1945,18 +2092,19 @@
     var lonS = ob.lon != null ?
       (Math.abs(ob.lon).toFixed(2) + (ob.lon >= 0 ? 'E' : 'W')) : '?';
     var rows = [];
-    rows.push('<div style="font-weight:800;font-size:13px;margin-bottom:1px">' +
+    rows.push('<div style="font-weight:800;font-size:13px;margin-bottom:1px;' +
+      'grid-column:1/-1">' +
       self_escape(m.aircraft || 'Aircraft') + ' · ' + id.type + '</div>');
     if (id.unit) {
-      rows.push('<div style="color:#8ea2bd;font-size:11px;margin-bottom:6px">' +
-        id.unit + '</div>');
+      rows.push('<div style="color:#8ea2bd;font-size:11px;margin-bottom:6px;' +
+        'grid-column:1/-1">' + id.unit + '</div>');
     }
     rows.push(row('Mission', self_escape(m.mission_id || '?')));
     rows.push(row('Storm', self_escape(m.name || m.storm_name || '?')));
     rows.push(row('Window', hhmm(m.valid_start) + ' to ' + hhmm(m.valid_end)));
     rows.push('<div style="border-top:1px solid #2a3e5c;margin:7px 0 6px;' +
       'padding-top:6px;color:' + (live ? '#5fd18f' : '#8ea2bd') +
-      ';font-weight:700;font-size:11px;letter-spacing:0.4px">' +
+      ';font-weight:700;font-size:11px;letter-spacing:0.4px;grid-column:1/-1">' +
       (live ? 'CURRENT POSITION' : 'POSITION AT LAST OB (END OF MISSION)') +
       '</div>');
     rows.push(row('Fix', latS + ' ' + lonS));
@@ -1984,26 +2132,58 @@
         Math.abs(Date.parse(vdm.t) - obT) <= 45 * 60000) {
       rows.push(row('Center fix', f1(vdm.mslp_hpa) + ' hPa @ ' + hhmm(vdm.t)));
     }
-    rows.push('<div style="text-align:right;margin-top:7px">' +
+    rows.push('<div style="text-align:right;margin-top:6px;grid-column:1/-1">' +
       '<span data-plane-close style="cursor:pointer;color:#8ea2bd;' +
       'font-weight:700;padding:2px 6px">close</span></div>');
+
+    // ---- placement. HARD RULE: the panel must not occlude the track,
+    // barbs, VDM fixes, sondes, or the marker. Try the largest-choice
+    // collision-aware search over the map's registered data footprints
+    // (nearest clear rect to the marker wins, leader line back to the
+    // plane); when nothing on-map fits, dock the panel in the viewer
+    // chrome BELOW the figure instead of floating over data.
+    var frame = this.dom.mapframe;
+    var L = this.layout.map;
+    var rect = this.dom.canvas.getBoundingClientRect();
+    var scale = rect.width / this.figW || 1;
+    var baseCss =
+      'background:rgba(10,19,36,0.96);border:1px solid #2a3e5c;' +
+      'border-radius:8px;color:#e5edf6;line-height:1.4;' +
+      'box-shadow:0 4px 18px rgba(0,0,0,0.45);';
+    // measure in FLOAT form first (hidden until placed — no flash)
+    if (d.parentNode !== frame) frame.appendChild(d);
+    d.style.cssText = baseCss +
+      'position:absolute;z-index:6;width:236px;padding:9px 11px;' +
+      'font-size:11.5px;visibility:hidden;';
     d.innerHTML = rows.join('');
+    var pw = d.offsetWidth || 236, ph = d.offsetHeight || 200;
+    var spot = this._findClearRect(pw / scale, ph / scale,
+      { x: hit.x, y: hit.y });
+    if (spot) {
+      var left = (L.x + spot.x) * scale, top = (L.y + spot.y) * scale;
+      d.style.left = left + 'px';
+      d.style.top = top + 'px';
+      d.style.visibility = 'visible';
+      this._syncPlaneLeader(
+        { left: left, top: top, right: left + pw, bottom: top + ph },
+        { x: (L.x + hit.x) * scale, y: (L.y + hit.y) * scale });
+    } else {
+      // DOCK: nothing on-map fits. Keep the panel INSIDE the viewer-owned map
+      // container (NEVER reparented to an ancestor the embedder might hide or
+      // remove on its own) and let it flow as a static block BELOW the canvas
+      // — off the imagery, still inside the viewer subtree so a tab-hide or
+      // unmount takes it with them. Compact multi-column key/value flow.
+      if (this._planeLeader) this._planeLeader.style.display = 'none';
+      if (d.parentNode !== frame) frame.appendChild(d);
+      d.style.cssText = baseCss +
+        'position:static;margin:8px 0 0;width:auto;padding:9px 12px;' +
+        'font-size:11.5px;display:grid;gap:1px 22px;' +
+        'grid-template-columns:repeat(auto-fit,minmax(190px,1fr));';
+      d.innerHTML = rows.join('');
+    }
     var self = this;
     var x = d.querySelector('[data-plane-close]');
     if (x) x.addEventListener('click', function () { self._closePlanePanel(); });
-
-    // anchor beside the marker (flip to the roomier side), clamped to the map
-    var L = this.layout.map;
-    var rect = this.dom.canvas.getBoundingClientRect();
-    var scale = rect.width / this.figW;
-    var cw = this.dom.mapframe.clientWidth;
-    var px = (L.x + hit.x) * scale, py = (L.y + hit.y) * scale;
-    var pw = d.offsetWidth || 248, ph = d.offsetHeight || 200;
-    var left = (hit.x < L.w / 2) ? px + 18 : px - pw - 18;
-    left = Math.max(4, Math.min(cw - pw - 4, left));
-    var top = Math.max(4, Math.min((L.y + L.h) * scale - ph - 4, py - ph / 2));
-    d.style.left = left + 'px';
-    d.style.top = top + 'px';
   };
 
   // ====================================================================
