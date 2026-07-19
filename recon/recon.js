@@ -1410,7 +1410,7 @@
 
   // ====================================================================
   // MULTI-PANEL TIME SERIES (shared x-axis, stacked):
-  //  (a) MSLP (p_sfc, inverted) + flight-level wind (wspd)
+  //  (a) MSLP (p_sfc, high at top) + flight-level wind (wspd)
   //  (b) SFMR wind (sfmr) + rain rate (rain, twin) ; suspect marked
   //  (c) temperature (temp) + dewpoint (dwpt)
   //  (d) static pressure (plane_p) + pressure-altitude (twin)
@@ -1488,7 +1488,7 @@
     var leftKey, rightKey, leftLab, rightLab, leftColor, rightColor;
     var leftInvert = false, rightSeries = true;
     if (panel.kind === 'mslp_wind') {
-      leftKey = 'p_sfc'; leftLab = 'MSLP hPa'; leftColor = '#cfe0f5'; leftInvert = true;
+      leftKey = 'p_sfc'; leftLab = 'MSLP hPa'; leftColor = '#cfe0f5';
       rightKey = 'wspd'; rightLab = 'FL kt'; rightColor = '#ffc857';
     } else if (panel.kind === 'sfmr_rain') {
       leftKey = 'sfmr'; leftLab = 'SFMR kt'; leftColor = '#5fd1e0';
