@@ -856,23 +856,71 @@
     if (!st.on || !doc || !doc.stations) return;
     var z = map.getZoom();
     // one full station model needs ~64x48 px; coarser cells zoomed out.
-    // stations arrive rank-desc sorted, so FIRST claim wins a cell — a full
-    // model always beats a wind-only ob for the same space.
     var step = z < 4 ? 120 : z < 5.5 ? 88 : 64;
     var bounds = map.getBounds();
     var w = bounds.getWest(), e = bounds.getEast(), s = bounds.getSouth(), n = bounds.getNorth();
-    var grid = {};
-    var rows = doc.stations;   // [id,lat,lon,t,td,slp,wdir,wspd,gust,rank,age]
-    for (var i = 0; i < rows.length; i++) {
-      var o = rows[i], lat = o[1];
-      if (lat < s || lat > n) continue;
+    var proj = function (o) {
+      var lat = o[1];
+      if (lat < s || lat > n) return null;
       var lon = o[2];
       if (lon < w && lon + 360 <= e) lon += 360;   // antimeridian nudge (SC parity)
-      if (lon < w || lon > e) continue;
+      if (lon < w || lon > e) return null;
       var xy = map.project([lon, lat]);
-      if (xy.x < -30 || xy.y < -30 || xy.x > box.width + 30 || xy.y > box.height + 30) continue;
-      var key = Math.floor(xy.x / step) + ':' + Math.floor(xy.y / step);
+      if (xy.x < -30 || xy.y < -30 || xy.x > box.width + 30 || xy.y > box.height + 30) return null;
+      return xy;
+    };
+    // STABLE DECLUTTER: land stations and moored platforms are FIXED sites,
+    // so the kept set is computed ONCE per camera from the newest series
+    // doc in a fully deterministic order (rank desc, then station id) and
+    // every frame draws exactly those stations at their canonical spots
+    // with that frame's values. Re-decluttering per frame reshuffled the
+    // winners as ranks/ages changed between emits — watched on a real loop
+    // capture as land stations "jittering". Only ships (plat 1) place per
+    // frame: they genuinely move, and they fill leftover cells without
+    // ever displacing the stable set.
+    var stable = pane._obsKeep;
+    var sck = camKey(map, box, 1) + ':' + step + ':' +
+              ((OBSData.doc && OBSData.doc.as_of) || '');
+    if (!stable || stable.ck !== sck) {
+      var cells = {}, keepIds = {};
+      var ref = (OBSData.doc && OBSData.doc.stations) || [];
+      var order = ref.slice().sort(function (a, b) {
+        return (b[9] - a[9]) ||
+               (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+      });
+      for (var ri = 0; ri < order.length; ri++) {
+        var ro = order[ri];
+        if ((ro[11] || 0) === 1) continue;         // ships are per-frame
+        var rxy = proj(ro);
+        if (!rxy) continue;
+        var rk = Math.floor(rxy.x / step) + ':' + Math.floor(rxy.y / step);
+        if (!cells[rk]) { cells[rk] = 1; keepIds[ro[0]] = 1; }
+      }
+      stable = pane._obsKeep = { ck: sck, keep: keepIds, cells: cells };
+    }
+    var grid = {};
+    var rows = doc.stations;   // [id,lat,lon,t,td,slp,wdir,wspd,gust,rank,age,plat]
+    var i, o, xy, key;
+    for (i = 0; i < rows.length; i++) {
+      o = rows[i];
+      if ((o[11] || 0) === 1 || !stable.keep[o[0]]) continue;
+      xy = proj(o);
+      if (!xy) continue;
+      key = Math.floor(xy.x / step) + ':' + Math.floor(xy.y / step);
       if (!grid[key]) grid[key] = { x: xy.x, y: xy.y, o: o };
+    }
+    var ships = [];
+    for (i = 0; i < rows.length; i++) if ((rows[i][11] || 0) === 1) ships.push(rows[i]);
+    ships.sort(function (a, b) {          // deterministic per frame
+      return (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) ||
+             (a[1] - b[1]) || (a[2] - b[2]);
+    });
+    for (i = 0; i < ships.length; i++) {
+      o = ships[i];
+      xy = proj(o);
+      if (!xy) continue;
+      key = Math.floor(xy.x / step) + ':' + Math.floor(xy.y / step);
+      if (!grid[key] && !stable.cells[key]) grid[key] = { x: xy.x, y: xy.y, o: o };
     }
     g.lineJoin = 'round'; g.lineCap = 'round';
     var ids = z >= 5.5;
