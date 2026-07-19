@@ -326,6 +326,33 @@
   // only then), THEN cap by the device/product residency budget.
   var LOOP_WINDOW_H = 6;
   var LOOP_MIN_FRAMES = 12;
+  // ---- visible-product dawn gate ----------------------------------------
+  // A visible/day-only product's loop must not MIX night and day frames:
+  // the near-black early frames read as a dark->bright flash on every wrap
+  // (watched on a real capture). Trim unlit frames (sun below horizon at
+  // the data footprint's center) when the window is mixed; an all-dark
+  // window stays untouched (uniform dark doesn't flash, and the latest
+  // frame must stay reachable). IR loops 24/7 as-is.
+  var D2R = Math.PI / 180;
+  function sunElevDeg(ms, lat, lon) {
+    var d = ms / 86400000 - 10957.5;             // days since J2000
+    var g = (357.529 + 0.98560028 * d) * D2R;    // solar mean anomaly
+    var q = 280.459 + 0.98564736 * d;            // mean longitude (deg)
+    var L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * D2R;
+    var e = (23.439 - 0.00000036 * d) * D2R;     // obliquity
+    var dec = Math.asin(Math.sin(e) * Math.sin(L));
+    var ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+    var gmst = (280.46061837 + 360.98564736629 * d) % 360;
+    var ha = (gmst + lon) * D2R - ra;
+    return Math.asin(Math.sin(lat * D2R) * Math.sin(dec) +
+                     Math.cos(lat * D2R) * Math.cos(dec) * Math.cos(ha)) / D2R;
+  }
+  VP._isDayProduct = function () {
+    var m = this.productMeta || {};
+    if (m.dayOnly || m.day_only) return true;
+    var k = String(m.key || m.id || '');
+    return /(^|-)[cb]0[1-6]$/.test(k);     // visible/NIR channels
+  };
   VP._deriveFrames = function () {
     var t = (this.manifest && this.manifest.times) || [];
     var cap = this._loopCapFor();
@@ -351,6 +378,15 @@
       for (gi = g.length - 1; gi >= 0; gi--) {
         if (g[gi] > thr && t.length - (gi + 1) >= 4) { t = t.slice(gi + 1); break; }
       }
+    }
+    if (this._isDayProduct() && t.length > 2) {
+      var bb = this.manifest && this.manifest.bounds;
+      var cLat = bb ? (bb[1] + bb[3]) / 2 : 25;
+      var cLon = bb ? (bb[0] + bb[2]) / 2 : -90;
+      var lit = t.filter(function (st2) {
+        return sunElevDeg(stampMs(st2), cLat, cLon) > -1;
+      });
+      if (lit.length >= 2 && lit.length < t.length) t = lit;
     }
     return t.slice(Math.max(0, t.length - cap));
   };
@@ -863,6 +899,7 @@
     // desync class this file exists to prevent).
     this._prodReq = (this._prodReq || 0) + 1;
     var prodReq = this._prodReq;
+    if (meta) this.productMeta = meta;   // day-only/visible gating reads this
     // RE-SELECTING the current product is a freshness no-op, never a
     // teardown/remount: retiring a product into ITSELF collides the
     // stamp-keyed source ids ("source already exists" — the GEO-ring

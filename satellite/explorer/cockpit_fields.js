@@ -147,7 +147,7 @@
       }
     };
   }
-  var OBSData = seriesStore(OBS_BASE, 24);   // >= a full playback lap of the
+  var OBSData = seriesStore(OBS_BASE, 44);   // >= a full playback lap of the
   // 30-frame server series — an LRU smaller than the loop's join set
   // refetches+reparses every frame JSON at each wrap (stutter fuel)
   // WPC surface analysis (tester item #13): fronts + pressure centers from

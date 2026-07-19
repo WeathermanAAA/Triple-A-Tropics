@@ -312,9 +312,10 @@ def main() -> int:
     times = [t for t in manifest.get("times", []) if t != stamp]
     times.append(stamp)
     times = sorted(times)
-    keep = 30       # ~5 h at the 10-min cadence — MUST outrun the deepest
-    #                 sat loop (48 x 5-min conus frames = 4 h) or the
-    #                 time-locked join honestly blanks the loop's old tail
+    keep = 100      # ~8.3 h at the box poller's 5-min cadence — MUST outrun
+    #                 the viewer's 6-h dense loop window with margin, or the
+    #                 time-locked join blanks the loop's old tail and the
+    #                 overlay flashes on/off across every wrap (watched live)
     rolled = times[:-keep] if len(times) > keep else []
     times = times[-keep:]
     prune_now = [t for t in manifest.get("prune_next", []) if t not in times]
