@@ -190,6 +190,11 @@ def main() -> int:
     base = "sfc/analysis"
     stamp = valid.strftime("%Y%m%dT%H%M%SZ")
     manifest = store.get_json(f"{base}/latest_times.json") or {}
+    if manifest.get("latest") == stamp:
+        # analyses are 3-hourly; a tight poll loop must write only on a NEW
+        # valid time (the MRMS watermark discipline)
+        print(f"[sfc] {stamp} already current — no-op")
+        return 0
     times = [t for t in manifest.get("times", []) if t != stamp]
     times.append(stamp)
     times = sorted(times)
