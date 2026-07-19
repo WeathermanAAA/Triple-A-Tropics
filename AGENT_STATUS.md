@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~18:3x UTC — 4-pane lockstep + uniform 10-min loop cadence + fluid MRMS animation (half-res variant + serialized uploads) + outline-forward NHC cone, all probe-measured and recorded live over 02L. Earlier today: obs jitter, loop quality, export dialog, model guidance — see entries below._
+_Last update: 2026-07-19 ~17:0x UTC (later wave) — ASCAT moved to a cred-gated box poller (publish contract proven; GH lane doubled until the .env cred lands — QUEUED one-liner for Andrew) and NHC formation areas now gate on the invest-vs-designated rule with the nhc-poller as the last overlay-feed box conversion. Live-verified over 02L + the open EPAC invests. Earlier waves below._
 
 ---
 
@@ -96,6 +96,44 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~16:3x-17:0x UTC) — ASCAT TO THE BOX (cred-gated) + NHC formation-area gate
+
+**ASCAT poller conversion** (recon via workflow fan-out; measured truth: the
+"missing recent passes" is ~4-5 h SOURCE publication latency — the pipeline
+ingests everything the source lists, health honest at 4.2/8 h — plus GH
+shedding ~1/3 of hourly crons adding 1-3 h detection lag overnight):
+- `scripts/ascat_r2_publish.py` (@18ce32ae) reproduces the workflow sync
+  contract exactly (no-manifest no-op, single header set, manifest last,
+  targeted reap). Proven against a fixture on a shadow R2 prefix (headers
+  verified via CDN, test objects cleaned).
+- Box `ascat-poller` joined tat-overlays (tsr @fd25cc0): 10-min ticks,
+  pass-id watermark vs the live manifest, idempotent backfill — and
+  CRED-GATED: the ingest needs EARTHDATA_TOKEN (or EARTHDATA_USERNAME+
+  EARTHDATA_PASSWORD, or KNMI_API_KEY) which exists ONLY as a GH secret.
+  Until a line lands in the box .env the tick idles with a clear log and
+  the GH workflow remains the writer — its cadence DOUBLED to 2 slots/hr
+  meanwhile. UHR was already box-authoritative (uhr-poller, minutes-fresh).
+- **QUEUED (Andrew)**: add `EARTHDATA_TOKEN=...` (or KNMI_API_KEY) to
+  `/root/tsr-s2/.env` + `docker compose -p tat-overlays -f
+  docker-compose.overlays.yml up -d ascat-poller`; once its first publish
+  lands, retire the update-ascat.yml schedule (comment marks the path).
+- Live verify: SC layer's merged list leads with the newest pass each feed
+  actually has (standard metopb 12:00Z — the newest PO.DAAC published;
+  UHR 10:12Z — newest provider cut).
+
+**NHC formation-area gate** (mid-flight report: dev-area wash over
+designated 02L): areas now gate on the invest-vs-designated rule AT THE
+SOURCE (@65884d3c) — an outlook polygon containing a designated storm's
+current position (CurrentStorms lists designated only) is dropped;
+developed systems carry a cone + track, never a chance-of-formation wash.
+Plus the last GH-cron overlay feed moved to the box: `nhc-poller` joined
+tat-overlays (5-min ticks), update-nhc-overlay.yml retired to
+dispatch-only. Live-verified: 02L shows cone + timed track + obs at full
+contrast with the wash GONE; the two open EPAC invest areas still render
+their AOI (screenshot both ways).
+
+---
 
 ## 2026-07-19 (~17:2x-18:3x UTC) — 4-PANE LOCKSTEP + UNIFORM CADENCE + FLUID MRMS + CONE LAYERING
 
