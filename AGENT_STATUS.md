@@ -2417,3 +2417,55 @@ is tidier post-rewrite.
 - Codespace disk: /workspaces at 90% (the 3 GB backup experiments were
   cleaned; the 97 MB bundle kept). The Codespace may idle-suspend — all work
   is committed and pushed; nothing uncommitted anywhere.
+
+---
+
+# 2026-07-19 · Repo size audit (GitHub quota warning)
+
+## Findings
+
+- **GitHub reports ~87.6 GB** for the repo; local `main` is only ~129 MB
+  packed and the checked-out tree ~60 MB (largest files: the vendored
+  basemap GeoJSONs, all needed). Nothing in the current tree or in main's
+  history is meaningfully large — **no filter-repo rewrite is needed, at
+  all**. The bulk is server-side:
+- **`mp4-artifacts` orphan branch = the quota eater.** Tip = 1.47 GB
+  (456 files). Since 2026-04-24 the SST + subsurface animation workflows
+  force-pushed ~1.5 GB of disjoint history to it daily; every force-push
+  strands the previous multi-GB pack as unreachable server-side garbage
+  that GitHub GCs lazily. ~60 such pushes ≈ the 87 GB reported. No client
+  can see or fix those objects — this was never a filter-repo case.
+- **35 stale feature branches** (recon-*/hafs-*/sat-*/…) all predate the
+  earlier main-history rewrite ("diverged ahead:1000+ behind:2567" vs
+  main) — they anchor the pre-rewrite blobs on the server. Individually
+  small (~100 MB-class, heavily shared), collectively the last tie to the
+  old history. `sat-explorer-fixes` was the only provably-merged branch
+  (ahead:0).
+
+## Actions taken (safe, no history rewrite, no force-push)
+
+- Retired the `mp4-artifacts` publish path — it was already dead weight:
+  `product_animator.js` reads R2 (`cdn.triple-a-tropics.com`) since R2
+  phase 3, verified live for all 7 families (fresh manifests + MP4 HEAD
+  200 video/mp4). Removed both orphan-push steps from `update-sst.yml`,
+  the push step from `update-subsurface-animations.yml`, deleted
+  `scripts/sst_publish_orphan.sh`, guarded the historical seed step in
+  `r2-backfill.yml` with `if: false`.
+- Deleted remote branches: `mp4-artifacts` (was `b9dce6178c62`) and the
+  merged `sat-explorer-fixes` (was `edc0c330d897`). Recovery: SHAs above
+  restorable via API until GitHub GCs.
+- With the branch gone and pushes stopped, GitHub's background
+  maintenance reclaims the ~87 GB over time (days-to-weeks).
+
+## QUEUED manual steps (Andrew)
+
+- **Optional, accelerates reclaim:** ask GitHub Support to run a GC on
+  WeathermanAAA/Triple-A-Tropics ("we deleted a branch that accumulated
+  ~85 GB of unreachable objects from daily force-pushes; please GC").
+  Without it the size number still drops, just slower.
+- **Decide on the 35 pre-rewrite branches** (list + tip SHAs:
+  `git ls-remote --heads origin` snapshot in this commit's parent).
+  Their features all shipped in main long ago; deleting them releases
+  the last pre-rewrite anchors. The 97 MB pre-rewrite bundle backup
+  (kept in the Codespace) covers recovery. One `git push origin
+  --delete <name>` each when you bless the list.

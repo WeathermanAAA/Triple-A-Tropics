@@ -5,8 +5,8 @@ name: Update Subsurface Animations
 #   Map families: 18 regions × 4 = 72 clips
 #   Cross-section families: 4 regions × 2 = 8 clips
 #   Total: 80 clips per cold run.
-# Pushed to the `mp4-artifacts` orphan branch alongside the SST
-# animator's output.
+# Published to R2 (cdn root, one dir per family) — the `mp4-artifacts`
+# orphan branch is retired; R2 is the only publish surface.
 #
 # Scheduled to fire after the SST (13:17/13:47), Subsurface static
 # (14:23/14:53), and ARMOR3D static (14:43/15:13) workflows have had
@@ -24,7 +24,7 @@ permissions:
 
 # Subsurface animator runs are long (cold ~2-3 h, warm ~5-10 min).
 # Queue overlapping triggers rather than racing — each run reads + writes
-# the same frame cache + the same orphan-branch family directories.
+# the same frame cache + the same R2 family directories.
 concurrency:
   group: update-subsurface-animations
   cancel-in-progress: false
@@ -131,8 +131,8 @@ jobs:
           COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
         run: python generate_subsurface_animations.py
 
-      # Save the cache regardless of whether the orphan-branch push
-      # below succeeds — the rendered frames are the expensive part.
+      # Save the cache regardless of whether the publish below
+      # succeeds — the rendered frames are the expensive part.
       - name: Save animation frame cache
         if: always()
         uses: actions/cache/save@v5
@@ -143,10 +143,9 @@ jobs:
           key: subsurface-mp4-frames-v1-${{ github.run_id }}
 
       - name: Upload subsurface MP4 animations to R2 (cdn.triple-a-tropics.com)
-        # R2 is the PRIMARY source product_animator.js now reads from.
-        # The orphan-branch push below stays as a belt-and-suspenders
-        # fallback until live R2 playback is confirmed (R2 phase 3), then
-        # retired. Per-family loop mirrors the orphan-push below: each
+        # R2 is the ONLY publish surface (the `mp4-artifacts` orphan
+        # branch is retired: its daily force-pushes were the repo
+        # size-quota eater). Per-family loop: each
         # family that produced build output is synced to its mirrored CDN
         # prefix; a family with no output this run (e.g. ARMOR3D skipped
         # on missing CMEMS creds) leaves its prior R2 copy untouched —
@@ -181,72 +180,3 @@ jobs:
             upload_family "$fam"
           done
 
-      - name: Push subsurface MP4 artifacts to orphan branch (force-push, scoped)
-        # Force-push is intentional and SAFE here:
-        #   * The `mp4-artifacts` branch is purpose-built for rewrites
-        #     — each workflow run rewrites only its OWN family
-        #     directories and leaves siblings (`sst/`) untouched.
-        #   * No source code lives on this branch.
-        #   * `main` is never touched by this step.
-        # If the branch doesn't exist yet (first subsurface run before
-        # the SST animator has run), it is created as an orphan so we
-        # bootstrap cleanly.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -eo pipefail
-          ARTIFACTS_DIR=/tmp/mp4-artifacts
-          rm -rf "$ARTIFACTS_DIR"
-          mkdir -p "$ARTIFACTS_DIR"
-          cd "$ARTIFACTS_DIR"
-
-          git init -q
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-          if git fetch --depth=1 origin mp4-artifacts 2>/dev/null; then
-            git checkout -q -b mp4-artifacts FETCH_HEAD
-          else
-            echo "mp4-artifacts branch does not exist yet — creating it"
-            git checkout -q --orphan mp4-artifacts
-            git rm -rfq . 2>/dev/null || true
-          fi
-
-          # Wipe ONLY this workflow's own family dirs; leave sst/ +
-          # any other future family alone. If the local build dir
-          # for a family wasn't produced (e.g. CMEMS creds missing
-          # → ARMOR3D phase skipped), we leave the existing version
-          # in place rather than wiping to an empty state.
-          for family in aoml_tchp aoml_d26 armor3d_tchp armor3d_d26 \
-                        armor3d_crosssection_actual \
-                        armor3d_crosssection_anomaly; do
-            src="${GITHUB_WORKSPACE}/_mp4_build/${family}"
-            if [ -d "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
-              echo "--- staging ${family} (wiping prior version) ---"
-              rm -rf "${family}"
-              mkdir -p "${family}"
-              cp -r "${src}/." "${family}/"
-            else
-              echo "--- ${family}: no local build output, preserving prior branch contents ---"
-            fi
-          done
-
-          # README is a fallback only — the SST animator writes the
-          # canonical version on its first run.
-          if [ ! -f README.md ] && [ -f "${GITHUB_WORKSPACE}/_mp4_build/README.md" ]; then
-            cp "${GITHUB_WORKSPACE}/_mp4_build/README.md" README.md
-          fi
-
-          git add aoml_tchp aoml_d26 armor3d_tchp armor3d_d26 \
-                  armor3d_crosssection_actual \
-                  armor3d_crosssection_anomaly \
-                  README.md 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "No subsurface artifact changes to push."
-            exit 0
-          fi
-          git commit -q -m "chore: refresh subsurface MP4 artifacts ($(date -u +'%Y-%m-%d %H:%M UTC'))"
-          # Force-push is fine here — see step header.
-          git push --force origin mp4-artifacts

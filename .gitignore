@@ -15,9 +15,9 @@ venv/
 .idea/
 .vscode/
 
-# MP4 animation pipeline. Frames are cached between CI runs via
-# actions/cache; the build dir is staged and pushed to the orphan
-# `mp4-artifacts` branch — neither belongs on main.
+# MP4 animation pipeline. Frames are cached between CI runs (R2 tar);
+# the build dir is staged and synced to R2 (the orphan `mp4-artifacts`
+# branch is retired) — neither belongs on main.
 _frame_cache/
 _mp4_build/
 

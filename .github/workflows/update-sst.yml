@@ -36,8 +36,8 @@ concurrency:
 #     if the OISST shard later trips up.
 #   * Job 2 inherits Job 1's cache (warm OISST), cold-renders the four
 #     CRW-family products, encodes ALL 144 MP4s in one consolidated
-#     pass (so the manifest is unified), and force-pushes to the
-#     `mp4-artifacts` orphan branch.
+#     pass (so the manifest is unified), and syncs them to R2 (the
+#     `mp4-artifacts` orphan branch is retired — R2 is canonical).
 #
 # Bootstrap (cache cold for both shards) is ~3 h + ~3 h. Steady-state
 # (cache warm) is ~5 min + ~5 min.
@@ -130,8 +130,8 @@ jobs:
         # Only the small meta JSONs go to git now; the PNGs are on R2.
         # We still commit BEFORE the animation render so meta updates
         # land even if the OISST cold render later hits the 6-hour
-        # timeout. Only this step pushes to main — the animation steps
-        # push to the orphan `mp4-artifacts` branch in Job 2.
+        # timeout. Only this step pushes to main — the animation MP4s
+        # go to R2 in Job 2, never to git.
         run: |
           set -eo pipefail
           git config --local user.name  "github-actions[bot]"
@@ -305,14 +305,6 @@ jobs:
             --cache-control "$CC" --content-type "application/json" \
             --exclude "*" --include "*.json" --only-show-errors
 
-      - name: Push OISST MP4 artifacts to orphan branch (overlay, merge-safe)
-        # Fallback publish surface. OVERLAY (no `rm -rf sst`) so this shard's
-        # OISST MP4s + merged manifest are added on top of the existing
-        # branch contents, preserving the CRW shard's MP4s. Each shard
-        # overlays its own family; the merged manifest references both.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/sst_publish_orphan.sh
 
   render-crw-and-publish:
     runs-on: ubuntu-latest
@@ -389,10 +381,10 @@ jobs:
         run: bash scripts/sst_frame_cache_r2.sh save
 
       - name: Upload SST MP4 animations to R2 (cdn.triple-a-tropics.com/sst/)
-        # R2 is the PRIMARY source product_animator.js now reads from.
-        # The orphan-branch push below is kept as a belt-and-suspenders
-        # fallback until live playback from R2 is confirmed (R2 phase 3),
-        # then retired. Content-types set EXPLICITLY: video/mp4 (playback
+        # R2 is the ONLY publish surface (the `mp4-artifacts` orphan
+        # branch is retired: its daily ~1.5 GB force-pushes were the repo
+        # size-quota eater, and playback from R2 has been confirmed live).
+        # Content-types set EXPLICITLY: video/mp4 (playback
         # + range scrubbing), image/jpeg (posters), application/json (the
         # manifest, fetched cross-origin → needs correct type + CORS).
         # Three passes, one Content-Type each; manifest skips --size-only
@@ -420,10 +412,3 @@ jobs:
             --cache-control "$CC" --content-type "application/json" \
             --exclude "*" --include "*.json" --only-show-errors
 
-      - name: Push CRW MP4 artifacts to orphan branch (overlay, merge-safe)
-        # Same shared overlay publisher as Job 1: adds this shard's CRW MP4s
-        # + merged manifest on top of the branch (which already has Job 1's
-        # fresh OISST), preserving both families. See scripts/sst_publish_orphan.sh.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/sst_publish_orphan.sh

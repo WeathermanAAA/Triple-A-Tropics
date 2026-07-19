@@ -134,6 +134,11 @@ jobs:
           fi
 
       - name: Seed mp4-artifacts media to R2 (R2 phase 3 — animations)
+        # RETIRED 2026-07-19: the seed ran and the `mp4-artifacts` branch
+        # was deleted (R2 is canonical; the scheduled workflows publish
+        # straight to R2). Guarded off so a future dispatch of this
+        # backfill job cannot fail on the missing branch.
+        if: ${{ false }}
         # The animation MP4s/JPGs/manifests (~456 files, ~1.4 GB across 7
         # family dirs: sst, aoml_{tchp,d26}, armor3d_{tchp,d26},
         # armor3d_crosssection_{actual,anomaly}) currently live ONLY on the
