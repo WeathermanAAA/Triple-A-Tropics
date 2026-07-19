@@ -1237,11 +1237,11 @@
       a.download = (self.manifest.product.replace(/\//g, '-')) + '_loop.webm';
       a.click();
     };
-    var i = 0, dwell = 1000 / fps;
+    var i = 0, start = this.frames.length - N, dwell = 1000 / fps;
     if (opts.onProgress) opts.onProgress(0, N);
     rec.start();
     (function step() {
-      self.showFrame(i); i++;
+      self.showFrame(start + i); i++;
       if (opts.onProgress) opts.onProgress(i, N);
       if (i < N) setTimeout(step, dwell);
       else setTimeout(function () { try { rec.stop(); } catch (e) {} }, dwell * 2);

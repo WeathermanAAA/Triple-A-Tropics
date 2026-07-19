@@ -1877,11 +1877,33 @@
       }, 'image/png');
     });
   }
+  // Export dialog: the defaults must MATCH THE SCREEN — the actual frame
+  // count of the current loop window and the viewer's current playback
+  // rate. Anything else exports a loop nobody was watching.
   function exportLoop(btn) {
     if (S.tm.on) { exportTMLoop(btn); return; }
-    var tv = lead(), pane = S.panes[0];
+    var tv = lead();
     if (!tv || btn.dataset.busy) return;
     if (tv.frames.length < 2) { flash('1 frame — loop export needs the cron backfill'); return; }
+    var pop = $('cx-exppop');
+    if (pop.style.display !== 'block') {
+      $('cx-exp-n').max = tv.frames.length;
+      $('cx-exp-n').value = tv.frames.length;   // the loop as-is
+      $('cx-exp-fps').value = S.fps;            // the rate on screen
+      pop.style.display = 'block';
+      $('cx-exp-go').onclick = function () {
+        pop.style.display = 'none';
+        runLoopExport(btn,
+          Math.max(2, Math.min(tv.frames.length, parseInt($('cx-exp-n').value, 10) || tv.frames.length)),
+          Math.max(1, Math.min(30, parseInt($('cx-exp-fps').value, 10) || S.fps)));
+      };
+      return;
+    }
+    pop.style.display = 'none';
+  }
+  function runLoopExport(btn, nFrames, fps) {
+    var tv = lead(), pane = S.panes[0];
+    if (!tv || btn.dataset.busy) return;
     btn.dataset.busy = '1'; stopClock();
     // record a COMPOSITE canvas: map frames + the branded chrome, redrawn
     // every animation tick so the valid time tracks the playing frame.
@@ -1900,6 +1922,8 @@
     };
     tv.exportWebM({
       captureCanvas: c,
+      fps: fps,
+      maxFrames: nFrames,
       maxBytes: S.hqExport ? 24e6 : 9e6,
       maxBitrate: S.hqExport ? 12e6 : 6e6,
       onProgress: function (i, n) {

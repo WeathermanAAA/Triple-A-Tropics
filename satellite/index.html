@@ -2024,8 +2024,14 @@ function makeSatViewer(idPrefix, opts) {
   function satOpenGifDialog() {
     if (!sat.frames.length) return;
     var nIn = satEl("gifn");
+    // defaults MATCH THE SCREEN: the loop as loaded, at the playback rate
+    // currently selected (base cadence x speed) — an export should be the
+    // thing the user was just watching
     nIn.max = sat.frames.length;
-    nIn.value = Math.min(sat.frames.length, 30);
+    nIn.value = sat.frames.length;
+    var liveFps = Math.max(1, Math.min(30,
+      Math.round(1000 / (SAT_BASE_MS / (sat.speed || 1)))));
+    satEl("giffps").value = liveFps;
     satEl("gifstatus").style.display = "none";
     satEl("gifmake").disabled = false;
     satEl("gifmodal").classList.add("open");
