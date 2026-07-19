@@ -23,7 +23,7 @@ CANONICAL = [
     ("/satellite/", "Satellite"),
     ("/models/", "Models"),
     ("/subseasonal/", "Subseasonal"),
-    ("/recon/", "Recon"),
+    ("/obs/", "Obs"),
     ("https://twitter.com/WeathermanAAA_", "Twitter"),
 ]
 
@@ -35,7 +35,7 @@ ACTIVE_FOR_SECTION = {
     "satellite": "/satellite/",
     "models": "/models/",
     "subseasonal": "/subseasonal/",
-    "recon": "/recon/",
+    "obs": "/obs/",
 }
 
 # nav-hidden utility pages: standard chrome, but NO section -> zero active

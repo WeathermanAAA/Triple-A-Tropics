@@ -1026,6 +1026,8 @@
     this._drawMap(g);
     this._drawTimeSeries(g);
     this._drawFooter(g);
+    // keep an open aircraft popover tracking the (possibly moved) marker
+    if (this._planePanel) this._updatePlanePanel();
   };
 
   ReconViewer.prototype._drawHeader = function (g) {
@@ -1162,6 +1164,10 @@
       var vp = proj(vlo, vla);
       this._drawVdm(g, vp[0], vp[1], vdm[i], L.w, L.h);
     }
+
+    // ---- 9) aircraft position: the newest ob of the mission, oriented on
+    //         the last track segment. Clickable (info popover).
+    this._drawPlaneMarker(g, proj, L);
 
     g.restore();
 
@@ -1790,6 +1796,217 @@
   };
 
   // ====================================================================
+  // Aircraft position marker + info popover.
+  //
+  // A muted top-view plane glyph at the mission's newest ob, rotated to the
+  // bearing of the last track segment. On a live mission it tracks the
+  // newest ob as the feed refreshes; on an archived mission it marks the
+  // end-of-mission position (the popover says which). Click/tap toggles a
+  // compact popover anchored beside the marker inside the map rect - it
+  // never covers the time-series panels, is dismissible (X / outside click /
+  // Esc), and is plain HTML so exports stay clean (the marker itself is on
+  // the canvas and ships in the PNG).
+  // ====================================================================
+  ReconViewer.prototype._lastFix = function () {
+    var track = this._scopedTrack();
+    for (var i = track.length - 1; i >= 0; i--) {
+      var p = track[i];
+      if (num(p.lat) != null && num(p.lon) != null) {
+        // heading: bearing from the previous DISTINCT position
+        for (var j = i - 1; j >= 0; j--) {
+          var q = track[j];
+          if (num(q.lat) == null || num(q.lon) == null) continue;
+          if (q.lat === p.lat && q.lon === p.lon) continue;
+          var la1 = p.lat * Math.PI / 180, la0 = q.lat * Math.PI / 180;
+          var dlo = (p.lon - q.lon) * Math.PI / 180;
+          var hdg = Math.atan2(Math.sin(dlo) * Math.cos(la1),
+            Math.cos(la0) * Math.sin(la1) -
+            Math.sin(la0) * Math.cos(la1) * Math.cos(dlo));
+          return { ob: p, hdg: hdg };
+        }
+        return { ob: p, hdg: 0 };
+      }
+    }
+    return null;
+  };
+
+  ReconViewer.prototype._drawPlaneMarker = function (g, proj, L) {
+    this._planeHit = null;
+    var fix = this._lastFix();
+    if (!fix) return;
+    var pt = proj(fix.ob.lon, fix.ob.lat);
+    if (pt[0] < -20 || pt[0] > L.w + 20 || pt[1] < -20 || pt[1] > L.h + 20) return;
+    g.save();
+    g.translate(pt[0], pt[1]);
+    g.rotate(fix.hdg);
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    // dark casing first so the glyph reads on any backdrop, then the glyph:
+    // fuselage, straight wings, tailplane. Muted house foreground.
+    var passes = [
+      { c: 'rgba(7,16,28,0.85)', w: 4.6 },
+      { c: 'rgba(229,237,246,0.95)', w: 2.2 }
+    ];
+    for (var i = 0; i < passes.length; i++) {
+      g.strokeStyle = passes[i].c; g.lineWidth = passes[i].w;
+      g.beginPath();
+      g.moveTo(0, -8); g.lineTo(0, 7);          // fuselage (nose up)
+      g.moveTo(-7.5, -1.5); g.lineTo(7.5, -1.5); // wings
+      g.moveTo(-3.5, 6); g.lineTo(3.5, 6);       // tail
+      g.stroke();
+    }
+    g.restore();
+    this._planeHit = { x: pt[0], y: pt[1], ob: fix.ob, hdg: fix.hdg };
+  };
+
+  ReconViewer.prototype._aircraftIdentity = function (ac) {
+    ac = String(ac || '').toUpperCase();
+    if (/^AF3\d\d$/.test(ac)) {
+      return { type: 'WC-130J Hercules',
+               unit: 'USAF 53rd Weather Reconnaissance Squadron' };
+    }
+    if (ac === 'NOAA2' || ac === 'NOAA42' || ac === 'NOAA3' || ac === 'NOAA43') {
+      return { type: 'WP-3D Orion', unit: 'NOAA Aircraft Operations Center' };
+    }
+    if (ac === 'NOAA9' || ac === 'NOAA49') {
+      return { type: 'Gulfstream IV-SP', unit: 'NOAA Aircraft Operations Center' };
+    }
+    if (/^NOAA/.test(ac)) {
+      return { type: 'Reconnaissance aircraft',
+               unit: 'NOAA Aircraft Operations Center' };
+    }
+    return { type: 'Reconnaissance aircraft', unit: null };
+  };
+
+  ReconViewer.prototype._onCanvasClick = function (ev) {
+    var L = this.layout && this.layout.map, hit = this._planeHit;
+    if (!L) return;
+    var rect = this.dom.canvas.getBoundingClientRect();
+    var sx = this.dom.canvas.width / rect.width / this.dpr;
+    var mx = (ev.clientX - rect.left) * sx - L.x;
+    var my = (ev.clientY - rect.top) * sx - L.y;
+    if (hit) {
+      var dx = mx - hit.x, dy = my - hit.y;
+      if (dx * dx + dy * dy <= 15 * 15) {
+        if (this._planePanel) this._closePlanePanel();
+        else this._openPlanePanel();
+        return;
+      }
+    }
+    if (this._planePanel) this._closePlanePanel();
+  };
+
+  ReconViewer.prototype._closePlanePanel = function () {
+    if (this._planePanel && this._planePanel.parentNode) {
+      this._planePanel.parentNode.removeChild(this._planePanel);
+    }
+    this._planePanel = null;
+  };
+
+  ReconViewer.prototype._openPlanePanel = function () {
+    this._closePlanePanel();
+    if (!this._planeHit || !this.dom.mapframe) return;
+    var d = document.createElement('div');
+    d.style.cssText =
+      'position:absolute;z-index:6;width:248px;max-width:70%;' +
+      'background:rgba(10,19,36,0.96);border:1px solid #2a3e5c;' +
+      'border-radius:8px;padding:10px 12px;color:#e5edf6;' +
+      'font-size:12px;line-height:1.45;box-shadow:0 4px 18px rgba(0,0,0,0.45);';
+    this._planePanel = d;
+    this.dom.mapframe.appendChild(d);
+    this._updatePlanePanel();
+    var self = this;
+    if (!this._planeEsc) {
+      this._planeEsc = function (e) {
+        if (e.key === 'Escape') self._closePlanePanel();
+      };
+      document.addEventListener('keydown', this._planeEsc);
+    }
+  };
+
+  ReconViewer.prototype._updatePlanePanel = function () {
+    var d = this._planePanel, m = this.mission, hit = this._planeHit;
+    if (!d) return;
+    if (!m || !hit) { this._closePlanePanel(); return; }
+    var ob = hit.ob;
+    var id = this._aircraftIdentity(m.aircraft);
+    var obT = Date.parse(ob.t || '');
+    var ageMin = isNaN(obT) ? null : Math.round((Date.now() - obT) / 60000);
+    var live = ageMin != null && ageMin <= 45;   // HDOBs post ~10-min; quiet
+                                                 // for 45+ min = mission over
+    function row(k, v) {
+      return '<div style="display:flex;justify-content:space-between;gap:10px">' +
+        '<span style="color:#8ea2bd">' + k + '</span>' +
+        '<span style="font-variant-numeric:tabular-nums;text-align:right">' +
+        v + '</span></div>';
+    }
+    function f1(v) { return Math.round(v * 10) / 10; }
+    var latS = ob.lat != null ?
+      (Math.abs(ob.lat).toFixed(2) + (ob.lat >= 0 ? 'N' : 'S')) : '?';
+    var lonS = ob.lon != null ?
+      (Math.abs(ob.lon).toFixed(2) + (ob.lon >= 0 ? 'E' : 'W')) : '?';
+    var rows = [];
+    rows.push('<div style="font-weight:800;font-size:13px;margin-bottom:1px">' +
+      self_escape(m.aircraft || 'Aircraft') + ' · ' + id.type + '</div>');
+    if (id.unit) {
+      rows.push('<div style="color:#8ea2bd;font-size:11px;margin-bottom:6px">' +
+        id.unit + '</div>');
+    }
+    rows.push(row('Mission', self_escape(m.mission_id || '?')));
+    rows.push(row('Storm', self_escape(m.name || m.storm_name || '?')));
+    rows.push(row('Window', hhmm(m.valid_start) + ' to ' + hhmm(m.valid_end)));
+    rows.push('<div style="border-top:1px solid #2a3e5c;margin:7px 0 6px;' +
+      'padding-top:6px;color:' + (live ? '#5fd18f' : '#8ea2bd') +
+      ';font-weight:700;font-size:11px;letter-spacing:0.4px">' +
+      (live ? 'CURRENT POSITION' : 'POSITION AT LAST OB (END OF MISSION)') +
+      '</div>');
+    rows.push(row('Fix', latS + ' ' + lonS));
+    rows.push(row('Ob time', hhmm(ob.t) +
+      (ageMin != null ? ' · ' + ageMin + ' min ago' : '')));
+    if (num(ob.wspd) != null) {
+      rows.push(row('FL wind', Math.round(ob.wspd) + ' kt' +
+        (num(ob.wdir) != null ? ' from ' + Math.round(ob.wdir) + '°' : '')));
+    }
+    if (num(ob.pkwnd) != null) rows.push(row('FL peak', Math.round(ob.pkwnd) + ' kt'));
+    if (num(ob.sfmr) != null) {
+      rows.push(row('SFMR sfc', Math.round(ob.sfmr) + ' kt' +
+        (ob.sfmr_suspect ? ' · suspect' : '')));
+    }
+    if (num(ob.plane_p) != null) {
+      var alt = 44330 * (1 - Math.pow(ob.plane_p / 1013.25, 0.1903));
+      rows.push(row('Static p', f1(ob.plane_p) + ' hPa · ' + Math.round(alt) + ' m'));
+    }
+    if (num(ob.p_sfc) != null) rows.push(row('Extrap sfc p', f1(ob.p_sfc) + ' hPa'));
+    // newest VDM center fix, only when it is fresh relative to the last ob
+    var vdm = (m.vdm_centers || []).slice().sort(function (a, b) {
+      return String(b.t || '').localeCompare(String(a.t || ''));
+    })[0];
+    if (vdm && num(vdm.mslp_hpa) != null && ob.t && vdm.t &&
+        Math.abs(Date.parse(vdm.t) - obT) <= 45 * 60000) {
+      rows.push(row('Center fix', f1(vdm.mslp_hpa) + ' hPa @ ' + hhmm(vdm.t)));
+    }
+    rows.push('<div style="text-align:right;margin-top:7px">' +
+      '<span data-plane-close style="cursor:pointer;color:#8ea2bd;' +
+      'font-weight:700;padding:2px 6px">close</span></div>');
+    d.innerHTML = rows.join('');
+    var self = this;
+    var x = d.querySelector('[data-plane-close]');
+    if (x) x.addEventListener('click', function () { self._closePlanePanel(); });
+
+    // anchor beside the marker (flip to the roomier side), clamped to the map
+    var L = this.layout.map;
+    var rect = this.dom.canvas.getBoundingClientRect();
+    var scale = rect.width / this.figW;
+    var cw = this.dom.mapframe.clientWidth;
+    var px = (L.x + hit.x) * scale, py = (L.y + hit.y) * scale;
+    var pw = d.offsetWidth || 248, ph = d.offsetHeight || 200;
+    var left = (hit.x < L.w / 2) ? px + 18 : px - pw - 18;
+    left = Math.max(4, Math.min(cw - pw - 4, left));
+    var top = Math.max(4, Math.min((L.y + L.h) * scale - ph - 4, py - ph / 2));
+    d.style.left = left + 'px';
+    d.style.top = top + 'px';
+  };
+
+  // ====================================================================
   // Shareable export: Download PNG / Copy (the full figure) via canvas.toBlob.
   // ====================================================================
   ReconViewer.prototype._exportName = function () {
@@ -2028,6 +2245,7 @@
     if (this.dom.canvas) {
       this.dom.canvas.addEventListener('mousemove', function (ev) { self._hover(ev); });
       this.dom.canvas.addEventListener('mouseleave', function () { if (self.dom.tooltip) self.dom.tooltip.style.display = 'none'; });
+      this.dom.canvas.addEventListener('click', function (ev) { self._onCanvasClick(ev); });
     }
     if (typeof window !== 'undefined' && window.ResizeObserver && this.dom.mapframe) {
       this._ro = new ResizeObserver(function () { self._resizeDebounced(); });

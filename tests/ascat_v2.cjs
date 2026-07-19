@@ -47,25 +47,30 @@ const m = require(path.join(ROOT, 'ascat', 'ascat.js'));
   assert.deepStrictEqual(m.rectToBbox(b, a), [-55, -45, 15, 25], 'normalized regardless of drag dir');
 })();
 
-// ---- F4: redirect mapping (/ascat/ -> /satellite/ascat/) preserving OG
+// ---- F4: redirect mapping (old paths -> /obs/ascat/) preserving OG
 (function redirect() {
-  const html = fs.readFileSync(path.join(ROOT, 'ascat', 'index.html'), 'utf8');
-  assert.ok(/http-equiv="refresh"[^>]*url=\/satellite\/ascat\//.test(html), 'meta-refresh to new path');
-  assert.ok(/location\.replace\('\/satellite\/ascat\//.test(html), 'JS redirect to new path');
-  assert.ok(/rel="canonical" href="https:\/\/triple-a-tropics\.com\/satellite\/ascat\/"/.test(html), 'canonical -> new path');
-  assert.ok(/og:url" content="https:\/\/triple-a-tropics\.com\/satellite\/ascat\/"/.test(html), 'og:url -> new path');
-  assert.ok(/og:title/.test(html) && /EUMETSAT/.test(html), 'OG card preserved');
+  // BOTH legacy locations stub-redirect to the /obs/ home (single hop each).
+  for (const stub of [path.join(ROOT, 'ascat', 'index.html'),
+                      path.join(ROOT, 'satellite', 'ascat', 'index.html')]) {
+    const html = fs.readFileSync(stub, 'utf8');
+    assert.ok(/http-equiv="refresh"[^>]*url=\/obs\/ascat\//.test(html), 'meta-refresh to /obs/ascat/');
+    assert.ok(/location\.replace\('\/obs\/ascat\//.test(html), 'JS redirect to /obs/ascat/');
+    assert.ok(/rel="canonical" href="https:\/\/triple-a-tropics\.com\/obs\/ascat\/"/.test(html), 'canonical -> /obs/ascat/');
+    assert.ok(/og:url" content="https:\/\/triple-a-tropics\.com\/obs\/ascat\/"/.test(html), 'og:url -> /obs/ascat/');
+    assert.ok(/og:title/.test(html) && /EUMETSAT/.test(html), 'OG card preserved');
+  }
 })();
 
-// ---- F4: IA structure (subpages exist, sub-nav present, MW moved off /satellite/)
+// ---- F4: IA structure (viewer at /obs/ascat/, satellite pages link across)
 (function ia() {
-  const ascat = fs.readFileSync(path.join(ROOT, 'satellite', 'ascat', 'index.html'), 'utf8');
+  const ascat = fs.readFileSync(path.join(ROOT, 'obs', 'ascat', 'index.html'), 'utf8');
   const mw = fs.readFileSync(path.join(ROOT, 'satellite', 'microwave', 'index.html'), 'utf8');
   const sat = fs.readFileSync(path.join(ROOT, 'satellite', 'index.html'), 'utf8');
-  for (const [name, h] of [['ascat', ascat], ['microwave', mw], ['satellite', sat]]) {
+  for (const [name, h] of [['mw', mw], ['satellite', sat]]) {
     assert.ok(/class="subnav"/.test(h), name + ' has the sub-nav');
-    assert.ok(/\/satellite\/microwave\//.test(h) && /\/satellite\/ascat\//.test(h), name + ' sub-nav links both siblings');
+    assert.ok(/\/satellite\/microwave\//.test(h) && /\/obs\/ascat\//.test(h), name + ' sub-nav links siblings (ascat now under /obs/)');
   }
+  assert.ok(/class="subnav"/.test(ascat) && /\/obs\/recon\//.test(ascat) && /\/obs\/sar\//.test(ascat), 'ascat page carries the obs sub-nav');
   assert.ok(/id="ascat-viewer"/.test(ascat) && /ascat\/ascat\.js/.test(ascat), 'ascat page mounts the viewer');
   assert.ok(/id="microwave-viewer"/.test(mw) && /microwave\/microwave\.js/.test(mw), 'microwave page mounts the viewer');
   assert.ok(!/id="microwave-viewer"/.test(sat), '/satellite/ no longer holds the MW viewer');

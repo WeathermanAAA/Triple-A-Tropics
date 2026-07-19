@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SAR Surface Winds · Obs · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Storm-tasked SAR ocean-surface winds at ~500 m resolution: RADARSAT Constellation and Sentinel-1 C-band passes over tropical cyclones, processed at NOAA/NESDIS/STAR/SOCD, indexed per storm.">
+<meta property="og:title" content="SAR Surface Winds · Triple-A-Tropics">
+<meta property="og:description" content="Storm-tasked C-band SAR at ~500 m: the highest-resolution TC surface wind observation, indexed per storm.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://triple-a-tropics.com/obs/sar/">
+<link rel="canonical" href="https://triple-a-tropics.com/obs/sar/">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/obs/subnav.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
+  nav, header, footer { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+
+  .sar-wrap { max-width: 1180px; margin: 0 auto; padding: 0 18px; }
+  .sar-storms { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .sar-storm {
+    display: block; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; text-decoration: none; cursor: pointer;
+  }
+  .sar-storm:hover { border-color: var(--accent-2); }
+  .sar-storm img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #07101c; }
+  .sar-storm .m { padding: 10px 12px; }
+  .sar-storm .n { color: var(--fg); font-weight: 800; font-size: 15px; }
+  .sar-storm .s { color: var(--muted); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  .sar-back { display: inline-block; color: var(--accent-2); font-size: 13px; font-weight: 700;
+    margin-bottom: 12px; cursor: pointer; text-decoration: none; }
+  .sar-passes { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .sar-pass {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; cursor: pointer;
+  }
+  .sar-pass.sel { border-color: var(--accent-2); }
+  .sar-pass img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #07101c; }
+  .sar-pass .m { padding: 7px 10px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .sar-pass .t { color: var(--fg); font-weight: 700; font-size: 12.5px; }
+
+  .sar-view { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+  .sar-view img { width: 100%; display: block; border-radius: 6px; }
+  .sar-viewmeta { color: var(--muted); font-size: 12px; padding: 8px 6px 4px; font-variant-numeric: tabular-nums; }
+  .sar-empty { color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 22px; }
+  .sar-h { color: var(--fg); font-size: 18px; font-weight: 800; margin: 0 0 10px; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/" class="active">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Observation sections">
+  <div class="subnav-inner">
+    <a href="/obs/">Overview</a>
+    <a href="/obs/recon/">Recon</a>
+    <a href="/obs/ascat/">Scatterometer</a>
+    <a href="/obs/sar/" class="active">SAR Winds</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>SAR Surface Winds</h1>
+  <p>Storm-tasked <b>synthetic aperture radar</b> ocean-surface winds at <b>~500 m</b>
+  resolution, the highest-resolution surface wind observation of a tropical cyclone
+  there is. C-band SAR resolves the eye, eyewall and wind maxima structure that
+  scatterometers smooth out. Acquisitions exist <b>only when a storm is tasked</b>,
+  so coverage is per storm and intermittent. Browse past storms below; new passes
+  appear automatically while a storm is tasked. Winds are shown on the standard
+  NOAA/NESDIS/STAR/SOCD SAR wind color scale in m/s.</p>
+</header>
+
+<section class="chart-section">
+  <div class="sar-wrap" id="sar-root">
+    <div class="sar-empty">Loading storm index...</div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · SAR winds: NOAA/NESDIS/STAR/SOCD · RADARSAT Constellation Mission imagery © Government of Canada · Contains modified Copernicus Sentinel-1 data</div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  var BASE = 'https://cdn.triple-a-tropics.com/sar';
+  var POLL_MS = 300000;
+  var root = document.getElementById('sar-root');
+  var manifest = null, curSlug = null, curIndex = null, curStem = null;
+  var lastGen = null;
+
+  function fetchJson(path) {
+    return fetch(BASE + path + '?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function fmtZ(iso) {
+    if (!iso) return 'time unknown';
+    return iso.replace('T', ' ').replace(':00Z', 'Z').replace(/Z$/, ' Z');
+  }
+  function ktOf(ms) { return Math.round(ms * 1.94384); }
+
+  // ---- storm grid ----
+  function renderStorms() {
+    root.innerHTML = '';
+    var storms = (manifest && manifest.storms || []).filter(function (s) { return s.n_passes > 0; });
+    if (!storms.length) {
+      root.appendChild(el('div', 'sar-empty',
+        'No SAR passes indexed yet. Passes appear here when a storm is tasked for SAR acquisition.'));
+      return;
+    }
+    var h = el('div', 'sar-h', 'Storms with SAR passes');
+    root.appendChild(h);
+    var grid = el('div', 'sar-storms');
+    storms.forEach(function (s) {
+      var a = el('a', 'sar-storm');
+      a.href = '#' + s.slug;
+      var img = el('img');
+      img.loading = 'lazy';
+      img.alt = s.name + ' latest SAR pass';
+      if (s.latest_thumb) img.src = BASE + '/' + s.latest_thumb;
+      a.appendChild(img);
+      var m = el('div', 'm');
+      m.appendChild(el('div', 'n', s.name + ' (' + (s.atcf || '').toUpperCase() + ')'));
+      m.appendChild(el('div', 's', s.basin + ' ' + s.year + ' · ' + s.n_passes +
+        (s.n_passes === 1 ? ' pass' : ' passes') +
+        (s.latest_utc ? ' · latest ' + fmtZ(s.latest_utc) : '')));
+      a.appendChild(m);
+      grid.appendChild(a);
+    });
+    root.appendChild(grid);
+  }
+
+  // ---- storm view ----
+  function renderStorm() {
+    root.innerHTML = '';
+    var back = el('a', 'sar-back', '< All storms');
+    back.href = '#';
+    root.appendChild(back);
+    if (!curIndex) { root.appendChild(el('div', 'sar-empty', 'Loading passes...')); return; }
+    root.appendChild(el('div', 'sar-h', curIndex.name + ' (' +
+      (curIndex.atcf || '').toUpperCase() + ') · ' + curIndex.passes.length +
+      (curIndex.passes.length === 1 ? ' SAR pass' : ' SAR passes')));
+    var grid = el('div', 'sar-passes');
+    curIndex.passes.forEach(function (p) {
+      var c = el('div', 'sar-pass' + (p.stem === curStem ? ' sel' : ''));
+      var img = el('img');
+      img.loading = 'lazy';
+      img.alt = 'SAR pass ' + fmtZ(p.t);
+      img.src = BASE + '/' + curSlug + '/' + p.thumb;
+      c.appendChild(img);
+      var m = el('div', 'm');
+      m.appendChild(el('div', 't', fmtZ(p.t)));
+      m.appendChild(el('div', null, (p.sat || '') + ' ' + (p.pol || '') +
+        (p.max_ms != null ? ' · max ' + p.max_ms + ' m/s (' + ktOf(p.max_ms) + ' kt)' : '')));
+      c.addEventListener('click', function () {
+        location.hash = '#' + curSlug + '/' + p.stem;
+      });
+      grid.appendChild(c);
+    });
+    root.appendChild(grid);
+    var pick = null;
+    for (var i = 0; i < curIndex.passes.length; i++) {
+      if (curIndex.passes[i].stem === curStem) { pick = curIndex.passes[i]; break; }
+    }
+    if (!pick) pick = curIndex.passes[0];
+    if (pick) {
+      var view = el('div', 'sar-view');
+      var big = el('img');
+      big.alt = 'SAR surface wind, ' + curIndex.name + ', ' + fmtZ(pick.t);
+      big.src = BASE + '/' + curSlug + '/' + pick.png;
+      view.appendChild(big);
+      view.appendChild(el('div', 'sar-viewmeta', fmtZ(pick.t) + ' · ' +
+        (pick.sat || '') + ' ' + (pick.pol || '') +
+        (pick.max_ms != null ? ' · max ' + pick.max_ms + ' m/s (' + ktOf(pick.max_ms) + ' kt)' : '')));
+      root.appendChild(view);
+    }
+  }
+
+  function route() {
+    var h = location.hash.replace(/^#/, '');
+    var parts = h ? h.split('/') : [];
+    var slug = parts[0] || null;
+    curStem = parts[1] || null;
+    if (!slug) {
+      curSlug = null; curIndex = null;
+      if (manifest) renderStorms();              // else keep the loading card
+      return;
+    }
+    if (slug !== curSlug || !curIndex) {
+      curSlug = slug; curIndex = null;
+      renderStorm();
+      fetchJson('/' + slug + '/index.json')
+        .then(function (idx) { if (curSlug === slug) { curIndex = idx; renderStorm(); } })
+        .catch(function () {
+          if (curSlug === slug) {
+            root.innerHTML = '';
+            root.appendChild(el('div', 'sar-empty', 'Could not load this storm.'));
+          }
+        });
+    } else {
+      renderStorm();
+    }
+  }
+
+  function loadManifest(first) {
+    fetchJson('/manifest.json')
+      .then(function (m) {
+        if (m.generated_utc === lastGen) return;   // idle poll: no re-render
+        lastGen = m.generated_utc;
+        manifest = m;
+        if (!curSlug) renderStorms();
+      })
+      .catch(function () {
+        if (first && !manifest) {
+          root.innerHTML = '';
+          root.appendChild(el('div', 'sar-empty',
+            'No SAR archive yet. Passes appear here when a storm is tasked.'));
+        }
+      })
+      .then(function () { setTimeout(loadManifest, POLL_MS); });
+  }
+
+  window.addEventListener('hashchange', route);
+  loadManifest(true);
+  route();
+  document.getElementById('year').textContent = new Date().getFullYear();
+})();
+</script>
+
+</body>
+</html>

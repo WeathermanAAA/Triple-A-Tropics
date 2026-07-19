@@ -1,0 +1,26 @@
+/* Shared sub-navigation for the /obs/ section (Overview · Recon ·
+   Scatterometer · SAR). Sits directly under the site nav; house dark theme. */
+.subnav {
+  background: var(--panel, #0a1324);
+  border-bottom: 1px solid var(--border, #2a3e5c);
+  position: sticky; top: 0; z-index: 40;
+}
+.subnav-inner {
+  max-width: 1180px; margin: 0 auto; padding: 0 18px;
+  display: flex; gap: 4px; align-items: stretch; flex-wrap: wrap;
+}
+.subnav-inner a {
+  display: inline-flex; align-items: center; padding: 11px 16px;
+  color: var(--muted, #8ea2bd); text-decoration: none;
+  font-size: 13.5px; font-weight: 600; letter-spacing: 0.2px;
+  border-bottom: 2px solid transparent;
+}
+.subnav-inner a:hover { color: var(--fg, #e5edf6); }
+.subnav-inner a.active {
+  color: var(--fg, #e5edf6);
+  border-bottom-color: var(--accent-2, #2b9cff);
+}
+@media (max-width: 560px) {
+  .subnav-inner { padding: 0 10px; }
+  .subnav-inner a { padding: 10px 12px; font-size: 13px; }
+}

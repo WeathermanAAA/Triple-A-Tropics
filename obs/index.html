@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Observations · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Direct tropical cyclone observations: Hurricane Hunter aircraft reconnaissance, ASCAT scatterometer ocean-surface winds, and storm-tasked SAR high-resolution surface wind imagery.">
+<meta property="og:title" content="Observations · Triple-A-Tropics">
+<meta property="og:description" content="Direct TC observations: aircraft recon, ASCAT scatterometer winds, and storm-tasked SAR high-resolution surface winds.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://triple-a-tropics.com/obs/">
+<link rel="canonical" href="https://triple-a-tropics.com/obs/">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/obs/subnav.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
+  nav, header, footer { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/" class="active">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Observation sections">
+  <div class="subnav-inner">
+    <a href="/obs/" class="active">Overview</a>
+    <a href="/obs/recon/">Recon</a>
+    <a href="/obs/ascat/">Scatterometer</a>
+    <a href="/obs/sar/">SAR Winds</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Observations</h1>
+  <p>Direct measurements of tropical cyclones, straight from the data.</p>
+</header>
+
+<section class="cards">
+  <a class="card live" href="/obs/recon/">
+    <span class="emoji">🛩️</span>
+    <h2>Aircraft Recon</h2>
+    <p>Hurricane Hunter missions: the Plan of the Day, flight tracks as wind barbs colored by TC wind, VDM center fixes, dropsondes, and a multi-panel time series. Live during missions.</p>
+    <span class="badge">● Live</span>
+  </a>
+
+  <a class="card live" href="/obs/ascat/">
+    <span class="emoji">💨</span>
+    <h2>Scatterometer</h2>
+    <p>ASCAT-B / ASCAT-C ocean-surface winds as barbs on a TC scale, by basin or per storm, with a satellite backdrop. Resolves the broad gale-force wind field.</p>
+    <span class="badge">● Live</span>
+  </a>
+
+  <a class="card live" href="/obs/sar/">
+    <span class="emoji">🛰️</span>
+    <h2>SAR Surface Winds</h2>
+    <p>Storm-tasked C-band SAR at ~500 m: the highest-resolution TC surface wind observation there is, indexed per storm. New passes appear only when a storm is tasked.</p>
+    <span class="badge">● Storm-tasked</span>
+  </a>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
+    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · Data: NOAA NHC recon · EUMETSAT ASCAT · NOAA/NESDIS/STAR/SOCD SAR</div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+</script>
+
+</body>
+</html>

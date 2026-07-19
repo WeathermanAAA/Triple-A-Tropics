@@ -2,126 +2,26 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>ASCAT Ocean Winds · Satellite · Triple-A-Tropics</title>
+<title>ASCAT Ocean Winds · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="ASCAT scatterometer ocean-surface winds: the most recent ASCAT-B and ASCAT-C coastal passes drawn as wind barbs colored by tropical-cyclone wind speed, by basin or per storm, with an optional GOES/Himawari satellite backdrop and draw-to-zoom. C-band winds resolve the broad gale-force wind field.">
+<!-- ASCAT moved under /obs/. Redirect old links + share cards to the new
+     canonical location while preserving the OG tags so social previews still work. -->
+<link rel="canonical" href="https://triple-a-tropics.com/obs/ascat/">
+<meta http-equiv="refresh" content="0; url=/obs/ascat/">
+<meta name="robots" content="noindex,follow">
+<meta name="description" content="ASCAT scatterometer ocean-surface winds — ASCAT-B and ASCAT-C coastal passes as wind barbs colored by TC wind speed, per storm with a satellite backdrop.">
 <meta property="og:title" content="ASCAT Ocean Winds · Triple-A-Tropics">
-<meta property="og:description" content="ASCAT-B / ASCAT-C scatterometer ocean-surface winds as barbs colored by TC wind, per storm with a satellite backdrop. Shareable PNG. © EUMETSAT.">
+<meta property="og:description" content="ASCAT-B / ASCAT-C scatterometer ocean-surface winds as barbs colored by TC wind, per storm with a satellite backdrop. © EUMETSAT.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://triple-a-tropics.com/satellite/ascat/">
-<link rel="canonical" href="https://triple-a-tropics.com/satellite/ascat/">
+<meta property="og:url" content="https://triple-a-tropics.com/obs/ascat/">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
-<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
 <link rel="stylesheet" href="/styles.css">
-<link rel="stylesheet" href="/satellite/subnav.css">
-<style>
-  html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
-  nav, header, footer { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
-  /* The ASCAT canvas is the complete figure (header, barbs, kt colorbar, the
-     disclosure + EUMETSAT credit + watermark all drawn on it) so Save / Copy /
-     Download PNG yield the whole figure. ascat.js injects its own controls. */
-  #ascat-viewer { display: block; padding: 4px; }
-</style>
-<style>
-/* ?embed=1: chrome-less mount inside the explorer cockpit (nav/head/footer
-   hidden; components untouched). Height is reported to the parent for iframe
-   auto-sizing (global_tracks postMessage precedent). */
-html.embedded .nav, html.embedded .subnav, html.embedded .page-head,
-html.embedded footer { display: none !important; }
-</style>
-<script>
-if (new URLSearchParams(location.search).get('embed') === '1') {
-  document.documentElement.classList.add('embedded');
-  window.addEventListener('load', function () {
-    var post = function () {
-      parent.postMessage({ tatEmbedHeight: document.documentElement.scrollHeight,
-                           page: location.pathname }, '*');
-    };
-    post(); setInterval(post, 1500);
-  });
-}
-</script>
+<script>location.replace('/obs/ascat/' + (location.hash || ''));</script>
 </head>
 <body>
-
-<nav class="nav">
-  <div class="nav-inner">
-    <a class="brand" href="/">
-      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
-      <span>Triple-A-Tropics</span>
-    </a>
-    <div class="nav-links">
-      <a href="/">Home</a>
-      <a href="/climatology/">Climatology</a>
-      <a href="/sst/">SST</a>
-      <a href="/satellite/" class="active">Satellite</a>
-      <a href="/models/">Models</a>
-      <a href="/subseasonal/">Subseasonal</a>
-      <a href="/recon/">Recon</a>
-      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
-    </div>
-  </div>
-</nav>
-
-<nav class="subnav" aria-label="Satellite sections">
-  <div class="subnav-inner">
-    <a href="/satellite/">Imagery</a>
-    <a href="/satellite/microwave/">Microwave</a>
-    <a href="/satellite/ascat/" class="active">Scatterometer</a>
-  </div>
-</nav>
-
-<header class="page-head">
-  <h1>ASCAT Ocean Winds</h1>
-  <p>Scatterometer ocean-surface winds from the <b>ASCAT</b> instruments on
-  EUMETSAT's MetOp-B and MetOp-C satellites, straight from the data, drawn as
-  standard <b>wind barbs</b> colored by speed on a tropical-cyclone scale. Pick a
-  <b>basin</b> for the most recent ASCAT-B + ASCAT-C coverage stitched together, or
-  pick an <b>active storm</b> to center on it and see only its passes — then toggle
-  a <b>GOES / Himawari satellite backdrop</b>, <b>drag a box to zoom</b>, hover any
-  barb for the exact speed and direction, and use Download PNG to share what you
-  see. ASCAT is a <b>C-band</b> scatterometer: it resolves the broad gale-force
-  wind field well but <b>underestimates the extreme winds in a tropical cyclone's
-  core</b> — a wind-field tool, not a peak-intensity tool. Rain- and quality-flagged
-  cells are removed; swaths are intermittent and this feed runs about a day behind
-  real time.</p>
-</header>
-
-<section class="chart-section">
-  <div class="chart-card">
-    <div id="ascat-viewer" tabindex="0"></div>
-  </div>
-</section>
-
-<section class="chart-section about">
-  <h2>About ASCAT ocean winds</h2>
-  <p>The <b>Advanced Scatterometer (ASCAT)</b> is a real-aperture radar that
-  measures the roughness of the ocean surface, from which the 10-metre wind speed
-  and direction are retrieved. These figures use the <b>12.5 km coastal</b> Level-2
-  product from the EUMETSAT Ocean and Sea Ice Satellite Application Facility
-  (<b>OSI SAF</b>), processed at KNMI and distributed through the KNMI Data Platform.
-  Because ASCAT operates at <b>C-band</b>, it is relatively insensitive to rain — an
-  advantage over Ku-band scatterometers — but the backscatter-to-wind relationship
-  loses sensitivity above roughly 25 m/s, so ASCAT <b>systematically underestimates
-  the peak winds in an intense tropical cyclone's eyewall</b>. Use it to map the
-  extent of the gale- and storm-force wind field, not to estimate peak intensity.
-  Wind directions are shown in the meteorological convention (barbs point toward the
-  direction the wind is coming from). The optional satellite backdrop is the nearest
-  GOES / Himawari storm-floater frame to each pass — its sensor, band and time are
-  shown on the figure; barbs are the precise layer. Rain- and quality-flagged cells
-  are removed. © <span id="cyear"></span> EUMETSAT.</p>
-</section>
-
-<footer>
-  <div class="footer-inner">
-    <div>© <span id="year"></span> Triple-A-Tropics · Data for research and educational purposes.</div>
-    <div>Built by <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">@WeathermanAAA_</a> · ASCAT winds: © EUMETSAT / OSI SAF / KNMI</div>
-  </div>
-</footer>
-
-<script>document.getElementById('year').textContent = new Date().getFullYear();
-document.getElementById('cyear').textContent = new Date().getFullYear();</script>
-<script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/ascat/ascat.js?v=0017"></script>
+<p style="font-family:Arial,sans-serif;color:#cfe0f5;background:#0a1324;padding:24px">
+  ASCAT Ocean Winds has moved to
+  <a href="/obs/ascat/" style="color:#2b9cff">/obs/ascat/</a>. Redirecting…
+</p>
 </body>
 </html>

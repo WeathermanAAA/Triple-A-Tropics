@@ -2601,3 +2601,52 @@ is tidier post-rewrite.
   a push actually fails on quota. This also completes expunge queue ②
   (the stale branches were the last pre-rewrite anchors on GitHub;
   orphaned SHAs remain fetchable until GitHub GCs them naturally).
+
+---
+
+# 2026-07-19 · /obs/ observations section + SAR winds (+ aircraft marker)
+
+## Shipped
+
+- **/obs/ hub** (Recon · Scatterometer · SAR cards; card grid leaves room
+  for Microwave later). Recon page moved UNCHANGED to /obs/recon/, ASCAT
+  viewer page to /obs/ascat/; old /recon/, /satellite/ascat/ and /ascat/
+  are single-hop redirect stubs (canonical + og:url + hash-preserving).
+  Site nav: Recon -> Obs everywhere; satellite subnav keeps a
+  Scatterometer entry pointing across to /obs/ascat/.
+- **SAR winds** (sarobs/ + generate_sar_winds.py + /obs/sar/): storm-tasked
+  Level-2 SAR wind passes discovered per storm from the provider listing
+  (page-parse), rendered on the provider's published m/s scale (sampled
+  ramp, 0-51.44 m/s, calm-black + gale breaks), per-storm indexed archive
+  on R2 under sar/. Box sar-poller (tat-overlays), 600 s ticks, R2-resident
+  watermark, per-tick budget, dead-letter after 3 failures, antimeridian
+  handling, per-constellation imagery credits (RCM / Sentinel-1).
+- **Recon aircraft marker**: plane glyph at the newest ob oriented on the
+  last track segment; click -> compact popover (aircraft identity from the
+  flight id, mission/storm/window, current fix incl. FL wind, SFMR with
+  suspect flag, static p + altitude, extrap sfc p, fresh VDM center MSLP).
+  Upstream strings escaped (adversarial review caught the injection sink).
+
+## Decisions taken (flag if you want them revisited)
+
+- recon.js and ascat.js STAY at /recon/recon.js and /ascat/ascat.js — the
+  CycloLab per-storm pages (tsr-built, on R2) lazy-load those URLs; only
+  the PAGES moved. The ASCAT viewer itself is untouched (its storm index
+  already lists storm-tagged passes newest-first, one entry per orbit).
+- SAR scope: AL/EP/CP/WP storms. Southern-hemisphere storms and INVEST
+  acquisitions (different upstream layout) are excluded for v1.
+- SAR archive seeded with the 2026 season at deploy. 2025 backfill is one
+  command when wanted:
+  `docker exec tat-overlays-sar-poller-1 sh -c "cd /work/tat && python generate_sar_winds.py --store r2 --year 2025 --sweep --max-new 80"`
+- Aircraft marker also shows on archived missions (at the final fix; the
+  popover labels it "position at last ob"), not just live ones.
+
+## Rollback
+
+- Site move: revert the commit (pages + stubs are one atomic commit);
+  nothing external depends on /obs/ yet.
+- SAR: `docker compose -p tat-overlays -f docker-compose.overlays.yml rm -sf sar-poller`
+  on the box stops the writer; SAR_ENABLED=0 in /root/tsr-s2/.env is the
+  kill switch; the R2 sar/ prefix is additive and owned only by this
+  poller (safe to delete wholesale to reset).
+- Marker: revert the recon.js hunk + restamp obs/recon/index.html.
