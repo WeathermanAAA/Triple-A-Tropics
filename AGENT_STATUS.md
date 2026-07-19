@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~01:2x UTC — overlay feeds (UHR/MRMS/METAR/sfc) moved to BOX POLLERS (tat-overlays, tsr @bcb21a8); the four GH cron workflows retired to dispatch-only @606c3b29. MRMS now emits native 2-min scans. Fourth wave (live-testing round 2 + UHR source) shipped earlier — see the 23:3x entry._
+_Last update: 2026-07-19 ~06:3x UTC — MODEL TRACK GUIDANCE shipped: one shared per-storm document (a-deck aids + EPS/GEFS member tracks, tsr @9155e07), CycloLab guidance rebuilt reference-grade (per-model identity, branded header bands, ensemble panel, @2x copy — tsr @877eb0c/@9fcd6b0), explorer Model Guidance overlay @f8640e28. All live-verified on 91L. Earlier tonight: box-poller conversion + loop fundamentals — see those entries._
 
 ---
 
@@ -96,6 +96,44 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~04:5x–06:3x UTC) — MODEL TRACK GUIDANCE: one shared product, two consumers (rebuilt reference-grade)
+
+Per the directives (build + the mid-flight "rebuild the presentation" follow-up):
+
+- **One shared data product** (reused ingest, no new creds): the existing
+  box guidance poller's `cyclolab/{sid}/guidance.json` (a-deck aids, taus
+  0-132) EXTENDED with an `ens` block — EPS (ecens) + GEFS member tracks
+  cut per storm from the existing enscenters tracks feeds (nearest
+  early-tau member track within 400 km, 6-h decimation, cross-member mean
+  with vector-mean lon; cached by cycle_version; absence never blocks the
+  a-deck side). tsr @9155e07; live-verified on 91L (9/51 EPS members carry
+  it, GEFS honestly zero). Pure matcher rides `cyclolab_guidance.py`
+  (35/35 unit tests green).
+- **CycloLab rebuild (tsr @877eb0c + @9fcd6b0, Andrew wasn't happy with
+  v1)**: per-model identity hues (stable + shared with the explorer
+  overlay) replace peak-SSHS coloring; tech labels ON the plot at track
+  ends (stack-decluttered); daily forecast-hour dots + tau chips on the
+  consensus spine; OFCL joins the consensus family; intensity plot gets
+  the same hues, right-edge line labels, dashed statisticals, bold IVCN;
+  NEW ensemble panel (members colored by min forecast MSLP, means heavy +
+  labeled, honest member counts). Every guidance plot carries a branded
+  header band (init time + @WeathermanAAA_, backing strip) and registers
+  in the right-click @2x copy set (copy-band mark aligned to the site
+  handle). Live-verified on 91L with per-plot captures.
+- **Explorer "Model guidance" overlay (@f8640e28,
+  `cockpit_fields.js?v=gd1`)**: toggleable like MRMS/METAR/NHC, honest-
+  gated, per active storm off the SAME document — deterministic aids
+  per-model colored w/ endpoint labels, consensus cased+bold, tau chips,
+  ensemble members thin/translucent + means heavy w/ matched counts;
+  layers re-raise above frame mounts; 10-min poll. Live-verified over 91L
+  (26 aid tracks, 153 member lines, 5 means across actives).
+- NOTE: the concurrent session's ATCF-number-gate work (ace_core 0.8.5,
+  anchors.py, enscenters.js) was NOT built upon — the guidance join keys
+  on storm_id + position only. Re-check `wears_invest_x` interplay once
+  that lands (guidance draws for invests by design).
+
+---
 
 ## 2026-07-19 (~01:0x–01:4x UTC) — LOOP FUNDAMENTALS: dense recent window + geo lane
 
