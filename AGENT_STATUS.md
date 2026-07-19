@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~21:0x UTC — C02 NATIVE z7 live: parallel tile PUTs (tsr @2bdbd55), 12g render ceiling, measured 2-min slots / 485 tiles / ~14x upload rate, recorded razor-sharp zoomed loop over 02L. ~\$20/mo total Class-A delta for the density+resolution program, stated plainly. Earlier waves below._
+_Last update: 2026-07-19 ~21:4x UTC — MIMIC-TPW2 moisture overlay shipped end-to-end (generator + box poller + freshness-gated explorer toggle); upstream mirror is stalled 13 days, so the layer idles honestly ("stale" chip, verified live) and self-activates when CIMSS/SSEC resumes. Also: GitHub size-quota warning queued for Andrew. Earlier waves below._
 
 ---
 
@@ -96,6 +96,48 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~21:1x-21:4x UTC) — MIMIC-TPW2 MOISTURE OVERLAY (built + deployed; upstream currently stalled)
+
+New environmental overlay for the explorer: hourly global total precipitable
+water (MIMIC-TPW2, courtesy CIMSS/SSEC — anonymous, no creds). Site @9f7f3a41,
+tsr s2-sat-ingest @0999cf4 (compose).
+
+- **The upstream mirror is STALLED**: every path on the public mirror
+  (data/, the color imagery, latest_image) froze at **2026-07-06 18:00Z**
+  — 13 days before this build; July 7-19 files 404. Decision: build the
+  full never-miss pipeline anyway so it idles honestly and self-activates
+  the moment the mirror resumes. Nothing needs re-touching then.
+- **generate_mimic_tpw.py**: presence-gated tick (LISTS current+previous
+  month dirs — never assumes on-the-hour; the mirror lags), idempotent
+  stamp watermark, backfill bounded to the rolling 36-frame window (an
+  826-file listing would otherwise churn ~17 h of doomed ingests), webp
+  frames row-warped to web-mercator (±75°), the standard operational TPW
+  ramp (browns→greens→blues→purples, 5-78 mm, ≤1 mm transparent), served
+  colorbar, deferred prune. Verified against the newest real file:
+  frame + cbar eyeballed, warnings-as-errors clean, scipy-free.
+- **Frontend** (cockpit_fields.js v=tpw1, cockpit.js v=core14): "TPW
+  moisture" toggle in Overlays — the radar image-source discipline (one
+  stable per-pane source, serialized updateImage, 90-min nearest-join
+  skew riding the cockpit clock), right-side mm colorbar, valid-time
+  badge "TPW (CIMSS/SSEC) · <UTC>". **Freshness gate**: the toggle only
+  enables when the newest frame is <3 h old — live right now the button
+  shows a "stale" chip and stays disabled (verified on the deployed
+  site), so 13-day-old moisture can never present as current. Harness
+  scenario `tpw` (re-stamped bench feed): join at the right frame,
+  playback walks the clock (21Z→20Z at the 18:50Z step), toggle-off
+  clears layer+cbar — all pass.
+- **Box poller** `tat-overlays-tpw-poller-1` (300 s ticks, --max-new 4):
+  first tick listed 36-in-window and published 4 frames + manifest to R2
+  (env/tpw/); the window finishes backfilling over ~9 ticks, then idles
+  ("no new frames") until the mirror resumes. Rollback: `docker compose
+  -p tat-overlays -f docker-compose.overlays.yml rm -sf tpw-poller`,
+  revert site @9f7f3a41; R2 cleanup = delete env/tpw/ prefix.
+- **FYI (queued, Andrew)**: GitHub warned "Repository is approaching its
+  size quota" on push. Nothing failing yet. Options when you're back:
+  prune the SST orphan-branch history (force-push already rewrites it
+  each run; old runs' data blobs linger) or `gh api` repo-size audit +
+  history expire. Destructive either way — your call, not mine.
 
 ## 2026-07-19 (~19:4x-21:0x UTC) — C02 NATIVE z7 SHIPPED (parallel tile PUTs)
 
