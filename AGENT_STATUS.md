@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~06:3x UTC — MODEL TRACK GUIDANCE shipped: one shared per-storm document (a-deck aids + EPS/GEFS member tracks, tsr @9155e07), CycloLab guidance rebuilt reference-grade (per-model identity, branded header bands, ensemble panel, @2x copy — tsr @877eb0c/@9fcd6b0), explorer Model Guidance overlay @f8640e28. All live-verified on 91L. Earlier tonight: box-poller conversion + loop fundamentals — see those entries._
+_Last update: 2026-07-19 ~16:2x UTC — loop quality re-fixed from Andrew's WATCHED capture (obs series depth, visible dawn gate, conus fast lane, honest export dialog) — all re-verified by recording the live loop and eyeballing frames. See the 16:2x entry; model-guidance + poller waves below._
 
 ---
 
@@ -96,6 +96,39 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~15:1x-16:2x UTC) — LOOP QUALITY FROM A WATCHED CAPTURE + honest export
+
+Andrew's real screen capture showed what the headless harness missed; every
+cause was measured, fixed, and re-verified by RECORDING the live loop
+(Playwright video -> frame extraction -> eyeballed contact sheet):
+
+- **Surface obs flashed on only at the newest frame**: the obs series kept
+  30 frames (2.5 h) against the 6 h loop window. keep 30->100 (@d7d9c7ed,
+  poller self-deploys) + client LRU 44. Verified live: every frame of the
+  current loop joins an obs frame within a minute (painted 87-121 stations
+  per frame, per-frame join dump). Full 6-h depth finishes filling by
+  ~21:30Z (the source is now-only; history can't backfill).
+- **Visible dawn flash**: c02 mixed near-black 09-11Z frames with daylight.
+  _deriveFrames now trims unlit frames (solar elevation at the footprint
+  center, validated against real sunrise/noon/sunset) when the window is
+  MIXED; all-dark windows stay untouched; IR unaffected. Verified live:
+  the c02 loop now STARTS at 11:31Z (sunrise 11:25Z) — every frame in the
+  recorded capture is daylit.
+- **~24-min frame spacing**: the conus lane's 28-product pass takes 30-45
+  min. A FAST lane (tsr @c1d95a3, `tat-s2-conus-fast`) pins ir/c02/irbd/
+  truecolor to the true 10-min grid (verified: last-hour gaps 10/10/10/5).
+  MRMS keep 150->220 so radar outruns the window too.
+- **Export params matched to the screen** (@673dae56): the Loop button now
+  opens a dialog whose defaults ARE the current loop (frame count = the
+  window, fps = the playback rate), exports the LAST N frames under the
+  <=10 MB budget. Verified with a real export: screen 7 frames @ 6 fps ->
+  dialog 7/6 -> 0.13 MB artifact at the on-screen cadence. (The reported
+  40-frame/60-fps dialog exists NOWHERE in either repo — likely an older
+  cached page; the real defect was the dialog-less fixed-8fps export.)
+  Legacy satellite-page dialogs now prefill from their live loop state too.
+
+---
 
 ## 2026-07-19 (~04:5x–06:3x UTC) — MODEL TRACK GUIDANCE: one shared product, two consumers (rebuilt reference-grade)
 
