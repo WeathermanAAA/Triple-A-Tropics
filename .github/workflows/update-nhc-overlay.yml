@@ -7,10 +7,12 @@
 # only changes when an advisory or outlook does.
 name: update-nhc-overlay
 
+# RETIRED AS A CRON 2026-07-19: the feed now emits from the BOX poller
+# (tsr-s2 docker-compose.overlays.yml, project tat-overlays, nhc-poller) —
+# same never-miss conversion as MRMS/METAR/sfc/UHR/ASCAT. ONE authoritative
+# writer: the box. workflow_dispatch stays for manual re-emits.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "11,41 * * * *"
 
 permissions:
   contents: read

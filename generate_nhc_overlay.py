@@ -132,7 +132,26 @@ def storm_features(sid: str, meta: dict):
     return out
 
 
-def gtwo_features():
+def _point_in_ring(lon: float, lat: float, ring) -> bool:
+    """Ray-cast point-in-polygon on one [[lon,lat],...] ring."""
+    inside = False
+    j = len(ring) - 1
+    for i in range(len(ring)):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[j][0], ring[j][1]
+        if (yi > lat) != (yj > lat) and \
+           lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def gtwo_features(designated_positions=None):
+    """Formation areas — POTENTIAL-development systems only. An area whose
+    polygon contains a DESIGNATED storm's current position is dropped: that
+    system already developed (it shows a cone + track, never a chance-of-
+    formation wash); the outlook shapefile just lags designation by up to a
+    cycle. Same invest-vs-designated rule as the marker number gate."""
     out = []
     try:
         z = zipfile.ZipFile(io.BytesIO(_http(GTWO_ZIP, timeout=90)))
@@ -152,9 +171,15 @@ def gtwo_features():
                 return int(str(rec.get(key, "")).rstrip("%") or 0)
             except ValueError:
                 return 0
+        rings = _rings(sr.shape)
+        if rings and any(_point_in_ring(lon, lat, rings[0])
+                         for lat, lon in (designated_positions or [])):
+            print("[nhc] outlook area contains a designated storm — dropped "
+                  "(developed systems carry a cone, not a formation wash)")
+            continue
         out.append({
             "type": "Feature",
-            "geometry": {"type": "Polygon", "coordinates": _rings(sr.shape)},
+            "geometry": {"type": "Polygon", "coordinates": rings},
             "properties": {
                 "kind": "area", "basin": rec.get("BASIN"),
                 "prob2": pct("PROB2DAY"), "risk2": rec.get("RISK2DAY"),
@@ -201,12 +226,20 @@ def main() -> int:
         raise RuntimeError(f"CurrentStorms.json unavailable: {e}")
     storms = current.get("activeStorms") or []
     feats = []
+    designated = []
     for s in storms:
         sid = str(s.get("id") or "").lower()
         if not sid:
             continue
         feats.extend(storm_features(sid, s))
-    areas = gtwo_features()
+        # CurrentStorms lists DESIGNATED systems only (invests never appear)
+        # — their positions gate the formation areas below
+        try:
+            designated.append((float(s["latitudeNumeric"]),
+                               float(s["longitudeNumeric"])))
+        except (KeyError, TypeError, ValueError):
+            pass
+    areas = gtwo_features(designated)
     feats.extend(areas)
     # honest-gate parity with the sibling emitters (metar station floor,
     # MRMS coverage ceiling, sfc parse floor): active storms with ZERO
