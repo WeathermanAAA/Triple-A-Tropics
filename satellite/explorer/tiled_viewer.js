@@ -316,9 +316,27 @@
     else if (PERF.hiDpi) cap = Math.min(cap, 36);
     return cap;
   };
+  // DENSE RECENT WINDOW: the manifest holds days of history, and outage
+  // eras leave multi-hour holes in it — a loop cut as "the trailing N of
+  // everything" can span DAYS with wildly uneven spacing (measured: 36
+  // conus frames across 47.8 h with a 32 h hole), so the scene teleports
+  // between frames and no playback cadence can smooth it. Cut the loop as
+  // "frames within LOOP_WINDOW_H of the newest" instead, floored at
+  // LOOP_MIN_FRAMES so a thin feed still animates (reaching further back
+  // only then), THEN cap by the device/product residency budget.
+  var LOOP_WINDOW_H = 6;
+  var LOOP_MIN_FRAMES = 12;
   VP._deriveFrames = function () {
     var t = (this.manifest && this.manifest.times) || [];
     var cap = this._loopCapFor();
+    if (t.length > LOOP_MIN_FRAMES) {
+      var newest = stampMs(t[t.length - 1]);
+      var cut = 0;
+      while (cut < t.length - 1 &&
+             newest - stampMs(t[cut]) > LOOP_WINDOW_H * 3600e3) cut++;
+      cut = Math.min(cut, t.length - LOOP_MIN_FRAMES);
+      t = t.slice(cut);
+    }
     return t.slice(Math.max(0, t.length - cap));
   };
   // PROGRESSIVE COLD LOAD: a cold product mount starts with a small
