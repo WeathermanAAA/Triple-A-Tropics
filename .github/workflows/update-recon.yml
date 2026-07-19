@@ -4,14 +4,16 @@ name: update-recon
 # Self-contained + isolated: decodes NHC recon bulletins to JSON and syncs them
 # to R2 under recon/. Touches NOTHING in the track/ACE/climatology pipeline.
 #
-# Cadence: every 10 minutes on a staggered (non-round) minute so GitHub does
-# not drop the run in its high-load :00/:30 windows. HDOB blocks post on a
-# ~10-min cadence; the /recon/ viewer re-polls R2 on top, so the current
-# mission stays near-live. (A box poller is the fast-follow for sub-minute.)
+# SCHEDULE RETIRED (2026-07-19): the box recon-poller (tat-overlays project,
+# tsr repo docker-compose.overlays.yml) is the authoritative writer — 90s
+# never-miss ticks with a bulletin cache + publish gate replace the cron that
+# GitHub load-shed to ~hourly. This workflow remains DISPATCH-ONLY for
+# historical backfills (--backfill-year merges into the live manifest and
+# never touches current.json). A dispatch WITHOUT backfill_year runs a plain
+# incremental — harmless beside the poller (same data, serialized by the
+# concurrency group) but pointless; prefer the poller.
 
 on:
-  schedule:
-    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
     inputs:
       window_days:
