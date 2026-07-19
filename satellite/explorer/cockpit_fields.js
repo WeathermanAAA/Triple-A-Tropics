@@ -1306,7 +1306,10 @@
                            '#ffcf5c', 40, '#ff9a2f', 60, '#f5333c'];
           map.addLayer({ id: sid + '-area-fill', type: 'fill', source: sid,
             filter: ['==', ['get', 'kind'], 'area'],
-            paint: { 'fill-color': areaColor, 'fill-opacity': 0.24 } }, before);
+            // the strong dashed outline carries the contrast; the fill is a
+            // wash — imagery (and a just-designated storm still inside a
+            // lingering outlook area) must read through it
+            paint: { 'fill-color': areaColor, 'fill-opacity': 0.16 } }, before);
           map.addLayer({ id: sid + '-area-line', type: 'line', source: sid,
             filter: ['==', ['get', 'kind'], 'area'],
             paint: { 'line-color': areaColor, 'line-opacity': 0.95,
