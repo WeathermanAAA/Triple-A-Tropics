@@ -8,6 +8,7 @@ empty/missing, keep last-known-good upstream).
 """
 from __future__ import annotations
 
+import gzip
 import re
 import time
 import urllib.request
@@ -21,13 +22,19 @@ _HREF = re.compile(r'href="([^"]+)"', re.I)
 
 
 def get(url: str, *, timeout: float = 20.0, retries: int = 2) -> str | None:
-    """GET text; bounded retries on transient errors; None on give-up."""
+    """GET text; bounded retries on transient errors; None on give-up.
+    Requests gzip (directory indexes compress ~20x — the dominant poller
+    bytes) and decompresses transparently."""
     last = None
     for attempt in range(retries + 1):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            req = urllib.request.Request(url, headers={
+                "User-Agent": _UA, "Accept-Encoding": "gzip"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read().decode("utf-8", "replace")
+                raw = r.read()
+                if (r.headers.get("Content-Encoding") or "").lower() == "gzip":
+                    raw = gzip.decompress(raw)
+                return raw.decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             if e.code in (404, 410):
                 return None                      # genuinely absent, do not retry
@@ -72,3 +79,10 @@ def iem_afos(pil: str, *, limit: int = 1, **kw) -> str | None:
     """IEM AFOS retrieval fallback (NHC down / historical pulls). Returns the
     concatenated product text for ``pil`` (e.g. 'REPRPD'), most-recent first."""
     return get(f"{IEM_AFOS}?pil={pil}&limit={int(limit)}&fmt=text", **kw)
+
+
+def recent_products(pil: str, *, limit: int = 8, **kw) -> str | None:
+    """The last ``limit`` raw text products for ``pil`` as one concatenated
+    payload (newest first) — the multi-product live top-up used by the box
+    poller so a briefly-missed bulletin is still caught next tick."""
+    return iem_afos(pil, limit=limit, **kw)

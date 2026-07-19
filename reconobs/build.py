@@ -32,20 +32,28 @@ _now = lambda: _dt.datetime.now(_dt.timezone.utc)   # noqa: E731
 def _fetch_prior_manifest(url: str | None) -> dict | None:
     """Read the existing manifest (the growing union) so this run can merge
     into it rather than replace it. http(s) URL -> cache-busted GET; a local
-    path -> read it; None/missing/parse-fail -> None (start fresh)."""
+    path -> read it. None/empty url -> None (deliberate start-fresh).
+
+    A CONFIGURED url that cannot be read RAISES instead of silently starting
+    fresh: publishing a union built without the prior manifest would strip
+    every out-of-window storm from the index (their R2 trees survive but go
+    unlisted). Failing the run loudly keeps last-known-good live and the next
+    run retries — a transient read error heals instead of wedging."""
     if not url:
         return None
+    if url.startswith("http"):
+        sep = "&" if "?" in url else "?"
+        body = fetch.get(f"{url}{sep}t={int(_now().timestamp())}", timeout=20)
+    else:
+        body = open(url, encoding="utf-8").read() \
+            if os.path.exists(url) else None
+    if not body:
+        raise RuntimeError(f"prior manifest unreadable: {url} "
+                           "(pass an empty --manifest-url to start fresh)")
     try:
-        if url.startswith("http"):
-            sep = "&" if "?" in url else "?"
-            body = fetch.get(f"{url}{sep}t={int(_now().timestamp())}",
-                             timeout=20)
-        else:
-            body = open(url, encoding="utf-8").read() \
-                if os.path.exists(url) else None
-        return json.loads(body) if body else None
-    except Exception:                            # noqa: BLE001
-        return None
+        return json.loads(body)
+    except ValueError as e:
+        raise RuntimeError(f"prior manifest unparsable: {url}: {e}") from e
 
 
 def _slugify(s: str) -> str:
@@ -128,11 +136,18 @@ def _write(out_dir: str, key: str, obj) -> None:
 
 def _best_name(missions: list[dict]) -> str:
     """Prefer a real (alpha, non-INVEST) TC name over INVEST/numeric, so a
-    storm's invest-stage + named-stage sorties read under the named identity."""
-    real = [m["storm_name"] for m in missions
-            if not m["is_invest"] and m["storm_name"].isalpha()]
+    storm's invest-stage + named-stage sorties read under the named identity.
+    Number-word designations (TWO, THIRTEEN — the unnamed-depression labels)
+    are NOT real names: once a named sortie exists it must win, else a named
+    hurricane would read as its depression designation for as long as a
+    placeholder-era sortie stays in the window."""
+    names = [m["storm_name"] for m in missions
+             if not m["is_invest"] and m["storm_name"].isalpha()]
+    real = [n for n in names if n not in _m._NUMBER_WORDS]
     if real:
         return max(real, key=len).title()
+    if names:                                     # designation-only storm
+        return max(names, key=len).title()
     return (missions[0]["storm_name"] or "Unknown").title()
 
 
@@ -190,7 +205,8 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
          basins=("AL", "EP"), backfill_year: int | None = None,
          backfill_month: int | None = None,
          prior_manifest_url: str | None = None,
-         stagger_s: float = 0.0, log=print) -> dict:
+         stagger_s: float = 0.0, cache_dir: str | None = None,
+         log=print) -> dict:
     """Run one ingest+assemble cycle. Returns a small summary dict.
 
     Incremental (default) owns the live "current" data + rolling-window
@@ -229,21 +245,36 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
         _write(out_dir, "tcpod.json", tcpod)
 
     # ---- gather bulletins ----
-    win = ingest.gather_window(year, since, until=until, basins=basins,
-                               stagger_s=stagger_s, log=log)
+    # The archive is hard-partitioned by year; an incremental window that
+    # crosses Jan 1 must list BOTH years' dirs or the late-December bulletins
+    # silently vanish from the window. (Residual caveat: a flight-code-derived
+    # atcf stamps the obs year, so a storm actually flown across New Year can
+    # still file year-twin ids — rare enough to accept; VDM-supplied ids are
+    # unaffected.)
+    years = [year] if is_backfill else sorted({since.year, year})
+    win: dict = {"basins": {}, "dropped": 0}
+    for y in years:
+        w = ingest.gather_window(y, since, until=until, basins=basins,
+                                 stagger_s=stagger_s, cache_dir=cache_dir,
+                                 log=log)
+        win["dropped"] += w["dropped"]
+        for b, bag in w["basins"].items():
+            tgt = win["basins"].setdefault(b, {"hdob": [], "vdm": [],
+                                               "sonde": []})
+            for k in ("hdob", "vdm", "sonde"):
+                tgt[k] += bag[k]
     if win["dropped"]:
         log(f"recon: capped {win['dropped']} over-window archive files")
     live_blocks = ingest.gather_live_hdob(basins=basins) if not is_backfill \
-        else []
+        else {}
 
-    # ---- decode + group per basin (basin tag travels with the mission) ----
+    # ---- decode + group per basin (basin tag travels with the mission;
+    # live blocks are keyed by basin so an EP live-only mission files EP) ----
     all_missions: list[dict] = []
     for b in basins:
         bag = win["basins"].get(b, {"hdob": [], "vdm": [], "sonde": []})
-        hdob = list(bag["hdob"])
-        if b == "AL":
-            hdob += [x for x in live_blocks]      # live blocks join AL/EP by
-        mis = _m.build_missions(hdob)             # their own ids (harmless dup)
+        hdob = list(bag["hdob"]) + live_blocks.get(b, [])
+        mis = _m.build_missions(hdob)
         # keep only TC/invest sorties (drop research/training/ferry) BEFORE
         # attaching VDM/sondes, so a fix never binds to a mission we discard.
         mis = {k: v for k, v in mis.items() if v.get("is_tropical")}
@@ -252,10 +283,6 @@ def build(out_dir: str, *, window_days: int = 4, year: int | None = None,
         for mm in mis.values():
             mm["basin"] = b
             all_missions.append(mm)
-    # live EP blocks: rebuild EP too (cheap) - already covered since EP bag
-    # decodes EP archive; live blocks were appended to AL pass. To keep basin
-    # correct, re-tag live-only missions by their HDOB product is overkill for
-    # V1; live blocks also appear in the archive within ~40 min.
 
     storms = _group_missions(all_missions, year)
 

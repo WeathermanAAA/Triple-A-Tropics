@@ -191,7 +191,7 @@ class TestBackfillMergesWithoutRegressingLive(unittest.TestCase):
                "dropped": 0}
         with mock.patch.object(ingest, "gather_window", return_value=bag), \
                 mock.patch.object(ingest, "gather_live_hdob",
-                                  return_value=[]), \
+                                  return_value={}), \
                 mock.patch.object(ingest, "gather_tcpod",
                                   return_value=None):
             summary = self.run_build(self.tmp, backfill_year=2013,
@@ -230,7 +230,7 @@ class TestBackfillMergesWithoutRegressingLive(unittest.TestCase):
                "dropped": 0}
         with mock.patch.object(ingest, "gather_window", return_value=bag), \
                 mock.patch.object(ingest, "gather_live_hdob",
-                                  return_value=[HDOB_2013]), \
+                                  return_value={"AL": [HDOB_2013]}), \
                 mock.patch.object(ingest, "gather_tcpod", return_value=None):
             self.run_build(self.tmp, window_days=7, basins=("AL",),
                          prior_manifest_url=self.prior)
@@ -452,7 +452,7 @@ class TestObsYearAndGhostPrune(unittest.TestCase):
                 "current_slug": "al012026", "has_active_recon": False}, f)
         bag = {"basins": {"AL": {"hdob": [], "vdm": [], "sonde": []}}, "dropped": 0}
         with mock.patch.object(ingest, "gather_window", return_value=bag), \
-                mock.patch.object(ingest, "gather_live_hdob", return_value=[]), \
+                mock.patch.object(ingest, "gather_live_hdob", return_value={}), \
                 mock.patch.object(ingest, "gather_tcpod", return_value=None):
             summary = run_build(tmp, window_days=4, basins=("AL",),
                                 prior_manifest_url=prior)

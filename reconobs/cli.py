@@ -28,9 +28,15 @@ def main(argv=None) -> int:
     p.add_argument("--basins", default="AL,EP")
     p.add_argument("--stagger", type=float, default=0.0,
                    help="seconds between archive fetches (backfill politeness)")
+    p.add_argument("--cache-dir", default=None,
+                   help="persistent bulletin cache (poller mode): archive "
+                        "files are immutable + name-unique, so repeat runs "
+                        "only download new ones")
     p.add_argument("--manifest-url",
                    default="https://cdn.triple-a-tropics.com/recon/manifest.json",
-                   help="prior manifest to MERGE into (the growing union)")
+                   help="prior manifest to MERGE into (the growing union); "
+                        "unreadable -> the run FAILS loudly (pass an empty "
+                        "string to deliberately start fresh)")
     p.add_argument("--disabled", action="store_true")
     args = p.parse_args(argv)
 
@@ -47,7 +53,7 @@ def main(argv=None) -> int:
         run_build(args.out_dir, window_days=args.window_days,
                   backfill_year=args.backfill_year,
                   backfill_month=args.backfill_month, basins=basins,
-                  stagger_s=args.stagger,
+                  stagger_s=args.stagger, cache_dir=args.cache_dir,
                   prior_manifest_url=(args.manifest_url or None))
     except Exception as e:                       # noqa: BLE001
         # Never leave a half-written tree that the sync would push: fail loud

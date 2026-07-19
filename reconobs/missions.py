@@ -22,6 +22,44 @@ _NON_TC = ("TRAIN", "SURVEY", "TEST", "FERRY", "LOGISTIC", "RESEARCH",
            "TEXAQS", "CALVAL", "CALIB", "AEROSE", "OWLES", "SHOUT",
            "HS3", "HS2", "GRIP", "IFEX", "NAMMA", "GLOBAL", "HAWK", "AVAPS",
            "CYCLONE", "SYSTEM")
+# Placeholder tokens the tasking agency puts in the storm-name slot of a REAL
+# TC sortie when the system has no name yet (observed live: an unnamed
+# depression flown as "CYCLONE"). A placeholder alone still reads non-TC —
+# only a placeholder PLUS a tasked flight id (see tasked_storm) rescues it.
+_PLACEHOLDER_NAMES = ("CYCLONE", "SYSTEM", "STORM")
+# Tasked flight ids encode the target: 2-char mission code, then the 2-digit
+# storm number and basin letter (e.g. 0102A = mission 01 into storm 02,
+# Atlantic; WA05E = mission WA into storm 05, E-Pac). Research/training ids
+# (WXWX*, long coded strings) never match.
+_TASKED_FLIGHT = re.compile(r"^[0-9A-Z]{2}(\d{2})([AECW])$")
+_TASK_BASIN = {"A": "al", "E": "ep", "C": "cp", "W": "wp"}
+# Designation for an unnamed system by storm number (the standard number-word
+# convention used for depressions); 90-99 are invest slots.
+_NUMBER_WORDS = (
+    "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
+    "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN",
+    "SEVENTEEN", "EIGHTEEN", "NINETEEN", "TWENTY", "TWENTY-ONE", "TWENTY-TWO",
+    "TWENTY-THREE", "TWENTY-FOUR", "TWENTY-FIVE", "TWENTY-SIX",
+    "TWENTY-SEVEN", "TWENTY-EIGHT", "TWENTY-NINE", "THIRTY")
+
+
+def tasked_storm(flight: str) -> tuple[int, str] | None:
+    """(storm_number, atcf_basin_prefix) encoded in a tasked flight id, or
+    None when the flight slot is not a standard tasked-mission code."""
+    m = _TASKED_FLIGHT.match((flight or "").strip().upper())
+    if not m:
+        return None
+    return int(m.group(1)), _TASK_BASIN[m.group(2)]
+
+
+def storm_name_for_number(num: int) -> str | None:
+    """Designation for storm ``num``: number-word for a depression slot,
+    INVEST for 90-99, None outside the known range."""
+    if 90 <= num <= 99:
+        return "INVEST"
+    if 1 <= num <= len(_NUMBER_WORDS):
+        return _NUMBER_WORDS[num - 1]
+    return None
 _VDM_LATLON = re.compile(r"([\d.]+)\s*deg\s*([NS])\s+([\d.]+)\s*deg\s*([EW])")
 # MSLP is the D. line (EXTRAP/DROP ... mb), NOT the C. standard-level height.
 _VDM_MSLP = re.compile(r"^\s*[DK]\.\s*[A-Z ]*?(\d{3,4})\s*mb", re.I | re.M)
@@ -112,6 +150,10 @@ def is_tropical_mission(name: str, flight: str) -> bool:
     up, fl = (name or "").upper(), (flight or "").upper()
     if fl.startswith("WXWX"):
         return False
+    # A placeholder (or empty) name on a TASKED flight id is a real TC sortie
+    # into an unnamed system — the flight slot, not the name, is authoritative.
+    if (not up or up in _PLACEHOLDER_NAMES) and tasked_storm(fl):
+        return True
     if not up or (up.isdigit() and len(up) > 2):
         return False
     if any(up.startswith(k) for k in _NON_TC):
@@ -167,12 +209,30 @@ def build_missions(hdob_contents: list[str]) -> dict[str, dict]:
         # the KEY, so a flight split across those variants merges into one
         # mission (points dedup by timestamp below) under the canonical name.
         cname = canonical_storm_name(name)
+        # An unnamed system flies under a placeholder (or empty) name token;
+        # the tasked flight id carries the real identity. Re-label with the
+        # number-word designation (key included, so a later token flip to the
+        # designation merges into the same mission) and remember the storm
+        # number + basin so finalize can derive the atcf once the obs year is
+        # known — grouping then unifies on it exactly as a VDM-supplied atcf.
+        tasked = tasked_storm(flight)
+        derived_task = None
+        if tasked and (not cname or cname in _PLACEHOLDER_NAMES):
+            desig = storm_name_for_number(tasked[0])
+            if desig:
+                cname = desig
+                # Invest slots (90-99) relabel to INVEST but do NOT derive an
+                # atcf: all invests share the (basin, INVEST) grouping key, so
+                # a derived id would leak via atcf_by_key onto every other
+                # invest mission in the basin and merge distinct invests.
+                if desig != "INVEST":
+                    derived_task = tasked
         mid = mid_raw if cname == name else f"{mid_raw.rsplit('-', 1)[0]}-{cname}"
         m = missions.setdefault(mid, {
             "mission_id": mid, "aircraft": aircraft, "flight": flight,
             "storm_name": cname, "is_invest": is_invest_name(cname),
             "is_tropical": is_tropical_mission(cname, flight),
-            "atcf": None, "_points": {},
+            "atcf": None, "_points": {}, "_tasked": derived_task,
         })
         for rec in _row_records(df):
             m["_points"][rec["t"]] = rec          # dedup by timestamp
@@ -183,6 +243,14 @@ def build_missions(hdob_contents: list[str]) -> dict[str, dict]:
         m["n_obs"] = len(pts)
         m["valid_start"] = pts[0]["t"] if pts else None
         m["valid_end"] = pts[-1]["t"] if pts else None
+        # Flight-code-derived atcf for a placeholder-named tasked sortie (needs
+        # the obs year, so it lands here). Setting it now also PINS the id:
+        # add_vdm seeds atcf only when unset, so a time-misbound VDM from a
+        # concurrent storm cannot re-identify this mission (the flight code
+        # comes from the mission's own header and both agree when correct).
+        tk = m.pop("_tasked", None)
+        if tk and m["atcf"] is None and m["valid_start"]:
+            m["atcf"] = f"{tk[1]}{tk[0]:02d}{m['valid_start'][:4]}"
         sfmr = [p["sfmr"] for p in pts
                 if p["sfmr"] is not None and not p.get("sfmr_suspect")]
         wspd = [p["wspd"] for p in pts if p["wspd"] is not None]
