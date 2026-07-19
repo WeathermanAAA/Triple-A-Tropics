@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~18:0x UTC — HAFS dispatch-churn root-caused: a HEALTHY tokened ens-watchdog (on the legacy platform) re-dispatching against a cycle stuck on the 120-min timeout wall since 02L tripled the render load; timeout 120->350 @8afe0705, completion monitor armed. Railway GO stands, with a continuity step queued: move ENS_WATCHDOG_GH_TOKEN to the box before/after deletion. Earlier waves below._
+_Last update: 2026-07-19 ~19:3x UTC — loop density + native-res ladder deployed (fast2 lane for the 11 common bands; z6 pyramids for c01/c02/c03/c05; rare-13 stays z5 at ~15-25 min by priority; c02 z7 = documented ceiling). Geometry-war between lanes caught + fixed mid-deploy. z6 density builds forward; recording verification when >=12 frames. Earlier waves below._
 
 ---
 
@@ -96,6 +96,36 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~18:1x-19:3x UTC) — LOOP DENSITY + NATIVE-RES LADDER (deployed; z6 series building)
+
+Measured first (workflow fan-out): ~48 s wall per product-slot regardless
+of product complexity -> one lane holds ~12 products on the 10-min grid;
+box headroom ~5 cores. Resolution truth: over the conus box, 2 km bands
+are NATIVE-BOUND at z5 (source 2500 px; deeper = upsampling); 1 km bands
+support native z6; c02 (0.5 km) supports z7 — but z7 is ~610 tiles/slot
+(~6.5 min serial upload), over any lane budget: DOCUMENTED CEILING, not
+cut. c02 serves z6 (2x sharper than before, 2.4x under native).
+
+Deployed (tsr @2c39407 + @c7eb480):
+- fast lane v2: ir, irbd, truecolor (z5) + c02 (z6, 6144 px base).
+- NEW fast2 lane: c01 c03 c05 (z6) + c07 c08 c09 c10 c14 sandwich
+  nightmicro airmass (z5) — the commonly-looped set on the 10-min grid.
+- full lane trimmed to the rare-13 (c04 c06 c11 c12 c15 c16 + 7 RGBs),
+  pass ~10-11 min -> ~15-25 min cadence for the rare set (honest: those
+  stay coarser by priority; nothing selectable is hourly anymore).
+- MID-DEPLOY WAR CAUGHT + FIXED: leaving --suite conus on the full lane
+  made two writers rebuild the upgraded bands at different geometries
+  (manifests ping-ponged z5<->z6). The full lane now loops only its 13.
+- Frontend @ab3aa390: live sessions adopt a deeper maxzoom in place
+  (remerge re-applies maxzoom+1 + the min-zoom pin).
+- TRANSITION: the geometry guard rebuilds upgraded-band manifests around
+  z6 frames only, and ready markers skip z5-existing slots, so the z6
+  series grows FORWARD at 10-min/slot — ~12 frames by ~21:15Z, full 6-h
+  window by ~00:30Z. Loops on those 4 bands are short meanwhile.
+  Density monitor armed; C02+C03 recording verification lands when ready.
+
+---
 
 ## 2026-07-19 (~17:3x-18:0x UTC) — THE "ROGUE" HAFS DISPATCHER: traced, root-caused, defused
 
