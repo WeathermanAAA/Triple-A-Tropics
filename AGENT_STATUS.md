@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~16:2x UTC — loop quality re-fixed from Andrew's WATCHED capture (obs series depth, visible dawn gate, conus fast lane, honest export dialog) — all re-verified by recording the live loop and eyeballing frames. See the 16:2x entry; model-guidance + poller waves below._
+_Last update: 2026-07-19 ~17:0x UTC — obs-jitter fixed with a frame-stable declutter (@de76cbdf), verified by recording the live loop: land stations pixel-steady, ships move for real. Loop-quality + export waves earlier today — see entries below._
 
 ---
 
@@ -96,6 +96,25 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~16:3x-17:0x UTC) — OBS JITTER: frame-stable declutter (recorded proof)
+
+Land stations jittered across loop frames because the declutter re-ran per
+frame over a feed that re-sorts by (rank, age) every emit — different cell
+winners each frame, whole field reshuffling. Fixed @de76cbdf
+(`cockpit_fields.js?v=obs8`): the kept set is computed ONCE per camera from
+the newest series doc in a fully deterministic order (rank desc, then
+station id); every frame draws exactly those stations at their canonical
+coordinates with that frame's values. Ships (plat 1) still place per frame
+at reported positions — real motion — filling leftover cells without ever
+displacing the stable set.
+
+Verified by RECORDING the live loop (12 frames, all joined to obs within a
+minute) and eyeballing consecutive-frame crop strips: land station models
+pixel-identical across frames while the imagery animates beneath; moored
+platforms steady; ship diamonds persist with only true drift.
+
+---
 
 ## 2026-07-19 (~15:1x-16:2x UTC) — LOOP QUALITY FROM A WATCHED CAPTURE + honest export
 
