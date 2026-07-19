@@ -762,7 +762,7 @@
     // buttons enable off their manifests (cockpit_fields.checkAvailability).
     [['mw', 'cx-ov-mw'], ['sc', 'cx-ov-sc'], ['rad', 'cx-ov-mrms'],
      ['obs', 'cx-ov-metar'], ['sfc', 'cx-ov-sfc'],
-     ['nhc', 'cx-ov-nhc']].forEach(function (pair) {
+     ['nhc', 'cx-ov-nhc'], ['guid', 'cx-ov-guid']].forEach(function (pair) {
       var b = $(pair[1]);
       if (!b) return;
       b.onclick = function () {
@@ -772,7 +772,8 @@
         if (pane.kind === pair[0]) { flash('already the pane field — pick a base field first'); return; }
         var st = pair[0] === 'mw' ? pane.mw : pair[0] === 'sc' ? pane.sc
                : pair[0] === 'rad' ? pane.rad : pair[0] === 'obs' ? pane.obs
-               : pair[0] === 'sfc' ? pane.sfc : pane.nhc;
+               : pair[0] === 'sfc' ? pane.sfc
+               : pair[0] === 'guid' ? pane.guid : pane.nhc;
         var on = !(st && st.on);
         window.CockpitFields.setLayer(S.active, pair[0], on);
         b.classList.toggle('on', on);
@@ -895,6 +896,7 @@
     var carry = {
       rad: !!(pane.rad && pane.rad.on), obs: !!(pane.obs && pane.obs.on),
       sfc: !!(pane.sfc && pane.sfc.on), nhc: !!(pane.nhc && pane.nhc.on),
+      guid: !!(pane.guid && pane.guid.on),
       mw: !!(pane.mw && pane.mw.on), sc: !!(pane.sc && pane.sc.on)
     };
     S.panes[i] = null;

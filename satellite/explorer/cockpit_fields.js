@@ -1457,9 +1457,272 @@
     if (_nhcT && _nhcT.unref) _nhcT.unref();
   }
 
+  // ========================================================================
+  // Model track guidance layer: deterministic + consensus aids and ensemble
+  // members/mean per ACTIVE storm, from the shared per-storm guidance
+  // document (cyclolab/{sid}/guidance.json — the same one the per-storm hub
+  // hydrates; ONE data product, every consumer). Latest init cycle only.
+  // ========================================================================
+  var GD_BASE = CDN + '/cyclolab';
+  // per-model hues (TAT palette, muted; consensus family warm+bold). Any
+  // tech not listed falls to the neutral slate.
+  var GD_COLORS = {
+    AVNI: '#5aa9ff', AVNO: '#5aa9ff', AEMN: '#5aa9ff',
+    HFAI: '#46c56a', HFBI: '#2bd4c0', HWFI: '#ffe14d', HMNI: '#ff9a2f',
+    CMCI: '#c08bff', CEMN: '#c08bff', NVGI: '#8ea2bd', NEMN: '#8ea2bd',
+    EGRI: '#ff6b9d', EGRR: '#ff6b9d', EMXI: '#46c56a', EEMN: '#46c56a',
+    CTCI: '#7aa0ff', OFCL: '#ffffff', TVCN: '#f5333c', HCCA: '#ff7a59'
+  };
+  var GD_ENS = { ecens: '#49b6c8', gefs: '#ff9a5c' };
+  var GDData = {
+    docs: null, _p: null,
+    load: function () {
+      var self = this;
+      if (this._p) return this._p;
+      this._p = GSData.load().then(function (gs) {
+        var sids = [];
+        ((gs && gs.features) || []).forEach(function (f) {
+          var p = f.properties || {};
+          var sid = p.storm_id || p.sid;
+          if (p.kind === 'active_marker' && sid && sids.indexOf(sid) < 0) sids.push(sid);
+        });
+        return Promise.all(sids.slice(0, 8).map(function (sid) {
+          return fetch(GD_BASE + '/' + encodeURIComponent(sid) + '/guidance.json?t=' + Date.now(),
+                       { cache: 'no-store' })
+            .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+            .catch(function () { return null; });
+        }));
+      }).then(function (docs) {
+        docs = (docs || []).filter(function (d) {
+          return d && d.init_cycle &&
+            ((d.track_aids && d.track_aids.length) || (d.ens && d.ens.models));
+        });
+        if (!docs.length) throw 0;   // honest gate: nothing to draw anywhere
+        self.docs = docs;
+        return docs;
+      });
+      return this._p;
+    },
+    reload: function () { this._p = null; return this.load(); }
+  };
+  function gdState(pane) {
+    if (!pane.guid) pane.guid = { on: false };
+    return pane.guid;
+  }
+  function gdLayerIds(i) {
+    var b = 'ofgd-' + i;
+    return [b + '-em', b + '-emean-case', b + '-emean',
+            b + '-aid-case', b + '-aid'];
+  }
+  function gdFeatures(docs) {
+    var fs = [];
+    (docs || []).forEach(function (d) {
+      var aids = d.aids || {};
+      var cons = {};
+      (d.consensus || []).forEach(function (c) { cons[c] = 1; });
+      var techs = (d.track_aids || []).slice();
+      if (aids.OFCL && techs.indexOf('OFCL') < 0) techs.push('OFCL');
+      techs.forEach(function (t) {
+        var pts = (aids[t] || []).filter(function (p) { return p.lat != null; });
+        if (pts.length < 2) return;
+        fs.push({ type: 'Feature',
+          geometry: { type: 'LineString',
+            coordinates: pts.map(function (p) { return [p.lon, p.lat]; }) },
+          properties: { k: 'aid', tech: t, sid: d.sid,
+                        cons: cons[t] || t === 'OFCL' ? 1 : 0,
+                        color: GD_COLORS[t] || '#8ea2bd' } });
+      });
+      (((d.ens || {}).models) || []).forEach(function (m) {
+        var col = GD_ENS[m.model] || '#8ea2bd';
+        (m.members || []).forEach(function (mm) {
+          if ((mm.points || []).length < 2) return;
+          fs.push({ type: 'Feature',
+            geometry: { type: 'LineString',
+              coordinates: mm.points.map(function (p) { return [p[2], p[1]]; }) },
+            properties: { k: 'em', model: m.model, color: col } });
+        });
+        if ((m.mean || []).length >= 2) {
+          fs.push({ type: 'Feature',
+            geometry: { type: 'LineString',
+              coordinates: m.mean.map(function (p) { return [p[2], p[1]]; }) },
+            properties: { k: 'emean', model: m.model, sid: d.sid, color: col } });
+        }
+      });
+    });
+    return { type: 'FeatureCollection', features: fs };
+  }
+  function gdClearLayers(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    gdLayerIds(paneIdx).forEach(function (id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    if (map.getSource('ofgd-' + paneIdx)) map.removeSource('ofgd-' + paneIdx);
+    if (pane._gdCanvas) {
+      var g = pane._gdCanvas.getContext('2d');
+      g.clearRect(0, 0, pane._gdCanvas.width, pane._gdCanvas.height);
+    }
+  }
+  function gdRender(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    var st = gdState(pane);
+    if (!map || !st.on) return;
+    GDData.load().then(function (docs) {
+      if (!docs || !st.on || !pane.tv || !pane.tv.map) return;
+      var sid = 'ofgd-' + paneIdx;
+      var data = gdFeatures(docs);
+      var before = map.getLayer('grat') ? 'grat' : undefined;
+      if (!map.getSource(sid)) {
+        map.addSource(sid, { type: 'geojson', data: data });
+        // ensemble members: thin, translucent — texture, not line-reading
+        map.addLayer({ id: sid + '-em', type: 'line', source: sid,
+          filter: ['==', ['get', 'k'], 'em'],
+          paint: { 'line-color': ['get', 'color'], 'line-opacity': 0.28,
+                   'line-width': 0.9 } }, before);
+        map.addLayer({ id: sid + '-emean-case', type: 'line', source: sid,
+          filter: ['==', ['get', 'k'], 'emean'],
+          paint: { 'line-color': 'rgba(5,10,20,0.8)', 'line-opacity': 0.85,
+                   'line-width': 4.0 } }, before);
+        map.addLayer({ id: sid + '-emean', type: 'line', source: sid,
+          filter: ['==', ['get', 'k'], 'emean'],
+          paint: { 'line-color': ['get', 'color'], 'line-opacity': 0.95,
+                   'line-width': 2.2 } }, before);
+        map.addLayer({ id: sid + '-aid-case', type: 'line', source: sid,
+          filter: ['all', ['==', ['get', 'k'], 'aid'], ['==', ['get', 'cons'], 1]],
+          paint: { 'line-color': 'rgba(5,10,20,0.8)', 'line-opacity': 0.85,
+                   'line-width': 4.2 } }, before);
+        map.addLayer({ id: sid + '-aid', type: 'line', source: sid,
+          filter: ['==', ['get', 'k'], 'aid'],
+          paint: { 'line-color': ['get', 'color'],
+                   'line-opacity': ['case', ['==', ['get', 'cons'], 1], 1, 0.8],
+                   'line-width': ['case', ['==', ['get', 'cons'], 1], 2.6, 1.4] } }, before);
+      } else {
+        map.getSource(sid).setData(data);
+      }
+      if (!pane._gdCanvas) {
+        var cv = document.createElement('canvas');
+        cv.className = 'cx-gd-overlay';
+        cv.style.cssText = 'position:absolute;inset:0;z-index:3;pointer-events:none;width:100%;height:100%';
+        pane.el.appendChild(cv);
+        pane._gdCanvas = cv;
+      }
+      if (!pane._gdWired) {
+        pane._gdWired = true;
+        map.on('render', function () { gdDraw(pane); });
+      }
+      gdDraw(pane);
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }).catch(function () { H.flash('model guidance unavailable'); });
+  }
+  function gdRaise(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    if (!map || !map.getLayer('grat')) return;
+    gdLayerIds(paneIdx).forEach(function (id) {
+      try { if (map.getLayer(id)) map.moveLayer(id, 'grat'); } catch (e) {}
+    });
+  }
+  var GD_TAUS = [24, 48, 72, 96, 120];
+  function gdDraw(pane) {
+    var st = pane.guid;
+    var cv = pane._gdCanvas;
+    var map = pane.tv && pane.tv.map;
+    if (!st || !cv || !map) return;
+    var box = pane.el.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var ck = camKey(map, box, dpr) + ':' + (st.on ? 1 : 0);
+    if (pane._gdDrawDocs === GDData.docs && pane._gdDrawCam === ck) return;
+    pane._gdDrawDocs = GDData.docs; pane._gdDrawCam = ck;
+    if (cv.width !== Math.round(box.width * dpr)) cv.width = Math.round(box.width * dpr);
+    if (cv.height !== Math.round(box.height * dpr)) cv.height = Math.round(box.height * dpr);
+    var g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, box.width, box.height);
+    if (!st.on || !GDData.docs) return;
+    var bounds = map.getBounds();
+    var w = bounds.getWest(), e = bounds.getEast(), s = bounds.getSouth(), n = bounds.getNorth();
+    var z = map.getZoom();
+    var proj = function (lon, lat) {
+      if (lat < s - 2 || lat > n + 2) return null;
+      if (lon < w && lon + 360 <= e) lon += 360;
+      if (lon < w - 2 || lon > e + 2) return null;
+      var xy = map.project([lon, lat]);
+      if (xy.x < -24 || xy.y < -24 || xy.x > box.width + 24 || xy.y > box.height + 24) return null;
+      return xy;
+    };
+    g.textAlign = 'left'; g.lineJoin = 'round';
+    GDData.docs.forEach(function (d) {
+      var aids = d.aids || {};
+      // forecast-hour chips ride the consensus spine (or the first aid)
+      var spine = aids.TVCN || aids.HCCA || aids[(d.track_aids || [])[0]] || [];
+      spine.forEach(function (p) {
+        if (p.lat == null || GD_TAUS.indexOf(p.tau) < 0) return;
+        var xy = proj(p.lon, p.lat);
+        if (!xy) return;
+        g.font = 'bold 9px "Segoe UI", system-ui, sans-serif';
+        g.lineWidth = 3; g.strokeStyle = 'rgba(5,10,20,0.85)';
+        g.strokeText(p.tau + 'h', xy.x + 5, xy.y + 3);
+        g.fillStyle = '#dfe8f2';
+        g.fillText(p.tau + 'h', xy.x + 5, xy.y + 3);
+      });
+      if (z >= 3.6) {
+        // model label at each aid's endpoint (its own hue, dark halo)
+        var techs = (d.track_aids || []).slice();
+        if (aids.OFCL && techs.indexOf('OFCL') < 0) techs.push('OFCL');
+        techs.forEach(function (t) {
+          var pts = (aids[t] || []).filter(function (p) { return p.lat != null; });
+          if (pts.length < 2) return;
+          var pe = pts[pts.length - 1];
+          var xy = proj(pe.lon, pe.lat);
+          if (!xy) return;
+          g.font = 'bold 9.5px "Segoe UI", system-ui, sans-serif';
+          g.lineWidth = 3; g.strokeStyle = 'rgba(5,10,20,0.85)';
+          g.strokeText(t, xy.x + 4, xy.y - 4);
+          g.fillStyle = GD_COLORS[t] || '#8ea2bd';
+          g.fillText(t, xy.x + 4, xy.y - 4);
+        });
+        (((d.ens || {}).models) || []).forEach(function (m) {
+          if ((m.mean || []).length < 2) return;
+          var pe = m.mean[m.mean.length - 1];
+          var xy = proj(pe[2], pe[1]);
+          if (!xy) return;
+          var lbl = (m.label || m.model) + ' mean (' + m.n_matched + ')';
+          g.font = 'bold 9.5px "Segoe UI", system-ui, sans-serif';
+          g.lineWidth = 3; g.strokeStyle = 'rgba(5,10,20,0.85)';
+          g.strokeText(lbl, xy.x + 4, xy.y - 4);
+          g.fillStyle = GD_ENS[m.model] || '#8ea2bd';
+          g.fillText(lbl, xy.x + 4, xy.y - 4);
+        });
+      }
+    });
+  }
+  var _gdT = null;
+  function gdStartPoll() {
+    if (_gdT) return;
+    _gdT = setInterval(function () {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      var any = false;
+      (CX && CX.panes || []).forEach(function (p) { if (p && p.guid && p.guid.on) any = true; });
+      if (!any) return;
+      GDData.reload().then(function () {
+        CX.panes.forEach(function (p, i) {
+          if (p && p.guid && p.guid.on) gdRender(p, i);
+        });
+      }).catch(function () {});
+    }, 600e3);
+    if (_gdT && _gdT.unref) _gdT.unref();
+  }
+
   function setLayer(i, kind, on) {
     var pane = CX.panes[i];
     if (!pane || !pane.tv || !pane.tv.map) return;
+    if (kind === 'guid') {
+      var gst = gdState(pane);
+      gst.on = on;
+      if (on) { gdRender(pane, i); gdStartPoll(); }
+      else { gdClearLayers(pane, i); }
+      if (H.renderPaneChrome) H.renderPaneChrome(i);
+      return;
+    }
     if (kind === 'nhc') {
       var nst = nhcState(pane);
       nst.on = on;
@@ -1548,6 +1811,7 @@
       if (pane.sfc && pane.sfc.on) sfcSyncTo(pane, i, stamp);
       // NHC vector layers share the frame-layer burial problem: re-raise
       if (pane.nhc && pane.nhc.on) nhcRaise(pane, i);
+      if (pane.guid && pane.guid.on) gdRaise(pane, i);
       if (pane._scFieldLayers && pane._scFieldLayers.length) scFieldRaise(pane);
     });
   }
@@ -1603,6 +1867,11 @@
     if (pane.obs && pane.obs.on) {
       var od = pane._obsDoc || OBSData.doc;
       extra.push('Surface obs' + (od && od.as_of ? ' \u00b7 ' + fmtZ(od.as_of) : ''));
+    }
+    if (pane.guid && pane.guid.on) {
+      var gdocs = GDData.docs;
+      var gi = gdocs && gdocs.length && gdocs[0].init_time;
+      extra.push('Model guidance' + (gi ? ' \u00b7 init ' + fmtZ(gi) : ''));
     }
     if (pane.nhc && pane.nhc.on) {
       var nd = NHCData.doc;
@@ -1777,7 +2046,7 @@
     // pane changes (an "on" toggle must always be truly on)
     var ap = CX && CX.panes && CX.panes[CX.active];
     [['cx-ov-mrms', 'rad'], ['cx-ov-metar', 'obs'], ['cx-ov-sfc', 'sfc'],
-     ['cx-ov-nhc', 'nhc']]
+     ['cx-ov-nhc', 'nhc'], ['cx-ov-guid', 'guid']]
       .forEach(function (pair) {
         var b = $(pair[0]);
         if (b) b.classList.toggle('on', !!(ap && ap[pair[1]] && ap[pair[1]].on));
@@ -1899,6 +2168,16 @@
     // NHC products: same honest gate
     NHCData.load().then(function () {
       var ov = $('cx-ov-nhc');
+      if (ov) {
+        ov.disabled = false;
+        var chip = ov.querySelector('.cx-chip');
+        if (chip) chip.remove();
+      }
+    }).catch(function () {});
+    // model guidance: same honest gate — enables only when at least one
+    // active storm has a current-cycle guidance document
+    GDData.load().then(function () {
+      var ov = $('cx-ov-guid');
       if (ov) {
         ov.disabled = false;
         var chip = ov.querySelector('.cx-chip');

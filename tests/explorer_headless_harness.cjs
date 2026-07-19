@@ -430,11 +430,15 @@ function serve() {
       window.__cockpit.panes[0].tv.map.jumpTo({ center: [-90, 33], zoom: 4 });
     });
     await page.waitForTimeout(3500);
-    await page.click("#cx-ov-mrms");
-    await page.click("#cx-ov-metar");
-    await page.click("#cx-ov-sfc");
-    await page.waitForTimeout(6000);    // preload settles
-    // record reveals over 6 s of playback with all overlays on
+    if (!process.env.NO_OVERLAYS) {   // =1 isolates the loop engine itself
+      await page.click("#cx-ov-mrms");
+      await page.click("#cx-ov-metar");
+      await page.click("#cx-ov-sfc");
+    }
+    // preload settle: PRELOAD_MS env widens it for cold benches (fresh
+    // frames + shared network need longer than the 6 s default)
+    await page.waitForTimeout(+(process.env.PRELOAD_MS || 6000));
+    // record reveals over the playback window with all overlays on
     await page.evaluate(() => {
       const tv = window.__cockpit.panes[0].tv;
       window.__reveals = [];
@@ -593,6 +597,69 @@ function serve() {
       return { sat: p.tv.frames[p.tv.frameIdx], obsShown: p.obs.shown, sfcShown: p.sfc.shown };
     })));
     await page.screenshot({ path: path.join(OUT, "nhc_overlay.png") });
+  }
+
+  if (scenario === "guidance") {
+    // Model-guidance layer over an active storm: fetch the live feed to find
+    // one, toggle the layer, check vector layers + label canvas + badge.
+    const gs = await (await fetch("https://cdn.triple-a-tropics.com/global_storms.geojson")).json();
+    const mk = gs.features.filter((f) => f.properties.kind === "active_marker");
+    const tgt = mk.find((f) => /AL91/.test(f.properties.storm_id || "")) || mk[0];
+    const [glon, glat] = tgt.geometry.coordinates;
+    console.log("TARGET:", tgt.properties.storm_id, glat, glon);
+    await page.evaluate(([lng, lat]) => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [lng + 2, lat], zoom: 4.4 });
+    }, [glon, glat]);
+    await page.waitForTimeout(3500);
+    const btn = await page.evaluate(() => {
+      const b = document.getElementById("cx-ov-guid");
+      return { disabled: b.disabled, text: b.textContent.trim() };
+    });
+    console.log("GUID BUTTON:", JSON.stringify(btn));
+    await page.click("#cx-ov-guid");
+    await page.waitForTimeout(3500);
+    const st = await page.evaluate(() => {
+      const p = window.__cockpit.panes[0], map = p.tv.map;
+      const layers = map.getStyle().layers.map(l => l.id).filter(id => id.startsWith("ofgd-"));
+      const src = map.getSource("ofgd-0");
+      const data = src && src._data;
+      const kinds = {};
+      ((data && data.features) || []).forEach(f => {
+        kinds[f.properties.k] = (kinds[f.properties.k] || 0) + 1; });
+      const cv = p._gdCanvas;
+      let painted = 0;
+      if (cv) {
+        const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+        for (let i = 3; i < d.length; i += 400) if (d[i] > 0) painted++;
+      }
+      return { layers, featureKinds: kinds, labelPaint: painted,
+               docs: (window.CockpitFields && null) || undefined,
+               badge: document.getElementById("cx-pht-0") ? document.getElementById("cx-pht-0").textContent : null };
+    });
+    console.log("GUID STATE:", JSON.stringify(st));
+    await page.screenshot({ path: path.join(OUT, "guidance_overlay.png") });
+  }
+
+  if (scenario === "followlive") {
+    // auto-follow proof: with the pane on the newest frame, a fresh emit
+    // must APPEND via the 90 s manifest poll and the view must ADVANCE to
+    // it — no reload. Needs a feed emitting faster than the wait window
+    // (conus lane: 10-min slots), so run ~12 min.
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-95, 30], zoom: 4.2 });
+    });
+    await page.waitForTimeout(4000);   // auto-switch to conus + settle
+    const snap = () => page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      return { newest: tv.frames[tv.frames.length - 1], shown: tv.frames[tv.frameIdx],
+               n: tv.frames.length, atTail: tv.frameIdx === tv.frames.length - 1 };
+    });
+    const before = await snap();
+    console.log("FOLLOW T0:", JSON.stringify(before));
+    await page.waitForTimeout(12 * 60 * 1000);
+    const after = await snap();
+    console.log("FOLLOW T+12m:", JSON.stringify(after));
+    console.log("ADVANCED:", after.newest > before.newest && after.atTail ? "YES" : "NO");
   }
 
   if (scenario === "uhr") {
