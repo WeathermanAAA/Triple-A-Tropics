@@ -88,7 +88,7 @@
       coast: 'rgba(201,219,242,0.95)', coastLw: 1.0,
       country: 'rgba(150,175,205,0.42)', countryLw: 0.6,
       state: 'rgba(150,175,205,0.16)', stateLw: 0.5,
-      grid: 'rgba(176,196,222,0.10)', gridLab: 'rgba(176,196,222,0.5)',
+      grid: 'rgba(176,196,222,0.24)', gridLab: 'rgba(176,196,222,0.5)',
       spine: 'rgba(190,205,225,0.34)', barbLw: 1.25
     },
     highcontrast: {
@@ -98,7 +98,7 @@
       coast: 'rgba(224,236,250,1.0)', coastLw: 1.15,
       country: 'rgba(180,205,235,0.55)', countryLw: 0.75,
       state: 'rgba(180,205,235,0.20)', stateLw: 0.55,
-      grid: 'rgba(214,228,245,0.14)', gridLab: 'rgba(214,228,245,0.62)',
+      grid: 'rgba(214,228,245,0.30)', gridLab: 'rgba(214,228,245,0.62)',
       spine: 'rgba(214,228,245,0.45)', barbLw: 1.5
     }
   };
