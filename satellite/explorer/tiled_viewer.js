@@ -337,6 +337,21 @@
       cut = Math.min(cut, t.length - LOOP_MIN_FRAMES);
       t = t.slice(cut);
     }
+    // head-straggler trim: the floor's reach-back (or an outage hole inside
+    // the window) can leave one gap that dwarfs the loop's own cadence — a
+    // visible teleport no playback can smooth. Cut at the LAST such gap and
+    // keep the dense tail (measured live: a lone 17:01Z frame ahead of a
+    // 5 h hole in an otherwise 10-min loop). Evenly-sparse feeds are
+    // untouched: the threshold scales off the set's own median gap.
+    if (t.length > 4) {
+      var g = [], gi;
+      for (gi = 1; gi < t.length; gi++) g.push(stampMs(t[gi]) - stampMs(t[gi - 1]));
+      var sg = g.slice().sort(function (a, b) { return a - b; });
+      var thr = Math.max(45 * 60e3, 6 * sg[Math.floor(sg.length / 2)]);
+      for (gi = g.length - 1; gi >= 0; gi--) {
+        if (g[gi] > thr && t.length - (gi + 1) >= 4) { t = t.slice(gi + 1); break; }
+      }
+    }
     return t.slice(Math.max(0, t.length - cap));
   };
   // PROGRESSIVE COLD LOAD: a cold product mount starts with a small
