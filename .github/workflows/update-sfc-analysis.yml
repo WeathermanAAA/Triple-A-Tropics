@@ -6,11 +6,13 @@
 # in between (same JSON, 5-min manifest cache).
 name: update-sfc-analysis
 
+# RETIRED AS A CRON 2026-07-19: this feed now emits from the BOX poller
+# (tsr-s2 docker-compose.overlays.yml, project tat-overlays) — a tight loop
+# with the generator's own watermark/new-object gate, so it never misses a
+# cycle the way GitHub's load-shed schedules did. ONE authoritative writer:
+# the box. workflow_dispatch stays for manual re-emits/backfills only.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 * * * *"
-    - cron: "47 * * * *"
 
 permissions:
   contents: read

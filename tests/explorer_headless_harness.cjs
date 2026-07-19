@@ -585,9 +585,11 @@ function serve() {
     // Scatterometer layer with the UHR companion feed: passes must appear in
     // the pass list (sensor-labelled), the ~2 km field raster must mount
     // under the barbs, and the barbs must draw from the decimated wvc set.
-    const um = JSON.parse(fs.readFileSync(path.join(
-      process.env.HARNESS_FEEDS, "uhr/ascat/uhr/manifest.json")));
-    const up = um.passes[0];
+    const um = UHR_LOCAL
+      ? JSON.parse(fs.readFileSync(path.join(UHR_LOCAL, "ascat/uhr/manifest.json")))
+      : await (await fetch("https://cdn.triple-a-tropics.com/ascat/uhr/manifest.json")).json();
+    // prefer a storm-tagged pass (the product exists for storms); else newest
+    const up = um.passes.find((p) => (p.storms || []).length) || um.passes[0];
     const [ux, uy] = [(up.bbox[0] + up.bbox[2]) / 2, (up.bbox[1] + up.bbox[3]) / 2];
     await page.evaluate(([lng, lat]) => {
       window.__cockpit.panes[0].tv.map.jumpTo({ center: [lng, lat], zoom: 4.6 });
