@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~17:5x UTC — RAILWAY DECOMMISSION: GO (zero live dependencies; latent fallback-URL hazard fixed in tsr first; stale docs scrubbed @01612358). Side-finding: an external ~40-min loop is dispatch-cancelling update-hafs.yml — see the entry. Earlier waves below._
+_Last update: 2026-07-19 ~18:0x UTC — HAFS dispatch-churn root-caused: a HEALTHY tokened ens-watchdog (on the legacy platform) re-dispatching against a cycle stuck on the 120-min timeout wall since 02L tripled the render load; timeout 120->350 @8afe0705, completion monitor armed. Railway GO stands, with a continuity step queued: move ENS_WATCHDOG_GH_TOKEN to the box before/after deletion. Earlier waves below._
 
 ---
 
@@ -96,6 +96,46 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~17:3x-18:0x UTC) — THE "ROGUE" HAFS DISPATCHER: traced, root-caused, defused
+
+Forensics on the ~40-min update-hafs.yml dispatch loop (actor
+WeathermanAAA):
+
+- **The dispatcher is not rogue — the pipeline was stuck.** Trigger
+  history: sporadic dispatches (0-5/day) all week, becoming a continuous
+  40-min loop only at 18:30Z on 07-18 — four hours AFTER the HAFS cycle
+  stopped closing. The +2-3 s cumulative drift between dispatches is a
+  sleep(2400) process loop = ens_watchdog.py's HAFS_COOLDOWN_S exactly:
+  a HEALTHY watchdog WITH a GH token, correctly re-dispatching against a
+  genuinely stuck cycle.
+- **The real defect**: when 02L formed, the cycle went from ~40-second
+  no-op runs to REAL work — ~8,514 render tasks + 516 GRIB ingests for 3
+  storms — and every run died at EXACTLY the 120-min job timeout
+  (14:33:37→16:33:53 measured), restarting from zero on a stateless
+  runner: one perpetual runner burning 24/7, the manifest never
+  advancing, the watchdog never quieting. FIX @8afe0705: timeout 120→350
+  (still clears the 6-h cadence; the commit says cut WORK not timeout if
+  ever exceeded). Most "cancelled" runs never started (pending-slot
+  bumps — cheap); cancel-in-progress was already correctly false.
+- **Where the tokened watchdog lives**: every reachable host is
+  eliminated (box watchdog token-less "WOULD dispatch" logs; box crontab
+  clean; no repo workflow dispatches it; this harness has no crons). The
+  only known host with the code + the token env is the paused-not-
+  deleted legacy platform project — the same one whose render instance
+  still answers /health. Andrew's project deletion kills it.
+- **CONTINUITY WARNING for the deletion**: that legacy watchdog is
+  currently the ONLY dispatcher with a token — the box watchdog is
+  decide-only. After deleting the project, add ENS_WATCHDOG_GH_TOKEN to
+  /root/tsr-s2's sibling /root/tat-satellite-render/.env and recreate
+  tat-render-ens-watchdog-1, or the stuck-cycle backstop goes silent
+  (QUEUED, one line + one compose command).
+- Cancel/dispatch via this token: 403 (Actions write not granted), so
+  the in-flight pre-fix runs drain naturally; the first post-push
+  dispatch holds the queue slot and runs with the new timeout. A
+  persistent monitor is armed for the first successful completion.
+
+---
 
 ## 2026-07-19 (~17:1x-17:5x UTC) — RAILWAY DECOMMISSION SWEEP: GO
 
