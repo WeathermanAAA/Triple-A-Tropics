@@ -364,7 +364,7 @@
       <a href="/satellite/" class="active">Satellite</a>
       <a href="/models/">Models</a>
       <a href="/subseasonal/">Subseasonal</a>
-      <a href="/recon/">Recon</a>
+      <a href="/obs/">Obs</a>
       <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
     </div>
   </div>
@@ -584,6 +584,8 @@
         title="WPC surface analysis — fronts + pressure centers">Sfc analysis <i class="cx-chip">soon</i></button>
       <button type="button" class="cx-ov" id="cx-ov-guid" disabled
         title="Model track guidance — deterministic + consensus aids and ensemble members per active storm, latest cycle">Model guidance <i class="cx-chip">soon</i></button>
+      <button type="button" class="cx-ov" id="cx-ov-tpw" disabled
+        title="Total precipitable water — MIMIC-TPW2 morphed microwave composite, courtesy CIMSS/SSEC (hourly, global)">TPW moisture <i class="cx-chip">soon</i></button>
       <button type="button" class="cx-ov" disabled>Model fields <i class="cx-chip">soon</i></button>
     </div>
   </aside>
@@ -635,8 +637,8 @@
      the cockpit adapters — loaded BEFORE cockpit.js so boot can init them -->
 <script src="/microwave/microwave.js?v=13"></script>
 <script src="/ascat/ascat.js?v=0017"></script>
-<script src="cockpit_fields.js?v=mp2"></script>
-<script src="cockpit.js?v=core13"></script>
+<script src="cockpit_fields.js?v=tpw1"></script>
+<script src="cockpit.js?v=core14"></script>
 <!-- objective center + intensity (ARCHER/ADT ports) — panel + compute -->
 <script src="objfix.js?v=ofx2"></script>
 <script src="objfix_sources.js?v=ofx3"></script>

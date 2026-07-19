@@ -113,6 +113,21 @@ function serve() {
     } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
   });
 
+  // TPW moisture bench-alias: the local emitter output re-stamped near now
+  // (scripts rewrite the manifest + filenames) so the freshness gate and the
+  // nearest-join exercise for real against the current sat loop
+  const TPW_LOCAL = aliasDir(SCRATCH + "/tpw/");
+  if (TPW_LOCAL) await page.route("https://cdn.triple-a-tropics.com/env/tpw/**", async (route) => {
+    const rel = route.request().url().replace("https://cdn.triple-a-tropics.com/", "").split("?")[0];
+    try {
+      const body = fs.readFileSync(path.join(TPW_LOCAL, rel));
+      const ctype = rel.endsWith(".webp") ? "image/webp"
+        : rel.endsWith(".png") ? "image/png" : "application/json";
+      await route.fulfill({ status: 200, body, headers: {
+        "content-type": ctype, "access-control-allow-origin": "*" } });
+    } catch (e) { await route.fulfill({ status: 404, body: "nf", headers: { "access-control-allow-origin": "*" } }); }
+  });
+
   // metar series bench-alias: present the single local frame near the cached
   // sat loop so the nearest-join exercises (sfc's 15Z frame joins for real)
   const OBS_LOCAL = aliasDir(SCRATCH + "/metar/");
@@ -369,6 +384,52 @@ function serve() {
     console.log("ZOOMED SHOT SAVED");
   }
 
+  if (scenario === "tpw") {
+    // freshness-gated toggle must have enabled off the bench manifest
+    await page.waitForFunction(() => {
+      const b = document.getElementById("cx-ov-tpw");
+      return b && !b.disabled;
+    }, { timeout: 20000 });
+    await page.evaluate(() => document.getElementById("cx-ov-tpw").click());
+    await page.waitForFunction(() => {
+      const p = window.__cockpit.panes[0];
+      return p && p.tpw && p.tpw.on && p.tpw.shown;
+    }, { timeout: 20000 });
+    await page.waitForTimeout(2500);
+    const st1 = await page.evaluate(() => {
+      const p = window.__cockpit.panes[0];
+      const map = p.tv.map;
+      return {
+        shown: p.tpw.shown,
+        layerVisible: map.getLayer("oftpw-0") &&
+          map.getLayoutProperty("oftpw-0", "visibility") !== "none",
+        cbar: !!(p._tpwCbar && p._tpwCbar.style.display !== "none" &&
+                 p._tpwCbar.complete && p._tpwCbar.naturalWidth > 0),
+        badge: (document.querySelector(".cx-pane-lbadge") || {}).textContent || ""
+      };
+    });
+    console.log("TPW STATE", JSON.stringify(st1));
+    await page.screenshot({ path: path.join(OUT, "tpw_on.png") });
+    // playback: the overlay must ride the clock (join per frame, serialized)
+    await page.evaluate(() => document.getElementById("cx-play").click());
+    await page.waitForTimeout(6000);
+    const st2 = await page.evaluate(() => {
+      const p = window.__cockpit.panes[0];
+      return { shown: p.tpw.shown, playing: !!window.__cockpit.playing };
+    });
+    await page.evaluate(() => document.getElementById("cx-play").click());
+    console.log("TPW PLAYBACK", JSON.stringify(st2));
+    await page.screenshot({ path: path.join(OUT, "tpw_playing.png") });
+    // toggle OFF must clear layer + colorbar
+    await page.evaluate(() => document.getElementById("cx-ov-tpw").click());
+    await page.waitForTimeout(1200);
+    const st3 = await page.evaluate(() => {
+      const p = window.__cockpit.panes[0];
+      return { on: p.tpw.on, layer: !!p.tv.map.getLayer("oftpw-0"),
+               cbarShown: !!(p._tpwCbar && p._tpwCbar.style.display !== "none") };
+    });
+    console.log("TPW OFF", JSON.stringify(st3));
+  }
   if (scenario === "mrmsanim") {
     await page.evaluate(() => {
       window.__cockpit.panes[0].tv.map.jumpTo({ center: [-90, 33], zoom: 4 });

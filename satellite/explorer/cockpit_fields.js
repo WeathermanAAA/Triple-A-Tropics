@@ -75,6 +75,32 @@
       return this.load();
     }
   };
+  // MIMIC-TPW2 total precipitable water (CIMSS/SSEC) — hourly global frames
+  // from the box poller. LIVE layer only: fresh() gates the toggle so a
+  // stalled upstream shows a disabled button, never 13-day-old moisture
+  // presented as current. Self-activates when the mirror resumes.
+  var TPW_BASE = CDN + '/env/tpw';
+  var TPW_FRESH_MS = 3 * 3600e3;
+  var TPWData = {
+    manifest: null, _p: null,
+    load: function () {
+      var self = this;
+      if (this._p) return this._p;
+      this._p = fetch(TPW_BASE + '/latest_times.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (m) { self.manifest = m; return m; });
+      return this._p;
+    },
+    reload: function () {
+      this._p = null;
+      return this.load();
+    },
+    fresh: function () {
+      var m = this.manifest;
+      if (!m || !m.latest) return false;
+      return (Date.now() - radStampMs(m.latest)) <= TPW_FRESH_MS;
+    }
+  };
   // METAR surface obs (tester item #12): one compact global JSON emitted by
   // update-metar.yml (aviationweather.gov cache — free, global, no creds).
   // Same honest-gate + poll model as MRMS.
@@ -830,6 +856,162 @@
       }).catch(function () {});
     }, 60e3);
     if (_radT && _radT.unref) _radT.unref();
+  }
+
+  // ========================================================================
+  // TPW moisture layer (MIMIC-TPW2, CIMSS/SSEC) — the radar image-source
+  // discipline verbatim: ONE stable per-pane image source, serialized
+  // updateImage swaps, nearest-frame time-lock. Hourly product, so the
+  // join skew is 90 min; a sat frame with no TPW within that hides the
+  // layer for that frame (honest: no moisture field existed "then").
+  // ========================================================================
+  function tpwState(pane) {
+    if (!pane.tpw) pane.tpw = { on: false, stamp: null };
+    return pane.tpw;
+  }
+  function tpwClearLayers(pane) {
+    var map = pane.tv && pane.tv.map;
+    if (map) {
+      (pane._tpwLayers || []).forEach(function (id) {
+        if (map.getLayer(id)) map.removeLayer(id);
+        if (map.getSource(id)) map.removeSource(id);
+      });
+    }
+    pane._tpwLayers = [];
+    pane._tpwLoading = false; pane._tpwNext = null; pane._tpwUrl = null;
+    if (pane._tpwCbar) { pane._tpwCbar.style.display = 'none'; }
+    if (pane.tpw) { pane.tpw.stamp = null; pane.tpw.shown = null; }
+  }
+  function tpwRender(pane, paneIdx) {
+    var map = pane.tv && pane.tv.map;
+    if (!map) return;
+    TPWData.load().then(function () {
+      if (!TPWData.fresh()) {
+        // upstream stalled mid-session: refuse to show stale moisture
+        var st = tpwState(pane);
+        st.on = false;
+        H.flash('TPW feed is stale upstream — layer disabled until it resumes');
+        if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+        if (window.CockpitFields) window.CockpitFields.syncControls();
+        return;
+      }
+      tpwSyncTo(pane, paneIdx, radPaneStamp(pane));
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }).catch(function () { H.flash('TPW data unavailable'); });
+  }
+  var TPW_MAX_SKEW_MS = 90 * 60e3;
+  function tpwSyncTo(pane, paneIdx, satStamp) {
+    var st = tpwState(pane);
+    var map = pane.tv && pane.tv.map;
+    var m = TPWData.manifest;
+    if (!st.on || !map || !m || !m.times || !m.times.length || !satStamp) return;
+    var t = radStampMs(satStamp), best = null, bd = Infinity;
+    for (var i = 0; i < m.times.length; i++) {
+      var d = Math.abs(radStampMs(m.times[i]) - t);
+      if (d < bd) { bd = d; best = m.times[i]; }
+    }
+    var id = 'oftpw-' + paneIdx;
+    var lyr = map.getLayer(id);
+    tpwEnsureCbar(pane, m);
+    if (best == null || bd > TPW_MAX_SKEW_MS) {
+      if (lyr) map.setLayoutProperty(id, 'visibility', 'none');
+      if (pane._tpwCbar) pane._tpwCbar.style.display = 'none';
+      st.shown = null;
+      return;
+    }
+    var b = m.bounds;   // [W,S,E,N]; frames web-mercator warped like radar
+    var coords = [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]];
+    var url = CDN + '/' + m.frame.replace('{t}', best);
+    if (!map.getSource(id)) {
+      map.addSource(id, { type: 'image', url: url, coordinates: coords });
+      var before = map.getLayer('grat') ? 'grat' : undefined;
+      map.addLayer({ id: id, type: 'raster', source: id,
+        paint: { 'raster-opacity': 0.78, 'raster-fade-duration': 0,
+                 'raster-opacity-transition': { duration: 0, delay: 0 },
+                 'raster-resampling': 'linear' } }, before);
+      pane._tpwLayers = [id];
+      pane._tpwUrl = url;
+    } else if (pane._tpwUrl !== url) {
+      tpwApply(pane, map, id, url, coords);
+    }
+    if (lyr || map.getLayer(id)) {
+      map.setLayoutProperty(id, 'visibility', 'visible');
+      // same frame-layer burial as radar: re-raise under the graticule
+      try { if (map.getLayer('grat')) map.moveLayer(id, 'grat'); } catch (e) {}
+      // radar reads above moisture when both are on (reflectivity is the
+      // sparser, more urgent field)
+      try {
+        (pane._radLayers || []).forEach(function (rid) {
+          if (map.getLayer(rid) && map.getLayer('grat')) map.moveLayer(rid, 'grat');
+        });
+      } catch (e) {}
+    }
+    if (pane._tpwCbar) pane._tpwCbar.style.display = 'block';
+    if (st.shown !== best) {
+      st.shown = best;
+      st.stamp = best;                     // badge shows the joined frame
+      tpwPrefetch(m, best);
+      if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
+    }
+  }
+  function tpwApply(pane, map, id, url, coords) {
+    if (pane._tpwLoading) { pane._tpwNext = { url: url, coords: coords }; return; }
+    pane._tpwLoading = true;
+    pane._tpwUrl = url;
+    try { map.getSource(id).updateImage({ url: url, coordinates: coords }); }
+    catch (e) { pane._tpwLoading = false; return; }   // mid-teardown: next sync remounts
+    var onData = function (e) {
+      if (e.sourceId !== id) return;
+      if (!map.getSource(id)) { map.off('sourcedata', onData); pane._tpwLoading = false; return; }
+      if (!map.isSourceLoaded(id)) return;
+      map.off('sourcedata', onData);
+      pane._tpwLoading = false;
+      if (pane._tpwNext) {
+        var nx = pane._tpwNext;
+        pane._tpwNext = null;
+        if (nx.url !== pane._tpwUrl) tpwApply(pane, map, id, nx.url, nx.coords);
+      }
+    };
+    map.on('sourcedata', onData);
+  }
+  var _tpwWarm = {};
+  function tpwPrefetch(m, shown) {
+    var i = m.times.indexOf(shown);
+    [i - 1, i + 1].forEach(function (j) {
+      if (j < 0 || j >= m.times.length) return;
+      var u = CDN + '/' + m.frame.replace('{t}', m.times[j]);
+      if (_tpwWarm[u]) return;
+      _tpwWarm[u] = 1;
+      try { fetch(u, { mode: 'cors' }).catch(function () {}); } catch (e) {}
+    });
+  }
+  // right-side mm colorbar (the feed ships it rendered); sits BELOW the
+  // product colorbar's top-right slot so the two never collide
+  function tpwEnsureCbar(pane, m) {
+    if (pane._tpwCbar || !m || !m.cbar) return;
+    var img = document.createElement('img');
+    img.className = 'cx-tpw-cbar';
+    img.alt = 'TPW (mm)';
+    img.src = CDN + '/' + m.cbar;
+    img.style.display = 'none';
+    pane.el.appendChild(img);
+    pane._tpwCbar = img;
+  }
+  var _tpwT = null;
+  function tpwStartPoll() {
+    if (_tpwT) return;
+    _tpwT = setInterval(function () {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      var any = false;
+      (CX && CX.panes || []).forEach(function (p) { if (p && p.tpw && p.tpw.on) any = true; });
+      if (!any) return;
+      TPWData.reload().then(function () {
+        CX.panes.forEach(function (p, i) {
+          if (p && p.tpw && p.tpw.on) tpwSyncTo(p, i, radPaneStamp(p));
+        });
+      }).catch(function () {});
+    }, 120e3);
+    if (_tpwT && _tpwT.unref) _tpwT.unref();
   }
 
   // ========================================================================
@@ -1853,6 +2035,14 @@
       if (H.renderPaneChrome) H.renderPaneChrome(i);
       return;
     }
+    if (kind === 'tpw') {
+      var tst = tpwState(pane);
+      tst.on = on;
+      if (on) { tpwRender(pane, i); tpwStartPoll(); }
+      else { tpwClearLayers(pane); }
+      if (H.renderPaneChrome) H.renderPaneChrome(i);
+      return;
+    }
     if (kind === 'mw') {
       var st = mwState(pane);
       st.on = on;
@@ -1897,6 +2087,7 @@
       }
       // the animated overlays ride the same clock: nearest frame each
       if (pane.rad && pane.rad.on) radSyncTo(pane, i, stamp);
+      if (pane.tpw && pane.tpw.on) tpwSyncTo(pane, i, stamp);
       if (pane.obs && pane.obs.on) obsSyncTo(pane, i, stamp);
       if (pane.sfc && pane.sfc.on) sfcSyncTo(pane, i, stamp);
       // NHC vector layers share the frame-layer burial problem: re-raise
@@ -1972,6 +2163,13 @@
       extra.push('MRMS radar' + (rs
         ? ' · ' + rs.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') +
           ' ' + rs.slice(9, 11) + ':' + rs.slice(11, 13) + 'Z'
+        : ''));
+    }
+    if (pane.tpw && pane.tpw.on) {
+      var ts = pane.tpw.stamp;
+      extra.push('TPW (CIMSS/SSEC)' + (ts
+        ? ' · ' + ts.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') +
+          ' ' + ts.slice(9, 11) + ':' + ts.slice(11, 13) + 'Z'
         : ''));
     }
     return extra.length ? { layerBadge: extra.join('  +  ') } : null;
@@ -2264,6 +2462,21 @@
         if (chip) chip.remove();
       }
     }).catch(function () {});
+    // TPW moisture: honest gate PLUS freshness — a manifest whose newest
+    // frame is hours stale (the mirror lags/stalls) keeps the button
+    // disabled with the chip flipped to say so; self-enables on resume
+    TPWData.load().then(function () {
+      var ov = $('cx-ov-tpw');
+      if (!ov) return;
+      var chip = ov.querySelector('.cx-chip');
+      if (TPWData.fresh()) {
+        ov.disabled = false;
+        if (chip) chip.remove();
+      } else if (chip) {
+        chip.textContent = 'stale';
+        ov.title += ' — upstream feed currently stalled; enables automatically when it resumes';
+      }
+    }).catch(function () {});
     // model guidance: same honest gate — enables only when at least one
     // active storm has a current-cycle guidance document
     GDData.load().then(function () {
@@ -2320,6 +2533,8 @@
       '.cx-pane-lbadge{position:absolute;left:8px;top:44px;z-index:4;pointer-events:none;' +
       ' font-size:10px;font-weight:600;color:#bcdcff;background:rgba(10,13,18,.72);' +
       ' border:1px solid rgba(43,156,255,.35);border-radius:6px;padding:3px 7px}' +
+      '.cx-tpw-cbar{position:absolute;right:8px;bottom:64px;z-index:4;' +
+      ' pointer-events:none;border:1px solid rgba(255,255,255,.12);border-radius:7px}' +
       '.cx-sc-tip{position:absolute;z-index:5;pointer-events:none;display:none;' +
       ' font-size:11px;line-height:1.45;white-space:nowrap;color:var(--cx-fg);' +
       ' background:rgba(10,13,18,.88);border:1px solid var(--cx-line);' +
