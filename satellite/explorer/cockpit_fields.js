@@ -685,6 +685,7 @@
       if (map.getSource(id)) map.removeSource(id);
     });
     pane._radLayers = [];
+    pane._radLoading = false; pane._radNext = null; pane._radUrl = null;
     if (pane.rad) { pane.rad.stamp = null; pane.rad.shown = null; }
   }
   function radRender(pane, paneIdx) {
@@ -732,7 +733,14 @@
     }
     var b = m.bounds;   // [W,S,E,N]; image web-mercator warped
     var coords = [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]];
-    var url = CDN + '/' + m.image.replace('{t}', best);
+    // ANIMATION VARIANT: during playback the half-res scan animates (a
+    // full-res 7000x3500 texture is a ~98 MB GPU upload per advance — the
+    // visible radar stall in the 4-pane capture); the freshness poll swaps
+    // the full-res back within a tick once paused.
+    var playing = !!(pane.tv && (pane.tv.playing || pane.tv._extPlaying));
+    var tmpl = (playing && m.image_small && m.small_since &&
+                best >= m.small_since) ? m.image_small : m.image;
+    var url = CDN + '/' + tmpl.replace('{t}', best);
     if (!map.getSource(id)) {
       map.addSource(id, { type: 'image', url: url, coordinates: coords });
       var before = map.getLayer('grat') ? 'grat' : undefined;
@@ -741,9 +749,13 @@
                  'raster-opacity-transition': { duration: 0, delay: 0 },
                  'raster-resampling': 'linear' } }, before);
       pane._radLayers = [id];
-    } else if (st.shown !== best) {
-      try { map.getSource(id).updateImage({ url: url, coordinates: coords }); }
-      catch (e) { /* source mid-teardown: next sync remounts */ }
+      pane._radUrl = url;
+    } else if (pane._radUrl !== url) {
+      // SERIALIZED update: MapLibre replaces the pending image on every
+      // updateImage call — issuing one per advance while decodes lag left
+      // the texture stuck frames behind. One in flight; only the LATEST
+      // wanted image is queued behind it.
+      radApply(pane, map, id, url, coords);
     }
     if (lyr || map.getLayer(id)) {
       map.setLayoutProperty(id, 'visibility', 'visible');
@@ -762,6 +774,26 @@
       if (H.renderPaneChrome) H.renderPaneChrome(paneIdx);
     }
   }
+  function radApply(pane, map, id, url, coords) {
+    if (pane._radLoading) { pane._radNext = { url: url, coords: coords }; return; }
+    pane._radLoading = true;
+    pane._radUrl = url;
+    try { map.getSource(id).updateImage({ url: url, coordinates: coords }); }
+    catch (e) { pane._radLoading = false; return; }   // mid-teardown: next sync remounts
+    var onData = function (e) {
+      if (e.sourceId !== id) return;
+      if (!map.getSource(id)) { map.off('sourcedata', onData); pane._radLoading = false; return; }
+      if (!map.isSourceLoaded(id)) return;
+      map.off('sourcedata', onData);
+      pane._radLoading = false;
+      if (pane._radNext) {
+        var nx = pane._radNext;
+        pane._radNext = null;
+        if (nx.url !== pane._radUrl) radApply(pane, map, id, nx.url, nx.coords);
+      }
+    };
+    map.on('sourcedata', onData);
+  }
   // warm the displayed scan's temporal neighbors into the HTTP cache so the
   // NEXT join boundary's updateImage is a disk hit, not a network fetch —
   // the scans are immutable-cached, so one warm fetch serves every replay
@@ -770,10 +802,15 @@
     var i = m.times.indexOf(shown);
     [i - 1, i + 1].forEach(function (j) {
       if (j < 0 || j >= m.times.length) return;
-      var u = CDN + '/' + m.image.replace('{t}', m.times[j]);
-      if (_radWarm[u]) return;
-      _radWarm[u] = 1;
-      try { fetch(u, { mode: 'cors' }).catch(function () {}); } catch (e) {}
+      var t = m.times[j];
+      var tmpls = [m.image];
+      if (m.image_small && m.small_since && t >= m.small_since) tmpls.push(m.image_small);
+      tmpls.forEach(function (tp) {
+        var u = CDN + '/' + tp.replace('{t}', t);
+        if (_radWarm[u]) return;
+        _radWarm[u] = 1;
+        try { fetch(u, { mode: 'cors' }).catch(function () {}); } catch (e) {}
+      });
     });
   }
   // freshness poll: ONE timer for all panes; only fetches while some pane
@@ -809,7 +846,7 @@
     if (pane._obsCanvas) return pane._obsCanvas;
     var cv = document.createElement('canvas');
     cv.className = 'cx-obs-overlay';
-    cv.style.cssText = 'position:absolute;inset:0;z-index:3;pointer-events:none;width:100%;height:100%';
+    cv.style.cssText = 'position:absolute;inset:0;z-index:4;pointer-events:none;width:100%;height:100%';
     pane.el.appendChild(cv);
     pane._obsCanvas = cv;
     return cv;
@@ -1274,13 +1311,15 @@
             filter: ['==', ['get', 'kind'], 'area'],
             paint: { 'line-color': areaColor, 'line-opacity': 0.95,
                      'line-width': 2.2, 'line-dasharray': [5, 3] } }, before);
+          // outline-forward cone: the fill frames the storm, never buries
+          // it — imagery and station plots must read clearly THROUGH it
           map.addLayer({ id: sid + '-cone-fill', type: 'fill', source: sid,
             filter: ['==', ['get', 'kind'], 'cone'],
-            paint: { 'fill-color': '#dfe8f2', 'fill-opacity': 0.10 } }, before);
+            paint: { 'fill-color': '#dfe8f2', 'fill-opacity': 0.045 } }, before);
           map.addLayer({ id: sid + '-cone-line', type: 'line', source: sid,
             filter: ['==', ['get', 'kind'], 'cone'],
-            paint: { 'line-color': '#dfe8f2', 'line-opacity': 0.8,
-                     'line-width': 1.4 } }, before);
+            paint: { 'line-color': '#eef4fb', 'line-opacity': 0.95,
+                     'line-width': 1.7, 'line-dasharray': [4, 3] } }, before);
           // forecast track: solid, cased for contrast over any imagery —
           // the cone alone hides the forecast; positions ride the glyph
           // canvas (timed, intensity-lettered) in nhcDraw

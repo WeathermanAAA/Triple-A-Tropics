@@ -852,6 +852,19 @@
           tv.map.setRenderWorldCopies(true);
         applyOverlayState(tv);
         renderPaneChrome(i);
+        // LINKED BOOT: a new pane adopts the GROUP camera instead of its own
+        // construction fit — measured desync: pane 0 kept its full-width
+        // camera (z2.76) while fresh quarter-cell panes fit-boot (z2.31),
+        // so the group only equalized on the first drag (as a lurch).
+        if (S.linked && i > 0) {
+          var lead0 = S.panes[0];
+          if (lead0 && lead0.tv && lead0.tv.map && lead0 !== pane) {
+            try {
+              tv.map.jumpTo({ center: lead0.tv.map.getCenter(),
+                              zoom: lead0.tv.map.getZoom() });
+            } catch (e) {}
+          }
+        }
         wireCameraSync(pane);
         wireDrawBox(pane);    // shift+drag must work from boot on every pane
         wireAutoSat(pane, i); // nadir-nearest auto-switch follows the lead camera
@@ -1198,6 +1211,24 @@
     $('cx-panes').dataset.n = n;
     document.querySelectorAll('[data-panes]').forEach(function (b) {
       b.classList.toggle('on', +b.dataset.panes === n);
+    });
+    // the grid reflow resizes every EXISTING pane's cell: refresh each map's
+    // transform now (belt+braces beside trackResize) and, when linked, snap
+    // every pane to the pane-0 camera so the group starts in true lockstep
+    requestAnimationFrame(function () {
+      S.panes.forEach(function (p) {
+        if (p && p.tv && p.tv.map) { try { p.tv.map.resize(); } catch (e) {} }
+      });
+      if (S.linked && n > 1) {
+        var lp = S.panes[0];
+        if (lp && lp.tv && lp.tv.map) {
+          var c = lp.tv.map.getCenter(), z = lp.tv.map.getZoom();
+          S.panes.forEach(function (o) {
+            if (o && o !== lp && o.tv && o.tv.map)
+              o.tv.map.jumpTo({ center: c, zoom: z });
+          });
+        }
+      }
     });
     applyLoopCaps();   // residency budget scales with the pane count
     S.panes.forEach(function (p, k) { if (p) paneTag(k); });

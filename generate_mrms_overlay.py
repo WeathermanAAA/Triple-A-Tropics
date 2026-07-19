@@ -298,6 +298,12 @@ def main() -> int:
         raise RuntimeError(f"implausible echo coverage {cover:.0%} — refusing to publish")
 
     store.put(f"{base}/{stamp}.webp", webp, CACHE_IMMUTABLE, "image/webp")
+    # ANIMATION VARIANT: a half-res copy per scan. A 7000x3500 RGBA texture
+    # is ~98 MB on the GPU — re-uploading it every loop advance is the
+    # visible radar stall during playback; the half-res (~24 MB) variant
+    # animates fluidly and the full-res swaps back in when paused/zoomed.
+    small = encode_webp(out[::2, ::2])
+    store.put(f"{base}/{stamp}.s.webp", small, CACHE_IMMUTABLE, "image/webp")
     times = [t for t in manifest.get("times", []) if t != stamp]
     times.append(stamp)
     # RENDER-EPOCH floor: frames emitted before the smooth-render pipeline
@@ -326,6 +332,10 @@ def main() -> int:
     manifest = {
         "product": "mrms/conus/reflectivity",
         "image": base + "/{t}.webp",
+        "image_small": base + "/{t}.s.webp",
+        # the first stamp that HAS a small variant — the client must not
+        # request smalls for older frames still in the rolling series
+        "small_since": manifest.get("small_since") or stamp,
         "times": times, "latest": stamp,
         "prune_next": rolled,
         "bounds": bounds, "projection": "webmercator",
@@ -335,10 +345,11 @@ def main() -> int:
     }
     store.put(mkey, json.dumps(manifest).encode(), CACHE_MANIFEST, "application/json")
     for t in prune_now:
-        try:
-            store.delete(f"{base}/{t}.webp")
-        except Exception:
-            pass
+        for ext in (".webp", ".s.webp"):
+            try:
+                store.delete(f"{base}/{t}{ext}")
+            except Exception:
+                pass
     print(f"[mrms] wrote {base}/{stamp}.webp + manifest ({len(times)} times, "
           f"pruned {len(prune_now)}, queued {len(rolled)})")
     return 0

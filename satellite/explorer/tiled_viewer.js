@@ -379,6 +379,39 @@
         if (g[gi] > thr && t.length - (gi + 1) >= 4) { t = t.slice(gi + 1); break; }
       }
     }
+    // UNIFORM CADENCE: mixed emit lanes leave 5/10/15-min gaps inside one
+    // window (measured live: [25,5,15,10,10,10,5,15,...]) and the motion
+    // hiccups at every irregular pair. Present ONE frame per fixed slot:
+    // grid step = the window's modal gap floored at 10 min (the fast-lane
+    // slot grid), walked back from the newest frame; a slot with no frame
+    // within a third of the step is skipped consistently — never a 5/15 mix.
+    if (t.length > 3) {
+      var msArr = t.map(stampMs);
+      var counts = {}, di;
+      for (di = 1; di < msArr.length; di++) {
+        var rd = Math.round((msArr[di] - msArr[di - 1]) / 300e3) * 300e3;
+        if (rd > 0) counts[rd] = (counts[rd] || 0) + 1;
+      }
+      var G = 0, bestN = 0;
+      Object.keys(counts).forEach(function (k) {
+        if (counts[k] > bestN) { bestN = counts[k]; G = +k; }
+      });
+      G = Math.max(G, 600e3);
+      if (G <= 3600e3) {
+        var kept = [], tol = G / 3;
+        for (var slot = msArr[msArr.length - 1]; slot >= msArr[0] - tol; slot -= G) {
+          var bi = -1, bd = tol;
+          for (di = msArr.length - 1; di >= 0; di--) {
+            var dd = Math.abs(msArr[di] - slot);
+            if (dd <= bd) { bd = dd; bi = di; }
+          }
+          if (bi >= 0 && (kept.length === 0 || kept[kept.length - 1] !== t[bi]))
+            kept.push(t[bi]);
+        }
+        kept.reverse();
+        if (kept.length >= 4) t = kept;
+      }
+    }
     if (this._isDayProduct() && t.length > 2) {
       var bb = this.manifest && this.manifest.bounds;
       var cLat = bb ? (bb[1] + bb[3]) / 2 : 25;
