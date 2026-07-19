@@ -114,7 +114,7 @@ jobs:
         #
         # Phase-3 cutover gate (mirrors WRITE_LIVE_FEEDS / RENDER_HAFS_ON_CRON):
         # when the streaming poller is promoted to write the LIVE geojson each
-        # cycle (GLOBAL_GEOJSON_KEY=global_storms.geojson on Railway), set the
+        # cycle (GLOBAL_GEOJSON_KEY=global_storms.geojson on the box poller), set the
         # repo variable WRITE_GLOBAL_GEOJSON_ON_CRON=false so the cron stops
         # overwriting the poller's fresh map with 6h-stale storms. Default
         # (unset) keeps the cron uploading = today's behavior. The Regenerate

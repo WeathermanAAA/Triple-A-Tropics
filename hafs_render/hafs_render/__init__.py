@@ -1,7 +1,7 @@
 """hafs_render - the Triple-A-Tropics HAFS model-plot render pipeline as an
 installable package: ONE source of truth shared by the Actions cron
 (update-hafs.yml, via the repo-root generate_hafs_plots.py shim) AND the
-tat-satellite-render Railway render worker (which pins this package as a git
+tat-satellite-render box render worker (which pins this package as a git
 dependency, the ace_core pattern).
 
 The four modules (hafs_plot, hafs_registry, hafs_cache, generate_hafs_plots) are

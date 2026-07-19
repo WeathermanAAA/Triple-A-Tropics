@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """v2 manifest + never-regress merge tests for the HAFS dual-writer fix.
 
-The cron (generate_hafs_plots) and the Railway render worker BOTH write
+The cron (generate_hafs_plots) and the box render worker BOTH write
 models/hafs/manifest.json. These tests pin (a) the cron's published shape to the
 worker's compose_manifest_v2 schema, and (b) the never-regress merge that lets
 the two writers coexist on one key without clobbering each other.

@@ -50,7 +50,7 @@ jobs:
 
       - name: Install Python dependencies
         # The HAFS render stack is now the installable hafs_render package - ONE
-        # source of truth, shared verbatim with the tat-satellite-render Railway
+        # source of truth, shared verbatim with the tat-satellite-render box
         # render worker (which pins it as a git dependency). It pulls the GRIB
         # stack (herbie-data .idx byte-range subsetting; cfgrib+eccodes decode -
         # the eccodes wheel bundles the binary, no apt; xarray+netCDF4 back the
@@ -84,7 +84,7 @@ jobs:
           done
 
       - name: Generate HAFS plots (latest complete cycle)
-        # STAGE-3 CUTOVER ROLLBACK GATE: once the Railway render worker is the
+        # STAGE-3 CUTOVER ROLLBACK GATE: once the box render worker is the
         # sole renderer (Stage 4), set the repo variable RENDER_HAFS_ON_CRON=false
         # to make this cron a no-op - the worker then owns models/hafs. Unset or
         # any other value keeps the cron rendering (the default, and the instant
@@ -92,7 +92,7 @@ jobs:
         # R2 upload are gated together so a disabled cron never half-publishes.
         #
         # RECOVERY OVERRIDE: a workflow_dispatch ALWAYS renders, even when the
-        # scheduled cron is gated off (RENDER_HAFS_ON_CRON=false while the Railway
+        # scheduled cron is gated off (RENDER_HAFS_ON_CRON=false while the box
         # worker is primary). This is the independent backstop the HAFS freshness
         # watchdog (tat-satellite-render ens_watchdog.py) fires when the worker
         # falls behind, and the manual unwedge path - it does NOT re-enable the
@@ -108,7 +108,7 @@ jobs:
           # --ingest-jobs 2: the parent-domain environmental products (v0.11.0)
           # make the parent .atm ingest memory-heavier (the PV pressure stack +
           # the extra surface/level reads), so cap the ingest pool at 2 like the
-          # Railway worker (ingest_jobs=2) - 4-wide env-parent ingests OOM the
+          # box worker (ingest_jobs=2) - 4-wide env-parent ingests OOM the
           # 7 GB runner and the halving-backoff thrash blows the 120 min budget.
           # The render pool stays 4 (CPU-bound, light memory).
           python generate_hafs_plots.py --jobs 4 --ingest-jobs 2 --cycle-scoped
@@ -123,7 +123,7 @@ jobs:
         # sync leaves the worker's live frames untouched. (workflow_dispatch
         # always renders + uploads - the recovery override; see the render step.)
         if: github.event_name == 'workflow_dispatch' || vars.RENDER_HAFS_ON_CRON != 'false'
-        # DUAL-WRITER SAFE. The Railway render worker co-writes models/hafs/ in
+        # DUAL-WRITER SAFE. The box render worker co-writes models/hafs/ in
         # the SAME v2 layout (cycle-scoped frames {cycle}/... + a v2 manifest with
         # cycles[]). So this cron must NOT clobber it:
         #   1. Frames for THIS cycle only, into models/hafs/{cycle}/, with

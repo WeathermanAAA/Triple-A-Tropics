@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hafs-render"
 version = "0.12.0"
-description = "Triple-A-Tropics HAFS model-plot render pipeline (ingest + render + manifest), packaged as one source of truth for the Actions cron and the Railway render worker."
+description = "Triple-A-Tropics HAFS model-plot render pipeline (ingest + render + manifest), packaged as one source of truth for the Actions cron and the box render worker."
 requires-python = ">=3.10"
 # matplotlib + numpy are PINNED so the cron and the worker rasterize identically
 # (the pixel-parity gate is meaningless without matching pins). The rest float;
@@ -39,5 +39,5 @@ include-package-data = true
 [tool.setuptools.package-data]
 # Vendored basemaps + radar palette, resolved relative to the package dir by
 # hafs_plot's ``HERE = Path(__file__).parent``. Bundling them makes the worker
-# self-contained (no Natural Earth fetch step on Railway).
+# self-contained (no Natural Earth fetch step on the render box).
 hafs_render = ["*.geojson", "assets/*.pal"]

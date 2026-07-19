@@ -7,7 +7,7 @@ name: update-recon
 # Cadence: every 10 minutes on a staggered (non-round) minute so GitHub does
 # not drop the run in its high-load :00/:30 windows. HDOB blocks post on a
 # ~10-min cadence; the /recon/ viewer re-polls R2 on top, so the current
-# mission stays near-live. (A Railway poller is the fast-follow for sub-minute.)
+# mission stays near-live. (A box poller is the fast-follow for sub-minute.)
 
 on:
   schedule:

@@ -18,8 +18,9 @@
 # resyncs per-(storm, band) state from the R2 manifests and dedupes frames
 # by content hash, so overlapping/duplicate producers are idempotent.
 # RETIRED 2026-07-12: the poller fleet migrated to the Hostinger box
-# (tsr main docker-compose.render.yml / RUNBOOK-RENDER.md — Railway kept
-# only as a dormant rollback target). Schedule disabled below;
+# (tsr main docker-compose.render.yml / RUNBOOK-RENDER.md). The old
+# platform project is DECOMMISSIONED (2026-07-19 sweep: zero live
+# dependencies remained). Schedule disabled below;
 # workflow_dispatch remains the emergency lever.
 name: floater-worker
 
@@ -53,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 58
     steps:
-      - name: Checkout tat-satellite-render (main — what Railway ran)
+      - name: Checkout tat-satellite-render (main — the render stack)
         uses: actions/checkout@v6
         with:
           repository: WeathermanAAA/tat-satellite-render
@@ -91,7 +92,7 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          # the PROMOTED global-map key (the Railway deployment's setting;
+          # the PROMOTED global-map key (the original deployment's setting;
           # the poller's own default is the shadow key from the cutover era)
           GLOBAL_GEOJSON_KEY: global_storms.geojson
           LOG_LEVEL: INFO

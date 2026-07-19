@@ -2,7 +2,7 @@
 """Publish the cron's freshly-rendered v2 manifest to R2 by MERGING it into the
 existing manifest -- the never-regress, atomic half of the dual-writer fix.
 
-``models/hafs/manifest.json`` has TWO writers: the Railway render worker (the
+``models/hafs/manifest.json`` has TWO writers: the box render worker (the
 primary, continuous) and this cron (the ens-watchdog recovery lever, on
 workflow_dispatch). Before this module the cron blindly overwrote the worker's
 multi-cycle v2 manifest with its own single-cycle one, clobbering the building

@@ -9,7 +9,7 @@ and render it as a clean photographic JPEG with a slim title strip + watermark.
 GIBS is free and needs NO credentials/API key — this is a plain HTTP WMS
 GetMap fetch, so the whole script runs anywhere (locally or in CI) without
 secrets. That's the reason Part B lands first: it's self-contained and fully
-testable offline of the Railway render service.
+testable offline of the render service.
 
 What "latest pass" means here
 ------------------------------

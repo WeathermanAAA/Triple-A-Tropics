@@ -25,9 +25,9 @@ to every product.
 - **Main repo (HAFS pipeline + GitHub Actions):** the package is in-tree.
   `.github/workflows/update-hafs.yml` runs `pip install ./palette`, then any
   generator can `import tat_palettes`.
-- **tat-satellite-render (Railway):** `requirements.txt` pins
+- **tat-satellite-render (render box):** `requirements.txt` pins
   `tat-palettes @ git+https://github.com/WeathermanAAA/Triple-A-Tropics.git@main#subdirectory=palette`.
-  Railway's nixpacks installs with `--no-cache-dir`, so each deploy refetches
+  the image builds install with `--no-cache-dir`, so each deploy refetches
   `@main` and picks up palette edits automatically. Its `colormaps.py` is a thin
   re-export shim, so `render.py` keeps importing from `colormaps` unchanged.
 

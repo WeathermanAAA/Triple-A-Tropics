@@ -558,7 +558,7 @@ def _compose_manifest_v2(entries: list, models: Sequence[str],
                          domains: Sequence[str], products: Sequence[str],
                          fxx_step: int, *, now_iso: Optional[str] = None,
                          fxx_end: int = TERMINAL_FXX, fxx_pad: int = 3) -> dict:
-    """The PUBLISHED manifest, ONE schema shared verbatim with the Railway render
+    """The PUBLISHED manifest, ONE schema shared verbatim with the box render
     worker's ``compose_manifest_v2`` so the two writers on
     ``models/hafs/manifest.json`` never clobber each other with incompatible
     shapes. ``entries`` is newest-first cycle entries. Legacy single-cycle fields
