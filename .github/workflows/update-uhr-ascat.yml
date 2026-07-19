@@ -32,7 +32,9 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --quiet --upgrade pip
-          pip install --quiet boto3 netCDF4 numpy Pillow
+          # requests: not used by the UHR path itself, but ascatobs/__init__
+          # eagerly imports the package's fetch module which needs it
+          pip install --quiet boto3 netCDF4 numpy Pillow requests
 
       - name: Emit UHR scatterometer feed to R2
         timeout-minutes: 20
