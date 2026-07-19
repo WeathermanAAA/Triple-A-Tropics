@@ -37,7 +37,16 @@ concurrency:
 jobs:
   regenerate:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # generous; a busy 4-storm cycle is ~20 min
+    # 350 (not 120): with three simultaneous storms the planner emits ~8.5k
+    # render tasks + ~516 GRIB ingests per cycle — measured 2026-07-19, every
+    # run died at exactly the old 120-min timeout, restarting from scratch on
+    # a stateless runner and burning a perpetual runner-hour loop while the
+    # cycle never closed (which also kept the external watchdog re-dispatching
+    # on its 40-min cooldown). 350 min still clears the 6-h cycle cadence; if
+    # a cycle ever exceeds it, cut WORK (storm cap / hafsb skip), not the
+    # timeout. A completing run is everything: only completion advances the
+    # manifest and quiets the stuck-cycle detector.
+    timeout-minutes: 350
 
     steps:
       - name: Check out repo
