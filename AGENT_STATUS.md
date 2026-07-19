@@ -2501,3 +2501,61 @@ is tidier post-rewrite.
   the last pre-rewrite anchors. The 97 MB pre-rewrite bundle backup
   (kept in the Codespace) covers recovery. One `git push origin
   --delete <name>` each when you bless the list.
+
+## 2026-07-19 · Stale-branch sweep (Andrew's decisions executed)
+
+- **Decision (1) DONE — 34 stale pre-rewrite branches deleted** (35th,
+  `sat-explorer-fixes`, went earlier as provably merged). None were
+  ahead:0 (all carried pre-rewrite history), so per the "or
+  bundle-backed" clause every tip was fetched and bundled FIRST:
+  `/workspaces/_backups/TAT-stale-branches-pre-delete-2026-07-19.bundle`
+  (101 MB, 34 heads, `git bundle verify` OK, self-contained — includes
+  the full pre-rewrite history those branches sat on).
+- **FLAG: the July-9 pre-expunge bundle is GONE** —
+  `/workspaces/_backups/TAT-main-pre-expunge.bundle` no longer exists
+  (backup-experiments cleanup or Codespace rebuild; the /tmp copy was
+  ephemeral). The new bundle above is now the ONLY pre-rewrite backup.
+  **Recommend copying it off-Codespace** (it also still contains the
+  expunged third-party names in old blobs — treat it like the old one).
+  Local refs/backup/* in this Codespace's clone mirror it.
+- Recovery: `git bundle unbundle` / fetch from the bundle, or push any
+  ref back. Deleted refs (tip SHAs):
+  - ace-core-0.7.1 e7f97635
+  - ace-single-source 41e707dd
+  - ascat-observations 1e9c98ad
+  - cyclolab-design 0e3c2bbd
+  - feat/mw-viewer-v2 b821a712
+  - feat/truecolor-frontend 0bd482b4
+  - fnv3-clusters 8f1b7b98
+  - hafs-89pct 9d65aad5
+  - hafs-89pct-polish 0888f971
+  - hafs-emptied-cycle-fallback af2e357a
+  - hafs-manifest-v2-cron 70390cbe
+  - hafs-presentation-fixes b5353737
+  - hafs-progressive-generator 901333de
+  - hafs-render-package 45eb5586
+  - hafs-sim-89h f16cf6e4
+  - hafs-storm-anchored-stats 67dfac48
+  - june-corridor 28d6cd7c
+  - meso-sectors 6146e8bb
+  - poller-framework 7d0f8e8e
+  - recon-backfill-safe 14b29b75
+  - recon-backfill-years-override b83bc81b
+  - recon-filter-research 4a206e58
+  - recon-fixes-and-archive 7ba2da2e
+  - recon-nav-link 9ee7c678
+  - recon-rain-suspect 3c7a33e1
+  - recon-v2-selfcontained dfffdff0
+  - recon-viewer-v1 ef520d13
+  - recon-viewer-v2 a8aa3f38
+  - recon-window-7 93fa860e
+  - sat-one-loop be895fb4
+  - sat-simple e2973f2f
+  - sat-smooth 36f17b5d
+  - tchp-records 6ed667fc
+  - upstream-active-retirement 5d2e48ce
+- **Decision (2) recorded — GitHub Support GC request SKIPPED** per
+  Andrew: let background maintenance reclaim naturally; revisit only if
+  a push actually fails on quota. This also completes expunge queue ②
+  (the stale branches were the last pre-rewrite anchors on GitHub;
+  orphaned SHAs remain fetchable until GitHub GCs them naturally).
