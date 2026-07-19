@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-18 ~23:3x UTC — FOURTH wave shipped: live-testing round 2 all eight items root-caused + live-verified (conus feed freeze was the common root — stopgap un-retired @47755eb1 AND a dedicated box conus emit lane, tsr @25abacb), surface obs w/ ships+buoys, NHC dialog+forecast points, per-sat field routing from the ring, MRMS epoch purge + live zoomed proof, playback smoothing, and a NEW UHR 2-km scatterometer source @aed3c37f. See the 23:3x entry._
+_Last update: 2026-07-19 ~01:2x UTC — overlay feeds (UHR/MRMS/METAR/sfc) moved to BOX POLLERS (tat-overlays, tsr @bcb21a8); the four GH cron workflows retired to dispatch-only @606c3b29. MRMS now emits native 2-min scans. Fourth wave (live-testing round 2 + UHR source) shipped earlier — see the 23:3x entry._
 
 ---
 
@@ -58,6 +58,63 @@ _Last update: 2026-07-18 ~23:3x UTC — FOURTH wave shipped: live-testing round 
    live → Streaming software), ③ three commands from the runbook. The
    /stream/ page it broadcasts is already live and self-updating.
 9. _(agent appends new steps here as the re-kick queue lands)_
+
+---
+
+## 2026-07-19 (~00:4x–01:2x UTC) — OVERLAY FEEDS → BOX POLLERS (GH crons retired)
+
+Per the directive: UHR ASCAT + MRMS + METAR + surface analysis converted from
+GitHub-Actions crons to **box pollers** — the TAT never-miss ingest pattern,
+one authoritative writer. GH load-shed even staggered schedules to ~hourly
+all day (a native 2-min radar product was riding a 10-min cron that actually
+fired 6× less often than declared).
+
+- **Mechanism** (`tsr-s2 docker-compose.overlays.yml`, project `tat-overlays`,
+  tsr @bcb21a8): four services on the `tat-s2` image; each keeps a sparse
+  blob-less clone of the SITE repo and hard-resets to `origin/main` every
+  tick, then runs its generator `--store r2` — so commit-to-main deploys
+  poller code too, matching the site model. The generators carry their own
+  watermark/new-object gates (MRMS + sfc no-op on an unchanged stamp — sfc
+  gate added @43838b88; UHR dedups by pass id and backfills its window;
+  METAR frames by run time at the minutely obs cadence), so ticks are cheap
+  and writes are new-data-only. Cadences: MRMS 75 s (`--keep 150` ≈ 5 h of
+  2-min scans), METAR 300 s, UHR 300 s (`--max-new 8`), sfc 600 s.
+- **First-tick verification (box logs + CDN)**: MRMS emitted the 00:56:40Z
+  native scan; METAR framed 00:58 with 708 buoy/C-MAN + 472 ships; sfc
+  honestly no-op'd on the unchanged 21:00Z analysis; UHR published 8 passes
+  (ELIDA/97E-tagged among them) — beating the GH workflow to its own first
+  emit. Live explorer screenshot over ELIDA's swaths: dense 2 km barbs +
+  wind-speed field, three UHR field layers mounted.
+- **GH workflows retired to dispatch-only** @606c3b29 (`update-metar`,
+  `update-mrms`, `update-sfc-analysis`, `update-uhr-ascat`) — kept for
+  manual re-emits/backfills. Zero GH-cron overlay feeds remain.
+- Note for the morning: the UHR workflow's ONE scheduled run (00:08Z) failed
+  on a missing `requests` (fixed @244c06e9 before retirement — moot now,
+  the poller owns the feed). Watch `docker logs tat-overlays-mrms-poller-1`
+  if radar cadence ever slips; pygrib installs at container start.
+- **Sustained-cadence verification (01:27Z, ~35 min in)**: MRMS at NATIVE
+  2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
+  3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
+  (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~01:0x–01:4x UTC) — LOOP FUNDAMENTALS: dense recent window + geo lane
+
+Root-caused the "jittery/sparse loop": the viewer cut its loop as the
+TRAILING loopCap of the whole manifest, and manifests hold days (90 conus
+frames back to 07-14 with outage holes) — measured: 36 frames across
+47.8 h including a 32 h hole. The scene teleported between frames; no
+cadence smoothing could fix data that sparse. Fixes:
+- `_deriveFrames` now cuts the newest **6 h window** (12-frame floor for
+  thin feeds) before the residency cap — consecutive frames are minutes
+  apart (@a9d0418a, `tiled_viewer.js?v=core8`).
+- The ring default view gets a **dedicated geo-global emit lane** on the box
+  (`tat-s2-geo-emit-cron-1`, tsr @13f6f8c) and the main rotation trims to
+  fd/himawari via `.env S2_CRON_SUITES` — ring spacing heads from ~30 min
+  toward the 10-min slot grid; box now runs 3 emit lanes + 4 overlay
+  pollers (load headroom checked before adding each).
+- Auto-follow-live was already present (90 s manifest poll → append +
+  follow-tail; wrap-seam merge during play) and rides the windowed derive
+  unchanged. FEED PAUSED keys on true data age only.
 
 ---
 

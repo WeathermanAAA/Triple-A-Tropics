@@ -448,6 +448,19 @@ function serve() {
       const rv = window.__reveals || [];
       const gaps = [];
       for (let i = 1; i < rv.length; i++) gaps.push(rv[i][0] - rv[i - 1][0]);
+      // the loop's DATA density: valid-time span + spacing of the frame list
+      const fr = window.__cockpit.panes[0].tv.frames || [];
+      const ms = (s) => Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+                                +s.slice(9, 11), +s.slice(11, 13), +s.slice(13, 15) || 0);
+      const fg = [];
+      for (let i = 1; i < fr.length; i++) fg.push((ms(fr[i]) - ms(fr[i - 1])) / 60e3);
+      fg.sort((a, b) => a - b);
+      window.__frameStats = {
+        nFrames: fr.length,
+        spanH: fr.length > 1 ? +((ms(fr[fr.length - 1]) - ms(fr[0])) / 3600e3).toFixed(1) : 0,
+        gapMinMedMax: fg.length ? [fg[0], fg[Math.floor(fg.length / 2)], fg[fg.length - 1]] : null,
+        perHour: fr.length > 1 ? +(fr.length / ((ms(fr[fr.length - 1]) - ms(fr[0])) / 3600e3)).toFixed(1) : 0,
+      };
       // split: first 8 s = cold fill, last 8 s = steady-state cadence (what
       // a settled loop feels like). jitter = p95-ish spread of warm gaps.
       const t0 = rv.length ? rv[0][0] : 0;
@@ -459,6 +472,7 @@ function serve() {
                maxGap: gaps.length ? Math.max(...gaps) : null,
                warmGaps: warm, warmMax: warm.length ? Math.max(...warm) : null,
                warmMedian: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null,
+               frameStats: window.__frameStats,
                probeStamps: rv.slice(0, 3).map(x => x[1]) };
     });
     console.log("PLAYBACK:", JSON.stringify(r));
