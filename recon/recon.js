@@ -402,6 +402,12 @@
   ReconViewer.prototype._setTab = function (t) {
     this.tab = (t === 'storms') ? 'storms' : 'current';
     this._applyTab();
+    // catch up on whatever this pane missed while hidden
+    if (this.tab === 'current' && !this.stormLock && this.manifest &&
+        this.manifest.generated_utc !== this._curViewStamp) {
+      this._loadCurrentView();
+    }
+    if (this._stormsVisible() && this._stormsStale) this._refreshRecon();
   };
 
   // ====================================================================
@@ -409,11 +415,29 @@
   // ====================================================================
   ReconViewer.prototype._loadCurrentView = function () {
     var self = this;
+    // watermark of the manifest this pane was last refreshed against — lets a
+    // tab switch know whether the pane missed updates while hidden.
+    this._curViewStamp = this.manifest && this.manifest.generated_utc;
     this._fetchJson('/tcpod.json', true)
-      .then(function (t) { self._renderTcpod(t); })
+      .then(function (t) {
+        // content-gated: a heartbeat republish (fresh stamps, same data)
+        // must not rebuild the pane DOM under the reader.
+        var key = t ? (t.tcpod_number || '') + '|' + (t.raw || '') : 'none';
+        if (key === self._tcpodKey) return;
+        self._tcpodKey = key;
+        self._renderTcpod(t);
+      })
       .catch(function (e) { console.warn('recon: tcpod load failed', e); self._renderTcpod(null); });
     this._fetchJson('/current.json', true)
-      .then(function (c) { self._renderSpotlight(c); })
+      .then(function (c) {
+        var mi = (c && c.mission) || {};
+        var key = c ? [c.storm_slug, c.has_active, mi.mission_id, mi.valid_end,
+                       mi.n_obs, (mi.vdm_centers || []).length,
+                       (mi.sondes || []).length].join('|') : 'none';
+        if (key === self._spotKey) return;
+        self._spotKey = key;
+        self._renderSpotlight(c);
+      })
       .catch(function (e) { console.warn('recon: current load failed', e); self._renderSpotlight(null); });
   };
 
@@ -662,24 +686,36 @@
       });
   };
 
-  ReconViewer.prototype._buildMissionSelect = function (recon, preferMissionId) {
+  // (re)fill the mission dropdown options; selection is the caller's job.
+  // No-op when the option set is unchanged (a live tick must not close an
+  // open dropdown for nothing).
+  ReconViewer.prototype._fillMissionSelect = function (missions) {
     var sel = this.dom.missionSel;
-    var missions = (recon && recon.missions) || [];
-    if (sel) {
-      sel.innerHTML = '';
-      var ordered = missions.slice().sort(function (a, b) {
-        return (Date.parse(b.valid_start || '') || 0) - (Date.parse(a.valid_start || '') || 0);
-      });
-      for (var i = 0; i < ordered.length; i++) {
-        var m = ordered[i];
-        var o = document.createElement('option');
-        o.value = m.mission_id;
-        o.textContent = (m.aircraft || '') + ' ' + (m.flight || '') + '  ·  ' + fmtZ(m.valid_start) +
-          (m.peak_sfmr_kt != null ? ('  ·  ' + Math.round(m.peak_sfmr_kt) + ' kt SFMR') : '');
-        sel.appendChild(o);
-      }
-      if (this.dom.missionWrap) this.dom.missionWrap.style.display = missions.length ? '' : 'none';
+    if (!sel) return;
+    var sig = missions.map(function (m) {
+      return m.mission_id + '|' + (m.valid_start || '') + '|' +
+             (m.peak_sfmr_kt != null ? m.peak_sfmr_kt : '');
+    }).join('');
+    if (sig === this._missionSelSig) return;
+    this._missionSelSig = sig;
+    sel.innerHTML = '';
+    var ordered = missions.slice().sort(function (a, b) {
+      return (Date.parse(b.valid_start || '') || 0) - (Date.parse(a.valid_start || '') || 0);
+    });
+    for (var i = 0; i < ordered.length; i++) {
+      var m = ordered[i];
+      var o = document.createElement('option');
+      o.value = m.mission_id;
+      o.textContent = (m.aircraft || '') + ' ' + (m.flight || '') + '  ·  ' + fmtZ(m.valid_start) +
+        (m.peak_sfmr_kt != null ? ('  ·  ' + Math.round(m.peak_sfmr_kt) + ' kt SFMR') : '');
+      sel.appendChild(o);
     }
+    if (this.dom.missionWrap) this.dom.missionWrap.style.display = missions.length ? '' : 'none';
+  };
+
+  ReconViewer.prototype._buildMissionSelect = function (recon, preferMissionId) {
+    var missions = (recon && recon.missions) || [];
+    this._fillMissionSelect(missions);
     if (!missions.length) { this._status('No missions for this storm.'); return; }
     var pick = null;
     if (preferMissionId) pick = this._missionMetaById(missions, preferMissionId);
@@ -697,6 +733,17 @@
     if (!id) return null;
     for (var i = 0; i < missions.length; i++) if (missions[i].mission_id === id) return missions[i];
     return null;
+  };
+
+  // newest mission (by valid_start, matching the dropdown ordering) — the
+  // "latest" the live refresh follows when the user is already on it.
+  ReconViewer.prototype._latestMissionId = function (missions) {
+    var best = null, bt = -1;
+    for (var i = 0; i < missions.length; i++) {
+      var t = Date.parse(missions[i].valid_start || '') || 0;
+      if (t > bt) { bt = t; best = missions[i].mission_id; }
+    }
+    return best;
   };
 
   ReconViewer.prototype._loadMissionFile = function (meta) {
@@ -758,9 +805,11 @@
   // must never fly over silently day-old imagery during a satellite outage
   // or producer stall) - the clean coastline basemap is the honest fallback.
   // ====================================================================
-  ReconViewer.prototype._maybeLoadSatBackdrop = function (m) {
+  // ``keep``: in-place live refresh — leave the existing backdrop up until
+  // (unless) a fresh frame replaces it, so a tick never flashes it away.
+  ReconViewer.prototype._maybeLoadSatBackdrop = function (m, keep) {
     var self = this;
-    this._sat = null;
+    if (!keep) this._sat = null;
     // only for a live mission whose storm is currently floating
     var manifest = this.manifest;
     if (!m || !manifest || !manifest.has_active_recon) return;
@@ -1807,7 +1856,10 @@
     if (this.mission) this._layoutAndDraw();
   };
 
-  // ---- poll: refresh manifest + current.json (60s) ----
+  // ---- live poll: manifest watermark -> in-place refresh (60s) ----
+  // One small manifest GET per tick. An unchanged generated_utc is a true
+  // no-op (no further fetches, no re-render). On change, only what actually
+  // moved refreshes, preserving the user's tab/storm/mission/scope selection.
   ReconViewer.prototype._schedulePoll = function () {
     clearTimeout(this._pollTimer);
     var self = this;
@@ -1817,12 +1869,128 @@
   ReconViewer.prototype._poll = function () {
     var self = this;
     this._fetchJson('/manifest.json', true)
-      .then(function (m) {
-        self.manifest = m;
-        if (self.tab === 'current' && !self.stormLock) self._loadCurrentView();
-      })
+      .then(function (m) { self._onPollManifest(m); })
       .catch(function () {})
       .then(function () { self._schedulePoll(); });
+  };
+
+  ReconViewer.prototype._stormsVisible = function () {
+    return this.tab !== 'current' || !!this.stormLock;
+  };
+
+  ReconViewer.prototype._onPollManifest = function (m) {
+    if (!m) return;
+    var prev = this.manifest;
+    if (prev && m.generated_utc === prev.generated_utc) return;   // idle tick
+    var hadStorms = !!(this.storms && this.storms.length);
+    if (!hadStorms) {
+      // empty/failed boot -> live: full boot semantics (no user state to lose)
+      if ((m.storms || []).length || m.tcpod_number) this._onManifest(m);
+      else this.manifest = m;
+      return;
+    }
+    this.manifest = m;
+    var storms = (m.storms || []);
+    if (this.stormLock) {
+      var locked = this._resolveLock(storms, this.stormLock);
+      storms = locked ? [locked] : [];
+    }
+    if (!storms.length && !m.tcpod_number) {      // season went quiet
+      this.storms = [];
+      this._showEmpty(true);
+      return;
+    }
+    this.storms = storms;
+    this._showEmpty(false);
+
+    // storm dropdown: rebuild only when the option set changed; keep selection
+    var sig = m.current_slug + '' + storms.map(function (s) {
+      return s.slug + '|' + (s.name || '') + '|' + (s.basin || '') + '|' +
+             (s.year || '') + '|' + (s.is_invest ? 1 : 0);
+    }).join('');
+    if (sig !== this._stormSelSig) {
+      this._stormSelSig = sig;
+      this._buildStormSelect();
+      if (this.curStorm && this._stormBySlug(this.curStorm) &&
+          this.dom.stormSel) this.dom.stormSel.value = this.curStorm;
+    }
+    // selected storm pruned from the index -> fall back like boot
+    if (this.curStorm && !this._stormBySlug(this.curStorm)) {
+      var fb = m.current_slug || (storms[0] && storms[0].slug);
+      if (fb) this._selectStorm(fb);
+      return;
+    }
+
+    // Current Mission pane (visible only): content-gated render inside
+    if (this.tab === 'current' && !this.stormLock) this._loadCurrentView();
+
+    // Storms pane: refresh the SELECTED storm when its index entry moved
+    var entry = this._stormBySlug(this.curStorm);
+    var prevEntry = null;
+    if (prev) {
+      var ps = prev.storms || [];
+      for (var i = 0; i < ps.length; i++) {
+        if (ps[i].slug === this.curStorm) { prevEntry = ps[i]; break; }
+      }
+    }
+    var moved = entry && (!prevEntry ||
+      entry.last_ob_utc !== prevEntry.last_ob_utc ||
+      entry.mission_count !== prevEntry.mission_count ||
+      entry.latest_mission_id !== prevEntry.latest_mission_id);
+    if (moved) {
+      if (this._stormsVisible()) this._refreshRecon();
+      else this._stormsStale = true;              // catch up on tab switch
+    }
+  };
+
+  // Re-read the selected storm's mission index and advance the plot in place.
+  // The user's picked mission is preserved; only when they were already on
+  // the storm's latest mission does the view follow a newer sortie.
+  ReconViewer.prototype._refreshRecon = function () {
+    var self = this, slug = this.curStorm;
+    if (!slug) return;
+    this._stormsStale = false;
+    this._fetchJson('/' + slug + '/recon.json', true)
+      .then(function (r) {
+        if (self.curStorm !== slug || !r) return;
+        var prevLatest = self._latestMissionId(
+          (self.recon && self.recon.missions) || []);
+        self.recon = r;
+        var missions = r.missions || [];
+        var newLatest = self._latestMissionId(missions);
+        var selId = (self.dom.missionSel && self.dom.missionSel.value) ||
+                    (self.mission && self.mission.mission_id) || null;
+        self._fillMissionSelect(missions);
+        var follow = selId && prevLatest && selId === prevLatest &&
+                     newLatest && newLatest !== prevLatest;
+        var meta = self._missionMetaById(missions,
+                     follow ? newLatest : selId) ||
+                   self._missionMetaById(missions, newLatest);
+        if (!meta) return;
+        if (self.dom.missionSel) self.dom.missionSel.value = meta.mission_id;
+        var cur = self.mission;
+        if (!cur || cur.mission_id !== meta.mission_id ||
+            cur.valid_end !== meta.valid_end || cur.n_obs !== meta.n_obs) {
+          self._refreshMissionFile(meta);
+        }
+      })
+      .catch(function () {});
+  };
+
+  // Like _loadMissionFile but silent (no status flash), cache-busted, and the
+  // in-place swap keeps the sat backdrop up until its replacement loads.
+  ReconViewer.prototype._refreshMissionFile = function (meta) {
+    var self = this, slug = this.curStorm, seq = ++this._fetchSeq;
+    if (!meta || !slug) return;
+    this._fetchJson('/' + slug + '/' + meta.file, true)
+      .then(function (d) {
+        if (seq !== self._fetchSeq || self.curStorm !== slug) return;
+        self.mission = d;
+        self._layoutAndDraw();
+        self._renderStats(d);
+        self._maybeLoadSatBackdrop(d, true);
+      })
+      .catch(function () {});
   };
 
   // ---- wiring ----
