@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~19:3x UTC — loop density + native-res ladder deployed (fast2 lane for the 11 common bands; z6 pyramids for c01/c02/c03/c05; rare-13 stays z5 at ~15-25 min by priority; c02 z7 = documented ceiling). Geometry-war between lanes caught + fixed mid-deploy. z6 density builds forward; recording verification when >=12 frames. Earlier waves below._
+_Last update: 2026-07-19 ~21:0x UTC — C02 NATIVE z7 live: parallel tile PUTs (tsr @2bdbd55), 12g render ceiling, measured 2-min slots / 485 tiles / ~14x upload rate, recorded razor-sharp zoomed loop over 02L. ~\$20/mo total Class-A delta for the density+resolution program, stated plainly. Earlier waves below._
 
 ---
 
@@ -96,6 +96,38 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~19:4x-21:0x UTC) — C02 NATIVE z7 SHIPPED (parallel tile PUTs)
+
+The greenlit ceiling fell. tsr @2bdbd55 (emitter) + @598bacc/@c7eb480-era
+lane files + the 12g memory bump:
+
+- **Bounded-parallel tile PUTs** in s2_pyramid.emit_pyramid
+  (S2_PUT_WORKERS, default 8; R2 client pool sized to match). Atomicity
+  unchanged — a failed PUT raises BEFORE the ready marker. 25/25 pyramid
+  tests green (4 emit-suite failures verified PRE-EXISTING at the parent
+  commit — fixture drift, noted, untouched).
+- **c02 cut at NATIVE z7** (10240 px base). First attempts OOM-killed at
+  the stack's 8g default (rc=137 — the RENDER, not the cut, which is
+  per-tile); fast lane now runs mem_limit 12g (transient ~1-min peak).
+- **MEASURED slot economics**: 485 tiles/slot (z7 331 + z6 101 + lower;
+  transparent-tile skip holds it under the ~610 estimate), fetch->done
+  2:00-2:10 min, tile upload ~20-25 s for 485 (~14x the serial rate).
+  Fast-lane pass ~5.7 min total — no starvation of ir/irbd/truecolor.
+- **R2 PUT delta, honest**: c02 +432 tiles/slot x 6/h ≈ +1.9M Class-A/mo
+  (~\$8-9/mo); with the earlier z6 bands + fast2 density the whole
+  density+resolution program adds roughly ~\$20/mo of Class-A ops and
+  negligible storage (14-day TTL). Documented, not hidden.
+- **RECORDED live verification**: deep-zoomed C02 loop over 02L at camera
+  z7.3 — individual convective turrets/cumulus streets, zero upscale
+  mush; uniform 10-min timeline (window trimmed the OOM-era stragglers
+  correctly and regrows 10-min-ly). c03 on its z6 grid alongside.
+- NOTE for the record: no per-tile content-hash dedup exists in this
+  emitter (the task assumed one) — PUT suppression is transparent-tile
+  skip + per-frame ready markers. Inventing a cross-stamp hash scheme
+  would break the immutable stamp-keyed tile contract; not done.
+
+---
 
 ## 2026-07-19 (~18:1x-19:3x UTC) — LOOP DENSITY + NATIVE-RES LADDER (deployed; z6 series building)
 
