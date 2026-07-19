@@ -445,6 +445,19 @@
   // stamp -- a merge must never remap frameIdx under a playing loop. Rolled-
   // off sources drop, new frames preload QUIETLY (no toast mid-session).
   VP._remergeFrames = function () {
+    // GEOMETRY ADOPTION: a deeper pyramid cut (maxzoom bump) arrives via the
+    // 90 s manifest refresh, but the camera cap was only ever set at mount/
+    // product-switch — a live session would keep the old ceiling until
+    // reload. Re-apply it here so deeper native tiles unlock in place.
+    if (this.map && this.manifest) {
+      try {
+        var wantMax = (this.manifest.maxzoom || 5) + 1;
+        if (this.map.getMaxZoom() !== wantMax) {
+          this.map.setMaxZoom(wantMax);
+          this._pinMinZoom();
+        }
+      } catch (e) {}
+    }
     var cur = this.frames[this.frameIdx];
     var wasTail = this.frames.length > 0 && this.frameIdx === this.frames.length - 1;
     this.frames = this._deriveFrames();
