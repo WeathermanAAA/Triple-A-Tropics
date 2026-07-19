@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~17:0x UTC — obs-jitter fixed with a frame-stable declutter (@de76cbdf), verified by recording the live loop: land stations pixel-steady, ships move for real. Loop-quality + export waves earlier today — see entries below._
+_Last update: 2026-07-19 ~18:3x UTC — 4-pane lockstep + uniform 10-min loop cadence + fluid MRMS animation (half-res variant + serialized uploads) + outline-forward NHC cone, all probe-measured and recorded live over 02L. Earlier today: obs jitter, loop quality, export dialog, model guidance — see entries below._
 
 ---
 
@@ -96,6 +96,39 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~17:2x-18:3x UTC) — 4-PANE LOCKSTEP + UNIFORM CADENCE + FLUID MRMS + CONE LAYERING
+
+All measured live on recorded 4-pane sessions (probe: per-pane cameras
+sampled through drags, per-pane advance + radar stamps during play, gap
+lists) — @b9bb163c + @1ffd0338, `cockpit_fields.js?v=mp2`:
+
+- **Linked desync**: pane 0 kept its full-width camera (z2.76) while fresh
+  quarter-cell panes fit-boot (z2.31) — equalized only on first drag, as a
+  lurch. New panes now ADOPT the group camera; pane-count reflow resizes
+  every map and snaps all to pane 0. AFTER: all four cameras identical at
+  boot and through drags on any pane (probe-verified lockstep).
+- **Non-uniform cadence** (measured 25/5/15/10/... gaps): the loop now
+  presents one frame per fixed slot (modal gap floored at the 10-min
+  fast-lane grid, walked from the newest frame; missing slots skip
+  consistently). AFTER: every gap a clean multiple of 10 min — no 5/15
+  hiccups; followers share the grid so cross-pane joins align.
+- **MRMS stalling under playback**: 7000x3500 RGBA = ~98 MB GPU upload per
+  advance, and MapLibre replaces the pending image per updateImage call —
+  the texture ran behind. Updates now SERIALIZED (one in flight, latest
+  queued) and playback uses a new half-res per-scan variant
+  ({t}.s.webp + small_since from the mrms poller); full-res returns
+  within a poll tick when paused. AFTER: radar advanced 9x in a 20-s
+  recorded play, stepping with the sat frames.
+- **NHC layering over 02L** (mid-flight report): cone now outline-forward
+  (fill 0.10 -> 0.045, crisp dashed edge 0.95/1.7), formation-area wash
+  0.24 -> 0.16 (the strong dashed outline carries the contrast), and the
+  surface-obs canvas rides above every overlay canvas (z4): imagery ->
+  cone fill -> track/markers -> obs. Live capture over 02L: storm
+  convection, timed forecast positions, and every station plot read
+  clearly through the cone.
+
+---
 
 ## 2026-07-19 (~16:3x-17:0x UTC) — OBS JITTER: frame-stable declutter (recorded proof)
 
