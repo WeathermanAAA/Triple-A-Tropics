@@ -29,6 +29,9 @@ def main(argv=None) -> int:
                         "continues next tick)")
     p.add_argument("--sweep", action="store_true",
                    help="force a full re-listing of every in-scope storm")
+    p.add_argument("--rerender", action="store_true",
+                   help="re-render passes already in the index (style/logic "
+                        "changes propagate to the archive)")
     p.add_argument("--geo-dir", default=".",
                    help="dir holding the vendored Natural Earth GeoJSON")
     args = p.parse_args(argv)
@@ -41,7 +44,7 @@ def main(argv=None) -> int:
     try:
         build(args.store, year=args.year, max_new=args.max_new,
               geo_dir=args.geo_dir, force_sweep=args.sweep,
-              extra_years=extra)
+              rerender=args.rerender, extra_years=extra)
     except Exception as e:                       # noqa: BLE001
         print(f"sar: tick FAILED: {type(e).__name__}: {e}", file=sys.stderr)
         return 1

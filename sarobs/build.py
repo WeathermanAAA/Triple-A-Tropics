@@ -53,7 +53,7 @@ def _age_s(stamp: str | None) -> float:
 
 
 def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
-          geo_dir: str = ".", force_sweep: bool = False,
+          geo_dir: str = ".", force_sweep: bool = False, rerender: bool = False,
           extra_years: tuple = (), log=print) -> dict:
     store = make_store(store_spec)
     year = year or _now().year
@@ -86,8 +86,8 @@ def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
         # Cheap skip: outside a full sweep, only storms that are NEW, still
         # BACKFILLING (an earlier tick's budget truncated them), or recently
         # active (latest pass < 8 days) get their page re-read every tick.
-        if not full_sweep and entry is not None and entry.get("n_passes") \
-                and not entry.get("backfilling"):
+        if not full_sweep and not rerender and entry is not None \
+                and entry.get("n_passes") and not entry.get("backfilling"):
             if _age_s(entry.get("latest_utc")) > 8 * 86400:
                 continue
         passes = discover.passes_for_storm(y, sid)
@@ -102,7 +102,8 @@ def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
         fails = dict(index.get("failed") or {})
         dead = {k for k, v in fails.items() if v >= MAX_FAILS}
         fresh = [p for p in passes
-                 if p["stem"] not in known and p["stem"] not in dead]
+                 if (rerender or p["stem"] not in known)
+                 and p["stem"] not in dead]
         if dead:
             log(f"sar: {sid}: {len(dead)} pass(es) dead-lettered "
                 f"(>= {MAX_FAILS} failures)")
@@ -139,7 +140,8 @@ def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
                     "stem": p["stem"], "t": stats["t"] or _iso(p["t"]),
                     "sat": p["sat"], "pol": p["pol"],
                     "png": f"{p['stem']}.png", "thumb": f"{p['stem']}_th.jpg",
-                    "max_ms": stats["max_ms"], "n_cells": stats["n_cells"],
+                    "max_ms": stats["max_ms"], "peak_ms": stats["peak_ms"],
+                    "peak_kt": stats["peak_kt"], "n_cells": stats["n_cells"],
                     "bbox": stats["bbox"]})
                 new_total += 1
                 log(f"sar: rendered {sid} {p['stem']} "
@@ -152,7 +154,11 @@ def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
                     f"(attempt {fails[p['stem']]})")
 
         if added or fails_changed or entry is None:
-            merged = index.get("passes", []) + added
+            # merge by stem (a re-render REPLACES the prior entry)
+            by_stem = {p["stem"]: p for p in index.get("passes", [])}
+            for p in added:
+                by_stem[p["stem"]] = p
+            merged = list(by_stem.values())
             merged.sort(key=lambda p: p.get("t") or "", reverse=True)
             index.update({
                 "schema_version": SCHEMA_VERSION, "slug": slug,

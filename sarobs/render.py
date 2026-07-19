@@ -136,6 +136,41 @@ def read_pass(nc_bytes: bytes) -> dict:
         ds.close()
 
 
+def despeckled_peak(wind: np.ma.MaskedArray) -> tuple[float, tuple[int, int]]:
+    """Speckle-resistant near-peak of the valid ocean wind field: the max of
+    the 3x3-mean-smoothed field, evaluated only at cells whose 3x3
+    neighborhood is FULLY valid and whose 5x5 neighborhood is mostly valid
+    (>= 20/25). One hot pixel cannot fake a peak (the mean dilutes it), and
+    shoreline-hugging contamination clusters — bay/estuary cells the
+    product's own land mask passes — cannot either (they always sit against
+    masked cells). Open-water peaks, including an eyewall just offshore,
+    keep a qualifying interior. Returns (peak_ms, (iy, ix))."""
+    filled = np.where(wind.mask, 0.0, wind.data) if np.ma.is_masked(wind) \
+        else np.asarray(wind, dtype=float)
+    valid = (~wind.mask).astype(float) if np.ma.is_masked(wind) \
+        else np.ones_like(filled)
+
+    def boxsum(a, r):
+        k = 2 * r + 1
+        p = np.pad(a, r, mode="constant")
+        out = np.zeros_like(a)
+        for dy in range(k):
+            for dx in range(k):
+                out += p[dy:dy + a.shape[0], dx:dx + a.shape[1]]
+        return out
+
+    nsum, ncnt = boxsum(filled, 1), boxsum(valid, 1)
+    ncnt5 = boxsum(valid, 2)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        smooth = np.where(ncnt > 0, nsum / ncnt, 0.0)
+    ok = (valid > 0) & (ncnt >= 9) & (ncnt5 >= 20)
+    if not ok.any():
+        raise ValueError("no despecklable ocean cells")
+    smooth = np.where(ok, smooth, -1.0)
+    iy, ix = np.unravel_index(int(np.argmax(smooth)), smooth.shape)
+    return float(smooth[iy, ix]), (int(iy), int(ix))
+
+
 def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[bytes, bytes, dict]:
     """Render one pass. ``meta``: {stem, sat, pol, t, storm_name, atcf}.
     Returns (png_bytes, thumb_jpg_bytes, stats)."""
@@ -171,6 +206,17 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     _draw_basemap(ax, ext, geo_dir)
     pm = ax.pcolormesh(lon, lat, wind, cmap=sar_cmap(), vmin=0.0, vmax=VMAX,
                        shading="nearest", zorder=2, rasterized=True)
+
+    # speckle-resistant near-peak (3x3-smoothed max over QC'd ocean cells) +
+    # a subtle cross at its location — no firework markers
+    peak_ms, (piy, pix) = despeckled_peak(wind)
+    plon, plat = float(lon[piy, pix]), float(lat[piy, pix])
+    r = 0.018 * (ext[1] - ext[0])
+    for c, w in (("#07101c", 2.4), (FG, 1.1)):
+        ax.plot([plon - r, plon + r], [plat, plat], color=c, lw=w, zorder=5,
+                alpha=0.9, solid_capstyle="round")
+        ax.plot([plon, plon], [plat - r / aspect, plat + r / aspect], color=c,
+                lw=w, zorder=5, alpha=0.9, solid_capstyle="round")
 
     # faint graticule + labeled ticks, house-muted
     for spine in ax.spines.values():
@@ -208,6 +254,17 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
              color=FG, fontsize=14, fontweight="bold", ha="left")
     fig.text(0.885, 0.9575, f"{tstr} · {meta.get('sat', '')} {meta.get('pol') or ''}",
              color=MUTED, fontsize=9.5, ha="right")
+    # near-peak readout: kt primary, m/s in parens. Honest label — an
+    # instantaneous scene peak (3x3-despeckled), not a sustained max.
+    peak_kt = peak_ms * 1.94384
+    _dplat = f"{abs(plat):.1f}{'N' if plat >= 0 else 'S'}"
+    _plond = ((plon + 180.0) % 360.0) - 180.0
+    _dplon = f"{abs(_plond):.1f}{'W' if _plond < 0 else 'E'}"
+    fig.text(0.055, 0.9225,
+             f"Peak SAR wind ~{peak_kt:.0f} kt ({peak_ms:.0f} m/s) "
+             f"near {_dplat} {_dplon} · instantaneous scene peak, "
+             "3x3 despeckled",
+             color=MUTED, fontsize=9.5, ha="left")
     # provider credit (required attribution, per constellation) + watermark
     yr = t.year if t else dt.datetime.now(dt.timezone.utc).year
     sat = (meta.get("sat") or "").upper()
@@ -240,6 +297,10 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     valid = wind.compressed()
     stats = {
         "max_ms": round(float(valid.max()), 1),
+        "peak_ms": round(peak_ms, 1),
+        "peak_kt": round(peak_kt),
+        "peak_lat": round(plat, 2),
+        "peak_lon": round(((plon + 180.0) % 360.0) - 180.0, 2),
         "mean_ms": round(float(valid.mean()), 1),
         "n_cells": int(valid.size),
         "bbox": [round(((w0 + 180.0) % 360.0) - 180.0, 2),

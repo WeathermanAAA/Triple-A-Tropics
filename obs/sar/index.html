@@ -48,6 +48,8 @@
   .sar-empty { color: var(--muted); background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 22px; }
   .sar-h { color: var(--fg); font-size: 18px; font-weight: 800; margin: 0 0 10px; }
+  .sar-updated { color: var(--muted); font-size: 12px; margin: -4px 0 12px;
+    font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -128,6 +130,14 @@
     return iso.replace('T', ' ').replace(':00Z', 'Z').replace(/Z$/, ' Z');
   }
   function ktOf(ms) { return Math.round(ms * 1.94384); }
+  function peakStr(p) {
+    if (p.peak_ms != null) {
+      return 'peak ~' + (p.peak_kt != null ? p.peak_kt : ktOf(p.peak_ms)) +
+        ' kt (' + Math.round(p.peak_ms) + ' m/s)';
+    }
+    if (p.max_ms != null) return 'max ' + p.max_ms + ' m/s (' + ktOf(p.max_ms) + ' kt)';
+    return '';
+  }
 
   // ---- storm grid ----
   function renderStorms() {
@@ -140,6 +150,12 @@
     }
     var h = el('div', 'sar-h', 'Storms with SAR passes');
     root.appendChild(h);
+    if (manifest.generated_utc) {
+      var newest = storms.length ? storms[0].latest_utc : null;
+      root.appendChild(el('div', 'sar-updated',
+        'Index updated ' + fmtZ(manifest.generated_utc) +
+        (newest ? ' · newest pass ' + fmtZ(newest) : '')));
+    }
     var grid = el('div', 'sar-storms');
     storms.forEach(function (s) {
       var a = el('a', 'sar-storm');
@@ -180,8 +196,10 @@
       c.appendChild(img);
       var m = el('div', 'm');
       m.appendChild(el('div', 't', fmtZ(p.t)));
+      var pk = peakStr(p);
       m.appendChild(el('div', null, (p.sat || '') + ' ' + (p.pol || '') +
-        (p.max_ms != null ? ' · max ' + p.max_ms + ' m/s (' + ktOf(p.max_ms) + ' kt)' : '')));
+        (pk ? ' · ' + pk : '')));
+      c.appendChild(m);
       c.addEventListener('click', function () {
         location.hash = '#' + curSlug + '/' + p.stem;
       });
@@ -199,9 +217,9 @@
       big.alt = 'SAR surface wind, ' + curIndex.name + ', ' + fmtZ(pick.t);
       big.src = BASE + '/' + curSlug + '/' + pick.png;
       view.appendChild(big);
+      var vpk = peakStr(pick);
       view.appendChild(el('div', 'sar-viewmeta', fmtZ(pick.t) + ' · ' +
-        (pick.sat || '') + ' ' + (pick.pol || '') +
-        (pick.max_ms != null ? ' · max ' + pick.max_ms + ' m/s (' + ktOf(pick.max_ms) + ' kt)' : '')));
+        (pick.sat || '') + ' ' + (pick.pol || '') + (vpk ? ' · ' + vpk : '')));
       root.appendChild(view);
     }
   }
@@ -232,13 +250,30 @@
     }
   }
 
+  function stormSig(m, slug) {
+    var s = (m && m.storms || []).filter(function (x) { return x.slug === slug; })[0];
+    return s ? s.n_passes + '|' + (s.latest_utc || '') : '';
+  }
+
   function loadManifest(first) {
     fetchJson('/manifest.json')
       .then(function (m) {
         if (m.generated_utc === lastGen) return;   // idle poll: no re-render
+        var prev = manifest;
         lastGen = m.generated_utc;
         manifest = m;
-        if (!curSlug) renderStorms();
+        if (!curSlug) { renderStorms(); return; }
+        // a new pass landed for the OPEN storm: re-read its index in place
+        // (the picked pass stays picked; follow-live only when on the grid
+        // default = newest pass)
+        if (stormSig(m, curSlug) !== stormSig(prev, curSlug)) {
+          var slug = curSlug;
+          fetchJson('/' + slug + '/index.json')
+            .then(function (idx) {
+              if (curSlug === slug) { curIndex = idx; renderStorm(); }
+            })
+            .catch(function () {});
+        }
       })
       .catch(function () {
         if (first && !manifest) {
@@ -251,6 +286,10 @@
   }
 
   window.addEventListener('hashchange', route);
+  // debug/harness hook (mirrors __reconView / __ascatView)
+  window.__sar = { poll: function () { return loadManifest(false); },
+                   state: function () { return { gen: lastGen, slug: curSlug,
+                     n: curIndex && curIndex.passes.length }; } };
   loadManifest(true);
   route();
   document.getElementById('year').textContent = new Date().getFullYear();

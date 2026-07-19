@@ -396,7 +396,7 @@
       var s = this.storms[i], o = document.createElement('option');
       o.value = s.key;
       var nm = (s.name && String(s.name).toUpperCase()) || (s.atcf || s.slug);
-      o.textContent = (s.isInvest ? '● ' : '🌀 ') + nm + '  (' + s.n + ' pass' + (s.n === 1 ? '' : 'es') + ')';
+      o.textContent = (s.isInvest ? '● ' : '') + nm + '  (' + s.n + ' pass' + (s.n === 1 ? '' : 'es') + ')';
       sel.appendChild(o);
     }
     sel.value = this.stormLock ? String(this.stormLock).toLowerCase() : '';
@@ -619,7 +619,7 @@
     } else { sub = 'No passes loaded for this view.'; }
     // F2: backdrop provenance (honest sat/band + frame age) appended to subtitle
     if (this.backdrop && this.bdImg && this.bdFrame) {
-      sub += '   ·   🛰 ' + this.bdFrame.sat + ' ' + String(this.bdFrame.band).toUpperCase() +
+      sub += '   ·   ' + this.bdFrame.sat + ' ' + String(this.bdFrame.band).toUpperCase() +
         ' ' + fmtZ(this.bdFrame.t);
       // Backdrop-stale honesty: imagery under the barbs must never read as
       // current when its frame is hours old (producer stall or a satellite
@@ -629,12 +629,12 @@
       var bdAgeMs = this.bdFrame.t ? Date.now() - (Date.parse(this.bdFrame.t) || 0) : NaN;
       if (isFinite(bdAgeMs) && bdAgeMs > 3 * 3600e3) {
         g.fillStyle = '#ffb24d';
-        sub += ' · ⚠ BACKDROP STALE (' + (bdAgeMs >= 48 * 3600e3
+        sub += ' · BACKDROP STALE (' + (bdAgeMs >= 48 * 3600e3
           ? Math.round(bdAgeMs / 86400e3) + ' d'
           : (bdAgeMs / 3600e3).toFixed(1) + ' h') + ' old)';
       }
     }
-    if (feedStale) sub += '   ·   ⚠ FEED DELAYED';
+    if (feedStale) sub += '   ·   FEED DELAYED';
     g.fillText(sub, h.x, h.y + 38);
     // sensor chip
     g.font = '700 11px ' + FONT; g.textAlign = 'right';

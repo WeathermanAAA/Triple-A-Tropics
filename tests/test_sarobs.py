@@ -88,7 +88,9 @@ class BuildTick(unittest.TestCase):
 
     def _patch(self, passes, nc=b"NC", render=None):
         def fake_render(nc_bytes, meta, geo_dir="."):
-            return (b"PNG", b"JPG", {"max_ms": 30.0, "mean_ms": 10.0,
+            return (b"PNG", b"JPG", {"max_ms": 30.0, "peak_ms": 27.0,
+                                     "peak_kt": 52, "peak_lat": 0.5,
+                                     "peak_lon": 0.5, "mean_ms": 10.0,
                                      "n_cells": 5, "bbox": [0, 1, 0, 1],
                                      "t": (meta["t"].strftime(
                                          "%Y-%m-%dT%H:%M:%SZ")
@@ -146,7 +148,9 @@ class BuildTick(unittest.TestCase):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise ValueError("bad file")
-            return (b"PNG", b"JPG", {"max_ms": 1.0, "mean_ms": 1.0,
+            return (b"PNG", b"JPG", {"max_ms": 1.0, "peak_ms": 1.0,
+                                     "peak_kt": 2, "peak_lat": 0.0,
+                                     "peak_lon": 0.0, "mean_ms": 1.0,
                                      "n_cells": 1, "bbox": [0, 1, 0, 1],
                                      "t": "2026-06-18T00:00:00Z"})
         p1, p2, p3, p4 = self._patch(self.PASSES[:1], render=flaky)
@@ -162,6 +166,72 @@ class BuildTick(unittest.TestCase):
             s = sbuild.build(self.spec, year=2026, log=lambda *a: None)
         self.assertEqual(s, {"storms": 0, "new_passes": 0})
         self.assertIsNone(self.store.get_json("sar/manifest.json"))
+
+
+class DespeckledPeak(unittest.TestCase):
+    def test_hot_pixel_does_not_set_peak(self):
+        import numpy as np
+        from sarobs.render import despeckled_peak
+        f = np.full((20, 20), 20.0)
+        f[10, 10] = 99.0                          # lone hot pixel (speckle)
+        w = np.ma.masked_invalid(f)
+        w = np.ma.masked_where(np.zeros_like(f, bool), f)
+        peak, (iy, ix) = despeckled_peak(np.ma.MaskedArray(f, mask=False))
+        self.assertLess(peak, 30.0)               # 3x3 mean dilutes the spike
+        self.assertGreater(peak, 20.0)
+
+    def test_real_core_sets_peak_and_location(self):
+        import numpy as np
+        from sarobs.render import despeckled_peak
+        f = np.full((20, 20), 15.0)
+        f[5:9, 5:9] = 55.0                        # coherent 4x4 wind core
+        peak, (iy, ix) = despeckled_peak(np.ma.MaskedArray(f, mask=False))
+        self.assertGreater(peak, 50.0)
+        self.assertTrue(5 <= iy <= 8 and 5 <= ix <= 8)
+
+    def test_masked_edge_needs_neighbors(self):
+        import numpy as np
+        from sarobs.render import despeckled_peak
+        f = np.full((10, 10), 10.0)
+        m = np.ones_like(f, bool)
+        m[0, 0] = False                           # single valid corner cell
+        f[0, 0] = 80.0
+        with self.assertRaises(ValueError):
+            despeckled_peak(np.ma.MaskedArray(f, mask=m))
+
+
+class RerenderFlag(unittest.TestCase):
+    def test_rerender_replaces_entries(self):
+        import tempfile, shutil
+        from unittest import mock as m2
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        store = LocalStore(tmp)
+        passes = BuildTick.PASSES
+        def mk(peak):
+            def r(nc_bytes, meta, geo_dir="."):
+                return (b"PNG", b"JPG", {"max_ms": 30.0, "peak_ms": peak,
+                                         "peak_kt": 1, "peak_lat": 0,
+                                         "peak_lon": 0, "mean_ms": 1,
+                                         "n_cells": 1, "bbox": [0, 1, 0, 1],
+                                         "t": (meta["t"].strftime(
+                                             "%Y-%m-%dT%H:%M:%SZ")
+                                             if meta.get("t") else None)})
+            return r
+        with m2.patch.object(sbuild.discover, "storms_for_year",
+                             return_value=["AL012026_ARTHUR"]),              m2.patch.object(sbuild.discover, "passes_for_storm",
+                             return_value=passes),              m2.patch.object(sbuild.fetch, "get_bytes", return_value=b"NC"):
+            with m2.patch.object(sbuild.render, "render_pass",
+                                 side_effect=mk(10.0)):
+                sbuild.build("local:" + tmp, year=2026, log=lambda *a: None)
+            with m2.patch.object(sbuild.render, "render_pass",
+                                 side_effect=mk(44.0)):
+                s = sbuild.build("local:" + tmp, year=2026, rerender=True,
+                                 log=lambda *a: None)
+        self.assertEqual(s["new_passes"], 2)      # both re-rendered
+        idx = store.get_json("sar/al012026_arthur/index.json")
+        self.assertEqual(len(idx["passes"]), 2)   # replaced, not duplicated
+        self.assertTrue(all(p["peak_ms"] == 44.0 for p in idx["passes"]))
 
 
 class ColorScale(unittest.TestCase):

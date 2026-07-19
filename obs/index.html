@@ -17,6 +17,8 @@
 <style>
   html, body, h1, h2, h3, p, a, span, div, button, input, select, label,
   nav, header, footer { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+  /* monochrome stroke icons (one weight, one size) in place of emoji */
+  .card .icon { display: block; margin-bottom: 10px; color: var(--accent-2); opacity: 0.75; }
 </style>
 </head>
 <body>
@@ -56,21 +58,21 @@
 
 <section class="cards">
   <a class="card live" href="/obs/recon/">
-    <span class="emoji">🛩️</span>
+    <svg class="icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5v17"/><path d="M12 7L3.5 11.5"/><path d="M12 7l8.5 4.5"/><path d="M12 17l-4 2.5"/><path d="M12 17l4 2.5"/></svg>
     <h2>Aircraft Recon</h2>
     <p>Hurricane Hunter missions: the Plan of the Day, flight tracks as wind barbs colored by TC wind, VDM center fixes, dropsondes, and a multi-panel time series. Live during missions.</p>
     <span class="badge">● Live</span>
   </a>
 
   <a class="card live" href="/obs/ascat/">
-    <span class="emoji">💨</span>
+    <svg class="icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3l3.5 3.5L17 10l-3.5-3.5z"/><path d="M2.5 14h8.5a2.2 2.2 0 1 0-2.2-3.4"/><path d="M2.5 18.5h12a2.2 2.2 0 1 1-2.2 3.4"/></svg>
     <h2>Scatterometer</h2>
     <p>ASCAT-B / ASCAT-C ocean-surface winds as barbs on a TC scale, by basin or per storm, with a satellite backdrop. Resolves the broad gale-force wind field.</p>
     <span class="badge">● Live</span>
   </a>
 
   <a class="card live" href="/obs/sar/">
-    <span class="emoji">🛰️</span>
+    <svg class="icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3l3.5 3.5L17 10l-3.5-3.5z"/><path d="M14.6 9.4L5 21"/><path d="M16.4 10.6L10 21"/><path d="M4 21h8"/><path d="M6.5 18.2l1.6 1.3"/><path d="M9 15.2l1.6 1.3"/></svg>
     <h2>SAR Surface Winds</h2>
     <p>Storm-tasked C-band SAR at ~500 m: the highest-resolution TC surface wind observation there is, indexed per storm. New passes appear only when a storm is tasked.</p>
     <span class="badge">● Storm-tasked</span>
