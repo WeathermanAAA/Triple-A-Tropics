@@ -2650,3 +2650,32 @@ is tidier post-rewrite.
   kill switch; the R2 sar/ prefix is additive and owned only by this
   poller (safe to delete wholesale to reset).
 - Marker: revert the recon.js hunk + restamp obs/recon/index.html.
+
+## 2026-07-19 · obs icons + SAR peak readout (verify-and-harden pass)
+
+**Already present (verified, untouched):** the box sar-poller was ALREADY a
+persistent supervised service (compose restart=always, while-true 600 s
+loop, off-season no-op; the seed backfill was a separate one-shot exec) —
+its own ticks were observed backfilling independently. The /obs/sar/ page
+ALREADY had the content-gated 300 s manifest poll for the storm GRID.
+
+**Newly added:** hub emoji -> three monochrome stroke SVG icons (plane /
+sat+wind arcs / sat+radar beam; 34 px, stroke 1.5, low-opacity accent);
+emoji sweep of the obs UI incl. ascat.js storm-select + canvas glyphs
+(ascat.js -> v0018 on both including pages). SAR peak-wind readout:
+despeckled_peak (3x3-mean max, fully-valid 3x3 + >=20/25 5x5 neighborhood
+gate) on the render header as "~kt (m/s) near lat lon", subtle cross at
+the peak cell, peak_ms/peak_kt in indexes + pass cards (kt primary);
+--rerender flag; ARCHIVE RE-RENDERED on the box (126 passes, 15 storms,
+2026 season) so old and new match. /obs/sar/ live: in-storm view now
+refreshes in place when that storm's manifest entry moves (selection
+kept), honest "Index updated ... newest pass ..." line, __sar debug hook.
+Also fixed: pass cards' meta line was never attached (appendChild missing
+since the original commit).
+
+**Known limitation (decision):** the peak is labeled "instantaneous scene
+peak" deliberately — in post-landfall coastal scenes the product's own
+QC passes bay/estuary contamination that can carry the scene peak (seen
+on the Arthur Gulf-coast scene; the printed peak COORDS make it
+self-evident). A storm-centered peak (needs a best-track join) is the
+possible v2 if you want it.
