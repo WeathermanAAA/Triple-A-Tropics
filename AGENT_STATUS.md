@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~17:0x UTC (later wave) — ASCAT moved to a cred-gated box poller (publish contract proven; GH lane doubled until the .env cred lands — QUEUED one-liner for Andrew) and NHC formation areas now gate on the invest-vs-designated rule with the nhc-poller as the last overlay-feed box conversion. Live-verified over 02L + the open EPAC invests. Earlier waves below._
+_Last update: 2026-07-19 ~17:5x UTC — RAILWAY DECOMMISSION: GO (zero live dependencies; latent fallback-URL hazard fixed in tsr first; stale docs scrubbed @01612358). Side-finding: an external ~40-min loop is dispatch-cancelling update-hafs.yml — see the entry. Earlier waves below._
 
 ---
 
@@ -96,6 +96,46 @@ fired 6× less often than declared).
   2-min cadence (01:16:41 / 01:18:39 / 01:20:40 / 01:22:40 / 01:24:42,
   3-min staleness — was ~hourly under the shed GH cron); METAR 5-min
   (latest 01:23); UHR backfilled to 45 passes. Working as designed.
+
+## 2026-07-19 (~17:1x-17:5x UTC) — RAILWAY DECOMMISSION SWEEP: GO
+
+Four-lane verification (site repo, tsr both branches on the box, live
+hosts, service-ownership inventory): **ZERO live Railway dependencies —
+safe to delete the project.**
+
+- render.triple-a-tropics.com A-records STRAIGHT to the box (2.25.183.231,
+  uvicorn behind the box Caddy; public /health == box-local /health);
+  cdn + apex are Cloudflare->R2/Pages. No served page or first-party JS
+  contains a platform URL (127-568 KB live-page + 14-asset grep: zero).
+- Every ex-platform service maps to a running owner: render/export ->
+  tat-render-render-1; floater poller, intensity poller, guidance poller,
+  ens-watchdog -> box containers; HAFS -> update-hafs.yml (GH, manifest
+  fresh 17:04Z); meso/s1/s2 lanes + the six overlay pollers -> box. No
+  container/crontab/Caddyfile/.env carries a platform string.
+- LATENT HAZARD FIXED FIRST: floater_poller.py + meso_poller.py defaulted
+  RENDER_BASE_URL to the retired platform URL (always overridden by
+  compose env, but a dropped env line would have silently pointed at a
+  deleted host) — defaults now box-internal (tsr main @2f7dfd1,
+  s2-sat-ingest @bd12e0b).
+- Scrubbed stale active-doc/comment mentions (@01612358, 15 files;
+  SATELLITE.md deploy section rewritten to the box runbook). Dated
+  history intentionally kept (this log, SATELLITE-REVIEW/REARCH, the
+  floater-worker outage narrative). tsr keeps its railway.*.json/
+  nixpacks/Procfile per RUNBOOK-RENDER §6 as the migration record —
+  delete or keep at will once the project is gone.
+- NOTE: the abandoned deployment web-production-b88d.up.railway.app is
+  STILL RUNNING (its /health answers) — deleting the project also stops
+  that burn. **Andrew: delete away.**
+
+**Side-finding (NOT Railway, needs attention)**: update-hafs.yml is being
+dispatched every ~40 min by an external loop (actor WeathermanAAA; the
+box ens-watchdog is token-less and only logs "WOULD dispatch") — every
+run since 2026-07-18 14:32Z gets CANCELLED at ~40 min by its successor.
+Manifests still publish mid-run, but runner-hours are burning and cycle
+2026071906 reports stuck. Find and stop that external dispatcher (it is
+not this agent's harness and not the box).
+
+---
 
 ## 2026-07-19 (~16:3x-17:0x UTC) — ASCAT TO THE BOX (cred-gated) + NHC formation-area gate
 
