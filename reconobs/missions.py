@@ -165,7 +165,8 @@ def is_tropical_mission(name: str, flight: str) -> bool:
 # V2 keeps their raw value and flags it `sfmr_suspect` so the time-series can
 # mark suspect points rather than silently drop them (the SFMR caveat is shown
 # on the panel). The flight-level + thermo vars still null on flag.
-_NULL_ON_FLAG = ("p_sfc", "temp", "dwpt", "wdir", "wspd", "pkwnd")
+_NULL_ON_FLAG = ("p_sfc", "temp", "dwpt", "wdir", "wspd", "pkwnd",
+                 "plane_p", "plane_z")
 
 
 def _row_records(df) -> list[dict]:
@@ -178,6 +179,7 @@ def _row_records(df) -> list[dict]:
             "t": r["time"].strftime("%Y-%m-%dT%H:%M:%SZ"),
             "lat": _clean(r["lat"]), "lon": _clean(r["lon"]),
             "plane_p": _clean(r.get("plane_p")),
+            "plane_z": _clean(r.get("plane_z")),   # geopotential height (m)
             "p_sfc": _clean(r.get("p_sfc")),
             "wspd": _clean(r.get("wspd")), "wdir": _clean(r.get("wdir")),
             "pkwnd": _clean(r.get("pkwnd")), "sfmr": _clean(r.get("sfmr")),

@@ -261,6 +261,9 @@
         <div class="recon-actions">
           <button id="recon-download" class="recon-btn" type="button" title="Download this figure as a PNG">&#8681; Download PNG</button>
           <button id="recon-copy" class="recon-btn" type="button" title="Copy this figure to the clipboard">Copy</button>
+          <button id="recon-copystats" class="recon-btn" type="button" title="Copy a text summary of this mission to the clipboard">Copy stats</button>
+          <button id="recon-copydata" class="recon-btn" type="button" title="Copy the decoded observations as TSV to the clipboard">Copy data</button>
+          <button id="recon-csv" class="recon-btn" type="button" title="Download the decoded observations as a CSV file">&#8681; CSV</button>
         </div>
 
         <div id="recon-stats" class="recon-stats"></div>
@@ -301,6 +304,6 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/recon/recon.js?v=popfix2"></script>
+<script src="/recon/recon.js?v=bf4eec6d86popfix2"></script>
 </body>
 </html>

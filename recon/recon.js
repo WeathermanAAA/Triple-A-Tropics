@@ -180,6 +180,9 @@
       '<div class="recon-actions">' +
         '<button id="recon-download" class="recon-btn" type="button" title="Download this figure as a PNG">⬇ Download PNG</button>' +
         '<button id="recon-copy" class="recon-btn" type="button" title="Copy this figure to the clipboard">Copy</button>' +
+        '<button id="recon-copystats" class="recon-btn" type="button" title="Copy a text summary of this mission to the clipboard">Copy stats</button>' +
+        '<button id="recon-copydata" class="recon-btn" type="button" title="Copy the decoded observations as TSV to the clipboard">Copy data</button>' +
+        '<button id="recon-csv" class="recon-btn" type="button" title="Download the decoded observations as a CSV file">⬇ CSV</button>' +
       '</div>' +
       '<div id="recon-stats" class="recon-stats"></div>' +
     '</div>' +
@@ -254,6 +257,9 @@
       scopeSel: el('recon-scope'),     // Last 10 min <-> Full mission
       download: el('recon-download'),
       copy: el('recon-copy'),
+      copystats: el('recon-copystats'),
+      copydata: el('recon-copydata'),
+      csv: el('recon-csv'),
       stats: el('recon-stats'),
       viewCurrent: el('recon-view-current'),
       viewStorms: el('recon-view-storms')
@@ -1749,18 +1755,31 @@
     g.stroke();
   };
 
+  // Fill UNDER the curve, but BREAK AT GAPS: each contiguous run of valid obs
+  // becomes its own closed sub-area dropped to the baseline. A missing or
+  // fully-flagged stretch (null value) must never be bridged — bridging the
+  // fill from the last valid point to the next painted a fake polygon
+  // spanning the gap (the SFMR-panel artifact). One canvas path with several
+  // closed subpaths; the caller's single fill() paints them all.
   ReconViewer.prototype._areaPath = function (g, track, getv, X, Y, baseY) {
-    var started = false, firstX = null, lastX = null;
     g.beginPath();
+    var runStartX = null, lastX = null;
+    function closeRun() {
+      if (runStartX != null && lastX != null) {
+        g.lineTo(lastX, baseY);       // drop to baseline at the run's end
+        g.closePath();                // back to (runStartX, baseY) -> closed area
+      }
+      runStartX = null; lastX = null;
+    }
     for (var i = 0; i < track.length; i++) {
       var v = getv(track[i]); var t = Date.parse(track[i].t || '');
-      if (v == null || isNaN(t)) continue;
+      if (v == null || isNaN(t)) { closeRun(); continue; }  // gap -> seal, no bridge
       var x = X(t), y = Y(v);
-      if (!started) { g.moveTo(x, baseY); g.lineTo(x, y); firstX = x; started = true; }
+      if (runStartX == null) { g.moveTo(x, baseY); g.lineTo(x, y); runStartX = x; }
       else g.lineTo(x, y);
       lastX = x;
     }
-    if (started) { g.lineTo(lastX, baseY); g.closePath(); }
+    closeRun();
   };
 
   // per-segment colored line (color from the segment's end value)
@@ -2236,6 +2255,144 @@
     setTimeout(function () { b.textContent = orig; }, 1400);
   };
 
+  // ====================================================================
+  // Text summary + raw decoded-data export (separate from the image Copy /
+  // Download PNG above). All from the mission JSON already loaded — no fetch.
+  // ====================================================================
+  function _fnum(v, dp) {
+    if (v === null || v === undefined || v === '' || isNaN(v)) return '';
+    var n = Number(v);
+    return dp === 0 ? String(Math.round(n)) : n.toFixed(dp);
+  }
+
+  // HDOB record columns: header name (with units) + accessor. The QC flag is
+  // INCLUDED, not silently dropped — flagged obs stay in the export.
+  var RECON_HDOB_COLS = [
+    ['time_utc', function (p) { return p.t || ''; }],
+    ['lat_deg', function (p) { return _fnum(p.lat, 3); }],
+    ['lon_deg', function (p) { return _fnum(p.lon, 3); }],
+    ['static_pressure_hPa', function (p) { return _fnum(p.plane_p, 1); }],
+    ['geopotential_height_m', function (p) { return _fnum(p.plane_z, 0); }],
+    ['fl_wind_dir_deg', function (p) { return _fnum(p.wdir, 0); }],
+    ['fl_wind_spd_kt', function (p) { return _fnum(p.wspd, 0); }],
+    ['peak_fl_wind_kt', function (p) { return _fnum(p.pkwnd, 0); }],
+    ['sfmr_sfc_wind_kt', function (p) { return _fnum(p.sfmr, 0); }],
+    ['sfmr_rain_mm_hr', function (p) { return _fnum(p.rain, 0); }],
+    ['extrap_sfc_pressure_hPa', function (p) { return _fnum(p.p_sfc, 1); }],
+    ['temp_C', function (p) { return _fnum(p.temp, 1); }],
+    ['dewpoint_C', function (p) { return _fnum(p.dwpt, 1); }],
+    ['sfmr_suspect_flag', function (p) { return p.sfmr_suspect ? '1' : '0'; }]
+  ];
+  var RECON_VDM_COLS = [
+    ['time_utc', function (v) { return v.t || ''; }],
+    ['lat_deg', function (v) { return _fnum(v.lat, 2); }],
+    ['lon_deg', function (v) { return _fnum(v.lon, 2); }],
+    ['mslp_hPa', function (v) { return _fnum(v.mslp_hpa, 1); }],
+    ['max_sfc_wind_kt', function (v) { return _fnum(v.max_sfc_wind_kt, 0); }],
+    ['atcf', function (v) { return v.atcf ? String(v.atcf).toUpperCase() : ''; }]
+  ];
+  var RECON_SONDE_COLS = [
+    ['time_utc', function (s) { return s.t || ''; }],
+    ['lat_deg', function (s) { return _fnum(s.lat, 2); }],
+    ['lon_deg', function (s) { return _fnum(s.lon, 2); }],
+    ['sfc_wind_kt', function (s) { return _fnum(s.sfc_wind_kt, 0); }]
+  ];
+
+  ReconViewer.prototype._statsText = function () {
+    var m = this.mission; if (!m) return '';
+    var idn = this._aircraftIdentity(m.aircraft);
+    var storm = m.name || m.storm_name || 'Storm';
+    var out = [storm + ' · ' + (m.mission_id || '') +
+      (m.aircraft ? ' · ' + m.aircraft + ' (' + idn.type + ')' : '')];
+    out.push('Valid ' + hhmm(m.valid_start) + ' to ' + hhmm(m.valid_end) +
+      (m.valid_start ? ' (' + fmtZ(m.valid_start) + ')' : ''));
+    var s = [];
+    if (m.n_obs != null) s.push(m.n_obs + ' obs');
+    if (num(m.peak_sfmr_kt) != null)
+      s.push('peak SFMR ' + Math.round(m.peak_sfmr_kt) + ' kt');
+    if (num(m.peak_fl_wind_kt) != null)
+      s.push('peak FL wind ' + Math.round(m.peak_fl_wind_kt) + ' kt');
+    if (num(m.min_p_sfc_hpa) != null)
+      s.push('min pressure ' + Math.round(m.min_p_sfc_hpa) + ' hPa');
+    if (s.length) out.push(s.join(' · '));
+    out.push('triple-a-tropics.com/obs/recon/ · data: NHC recon (HDOB/VDM)');
+    return out.join('\n');
+  };
+
+  // Build the decoded mission as a delimited table (sep = "\t" TSV or "," CSV).
+  ReconViewer.prototype._dataTable = function (sep) {
+    var m = this.mission; if (!m) return '';
+    function esc(v) {
+      var s = String(v == null ? '' : v);
+      if (sep === ',' && /[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }
+    function rows(cols, arr) {
+      var lines = [cols.map(function (c) { return c[0]; }).join(sep)];
+      for (var i = 0; i < arr.length; i++) {
+        lines.push(cols.map(function (c) { return esc(c[1](arr[i])); }).join(sep));
+      }
+      return lines.join('\n');
+    }
+    var track = (m.track || []);
+    var out = [rows(RECON_HDOB_COLS, track)];
+    var vdm = (m.vdm_centers || []);
+    if (vdm.length) out.push('', '# VDM center fixes', rows(RECON_VDM_COLS, vdm));
+    var sondes = (m.sondes || []);
+    if (sondes.length) out.push('', '# Dropsondes', rows(RECON_SONDE_COLS, sondes));
+    return out.join('\n');
+  };
+
+  ReconViewer.prototype._flashBtn = function (btn, msg) {
+    if (!btn) return;
+    var orig = btn.textContent; btn.textContent = msg;
+    setTimeout(function () { btn.textContent = orig; }, 1400);
+  };
+
+  ReconViewer.prototype._copyTextTo = function (text, btn) {
+    var self = this;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { self._flashBtn(btn, 'Copied'); },
+        function () { self._fallbackCopy(text, btn); });
+    } else { this._fallbackCopy(text, btn); }
+  };
+
+  ReconViewer.prototype._fallbackCopy = function (text, btn) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      this._flashBtn(btn, 'Copied');
+    } catch (e) { this._flashBtn(btn, 'Copy failed'); }
+  };
+
+  ReconViewer.prototype._copyStats = function () {
+    if (!this.mission) return;
+    this._copyTextTo(this._statsText(), this.dom.copystats);
+  };
+
+  ReconViewer.prototype._copyData = function () {
+    if (!this.mission) return;
+    this._copyTextTo(this._dataTable('\t'), this.dom.copydata);
+  };
+
+  ReconViewer.prototype._downloadCsv = function () {
+    var m = this.mission; if (!m) return;
+    var csv = this._dataTable(',');
+    var name = 'recon_' + String(m.mission_id || this.curStorm || 'mission')
+      .replace(/[^A-Za-z0-9_-]/g, '_') + '.csv';
+    try {
+      var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      var u = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = u; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
+      this._flashBtn(this.dom.csv, 'Saved');
+    } catch (e) { this._flashBtn(this.dom.csv, 'Failed'); }
+  };
+
   // ---- style / wind-mode / scope pickers ----
   ReconViewer.prototype._setStyle = function (key) {
     this.style = STYLES[key] ? key : 'sshws';
@@ -2423,6 +2580,9 @@
     });
     if (this.dom.download) this.dom.download.addEventListener('click', function () { self._download(); });
     if (this.dom.copy) this.dom.copy.addEventListener('click', function () { self._copy(); });
+    if (this.dom.copystats) this.dom.copystats.addEventListener('click', function () { self._copyStats(); });
+    if (this.dom.copydata) this.dom.copydata.addEventListener('click', function () { self._copyData(); });
+    if (this.dom.csv) this.dom.csv.addEventListener('click', function () { self._downloadCsv(); });
 
     if (this.dom.styleSel) {
       this.dom.styleSel.innerHTML = '';
