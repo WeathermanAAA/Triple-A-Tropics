@@ -2258,17 +2258,38 @@
   // no-op (no further fetches, no re-render). On change, only what actually
   // moved refreshes, preserving the user's tab/storm/mission/scope selection.
   ReconViewer.prototype._schedulePoll = function () {
+    if (this._destroyed) return;               // never re-arm after teardown
     clearTimeout(this._pollTimer);
     var self = this;
     this._pollTimer = setTimeout(function () { self._poll(); }, POLL_MS);
   };
 
   ReconViewer.prototype._poll = function () {
+    if (this._destroyed) return;
     var self = this;
     this._fetchJson('/manifest.json', true)
       .then(function (m) { self._onPollManifest(m); })
       .catch(function () {})
       .then(function () { self._schedulePoll(); });
+  };
+
+  // Teardown for embedded mounts (the CycloLab per-storm tab mounts/unmounts
+  // ReconViewer instances). Releases every instance-scoped resource — the
+  // self-re-arming poll timer, the ResizeObserver / window resize listener,
+  // the debounce timer, and the open popover (panel + leader SVG + the
+  // document Esc listener) — so unmounting lets the instance be GC'd instead
+  // of being pinned for the page lifetime. The standalone /recon/ page never
+  // unmounts, so it never calls this. Idempotent.
+  ReconViewer.prototype.destroy = function () {
+    this._destroyed = true;
+    clearTimeout(this._pollTimer);
+    clearTimeout(this._rt);
+    if (this._ro) { try { this._ro.disconnect(); } catch (e) {} this._ro = null; }
+    if (this._onWinResize && typeof window !== 'undefined') {
+      window.removeEventListener('resize', this._onWinResize);
+      this._onWinResize = null;
+    }
+    this._closePlanePanel();     // removes panel + leader + the Esc listener
   };
 
   ReconViewer.prototype._stormsVisible = function () {
@@ -2431,7 +2452,10 @@
       this._ro = new ResizeObserver(function () { self._resizeDebounced(); });
       this._ro.observe(this.dom.mapframe);
     } else if (typeof window !== 'undefined') {
-      window.addEventListener('resize', function () { self._resizeDebounced(); });
+      // keep a reference so destroy() can remove it (an anonymous handler
+      // could never be unbound — the resize sibling of the popover leak class)
+      this._onWinResize = function () { self._resizeDebounced(); };
+      window.addEventListener('resize', this._onWinResize);
     }
   };
 
