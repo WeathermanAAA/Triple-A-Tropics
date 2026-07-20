@@ -220,3 +220,63 @@ def fetch_tail(init: dt.datetime, days: int = MAX_DAYS, workers: int = 4):
     if not dates:
         return [], None, None, []
     return dates, np.stack(us), np.stack(vs), ns
+
+
+def fetch_mean_olr_day(args):
+    """((init, dd)) -> (dd, date, olr[181,360], nsteps) or None. GEFS
+    ensemble-mean outgoing longwave (ULWRF top-of-atmosphere, W m-2) on the
+    1-deg grid(), averaged over forecast day dd's 6-h buckets. ULWRF is a
+    6-h-average field that DOES NOT EXIST at f000, so day dd uses the four
+    buckets ending 6/12/18/24 h into it. Module-level for the spawn pool."""
+    init, dd = args
+    from herbie import Herbie
+    warnings.filterwarnings("ignore")
+    got = []
+    for fxx in (24 * dd - 18, 24 * dd - 12, 24 * dd - 6, 24 * dd):
+        if fxx <= 0 or fxx > MAX_LEAD_H:
+            continue
+        try:
+            h = Herbie(init, model="gefs", product="atmos.5",
+                       member="avg", fxx=fxx, verbose=False)
+            if not h.grib:
+                continue
+            do = h.xarray(":ULWRF:top of atmosphere:")
+            if isinstance(do, list):
+                do = do[0]
+            var = [v for v in do.data_vars][0]
+            got.append(do[var].values[::2, ::2].astype(float))
+        except Exception as e:  # noqa: BLE001 — a missing step is expected
+            print(f"    gefs mean OLR d{dd} f{fxx:03d}: {e}")
+    if not got:
+        return None
+    date = (init + dt.timedelta(days=dd)).date()
+    return dd, date, np.mean(got, axis=0), len(got)
+
+
+def fetch_olr_tail(init: dt.datetime, days: int = MAX_DAYS, workers: int = 4):
+    """The GEFS ensemble-mean OLR forecast tail: (dates, olr[nd,181,360],
+    nsteps[nd]) for forecast days 1..days on grid(). Contiguous only — a
+    hole ends the tail. Empty ([], None, []) when nothing is reachable."""
+    import multiprocessing as mp
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    ctx = mp.get_context("spawn")
+    here = os.path.dirname(os.path.abspath(__file__))
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
+                             initializer=_worker_path_init,
+                             initargs=(here,)) as ex:
+        results = list(ex.map(fetch_mean_olr_day,
+                              [(init, dd) for dd in range(1, days + 1)],
+                              chunksize=2))
+    by_dd = {r[0]: r for r in results if r is not None}
+    dates, olrs, ns = [], [], []
+    for dd in range(1, days + 1):
+        if dd not in by_dd:
+            break                      # contiguous tail only
+        _, date, olr, n = by_dd[dd]
+        dates.append(date)
+        olrs.append(olr)
+        ns.append(n)
+    if not dates:
+        return [], None, []
+    return dates, np.stack(olrs), ns

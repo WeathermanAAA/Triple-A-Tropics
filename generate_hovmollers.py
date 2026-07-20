@@ -367,6 +367,37 @@ def fetch_olr():
     return dates, lats, lons, anom, n_bad
 
 
+def fetch_olr_ltm_grid():
+    """(ltm_sm[365, lat, lon], lats, lons) — the CDR daily seasonal cycle
+    (mean + first 3 harmonics) over 20S-20N on the OLR grid. The GEFS OLR
+    forecast anomaly uses this IDENTICAL seasonal cycle as the obs side."""
+    ltm_ds = _open_dods(OLR_LTM_URL)
+    sub = ltm_ds.olr.sel(lat=slice(-20, 20))
+    ltm = _load_slabbed(sub).values.astype(float)
+    lats = sub.lat.values.astype(float)
+    lons = sub.lon.values.astype(float)
+    ltm_ds.close()
+    _guard_degenerate("OLR LTM (grid)", ltm, 150.0)
+    return smooth_climo_3harm(ltm), lats, lons
+
+
+def _regrid_field(field, src_lats, src_lons, dst_lats, dst_lons):
+    """Bilinear regrid of a 2-D (lat, lon) field onto (dst_lats, dst_lons).
+    Handles a descending source-lat axis and periodic longitude."""
+    order = np.argsort(src_lats)
+    sl = src_lats[order]
+    f = np.asarray(field)[order]
+    fi = np.empty((dst_lats.size, src_lons.size))
+    for j in range(src_lons.size):
+        fi[:, j] = np.interp(dst_lats, sl, f[:, j])
+    ext_lon = np.concatenate([src_lons, src_lons[:1] + 360.0])
+    out = np.empty((dst_lats.size, dst_lons.size))
+    for i in range(dst_lats.size):
+        ext = np.concatenate([fi[i], fi[i][:1]])
+        out[i] = np.interp(dst_lons % 360.0, ext_lon, ext)
+    return out
+
+
 # ------------------------------------------------- GFS u archive (like chi)
 # Archive tuple: (times, levels, lats, lons, u, v, ncycles). The v field
 # was added for the v850 Hovmöller; archives written before it load with
@@ -693,50 +724,104 @@ def region_days_slices(dates, days):
 
 # ------------------------------------------------------------- sections
 
-def do_olr(hov: Path, meta: dict, genesis: list) -> None:
+def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None) -> None:
     print("OLR: fetching CDR v2 + LTM ...")
     dates, lats, lons, anom, n_filled = fetch_olr()
     print(f"OLR through {dates[-1]} ({len(dates)} days, "
           f"{n_filled} gap-filled)")
     nf = min(len(dates), FILTER_DAYS)
     f_dates = dates[-nf:]
-    filts = {}
-    for bkey, (lo, hi, _) in BANDS.items():
-        bm = band_mean(anom, lats, lo, hi)          # (time, lon)
-        fb = bm[-nf:]
-        filts[bkey] = {"anom": fb,
-                       **{m: filter_realtime(fb, m)
-                          for m in WAVE_STYLE}}
+    obs_anom = anom[-nf:]
+
+    # ---- GEFS ensemble-mean OLR forecast (Phase 3). Additive: any failure
+    # only drops the tail, never the analysis. Two OLR-specific wrinkles the
+    # wind/chi extensions don't have: (a) the CDR lags realtime ~4 days while
+    # GEFS forecast starts at init+1, so there is an honest multi-day gap
+    # between analysis and forecast (blank rows; the WK filter bridges it);
+    # (b) GEFS ULWRF carries a mean bias vs the CDR, so the forecast anomaly
+    # is per-cell seam-anchored to the analysis (the propagating MJO pattern
+    # is preserved; only the constant offset is removed), like the RMM seam.
+    fc_anom, fc_kept, fc_init, fc_ns = None, [], None, []
+    if gefs_tail:
+        try:
+            fc_init = gefs_tail[0]
+            fdates, folr, fc_ns_all = gefs_mean.fetch_olr_tail(fc_init)
+            keep = [k for k, d in enumerate(fdates or []) if d > f_dates[-1]]
+            fc_kept = [fdates[k] for k in keep]
+            fc_ns = [fc_ns_all[k] for k in keep]
+            if fc_kept:
+                glats, glons = gefs_mean.grid()
+                ltm_sm, llat, llon = fetch_olr_ltm_grid()
+                fc_anom = np.empty((len(keep), lats.size, lons.size))
+                for m2, k in enumerate(keep):
+                    reg = _regrid_field(folr[k], glats, glons, lats, lons)
+                    doy = min(fc_kept[m2].timetuple().tm_yday, 365)
+                    ltm_k = _regrid_field(ltm_sm[doy - 1], llat, llon,
+                                          lats, lons)
+                    fc_anom[m2] = reg - ltm_k
+                obs_ref = np.nanmean(obs_anom[-3:], axis=0)
+                fc_ref = np.nanmean(fc_anom[:3], axis=0)
+                fc_anom += (obs_ref - fc_ref)[None]
+        except Exception as e:  # noqa: BLE001 — tail is additive
+            print(f"OLR fc tail failed ({type(e).__name__}: {e}) "
+                  f"— analysis only")
+            fc_anom, fc_kept = None, []
+
+    nf2 = min(nf + len(fc_kept), FILTER_DAYS)
+    title = ("OLR anomaly + equatorial waves · through "
+             f"{f_dates[-1]:%Y-%m-%d}" + (" (+GEFS)" if fc_kept else ""))
     for bkey, (lo, hi, blabel) in BANDS.items():
+        bm = band_mean(obs_anom, lats, lo, hi)          # (nf, lon)
+        bm_fc = (band_mean(fc_anom, lats, lo, hi)
+                 if fc_anom is not None else None)
+        fc_axis, fc_rows = _fc_axis_for(f_dates, fc_kept, bm_fc) \
+            if bm_fc is not None else ([], None)
+        bm_ext = np.vstack([bm, fc_rows]) if fc_rows is not None else bm
+        nfc = len(fc_axis)
+        filts = wave_filts(bm_ext, nf2)
         for nd in DAYS:
             d_sub, sl = region_days_slices(f_dates, nd)
+            n = len(d_sub)
+            d_plot = d_sub + fc_axis
+            field_plot = (np.vstack([bm[sl], fc_rows])
+                          if fc_rows is not None else bm[sl])
             for wkey, modes in WAVE_SETS.items():
+                overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
+                note_b = ("contours: wave-filtered anomalies, −10 W m⁻² "
+                          "solid (enhanced) / +10 dashed · "
+                          + ("filtered on the analysis+forecast concat "
+                             "(CDR–forecast gap left blank)"
+                             if nfc else "newest ~2 weeks amplitude-damped "
+                             "(WW01 real-time filter)"))
                 for rkey in REGIONS:
-                    overlays = [(m, filts[bkey][m][sl])
-                                for m in modes]
                     render_hov(
-                        filts[bkey]["anom"][sl], d_sub, lons,
+                        field_plot, d_plot, lons,
                         cmap="BrBG_r", vmax=60, step=10,
                         cb_label="OLR anomaly (W m⁻²), green = enhanced",
-                        title=f"OLR anomaly + equatorial waves · "
-                              f"through {f_dates[-1]:%Y-%m-%d}",
+                        title=title,
                         band_label=blabel,
                         note_a=("shading: OLR anomaly vs 1991–2020 daily "
                                 "climatology (mean + 3 harmonics)"),
-                        note_b=("contours: wave-filtered anomalies, "
-                                "−10 W m⁻² solid (enhanced) / +10 "
-                                "dashed · newest ~2 weeks "
-                                "amplitude-damped (WW01 real-time "
-                                "filter)"),
-                        credit=("Data: NOAA OLR CDR (via NOAA PSL) · "
+                        note_b=note_b,
+                        credit=("Data: NOAA OLR CDR + NCEP GEFS mean (fcst, "
+                                "bias-anchored) · ○ genesis: tcvitals "
+                                "(UCAR/RAL)" if nfc else
+                                "Data: NOAA OLR CDR (via NOAA PSL) · "
                                 "○ genesis: tcvitals (UCAR/RAL)"),
                         overlays=overlays, genesis=genesis,
                         region=rkey,
                         out_png=hov / (f"hov_olr_{wkey}_{bkey}_"
-                                       f"{nd}_{rkey}.png"))
+                                       f"{nd}_{rkey}.png"),
+                        fc_start=fc_axis[0] if fc_axis else None,
+                        fc_note=(gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
+                                 if fc_axis else ""))
     meta["vars"]["olr"] = {"through": f_dates[-1].isoformat(),
                            "gap_filled_days": n_filled,
-                           "waves": True}
+                           "waves": True,
+                           **({"fc_to": fc_kept[-1].isoformat(),
+                               "fc_init": fc_init.strftime(
+                                   "%Y-%m-%dT%H:%M:%SZ")}
+                              if fc_kept else {})}
     print("OLR panels done")
 
 
@@ -1175,15 +1260,19 @@ def main() -> None:
 
     # GEFS ensemble-mean forecast tail (Phase 3 Group B): fetched once
     # (or reused from the VP product's gefs_tail.nc in the same run) and
-    # threaded into the u/v/chi sections; None = analysis-only, as before
-    gefs_tail = None if args.skip_u and args.skip_chi else get_gefs_tail(out)
+    # threaded into the OLR/u/v/chi sections; None = analysis-only, as before.
+    # The winds tail (gefs_tail) carries u/v; do_olr additionally fetches the
+    # ensemble-mean OLR tail for the same init.
+    gefs_tail = (None if (args.skip_u and args.skip_chi and args.skip_olr)
+                 else get_gefs_tail(out))
 
     # one flaky upstream (PSL THREDDS, AWS GFS, R2) must not take down
     # the other variables' panels — isolate each section, fail loudly
     # only if EVERYTHING failed (or nothing rendered at all)
     sections = []
     if not args.skip_olr:
-        sections.append(("OLR", lambda: do_olr(hov, meta, genesis)))
+        sections.append(("OLR", lambda: do_olr(hov, meta, genesis,
+                                                gefs_tail=gefs_tail)))
     if not args.skip_u:
         sections.append(("u", lambda: do_u(
             hov, meta, genesis, u_archive_path,
