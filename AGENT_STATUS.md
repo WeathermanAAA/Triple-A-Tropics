@@ -2679,3 +2679,17 @@ QC passes bay/estuary contamination that can carry the scene peak (seen
 on the Arthur Gulf-coast scene; the printed peak COORDS make it
 self-evident). A storm-centered peak (needs a best-track join) is the
 possible v2 if you want it.
+
+## 2026-07-20 · SAR peak: interior/edge-robust + small marker
+
+Fixed the peak-wind readout latching onto swath-edge/coastal artifacts
+(tester: ~69 kt on the Elida TOP edge). Peak is now interior open-water:
+valid mask eroded inward ~10 cells (~5 km, O(N) summed-area table) — one
+erosion covers swath-edge + coastal/bay + hole buffers; plus an incidence
+gate (>47 deg dropped). Also fixed a latent nomask bug on all-water scenes
+(getmaskarray). No qualifying interior cell -> "peak n/a" (frontend no
+longer falls back to the raw single-pixel max). Marker: big "+" -> small
+dark-haloed hollow ring. Archive re-rendered on the box (128 passes).
+Verified live (Elida newest: 52 kt @ 24.1N, on the storm).
+Rollback: revert render.py hunk + `--rerender --sweep` re-render; EDGE
+knobs are EDGE_MARGIN_CELLS / INCID_MAX_DEG constants in render.py.
