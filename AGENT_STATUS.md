@@ -2693,3 +2693,39 @@ dark-haloed hollow ring. Archive re-rendered on the box (128 passes).
 Verified live (Elida newest: 52 kt @ 24.1N, on the storm).
 Rollback: revert render.py hunk + `--rerender --sweep` re-render; EDGE
 knobs are EDGE_MARGIN_CELLS / INCID_MAX_DEG constants in render.py.
+
+## 2026-07-20 · MJO subseasonal audit/fixes + recon export
+
+**Part 1 (audit) — observed RMM CONFIRMED CORRECT, no fix.** Cross-checked
+the ingest against BoM rmm.74toRealtime.txt (fetched with the generator's
+UA): amplitudes match to 7 sig figs, the WH04 phase formula matches BoM
+across 120 days (0 mismatches), dates align. 17 Jul = phase 8 / amp 2.070
+as expected. GEFS forecast projection uses the canonical WH04 norms
+(NORM_OLR/U850/U200, PC1/PC2_NORM) + seam-anchoring to BoM — methodology
+sound.
+
+**Part 1 honesty + Part 2 plume (e4a7624a).** Amplitude min/max envelope
+-> member-amplitude percentile fan (10-90 + 25-75, median-member line);
+the ensemble-mean VECTOR amplitude is now a thin dashed line, so a drooping
+mean above a still-strong band reads as phase dispersion, labeled as such.
+
+**Part 3 OLR forecast Hovmoller (92420cbc).** u/u850/v850/chi200 already
+extended; OLR was analysis-only. Added GEFS ensemble-mean ULWRF fetch
+(gefs_mean.fetch_olr_tail) + do_olr forecast extension: anomaly vs the same
+CDR 3-harmonic climo, per-cell seam-anchored (removes GEFS-vs-CDR bias,
+preserves the MJO pattern), honest ~4-day CDR-to-forecast gap (WK filter
+bridges it), init divider + 'GEFS mean below' + 'bias-anchored' credit.
+End-to-end verified locally (192 panels, fc_to 2026-08-05).
+
+RENDER TIMING: the subseasonal products are R2-only, re-rendered by the
+update-subseasonal cron (15:41 + 16:11 UTC). Both changes verified locally
+(synthetic + real OLR render); the live PNGs refresh on the next cron. I
+cannot force the dispatch (gh Actions token 403).
+
+**Mid-turn recon export (03612e93).** /obs/recon/ gains Copy stats (text
+summary), Copy data (TSV), Download CSV of the HDOB records (units header,
+QC flag kept not dropped, VDM+sonde sections). reconobs now carries plane_z
+(geopotential height) in the track JSON — decoded upstream but previously
+dropped. Box recon-poller clone is at 03612e9; plane_z populates on each
+mission's next republish (new obs / ~10-min heartbeat); older cached
+missions export a blank height column honestly.
