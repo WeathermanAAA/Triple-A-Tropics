@@ -271,31 +271,57 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180,
     ax.fill_between(d, 0, amp, color=ACCENT, alpha=0.12, lw=0)
     x_end, y_top = d[-1], float(amp.max())
 
-    # GEFS forecast extension: ensemble-mean amplitude (bold) + the
-    # member amplitude envelope past the labeled init line
+    # GEFS forecast extension. Amplitude is >=0, so a raw member min/max
+    # envelope reads as a lopsided near-black blob; instead show smooth,
+    # translucent MEMBER-AMPLITUDE percentile bands (10-90 outer, 25-75
+    # inner) with the MEDIAN member as the primary line. Crucially this
+    # separates two different quantities the reader must not conflate:
+    #   - member amplitudes (bands + median): each member's own |RMM|;
+    #     these mostly stay strong even when the event survives.
+    #   - the ensemble-mean VECTOR amplitude (thin dashed): |mean(RMM)|,
+    #     which shrinks as members disperse in PHASE even if none weaken.
+    # A drooping dashed line above a still-strong band = phase dispersion,
+    # not the MJO dying. Labeled as such so the mean is not misread.
     if fc:
         fd = fc["dates"]
         m1, m2 = fc["mean"]
-        mean_amp = np.sqrt(np.array(m1) ** 2 + np.array(m2) ** 2)
-        env_lo = np.full(len(fd), np.inf)
-        env_hi = np.full(len(fd), -np.inf)
-        for _m, (mfd, p1, p2) in fc["members"].items():
-            a = np.sqrt(np.asarray(p1) ** 2 + np.asarray(p2) ** 2)
-            for k in range(min(len(fd), len(a))):
-                env_lo[k] = min(env_lo[k], a[k])
-                env_hi[k] = max(env_hi[k], a[k])
-        joined_d = [d[-1]] + list(fd)
-        ax.fill_between(fd, env_lo, env_hi, color=FC_COLOR, alpha=0.10,
-                        lw=0)
-        ax.plot(joined_d, [amp[-1]] + list(mean_amp), color=FC_COLOR,
-                lw=2.0)
-        ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
-                   alpha=0.8)
-        ax.text(d[-1], 0.06, "  GEFS ensemble mean + member envelope · "
-                f"init {fc['init']:%Y-%m-%d} 00Z · smoothed · ~16-day "
-                f"limit", color=FC_COLOR, fontsize=8, va="bottom")
-        x_end = fd[-1]
-        y_top = max(y_top, float(env_hi.max()))
+        vec_mean_amp = np.sqrt(np.array(m1) ** 2 + np.array(m2) ** 2)
+        # per-forecast-day member amplitude distribution
+        p10 = np.full(len(fd), np.nan); p25 = np.full(len(fd), np.nan)
+        p50 = np.full(len(fd), np.nan); p75 = np.full(len(fd), np.nan)
+        p90 = np.full(len(fd), np.nan)
+        for k in range(len(fd)):
+            vals = [np.hypot(p1[k], p2[k])
+                    for (_mfd, p1, p2) in fc["members"].values()
+                    if k < len(p1) and np.isfinite(p1[k]) and np.isfinite(p2[k])]
+            if len(vals) >= 5:
+                p10[k], p25[k], p50[k], p75[k], p90[k] = np.percentile(
+                    vals, [10, 25, 50, 75, 90])
+        ok = np.isfinite(p50)
+        if ok.any():
+            fda = np.array(fd)[ok]
+            # join bands + median onto the last observed point for continuity
+            jx = np.concatenate(([d[-1]], fda))
+            def _j(arr):
+                return np.concatenate(([amp[-1]], arr[ok]))
+            ax.fill_between(jx, _j(p10), _j(p90), color=FC_COLOR,
+                            alpha=0.11, lw=0)
+            ax.fill_between(jx, _j(p25), _j(p75), color=FC_COLOR,
+                            alpha=0.20, lw=0)
+            ax.plot(jx, _j(p50), color=FC_COLOR, lw=2.0)      # median member
+            ax.plot(jx, np.concatenate(([amp[-1]], vec_mean_amp[ok])),
+                    color=FC_COLOR, lw=1.3, ls=(0, (5, 3)),
+                    alpha=0.85)                               # vector mean
+            ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
+                       alpha=0.8)
+            ax.text(d[-1], 0.06,
+                    f"  GEFS · init {fc['init']:%Y-%m-%d} 00Z · median "
+                    "member (line) + 25-75 / 10-90 member bands · dashed = "
+                    "vector-mean |RMM| (drops with phase spread, not "
+                    "weakening) · ~16-day limit", color=FC_COLOR,
+                    fontsize=7.8, va="bottom")
+            x_end = fd[-1]
+            y_top = max(y_top, float(np.nanmax(p90)))
 
     ax.set_ylim(0, max(2.6, y_top + 0.3))
     ax.set_xlim(d[0], x_end)
