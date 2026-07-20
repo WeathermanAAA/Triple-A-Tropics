@@ -111,8 +111,23 @@ def _draw_basemap(ax, ext, geo_dir="."):
                     ax.plot(xs2, ys, color=COAST, lw=0.7, alpha=0.9, zorder=3)
 
 
+# Peak-statistic QC. The peak must be an INTERIOR, open-water, good-quality
+# value — never a swath-edge/coastal artifact:
+#   * EDGE_MARGIN_CELLS: erode the valid-data mask inward by this many cells
+#     before taking the peak. At 500 m posting ~10 cells = ~5 km. Because
+#     land, sea-ice, out-of-range and off-array cells are ALL "invalid," one
+#     erosion buys the swath-edge buffer (SAR degrades at high incidence /
+#     the radiometric edge, and coherent edge bands survive the despeckle),
+#     the coastal/shallow-water buffer (post-landfall bay contamination the
+#     product's own land mask passes), and an around-any-hole buffer, at once.
+#   * INCID_MAX_DEG: additionally drop very-high-incidence far-range cells
+#     when the product carries an incidence field.
+EDGE_MARGIN_CELLS = 10
+INCID_MAX_DEG = 47.0
+
+
 def read_pass(nc_bytes: bytes) -> dict:
-    """Level-2 nc -> {lon, lat, wind (masked ndarray), t, sat} arrays."""
+    """Level-2 nc -> {lon, lat, wind (masked ndarray), incid, t} arrays."""
     import netCDF4
     ds = netCDF4.Dataset("inmem", memory=nc_bytes)
     try:
@@ -124,6 +139,9 @@ def read_pass(nc_bytes: bytes) -> dict:
         bad = (mask != -1) | (wind == fill) | (wind < 0) | (wind >= 99.0) \
             | ~np.isfinite(wind)
         wind = np.ma.masked_where(bad, wind)
+        incid = None
+        if "incid" in ds.variables:
+            incid = np.array(ds.variables["incid"][:], dtype=float)
         t = None
         try:
             acq = float(np.array(ds.variables["acquisition_time"][:]))
@@ -131,41 +149,67 @@ def read_pass(nc_bytes: bytes) -> dict:
                  + dt.timedelta(seconds=acq))
         except Exception:                        # noqa: BLE001
             pass
-        return {"lon": lon, "lat": lat, "wind": wind, "t": t}
+        return {"lon": lon, "lat": lat, "wind": wind, "incid": incid, "t": t}
     finally:
         ds.close()
 
 
-def despeckled_peak(wind: np.ma.MaskedArray) -> tuple[float, tuple[int, int]]:
-    """Speckle-resistant near-peak of the valid ocean wind field: the max of
-    the 3x3-mean-smoothed field, evaluated only at cells whose 3x3
-    neighborhood is FULLY valid and whose 5x5 neighborhood is mostly valid
-    (>= 20/25). One hot pixel cannot fake a peak (the mean dilutes it), and
-    shoreline-hugging contamination clusters — bay/estuary cells the
-    product's own land mask passes — cannot either (they always sit against
-    masked cells). Open-water peaks, including an eyewall just offshore,
-    keep a qualifying interior. Returns (peak_ms, (iy, ix))."""
-    filled = np.where(wind.mask, 0.0, wind.data) if np.ma.is_masked(wind) \
-        else np.asarray(wind, dtype=float)
-    valid = (~wind.mask).astype(float) if np.ma.is_masked(wind) \
-        else np.ones_like(filled)
+def _box_all_valid(valid: np.ndarray, m: int) -> np.ndarray:
+    """Boolean array: True where the full (2m+1)^2 box centred on a cell is
+    entirely valid (off-array counts as invalid, so the array edge erodes
+    too). O(N) via a summed-area table — the erosion of the valid mask by an
+    (2m+1)-square structuring element."""
+    if m <= 0:
+        return valid.astype(bool)
+    v = valid.astype(np.int64)
+    sat = np.pad(v, ((m + 1, m), (m + 1, m)), mode="constant")
+    sat = sat.cumsum(0).cumsum(1)
+    H, W = valid.shape
+    k = 2 * m + 1
+    # window sum over the k x k box centred on each original cell
+    box = (sat[k:k + H, k:k + W] - sat[0:H, k:k + W]
+           - sat[k:k + H, 0:W] + sat[0:H, 0:W])
+    return box == k * k
 
-    def boxsum(a, r):
-        k = 2 * r + 1
-        p = np.pad(a, r, mode="constant")
-        out = np.zeros_like(a)
-        for dy in range(k):
-            for dx in range(k):
-                out += p[dy:dy + a.shape[0], dx:dx + a.shape[1]]
-        return out
 
-    nsum, ncnt = boxsum(filled, 1), boxsum(valid, 1)
-    ncnt5 = boxsum(valid, 2)
+def _boxsum(a: np.ndarray, r: int) -> np.ndarray:
+    k = 2 * r + 1
+    p = np.pad(a, r, mode="constant")
+    out = np.zeros_like(a, dtype=float)
+    for dy in range(k):
+        for dx in range(k):
+            out += p[dy:dy + a.shape[0], dx:dx + a.shape[1]]
+    return out
+
+
+def despeckled_peak(wind: np.ma.MaskedArray, incid=None, *,
+                    edge_margin: int = EDGE_MARGIN_CELLS,
+                    incid_max: float = INCID_MAX_DEG):
+    """Robust interior open-water near-peak. The 3x3-mean-smoothed field
+    (one hot pixel cannot fake a peak — the mean dilutes it), taken only over
+    cells that are: valid ocean (the caller's land/ice/>=99 QC), INTERIOR
+    (a fully-valid box of ``edge_margin`` cells around them — erodes swath
+    edges, coastlines and holes), well-neighboured (full 3x3 + >=20/25 in
+    5x5), and not very-high-incidence far-range (when ``incid`` is given).
+    Returns (peak_ms, (iy, ix)) or None when nothing qualifies (tiny or
+    edge-only scene) so the caller can honestly show 'peak n/a' rather than a
+    boundary artifact."""
+    valid = ~np.ma.getmaskarray(wind)            # always a full bool array
+    filled = np.where(valid, np.ma.getdata(wind), 0.0)
+    vf = valid.astype(float)
+
+    nsum, ncnt = _boxsum(filled, 1), _boxsum(vf, 1)
+    ncnt5 = _boxsum(vf, 2)
     with np.errstate(invalid="ignore", divide="ignore"):
         smooth = np.where(ncnt > 0, nsum / ncnt, 0.0)
-    ok = (valid > 0) & (ncnt >= 9) & (ncnt5 >= 20)
+
+    interior = _box_all_valid(valid, edge_margin)
+    ok = valid & interior & (ncnt >= 9) & (ncnt5 >= 20)
+    if incid is not None:
+        with np.errstate(invalid="ignore"):
+            ok &= (incid <= incid_max)           # nan incid -> False -> dropped
     if not ok.any():
-        raise ValueError("no despecklable ocean cells")
+        return None
     smooth = np.where(ok, smooth, -1.0)
     iy, ix = np.unravel_index(int(np.argmax(smooth)), smooth.shape)
     return float(smooth[iy, ix]), (int(iy), int(ix))
@@ -175,7 +219,7 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     """Render one pass. ``meta``: {stem, sat, pol, t, storm_name, atcf}.
     Returns (png_bytes, thumb_jpg_bytes, stats)."""
     d = read_pass(nc_bytes)
-    lon, lat, wind = d["lon"], d["lat"], d["wind"]
+    lon, lat, wind, incid = d["lon"], d["lat"], d["wind"], d["incid"]
     t = meta.get("t") or d["t"]
 
     if wind.count() == 0:
@@ -207,16 +251,18 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     pm = ax.pcolormesh(lon, lat, wind, cmap=sar_cmap(), vmin=0.0, vmax=VMAX,
                        shading="nearest", zorder=2, rasterized=True)
 
-    # speckle-resistant near-peak (3x3-smoothed max over QC'd ocean cells) +
-    # a subtle cross at its location — no firework markers
-    peak_ms, (piy, pix) = despeckled_peak(wind)
-    plon, plat = float(lon[piy, pix]), float(lat[piy, pix])
-    r = 0.018 * (ext[1] - ext[0])
-    for c, w in (("#07101c", 2.4), (FG, 1.1)):
-        ax.plot([plon - r, plon + r], [plat, plat], color=c, lw=w, zorder=5,
-                alpha=0.9, solid_capstyle="round")
-        ax.plot([plon, plon], [plat - r / aspect, plat + r / aspect], color=c,
-                lw=w, zorder=5, alpha=0.9, solid_capstyle="round")
+    # robust interior open-water near-peak (edge/coast-eroded, despeckled) +
+    # a small dark-haloed hollow ring at its location — pinpoint, not firework.
+    pk = despeckled_peak(wind, incid)
+    if pk is not None:
+        peak_ms, (piy, pix) = pk
+        plon, plat = float(lon[piy, pix]), float(lat[piy, pix])
+        ax.plot(plon, plat, marker="o", mfc="none", mec="#07101c",
+                ms=8, mew=2.6, zorder=5, alpha=0.9)
+        ax.plot(plon, plat, marker="o", mfc="none", mec=FG,
+                ms=8, mew=1.1, zorder=6, alpha=0.95)
+    else:
+        peak_ms, plon, plat = None, None, None
 
     # faint graticule + labeled ticks, house-muted
     for spine in ax.spines.values():
@@ -255,16 +301,21 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     fig.text(0.885, 0.9575, f"{tstr} · {meta.get('sat', '')} {meta.get('pol') or ''}",
              color=MUTED, fontsize=9.5, ha="right")
     # near-peak readout: kt primary, m/s in parens. Honest label — an
-    # instantaneous scene peak (3x3-despeckled), not a sustained max.
-    peak_kt = peak_ms * 1.94384
-    _dplat = f"{abs(plat):.1f}{'N' if plat >= 0 else 'S'}"
-    _plond = ((plon + 180.0) % 360.0) - 180.0
-    _dplon = f"{abs(_plond):.1f}{'W' if _plond < 0 else 'E'}"
-    fig.text(0.055, 0.9225,
-             f"Peak SAR wind ~{peak_kt:.0f} kt ({peak_ms:.0f} m/s) "
-             f"near {_dplat} {_dplon} · instantaneous scene peak, "
-             "3x3 despeckled",
-             color=MUTED, fontsize=9.5, ha="left")
+    # instantaneous scene peak (interior open-water, despeckled), not a
+    # sustained max. 'peak n/a' when no interior cell qualifies.
+    if peak_ms is not None:
+        peak_kt = peak_ms * 1.94384
+        _dplat = f"{abs(plat):.1f}{'N' if plat >= 0 else 'S'}"
+        _plond = ((plon + 180.0) % 360.0) - 180.0
+        _dplon = f"{abs(_plond):.1f}{'W' if _plond < 0 else 'E'}"
+        peak_txt = (f"Peak SAR wind ~{peak_kt:.0f} kt ({peak_ms:.0f} m/s) "
+                    f"near {_dplat} {_dplon} · instantaneous scene peak, "
+                    "interior open water")
+    else:
+        peak_kt = None
+        peak_txt = ("Peak SAR wind n/a · no interior open-water cell "
+                    "qualifies (edge-only scene)")
+    fig.text(0.055, 0.9225, peak_txt, color=MUTED, fontsize=9.5, ha="left")
     # provider credit (required attribution, per constellation) + watermark
     yr = t.year if t else dt.datetime.now(dt.timezone.utc).year
     sat = (meta.get("sat") or "").upper()
@@ -297,10 +348,11 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     valid = wind.compressed()
     stats = {
         "max_ms": round(float(valid.max()), 1),
-        "peak_ms": round(peak_ms, 1),
-        "peak_kt": round(peak_kt),
-        "peak_lat": round(plat, 2),
-        "peak_lon": round(((plon + 180.0) % 360.0) - 180.0, 2),
+        "peak_ms": round(peak_ms, 1) if peak_ms is not None else None,
+        "peak_kt": round(peak_kt) if peak_kt is not None else None,
+        "peak_lat": round(plat, 2) if plat is not None else None,
+        "peak_lon": (round(((plon + 180.0) % 360.0) - 180.0, 2)
+                     if plon is not None else None),
         "mean_ms": round(float(valid.mean()), 1),
         "n_cells": int(valid.size),
         "bbox": [round(((w0 + 180.0) % 360.0) - 180.0, 2),

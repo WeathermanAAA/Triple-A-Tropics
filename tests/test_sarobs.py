@@ -174,9 +174,9 @@ class DespeckledPeak(unittest.TestCase):
         from sarobs.render import despeckled_peak
         f = np.full((20, 20), 20.0)
         f[10, 10] = 99.0                          # lone hot pixel (speckle)
-        w = np.ma.masked_invalid(f)
-        w = np.ma.masked_where(np.zeros_like(f, bool), f)
-        peak, (iy, ix) = despeckled_peak(np.ma.MaskedArray(f, mask=False))
+        # edge_margin=0 isolates the despeckle from the erosion here
+        peak, (iy, ix) = despeckled_peak(np.ma.MaskedArray(f, mask=False),
+                                         edge_margin=0)
         self.assertLess(peak, 30.0)               # 3x3 mean dilutes the spike
         self.assertGreater(peak, 20.0)
 
@@ -185,7 +185,8 @@ class DespeckledPeak(unittest.TestCase):
         from sarobs.render import despeckled_peak
         f = np.full((20, 20), 15.0)
         f[5:9, 5:9] = 55.0                        # coherent 4x4 wind core
-        peak, (iy, ix) = despeckled_peak(np.ma.MaskedArray(f, mask=False))
+        peak, (iy, ix) = despeckled_peak(np.ma.MaskedArray(f, mask=False),
+                                         edge_margin=0)
         self.assertGreater(peak, 50.0)
         self.assertTrue(5 <= iy <= 8 and 5 <= ix <= 8)
 
@@ -196,8 +197,57 @@ class DespeckledPeak(unittest.TestCase):
         m = np.ones_like(f, bool)
         m[0, 0] = False                           # single valid corner cell
         f[0, 0] = 80.0
-        with self.assertRaises(ValueError):
-            despeckled_peak(np.ma.MaskedArray(f, mask=m))
+        self.assertIsNone(despeckled_peak(np.ma.MaskedArray(f, mask=m),
+                                          edge_margin=0))
+
+    def test_edge_band_rejected_interior_kept(self):
+        # a hot swath-edge band (top rows) must NOT win over a real interior
+        # core once the valid mask is eroded inward.
+        import numpy as np
+        from sarobs.render import despeckled_peak
+        f = np.full((80, 80), 12.0)
+        f[0:3, :] = 45.0                          # coherent top-edge band
+        f[40:46, 40:46] = 30.0                    # real interior core (lower)
+        peak = despeckled_peak(np.ma.MaskedArray(f, mask=False), edge_margin=6)
+        self.assertIsNotNone(peak)
+        val, (iy, ix) = peak
+        self.assertGreater(iy, 6)                 # not on the top edge
+        self.assertLess(abs(val - 30.0), 5.0)     # the interior core, ~30
+
+    def test_coastal_buffer_erodes_near_land(self):
+        # cells hugging masked land (bay contamination) are eroded out.
+        import numpy as np
+        f = np.full((60, 60), 15.0)
+        m = np.zeros_like(f, bool)
+        m[:, :30] = True                          # left half is land (masked)
+        f[8:13, 31:36] = 70.0                     # hot band hugging the coast
+        f[38:43, 48:53] = 40.0                    # real offshore core (block)
+        from sarobs.render import despeckled_peak
+        peak = despeckled_peak(np.ma.MaskedArray(f, mask=m), edge_margin=6)
+        self.assertIsNotNone(peak)
+        val, (iy, ix) = peak
+        self.assertGreater(ix, 36)                # well off the coast
+        self.assertLess(abs(val - 40.0), 8.0)
+
+    def test_incidence_gate_drops_far_range(self):
+        import numpy as np
+        from sarobs.render import despeckled_peak
+        f = np.full((60, 60), 20.0)
+        f[30, 55] = 60.0                          # hot far-range cell
+        incid = np.full((60, 60), 30.0)
+        incid[:, 50:] = 49.0                      # far-range high incidence
+        peak = despeckled_peak(np.ma.MaskedArray(f, mask=False), incid,
+                               edge_margin=3, incid_max=47.0)
+        self.assertIsNotNone(peak)
+        val, (iy, ix) = peak
+        self.assertLess(ix, 50)                   # the high-incid strip dropped
+
+    def test_edge_only_scene_returns_none(self):
+        import numpy as np
+        from sarobs.render import despeckled_peak
+        f = np.full((8, 8), 40.0)                 # smaller than the erosion box
+        self.assertIsNone(despeckled_peak(np.ma.MaskedArray(f, mask=False),
+                                          edge_margin=10))
 
 
 class RerenderFlag(unittest.TestCase):

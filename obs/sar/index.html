@@ -131,11 +131,14 @@
   }
   function ktOf(ms) { return Math.round(ms * 1.94384); }
   function peakStr(p) {
+    // peak_ms is the robust interior open-water near-peak; the raw max is
+    // NOT shown as a fallback (it is exactly the edge/coastal artifact the
+    // peak stat rejects). A pass with no qualifying interior cell reads n/a.
     if (p.peak_ms != null) {
       return 'peak ~' + (p.peak_kt != null ? p.peak_kt : ktOf(p.peak_ms)) +
         ' kt (' + Math.round(p.peak_ms) + ' m/s)';
     }
-    if (p.max_ms != null) return 'max ' + p.max_ms + ' m/s (' + ktOf(p.max_ms) + ' kt)';
+    if ('peak_ms' in p) return 'peak n/a';
     return '';
   }
 
