@@ -28,6 +28,22 @@
    auto-sizing (global_tracks postMessage precedent). */
 html.embedded .nav, html.embedded .subnav, html.embedded .page-head,
 html.embedded footer { display: none !important; }
+/* archived-QuikSCAT browser (quiet, matches the recon/ss control rows) */
+.qsa-note { color: var(--muted, #8ea2bd); font-size: 13.5px; line-height: 1.6;
+  max-width: 860px; }
+.qsa-controls { display: flex; flex-wrap: wrap; gap: 10px 14px;
+  align-items: flex-end; margin: 12px 0; }
+.qsa-group { display: flex; flex-direction: column; gap: 3px; }
+.qsa-group label { font-size: 10px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted, #8ea2bd); }
+.qsa-controls select { background: #0e1a30; color: var(--fg, #e5edf6);
+  border: 1px solid var(--border, #1c2b45); border-radius: 6px;
+  padding: 6px 8px; font-size: 13px; min-width: 130px; }
+.qsa-img { display: block; width: 100%; max-width: 980px; height: auto;
+  border-radius: 10px; border: 1px solid var(--border, #1c2b45); }
+.qsa-cap { color: var(--muted, #8ea2bd); font-size: 12.5px; margin-top: 8px;
+  font-variant-numeric: tabular-nums; }
+html.embedded #qscat-section { display: none !important; }
 </style>
 <script>
 if (new URLSearchParams(location.search).get('embed') === '1') {
@@ -94,6 +110,18 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
   </div>
 </section>
 
+<section class="chart-section" id="qscat-section">
+  <div id="qscat-archive" style="display:none">
+    <h2>Archived passes · QuikSCAT (1999–2009)</h2>
+    <p class="qsa-note">Per-pass 2.5&nbsp;km SeaWinds ocean winds for named
+    storms, 1999–2009. Ku-band winds saturate near 100&nbsp;kt and read high
+    in heavy rain and in cells touching coastlines; the labeled best-track
+    intensity is the official record.
+    Data: NASA JPL QuikSCAT/SeaWinds · enhanced-resolution winds: BYU
+    Scatterometer Climate Pathfinder.</p>
+  </div>
+</section>
+
 <section class="chart-section about">
   <h2>About ASCAT ocean winds</h2>
   <p>The <b>Advanced Scatterometer (ASCAT)</b> is a real-aperture radar that
@@ -124,5 +152,6 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
 document.getElementById('cyear').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
 <script src="/ascat/ascat.js?v=0019"></script>
+<script src="/ascat/qscat_archive.js?v=0001"></script>
 </body>
 </html>
