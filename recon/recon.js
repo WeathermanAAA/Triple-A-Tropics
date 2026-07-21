@@ -5,7 +5,8 @@
  *   - dark-ocean basemap: ne_10m coastlines (single crisp stroke) + country /
  *     state borders (dimmer) + a faint lat/lon graticule with edge labels,
  *   - a STANDARD wind-barb spatial plot (sub-sampled along the track so barbs
- *     never overlap) colored by peak flight-level wind on a vivid TC kt scale,
+ *     never overlap) colored by flight-level wind (the same wind the barb length
+ *     encodes) on a vivid TC kt scale,
  *   - VDM center fixes labeled with MSLP, dropsonde markers,
  *   - an SFMR toggle (flight-level <-> SFMR surface wind), and
  *   - a multi-panel time series (MSLP+FL wind, SFMR+rain, temp+dewpoint,
@@ -1071,11 +1072,13 @@
   ReconViewer.prototype._barbSpeed = function (ob) {
     return (this.windMode === 'sfmr') ? num(ob.sfmr) : num(ob.wspd);
   };
-  // value used for the barb's COLOR: peak FL wind in FL mode; SFMR in SFMR mode.
+  // value used for the barb's COLOR: the SAME wind the barb LENGTH encodes
+  // (average flight-level wind in FL mode, SFMR surface wind in SFMR mode).
+  // Colouring by the 10-second peak while the barbs' length shows the
+  // average overstated the field and conflated "peak" with the base wind;
+  // the 10-second peak stays available in the hover tooltip + popover.
   ReconViewer.prototype._barbColorKt = function (ob) {
-    if (this.windMode === 'sfmr') return num(ob.sfmr);
-    var pk = num(ob.pkwnd);
-    return (pk != null) ? pk : num(ob.wspd);
+    return (this.windMode === 'sfmr') ? num(ob.sfmr) : num(ob.wspd);
   };
 
   ReconViewer.prototype._drawMap = function (g) {
@@ -1437,8 +1440,8 @@
     // caption
     g.fillStyle = C.muted; g.font = '600 9px ' + FONT; g.textAlign = 'left';
     var cap = (this.windMode === 'sfmr')
-      ? 'Peak 10-second Average SFMR Surface Wind Speed (kt)'
-      : 'Peak 10-second Average Flight-level Wind Speed (kt)';
+      ? 'SFMR surface wind speed (kt)'
+      : 'Flight-level wind speed (kt) · barb color + length = same wind';
     g.fillText(cap, bx, ly + labH + 5);
     g.restore();
 
@@ -1528,6 +1531,7 @@
       if (t1 == null || ts > t1) t1 = ts;
     }
     if (t0 == null || t1 == null || t1 <= t0) {
+      this._tsAxis = null;
       g.save();
       g.fillStyle = 'rgba(10,19,36,0.7)'; g.fillRect(L.x, L.y, L.w, L.h);
       g.strokeStyle = C.border; g.lineWidth = 1; g.strokeRect(L.x + 0.5, L.y + 0.5, L.w - 1, L.h - 1);
@@ -1541,6 +1545,7 @@
     // only the panels with data (empty SFMR/temp/etc. panels are hidden)
     var panels = this._activePanels();
     if (!panels.length) {
+      this._tsAxis = null;
       g.save();
       g.fillStyle = 'rgba(10,19,36,0.7)'; g.fillRect(L.x, L.y, L.w, L.h);
       g.strokeStyle = C.border; g.lineWidth = 1; g.strokeRect(L.x + 0.5, L.y + 0.5, L.w - 1, L.h - 1);
@@ -1550,11 +1555,17 @@
       return;
     }
 
+    var lastBottom = L.y;
     for (var pi = 0; pi < panels.length; pi++) {
       var py = L.y + pi * (L.panelH + L.gap);
       this._drawPanel(g, panels[pi], track, L.x, py, L.w, L.panelH, t0, tspan,
         pi === panels.length - 1);
+      lastBottom = py + L.panelH;
     }
+    // geometry for the synced hover crosshair (figure coords; gl=gr=46 in
+    // _drawPanel is the plot-area inset, so the x-axis matches the drawn lines)
+    this._tsAxis = { t0: t0, tspan: tspan, px: L.x + 46, pw: L.w - 92,
+                     top: L.y, bottom: lastBottom };
   };
 
   // One time-series panel. `last` => draw the x time ticks under it.
@@ -1807,35 +1818,114 @@
   };
 
   // ---- hover tooltip over the track (map-local hit test) ----
+  // Values-at-this-ob tooltip lines, shared by the map + time-series hover.
+  ReconViewer.prototype._obLines = function (ob) {
+    var sfmr = num(ob.sfmr), wspd = num(ob.wspd), ps = num(ob.p_sfc),
+        pk = num(ob.pkwnd), rain = num(ob.rain), wdir = num(ob.wdir);
+    var lines = [hhmm(ob.t)];
+    if (wspd != null) lines.push('FL wind ' + Math.round(wspd) + ' kt' + (wdir != null ? (' / ' + Math.round(wdir) + '°') : ''));
+    if (pk != null) lines.push('Peak FL ' + Math.round(pk) + ' kt');
+    if (sfmr != null) lines.push('SFMR ' + Math.round(sfmr) + ' kt' + (ob.sfmr_suspect === true ? ' (suspect)' : ''));
+    if (rain != null) lines.push('Rain ' + (Math.round(rain * 10) / 10) + ' mm/hr');
+    if (ps != null) lines.push('MSLP ' + Math.round(ps) + ' hPa');
+    return lines;
+  };
+
+  // Dispatch a pointer move to the map hover or the time-series hover.
   ReconViewer.prototype._hover = function (ev) {
+    if (this._hoverMap(ev)) { this._hideCross(); return; }
+    if (this._hoverTS(ev)) return;
+    this._hideHover();
+  };
+
+  ReconViewer.prototype._hideHover = function () {
+    if (this.dom.tooltip) this.dom.tooltip.style.display = 'none';
+    this._hideCross();
+  };
+  ReconViewer.prototype._hideCross = function () {
+    if (this._tsCross) this._tsCross.style.display = 'none';
+  };
+
+  // Map panel: nearest track point -> value tooltip. Returns true if handled.
+  ReconViewer.prototype._hoverMap = function (ev) {
     var tip = this.dom.tooltip, L = this.layout && this.layout.map;
-    if (!tip || !L || !this._pts || !this._pts.length) return;
+    if (!tip || !L || !this._pts || !this._pts.length) return false;
     var rect = this.dom.canvas.getBoundingClientRect();
     var sx = this.dom.canvas.width / rect.width / this.dpr;
     var mx = (ev.clientX - rect.left) * sx - L.x;
     var my = (ev.clientY - rect.top) * sx - L.y;
-    if (mx < 0 || my < 0 || mx > L.w || my > L.h) { tip.style.display = 'none'; return; }
+    if (mx < 0 || my < 0 || mx > L.w || my > L.h) return false;
     var best = null, bestD = 12 * 12;
     for (var i = 0; i < this._pts.length; i++) {
       var p = this._pts[i]; if (!p) continue;
       var dx = p.x - mx, dy = p.y - my, d = dx * dx + dy * dy;
       if (d < bestD) { bestD = d; best = p; }
     }
-    if (!best) { tip.style.display = 'none'; return; }
-    var ob = best.ob;
-    var sfmr = num(ob.sfmr), wspd = num(ob.wspd), ps = num(ob.p_sfc), pk = num(ob.pkwnd),
-        rain = num(ob.rain), wdir = num(ob.wdir);
-    var lines = [];
-    lines.push(hhmm(ob.t));
-    if (wspd != null) lines.push('FL wind ' + Math.round(wspd) + ' kt' + (wdir != null ? (' / ' + Math.round(wdir) + '°') : ''));
-    if (pk != null) lines.push('Peak FL ' + Math.round(pk) + ' kt');
-    if (sfmr != null) lines.push('SFMR ' + Math.round(sfmr) + ' kt' + (ob.sfmr_suspect === true ? ' (suspect)' : ''));
-    if (rain != null) lines.push('Rain ' + (Math.round(rain * 10) / 10) + ' mm/hr');
-    if (ps != null) lines.push('MSLP ' + Math.round(ps) + ' hPa');
+    if (!best) { tip.style.display = 'none'; return true; }
     tip.style.display = 'block';
     tip.style.left = (ev.clientX - rect.left + 12) + 'px';
     tip.style.top = (ev.clientY - rect.top + 12) + 'px';
+    tip.innerHTML = this._obLines(best.ob).join('<br>');
+    return true;
+  };
+
+  // Time-series panels: a vertical crosshair synced across every stacked
+  // panel at the nearest ob, plus a value tooltip carrying the Z time.
+  // Returns true if the pointer is over the time-series region.
+  ReconViewer.prototype._hoverTS = function (ev) {
+    var tip = this.dom.tooltip, ax = this._tsAxis;
+    if (!tip || !ax || !this.dom.mapframe) return false;
+    var track = this._scopedTrack();
+    if (!track.length) return false;
+    var rect = this.dom.canvas.getBoundingClientRect();
+    var sx = this.figW / rect.width;               // CSS px -> figure units
+    var mx = (ev.clientX - rect.left) * sx;
+    var my = (ev.clientY - rect.top) * sx;
+    if (my < ax.top || my > ax.bottom || mx < ax.px - 6 || mx > ax.px + ax.pw + 6) {
+      return false;
+    }
+    // mouse x -> time -> nearest ob by |Δt|
+    var frac = Math.max(0, Math.min(1, (mx - ax.px) / ax.pw));
+    var tTarget = ax.t0 + frac * ax.tspan;
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < track.length; i++) {
+      var tt = Date.parse(track[i].t || '');
+      if (isNaN(tt)) continue;
+      var d = Math.abs(tt - tTarget);
+      if (d < bestD) { bestD = d; best = track[i]; }
+    }
+    if (!best) return false;
+    var obT = Date.parse(best.t);
+    var figX = ax.px + (obT - ax.t0) / ax.tspan * ax.pw;
+    var scale = rect.width / this.figW;            // figure units -> CSS px
+    // vertical crosshair spanning the whole panel stack (HTML overlay: no
+    // canvas redraw, so it stays smooth on large missions)
+    if (!this._tsCross) {
+      this._tsCross = document.createElement('div');
+      this._tsCross.style.cssText = 'position:absolute;width:1px;z-index:5;' +
+        'pointer-events:none;background:rgba(233,241,250,0.55);display:none';
+      this.dom.mapframe.appendChild(this._tsCross);
+    }
+    this._tsCross.style.left = (figX * scale) + 'px';
+    this._tsCross.style.top = (ax.top * scale) + 'px';
+    this._tsCross.style.height = ((ax.bottom - ax.top) * scale) + 'px';
+    this._tsCross.style.display = 'block';
+    // tooltip near the cursor, clamped inside the frame
+    var lines = this._obLines(best);
+    tip.style.display = 'block';
     tip.innerHTML = lines.join('<br>');
+    var fx = (ev.clientX - rect.left), fy = (ev.clientY - rect.top);
+    var tw = tip.offsetWidth || 130;
+    tip.style.left = Math.min(fx + 12, rect.width - tw - 4) + 'px';
+    tip.style.top = (fy + 12) + 'px';
+    return true;
+  };
+
+  // Touch-friendly: a touch drives the same hover; touchend tears it down.
+  ReconViewer.prototype._hoverTouch = function (ev) {
+    if (!ev.touches || !ev.touches.length) return;
+    var t = ev.touches[0];
+    this._hover({ clientX: t.clientX, clientY: t.clientY });
   };
 
   // ====================================================================
@@ -2446,6 +2536,20 @@
       window.removeEventListener('resize', this._onWinResize);
       this._onWinResize = null;
     }
+    if (this.dom && this.dom.canvas) {
+      if (this._onTouchMove) {
+        this.dom.canvas.removeEventListener('touchstart', this._onTouchMove);
+        this.dom.canvas.removeEventListener('touchmove', this._onTouchMove);
+      }
+      if (this._onTouchEnd) {
+        this.dom.canvas.removeEventListener('touchend', this._onTouchEnd);
+      }
+    }
+    this._onTouchMove = this._onTouchEnd = null;
+    if (this._tsCross && this._tsCross.parentNode) {
+      this._tsCross.parentNode.removeChild(this._tsCross);
+    }
+    this._tsCross = null;
     this._closePlanePanel();     // removes panel + leader + the Esc listener
   };
 
@@ -2605,8 +2709,14 @@
 
     if (this.dom.canvas) {
       this.dom.canvas.addEventListener('mousemove', function (ev) { self._hover(ev); });
-      this.dom.canvas.addEventListener('mouseleave', function () { if (self.dom.tooltip) self.dom.tooltip.style.display = 'none'; });
+      this.dom.canvas.addEventListener('mouseleave', function () { self._hideHover(); });
       this.dom.canvas.addEventListener('click', function (ev) { self._onCanvasClick(ev); });
+      // touch: same synced crosshair/tooltip; passive so scrolling still works
+      this._onTouchMove = function (ev) { self._hoverTouch(ev); };
+      this._onTouchEnd = function () { self._hideHover(); };
+      this.dom.canvas.addEventListener('touchstart', this._onTouchMove, { passive: true });
+      this.dom.canvas.addEventListener('touchmove', this._onTouchMove, { passive: true });
+      this.dom.canvas.addEventListener('touchend', this._onTouchEnd, { passive: true });
     }
     if (typeof window !== 'undefined' && window.ResizeObserver && this.dom.mapframe) {
       this._ro = new ResizeObserver(function () { self._resizeDebounced(); });

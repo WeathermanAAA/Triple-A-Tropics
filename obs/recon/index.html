@@ -199,7 +199,7 @@
 
 <header class="page-head">
   <h1>Aircraft Recon</h1>
-  <p>Hurricane Hunter reconnaissance, straight from the data. The <b>Current Mission</b> tab leads with the National Hurricane Center <b>Plan of the Day</b> (which aircraft are tasked, where, and when) and spotlights the active or most recent pass, with a <b>Last 10 min</b> and a <b>Full Mission</b> view. The <b>Storms</b> tab plots any mission: a flight track drawn as standard <b>wind barbs</b> colored by peak flight-level wind on a tropical-cyclone scale, VDM center fixes labeled with sea-level pressure, dropsondes, and a stacked multi-panel time series (sea-level pressure and wind, SFMR and rain, temperature and dewpoint, static pressure and altitude). A <b>Wind</b> toggle switches the barbs and color between flight-level and SFMR surface wind. Every figure is one canvas, so you can right-click to save or use the Download PNG button to share exactly what you see.</p>
+  <p>Hurricane Hunter reconnaissance, straight from the data. The <b>Current Mission</b> tab leads with the National Hurricane Center <b>Plan of the Day</b> (which aircraft are tasked, where, and when) and spotlights the active or most recent pass, with a <b>Last 10 min</b> and a <b>Full Mission</b> view. The <b>Storms</b> tab plots any mission: a flight track drawn as standard <b>wind barbs</b> colored by flight-level wind on a tropical-cyclone scale, VDM center fixes labeled with sea-level pressure, dropsondes, and a stacked multi-panel time series (sea-level pressure and wind, SFMR and rain, temperature and dewpoint, static pressure and altitude). A <b>Wind</b> toggle switches the barbs and color between flight-level and SFMR surface wind. Every figure is one canvas, so you can right-click to save or use the Download PNG button to share exactly what you see.</p>
 </header>
 
 <section class="chart-section">
@@ -281,6 +281,125 @@
   </div>
 </section>
 
+<section class="chart-section">
+  <style>
+    .flsfc h2 { margin: 0 0 6px; }
+    .flsfc p { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .flsfc-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; margin-bottom: 14px; }
+    .flsfc-controls label { color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.7; }
+    .flsfc-controls input, .flsfc-controls select {
+      background: var(--bg, #07101c); color: var(--fg, #e5edf6);
+      border: 1px solid var(--border, #1c2b45); border-radius: 6px;
+      padding: 7px 9px; font-size: 14px; font-family: inherit;
+    }
+    .flsfc-controls input { width: 82px; }
+    .flsfc-out { font-size: 20px; font-weight: 800; color: var(--fg, #e5edf6);
+      margin: 4px 0 6px; font-variant-numeric: tabular-nums; }
+    .flsfc-out .f { color: var(--accent-2, #49b6c8); }
+    .flsfc-note { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+    .flsfc-table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .flsfc-table th, .flsfc-table td { border: 1px solid var(--border, #1c2b45);
+      padding: 6px 12px; text-align: center; color: var(--muted); }
+    .flsfc-table th { color: var(--fg, #e5edf6); font-weight: 700; }
+    .flsfc-table td.on { background: rgba(73,182,200,0.18); color: var(--fg, #e5edf6);
+      font-weight: 800; border-color: var(--accent-2, #49b6c8); }
+    .flsfc-cite { font-size: 11px; margin-top: 12px; }
+  </style>
+  <div class="flsfc">
+    <h2>Flight-level → surface wind</h2>
+    <p>Estimate the surface wind from an aircraft flight-level wind using the mean
+    adjustment factors of Franklin, Black &amp; Valde (2003). Choose the flight level
+    and storm region; surface wind ≈ flight-level wind × factor. These are
+    climatological means — an individual reduction varies with the boundary layer,
+    so treat the result as a first-order estimate, not a measurement.</p>
+    <div class="flsfc-controls">
+      <label>Flight-level wind<br><input id="flsfc-in" type="number" min="0" max="250" step="1" value="100" inputmode="numeric"> kt</label>
+      <label>Flight level<br><select id="flsfc-lvl">
+        <option value="700">700 hPa</option>
+        <option value="850">850 hPa</option>
+        <option value="925">925 hPa</option>
+        <option value="1000ft">1000 ft</option>
+      </select></label>
+      <label>Storm region<br><select id="flsfc-reg">
+        <option value="0">Eyewall</option>
+        <option value="1">Outer vortex (convective)</option>
+        <option value="2">Outer vortex (no convection)</option>
+        <option value="c">Center, no eyewall</option>
+      </select></label>
+    </div>
+    <div class="flsfc-out" id="flsfc-out"></div>
+    <div class="flsfc-note" id="flsfc-note"></div>
+    <table class="flsfc-table" id="flsfc-table"></table>
+    <p class="flsfc-cite">Factors: Franklin, J. L., M. L. Black, and K. Valde
+    (2003), “GPS Dropwindsonde Wind Profiles in Hurricanes and Their Operational
+    Implications,” <i>Weather and Forecasting</i>, 18, 32–44 (Table 2).</p>
+  </div>
+  <script>
+  (function () {
+    // Franklin et al. (2003) Table 2 mean FL→surface adjustment factors.
+    // rows = flight level; cols = [eyewall, outer-vortex convective,
+    // outer-vortex non-convective].
+    var LVLS = ['700', '850', '925', '1000ft'];
+    var LVL_LABEL = { '700': '700 hPa', '850': '850 hPa', '925': '925 hPa', '1000ft': '1000 ft' };
+    var COLS = ['Eyewall', 'Outer (convective)', 'Outer (no convection)'];
+    var F = {
+      '700': [0.90, 0.85, 0.80],
+      '850': [0.80, 0.80, 0.75],
+      '925': [0.75, 0.75, 0.75],
+      '1000ft': [0.80, 0.80, 0.80]
+    };
+    var inEl = document.getElementById('flsfc-in');
+    var lvlEl = document.getElementById('flsfc-lvl');
+    var regEl = document.getElementById('flsfc-reg');
+    var outEl = document.getElementById('flsfc-out');
+    var noteEl = document.getElementById('flsfc-note');
+    var tbl = document.getElementById('flsfc-table');
+
+    function regCol(reg) { return reg === 'c' ? 2 : parseInt(reg, 10); }
+
+    function buildTable(lvl, col) {
+      var h = '<tr><th>Flight level</th>';
+      for (var c = 0; c < COLS.length; c++) h += '<th>' + COLS[c] + '</th>';
+      h += '</tr>';
+      for (var i = 0; i < LVLS.length; i++) {
+        var L = LVLS[i];
+        h += '<tr><th>' + LVL_LABEL[L] + '</th>';
+        for (var j = 0; j < 3; j++) {
+          var on = (L === lvl && j === col) ? ' class="on"' : '';
+          h += '<td' + on + '>' + F[L][j].toFixed(2) + '</td>';
+        }
+        h += '</tr>';
+      }
+      tbl.innerHTML = h;
+    }
+
+    function update() {
+      var lvl = lvlEl.value, reg = regEl.value, col = regCol(reg);
+      var factor = F[lvl][col];
+      var fl = parseFloat(inEl.value);
+      buildTable(lvl, col);
+      if (isNaN(fl) || fl < 0) {
+        outEl.innerHTML = 'Enter a flight-level wind.';
+      } else {
+        var sfc = Math.round(fl * factor);
+        outEl.innerHTML = 'Surface wind ≈ <b>' + sfc + ' kt</b> ' +
+          '<span class="f">(× ' + factor.toFixed(2) + ')</span>';
+      }
+      noteEl.textContent = (reg === 'c')
+        ? 'Franklin et al. Table 2 gives no distinct factor for a center with no ' +
+          'eyewall; this uses the non-convective outer-vortex value as the closest ' +
+          'documented analog.'
+        : '';
+    }
+
+    inEl.addEventListener('input', update);
+    lvlEl.addEventListener('change', update);
+    regEl.addEventListener('change', update);
+    update();
+  })();
+  </script>
+</section>
+
 <section class="chart-section about">
   <h2>About aircraft recon</h2>
   <p>NOAA and U.S. Air Force Reserve <b>Hurricane Hunter</b> aircraft fly directly
@@ -304,6 +423,6 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/regions.js?v=e3af569ee9"></script>
-<script src="/recon/recon.js?v=bf4eec6d86popfix2"></script>
+<script src="/recon/recon.js?v=e02f0027a2"></script>
 </body>
 </html>
