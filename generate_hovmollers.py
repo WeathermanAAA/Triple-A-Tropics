@@ -602,8 +602,12 @@ def fetch_genesis(start: dt.date, end: dt.date):
     for sid, recs in systems.items():
         for rec in recs:
             d = rec["first"].date()
-            if start <= d <= end and abs(rec["lat"]) <= 25.0:
-                out.append({"date": d, "lon": rec["lon"],
+            # 30N cutoff (was 25N) so tropical NATL/Gulf genesis — which forms
+            # 5-10 deg poleward of the WPAC/EPAC main development regions
+            # (e.g. Arthur/Two 2026 at ~27N) — is included; clearly subtropical
+            # / extratropical lows (Fernand 36N, Karen 44N) are still excluded.
+            if start <= d <= end and abs(rec["lat"]) <= 30.0:
+                out.append({"date": d, "lon": rec["lon"], "lat": rec["lat"],
                             "name": rec["name"], "id": sid})
     out.sort(key=lambda g: g["date"])
     return out
@@ -640,6 +644,12 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
         ax.contour(lons, t, filt, levels=pos, colors=color,
                    linewidths=1.0, linestyles="dashed", alpha=0.75)
 
+    # genesis markers + decluttered labels. Markers: a bright dot with a dark
+    # ring + a dark outer halo so they read on BOTH the tan (suppressed) and
+    # teal (enhanced) shading. Labels: edge-aware anchoring (never clip a
+    # panel edge) + a greedy vertical stagger with leader lines so no two
+    # collide.
+    gvis = []
     for g in genesis:
         if not (lon_lo <= g["lon"] <= lon_hi):
             continue
@@ -647,13 +657,42 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                                          g["date"].day))
         if gy < t[0] or gy > t[-1]:
             continue
-        ax.plot(g["lon"], gy, marker="o", ms=7, mfc="#10131a",
-                mec=TEXT, mew=1.6, zorder=6)
-        ax.annotate(g["name"], (g["lon"], gy), xytext=(6, 6),
-                    textcoords="offset points", color=TEXT, fontsize=7.5,
-                    fontweight="bold", zorder=6,
-                    path_effects=[matplotlib.patheffects.withStroke(
-                        linewidth=2.2, foreground="#10131a")])
+        gvis.append((g, gy))
+    xspan = (lon_hi - lon_lo) or 1.0
+    yspan = (t[0] - t[-1]) or 1.0                 # note: y-axis is inverted
+    placed = []                                    # (xn, label_yn) already set
+    for g, gy in sorted(gvis, key=lambda z: z[1]):
+        xn = (g["lon"] - lon_lo) / xspan
+        yn = (gy - t[-1]) / yspan
+        # dark halo ring, then a bright dot with a dark edge (high contrast)
+        ax.plot(g["lon"], gy, marker="o", ms=9.5, mfc="none",
+                mec="#0a0d12", mew=3.0, zorder=6)
+        ax.plot(g["lon"], gy, marker="o", ms=6.5, mfc="#f2f6fb",
+                mec="#0a0d12", mew=1.3, zorder=7)
+        # label placement: anchor away from the near edge, then stagger down
+        right = xn > 0.8
+        ha = "right" if right else "left"
+        lab_xn = xn + (-0.012 if right else 0.012)
+        lab_yn = yn + 0.014
+        for _i in range(8):
+            clash = any(abs(lab_xn - px) < 0.14 and abs(lab_yn - py) < 0.022
+                        for px, py in placed)
+            if not clash:
+                break
+            lab_yn += 0.024
+        lab_yn = min(0.985, max(0.015, lab_yn))
+        placed.append((lab_xn, lab_yn))
+        lab_lon = lon_lo + lab_xn * xspan
+        lab_gy = t[-1] + lab_yn * yspan
+        leader = abs(lab_yn - yn) > 0.02
+        ax.annotate(
+            g["name"], xy=(g["lon"], gy), xytext=(lab_lon, lab_gy),
+            textcoords="data", color=TEXT, fontsize=7.5, fontweight="bold",
+            ha=ha, va="center", zorder=8,
+            arrowprops=(dict(arrowstyle="-", color=MUTED, lw=0.6, alpha=0.8,
+                             shrinkA=0, shrinkB=3) if leader else None),
+            path_effects=[matplotlib.patheffects.withStroke(
+                linewidth=2.4, foreground="#0a0d12")])
 
     # labeled init line: analysis above, GEFS ensemble-mean tail below
     # (time runs DOWN the page, so the forecast rows sit at the bottom)
@@ -777,6 +816,13 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None) -> None:
         fc_axis, fc_rows = _fc_axis_for(f_dates, fc_kept, bm_fc) \
             if bm_fc is not None else ([], None)
         bm_ext = np.vstack([bm, fc_rows]) if fc_rows is not None else bm
+        # BRIDGE the CDR->forecast latency gap for the DISPLAY: the CDR ends
+        # ~4 d before the GEFS init, leaving blank rows between analysis and
+        # forecast. Fill them per longitude by interpolating from the last
+        # analysis day to the first forecast day so the shading is continuous
+        # through the init line (honest: it is interpolation, noted below).
+        if fc_rows is not None:
+            fc_rows = _bridge_gap_rows(bm, fc_rows)
         nfc = len(fc_axis)
         filts = wave_filts(bm_ext, nf2)
         for nd in DAYS:
@@ -789,8 +835,8 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None) -> None:
                 overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
                 note_b = ("contours: wave-filtered anomalies, −10 W m⁻² "
                           "solid (enhanced) / +10 dashed · "
-                          + ("filtered on the analysis+forecast concat "
-                             "(CDR–forecast gap left blank)"
+                          + ("filtered on the analysis+forecast concat; "
+                             "CDR→GEFS gap bridged by interpolation"
                              if nfc else "newest ~2 weeks amplitude-damped "
                              "(WW01 real-time filter)"))
                 for rkey in REGIONS:
@@ -823,6 +869,27 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None) -> None:
                                    "%Y-%m-%dT%H:%M:%SZ")}
                               if fc_kept else {})}
     print("OLR panels done")
+
+
+def _bridge_gap_rows(bm, fc_rows):
+    """Fill leading/interior NaN rows in ``fc_rows`` (the forecast band-mean
+    on a continuous daily axis) by per-longitude linear interpolation, using
+    the last analysis row ``bm[-1]`` as the anchor just before the forecast.
+    Bridges the CDR→forecast latency gap so the shading is continuous; a
+    fully-NaN column (no forecast at that lon) is left as-is."""
+    out = fc_rows.astype(float, copy=True)
+    nrow = out.shape[0]
+    idx = np.arange(nrow, dtype=float)
+    for j in range(out.shape[1]):
+        col = out[:, j]
+        fin = np.isfinite(col)
+        if fin.all() or not fin.any():
+            continue
+        anchor_x = np.concatenate(([-1.0], idx[fin]))     # -1 = analysis end
+        anchor_y = np.concatenate(([bm[-1, j]], col[fin]))
+        bad = ~fin
+        col[bad] = np.interp(idx[bad], anchor_x, anchor_y)
+    return out
 
 
 def _fc_axis_for(full, fc_dates_kept, bm_fc):
