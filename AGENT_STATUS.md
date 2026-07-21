@@ -101,7 +101,15 @@ resumable — rerun the same command if it dies). Honesty call: NO "peak
 retrieved" headline (Ku rain contamination is coherent; despeckle still read
 77 kt on a 30-kt TD).
 
-**#14 remaining — HY-2B + RapidScat:**
+**#14 HY-2 — SHIPPED (@a4603add, later same session).** hy2obs package on
+the confirmed keyless Copernicus Marine S3 source; delayed-daily renders
+(all labels honest: DELAYED, rain/land/QC-masked), outage-tolerant guarded
+skip; /obs/ascat/ HY-2 section (6-day staleness gate); box hy2-poller live
+(tsr @0443998, hourly). Verified on the 07-16 pre-outage granules end-to-end.
+Follow-ups: watch first box tick publish to CDN once the upstream outage
+clears; optional few-hour KNMI WIND-FTP creds remain an Andrew option.
+
+**#14 remaining — RapidScat:**
 - HY-2B: source PROVED keyless (Copernicus Marine native S3, daily 0.25-deg
   HSCAT L3 with per-cell times + rain/quality bitmask; 19-43h latency;
   listing recipe + schema in the scout notes). NOTE: the KNMI-to-CMEMS chain
