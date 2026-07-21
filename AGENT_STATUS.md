@@ -67,6 +67,20 @@ _Last update: 2026-07-21 ~17:1x UTC — BIG WAVE LANDED: #4 ECMWF MJO models (IF
 
 ---
 
+## 2026-07-21 (~18:2x-19:0x UTC) — 3D CLOUD TOPS (#16) SHIPPED (@bb1dc5f1)
+
+Explorer gains a 2D/3D toggle (settings, "View" section): IR cloud tops
+extruded as a relief surface, tilt/rotate camera, exaggeration slider
+(x4-16, default x8), honest proxy chip on-map. Fully client-side: ir3d.js
+addProtocol('tatdem') synthesizes Terrain-RGB DEM tiles from the existing
+per-frame bt.png (no box changes, no new R2 product); dem twin sources ride
+the loop's mount/park machinery, terrain flips in _reveal only. Gated to
+bt:true products; auto-drops to 2D on non-BT/MW/TM; Reset exits fully; 2D
+path untouched when off. Verified via the new tilt3d harness scenario
+(terrain+pitch asserts, terrain-follows-frame in playback, clean 2D return,
+zero page errors) + a pitched GOES-19 CONUS IR screenshot. Rollback: revert
+@bb1dc5f1 (pure frontend).
+
 ## 2026-07-21 (~08:0x-17:1x UTC) — #4 ECMWF MJO + RECON PRODUCTS + #14 QUIKSCAT SHIPPED
 
 **#4 (@9aa187dc on main).** subseasonal/ecmwf_open.py: keyless ECMWF open-data
