@@ -20,7 +20,8 @@ try {
   puppeteer = require(path.join(process.env.PUPPETEER_DIR || ".", "node_modules", "puppeteer"));
 }
 
-// A meta doc shaped exactly like generate_hovmollers.py writes it.
+// A meta doc shaped like the PREVIOUS generator wrote it (boolean waves +
+// one global wave list): proves the page still resolves during CDN skew.
 const META = {
   vars: {
     olr: { through: "2026-07-12", gap_filled_days: 0, waves: true },
@@ -36,6 +37,31 @@ const META = {
   template: "hov/hov_{var}_{band}_{days}_{region}.png",
   genesis_markers: 50,
   generated_utc: "2026-07-15T20:00:00Z",
+};
+
+// A meta doc shaped exactly like generate_hovmollers.py writes it NOW:
+// per-variable wave-key ARRAYS (OLR = the MJO panel, no "all") + the
+// wave-ful template.
+const FULL_WAVES = ["all", "mjo", "kelvin", "er", "mrgtd", "mrgtd_er",
+                    "lowfreq", "none"];
+const META_NEW = {
+  vars: {
+    olr: { through: "2026-07-19", gap_filled_days: 0,
+           waves: ["mjo", "kelvin", "mjo+kelvin", "none"] },
+    u200: { through: "2026-07-20", days_archived: 220, waves: FULL_WAVES },
+    u850: { through: "2026-07-20", days_archived: 220, waves: FULL_WAVES },
+    chi200: { through: "2026-07-20", days_archived: 220, waves: FULL_WAVES },
+  },
+  waves: ["mjo", "kelvin", "mjo+kelvin", "none"],
+  bands: { eq: "7.5°S–7.5°N", trop: "15°S–15°N", nh: "0°–15°N", sh: "15°S–0°" },
+  days: [60, 120, 180],
+  regions: { glob: "Global", ipac: "Indo-Pacific" },
+  template_olr: "hov/hov_olr_{wave}_{band}_{days}_{region}.png",
+  template_olr_model: "hov/hov_olr_{wave}_{band}_{days}_{region}_{model}.png",
+  template: "hov/hov_{var}_{band}_{days}_{region}.png",
+  template_wave: "hov/hov_{var}_{wave}_{band}_{days}_{region}.png",
+  genesis_markers: 50,
+  generated_utc: "2026-07-21T20:00:00Z",
 };
 
 let failures = 0;
@@ -63,7 +89,7 @@ function serve() {
   });
 }
 
-async function scenario(browser, base, { metaOk }) {
+async function scenario(browser, base, { metaOk, meta }) {
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -77,7 +103,7 @@ async function scenario(browser, base, { metaOk }) {
           status: 200,
           contentType: "application/json",
           headers: { "access-control-allow-origin": "*" },
-          body: JSON.stringify(META),
+          body: JSON.stringify(meta || META),
         });
       }
       if (url.endsWith(".png") || url.includes(".png?")) {
@@ -184,9 +210,57 @@ async function scenario(browser, base, { metaOk }) {
   // B — meta fetch fails: baked fallback, selector stays hidden
   {
     const { page, errors, state } = await scenario(browser, base, { metaOk: false });
-    check("B fallback panel", state.src.includes("hov/hov_olr_all_eq_60_glob.png"), state.src);
+    check("B fallback panel", state.src.includes("hov/hov_olr_mjo_eq_60_glob.png"), state.src);
     check("B selector hidden", state.selHidden === true);
     check("B zero page errors", errors.length === 0, errors.join(" | "));
+    await page.close();
+  }
+
+  // C — NEW meta (per-variable wave arrays): OLR opens on the MJO panel
+  // with its 4-key wave row; the row rebuilds to the full matrix on a
+  // wind view and comes back to the MJO set on OLR.
+  {
+    const { page, errors, state } = await scenario(
+      browser, base, { metaOk: true, meta: META_NEW });
+    check("C selector shown", state.selHidden === false);
+    check("C default panel is MJO",
+          state.src.includes("hov/hov_olr_mjo_eq_60_glob.png"), state.src);
+    check("C OLR wave buttons", state.rows["hov-wave"].n === 4,
+          state.rows["hov-wave"].n);
+    check("C OLR wave selected mjo",
+          String(state.rows["hov-wave"].on) === "mjo",
+          String(state.rows["hov-wave"].on));
+
+    // switch to u850: wave row rebuilds to the full matrix, default 'all'
+    await page.evaluate(() => {
+      Array.prototype.find.call(
+        document.getElementById("hov-var").children,
+        (b) => b.dataset.k === "u850").click();
+    });
+    let s = await page.evaluate(() => ({
+      src: document.getElementById("img-hov").getAttribute("src"),
+      n: document.getElementById("hov-wave").children.length,
+      waveHidden: document.getElementById("hov-wave").style.display === "none",
+    }));
+    check("C u850 wave buttons rebuilt", s.n === 8, s.n);
+    check("C u850 wave row visible", s.waveHidden === false);
+    check("C u850 default all panel",
+          s.src.includes("hov/hov_u850_all_eq_60_glob.png"), s.src);
+
+    // back to OLR: the 4-key row returns with the MJO default
+    await page.evaluate(() => {
+      Array.prototype.find.call(
+        document.getElementById("hov-var").children,
+        (b) => b.dataset.k === "olr").click();
+    });
+    s = await page.evaluate(() => ({
+      src: document.getElementById("img-hov").getAttribute("src"),
+      n: document.getElementById("hov-wave").children.length,
+    }));
+    check("C OLR wave row back to 4", s.n === 4, s.n);
+    check("C OLR back on MJO panel",
+          s.src.includes("hov/hov_olr_mjo_eq_60_glob.png"), s.src);
+    check("C zero page errors", errors.length === 0, errors.join(" | "));
     await page.close();
   }
 

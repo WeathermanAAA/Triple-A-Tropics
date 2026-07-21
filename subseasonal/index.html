@@ -147,12 +147,17 @@
     <h2>Time-Longitude (Hovmöller) Diagrams</h2>
     <p class="ss-sub">How the tropics are propagating: anomalies band-averaged
     in latitude and drawn against time (down the page) and longitude. The OLR
-    view overlays Wheeler-Kiladis space-time-filtered contours for the
-    operational wave bands (MJO, Kelvin, equatorial Rossby, MRG/TD-type,
-    low-frequency) - negative (enhanced-convection) contours solid, positive
-    dashed. Circular markers are the first tcvitals fix of each designated
-    tropical cyclone. The newest ~2 weeks of the filtered contours are
-    amplitude-damped by the real-time filter, as each panel states.
+    view is the MJO diagnostic: shading is the unfiltered anomaly (blue =
+    enhanced convection) with the seasonal cycle and the previous 120-day
+    mean removed, overlaid with Wheeler-Kiladis space-time-filtered MJO
+    contours (Kelvin optional; positive solid, negative dashed, 1-std
+    interval), and its forecast half is MJO-reconstructed OLR from the
+    selected model's ensemble-mean RMM forecast. The wind and χ views keep
+    the full wave-band matrix (MJO, Kelvin, equatorial Rossby, MRG/TD-type,
+    low-frequency). Circular markers are the first tcvitals fix of each
+    designated tropical cyclone. The newest ~2 weeks of the filtered
+    contours are amplitude-damped by the real-time filter, as each panel
+    states.
     <span id="hov-asof" class="ss-asof"></span></p>
     <div class="ss-hovsel" id="hov-sel" hidden>
       <span class="lbl">Field</span>
@@ -172,8 +177,9 @@
     <figure class="ss-card ss-hovcard">
       <img id="img-hov" alt="Time-longitude Hovmöller diagram of tropical anomalies with equatorial-wave-filtered contours and TC genesis markers">
       <figcaption id="hov-caption">Shading: the selected field's anomaly vs
-      its 1991-2020 climatology. OLR contours: wave-filtered anomalies,
-      color-coded by mode. Time runs down the page, newest at the bottom.
+      its 1991-2020 climatology (OLR: blue = enhanced convection). Contours:
+      wave-filtered anomalies, color-coded by mode. Time runs down the page,
+      newest at the bottom.
       </figcaption>
     </figure>
   </section>
@@ -365,12 +371,13 @@
 
   // Hovmöller selector (meta-driven, like the VP windows; falls back to
   // the baked default panel if the meta fetch fails)
-  var HOV_FALLBACK = 'hov/hov_olr_all_eq_60_glob.png';
+  var HOV_FALLBACK = 'hov/hov_olr_mjo_eq_60_glob.png';
   var hovImg = document.getElementById('img-hov');
   var VAR_ORDER = ['olr', 'u850', 'v850', 'u200', 'chi200'];
   var VAR_LABELS = { olr: 'OLR + waves', u850: 'u850', v850: 'v850',
                      u200: 'u200', chi200: 'χ200' };
   var WAVE_LABELS = { all: 'All waves', mjo: 'MJO', kelvin: 'Kelvin',
+                      'mjo+kelvin': 'MJO + Kelvin',
                       er: 'ER', mrgtd: 'MRG-TD', mrgtd_er: 'MRG-TD + ER',
                       lowfreq: 'Low-freq', none: 'None' };
   // per-variable wave default (applied until the user picks a wave):
@@ -420,11 +427,34 @@
         });
       }
       buildRow(rows.v, vars, VAR_LABELS, 'v');
-      buildRow(rows.w, m.waves, WAVE_LABELS, 'w');
       buildRow(rows.b, Object.keys(m.bands), m.bands, 'b');
       buildRow(rows.d, m.days, null, 'd');
       buildRow(rows.r, Object.keys(m.regions), m.regions, 'r');
       if (hasModels) buildRow(rows.m, mKeys, MODEL_LABELS, 'm');
+      // per-variable wave lists: new meta carries each variable's own
+      // wave-set keys as an ARRAY in vars[v].waves (OLR is MJO/Kelvin
+      // only; winds/chi keep the full matrix); old meta carries a
+      // boolean + the single global m.waves list. The wave row is
+      // rebuilt whenever the variable's list changes, and st.w is kept
+      // valid within it.
+      function waveListFor(v) {
+        var info = m.vars[v] || {};
+        if (Array.isArray(info.waves)) return info.waves;
+        return m.waves || [];
+      }
+      var wBuiltFor = null;
+      function syncWaves() {
+        var list = waveListFor(st.v);
+        if (wBuiltFor !== st.v) {
+          rows.w.innerHTML = '';
+          buildRow(rows.w, list, WAVE_LABELS, 'w');
+          wBuiltFor = st.v;
+        }
+        if (list.length && list.indexOf(st.w) < 0) {
+          st.w = (list.indexOf(WAVE_DEFAULT[st.v] || '') >= 0)
+            ? WAVE_DEFAULT[st.v] : list[0];
+        }
+      }
       // per-variable wave default: the buttons' own onclick runs first
       // (sets st.v + renders), then this bubbled handler applies the
       // variable's preferred wave set unless the user has picked one
@@ -433,17 +463,22 @@
                               true);
       rows.v.addEventListener('click', function () {
         if (wTouched) return;
-        var d = WAVE_DEFAULT[st.v] || 'all';
-        if (m.waves.indexOf(d) >= 0 && st.w !== d) { st.w = d; render(); }
+        var list = waveListFor(st.v);
+        var d = WAVE_DEFAULT[st.v] || list[0];
+        if (list.indexOf(d) >= 0 && st.w !== d) { st.w = d; render(); }
       });
       function render() {
         // waves are per-variable + meta-driven: a variable advertises
-        // waves:true once its wave-ful panels exist on the CDN, and the
-        // wave-less template stays as the skew-safe fallback (old meta /
-        // old panels). OLR keeps its dedicated template on old meta.
-        // ECMWF forecast variants exist for OLR only, "all"-waves only.
+        // waves (array of keys, or legacy boolean) once its wave-ful
+        // panels exist on the CDN, and the wave-less template stays as
+        // the skew-safe fallback (old meta / old panels). OLR keeps its
+        // dedicated template on old meta. ECMWF forecast variants exist
+        // for OLR only, single wave set ('mjo'; 'all' on old meta).
+        syncWaves();
         var mdl = (st.v === 'olr' && st.m !== 'gefs' && hasModels)
           ? st.m : null;
+        var mwave = Array.isArray((m.vars.olr || {}).waves)
+          ? 'mjo' : 'all';
         var hasWaves = !!(m.template_wave && m.vars[st.v] &&
                           m.vars[st.v].waves);
         var showWaves = (hasWaves || st.v === 'olr') && !mdl;
@@ -455,7 +490,7 @@
         document.getElementById('hov-model-lbl').style.display =
           showModels ? '' : 'none';
         var f = mdl
-          ? m.template_olr_model.replace('{wave}', 'all')
+          ? m.template_olr_model.replace('{wave}', mwave)
               .replace('{band}', st.b).replace('{days}', st.d)
               .replace('{region}', st.r).replace('{model}', mdl)
           : hasWaves

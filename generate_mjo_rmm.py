@@ -634,6 +634,22 @@ def main() -> None:
         print(f"rmm [{args.model}]: no forecast — nothing written")
         return
 
+    if fc is not None:
+        # ensemble-mean forecast PCs for the OLR Hovmöller's forecast
+        # half (generate_hovmollers reconstructs MJO OLR from these via
+        # subseasonal/mjo_reconstruct; runs later in the same CI job).
+        # The PCs are the plotted mean track, i.e. BoM-seam-anchored
+        # when the anchor engaged, so both products join the same track.
+        pcs_path = out / f"mjo_fc_pcs{suffix}.json"
+        pcs_path.write_text(json.dumps({
+            "model": fc["model"],
+            "label": fc["label"],
+            "init": fc["init"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "dates": [d.isoformat() for d in fc["dates"]],
+            "mean_pc1": [round(float(x), 4) for x in fc["mean"][0]],
+            "mean_pc2": [round(float(y), 4) for y in fc["mean"][1]]}))
+        print("wrote", pcs_path)
+
     meta = render_phase(rows, args.days, out, dt.date.today(), fc=fc,
                         suffix=suffix)
     render_amplitude(rows, out, fc=fc, suffix=suffix)

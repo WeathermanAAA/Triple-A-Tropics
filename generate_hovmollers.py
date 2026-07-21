@@ -4,13 +4,22 @@ Wheeler–Kiladis equatorial-wave overlays (subseasonal Phase 2).
 Variables
   olr     NOAA OLR CDR v2 daily means (NOAA PSL OPeNDAP), anomalies vs the
           SAME dataset's 1991–2020 daily LTM smoothed to mean + first 3
-          harmonics (Wheeler & Weickmann 2001). Shading = OLR anomaly
-          (green = negative = enhanced convection, the site's convention);
-          contours = space-time-filtered anomalies for the operational
-          wave bands (subseasonal/wk_filter.py: MJO / Kelvin / ER /
-          MRG–TD), filtered on the newest 365 days zero-padded to 1024
-          (WW01 real-time method — the last ~2 weeks are amplitude-damped
-          for the lowest-frequency bands and every plot says so).
+          harmonics (Wheeler & Weickmann 2001) MINUS the previous-120-day
+          running mean per longitude (the WH04 step-2 treatment — removes
+          ENSO/low-frequency variability so the intraseasonal signal
+          carries the panel). Shading = the unfiltered anomaly (blue =
+          negative = enhanced convection); contours = space-time-filtered
+          anomalies (subseasonal/wk_filter.py) for the MJO band (default)
+          with Kelvin as the only optional second mode, drawn at a 1-std
+          interval of each filtered field over the displayed window,
+          filtered on the newest 365 days zero-padded to 1024 (WW01
+          real-time method — the last ~2 weeks are amplitude-damped and
+          every plot says so). The FORECAST half is MJO-reconstructed
+          OLR from each model's ensemble-mean RMM forecast (the
+          mjo_fc_pcs*.json files generate_mjo_rmm writes earlier in the
+          same job, inverted by subseasonal/mjo_reconstruct) — never raw
+          ensemble-mean OLR, whose phase-incoherent member averaging
+          collapses the wave.
           NOTE: the classic PSL *interpolated* OLR (olr.day.mean.nc) has
           not updated since 2022 — the CDR v2 daily product is the
           PSL-hosted operational equivalent (1 deg, ~3-5 day lag).
@@ -77,7 +86,8 @@ U_LEVELS = (200.0, 850.0)
 U_LATS = np.arange(-22.0, 22.1, 2.0)      # GFS 1p00 rows kept in the archive
 MIN_CYCLES_PER_DAY = 2
 
-FETCH_DAYS = 430          # OLR pull depth (365-day filter window + slack)
+FETCH_DAYS = 490          # OLR pull depth (365-day filter window + the
+                          # 120-day running-mean spin-up + slack)
 FILTER_DAYS = 365         # WW01 real-time window
 PAD_TO = 1024             # zero-pad length for the space-time filter
 
@@ -92,15 +102,25 @@ REGIONS = {                # key -> (lon_lo, lon_hi, label)
     "glob": (0.0, 360.0, "Global"),
     "ipac": (40.0, 200.0, "Indo-Pacific"),
 }
-WAVE_SETS = {              # wave-overlay selector -> modes drawn
+WAVE_SETS = {              # wave-overlay selector -> modes drawn (u/v/chi)
     "all": ["mjo", "kelvin", "er", "mrg_td"],
     "mjo": ["mjo"], "kelvin": ["kelvin"], "er": ["er"],
     "mrgtd": ["mrg_td"], "mrgtd_er": ["mrg_td", "er"],
     "lowfreq": ["lowfreq"], "none": [],
 }
+# The OLR panel is the MJO diagnostic: MJO contours by default, Kelvin as
+# the only optional second mode ("all" is retired there; the wind/chi
+# panels keep the full WAVE_SETS matrix). The retired OLR wave keys stay
+# resolvable for one release cycle via copies of the "mjo" panel, so a
+# cached page running the previous JS/meta keeps loading images.
+OLR_WAVE_SETS = {
+    "mjo": ["mjo"], "kelvin": ["kelvin"],
+    "mjo+kelvin": ["mjo", "kelvin"], "none": [],
+}
+OLR_WAVE_COMPAT = ("all", "er", "mrgtd", "mrgtd_er", "lowfreq")
 WAVE_STYLE = {             # mode -> (label, color) on the dark canvas
     # MJO draws CHARCOAL: near-white contours washed out on the light OLR
-    # shading; charcoal reads on both the tan and teal fills and stays
+    # shading; charcoal reads on both the warm and cool fills and stays
     # distinct from Kelvin/ER/MRG-TD. Its legend chip gets a light stroke
     # so the dark label survives the dark header.
     "mjo":    ("MJO", "#262c34"),
@@ -385,37 +405,6 @@ def fetch_olr():
     return dates, lats, lons, anom, n_bad
 
 
-def fetch_olr_ltm_grid():
-    """(ltm_sm[365, lat, lon], lats, lons) — the CDR daily seasonal cycle
-    (mean + first 3 harmonics) over 20S-20N on the OLR grid. The GEFS OLR
-    forecast anomaly uses this IDENTICAL seasonal cycle as the obs side."""
-    ltm_ds = _open_dods(OLR_LTM_URL)
-    sub = ltm_ds.olr.sel(lat=slice(-20, 20))
-    ltm = _load_slabbed(sub).values.astype(float)
-    lats = sub.lat.values.astype(float)
-    lons = sub.lon.values.astype(float)
-    ltm_ds.close()
-    _guard_degenerate("OLR LTM (grid)", ltm, 150.0)
-    return smooth_climo_3harm(ltm), lats, lons
-
-
-def _regrid_field(field, src_lats, src_lons, dst_lats, dst_lons):
-    """Bilinear regrid of a 2-D (lat, lon) field onto (dst_lats, dst_lons).
-    Handles a descending source-lat axis and periodic longitude."""
-    order = np.argsort(src_lats)
-    sl = src_lats[order]
-    f = np.asarray(field)[order]
-    fi = np.empty((dst_lats.size, src_lons.size))
-    for j in range(src_lons.size):
-        fi[:, j] = np.interp(dst_lats, sl, f[:, j])
-    ext_lon = np.concatenate([src_lons, src_lons[:1] + 360.0])
-    out = np.empty((dst_lats.size, dst_lons.size))
-    for i in range(dst_lats.size):
-        ext = np.concatenate([fi[i], fi[i][:1]])
-        out[i] = np.interp(dst_lons % 360.0, ext_lon, ext)
-    return out
-
-
 # ------------------------------------------------- GFS u archive (like chi)
 # Archive tuple: (times, levels, lats, lons, u, v, ncycles). The v field
 # was added for the v850 Hovmöller; archives written before it load with
@@ -636,6 +625,7 @@ def fetch_genesis(start: dt.date, end: dt.date):
 def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                title, band_label, note_a, note_b, credit, overlays,
                genesis, region, out_png: Path, wave_step: float = 10.0,
+               sigma_contours: bool = False,
                fc_start=None, fc_note: str = "", fc_label: str = ""):
     """One time-longitude panel: shading + wave contours + genesis marks.
     field is (time, lon) newest-last; time runs DOWN the page.
@@ -660,6 +650,25 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
     thin = len(overlays) > 2
     for mode, filt in overlays:
         label, color = WAVE_STYLE[mode]
+        if sigma_contours:
+            # MJO-diagnostics spec (the OLR panel): contour interval =
+            # 1 std of THIS filtered field over the displayed window
+            # (rows shown x the region's longitudes), levels at +-1..4
+            # std; positive SOLID / negative DASHED (standard convention
+            # - the negative, enhanced-convection side is dashed here).
+            sel = (lons >= lon_lo) & (lons <= lon_hi)
+            sig = float(np.nanstd(filt[:, sel])) if sel.any() else 0.0
+            if not np.isfinite(sig) or sig <= 0.0:
+                continue
+            ax.contour(lons, t, filt,
+                       levels=[m * sig for m in WAVE_CLEV_MULTS],
+                       colors=color, linewidths=1.4, linestyles="solid")
+            ax.contour(lons, t, filt,
+                       levels=[-m * sig for m in
+                               reversed(WAVE_CLEV_MULTS)],
+                       colors=color, linewidths=1.0, linestyles="dashed",
+                       alpha=0.75)
+            continue
         neg = [-m * wave_step for m in reversed(WAVE_CLEV_MULTS)]
         pos = [m * wave_step for m in WAVE_CLEV_MULTS]
         ax.contour(lons, t, filt, levels=neg, colors=color,
@@ -720,12 +729,13 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                 linewidth=2.4, foreground="#0a0d12")])
 
     # init line: analysis above, forecast tail below (time runs DOWN the
-    # page). A clean line with a SHORT model tag only - the full forecast
-    # sentence lives in the figure footer, never floating over the data.
+    # page). ONE bold SOLID line, tagged "<MODEL> init · YYYY-MM-DD" by
+    # the caller via fc_label - the full forecast sentence lives in the
+    # figure footer, never floating over the data.
     if fc_start is not None:
         yline = mdates.date2num(dt.datetime(fc_start.year, fc_start.month,
                                             fc_start.day)) - 0.5
-        ax.axhline(yline, color=TEXT, lw=1.2, ls=(0, (6, 3)), zorder=5)
+        ax.axhline(yline, color=TEXT, lw=1.6, ls="solid", zorder=5)
         if fc_label:
             ax.text(lon_lo + 0.995 * (lon_hi - lon_lo), yline,
                     fc_label + "  ", color=TEXT, fontsize=8,
@@ -769,11 +779,14 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
         ax.text(x, 1.030, "waves:", transform=ax.transAxes, color=MUTED,
                 fontsize=8.5, ha="right")
 
-    cax = fig.add_axes([0.085, 0.058, 0.58, 0.012])
+    # bar shortened 0.58 -> 0.52 so the longest label ("OLR anomaly
+    # (W m-2), blue = enhanced convection") ends ~0.95, inside the figure
+    # (pixel-probed at dpi 140); the old 0.685 start clipped its tail
+    cax = fig.add_axes([0.085, 0.058, 0.52, 0.012])
     cb = fig.colorbar(cf, cax=cax, orientation="horizontal")
     cb.ax.tick_params(colors=MUTED, labelsize=8)
     cb.outline.set_edgecolor(GRID)
-    fig.text(0.685, 0.064, cb_label, color=MUTED, fontsize=8.5,
+    fig.text(0.625, 0.064, cb_label, color=MUTED, fontsize=8.5,
              va="center")
     if fc_note:
         fig.text(0.085, 0.026, "forecast: " + fc_note, color=MUTED,
@@ -796,125 +809,134 @@ def region_days_slices(dates, days):
 
 # ------------------------------------------------------------- sections
 
-def _smooth_lonlat(f: np.ndarray, *, nlon: int, nlat: int) -> np.ndarray:
-    """NaN-aware boxcar over (lat, lon): lon wraps, lat clamps. Small grids
-    only (the anchor-offset field) - plain shift accumulation."""
-    fin = np.isfinite(f)
-    f0 = np.where(fin, f, 0.0)
-    num = np.zeros_like(f0)
-    den = np.zeros_like(f0)
-    ny, nx = f.shape
-    for dy in range(-(nlat // 2), nlat // 2 + 1):
-        ys = np.clip(np.arange(ny) + dy, 0, ny - 1)
-        for dx in range(-(nlon // 2), nlon // 2 + 1):
-            xs = (np.arange(nx) + dx) % nx
-            num += f0[np.ix_(ys, xs)]
-            den += fin[np.ix_(ys, xs)]
-    return np.where(den > 0, num / den, np.nan)
-
-
 # per-model OLR display strings: (title short-name, credit source piece).
-# gefs reproduces the original strings byte-for-byte.
 _OLR_FC_LABEL = {
     # short name kept title-length-safe (the fixed band label sits at the
-    # title's right); the init-line note + credit carry the full source
-    "gefs": ("GEFS", "NCEP GEFS mean"),
-    "ifs": ("IFS", "ECMWF IFS (open data CC BY 4.0)"),
-    "ens": ("ENS", "ECMWF ENS mean (open data CC BY 4.0)"),
+    # title's right); the init-line note + credit carry the full source.
+    # Credit pieces are length-budgeted: the whole credit line must end
+    # left of the watermark (pixel-probed at dpi 140) — don't lengthen.
+    "gefs": ("GEFS", "NCEP GEFS (RMM fcst)"),
+    "ifs": ("IFS", "ECMWF IFS RMM fcst (CC BY 4.0)"),
+    "ens": ("ENS", "ECMWF ENS RMM fcst (CC BY 4.0)"),
 }
+# forecast-half provenance per model: (init-line tag, fc_note wording).
+# The forecast half is MJO-RECONSTRUCTED OLR from the model's mean RMM
+# forecast - said exactly, per model honestly (IFS is a single run).
+_FC_RECON = {
+    "gefs": ("GEFS", "GEFS ensemble-mean RMM"),
+    "ifs": ("ECMWF-IFS", "ECMWF IFS single-run RMM"),
+    "ens": ("ECMWF-ENS", "ECMWF ENS ensemble-mean RMM"),
+}
+# bands that carry the forecast tail: the reconstruction is the WH04
+# 15S-15N structure, honest for the equatorial/tropical band-means only;
+# nh/sh render analysis-only.
+_FC_BANDS = ("eq", "trop")
 
 
-def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None,
+def _load_fc_pcs(out_dir: Path, model: str, max_age_days: float = 2.0):
+    """(init, dates, pc1, pc2, label) from the mjo_fc_pcs{suffix}.json
+    generate_mjo_rmm wrote earlier in this same CI job, or None (missing,
+    malformed, wrong model, or stale init). NO fallback to raw model OLR:
+    a missing/stale file simply skips that model's forecast tail."""
+    sfx = {"gefs": "", "ifs": "_ifs", "ens": "_ens"}[model]
+    path = out_dir / f"mjo_fc_pcs{sfx}.json"
+    if not path.exists():
+        print(f"OLR fc [{model}]: {path.name} missing — tail skipped")
+        return None
+    try:
+        doc = json.loads(path.read_text())
+        if doc.get("model") != model:
+            raise ValueError(f"model mismatch ({doc.get('model')!r})")
+        init = dt.datetime.strptime(doc["init"], "%Y-%m-%dT%H:%M:%SZ")
+        fdates = [dt.date.fromisoformat(d) for d in doc["dates"]]
+        pc1 = np.asarray(doc["mean_pc1"], float)
+        pc2 = np.asarray(doc["mean_pc2"], float)
+        if not fdates or not (len(fdates) == pc1.size == pc2.size):
+            raise ValueError("empty / length mismatch")
+    except Exception as e:  # noqa: BLE001 — a bad file just skips the tail
+        print(f"OLR fc [{model}]: {path.name} unreadable ({e}) — "
+              "tail skipped")
+        return None
+    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    if (now - init).total_seconds() > max_age_days * 86400:
+        print(f"OLR fc [{model}]: init {init:%Y-%m-%d} stale — "
+              "tail skipped")
+        return None
+    return init, fdates, pc1, pc2, doc.get("label", model)
+
+
+def do_olr(hov: Path, meta: dict, genesis: list,
            fc_models=("gefs",)) -> None:
+    import mjo_reconstruct
+    import rmm_wh04
     print("OLR: fetching CDR v2 + LTM ...")
     dates, lats, lons, anom, n_filled = fetch_olr()
     print(f"OLR through {dates[-1]} ({len(dates)} days, "
           f"{n_filled} gap-filled)")
     nf = min(len(dates), FILTER_DAYS)
     f_dates = dates[-nf:]
-    obs_anom = anom[-nf:]
 
-    # ---- model OLR forecast tails (Phase 3). Additive: any failure only
-    # drops that model's tail, never the analysis. Two OLR-specific wrinkles
-    # the wind/chi extensions don't have: (a) the CDR lags realtime ~4 days
-    # while the forecast starts at init+1, so there is an honest multi-day
-    # gap between analysis and forecast (blank rows; the WK filter bridges
-    # it); (b) every model's OLR proxy carries a mean bias vs the CDR
-    # (GEFS ULWRF, ECMWF -ttr/86400), so the forecast anomaly is per-cell
-    # seam-anchored to the analysis (the propagating MJO pattern is
-    # preserved; only the constant offset is removed), like the RMM seam.
-    ltm_grid = None                    # fetched once, shared across models
-    fc_by = {}                         # model -> (anom, kept, init, ns)
+    # per-band analysis series, WH04-consistent: cos-weighted band-mean,
+    # then remove the previous-120-day running mean per longitude
+    # (rmm_wh04's exact convention). This is the same treatment the
+    # forecast reconstruction carries by construction — its PCs come from
+    # 120-day-removed anomalies — so both halves live in one anomaly
+    # space; it also removes the ENSO/low-frequency shading. Computed on
+    # the full FETCH_DAYS fetch so every displayed row has a full window.
+    bms = {}
+    for bkey, (lo, hi, _bl) in BANDS.items():
+        bm_full = band_mean(anom, lats, lo, hi)
+        bms[bkey] = rmm_wh04.remove_trailing_mean(bm_full)[-nf:]
+
+    # ---- forecast half = MJO-RECONSTRUCTED OLR from each model's
+    # ensemble-mean RMM forecast (the mjo_fc_pcs{suffix}.json files
+    # generate_mjo_rmm wrote earlier in this same job). Raw ensemble-mean
+    # OLR is NOT used: phase-incoherent member averaging collapses the
+    # propagating wave (the old washed-out forecast half). A missing or
+    # stale PC file skips that model's tail — never a raw-OLR fallback.
+    fc_by = {}          # model -> (rows on CDR lons, kept dates, init)
+    ext_l = np.concatenate([mjo_reconstruct.RMM_LONS,
+                            mjo_reconstruct.RMM_LONS[:1] + 360.0])
     for model in fc_models:
-        try:
-            if model == "gefs":
-                if not gefs_tail:
-                    continue
-                fc_init = gefs_tail[0]
-                fdates, folr, fc_ns_all = gefs_mean.fetch_olr_tail(fc_init)
-                glats, glons = gefs_mean.grid()
-            else:
-                import ecmwf_open
-                ad = ecmwf_open.OPER if model == "ifs" else ecmwf_open.ENS
-                fc_init = ad.newest_complete_init()
-                fdates, folr, fc_ns_all = ad.fetch_olr_tail(fc_init,
-                                                            days=15)
-                glats, glons = ad.grid()
-            keep = [k for k, d in enumerate(fdates or [])
-                    if d > f_dates[-1]]
-            fc_kept = [fdates[k] for k in keep]
-            fc_ns = [fc_ns_all[k] for k in keep]
-            if not fc_kept:
-                continue
-            if ltm_grid is None:
-                ltm_grid = fetch_olr_ltm_grid()
-            ltm_sm, llat, llon = ltm_grid
-            fc_anom = np.empty((len(keep), lats.size, lons.size))
-            for m2, k in enumerate(keep):
-                reg = _regrid_field(folr[k], glats, glons, lats, lons)
-                doy = min(fc_kept[m2].timetuple().tm_yday, 365)
-                ltm_k = _regrid_field(ltm_sm[doy - 1], llat, llon,
-                                      lats, lons)
-                fc_anom[m2] = reg - ltm_k
-            obs_ref = np.nanmean(obs_anom[-3:], axis=0)
-            fc_ref = np.nanmean(fc_anom[:3], axis=0)
-            # PLANETARY-SCALE anchor only: a raw per-cell offset stamps the
-            # anchor days' synoptic OLR pattern onto EVERY forecast row as a
-            # time-constant field - measured at 9.2 W/m2 small-scale std,
-            # 1.3x the forecast's own day-to-day signal, i.e. the vertical
-            # striping that used to dominate the forecast half. Smoothing
-            # the offset to ~30 deg lon x ~10 deg lat removes only the
-            # systematic model-vs-CDR bias, never the anchor-day weather.
-            off = _smooth_lonlat(obs_ref - fc_ref, nlon=31, nlat=11)
-            fc_anom += off[None]
-            fc_by[model] = (fc_anom, fc_kept, fc_init, fc_ns)
-        except Exception as e:  # noqa: BLE001 — tail is additive
-            print(f"OLR fc tail [{model}] failed "
-                  f"({type(e).__name__}: {e}) — skipped")
+        pcs = _load_fc_pcs(hov.parent, model)
+        if pcs is None:
+            continue
+        fc_init, fdates, pc1, pc2, _label = pcs
+        keep = [k for k, d in enumerate(fdates) if d > f_dates[-1]]
+        if not keep:
+            continue
+        rec = mjo_reconstruct.olr_from_pcs(pc1[keep], pc2[keep])
+        rows = np.empty((len(keep), lons.size))
+        for k in range(len(keep)):
+            ext = np.concatenate([rec[k], rec[k][:1]])
+            rows[k] = np.interp(lons % 360.0, ext_l, ext)
+        print(f"OLR fc [{model}]: {len(keep)} reconstructed day(s), "
+              f"init {fc_init:%Y-%m-%d} 00Z, range "
+              f"{np.nanmin(rec):+.1f} .. {np.nanmax(rec):+.1f} W m-2")
+        fc_by[model] = (rows, [fdates[k] for k in keep], fc_init)
 
-    # render per model: gefs always renders (analysis-only if its tail
-    # failed) with unchanged names + full wave matrix; ifs/ens render the
-    # unfiltered "all" set only, suffixed _ifs/_ens, and only with a tail.
+    # render per model: gefs always renders (analysis-only if its PC file
+    # is absent) at unchanged names + the OLR wave matrix; ifs/ens render
+    # the "mjo" set only, suffixed _ifs/_ens, and only with a tail.
     render_order = list(dict.fromkeys(["gefs", *fc_models]))
     for model in render_order:
-        fc_anom, fc_kept, fc_init, fc_ns = fc_by.get(
-            model, (None, [], None, []))
+        fc_rows_all, fc_kept, fc_init = fc_by.get(model, (None, [], None))
         if model != "gefs" and not fc_kept:
             continue
         msfx = "" if model == "gefs" else f"_{model}"
         short, cred_src = _OLR_FC_LABEL[model]
-        wave_sets = (WAVE_SETS if model == "gefs"
-                     else {"all": WAVE_SETS["all"]})
-        nf2 = min(nf + len(fc_kept), FILTER_DAYS)
-        title = ("OLR anomaly + equatorial waves · through "
-                 f"{f_dates[-1]:%Y-%m-%d}"
-                 + (f" (+{short})" if fc_kept else ""))
+        tag, recon_src = _FC_RECON[model]
+        wave_sets = (OLR_WAVE_SETS if model == "gefs"
+                     else {"mjo": OLR_WAVE_SETS["mjo"]})
         for bkey, (lo, hi, blabel) in BANDS.items():
-            bm = band_mean(obs_anom, lats, lo, hi)          # (nf, lon)
-            bm_fc = (band_mean(fc_anom, lats, lo, hi)
-                     if fc_anom is not None else None)
-            fc_axis, fc_rows = _fc_axis_for(f_dates, fc_kept, bm_fc) \
-                if bm_fc is not None else ([], None)
+            bm = bms[bkey]                                  # (nf, lon)
+            # the tail rides the equatorial/tropical bands only: the
+            # reconstruction is the WH04 15S-15N structure and has no
+            # latitude dependence to offer nh/sh (analysis-only there)
+            band_fc = (fc_kept if (fc_rows_all is not None
+                                   and bkey in _FC_BANDS) else [])
+            fc_axis, fc_rows = (_fc_axis_for(f_dates, band_fc, fc_rows_all)
+                                if band_fc else ([], None))
             bm_ext = np.vstack([bm, fc_rows]) if fc_rows is not None else bm
             # BRIDGE the CDR->forecast latency gap for the DISPLAY: the CDR
             # ends ~4 d before the init, leaving blank rows between analysis
@@ -925,7 +947,11 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None,
             if fc_rows is not None:
                 fc_rows = _bridge_gap_rows(bm, fc_rows)
             nfc = len(fc_axis)
+            nf2 = min(nf + nfc, FILTER_DAYS)
             filts = wave_filts(bm_ext, nf2)
+            title = ("OLR anomaly + equatorial waves · through "
+                     f"{f_dates[-1]:%Y-%m-%d}"
+                     + (f" (+{short})" if nfc else ""))
             for nd in DAYS:
                 d_sub, sl = region_days_slices(f_dates, nd)
                 n = len(d_sub)
@@ -934,45 +960,64 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None,
                               if fc_rows is not None else bm[sl])
                 for wkey, modes in wave_sets.items():
                     overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
-                    note_b = (("contours: wave-filtered anomalies, −10 W m⁻² "
-                               "(enhanced) only, thinned · " if len(modes) > 2
-                               else "contours: wave-filtered anomalies, "
-                               "−10 W m⁻² solid (enhanced) / +10 dashed · ")
-                              + (f"filtered on the analysis+forecast concat; "
-                                 f"CDR→{short} gap bridged by interpolation"
-                                 if nfc else "newest ~2 weeks "
-                                 "amplitude-damped (WW01 real-time filter)"))
+                    # one line only — measured to fit the figure width at
+                    # fontsize 8.5; the full forecast sentence (with the
+                    # gap-bridge disclosure) lives in the fc footer line
+                    note_b = ("" if not modes else
+                              "contours: wavenumber-frequency filtering "
+                              "per NOAA PSL conventions, 1-std interval, "
+                              "+ solid / − dashed (enhanced)"
+                              + (" · fcst concat, gap bridged" if nfc
+                                 else " · ~2 wk damped (WW01)"))
                     for rkey in REGIONS:
+                        out_png = hov / (f"hov_olr_{wkey}_{bkey}_"
+                                         f"{nd}_{rkey}{msfx}.png")
                         render_hov(
                             field_plot, d_plot, lons,
-                            cmap="BrBG_r", vmax=60, step=10,
-                            cb_label="OLR anomaly (W m⁻²), green = enhanced",
+                            cmap="RdBu_r", vmax=60, step=10,
+                            cb_label=("OLR anomaly (W m⁻²), "
+                                      "blue = enhanced convection"),
                             title=title,
                             band_label=blabel,
-                            note_a=("shading: OLR anomaly vs 1991–2020 daily "
-                                    "climatology (mean + 3 harmonics)"),
+                            # length-budgeted: must end left of the
+                            # two-chip wave legend (pixel-probed ~0.70
+                            # axes-frac vs legend left edge ~0.79)
+                            note_a=("shading: OLR anomaly vs 1991–2020 "
+                                    "climatology (3 harmonics) minus "
+                                    "the previous 120-day mean"),
                             note_b=note_b,
-                            credit=(f"Data: NOAA OLR CDR + {cred_src} (fcst, "
-                                    "bias-anchored) · ○ genesis: tcvitals "
-                                    "(UCAR/RAL)" if nfc else
-                                    "Data: NOAA OLR CDR (via NOAA PSL) · "
-                                    "○ genesis: tcvitals (UCAR/RAL)"),
+                            credit=((f"Data: NOAA OLR CDR + {cred_src} · "
+                                     "○ genesis: tcvitals (UCAR/RAL)")
+                                    if nfc else
+                                    ("Data: NOAA OLR CDR (via NOAA PSL) · "
+                                     "○ genesis: tcvitals (UCAR/RAL)")),
                             overlays=overlays, genesis=genesis,
                             region=rkey,
-                            out_png=hov / (f"hov_olr_{wkey}_{bkey}_"
-                                           f"{nd}_{rkey}{msfx}.png"),
+                            out_png=out_png,
+                            sigma_contours=True,
                             fc_start=fc_axis[0] if fc_axis else None,
-                            fc_note=(gefs_fc_note(fc_init, fc_ns,
-                                                  fc_kept[-1], model=model)
+                            fc_note=(f"MJO-reconstructed OLR from "
+                                     f"{recon_src} (RMM1/RMM2 × WH04 "
+                                     f"EOFs), valid to "
+                                     f"{band_fc[-1]:%Y-%m-%d}, CDR gap "
+                                     f"bridged"
                                      if fc_axis else ""),
-                            fc_label=({"gefs": "GEFS",
-                                       "ifs": "ECMWF-IFS",
-                                       "ens": "ECMWF-ENS"}[model] + " init"
+                            fc_label=(f"{tag} init · {fc_init:%Y-%m-%d}"
                                       if fc_axis else ""))
+                        if wkey == "mjo":
+                            # retired wave keys resolve for one release
+                            # cycle (cached pages / old meta): the MJO
+                            # default stands in for the old sets
+                            for old in (OLR_WAVE_COMPAT
+                                        if model == "gefs" else ("all",)):
+                                shutil.copyfile(
+                                    out_png,
+                                    hov / (f"hov_olr_{old}_{bkey}_"
+                                           f"{nd}_{rkey}{msfx}.png"))
         if model == "gefs":
             meta["vars"]["olr"] = {"through": f_dates[-1].isoformat(),
                                    "gap_filled_days": n_filled,
-                                   "waves": True,
+                                   "waves": list(OLR_WAVE_SETS),
                                    **({"fc_to": fc_kept[-1].isoformat(),
                                        "fc_init": fc_init.strftime(
                                            "%Y-%m-%dT%H:%M:%SZ")}
@@ -1139,7 +1184,8 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                             fc_note=(gefs_fc_note(fc_init, fc_ns,
                                                   fc_kept[-1])
                                      if fc_axis else ""),
-                            fc_label="GEFS init" if fc_axis else "")
+                            fc_label=(f"GEFS init · {fc_init:%Y-%m-%d}"
+                                      if fc_axis else ""))
                         if wkey == "none":
                             # legacy wave-less name: kept one release cycle
                             # so a cached page (old JS) still resolves
@@ -1148,7 +1194,7 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                                                 f"{nd}_{rkey}.png"))
         meta["vars"][vkey] = {"through": times[-1].isoformat(),
                               "days_archived": len(times),
-                              "waves": True,
+                              "waves": list(WAVE_SETS),
                               **({"fc_to": fc_kept[-1].isoformat(),
                                   "fc_init": fc_init.strftime(
                                       "%Y-%m-%dT%H:%M:%SZ")}
@@ -1259,7 +1305,8 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                             fc_note=(gefs_fc_note(fc_init, fc_ns,
                                                   fc_kept[-1])
                                      if fc_axis else ""),
-                            fc_label="GEFS init" if fc_axis else "")
+                            fc_label=(f"GEFS init · {fc_init:%Y-%m-%d}"
+                                      if fc_axis else ""))
                         if wkey == "none":
                             shutil.copyfile(
                                 out_png, hov / (f"hov_v850_{bkey}_"
@@ -1267,7 +1314,7 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
         meta["vars"]["v850"] = {"through": times[-1].isoformat(),
                                 "days_archived": int(np.isfinite(
                                     v[:, li850]).any(axis=(1, 2)).sum()),
-                                "waves": True,
+                                "waves": list(WAVE_SETS),
                                 **({"fc_to": fc_kept[-1].isoformat(),
                                     "fc_init": fc_init.strftime(
                                         "%Y-%m-%dT%H:%M:%SZ")}
@@ -1389,7 +1436,8 @@ def do_chi(hov: Path, meta: dict, genesis: list,
                         fc_start=fc_axis[0] if fc_axis else None,
                         fc_note=(gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
                                  if fc_axis else ""),
-                        fc_label="GEFS init" if fc_axis else "")
+                        fc_label=(f"GEFS init · {fc_init:%Y-%m-%d}"
+                                  if fc_axis else ""))
                     if wkey == "none":
                         # legacy wave-less name: kept one release cycle
                         # so a cached page (old JS) still resolves
@@ -1398,7 +1446,7 @@ def do_chi(hov: Path, meta: dict, genesis: list,
                                             f"{nd}_{rkey}.png"))
     meta["vars"]["chi200"] = {"through": times[-1].isoformat(),
                               "days_archived": len(times),
-                              "waves": True,
+                              "waves": list(WAVE_SETS),
                               **({"fc_to": fc_kept[-1].isoformat(),
                                   "fc_init": fc_init.strftime(
                                       "%Y-%m-%dT%H:%M:%SZ")}
@@ -1422,9 +1470,11 @@ def main() -> None:
     p.add_argument("--skip-chi", action="store_true")
     p.add_argument("--fc-models", default="gefs",
                    help="comma list of OLR forecast-tail models "
-                        "(gefs,ifs,ens). gefs renders the full wave matrix "
-                        "at unchanged names; ifs/ens add _ifs/_ens-suffixed "
-                        "'all'-wave panels (ECMWF open data, CC BY 4.0).")
+                        "(gefs,ifs,ens); tails are MJO-reconstructed from "
+                        "each model's mjo_fc_pcs json. gefs renders the OLR "
+                        "wave matrix at unchanged names; ifs/ens add "
+                        "_ifs/_ens-suffixed 'mjo'-wave panels (ECMWF open "
+                        "data, CC BY 4.0).")
     args = p.parse_args()
     _toks = [m.strip() for m in args.fc_models.split(",") if m.strip()]
     fc_models = tuple(m for m in _toks
@@ -1442,7 +1492,10 @@ def main() -> None:
         out / "chi_daily_archive.nc"
 
     today = dt.datetime.now(dt.timezone.utc).date()
-    meta = {"vars": {}, "waves": list(WAVE_SETS.keys()),
+    # meta["waves"] is the DEFAULT (OLR) wave list — the page opens on OLR
+    # and old JS validates its wave state against it. Per-variable lists
+    # ride meta["vars"][v]["waves"] (arrays; old JS truth-tests them).
+    meta = {"vars": {}, "waves": list(OLR_WAVE_SETS),
             "bands": {k: v[2] for k, v in BANDS.items()},
             "days": list(DAYS),
             "regions": {k: v[2] for k, v in REGIONS.items()},
@@ -1460,10 +1513,10 @@ def main() -> None:
 
     # GEFS ensemble-mean forecast tail (Phase 3 Group B): fetched once
     # (or reused from the VP product's gefs_tail.nc in the same run) and
-    # threaded into the OLR/u/v/chi sections; None = analysis-only, as before.
-    # The winds tail (gefs_tail) carries u/v; do_olr additionally fetches the
-    # ensemble-mean OLR tail for the same init.
-    gefs_tail = (None if (args.skip_u and args.skip_chi and args.skip_olr)
+    # threaded into the u/v/chi sections; None = analysis-only, as before.
+    # The OLR section no longer touches it — its forecast half is the MJO
+    # reconstruction from generate_mjo_rmm's PC files.
+    gefs_tail = (None if (args.skip_u and args.skip_chi)
                  else get_gefs_tail(out))
 
     # one flaky upstream (PSL THREDDS, AWS GFS, R2) must not take down
@@ -1472,7 +1525,6 @@ def main() -> None:
     sections = []
     if not args.skip_olr:
         sections.append(("OLR", lambda: do_olr(hov, meta, genesis,
-                                                gefs_tail=gefs_tail,
                                                 fc_models=fc_models)))
     if not args.skip_u:
         sections.append(("u", lambda: do_u(
