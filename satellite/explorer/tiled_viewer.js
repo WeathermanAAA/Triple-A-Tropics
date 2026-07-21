@@ -397,6 +397,7 @@
         if (counts[k] > bestN) { bestN = counts[k]; G = +k; }
       });
       G = Math.max(G, 600e3);
+      this._loopCadenceMs = (G <= 3600e3) ? G : 0;
       if (G <= 3600e3) {
         var kept = [], tol = G / 3;
         for (var slot = msArr[msArr.length - 1]; slot >= msArr[0] - tol; slot -= G) {
@@ -420,6 +421,34 @@
         return sunElevDeg(stampMs(st2), cLat, cLon) > -1;
       });
       if (lit.length >= 2 && lit.length < t.length) t = lit;
+    }
+    // UNIFORM CADENCE THROUGH THE LAST FRAME. The cadence grid above anchors
+    // to the NEWEST frame, so a newest frame that arrives after a latency gap
+    // (the intervening cadence slots never landed) is kept on a grid slot but
+    // separated from the dense run by a MULTIPLE of the step — an oversized
+    // final step below the head-straggler threshold (measured: a 40-min last
+    // step in a 10-min C13 loop, 03:31Z→04:11Z). Keep the newest frame in the
+    // loop only when it sits within ~1 cadence step of the prior on-grid
+    // frame; otherwise HOLD the tail at that last on-cadence slot so the final
+    // interval equals the cadence like every other frame, and record the hold
+    // (surfaced as FEED PAUSED). Clears the instant the missing slots fill and
+    // the loop follows live again.
+    this._offGridHoldMs = 0;
+    var cad = this._loopCadenceMs || 0;
+    if (!cad && t.length > 2) {
+      var gaps = [];
+      for (var ci = 1; ci < t.length; ci++) {
+        gaps.push(stampMs(t[ci]) - stampMs(t[ci - 1]));
+      }
+      gaps.sort(function (a, b) { return a - b; });
+      cad = gaps[Math.floor(gaps.length / 2)];
+    }
+    if (cad > 0 && cad <= 3600e3) {
+      while (t.length > 4 &&
+             stampMs(t[t.length - 1]) - stampMs(t[t.length - 2]) > 1.5 * cad) {
+        this._offGridHoldMs = stampMs(t[t.length - 2]);  // the held-at slot
+        t = t.slice(0, t.length - 1);
+      }
     }
     return t.slice(Math.max(0, t.length - cap));
   };

@@ -135,7 +135,15 @@
   // Machine (old frames are the point there)
   function pausedTag(pane) {
     if (S.tm.on) return '';
-    var newest = pane && pane.tv && pane.tv.manifest && pane.tv.manifest.latest;
+    var tv = pane && pane.tv;
+    // cadence hold: the loop tail is held at the last on-cadence slot because
+    // the newest frame is off-grid / the intervening slots never landed (a
+    // latency gap). Surface the true age of the held tail — it grows until the
+    // grid fills, then the hold clears and the loop follows live again.
+    if (tv && tv._offGridHoldMs) {
+      return 'FEED PAUSED (' + fmtAgeH(Date.now() - tv._offGridHoldMs) + ' old)';
+    }
+    var newest = tv && tv.manifest && tv.manifest.latest;
     var age = stampAgeMs(newest);
     if (!isFinite(age) || age <= FEED_PAUSED_MS) return '';
     return 'FEED PAUSED (' + fmtAgeH(age) + ' old)';
