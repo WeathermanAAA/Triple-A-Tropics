@@ -110,6 +110,22 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
   </div>
 </section>
 
+<section class="chart-section" id="hy2-section">
+  <div id="hy2-view" style="display:none">
+    <h2>HY-2 HSCAT winds · previous day</h2>
+    <p class="qsa-note">Daily 25&nbsp;km ocean winds from the HY-2B/2C
+    scatterometers, a <b>delayed</b> look (files publish ~1–2 days behind
+    sensing — never current). Rain, land, and low-quality cells are removed;
+    Ku-band still reads high in residual rain.
+    Data: EUMETSAT/OSI SAF/KNMI · Generated using E.U. Copernicus Marine
+    Service Information (doi:10.48670/moi-00182) · HSCAT L1B courtesy
+    NSOAS/CNSA.</p>
+    <div class="qsa-controls" id="hy2-controls"></div>
+    <img class="qsa-img" id="hy2-img" alt="HY-2 HSCAT daily scatterometer wind field">
+    <div class="qsa-cap" id="hy2-cap"></div>
+  </div>
+</section>
+
 <section class="chart-section" id="qscat-section">
   <div id="qscat-archive" style="display:none">
     <h2>Archived passes · QuikSCAT (1999–2009)</h2>
@@ -153,5 +169,6 @@ document.getElementById('cyear').textContent = new Date().getFullYear();</script
 <script src="/models/regions.js?v=e3af569ee9"></script>
 <script src="/ascat/ascat.js?v=0019"></script>
 <script src="/ascat/qscat_archive.js?v=0001"></script>
+<script src="/ascat/hy2_view.js?v=0001"></script>
 </body>
 </html>
