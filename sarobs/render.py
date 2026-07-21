@@ -222,7 +222,10 @@ def _overlay_low_salinity(ax, ext, salinity) -> bool:
     """Hatch low-salinity water (SMAP SSS < LOW_SSS_PSU) within the pass
     extent. Nearest-neighbour samples the regular 0.25 deg SSS grid onto a
     coarse grid over the extent, then hatches the sub-threshold region.
-    Returns True iff any low-salinity water falls inside the scene."""
+    The hatch is a SUBTLE reliability texture, not a mask: thin, widely
+    spaced, low-alpha mid-tone lines so the wind field still reads clearly
+    THROUGH it (a 'flagged' cue). Returns True iff any low-salinity water
+    falls inside the scene."""
     import matplotlib as mpl
     slat, slon, sss = salinity
     gx = np.linspace(ext[0], ext[1], 140)
@@ -236,14 +239,20 @@ def _overlay_low_salinity(ax, ext, salinity) -> bool:
     low = np.where(np.isfinite(samp) & (samp < LOW_SSS_PSU), 1.0, 0.0)
     if low.sum() < 2:
         return False
+    # house-muted blue-grey (a lightened MUTED, NOT near-white) with baked-in
+    # low alpha: reads as a faint diagonal texture over BOTH the bright wind
+    # ramp and the dark no-data ocean, while the wind field shows clearly
+    # through. Single-direction "/" = the widest hatch spacing matplotlib
+    # offers; 0.26 pt lines.
     old_c, old_lw = mpl.rcParams["hatch.color"], mpl.rcParams["hatch.linewidth"]
-    mpl.rcParams["hatch.color"] = "#cfe0f5"
-    mpl.rcParams["hatch.linewidth"] = 0.45
+    mpl.rcParams["hatch.color"] = (0.62, 0.67, 0.74, 0.50)
+    mpl.rcParams["hatch.linewidth"] = 0.26
     try:
         ax.contourf(GX, GY, low, levels=[0.5, 1.5], colors=[(0, 0, 0, 0)],
-                    hatches=["////"], zorder=2.6)
-        ax.contour(GX, GY, low, levels=[0.5], colors="#cfe0f5",
-                   linewidths=0.6, alpha=0.5, zorder=2.7)
+                    hatches=["/"], zorder=2.6)
+        ax.contour(GX, GY, low, levels=[0.5],
+                   colors=[(0.62, 0.67, 0.74, 0.30)],
+                   linewidths=0.4, zorder=2.7)
     finally:
         mpl.rcParams["hatch.color"] = old_c
         mpl.rcParams["hatch.linewidth"] = old_lw
@@ -280,7 +289,7 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".",
     aspect = 1.0 / max(0.2, math.cos(math.radians(midlat)))
 
     fig = plt.figure(figsize=(11.4, 8.2), dpi=150, facecolor=BG)
-    ax = fig.add_axes([0.055, 0.075, 0.83, 0.83], facecolor=OCEAN)
+    ax = fig.add_axes([0.055, 0.095, 0.83, 0.81], facecolor=OCEAN)
     ax.set_xlim(ext[0], ext[1])
     ax.set_ylim(ext[2], ext[3])
     ax.set_aspect(aspect)
@@ -376,16 +385,18 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".",
         imagery = f"RADARSAT-2 imagery © MDA {yr}"
     else:
         imagery = "Satellite SAR imagery"
-    fig.text(0.055, 0.022,
-             f"{imagery} · Processed at NOAA/NESDIS/STAR/SOCD · ~500 m C-band"
-             + (" · salinity: RSS SMAP" if sal_shown else ""),
+    fig.text(0.055, 0.020,
+             f"{imagery} · Processed at NOAA/NESDIS/STAR/SOCD · ~500 m C-band",
              color=MUTED, fontsize=7.2, ha="left")
     if sal_shown:
-        fig.text(0.055, 0.05,
+        # own line, sitting in the clear band BELOW the longitude tick
+        # labels (axes bottom is 0.095) and above the credit row — no
+        # collision with the axis. Carries its own RSS attribution.
+        fig.text(0.055, 0.051,
                  f"Hatched: low-salinity water (SMAP 8-day SSS < "
                  f"{int(LOW_SSS_PSU)}), where C-band SAR winds are less "
-                 "reliable", color=MUTED, fontsize=7.5, ha="left")
-    fig.text(0.885, 0.022, "@WeathermanAAA_", color=MUTED, fontsize=8,
+                 "reliable · RSS SMAP", color=MUTED, fontsize=7.2, ha="left")
+    fig.text(0.885, 0.020, "@WeathermanAAA_", color=MUTED, fontsize=8,
              ha="right", fontweight="bold")
 
     buf = io.BytesIO()
