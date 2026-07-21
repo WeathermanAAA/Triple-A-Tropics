@@ -132,39 +132,49 @@ def _style_axes(ax):
     ax.tick_params(colors=MUTED_COLOR, labelsize=9)
 
 
-FC_COLOR = "#ffb83a"        # ensemble mean (amber; obs track stays teal)
-FC_MEMBER = "#8ea2bd"       # member spaghetti (muted)
+OBS_COLOR = "#e5edf6"       # observed track: the house bg is dark navy,
+                            # so "observed = black" translates to the
+                            # highest-contrast neutral (near-white)
+FC_COLOR = "#ffb83a"        # ensemble mean (the single amber accent)
+FC_LEAD = ("#ffb83a", "#ffc96e", "#ffdba2")
+                            # ensemble-mean line shaded by lead: amber
+                            # stepping paler every 5 forecast days
+FC_MEMBER = "#ffd27a"       # member spaghetti: thin desaturated tint of
+                            # the amber at low alpha (same data family as
+                            # the mean; the old blue-grey read as a
+                            # separate one)
 FC_BAND = "#ffd27a"         # amplitude percentile bands: a clean
                             # light-amber tint (amber over the dark
                             # panel went muddy-olive at low alpha)
 
-# Forecast model sources for the RMM layer. gefs strings reproduce the
-# original labels byte-for-byte; ifs/ens ride subseasonal/ecmwf_open.py
-# (ECMWF open data, CC BY 4.0 — credited on-plot and in meta). Suffixed
-# outputs land beside the GEFS ones so the page's model selector can swap.
+# Forecast model sources for the RMM layer. ifs/ens ride
+# subseasonal/ecmwf_open.py (ECMWF open data, CC BY 4.0 — credited
+# on-plot and in meta). Suffixed outputs land beside the GEFS ones so
+# the page's model selector can swap.
 MODELS = {
     "gefs": {"suffix": "", "label": "GEFS", "fc_days": 16,
              "limit": "~16-day limit",
-             "sub_desc": "GEFS members (thin) + ensemble mean "
-                         "(amber, smoothed)",
-             "amp_desc": "median member (line) + 25-75 / 10-90 member "
-                         "bands · dashed = vector-mean |RMM| (drops with "
-                         "phase spread, not weakening)",
+             "sub_desc": "GEFS members (thin) + mean "
+                         "(amber, paler with lead)",
+             "amp_desc": "mean member amplitude (line) + 25-75 / 10-90 "
+                         "member bands · dashed = vector-mean |RMM| "
+                         "(drops with phase spread, not weakening)",
              "source": "NOAA NCEP GEFS (members + ensemble mean), "
                        "WH04 EOF projection"},
     "ifs":  {"suffix": "_ifs", "label": "ECMWF IFS", "fc_days": 15,
              "limit": "~15-day limit",
-             "sub_desc": "ECMWF IFS single high-res run (amber)",
-             "amp_desc": "single high-res run, |RMM|",
+             "sub_desc": "ECMWF IFS single high-res run "
+                         "(amber, paler with lead)",
+             "amp_desc": "single run, |RMM|",
              "source": "ECMWF IFS (HRES) via ECMWF open data (CC BY 4.0), "
                        "WH04 EOF projection"},
     "ens":  {"suffix": "_ens", "label": "ECMWF ENS", "fc_days": 15,
              "limit": "~15-day limit",
-             "sub_desc": "ECMWF ENS members (thin) + ensemble mean "
-                         "(amber, smoothed)",
-             "amp_desc": "median member (line) + 25-75 / 10-90 member "
-                         "bands · dashed = vector-mean |RMM| (drops with "
-                         "phase spread, not weakening)",
+             "sub_desc": "ECMWF ENS members (thin) + mean "
+                         "(amber, paler with lead)",
+             "amp_desc": "mean member amplitude (line) + 25-75 / 10-90 "
+                         "member bands · dashed = vector-mean |RMM| "
+                         "(drops with phase spread, not weakening)",
              "source": "ECMWF IFS ensemble (50 members) via ECMWF open "
                        "data (CC BY 4.0), WH04 EOF projection"},
 }
@@ -213,17 +223,19 @@ def render_phase(rows: list[dict], days: int, out: Path,
         ax.text((lim - 0.35) * math.cos(a), (lim - 0.35) * math.sin(a),
                 label.replace("\n", " "), **kw, zorder=3)
 
-    # trailing track: alpha ramps toward today (restrained fade, no effects)
+    # trailing track: alpha ramps toward today (restrained fade, no
+    # effects); near-white = the observed data identity on the dark bg,
+    # with the endpoint emphasized (larger, dark rim)
     xs = [r["rmm1"] for r in track]
     ys = [r["rmm2"] for r in track]
     n = len(track)
     for i in range(1, n):
         alpha = 0.28 + 0.72 * (i / (n - 1))
-        ax.plot(xs[i - 1:i + 1], ys[i - 1:i + 1], color=ACCENT,
+        ax.plot(xs[i - 1:i + 1], ys[i - 1:i + 1], color=OBS_COLOR,
                 lw=1.8, alpha=alpha, zorder=4, solid_capstyle="round")
-    ax.scatter(xs[:-1], ys[:-1], s=12, color=ACCENT, alpha=0.75, zorder=5)
-    ax.scatter([xs[-1]], [ys[-1]], s=52, color=ACCENT,
-               edgecolor=TEXT_COLOR, linewidth=1.2, zorder=6)
+    ax.scatter(xs[:-1], ys[:-1], s=12, color=OBS_COLOR, alpha=0.75, zorder=5)
+    ax.scatter([xs[-1]], [ys[-1]], s=64, color=OBS_COLOR,
+               edgecolor=BG_COLOR, linewidth=1.4, zorder=6)
 
     # date labels on the 5/10/15/... of each month + the endpoint
     # (selective direct labels, never every point)
@@ -239,24 +251,36 @@ def render_phase(rows: list[dict], days: int, out: Path,
 
     latest = track[-1]
 
-    # GEFS-member forecast layer: spaghetti thin, ensemble mean bold,
-    # both joined onto the observed endpoint; dated labels on the mean
+    # forecast layer: member spaghetti thin (desaturated amber tint, same
+    # data family as the mean), ensemble mean bold amber stepping paler
+    # every 5 days of lead, both joined onto the observed endpoint;
+    # "day 5/10/15" lead ticks on the mean + a dated endpoint
     if fc:
         ox, oy = xs[-1], ys[-1]
         for m, (fd, p1, p2) in fc["members"].items():
             ax.plot([ox] + list(p1), [oy] + list(p2), color=FC_MEMBER,
-                    lw=0.9, alpha=0.30, zorder=4)
+                    lw=0.9, alpha=0.22, zorder=4)
         m1, m2 = fc["mean"]
-        ax.plot([ox] + list(m1), [oy] + list(m2), color=FC_COLOR,
-                lw=2.4, zorder=6, solid_capstyle="round")
-        for k, d in enumerate(fc["dates"]):
-            if d.day % 5 == 0 or k == len(fc["dates"]) - 1:
-                ax.annotate(d.strftime("%-d %b") if k == len(fc["dates"]) - 1
-                            else d.strftime("%-d"),
-                            (m1[k], m2[k]), textcoords="offset points",
-                            xytext=(6, -9), fontsize=8, color=FC_COLOR,
-                            fontweight="bold" if k == len(fc["dates"]) - 1
-                            else "normal", zorder=7)
+        mx, my = [ox] + list(m1), [oy] + list(m2)
+        for k in range(1, len(mx)):
+            col = FC_LEAD[min((k - 1) // 5, len(FC_LEAD) - 1)]
+            ax.plot(mx[k - 1:k + 1], my[k - 1:k + 1], color=col,
+                    lw=2.4, zorder=6, solid_capstyle="round")
+        nfc = len(fc["dates"])
+        for k in range(nfc):
+            lead = k + 1
+            last = k == nfc - 1
+            if not last and lead % 5 != 0:
+                continue
+            col = FC_LEAD[min(k // 5, len(FC_LEAD) - 1)]
+            if not last:
+                ax.scatter([m1[k]], [m2[k]], s=14, color=col, zorder=6)
+            ax.annotate(fc["dates"][k].strftime("%-d %b") if last
+                        else f"day {lead}",
+                        (m1[k], m2[k]), textcoords="offset points",
+                        xytext=(6, -9), fontsize=8 if last else 7.5,
+                        color=FC_COLOR if last else col,
+                        fontweight="bold" if last else "normal", zorder=7)
         ax.scatter([m1[-1]], [m2[-1]], s=42, color=FC_COLOR,
                    edgecolor=TEXT_COLOR, linewidth=1.0, zorder=7)
 
@@ -303,19 +327,22 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 90,
     ax.axhline(1.0, color=MUTED_COLOR, lw=1.0, ls=(0, (4, 3)), alpha=0.8)
     ax.text(d[0], 1.04, "amplitude 1: significant MJO", color=MUTED_COLOR,
             fontsize=8, va="bottom")
-    ax.plot(d, amp, color=ACCENT, lw=1.7)
-    ax.fill_between(d, 0, amp, color=ACCENT, alpha=0.12, lw=0)
+    ax.plot(d, amp, color=OBS_COLOR, lw=1.7)
+    ax.fill_between(d, 0, amp, color=OBS_COLOR, alpha=0.10, lw=0)
     x_end, y_top = d[-1], float(amp.max())
 
-    # GEFS forecast extension. Amplitude is >=0, so a raw member min/max
+    # Forecast extension. Amplitude is >=0, so a raw member min/max
     # envelope reads as a lopsided near-black blob; instead show smooth,
     # translucent MEMBER-AMPLITUDE percentile bands (10-90 outer, 25-75
-    # inner) with the MEDIAN member as the primary line. Crucially this
-    # separates two different quantities the reader must not conflate:
-    #   - member amplitudes (bands + median): each member's own |RMM|;
+    # inner) with the MEAN member amplitude as the primary line:
+    # mean_m sqrt(RMM1_m^2 + RMM2_m^2). Crucially this separates two
+    # different quantities the reader must not conflate:
+    #   - member amplitudes (bands + mean): each member's own |RMM|;
     #     these mostly stay strong even when the event survives.
     #   - the ensemble-mean VECTOR amplitude (thin dashed): |mean(RMM)|,
     #     which shrinks as members disperse in PHASE even if none weaken.
+    #     This is why the central line is the mean OF member amplitudes,
+    #     never the amplitude of the mean vector.
     # A drooping dashed line above a still-strong band = phase dispersion,
     # not the MJO dying. Labeled as such so the mean is not misread.
     if fc:
@@ -323,20 +350,21 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 90,
         m1, m2 = fc["mean"]
         vec_mean_amp = np.sqrt(np.array(m1) ** 2 + np.array(m2) ** 2)
         # per-forecast-day member amplitude distribution
+        mean_amp = np.full(len(fd), np.nan)
         p10 = np.full(len(fd), np.nan); p25 = np.full(len(fd), np.nan)
-        p50 = np.full(len(fd), np.nan); p75 = np.full(len(fd), np.nan)
-        p90 = np.full(len(fd), np.nan)
+        p75 = np.full(len(fd), np.nan); p90 = np.full(len(fd), np.nan)
         for k in range(len(fd)):
             vals = [np.hypot(p1[k], p2[k])
                     for (_mfd, p1, p2) in fc["members"].values()
                     if k < len(p1) and np.isfinite(p1[k]) and np.isfinite(p2[k])]
             if len(vals) >= 5:
-                p10[k], p25[k], p50[k], p75[k], p90[k] = np.percentile(
-                    vals, [10, 25, 50, 75, 90])
-        ok = np.isfinite(p50)
+                mean_amp[k] = float(np.mean(vals))
+                p10[k], p25[k], p75[k], p90[k] = np.percentile(
+                    vals, [10, 25, 75, 90])
+        ok = np.isfinite(mean_amp)
         if ok.any():
             fda = np.array(fd)[ok]
-            # join bands + median onto the last observed point for continuity
+            # join bands + mean onto the last observed point for continuity
             jx = np.concatenate(([d[-1]], fda))
             def _j(arr):
                 return np.concatenate(([amp[-1]], arr[ok]))
@@ -344,7 +372,8 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 90,
                             alpha=0.18, lw=0)
             ax.fill_between(jx, _j(p25), _j(p75), color=FC_BAND,
                             alpha=0.30, lw=0)
-            ax.plot(jx, _j(p50), color=FC_COLOR, lw=2.0)      # median member
+            ax.plot(jx, _j(mean_amp), color=FC_COLOR,
+                    lw=2.0)                       # mean member amplitude
             ax.plot(jx, np.concatenate(([amp[-1]], vec_mean_amp[ok])),
                     color=FC_COLOR, lw=1.3, ls=(0, (5, 3)),
                     alpha=0.85)                               # vector mean
