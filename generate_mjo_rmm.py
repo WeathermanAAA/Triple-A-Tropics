@@ -135,9 +135,40 @@ def _style_axes(ax):
 FC_COLOR = "#ffb83a"        # ensemble mean (amber; obs track stays teal)
 FC_MEMBER = "#8ea2bd"       # member spaghetti (muted)
 
+# Forecast model sources for the RMM layer. gefs strings reproduce the
+# original labels byte-for-byte; ifs/ens ride subseasonal/ecmwf_open.py
+# (ECMWF open data, CC BY 4.0 — credited on-plot and in meta). Suffixed
+# outputs land beside the GEFS ones so the page's model selector can swap.
+MODELS = {
+    "gefs": {"suffix": "", "label": "GEFS", "fc_days": 16,
+             "limit": "~16-day limit",
+             "sub_desc": "GEFS members (thin) + ensemble mean "
+                         "(amber, smoothed)",
+             "amp_desc": "median member (line) + 25-75 / 10-90 member "
+                         "bands · dashed = vector-mean |RMM| (drops with "
+                         "phase spread, not weakening)",
+             "source": "NOAA NCEP GEFS (members + ensemble mean), "
+                       "WH04 EOF projection"},
+    "ifs":  {"suffix": "_ifs", "label": "ECMWF IFS", "fc_days": 15,
+             "limit": "~15-day limit",
+             "sub_desc": "ECMWF IFS single high-res run (amber)",
+             "amp_desc": "single high-res run, |RMM|",
+             "source": "ECMWF IFS (HRES) via ECMWF open data (CC BY 4.0), "
+                       "WH04 EOF projection"},
+    "ens":  {"suffix": "_ens", "label": "ECMWF ENS", "fc_days": 15,
+             "limit": "~15-day limit",
+             "sub_desc": "ECMWF ENS members (thin) + ensemble mean "
+                         "(amber, smoothed)",
+             "amp_desc": "median member (line) + 25-75 / 10-90 member "
+                         "bands · dashed = vector-mean |RMM| (drops with "
+                         "phase spread, not weakening)",
+             "source": "ECMWF IFS ensemble (50 members) via ECMWF open "
+                       "data (CC BY 4.0), WH04 EOF projection"},
+}
+
 
 def render_phase(rows: list[dict], days: int, out: Path,
-                 now: dt.date, fc=None) -> dict:
+                 now: dt.date, fc=None, suffix: str = "") -> dict:
     track = rows[-days:]
     # 1.5x canvas at constant dpi/fonts: the /subseasonal/ page went
     # full-bleed, so the render must carry ~2x the pixels at its new
@@ -229,7 +260,7 @@ def render_phase(rows: list[dict], days: int, out: Path,
     d0, d1 = dt.date(*track[0]["ymd"]), dt.date(*latest["ymd"])
     title = f"MJO phase space (RMM)  ·  {d0:%d %b} – {d1:%d %b %Y}"
     if fc:
-        title += f"  + GEFS to {fc['dates'][-1]:%d %b}"
+        title += f"  + {fc['label']} to {fc['dates'][-1]:%d %b}"
     ax.set_title(title, color=TEXT_COLOR, fontsize=13, fontweight="bold",
                  pad=26)
     # 1.012 (not 1.022): axes-fraction offsets grew with the 1.5x canvas;
@@ -238,9 +269,9 @@ def render_phase(rows: list[dict], days: int, out: Path,
            f"{latest['amp']:.2f}"
            f" · eastward propagation is counterclockwise")
     if fc:
-        sub += (f" · forecast: GEFS members (thin) + ensemble mean "
-                f"(amber, smoothed), init {fc['init']:%Y-%m-%d} 00Z, "
-                f"~16-day limit")
+        sub += (f" · forecast: {fc['sub_desc']}, "
+                f"init {fc['init']:%Y-%m-%d} 00Z, "
+                f"{fc['limit']}")
     ax.text(0.0, 1.012, sub,
             transform=ax.transAxes, color=MUTED_COLOR, fontsize=9)
     ax.text(0.995, 0.012, WATERMARK, transform=ax.transAxes, ha="right",
@@ -249,14 +280,14 @@ def render_phase(rows: list[dict], days: int, out: Path,
             "RMM index: Australian Bureau of Meteorology (Wheeler & Hendon 2004)",
             transform=ax.transAxes, color=MUTED_COLOR, alpha=0.9, fontsize=8)
     fig.tight_layout()
-    fig.savefig(out / "mjo_phase.png", dpi=150, facecolor=BG_COLOR)
+    fig.savefig(out / f"mjo_phase{suffix}.png", dpi=150, facecolor=BG_COLOR)
     plt.close(fig)
     return {"phase": latest["phase"], "amp": latest["amp"],
             "as_of": d1.isoformat()}
 
 
 def render_amplitude(rows: list[dict], out: Path, days: int = 180,
-                     fc=None) -> None:
+                     fc=None, suffix: str = "") -> None:
     seg = rows[-days:]
     d = [dt.date(*r["ymd"]) for r in seg]
     amp = np.array([r["amp"] for r in seg])
@@ -315,26 +346,39 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180,
             ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
                        alpha=0.8)
             ax.text(d[-1], 0.06,
-                    f"  GEFS · init {fc['init']:%Y-%m-%d} 00Z · median "
-                    "member (line) + 25-75 / 10-90 member bands · dashed = "
-                    "vector-mean |RMM| (drops with phase spread, not "
-                    "weakening) · ~16-day limit", color=FC_COLOR,
+                    f"  {fc['label']} · init {fc['init']:%Y-%m-%d} 00Z · "
+                    f"{fc['amp_desc']} · {fc['limit']}", color=FC_COLOR,
                     fontsize=7.8, va="bottom")
             x_end = fd[-1]
             y_top = max(y_top, float(np.nanmax(p90)))
+        elif np.isfinite(vec_mean_amp).any():
+            # single-run source (no member distribution to band): the run's
+            # own |RMM| is the primary line, honestly labeled as such
+            jx = np.concatenate(([d[-1]], np.array(fd)))
+            ax.plot(jx, np.concatenate(([amp[-1]], vec_mean_amp)),
+                    color=FC_COLOR, lw=2.0)
+            ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
+                       alpha=0.8)
+            ax.text(d[-1], 0.06,
+                    f"  {fc['label']} · init {fc['init']:%Y-%m-%d} 00Z · "
+                    f"{fc['amp_desc']} · {fc['limit']}", color=FC_COLOR,
+                    fontsize=7.8, va="bottom")
+            x_end = fd[-1]
+            y_top = max(y_top, float(np.nanmax(vec_mean_amp)))
 
     ax.set_ylim(0, max(2.6, y_top + 0.3))
     ax.set_xlim(d[0], x_end)
     ax.set_ylabel("RMM amplitude", color=MUTED_COLOR, fontsize=9.5)
     title = f"MJO amplitude · last {days} days"
     if fc:
-        title += f" + GEFS to {fc['dates'][-1]:%b %-d}"
+        title += f" + {fc['label']} to {fc['dates'][-1]:%b %-d}"
     ax.set_title(title, color=TEXT_COLOR,
                  fontsize=12, fontweight="bold", loc="left")
     ax.text(1.0, 1.02, WATERMARK, transform=ax.transAxes, ha="right",
             color=MUTED_COLOR, alpha=0.7, fontsize=8.5)
     fig.tight_layout()
-    fig.savefig(out / "mjo_amplitude.png", dpi=150, facecolor=BG_COLOR)
+    fig.savefig(out / f"mjo_amplitude{suffix}.png", dpi=150,
+                facecolor=BG_COLOR)
     plt.close(fig)
 
 
@@ -356,9 +400,13 @@ def _to_rmm_lons(series_lons, series):
 
 
 def build_forecast(out: Path, u_archive_path: Path, rows_obs: list[dict],
-                   fc_days: int = 16, workers: int = 6):
-    """GEFS-member RMM projection -> {init, dates, members{m:(pc1,pc2)},
-    mean(pc1,pc2), seam, olr_bridge_days, anchored} or None on failure.
+                   fc_days: int = 16, workers: int = 6,
+                   model: str = "gefs"):
+    """Member RMM projection -> {init, dates, members{m:(pc1,pc2)},
+    mean(pc1,pc2), seam, olr_bridge_days, anchored, model labels} or None
+    on failure. ``model`` picks the forecast source (MODELS): gefs via
+    subseasonal/gefs_mean, ifs/ens via subseasonal/ecmwf_open — identical
+    fetch interfaces, so everything below the fetch is shared.
 
     Obs side: OLR anomalies from the PSL CDR (via the Hovmöller module's
     fetch — same LTM 3-harmonic seasonal cycle), winds from the restored
@@ -411,13 +459,20 @@ def build_forecast(out: Path, u_archive_path: Path, rows_obs: list[dict],
     olr_bm = _to_rmm_lons(lons_o, gh.band_mean(anom_o, lats_o, -15, 15))
     o_idx = {d: i for i, d in enumerate(dates_o)}
 
-    # ---- member forecasts
-    init = gefs_mean.newest_complete_init()
-    members = gefs_mean.fetch_members_rmm(init, fc_days, workers)
+    # ---- member forecasts (model-dispatched; identical interfaces)
+    if model == "gefs":
+        fc_mod = gefs_mean
+    else:
+        import ecmwf_open
+        fc_mod = ecmwf_open.OPER if model == "ifs" else ecmwf_open.ENS
+    init = fc_mod.newest_complete_init()
+    members = fc_mod.fetch_members_rmm(init, fc_days, workers)
     if not members:
-        print("rmm fc: no GEFS members reachable — forecast skipped")
+        print(f"rmm fc: no {MODELS[model]['label']} members reachable — "
+              "forecast skipped")
         return None
-    print(f"rmm fc: {len(members)} member(s), init {init:%Y-%m-%d} 00Z")
+    print(f"rmm fc [{model}]: {len(members)} member(s), "
+          f"init {init:%Y-%m-%d} 00Z")
 
     # unified obs axis: from OLR/wind overlap start to the wind end
     obs_days = [d for d in full if d in o_idx or d > dates_o[-1]]
@@ -514,10 +569,14 @@ def build_forecast(out: Path, u_archive_path: Path, rows_obs: list[dict],
     print(f"rmm fc: seam vs BoM ({seam[0]:+.2f},{seam[1]:+.2f}) · "
           f"anchored={anchored} · olr bridge {bridge_days} d")
 
+    cfg = MODELS[model]
     return {"init": init, "dates": all_dates,
             "members": out_members, "mean": (mean1, mean2),
             "seam": seam, "anchored": anchored,
-            "olr_bridge_days": bridge_days}
+            "olr_bridge_days": bridge_days,
+            "model": model, "label": cfg["label"],
+            "sub_desc": cfg["sub_desc"], "amp_desc": cfg["amp_desc"],
+            "limit": cfg["limit"]}
 
 
 def main() -> None:
@@ -525,14 +584,22 @@ def main() -> None:
     p.add_argument("--days", type=int, default=40)
     p.add_argument("--out", default=str(HERE / "subseasonal" / "out"))
     p.add_argument("--forecast", action="store_true",
-                   help="add the GEFS-member RMM forecast layer")
+                   help="add the member RMM forecast layer")
+    p.add_argument("--model", choices=sorted(MODELS), default="gefs",
+                   help="forecast source (gefs default; ifs/ens = ECMWF "
+                        "open data). Non-gefs runs write _ifs/_ens-suffixed "
+                        "outputs and skip all writes if the forecast fails.")
     p.add_argument("--u-archive", default=None,
                    help="restored GFS wind archive (forecast obs side)")
-    p.add_argument("--fc-days", type=int, default=16)
+    p.add_argument("--fc-days", type=int, default=None,
+                   help="forecast days (default: per-model limit)")
     p.add_argument("--fc-workers", type=int, default=6)
     args = p.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    cfg = MODELS[args.model]
+    suffix = cfg["suffix"]
+    fc_days = args.fc_days or cfg["fc_days"]
 
     rows, source = fetch_rmm(out / "_rmm_cache.json")
     print(f"RMM rows: {len(rows)} · newest {rows[-1]['ymd']} · {source}")
@@ -543,14 +610,22 @@ def main() -> None:
             u_arch = Path(args.u_archive) if args.u_archive else \
                 out / "u_daily_archive.nc"
             fc = build_forecast(out, u_arch, rows,
-                                args.fc_days, args.fc_workers)
+                                fc_days, args.fc_workers,
+                                model=args.model)
         except Exception as e:  # noqa: BLE001 — forecast is additive
             print(f"rmm forecast failed ({type(e).__name__}: {e}) — "
                   f"observed-only renders")
             fc = None
 
-    meta = render_phase(rows, args.days, out, dt.date.today(), fc=fc)
-    render_amplitude(rows, out, fc=fc)
+    if fc is None and args.model != "gefs":
+        # a model-suffixed obs-only render would just duplicate the GEFS
+        # page with a wrong label — keep the prior day's files instead
+        print(f"rmm [{args.model}]: no forecast — nothing written")
+        return
+
+    meta = render_phase(rows, args.days, out, dt.date.today(), fc=fc,
+                        suffix=suffix)
+    render_amplitude(rows, out, fc=fc, suffix=suffix)
     meta.update({"generated_utc":
                  dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                  "source": "Australian Bureau of Meteorology RMM (WH04)"})
@@ -562,10 +637,11 @@ def main() -> None:
             "seam": [round(x, 3) for x in fc["seam"]],
             "anchored": fc["anchored"],
             "olr_bridge_days": fc["olr_bridge_days"],
-            "source": "NOAA NCEP GEFS (members + ensemble mean), "
-                      "WH04 EOF projection"}
-    (out / "mjo_meta.json").write_text(json.dumps(meta))
-    print("wrote", out / "mjo_phase.png", "+ amplitude + meta")
+            "model": args.model,
+            "label": cfg["label"],
+            "source": cfg["source"]}
+    (out / f"mjo_meta{suffix}.json").write_text(json.dumps(meta))
+    print("wrote", out / f"mjo_phase{suffix}.png", "+ amplitude + meta")
 
 
 if __name__ == "__main__":

@@ -100,6 +100,8 @@
     The track shows the last 40 days through phase space; eastward propagation
     is counterclockwise, and points inside the unit circle are a weak MJO.
     <span id="mjo-asof" class="ss-asof"></span></p>
+    <div class="ss-winsel" id="mjo-modelsel" role="group"
+         aria-label="forecast model" hidden></div>
     <div class="ss-grid">
       <figure class="ss-card">
         <img id="img-mjo-phase" alt="MJO RMM phase-space diagram: RMM1 vs RMM2 with the 8 Wheeler-Hendon phases and the 40-day track">
@@ -165,6 +167,9 @@
       <div class="ss-winsel" id="hov-days" role="group" aria-label="days shown"></div>
       <span class="lbl">Sector</span>
       <div class="ss-winsel" id="hov-region" role="group" aria-label="longitude sector"></div>
+      <span class="lbl" id="hov-model-lbl" style="display:none">Forecast</span>
+      <div class="ss-winsel" id="hov-model" role="group"
+           aria-label="forecast model" style="display:none"></div>
     </div>
     <figure class="ss-card ss-hovcard">
       <img id="img-hov" alt="Time-longitude Hovmöller diagram of tropical anomalies with equatorial-wave-filtered contours and TC genesis markers">
@@ -184,7 +189,11 @@
     operational preprocessing (seasonal cycle and prior-120-day mean
     removed on the observation+forecast concatenation), members thin and
     the ensemble mean bold; the ensemble mean is smoothed by construction
-    and every forecast graphic says so. Velocity potential: daily means
+    and every forecast graphic says so. Optional forecast variants project
+    the ECMWF IFS high-resolution run and the 50-member IFS ensemble from
+    ECMWF open data (CC BY 4.0) through the identical preprocessing and
+    EOF projection; the model selector appears only when a variant's
+    forecast is current. Velocity potential: daily means
     of NOAA NCEP GFS analysis winds at 200/850 hPa; χ from a
     spherical-harmonic Poisson solve of the divergence, triangular truncation
     T21; running means over the selected window (the MJO view is a
@@ -210,17 +219,74 @@
 (function () {
   var CDN = 'https://cdn.triple-a-tropics.com/subseasonal/';
   var bust = '?t=' + Math.floor(Date.now() / 6e5);   // 10-min cache key
-  [['img-mjo-phase', 'mjo_phase.png'], ['img-mjo-amp', 'mjo_amplitude.png']]
-    .forEach(function (p) {
-      var el = document.getElementById(p[0]);
-      if (el) el.src = CDN + p[1] + bust;
-    });
-  fetch(CDN + 'mjo_meta.json' + bust).then(function (r) { return r.json(); })
-    .then(function (m) {
+  // MJO forecast-model selector: GEFS is the baked default; the ECMWF
+  // variants (_ifs/_ens files) are offered only when their meta exists AND
+  // the forecast init is fresh (<4 days) — a stalled variant simply
+  // disappears from the row instead of showing stale guidance.
+  var MJO_MODELS = [
+    { key: 'gefs', sfx: '', label: 'GEFS' },
+    { key: 'ifs', sfx: '_ifs', label: 'ECMWF IFS' },
+    { key: 'ens', sfx: '_ens', label: 'ECMWF ENS' }
+  ];
+  var mjoMeta = {};
+  function mjoShow(key) {
+    var mm = null;
+    MJO_MODELS.forEach(function (m) { if (m.key === key) mm = m; });
+    if (!mm) return;
+    document.getElementById('img-mjo-phase').src =
+      CDN + 'mjo_phase' + mm.sfx + '.png' + bust;
+    document.getElementById('img-mjo-amp').src =
+      CDN + 'mjo_amplitude' + mm.sfx + '.png' + bust;
+    var meta = mjoMeta[key];
+    if (meta) {
       document.getElementById('mjo-asof').textContent =
-        'Latest RMM value: ' + m.as_of + ' · phase ' + m.phase +
-        ' · amplitude ' + (+m.amp).toFixed(2) + '.';
-    }).catch(function () {});
+        'Latest RMM value: ' + meta.as_of + ' · phase ' + meta.phase +
+        ' · amplitude ' + (+meta.amp).toFixed(2) +
+        (meta.forecast && meta.forecast.label
+          ? ' · forecast: ' + meta.forecast.label + ' to ' +
+            meta.forecast.to + '.'
+          : '.');
+    }
+    var sel = document.getElementById('mjo-modelsel');
+    Array.prototype.forEach.call(sel.children, function (b) {
+      b.className = b.dataset.k === key ? 'on' : '';
+    });
+  }
+  mjoShow('gefs');
+  Promise.all(MJO_MODELS.map(function (m) {
+    return fetch(CDN + 'mjo_meta' + m.sfx + '.json' + bust)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+  })).then(function (metas) {
+    var avail = [];
+    MJO_MODELS.forEach(function (m, i) {
+      var meta = metas[i];
+      if (m.key === 'gefs') {
+        // the baked default is always offered, meta or not
+        if (meta) mjoMeta.gefs = meta;
+        avail.push(m);
+        return;
+      }
+      if (!meta) return;
+      var init = meta.forecast && meta.forecast.init;
+      if (!init || (Date.now() - Date.parse(init)) > 4 * 864e5) return;
+      mjoMeta[m.key] = meta;
+      avail.push(m);
+    });
+    if (avail.length > 1) {
+      var sel = document.getElementById('mjo-modelsel');
+      avail.forEach(function (m) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.k = m.key;
+        b.textContent = m.label;
+        b.onclick = function () { mjoShow(m.key); };
+        sel.appendChild(b);
+      });
+      sel.hidden = false;
+    }
+    mjoShow('gefs');
+  });
 
   // VP window selector (meta-driven; falls back to the baked default
   // filenames if the meta fetch fails)
@@ -342,7 +408,8 @@
     .then(function (m) {
       var vars = VAR_ORDER.filter(function (v) { return m.vars && m.vars[v]; });
       if (!vars.length || !m.template) { hovImg.src = CDN + HOV_FALLBACK + bust; return; }
-      var st = { v: vars[0], w: 'all', b: 'eq', d: m.days[0], r: 'glob' };
+      var st = { v: vars[0], w: 'all', b: 'eq', d: m.days[0], r: 'glob',
+                 m: 'gefs' };
       if (!(st.b in m.bands)) st.b = Object.keys(m.bands)[0];
       if (!(st.r in m.regions)) st.r = Object.keys(m.regions)[0];
       if (m.waves.indexOf(st.w) < 0) st.w = m.waves[0];
@@ -351,8 +418,20 @@
         w: document.getElementById('hov-wave'),
         b: document.getElementById('hov-band'),
         d: document.getElementById('hov-days'),
-        r: document.getElementById('hov-region')
+        r: document.getElementById('hov-region'),
+        m: document.getElementById('hov-model')
       };
+      // OLR forecast-model row: offered only when the meta advertises
+      // fresh (<4 days) ECMWF variants; stale ones just disappear
+      var olrModels = (m.vars.olr && m.vars.olr.models) || {};
+      var MODEL_LABELS = { gefs: 'GEFS', ifs: 'ECMWF IFS',
+                           ens: 'ECMWF ENS' };
+      var mKeys = ['gefs'].concat(
+        Object.keys(olrModels).filter(function (k) {
+          var init = olrModels[k].fc_init;
+          return init && (Date.now() - Date.parse(init)) <= 4 * 864e5;
+        }));
+      var hasModels = mKeys.length > 1 && !!m.template_olr_model;
       function buildRow(el, keys, labels, field) {
         keys.forEach(function (k) {
           var b = document.createElement('button');
@@ -373,6 +452,7 @@
       buildRow(rows.b, Object.keys(m.bands), m.bands, 'b');
       buildRow(rows.d, m.days, null, 'd');
       buildRow(rows.r, Object.keys(m.regions), m.regions, 'r');
+      if (hasModels) buildRow(rows.m, mKeys, MODEL_LABELS, 'm');
       // per-variable wave default: the buttons' own onclick runs first
       // (sets st.v + renders), then this bubbled handler applies the
       // variable's preferred wave set unless the user has picked one
@@ -389,32 +469,50 @@
         // waves:true once its wave-ful panels exist on the CDN, and the
         // wave-less template stays as the skew-safe fallback (old meta /
         // old panels). OLR keeps its dedicated template on old meta.
+        // ECMWF forecast variants exist for OLR only, "all"-waves only.
+        var mdl = (st.v === 'olr' && st.m !== 'gefs' && hasModels)
+          ? st.m : null;
         var hasWaves = !!(m.template_wave && m.vars[st.v] &&
                           m.vars[st.v].waves);
-        var showWaves = hasWaves || st.v === 'olr';
+        var showWaves = (hasWaves || st.v === 'olr') && !mdl;
         rows.w.style.display = showWaves ? '' : 'none';
         document.getElementById('hov-wave-lbl').style.display =
           showWaves ? '' : 'none';
-        var f = hasWaves
-          ? m.template_wave.replace('{var}', st.v).replace('{wave}', st.w)
+        var showModels = hasModels && st.v === 'olr';
+        rows.m.style.display = showModels ? '' : 'none';
+        document.getElementById('hov-model-lbl').style.display =
+          showModels ? '' : 'none';
+        var f = mdl
+          ? m.template_olr_model.replace('{wave}', 'all')
               .replace('{band}', st.b).replace('{days}', st.d)
-              .replace('{region}', st.r)
-          : (st.v === 'olr'
-              ? m.template_olr.replace('{wave}', st.w)
-                  .replace('{band}', st.b).replace('{days}', st.d)
-                  .replace('{region}', st.r)
-              : m.template.replace('{var}', st.v).replace('{band}', st.b)
-                  .replace('{days}', st.d).replace('{region}', st.r));
+              .replace('{region}', st.r).replace('{model}', mdl)
+          : hasWaves
+            ? m.template_wave.replace('{var}', st.v).replace('{wave}', st.w)
+                .replace('{band}', st.b).replace('{days}', st.d)
+                .replace('{region}', st.r)
+            : (st.v === 'olr'
+                ? m.template_olr.replace('{wave}', st.w)
+                    .replace('{band}', st.b).replace('{days}', st.d)
+                    .replace('{region}', st.r)
+                : m.template.replace('{var}', st.v).replace('{band}', st.b)
+                    .replace('{days}', st.d).replace('{region}', st.r));
         hovImg.src = CDN + f + bust;
         Object.keys(rows).forEach(function (k) { mark(rows[k], st[k]); });
         var info = m.vars[st.v] || {};
+        var fcLine = '';
+        if (mdl && info.models && info.models[mdl]) {
+          fcLine = ' · ' + (MODEL_LABELS[mdl] || mdl) +
+            (mdl === 'ens' ? ' mean' : '') + ' tail to ' +
+            info.models[mdl].fc_to + ' (init ' +
+            String(info.models[mdl].fc_init || '').slice(0, 10) +
+            ' 00Z' + (mdl === 'ens' ? ', smoothed' : '') + ')';
+        } else if (info.fc_to) {
+          fcLine = ' · GEFS ensemble-mean tail to ' + info.fc_to +
+            ' (init ' + String(info.fc_init || '').slice(0, 10) +
+            ' 00Z, smoothed)';
+        }
         document.getElementById('hov-asof').textContent =
-          'Data through ' + (info.through || '?') +
-          (info.fc_to
-            ? ' · GEFS ensemble-mean tail to ' + info.fc_to +
-              ' (init ' + String(info.fc_init || '').slice(0, 10) +
-              ' 00Z, smoothed)'
-            : '') +
+          'Data through ' + (info.through || '?') + fcLine +
           (m.genesis_markers != null
             ? ' · ' + m.genesis_markers + ' TC-genesis markers.' : '.');
       }

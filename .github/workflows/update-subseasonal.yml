@@ -123,10 +123,32 @@ jobs:
           python generate_mjo_rmm.py --forecast \
             --u-archive subseasonal/out/u_daily_archive.nc
 
+      - name: Render MJO RMM ECMWF variants (IFS + ENS, open data)
+        # additive products (_ifs/_ens suffixes): a crash here must never
+        # take down the day's GEFS publish, and a failed forecast writes
+        # nothing (the page's model selector hides stale variants). The
+        # timeout bounds a pathological network stall — continue-on-error
+        # bounds exit codes, not wall clock, and Publish must still run.
+        continue-on-error: true
+        timeout-minutes: 45
+        run: |
+          # each model independent: an ifs crash must not skip ens
+          python generate_mjo_rmm.py --forecast --model ifs \
+            --u-archive subseasonal/out/u_daily_archive.nc \
+            || echo "ifs RMM variant failed (kept prior day's files)"
+          python generate_mjo_rmm.py --forecast --model ens \
+            --u-archive subseasonal/out/u_daily_archive.nc \
+            || echo "ens RMM variant failed (kept prior day's files)"
+
       - name: Render Hovmöllers (OLR + waves, u850/u200/v850, chi200 + GEFS tails)
+        # OLR additionally renders ECMWF forecast-tail variants (_ifs/_ens,
+        # "all"-wave set) — the ECMWF fetches reuse the reduced-field disk
+        # cache the MJO variant step just populated (same init), so this
+        # adds render time, not network time
         run: |
           python generate_hovmollers.py \
-            --u-backfill-days "${{ inputs.backfill_days || '45' }}"
+            --u-backfill-days "${{ inputs.backfill_days || '45' }}" \
+            --fc-models gefs,ifs,ens
 
       # runs even if the render step failed after backfill — a day's
       # fetched analyses are never lost to a rendering bug
