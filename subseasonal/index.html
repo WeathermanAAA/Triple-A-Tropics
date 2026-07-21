@@ -132,8 +132,6 @@
     (convergent) centers. <span id="vp-asof" class="ss-asof"></span></p>
     <div class="ss-winsel" id="vp-winsel" role="group"
       aria-label="averaging window"></div>
-    <div class="ss-winsel" id="vp-wavesel" role="group"
-      aria-label="wave-contour overlay"></div>
     <div class="ss-winnote" id="vp-winnote"></div>
     <div class="ss-stack">
       <figure class="ss-card">
@@ -290,13 +288,9 @@
 
   // VP window selector (meta-driven; falls back to the baked default
   // filenames if the meta fetch fails)
-  var vpMeta = null, vpWave = 'none';
+  var vpMeta = null;
   function setChi(win) {
     function name(level) {
-      if (win && vpWave !== 'none' && vpMeta && vpMeta.template_wave) {
-        return vpMeta.template_wave.replace('{level}', level)
-          .replace('{key}', win).replace('{mode}', vpWave);
-      }
       return 'chi_anom_' + level + (win ? '_' + win : '') + '.png';
     }
     document.getElementById('img-chi-200').src = CDN + name('200') + bust;
@@ -312,7 +306,6 @@
         return;
       }
       var sel = document.getElementById('vp-winsel');
-      var wsel = document.getElementById('vp-wavesel');
       var note = document.getElementById('vp-winnote');
       var current = m.available.indexOf(m.default) >= 0
         ? m.default : m.available[0];
@@ -340,17 +333,9 @@
               Math.round(w.retained * 100) + '% amplitude retained';
           }
         }
-        if (vpWave !== 'none' && m.wave_valid) {
-          txt += ' · wave contours: WK-filtered χ′ at ' +
-            (lead ? lead.valid : m.wave_valid) +
-            ', divergent solid / convergent dashed';
-        }
         note.textContent = txt + '.';
         Array.prototype.forEach.call(sel.children, function (b) {
           b.className = b.dataset.win === win ? 'on' : '';
-        });
-        Array.prototype.forEach.call(wsel.children, function (b) {
-          b.className = b.dataset.wave === vpWave ? 'on' : '';
         });
       }
       m.available.forEach(function (win) {
@@ -372,19 +357,6 @@
           b.onclick = function () { show(ld.key); };
           sel.appendChild(b);
         });
-      }
-      // wave-contour toggle: meta-driven, absent until the generator
-      // advertises the overlay files for BOTH levels
-      if (m.template_wave && m.wave_modes && m.wave_modes.length) {
-        [{ key: 'none', label: 'No wave contours' }]
-          .concat(m.wave_modes).forEach(function (o) {
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.textContent = o.label;
-            b.dataset.wave = o.key;
-            b.onclick = function () { vpWave = o.key; show(current); };
-            wsel.appendChild(b);
-          });
       }
       show(current);
       document.getElementById('vp-asof').textContent =
