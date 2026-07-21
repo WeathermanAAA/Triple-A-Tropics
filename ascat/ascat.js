@@ -39,7 +39,13 @@
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
   var CREDIT = '© EUMETSAT';
   var MAX_PASSES = 6;                  // recent passes loaded for a basin composite
-  var GLOBAL_MAX_PASSES = 40;          // Global view: all recent passes worldwide
+  var GLOBAL_MAX_PASSES = 90;          // Global view: cover the full ~60 h
+                                       // ingest window (~68 orbits: MetOp-B +
+                                       // MetOp-C at ~14/day each over 2.5 d);
+                                       // the density control culls overlapping
+                                       // barbs, so more passes = fuller globe,
+                                       // not more clutter. 40 left a day of
+                                       // orbits undrawn -> empty regions.
 
   // ---- TC kt color scale (hard bins), shared with recon for cross-product
   // consistency. Each entry [minKt, color]; a speed picks the LAST bin it meets.
