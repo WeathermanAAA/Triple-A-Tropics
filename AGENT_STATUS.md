@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-19 ~21:4x UTC — MIMIC-TPW2 moisture overlay shipped end-to-end (generator + box poller + freshness-gated explorer toggle); upstream mirror is stalled 13 days, so the layer idles honestly ("stale" chip, verified live) and self-activates when CIMSS/SSEC resumes. Also: GitHub size-quota warning queued for Andrew. Earlier waves below._
+_Last update: 2026-07-21 ~07:2x UTC — SAR low-salinity reliability overlay (#10) SHIPPED end-to-end (RSS SMAP SSS ingest + render hatch + box salinity-poller live; mask.nc on CDN; 80 passes backfilled). Extra-MJO (#4) and archived-scatterometer (#14) sources probed and confirmed buildable, but implementation is QUEUED behind a file-tool (vibe-island VS Code bridge) outage + an ECMWF rate-limit — decisions surfaced below. Earlier waves below._
 
 ---
 
@@ -57,9 +57,88 @@ _Last update: 2026-07-19 ~21:4x UTC — MIMIC-TPW2 moisture overlay shipped end-
    4 GB, Docker), ② grab the YouTube stream key (YouTube Studio → Go
    live → Streaming software), ③ three commands from the runbook. The
    /stream/ page it broadcasts is already live and self-updating.
-9. _(agent appends new steps here as the re-kick queue lands)_
+9. **(#14 RapidScat cred — only when #14 build resumes)** add
+   `EARTHDATA_TOKEN=<token>` to the render box `.env`
+   (`/root/tsr-s2/.env`) so `ascatobs/podaac.py` can pull PO.DAAC
+   `RSCAT_LEVEL_2B_*`. Get a token at
+   `https://urs.earthdata.nasa.gov/` (Applications -> Generate Token).
+   Not needed for KNMI ASCAT (keyless) or QuikSCAT (anonymous BYU).
+10. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-21 (~05:3x-07:2x UTC) — SAR SALINITY OVERLAY SHIPPED (#10); EXTRA-MJO (#4) + SCATTEROMETERS (#14) ASSESSED + QUEUED
+
+**#10 SAR low-salinity reliability overlay — SHIPPED, LIVE.** C-band SAR
+ocean-wind retrieval is less reliable over low-salinity water (river plumes,
+fresh rain lenses). Ingest RSS SMAP SSS 8-day running mean (rain-filtered
+`sss_smap_RF`, anonymous HTTPS, no creds) and hatch sub-33-PSU water on each
+/obs/sar/ pass as an honest reliability cue.
+- Code **@6532e4b8** on main: `sarobs/salinity.py` (ingest + compact-grid
+  publish, watermark-gated on SMAP DOY), `sarobs/salinity_cli.py` +
+  `generate_sar_salinity.py` (poller shim), `sarobs/render.py`
+  (`_overlay_low_salinity` muted hatch + legend/credit; fires only where
+  low-SSS water falls inside the pass extent), `sarobs/build.py` (loads
+  `sar/salinity/mask.nc` once per tick, passes to every render), `store.py`
+  `get_bytes`, tests (24 pass).
+- Box: `tat-overlays-salinity-poller-1` live (tsr s2-sat-ingest **@a40f2b0**,
+  3600s watermark-gated ticks). First tick published `sar/salinity/mask.nc`
+  (1.31 MB, DOY 177 / 2026-06-26) + `meta.json` — both HTTP 200 on
+  cdn.triple-a-tropics.com. One-time `--rerender --max-new 80` backfilled 80
+  existing passes; the tail flows via new passes.
+- Verified: overlay fires on the Arthur Gulf pass (RCM1/VH) over the
+  Mississippi/Atchafalaya plume (56% of in-bbox water 25.5-35.4 PSU); wind
+  reads through; legend/credit clean (no watermark collision). Credit: RSS.
+- Rollback: on the box `docker compose -p tat-overlays -f
+  docker-compose.overlays.yml rm -sf salinity-poller`; revert the main commit.
+  Fail-open: a missing mask just renders passes without the overlay.
+
+**#4 Extra MJO forecasts (Euro/IFS-oper + IFS-ENS) — SOURCE VERIFIED, BUILD QUEUED.**
+- ECMWF open-data (data.ecmwf.int, anonymous, CC-BY-4.0) confirmed end-to-end:
+  the `.index` is JSON-lines with `_offset`/`_length` for byte-range GETs;
+  `ttr` (sfc, accumulated top thermal radiation -> OLR = -ttr/Δaccum) and `u`
+  at pl 850/200 are all present and decode cleanly via cfgrib (721x1440
+  0.25 deg global, verified on the 20260721/00z oper 24h file).
+- Plan: new `subseasonal/ecmwf_open.py` mirroring `gefs_mean`'s interface
+  (`fetch_members_rmm` -> {member:(dates, olr[nd,144], u850, u200)},
+  `fetch_olr_tail`, `newest_complete_init`); reduce ttr->OLR + winds to the
+  15S-15N 144-lon RMM band; project via the shared `rmm_wh04` WH04 EOFs; then
+  a `--model {gefs,ifs,ens}` dispatch in `generate_mjo_rmm.build_forecast` +
+  `generate_hovmollers`, a model selector on /subseasonal/, and an
+  `ecmwf-mjo-poller` on the box.
+- **DECISION — AIFS: DROP (recommended) or winds-only.** AIFS (the ML model)
+  emits no top-of-atmosphere radiation flux (no `ttr`), so no OLR; RMM is an
+  OLR+u850+u200 projection, so AIFS can drive neither the RMM phase-space nor
+  the OLR Hovmöller. Recommend omitting AIFS from the MJO selector (a
+  winds-only "half-RMM" is a non-standard index that would mislead); ship
+  IFS-oper + IFS-ENS fully.
+- **BLOCKED THIS SESSION** on (a) the file-editing tools — the vibe-island VS
+  Code bridge host went unreachable (~35 min; Edit/Write/Read all time out,
+  only Bash works), so the large edits to `generate_mjo_rmm.py` /
+  `generate_hovmollers.py` + the live /subseasonal/ frontend can't be made or
+  image-verified safely, and (b) ECMWF now rate-limiting probes (429) — a
+  fetcher built now couldn't be numerically verified before landing. Resumes
+  when either clears.
+
+**#14 Archived + extra scatterometers — ASSESSED, BUILD QUEUED.**
+- **KNMI/OSI-SAF ASCAT is ALREADY LIVE** — the existing `ascat-poller` +
+  `ascatobs` package ingests OSI SAF ASCAT-B/C coastal via the KNMI
+  Scatterometer Data Portal (keyless; no `KNMI_API_KEY` on the box). #14's
+  "live bonus KNMI ASCAT" is therefore already shipped.
+- Remaining, all landing in `ascatobs` + the /obs/ascat/ + explorer frontend
+  as selectable sources:
+  - **HY-2B (HSCAT):** OSI SAF/KNMI distributes it — extends the existing KNMI
+    fetch path as another sensor (portal reachable).
+  - **RapidScat (ISS 2014-2016):** PO.DAAC `RSCAT_LEVEL_2B_*`;
+    `ascatobs/podaac.py` already exists for the EARTHDATA path. **DECISION —
+    cred:** the box `.env` currently has NO `EARTHDATA_TOKEN` (checked,
+    presence-only) -> this is a one-time Andrew step (see QUEUED below). No new
+    Codespaces secret.
+  - **QuikSCAT (1999-2009):** BYU SCP anonymous (`ftp.scp.byu.edu/data/qscatv2/`,
+    reachable) — enhanced-res SIR-format binary (a new decode path, not the
+    swath-L2B pipeline); the archival bonus, heaviest lift.
+- **BLOCKED THIS SESSION** on the same file-tool outage (new decode module +
+  live frontend selector edits).
 
 ## 2026-07-19 (~00:4x–01:2x UTC) — OVERLAY FEEDS → BOX POLLERS (GH crons retired)
 
