@@ -265,12 +265,169 @@ def build_missions(hdob_contents: list[str]) -> dict[str, dict]:
     return missions
 
 
-def _parse_vdm(content: str) -> dict | None:
+# ---- VDM enrichment (schema v2): defensive parsers over decode_vdm's dict.
+# decode_vdm values pass through its isNA(): 'NA' -> NaN, numeric -> float,
+# anything else -> lowercased string ('058 deg 34 kt', '19 c / 2448 m').
+_RE_KT = re.compile(r"(-?\d+(?:\.\d+)?)\s*kt", re.I)
+_RE_DEG = re.compile(r"(\d+(?:\.\d+)?)\s*deg", re.I)
+_RE_C = re.compile(r"(-?\d+(?:\.\d+)?)\s*c\b", re.I)
+_RE_M = re.compile(r"(-?\d+(?:\.\d+)?)\s*m\b", re.I)   # '2448 m'; skips 'nm'/'mb'
+_VDM_ATCF_YEAR = re.compile(r"\b[A-Z]{2}\d{2}(\d{4})\b")
+
+
+def _str(v, cap: int | None = None):
+    """Decoder string value -> whitespace-collapsed str or None (NaN/absent)."""
+    if not isinstance(v, str):
+        return None
+    s = re.sub(r"\s+", " ", v).strip()
+    if cap and len(s) > cap:
+        s = s[:cap].rstrip()
+    return s or None
+
+
+def _rng(v, lo: float, hi: float):
+    """Numeric decoder value clamped to a sane range; strings/NaN -> None.
+    The clamp is the guard against a wrong-FORMAT decode (e.g. an mb line
+    read as kt) ever publishing a bogus value."""
+    if isinstance(v, (str, bool)):
+        return None
+    f = _clean(v)
+    return f if isinstance(f, (int, float)) and lo <= f <= hi else None
+
+
+def _num_unit(v, rx, lo: float, hi: float, bare: bool = False):
+    """First ``rx``-matched number inside a decoder STRING value; a bare
+    numeric passes only when ``bare`` (the key itself IS that quantity).
+    Absent/garbled/out-of-range -> None, never raises."""
+    if not isinstance(v, str):
+        return _rng(v, lo, hi) if bare else None
+    m = rx.search(v)
+    if not m:
+        return None
+    try:
+        f = float(m.group(1))
+    except ValueError:
+        return None
+    return _clean(f) if lo <= f <= hi else None
+
+
+def _dir_spd(v):
+    """'058 deg 34 kt' / '34 kt' / bare 34.0 -> (dir_deg, spd_kt)."""
+    if not isinstance(v, str):
+        return None, _rng(v, 0.0, 250.0)
+    return (_num_unit(v, _RE_DEG, 0.0, 360.0),
+            _num_unit(v, _RE_KT, 0.0, 250.0))
+
+
+def _vdm_ref(content: str, ref_year: int | None = None):
+    """Reference datetime for decode_vdm. Its FORMAT fork keys on the YEAR
+    (>=2018 selects the modern URNT12 layout); passing None always raised,
+    which silently nulled every enrichment field on every published record.
+    Year: the bulletin's own ATCF id (AL022026 -> 2026), else the caller's
+    mission-window year, else now. Day + time-of-day: the A. line, else the
+    WMO header DDHHMM. The bulletin carries no month; July (31 days) keeps
+    the datetime constructible - the decoded 'time' is never consumed
+    (regex vdm_day/vdm_tod drive the mission attach)."""
+    import datetime as _dt
+    now_y = _dt.datetime.now(_dt.timezone.utc).year
+    y = None
+    ma = _VDM_ATCF_YEAR.search(content)
+    if ma and 1989 <= int(ma.group(1)) <= now_y + 1:
+        y = int(ma.group(1))
+    if y is None:
+        y = ref_year if (ref_year and 1989 <= ref_year <= now_y + 1) else now_y
+    day, hh, mi, ss = 15, 0, 0, 0
+    mt = _VDM_TIME.search(content)
+    if mt:
+        day, hh, mi, ss = (int(g) for g in mt.groups())
+    else:
+        mh = _SONDE_HDR_TS.search(content)
+        if mh:
+            day, hh, mi = (int(g) for g in mh.groups())
+    if not 1 <= day <= 31:
+        day = 15
+    return _dt.datetime(y, 7, day, hh, mi, ss)
+
+
+def _vdm_enrich(d: dict) -> dict:
+    """decode_vdm's dict (either FORMAT's keys, or {} on decode failure) ->
+    the flat v2 enrichment fields, every key always present (None-filled).
+    FORMAT 1 naming trap: the modern E-line (center DROPSONDE surface wind,
+    'E. 110 deg 10 kt') is filed by the vendored decoder under 'Location of
+    Estimated Maximum Surface Wind Inbound'; the 1999-2017 format has the
+    correctly named center-drop keys instead - both are handled."""
+    fl_in_dir, fl_in_kt = _dir_spd(
+        d.get("Maximum Flight Level Wind Inbound (kt)",
+              d.get("Maximum Flight Level Wind Inbound")))
+    fl_out_dir, fl_out_kt = _dir_spd(
+        d.get("Maximum Flight Level Wind Outbound (kt)"))
+    sfc_in = _num_unit(d.get("Estimated Maximum Surface Wind Inbound (kt)"),
+                       _RE_KT, 0.0, 250.0, bare=True)
+    sfc_out = _num_unit(d.get("Estimated Maximum Surface Wind Outbound (kt)"),
+                        _RE_KT, 0.0, 250.0, bare=True)
+    cd_dir, cd_kt = _dir_spd(
+        d.get("Location of Estimated Maximum Surface Wind Inbound"))
+    if cd_kt is None:
+        cd_kt = _rng(d.get("Dropsonde Surface Wind Speed at Center (kt)"),
+                     0.0, 250.0)
+        cd_dir = _rng(d.get("Dropsonde Surface Wind Direction at Center (deg)"),
+                      0.0, 360.0)
+    t_out = d.get("Maximum Flight Level Temp & Pressure Altitude Outside Eye",
+                  d.get("Maximum Flight Level Temp Outside Eye (C)"))
+    t_in = d.get("Maximum Flight Level Temp & Pressure Altitude Inside Eye",
+                 d.get("Maximum Flight Level Temp Inside Eye (C)"))
+    dp = d.get("Dewpoint Temp (collected at same location as temp inside eye)",
+               d.get("Dew Point Inside Eye (C)"))
+    press_alt = _num_unit(t_out, _RE_M, 0.0, 20000.0)  # string-only: an F>=2
+    if press_alt is None:                              # bare temp is NOT an alt
+        press_alt = _num_unit(t_in, _RE_M, 0.0, 20000.0)
+    fix_note = "; ".join(x for x in (_str(d.get("Fix"), 60),
+                                     _str(d.get("Accuracy"), 60)) if x) or None
+    sfc = [x for x in (sfc_in, sfc_out) if x is not None]
+    return {
+        "max_sfc_wind_kt": max(sfc) if sfc else None,   # back-compat key
+        "max_sfc_wind_in_kt": sfc_in, "max_sfc_wind_out_kt": sfc_out,
+        "max_sfc_wind_in_loc": _str(d.get(
+            "Location & Time of the Estimated Maximum Surface Wind Inbound"), 80),
+        "max_sfc_wind_out_loc": _str(d.get(
+            "Location & Time of the Estimated Maximum Surface Wind Outbound"), 80),
+        "max_fl_wind_in_kt": fl_in_kt, "max_fl_wind_in_dir_deg": fl_in_dir,
+        "max_fl_wind_out_kt": fl_out_kt, "max_fl_wind_out_dir_deg": fl_out_dir,
+        "max_fl_wind_in_loc": _str(d.get(
+            "Location & Time of the Maximum Flight Level Wind Inbound",
+            d.get("Location of the Maximum Flight Level Wind Inbound")), 80),
+        "max_fl_wind_out_loc": _str(d.get(
+            "Location & Time of the Maximum Flight Level Wind Outbound"), 80),
+        "center_drop_sfc_wind_kt": cd_kt,
+        "center_drop_sfc_wind_dir_deg": cd_dir,
+        "eye_character": _str(d.get("Eye character"), 60),
+        "eye_shape": _str(d.get("Eye Shape"), 30),
+        "eye_diameter_nmi": _rng(d.get("Eye Diameter (nmi)",
+                                       d.get("Eye Diameter 1 (nmi)")), 0, 400),
+        "eye_diameter2_nmi": _rng(d.get("Eye Diameter 2 (nmi)"), 0, 400),
+        "eye_major_nmi": _rng(d.get("Eye Major Axis (nmi)"), 0, 400),
+        "eye_minor_nmi": _rng(d.get("Eye Minor Axis (nmi)"), 0, 400),
+        "eye_orientation_deg": _rng(d.get("Orientation"), 0, 360),
+        "temp_out_eye_c": _num_unit(t_out, _RE_C, -100, 60, bare=True),
+        "temp_in_eye_c": _num_unit(t_in, _RE_C, -100, 60, bare=True),
+        "dewpoint_in_eye_c": _num_unit(dp, _RE_C, -100, 60, bare=True),
+        "press_alt_m": press_alt,
+        "std_level_hpa": _rng(d.get("Standard Level (hPa)"), 100, 1070),
+        "min_height_m": _rng(d.get("Minimum Height at Standard Level (m)"),
+                             0, 6000),
+        "fix_note": fix_note, "remarks": _str(d.get("Remarks"), 300),
+    }
+
+
+def _parse_vdm(content: str, ref_year: int | None = None) -> dict | None:
     """VDM center-fix parse (regex-primary, so it never trips the way
     tropycal's decode_vdm does on some real bulletins). atcf + center lat/lon
-    are required; MSLP (D. line) + fix day/time-of-day + an optional max-wind
-    enrichment from the vendored decoder are best-effort. Returns
-    {atcf, lat, lon, mslp_hpa, max_sfc_wind_kt, vdm_day, vdm_tod} or None."""
+    are required; MSLP (D. line) + fix day/time-of-day are regex best-effort;
+    the v2 enrichment fields come from the vendored decoder (never required -
+    on decode failure every enrichment key is present but None). decode_vdm
+    returns (missionname, dict) and NEEDS a reference datetime - the old call
+    passed None (always raised) and checked the tuple with isinstance(dict),
+    so max_sfc_wind_kt was null on every published record."""
     mll = _VDM_LATLON.search(content)
     if not mll:
         return None
@@ -290,17 +447,17 @@ def _parse_vdm(content: str) -> dict | None:
     if mt:
         day = int(mt.group(1))
         tod = int(mt.group(2)) * 3600 + int(mt.group(3)) * 60 + int(mt.group(4))
-    max_wind = None
+    d = {}
     try:                                         # enrich (never required)
-        d = decode_vdm(_norm(content), None)
-        if isinstance(d, dict):
-            max_wind = _clean(
-                d.get("Estimated Maximum Surface Wind Inbound (kt)"))
+        _, dec = decode_vdm(_norm(content), _vdm_ref(content, ref_year))
+        if isinstance(dec, dict):
+            d = dec
     except Exception:                            # noqa: BLE001
-        pass
-    return {"atcf": atcf, "lat": round(lat, 2), "lon": round(lon, 2),
-            "mslp_hpa": mslp, "max_sfc_wind_kt": max_wind,
-            "vdm_day": day, "vdm_tod": tod}
+        d = {}
+    rec = {"atcf": atcf, "lat": round(lat, 2), "lon": round(lon, 2),
+           "mslp_hpa": mslp, "vdm_day": day, "vdm_tod": tod}
+    rec.update(_vdm_enrich(d))
+    return rec
 
 
 def _attach_nearest(missions: dict[str, dict], item: dict, key: str) -> None:
@@ -348,14 +505,40 @@ def _attach_nearest(missions: dict[str, dict], item: dict, key: str) -> None:
 
 def add_vdm(missions: dict[str, dict], vdm_contents: list[str]) -> None:
     """Parse VDM center fixes and attach to the nearest mission (+ atcf)."""
+    # Mission-window year: _vdm_ref's fallback for bulletins whose ATCF id
+    # line is absent (mostly pre-2018 archives), so backfills still pick the
+    # right decode_vdm FORMAT.
+    ry = next((int(mm["valid_start"][:4]) for mm in missions.values()
+               if mm.get("valid_start")), None)
     for content in vdm_contents:
-        c = _parse_vdm(content)
+        c = _parse_vdm(content, ref_year=ry)
         if c and c.get("lat") is not None:
             _attach_nearest(missions, c, "vdm_centers")
 
 
 _SONDE_HDR_TS = re.compile(r"^[A-Z]{4}\d{2}\s+\w{4}\s+(\d{2})(\d{2})(\d{2})",
                            re.M)
+
+
+def _sonde_levels(d: dict) -> list:
+    """decode_dropsonde data['levels'] (a DataFrame: pres/hgt/temp/dwpt/wdir/
+    wspd, the merged XXAA+XXBB+21212 profile) -> JSON rows [pres_hpa, hgt_m,
+    temp_c, dwpt_c, wdir_deg, wspd_kt], surface->top (descending pressure).
+    Rows without a pressure are dropped; capped at 200 rows (a real profile
+    is ~15-45). 'levels' is NaN when the bulletin had no usable XXAA."""
+    lv = d.get("levels")
+    if lv is None or not hasattr(lv, "iterrows"):
+        return []
+    rows = []
+    for _, r in lv.iterrows():
+        p = _clean(r.get("pres"))
+        if p is None:
+            continue
+        rows.append([p, _clean(r.get("hgt")), _clean(r.get("temp")),
+                     _clean(r.get("dwpt")), _clean(r.get("wdir")),
+                     _clean(r.get("wspd"))])
+    rows.sort(key=lambda x: -x[0])
+    return rows[:200]
 
 
 def add_sondes(missions: dict[str, dict], sonde_contents: list[str]) -> None:
@@ -405,10 +588,32 @@ def add_sondes(missions: dict[str, dict], sonde_contents: list[str]) -> None:
         if lat is None or lon is None:
             continue
         t = d.get("TOPtime")
+        b_lat, b_lon = _clean(d.get("BOTTOMlat")), _clean(d.get("BOTTOMlon"))
+        bt = d.get("BOTTOMtime")
+        try:
+            obsnum = int(d.get("obsnum"))
+        except (TypeError, ValueError):
+            obsnum = None
         sonde = {"t": (t.strftime("%Y-%m-%dT%H:%M:%SZ")
                        if hasattr(t, "strftime") else None),
                  "lat": lat, "lon": lon,
-                 "sfc_wind_kt": _clean(d.get("WL150spd"))}
+                 "sfc_wind_kt": _clean(d.get("WL150spd")),
+                 # v2 enrichment (additive): full profile + splash + scalars
+                 "levels": _sonde_levels(d),
+                 "slp_hpa": _clean(d.get("slp")),
+                 "top_hpa": _clean(d.get("top")),
+                 "splash": ({"lat": b_lat, "lon": b_lon,
+                             "t": (bt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                                   if hasattr(bt, "strftime") else None)}
+                            if b_lat is not None and b_lon is not None
+                            else None),
+                 "location": _str(d.get("location"), 20),
+                 "octant": _str(d.get("octant"), 4), "obsnum": obsnum,
+                 "mbl_dir_deg": _clean(d.get("MBLdir")),
+                 "mbl_spd_kt": _clean(d.get("MBLspd")),
+                 "dlm_dir_deg": _clean(d.get("DLMdir")),
+                 "dlm_spd_kt": _clean(d.get("DLMspd")),
+                 "wl150_dir_deg": _clean(d.get("WL150dir"))}
         # nearest-in-time mission; fall back to the first mission with a track
         # so a sonde whose time can't be stamped is NOT silently dropped.
         best, best_dt = None, None

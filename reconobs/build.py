@@ -25,7 +25,16 @@ import re
 from . import ingest, missions as _m, fetch
 from .tcpod import parse_tcpod
 
-SCHEMA_VERSION = 1
+# v2: VDM records carry the full decoded fix (FL/sfc winds in/out, center-drop
+# wind, eye geometry, temps, fix accuracy, remarks) and sondes the full level
+# profile + splash + layer means - additive only, v1 keys unchanged. There is
+# no watermark to migrate: this build rewrites every in-window mission JSON on
+# every run (stateless rolling-window rebuild), and the downstream publish gate
+# (scripts/recon_r2_publish.py _fingerprint) heartbeats a full re-upload of the
+# owned tree within ~10 min even when the data is unchanged, so v1-published
+# in-window missions re-emit under v2 without any gate change. Out-of-window
+# storms keep their v1 JSONs until a backfill re-run (inherent to the design).
+SCHEMA_VERSION = 2
 _now = lambda: _dt.datetime.now(_dt.timezone.utc)   # noqa: E731
 
 

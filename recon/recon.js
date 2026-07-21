@@ -186,6 +186,20 @@
         '<button id="recon-csv" class="recon-btn" type="button" title="Download the decoded observations as a CSV file">⬇ CSV</button>' +
       '</div>' +
       '<div id="recon-stats" class="recon-stats"></div>' +
+      '<div id="recon-vdm" class="recon-vdm" style="display:none">' +
+        '<div class="recon-panel-title">Vortex Data Message ' +
+        '<select id="recon-vdm-fix" class="recon-vdm-fixsel" aria-label="center fix"></select></div>' +
+        '<div id="recon-vdm-body" class="recon-vdm-body"></div>' +
+      '</div>' +
+      '<div id="recon-skewt-wrap" class="recon-skewt-wrap" style="display:none">' +
+        '<div class="recon-panel-title">Dropsonde profile (Skew-T log-P) ' +
+        '<select id="recon-sonde" class="recon-vdm-fixsel" aria-label="dropsonde"></select>' +
+        '<span id="recon-skewt-head" class="recon-skewt-head"></span></div>' +
+        '<div class="recon-skewt-row">' +
+          '<canvas id="recon-skewt" width="760" height="700" aria-label="Dropsonde Skew-T log-P diagram"></canvas>' +
+          '<table class="flsfc-table" id="recon-skewt-table"></table>' +
+        '</div>' +
+      '</div>' +
     '</div>' +
     '<div id="recon-empty" class="recon-empty"><h2>No reconnaissance data right now</h2>' +
       '<p>The Plan of the Day and aircraft missions appear here when the Hurricane Hunters are flying tropical systems. This view refreshes automatically as new missions and Plans of the Day are issued.</p></div>';
@@ -211,6 +225,13 @@
     '.recon-btn:hover{border-color:#2b6cb0}' +
     '.recon-stats{display:flex;flex-wrap:wrap;gap:8px 18px;color:#cdd9ea;font:13px/1.3 inherit}' +
     '.recon-tcpod,.recon-spotlight{margin-bottom:12px;color:#cdd9ea}' +
+    '.recon-vdm,.recon-skewt-wrap{margin-top:14px;background:#0a1324;border:1px solid #2a3e5c;border-radius:10px;padding:12px 14px}' +
+    '.recon-panel-title{color:#e5edf6;font:800 12px/1.3 inherit;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}' +
+    '.recon-vdm-fixsel{background:#0e1a30;color:#e5edf6;border:1px solid #2a3e5c;border-radius:6px;padding:4px 8px;font:600 12px/1 inherit}' +
+    '.recon-vdm-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px 18px;margin-top:12px}' +
+    '.recon-skewt-head{color:#8ea2bd;font:600 12px/1.3 inherit;text-transform:none;letter-spacing:0}' +
+    '.recon-skewt-row{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;margin-top:12px}' +
+    '.recon-skewt-row canvas{flex:1 1 420px;min-width:280px;max-width:760px;width:100%;height:auto;display:block;border-radius:8px}' +
     '.recon-empty{color:#8ea2bd;padding:18px 4px}.recon-tooltip{display:none}';
 
   // ========================================================================
@@ -262,6 +283,14 @@
       copydata: el('recon-copydata'),
       csv: el('recon-csv'),
       stats: el('recon-stats'),
+      vdm: el('recon-vdm'),
+      vdmFixSel: el('recon-vdm-fix'),
+      vdmBody: el('recon-vdm-body'),
+      skewtWrap: el('recon-skewt-wrap'),
+      skewtCanvas: el('recon-skewt'),
+      skewtTable: el('recon-skewt-table'),
+      skewtHead: el('recon-skewt-head'),
+      sondeSel: el('recon-sonde'),
       viewCurrent: el('recon-view-current'),
       viewStorms: el('recon-view-storms')
     };
@@ -276,6 +305,9 @@
     this.tab = this.startTab;
     this.layout = null;         // computed geometry
     this._pts = [];             // projected track points (for hover)
+    this._sondePts = [];        // projected sonde markers (for click/hover)
+    this.curSonde = 0;          // selected dropsonde index (Skew-T)
+    this.curVdm = 0;            // selected VDM fix index (readout panel)
     this._fetchSeq = 0;         // guards against out-of-order mission fetches
     this.windMode = 'fl';       // 'fl' (flight-level, default) | 'sfmr'
     this.scope = 'full';        // 'full' | 'last10' (storms tab keeps 'full')
@@ -772,9 +804,14 @@
   ReconViewer.prototype._setMission = function (m) {
     this.mission = m;
     this._sat = null;
+    this.curSonde = 0;
+    this.curVdm = Math.max(0, ((m && m.vdm_centers) || []).length - 1);
     this._status('');
     this._layoutAndDraw();
     this._renderStats(m);
+    this._renderVdm(m);
+    this._fillSondeSelect(m);
+    this._drawSkewT();
     // Best-effort satellite backdrop for a LIVE current mission only. Never
     // blocks the view: it redraws on success and is a no-op on any failure.
     this._maybeLoadSatBackdrop(m);
@@ -797,6 +834,437 @@
       var v = document.createElement('span'); v.className = 'recon-chip-v'; v.textContent = stats[i][1];
       var k = document.createElement('span'); k.className = 'recon-chip-k'; k.textContent = stats[i][0];
       c.appendChild(v); c.appendChild(k); host.appendChild(c);
+    }
+  };
+
+  // ====================================================================
+  // Vortex Data Message readout: the full decoded fix, chips-only, no
+  // interpretation. Fields the aircraft did not report are simply absent.
+  // ====================================================================
+  function fmtLatLon(la, lo) {
+    if (la == null || lo == null) return null;
+    return Math.abs(la).toFixed(2) + (la >= 0 ? 'N' : 'S') + ' ' +
+           Math.abs(lo).toFixed(2) + (lo >= 0 ? 'E' : 'W');
+  }
+  function fmtWind(kt, dir) {
+    if (kt == null) return null;
+    return (dir != null ? String(Math.round(dir)).padStart(3, '0') + '° / '
+                        : '') + Math.round(kt) + ' kt';
+  }
+
+  ReconViewer.prototype._renderVdm = function (m) {
+    var host = this.dom.vdm, body = this.dom.vdmBody, sel = this.dom.vdmFixSel;
+    if (!host || !body) return;
+    var fixes = (m && m.vdm_centers) || [];
+    if (!fixes.length) { host.style.display = 'none'; return; }
+    host.style.display = '';
+    if (sel) {
+      var sig = fixes.map(function (f) { return f.t || ''; }).join('|');
+      if (sel._sig !== sig) {
+        sel._sig = sig;
+        sel.innerHTML = '';
+        for (var i = 0; i < fixes.length; i++) {
+          var o = document.createElement('option');
+          o.value = String(i);
+          o.textContent = 'Fix ' + (i + 1) + ' · ' +
+            (fixes[i].t ? String(fixes[i].t).slice(11, 16) + 'Z' : '?');
+          sel.appendChild(o);
+        }
+      }
+      sel.value = String(this.curVdm);
+    }
+    var f = fixes[this.curVdm] || fixes[fixes.length - 1];
+    var eye = null;
+    if (f.eye_character != null || f.eye_shape != null ||
+        f.eye_diameter_nmi != null || f.eye_major_nmi != null) {
+      var bits = [];
+      if (f.eye_character != null) bits.push(f.eye_character);
+      if (f.eye_shape != null) bits.push(String(f.eye_shape).toLowerCase());
+      if (f.eye_major_nmi != null && f.eye_minor_nmi != null) {
+        bits.push(Math.round(f.eye_major_nmi) + '×' +
+                  Math.round(f.eye_minor_nmi) + ' nmi' +
+                  (f.eye_orientation_deg != null
+                    ? ' @ ' + Math.round(f.eye_orientation_deg) + '°' : ''));
+      } else if (f.eye_diameter_nmi != null) {
+        bits.push(Math.round(f.eye_diameter_nmi) +
+                  (f.eye_diameter2_nmi != null
+                    ? '/' + Math.round(f.eye_diameter2_nmi) : '') + ' nmi');
+      }
+      eye = bits.join(' · ');
+    }
+    var temps = null;
+    if (f.temp_in_eye_c != null || f.temp_out_eye_c != null) {
+      temps = (f.temp_out_eye_c != null
+                ? Math.round(f.temp_out_eye_c) + '° out' : '') +
+              (f.temp_in_eye_c != null
+                ? (f.temp_out_eye_c != null ? ' / ' : '') +
+                  Math.round(f.temp_in_eye_c) + '° in eye' : '') +
+              (f.dewpoint_in_eye_c != null
+                ? ' · Td ' + Math.round(f.dewpoint_in_eye_c) + '°' : '');
+    }
+    var rows = [
+      ['Center', fmtLatLon(f.lat, f.lon)],
+      ['Fix time', f.t ? String(f.t).replace('T', ' ').slice(0, 16) + 'Z'
+                       : null],
+      ['MSLP (center fix)', f.mslp_hpa != null
+        ? Math.round(f.mslp_hpa) + ' hPa' : null],
+      ['Max est sfc wind, inbound',
+       fmtWind(f.max_sfc_wind_in_kt != null ? f.max_sfc_wind_in_kt
+                                            : f.max_sfc_wind_kt, null)],
+      ['Max est sfc wind, outbound', fmtWind(f.max_sfc_wind_out_kt, null)],
+      ['Max FL wind, inbound',
+       fmtWind(f.max_fl_wind_in_kt, f.max_fl_wind_in_dir_deg)],
+      ['Max FL wind, outbound',
+       fmtWind(f.max_fl_wind_out_kt, f.max_fl_wind_out_dir_deg)],
+      ['Center dropsonde sfc wind',
+       fmtWind(f.center_drop_sfc_wind_kt, f.center_drop_sfc_wind_dir_deg)],
+      ['Eye', eye],
+      ['FL temps', temps],
+      ['Std level', f.std_level_hpa != null
+        ? Math.round(f.std_level_hpa) + ' hPa' +
+          (f.min_height_m != null
+            ? ' · min hgt ' + Math.round(f.min_height_m) + ' m' : '')
+        : null],
+      ['Fix quality', f.fix_note || null]
+    ];
+    body.innerHTML = '';
+    for (var r = 0; r < rows.length; r++) {
+      if (rows[r][1] == null) continue;
+      var c = document.createElement('div'); c.className = 'recon-chip';
+      var v = document.createElement('span'); v.className = 'recon-chip-v';
+      v.textContent = rows[r][1];
+      var k = document.createElement('span'); k.className = 'recon-chip-k';
+      k.textContent = rows[r][0];
+      c.appendChild(v); c.appendChild(k); body.appendChild(c);
+    }
+  };
+
+  // ====================================================================
+  // Dropsonde Skew-T log-P. Hand-rolled on canvas in the house chart
+  // style: skewed isotherms, log-p isobars, faint dry/moist adiabats and
+  // mixing-ratio lines, T (warm) + Td (green) profiles, wind-barb rail,
+  // and a level table. Profiles come from the mission JSON's per-sonde
+  // ``levels`` rows [pres, hgt, temp, dwpt, wdir, wspd].
+  // ====================================================================
+  var SK_PB = 1050, SK_PT = 100;                  // hPa bounds
+  var SK_LNR = Math.log(SK_PB / SK_PT);           // 2.351375
+  var SK_TL = -30, SK_TR = 50;                    // bottom-edge temp span
+  var SK_K = (SK_TR - SK_TL) / SK_LNR;            // 45-deg skew factor
+
+  function skEs(tc) { return 6.112 * Math.exp(17.67 * tc / (tc + 243.5)); }
+
+  ReconViewer.prototype._selectSonde = function (i) {
+    var m = this.mission, n = ((m && m.sondes) || []).length;
+    if (!n) return;
+    this.curSonde = Math.max(0, Math.min(n - 1, i));
+    if (this.dom.sondeSel) this.dom.sondeSel.value = String(this.curSonde);
+    this._draw();                                  // map highlight follows
+    this._drawSkewT();
+  };
+
+  ReconViewer.prototype._fillSondeSelect = function (m) {
+    var sel = this.dom.sondeSel, wrap = this.dom.skewtWrap;
+    if (!sel || !wrap) return;
+    var sondes = (m && m.sondes) || [];
+    if (!sondes.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    var sig = sondes.map(function (s) { return s.t || ''; }).join('|');
+    if (sel._sig !== sig) {
+      sel._sig = sig;
+      sel.innerHTML = '';
+      for (var i = 0; i < sondes.length; i++) {
+        var o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = (i + 1) + ' · ' +
+          (sondes[i].t ? String(sondes[i].t).slice(11, 16) + 'Z' : '?') +
+          (sondes[i].location ? ' · ' +
+            String(sondes[i].location).toLowerCase() : '');
+        sel.appendChild(o);
+      }
+    }
+    sel.value = String(this.curSonde);
+  };
+
+  ReconViewer.prototype._drawSkewT = function () {
+    var m = this.mission, cv = this.dom.skewtCanvas;
+    if (!cv || !this.dom.skewtWrap) return;
+    var sondes = (m && m.sondes) || [];
+    if (!sondes.length) return;                    // wrap already hidden
+    var s = sondes[this.curSonde] || sondes[0];
+    var S = this._S();
+
+    // header: drop position + time + location tag (honest, data-only)
+    if (this.dom.skewtHead) {
+      var head = 'Drop ' + (this.curSonde + 1) + ' of ' + sondes.length;
+      var pos = fmtLatLon(s.lat, s.lon);
+      if (pos) head += ' · ' + pos;
+      if (s.t) head += ' · ' + String(s.t).replace('T', ' ').slice(0, 16) + 'Z';
+      if (s.location) head += ' · ' + String(s.location).toLowerCase();
+      if (s.sfc_wind_kt != null) {
+        head += ' · lowest-150m mean wind ' + Math.round(s.sfc_wind_kt) + ' kt';
+      }
+      this.dom.skewtHead.textContent = head;
+    }
+
+    var Wl = 760, Hl = 700;                        // logical canvas size
+    var dpr = Math.min((typeof window !== 'undefined' &&
+                        window.devicePixelRatio) || 1, 2);
+    cv.width = Wl * dpr; cv.height = Hl * dpr;
+    var g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = S.bg; g.fillRect(0, 0, Wl, Hl);
+
+    var levels = s.levels || [];
+
+    // ADAPTIVE SHEET: most TC drops leave a ~700-850 hPa flight level, so
+    // a fixed 100-hPa top would squash the whole profile into a stub. Top
+    // the sheet just above the profile top; for shallow sheets narrow the
+    // temperature window to the data. The skew factor rescales so
+    // isotherms stay at 45 degrees whatever the bounds.
+    var PB = SK_PB, PT = SK_PT, TL = SK_TL, TR = SK_TR;
+    var topP = null, tmin = null, tmax = null;
+    for (var li = 0; li < levels.length; li++) {
+      var lp = levels[li][0];
+      if (lp == null) continue;
+      if (topP == null || lp < topP) topP = lp;
+      for (var ci = 2; ci <= 3; ci++) {
+        var tv = levels[li][ci];
+        if (tv == null) continue;
+        if (tmin == null || tv < tmin) tmin = tv;
+        if (tmax == null || tv > tmax) tmax = tv;
+      }
+    }
+    if (topP != null) {
+      var cands = [700, 500, 400, 300, 250, 200, 150, 100];
+      for (var ki = 0; ki < cands.length; ki++) {
+        if (cands[ki] < topP - 20) { PT = cands[ki]; break; }
+      }
+      if (PT >= 500 && tmin != null) {           // shallow: fit the window
+        TL = Math.floor(tmin) - 6;
+        TR = Math.ceil(tmax) + 14;
+        if (TR - TL < 25) TR = TL + 25;
+      }
+    }
+    var LNR = Math.log(PB / PT);
+    var KSK = (TR - TL) / LNR;                     // 45-deg skew, any bounds
+    var tstep = (TR - TL) <= 40 ? 5 : 10;
+
+    var x0 = 52, y0 = 18, W = Wl - x0 - 104, H = Hl - y0 - 44;
+    function yP(p) {
+      return y0 + H * (1 - Math.log(PB / p) / LNR);
+    }
+    function xT(tc, p) {
+      var X = tc + KSK * Math.log(PB / p);
+      return x0 + W * (X - TL) / (TR - TL);
+    }
+
+    // plot frame
+    g.strokeStyle = C.border; g.lineWidth = 1;
+    g.strokeRect(x0 + 0.5, y0 + 0.5, W - 1, H - 1);
+
+    g.save();
+    g.beginPath(); g.rect(x0, y0, W, H); g.clip();
+
+    // mixing-ratio lines (g/kg), dashed, sheet bottom -> min(500, PT)
+    g.setLineDash([3, 4]);
+    g.strokeStyle = 'rgba(95,209,143,0.16)'; g.lineWidth = 0.8;
+    var mixTop = Math.max(500, PT);
+    [1, 2, 4, 7, 10, 16, 24].forEach(function (w) {
+      g.beginPath();
+      for (var p = PB; p >= mixTop; p -= 25) {
+        var e = p * w / (621.97 + w);
+        var lg = Math.log(e / 6.112);
+        var td = 243.5 * lg / (17.67 - lg);
+        var px = xT(td, p), py = yP(p);
+        if (p === PB) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.stroke();
+    });
+    g.setLineDash([]);
+
+    // dry adiabats (theta in C at 1000 hPa)
+    g.strokeStyle = 'rgba(255,184,58,0.12)'; g.lineWidth = 0.8;
+    for (var th = -30; th <= 200; th += 10) {
+      g.beginPath();
+      for (var i2 = 0; i2 <= 24; i2++) {
+        var u2 = i2 / 24;
+        var p2 = PB * Math.pow(PT / PB, u2);
+        var t2 = (th + 273.15) * Math.pow(p2 / 1000, 0.2854) - 273.15;
+        var px2 = xT(t2, p2), py2 = yP(p2);
+        if (i2 === 0) g.moveTo(px2, py2); else g.lineTo(px2, py2);
+      }
+      g.stroke();
+    }
+
+    // moist (pseudo-)adiabats: integrate dT/dlnp upward from the bottom
+    g.strokeStyle = 'rgba(95,209,224,0.14)'; g.lineWidth = 0.8;
+    var Rd = 287.0, cp = 1004.0, Lv = 2.5e6, eps = 0.622;
+    [-10, -4, 2, 8, 14, 20, 26, 32].forEach(function (t1050) {
+      var tk = t1050 + 273.15;
+      g.beginPath();
+      g.moveTo(xT(t1050, PB), yP(PB));
+      var steps = 120, dlnp = LNR / steps;
+      var p3 = PB;
+      for (var j = 0; j < steps; j++) {
+        var es3 = skEs(tk - 273.15);
+        var ws = eps * es3 / Math.max(p3 - es3, 1e-3);
+        var num3 = Rd * tk + Lv * ws;
+        var den3 = cp + Lv * Lv * ws * eps / (Rd * tk * tk);
+        tk -= (num3 / den3) * dlnp;
+        p3 = PB * Math.exp(-(j + 1) * dlnp);
+        g.lineTo(xT(tk - 273.15, p3), yP(p3));
+      }
+      g.stroke();
+    });
+
+    // isotherms (0C emphasized) — straight lines in this frame. Range
+    // covers the top-left corner (TL shifted by the full-sheet skew).
+    var tIso0 = Math.floor((TL - KSK * LNR) / tstep) * tstep;
+    for (var t4 = tIso0; t4 <= TR; t4 += tstep) {
+      g.strokeStyle = t4 === 0 ? 'rgba(176,196,222,0.38)'
+                               : 'rgba(176,196,222,0.13)';
+      g.lineWidth = t4 === 0 ? 1.1 : 0.7;
+      g.beginPath();
+      g.moveTo(xT(t4, PB), yP(PB));
+      g.lineTo(xT(t4, PT), yP(PT));
+      g.stroke();
+    }
+
+    // isobars, adapted to the sheet depth
+    var ISO = (PT >= 500
+      ? [1000, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500]
+      : [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100])
+      .filter(function (p5) { return p5 >= PT && p5 <= PB; });
+    g.strokeStyle = 'rgba(176,196,222,0.16)'; g.lineWidth = 0.7;
+    ISO.forEach(function (p5) {
+      g.beginPath();
+      g.moveTo(x0, yP(p5)); g.lineTo(x0 + W, yP(p5));
+      g.stroke();
+    });
+
+    // T / Td profiles. Merged soundings interleave wind-only levels (null
+    // T/Td) between the reported temperature levels — the curve connects
+    // consecutive REPORTED values (standard sounding practice), so null
+    // rows are skipped, not treated as breaks.
+    function profile(col, color) {
+      g.strokeStyle = color; g.lineWidth = 2.2;
+      g.lineJoin = 'round'; g.lineCap = 'round';
+      g.beginPath();
+      var pen = false;
+      for (var r = 0; r < levels.length; r++) {
+        var p6 = levels[r][0], v6 = levels[r][col];
+        if (p6 == null || v6 == null) continue;
+        var px6 = xT(v6, p6), py6 = yP(p6);
+        if (pen) g.lineTo(px6, py6); else g.moveTo(px6, py6);
+        pen = true;
+      }
+      g.stroke();
+    }
+    if (levels.length) {
+      profile(2, '#ff8b6b');                       // temperature
+      profile(3, '#5fd18f');                       // dewpoint
+    }
+    g.restore();
+
+    // axis labels: pressure left, temperature bottom
+    g.font = '600 8.5px ' + FONT;
+    g.fillStyle = C.muted;
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    ISO.forEach(function (p7) { g.fillText(String(p7), x0 - 5, yP(p7)); });
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    for (var t8 = Math.ceil(TL / tstep) * tstep; t8 <= TR; t8 += tstep) {
+      g.fillText(String(t8) + '°', xT(t8, PB), y0 + H + 5);
+    }
+    g.save();
+    g.translate(14, y0 + H / 2); g.rotate(-Math.PI / 2);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '700 8.5px ' + FONT;
+    g.fillText('pressure (hPa)', 0, 0);
+    g.restore();
+    g.font = '700 8.5px ' + FONT;
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    g.fillText('temperature (°C) · skewed', x0 + W / 2, y0 + H + 20);
+
+    // wind-barb rail (right), subsampled to <=22 barbs, colored by speed
+    var withWind = [];
+    for (var r2 = 0; r2 < levels.length; r2++) {
+      if (levels[r2][0] != null && levels[r2][4] != null &&
+          levels[r2][5] != null) withWind.push(levels[r2]);
+    }
+    var stride = Math.max(1, Math.ceil(withWind.length / 22));
+    var bx = x0 + W + 34;
+    g.strokeStyle = 'rgba(176,196,222,0.2)'; g.lineWidth = 0.7;
+    g.beginPath(); g.moveTo(bx, y0); g.lineTo(bx, y0 + H); g.stroke();
+    for (var r3 = 0; r3 < withWind.length; r3 += stride) {
+      var lv = withWind[r3];
+      this._barb(g, bx, yP(lv[0]), lv[5], lv[4], this._windColor(lv[5]));
+    }
+    g.font = '600 8px ' + FONT; g.fillStyle = C.muted;
+    g.textAlign = 'center'; g.textBaseline = 'bottom';
+    g.fillText('wind', bx, y0 - 4);
+
+    // no-profile placeholder (drop reported, sounding not transmitted)
+    if (!levels.length) {
+      g.font = '600 13px ' + FONT; g.fillStyle = C.muted;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('No vertical profile transmitted for this drop.',
+                 x0 + W / 2, y0 + H / 2);
+    }
+
+    // watermark, house pattern
+    g.font = '700 11px ' + FONT;
+    g.fillStyle = 'rgba(142,162,189,0.55)';
+    g.textAlign = 'right'; g.textBaseline = 'bottom';
+    g.fillText(WATERMARK, x0 + W - 6, y0 + H - 5);
+
+    this._fillSkewtTable(s);
+  };
+
+  // Level table beside the Skew-T: standard levels present in the profile
+  // (nearest within 6 hPa) + surface + top, with wind by level.
+  ReconViewer.prototype._fillSkewtTable = function (s) {
+    var tb = this.dom.skewtTable;
+    if (!tb) return;
+    var levels = (s && s.levels) || [];
+    tb.innerHTML = '';
+    if (!levels.length) return;
+    var want = [1050, 1000, 925, 850, 700, 500, 400, 300, 250, 200];
+    var rows = [], used = {};
+    for (var w = 0; w < want.length; w++) {
+      var best = null, bd = 6.01;
+      for (var i = 0; i < levels.length; i++) {
+        var p = levels[i][0];
+        if (p == null || used[i]) continue;
+        var d = Math.abs(p - want[w]);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best != null) { used[best] = 1; rows.push(levels[best]); }
+    }
+    if (!used[0] && levels[0][0] != null) rows.unshift(levels[0]);
+    rows.sort(function (a, b) { return b[0] - a[0]; });
+    var thead = document.createElement('tr');
+    ['hPa', 'm', 'T °C', 'Td °C', 'wind'].forEach(function (h) {
+      var th = document.createElement('th'); th.textContent = h;
+      thead.appendChild(th);
+    });
+    tb.appendChild(thead);
+    function cell(v, f) {
+      return v == null ? '–' : f(v);
+    }
+    for (var r = 0; r < rows.length; r++) {
+      var tr = document.createElement('tr'), lv = rows[r];
+      [cell(lv[0], function (v) { return String(Math.round(v)); }),
+       cell(lv[1], function (v) { return String(Math.round(v)); }),
+       cell(lv[2], function (v) { return v.toFixed(1); }),
+       cell(lv[3], function (v) { return v.toFixed(1); }),
+       (lv[4] != null && lv[5] != null
+         ? String(Math.round(lv[4])).padStart(3, '0') + '° / ' +
+           Math.round(lv[5]) + ' kt' : '–')
+      ].forEach(function (tx) {
+        var td = document.createElement('td'); td.textContent = tx;
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
     }
   };
 
@@ -1162,18 +1630,41 @@
     // ---- 6) wind barbs, dense along-track sampling (~16 px spacing, TT-style)
     this._drawBarbs(g, pts, S);
 
-    // ---- 7) dropsondes: small diamond
+    // ---- 7) dropsondes: numbered diamonds, cross-referenced to the
+    //         Skew-T selector (click a marker -> its profile). The number
+    //         is the 1-based mission drop order; the selected drop gets an
+    //         accent ring.
     var sondes = m.sondes || [];
+    var sondePts = this._sondePts = [];
     for (i = 0; i < sondes.length; i++) {
       var sla = num(sondes[i].lat), slo = num(sondes[i].lon);
       if (sla == null || slo == null) continue;
       var sp = proj(slo, sla);
-      obst.push({ x: sp[0], y: sp[1], r: 7 });
+      obst.push({ x: sp[0], y: sp[1], r: 12 });
+      sondePts.push({ x: sp[0], y: sp[1], i: i, sonde: sondes[i] });
+      var sel = (i === this.curSonde);
+      if (sel) {
+        g.beginPath();
+        g.arc(sp[0], sp[1], 7.5, 0, 2 * Math.PI);
+        g.strokeStyle = C.accent; g.lineWidth = 1.6; g.stroke();
+      }
       g.save();
       g.translate(sp[0], sp[1]); g.rotate(Math.PI / 4);
       g.fillStyle = 'rgba(233,241,250,0.92)'; g.strokeStyle = '#10203a'; g.lineWidth = 1;
       g.fillRect(-3, -3, 6, 6); g.strokeRect(-3, -3, 6, 6);
       g.restore();
+      // drop number on a small dark pill, flipped left near the right edge
+      var lbl = String(i + 1);
+      g.font = '700 8.5px ' + FONT;
+      var lw2 = g.measureText(lbl).width + 6;
+      var lx = sp[0] + 7, ly = sp[1] - 13;
+      if (lx + lw2 > L.w - 2) lx = sp[0] - 7 - lw2;
+      ly = Math.max(2, Math.min(L.h - 13, ly));
+      g.fillStyle = 'rgba(7,16,28,0.85)';
+      roundRectPath(g, lx, ly, lw2, 11, 3); g.fill();
+      g.fillStyle = sel ? C.accent : 'rgba(233,241,250,0.9)';
+      g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText(lbl, lx + 3, ly + 5.5);
     }
 
     // ---- 8) VDM centers: cross + ring, labeled with MSLP
@@ -1855,6 +2346,22 @@
     var mx = (ev.clientX - rect.left) * sx - L.x;
     var my = (ev.clientY - rect.top) * sx - L.y;
     if (mx < 0 || my < 0 || mx > L.w || my > L.h) return false;
+    // dropsonde markers outrank track points (they sit on the track): a
+    // close pass names the drop + time and hints the click-through
+    var sp = this._sondePts || [];
+    for (var si = 0; si < sp.length; si++) {
+      var sdx = sp[si].x - mx, sdy = sp[si].y - my;
+      if (sdx * sdx + sdy * sdy <= 9 * 9) {
+        tip.style.display = 'block';
+        tip.style.left = (ev.clientX - rect.left + 12) + 'px';
+        tip.style.top = (ev.clientY - rect.top + 12) + 'px';
+        tip.innerHTML = 'Dropsonde ' + (sp[si].i + 1) +
+          (sp[si].sonde.t ? ' · ' + String(sp[si].sonde.t).slice(11, 16) + 'Z'
+                          : '') +
+          '<br><span style="color:#8ea2bd">click for profile</span>';
+        return true;
+      }
+    }
     var best = null, bestD = 12 * 12;
     for (var i = 0; i < this._pts.length; i++) {
       var p = this._pts[i]; if (!p) continue;
@@ -2036,6 +2543,15 @@
     var sx = this.dom.canvas.width / rect.width / this.dpr;
     var mx = (ev.clientX - rect.left) * sx - L.x;
     var my = (ev.clientY - rect.top) * sx - L.y;
+    // numbered dropsonde markers first: click selects that drop's Skew-T
+    var sp = this._sondePts || [];
+    for (var si = 0; si < sp.length; si++) {
+      var sdx = mx - sp[si].x, sdy = my - sp[si].y;
+      if (sdx * sdx + sdy * sdy <= 10 * 10) {
+        this._selectSonde(sp[si].i);
+        return;
+      }
+    }
     if (hit) {
       var dx = mx - hit.x, dy = my - hit.y;
       if (dx * dx + dy * dy <= 17 * 17) {
@@ -2665,8 +3181,17 @@
       .then(function (d) {
         if (seq !== self._fetchSeq || self.curStorm !== slug) return;
         self.mission = d;
+        // live refresh: keep the user's drop/fix selections but clamp to
+        // the refreshed arrays (new drops may have arrived)
+        self.curSonde = Math.min(self.curSonde,
+                                 Math.max(0, (d.sondes || []).length - 1));
+        self.curVdm = Math.min(self.curVdm,
+                               Math.max(0, (d.vdm_centers || []).length - 1));
         self._layoutAndDraw();
         self._renderStats(d);
+        self._renderVdm(d);
+        self._fillSondeSelect(d);
+        self._drawSkewT();
         self._maybeLoadSatBackdrop(d, true);
       })
       .catch(function () {});
@@ -2701,6 +3226,17 @@
     if (this.dom.windSel) {
       this.dom.windSel.addEventListener('change', function () { self._setWindMode(this.value); });
       this.dom.windSel.value = this.windMode;
+    }
+    if (this.dom.sondeSel) {
+      this.dom.sondeSel.addEventListener('change', function () {
+        self._selectSonde(parseInt(this.value, 10) || 0);
+      });
+    }
+    if (this.dom.vdmFixSel) {
+      this.dom.vdmFixSel.addEventListener('change', function () {
+        self.curVdm = parseInt(this.value, 10) || 0;
+        self._renderVdm(self.mission);
+      });
     }
     if (this.dom.scopeSel) {
       this.dom.scopeSel.addEventListener('change', function () { self._setScope(this.value); });
