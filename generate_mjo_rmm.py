@@ -134,6 +134,9 @@ def _style_axes(ax):
 
 FC_COLOR = "#ffb83a"        # ensemble mean (amber; obs track stays teal)
 FC_MEMBER = "#8ea2bd"       # member spaghetti (muted)
+FC_BAND = "#ffd27a"         # amplitude percentile bands: a clean
+                            # light-amber tint (amber over the dark
+                            # panel went muddy-olive at low alpha)
 
 # Forecast model sources for the RMM layer. gefs strings reproduce the
 # original labels byte-for-byte; ifs/ens ride subseasonal/ecmwf_open.py
@@ -286,8 +289,10 @@ def render_phase(rows: list[dict], days: int, out: Path,
             "as_of": d1.isoformat()}
 
 
-def render_amplitude(rows: list[dict], out: Path, days: int = 180,
+def render_amplitude(rows: list[dict], out: Path, days: int = 90,
                      fc=None, suffix: str = "") -> None:
+    # 90-day window (not 180): with a ~15-day forecast the longer history
+    # crammed the forecast bands into an unreadable sliver
     seg = rows[-days:]
     d = [dt.date(*r["ymd"]) for r in seg]
     amp = np.array([r["amp"] for r in seg])
@@ -335,20 +340,23 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180,
             jx = np.concatenate(([d[-1]], fda))
             def _j(arr):
                 return np.concatenate(([amp[-1]], arr[ok]))
-            ax.fill_between(jx, _j(p10), _j(p90), color=FC_COLOR,
-                            alpha=0.11, lw=0)
-            ax.fill_between(jx, _j(p25), _j(p75), color=FC_COLOR,
-                            alpha=0.20, lw=0)
+            ax.fill_between(jx, _j(p10), _j(p90), color=FC_BAND,
+                            alpha=0.18, lw=0)
+            ax.fill_between(jx, _j(p25), _j(p75), color=FC_BAND,
+                            alpha=0.30, lw=0)
             ax.plot(jx, _j(p50), color=FC_COLOR, lw=2.0)      # median member
             ax.plot(jx, np.concatenate(([amp[-1]], vec_mean_amp[ok])),
                     color=FC_COLOR, lw=1.3, ls=(0, (5, 3)),
                     alpha=0.85)                               # vector mean
             ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
                        alpha=0.8)
-            ax.text(d[-1], 0.06,
-                    f"  {fc['label']} · init {fc['init']:%Y-%m-%d} 00Z · "
+            # axes-fraction anchor: data-coord text ran past x_end and
+            # tight_layout squeezed the axes to half the figure to fit it
+            ax.text(0.995, 0.03,
+                    f"{fc['label']} · init {fc['init']:%Y-%m-%d} 00Z · "
                     f"{fc['amp_desc']} · {fc['limit']}", color=FC_COLOR,
-                    fontsize=7.8, va="bottom")
+                    fontsize=7.8, va="bottom", ha="right",
+                    transform=ax.transAxes)
             x_end = fd[-1]
             y_top = max(y_top, float(np.nanmax(p90)))
         elif np.isfinite(vec_mean_amp).any():
@@ -359,10 +367,13 @@ def render_amplitude(rows: list[dict], out: Path, days: int = 180,
                     color=FC_COLOR, lw=2.0)
             ax.axvline(d[-1], color=TEXT_COLOR, lw=1.0, ls=(0, (5, 3)),
                        alpha=0.8)
-            ax.text(d[-1], 0.06,
-                    f"  {fc['label']} · init {fc['init']:%Y-%m-%d} 00Z · "
+            # axes-fraction anchor: data-coord text ran past x_end and
+            # tight_layout squeezed the axes to half the figure to fit it
+            ax.text(0.995, 0.03,
+                    f"{fc['label']} · init {fc['init']:%Y-%m-%d} 00Z · "
                     f"{fc['amp_desc']} · {fc['limit']}", color=FC_COLOR,
-                    fontsize=7.8, va="bottom")
+                    fontsize=7.8, va="bottom", ha="right",
+                    transform=ax.transAxes)
             x_end = fd[-1]
             y_top = max(y_top, float(np.nanmax(vec_mean_amp)))
 

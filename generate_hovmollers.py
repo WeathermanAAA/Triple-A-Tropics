@@ -317,11 +317,11 @@ def get_gefs_tail(out: Path):
 # gefs reproduces the original strings byte-for-byte; ifs is a single run
 # so "ensemble-mean-smoothed" would be dishonest there.
 _FC_NOTE = {
-    "gefs": ("GEFS ensemble mean below", "ensemble-mean-smoothed",
+    "gefs": ("GEFS ensemble mean", "ensemble-mean-smoothed",
              "~16-day limit"),
-    "ifs": ("ECMWF IFS (high-res run) below", "single run",
+    "ifs": ("ECMWF IFS (high-res run)", "single run",
             "~15-day limit"),
-    "ens": ("ECMWF ENS mean below", "ensemble-mean-smoothed",
+    "ens": ("ECMWF ENS mean", "ensemble-mean-smoothed",
             "~15-day limit"),
 }
 
@@ -632,7 +632,7 @@ def fetch_genesis(start: dt.date, end: dt.date):
 def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
                title, band_label, note_a, note_b, credit, overlays,
                genesis, region, out_png: Path, wave_step: float = 10.0,
-               fc_start=None, fc_note: str = ""):
+               fc_start=None, fc_note: str = "", fc_label: str = ""):
     """One time-longitude panel: shading + wave contours + genesis marks.
     field is (time, lon) newest-last; time runs DOWN the page.
 
@@ -649,14 +649,21 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
     levels = np.arange(-vmax, vmax + step / 2, step)
     cf = ax.contourf(lons, t, field, levels=levels, cmap=cmap,
                      extend="both")
+    # multi-mode views ("all waves") draw every mode at once - full-weight
+    # solid+dashed contours turn into spaghetti over the shading, so there
+    # they thin to enhanced-only, hairline, translucent; the OLR shading is
+    # the primary read. Single/dual-mode views keep both signs full weight.
+    thin = len(overlays) > 2
     for mode, filt in overlays:
         label, color = WAVE_STYLE[mode]
         neg = [-m * wave_step for m in reversed(WAVE_CLEV_MULTS)]
         pos = [m * wave_step for m in WAVE_CLEV_MULTS]
         ax.contour(lons, t, filt, levels=neg, colors=color,
-                   linewidths=1.4, linestyles="solid")
-        ax.contour(lons, t, filt, levels=pos, colors=color,
-                   linewidths=1.0, linestyles="dashed", alpha=0.75)
+                   linewidths=0.7 if thin else 1.4, linestyles="solid",
+                   alpha=0.55 if thin else 1.0)
+        if not thin:
+            ax.contour(lons, t, filt, levels=pos, colors=color,
+                       linewidths=1.0, linestyles="dashed", alpha=0.75)
 
     # genesis markers + decluttered labels. Markers: a bright dot with a dark
     # ring + a dark outer halo so they read on BOTH the tan (suppressed) and
@@ -708,17 +715,19 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
             path_effects=[matplotlib.patheffects.withStroke(
                 linewidth=2.4, foreground="#0a0d12")])
 
-    # labeled init line: analysis above, GEFS ensemble-mean tail below
-    # (time runs DOWN the page, so the forecast rows sit at the bottom)
+    # init line: analysis above, forecast tail below (time runs DOWN the
+    # page). A clean line with a SHORT model tag only - the full forecast
+    # sentence lives in the figure footer, never floating over the data.
     if fc_start is not None:
         yline = mdates.date2num(dt.datetime(fc_start.year, fc_start.month,
                                             fc_start.day)) - 0.5
         ax.axhline(yline, color=TEXT, lw=1.2, ls=(0, (6, 3)), zorder=5)
-        ax.text(lon_lo + 0.995 * (lon_hi - lon_lo), yline, fc_note + "  ",
-                color=TEXT, fontsize=8, fontweight="bold", ha="right",
-                va="top", zorder=6,
-                path_effects=[matplotlib.patheffects.withStroke(
-                    linewidth=2.2, foreground="#10131a")])
+        if fc_label:
+            ax.text(lon_lo + 0.995 * (lon_hi - lon_lo), yline,
+                    fc_label + "  ", color=TEXT, fontsize=8,
+                    fontweight="bold", ha="right", va="top", zorder=6,
+                    path_effects=[matplotlib.patheffects.withStroke(
+                        linewidth=2.2, foreground="#10131a")])
 
     ax.set_xlim(lon_lo, lon_hi)
     ax.set_ylim(t[-1], t[0])                     # newest at the BOTTOM
@@ -753,13 +762,16 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
         ax.text(x, 1.030, "waves:", transform=ax.transAxes, color=MUTED,
                 fontsize=8.5, ha="right")
 
-    cax = fig.add_axes([0.085, 0.050, 0.58, 0.012])
+    cax = fig.add_axes([0.085, 0.058, 0.58, 0.012])
     cb = fig.colorbar(cf, cax=cax, orientation="horizontal")
     cb.ax.tick_params(colors=MUTED, labelsize=8)
     cb.outline.set_edgecolor(GRID)
-    fig.text(0.685, 0.056, cb_label, color=MUTED, fontsize=8.5,
+    fig.text(0.685, 0.064, cb_label, color=MUTED, fontsize=8.5,
              va="center")
-    fig.text(0.085, 0.013, credit + " · rendered by Triple-A-Tropics",
+    if fc_note:
+        fig.text(0.085, 0.026, "forecast: " + fc_note, color=MUTED,
+                 fontsize=8)
+    fig.text(0.085, 0.010, credit + " · rendered by Triple-A-Tropics",
              color=MUTED, alpha=0.9, fontsize=7.5)
     fig.text(0.970, 0.013, WATERMARK, color=MUTED, alpha=0.9,
              fontsize=7.5, ha="right")
@@ -776,6 +788,23 @@ def region_days_slices(dates, days):
 
 
 # ------------------------------------------------------------- sections
+
+def _smooth_lonlat(f: np.ndarray, *, nlon: int, nlat: int) -> np.ndarray:
+    """NaN-aware boxcar over (lat, lon): lon wraps, lat clamps. Small grids
+    only (the anchor-offset field) - plain shift accumulation."""
+    fin = np.isfinite(f)
+    f0 = np.where(fin, f, 0.0)
+    num = np.zeros_like(f0)
+    den = np.zeros_like(f0)
+    ny, nx = f.shape
+    for dy in range(-(nlat // 2), nlat // 2 + 1):
+        ys = np.clip(np.arange(ny) + dy, 0, ny - 1)
+        for dx in range(-(nlon // 2), nlon // 2 + 1):
+            xs = (np.arange(nx) + dx) % nx
+            num += f0[np.ix_(ys, xs)]
+            den += fin[np.ix_(ys, xs)]
+    return np.where(den > 0, num / den, np.nan)
+
 
 # per-model OLR display strings: (title short-name, credit source piece).
 # gefs reproduces the original strings byte-for-byte.
@@ -842,7 +871,15 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None,
                 fc_anom[m2] = reg - ltm_k
             obs_ref = np.nanmean(obs_anom[-3:], axis=0)
             fc_ref = np.nanmean(fc_anom[:3], axis=0)
-            fc_anom += (obs_ref - fc_ref)[None]
+            # PLANETARY-SCALE anchor only: a raw per-cell offset stamps the
+            # anchor days' synoptic OLR pattern onto EVERY forecast row as a
+            # time-constant field - measured at 9.2 W/m2 small-scale std,
+            # 1.3x the forecast's own day-to-day signal, i.e. the vertical
+            # striping that used to dominate the forecast half. Smoothing
+            # the offset to ~30 deg lon x ~10 deg lat removes only the
+            # systematic model-vs-CDR bias, never the anchor-day weather.
+            off = _smooth_lonlat(obs_ref - fc_ref, nlon=31, nlat=11)
+            fc_anom += off[None]
             fc_by[model] = (fc_anom, fc_kept, fc_init, fc_ns)
         except Exception as e:  # noqa: BLE001 — tail is additive
             print(f"OLR fc tail [{model}] failed "
@@ -890,8 +927,10 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None,
                               if fc_rows is not None else bm[sl])
                 for wkey, modes in wave_sets.items():
                     overlays = [(m, filts[m][-(n + nfc):]) for m in modes]
-                    note_b = ("contours: wave-filtered anomalies, −10 W m⁻² "
-                              "solid (enhanced) / +10 dashed · "
+                    note_b = (("contours: wave-filtered anomalies, −10 W m⁻² "
+                               "(enhanced) only, thinned · " if len(modes) > 2
+                               else "contours: wave-filtered anomalies, "
+                               "−10 W m⁻² solid (enhanced) / +10 dashed · ")
                               + (f"filtered on the analysis+forecast concat; "
                                  f"CDR→{short} gap bridged by interpolation"
                                  if nfc else "newest ~2 weeks "
@@ -918,7 +957,11 @@ def do_olr(hov: Path, meta: dict, genesis: list, gefs_tail=None,
                             fc_start=fc_axis[0] if fc_axis else None,
                             fc_note=(gefs_fc_note(fc_init, fc_ns,
                                                   fc_kept[-1], model=model)
-                                     if fc_axis else ""))
+                                     if fc_axis else ""),
+                            fc_label=({"gefs": "GEFS",
+                                       "ifs": "ECMWF-IFS",
+                                       "ens": "ECMWF-ENS"}[model] + " init"
+                                      if fc_axis else ""))
         if model == "gefs":
             meta["vars"]["olr"] = {"through": f_dates[-1].isoformat(),
                                    "gap_filled_days": n_filled,
@@ -1086,8 +1129,10 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                             region=rkey,
                             out_png=out_png, wave_step=2.0,
                             fc_start=fc_axis[0] if fc_axis else None,
-                            fc_note=gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
-                            if fc_axis else "")
+                            fc_note=(gefs_fc_note(fc_init, fc_ns,
+                                                  fc_kept[-1])
+                                     if fc_axis else ""),
+                            fc_label="GEFS init" if fc_axis else "")
                         if wkey == "none":
                             # legacy wave-less name: kept one release cycle
                             # so a cached page (old JS) still resolves
@@ -1204,8 +1249,10 @@ def do_u(hov: Path, meta: dict, genesis: list, u_archive_path: Path,
                             region=rkey,
                             out_png=out_png, wave_step=2.0,
                             fc_start=fc_axis[0] if fc_axis else None,
-                            fc_note=gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
-                            if fc_axis else "")
+                            fc_note=(gefs_fc_note(fc_init, fc_ns,
+                                                  fc_kept[-1])
+                                     if fc_axis else ""),
+                            fc_label="GEFS init" if fc_axis else "")
                         if wkey == "none":
                             shutil.copyfile(
                                 out_png, hov / (f"hov_v850_{bkey}_"
@@ -1333,8 +1380,9 @@ def do_chi(hov: Path, meta: dict, genesis: list,
                         overlays=overlays, genesis=genesis, region=rkey,
                         out_png=out_png, wave_step=step,
                         fc_start=fc_axis[0] if fc_axis else None,
-                        fc_note=gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
-                        if fc_axis else "")
+                        fc_note=(gefs_fc_note(fc_init, fc_ns, fc_kept[-1])
+                                 if fc_axis else ""),
+                        fc_label="GEFS init" if fc_axis else "")
                     if wkey == "none":
                         # legacy wave-less name: kept one release cycle
                         # so a cached page (old JS) still resolves
