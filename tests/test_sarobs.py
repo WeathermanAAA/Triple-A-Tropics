@@ -87,7 +87,7 @@ class BuildTick(unittest.TestCase):
         self.store = LocalStore(self.tmp)
 
     def _patch(self, passes, nc=b"NC", render=None):
-        def fake_render(nc_bytes, meta, geo_dir="."):
+        def fake_render(nc_bytes, meta, geo_dir=".", salinity=None):
             return (b"PNG", b"JPG", {"max_ms": 30.0, "peak_ms": 27.0,
                                      "peak_kt": 52, "peak_lat": 0.5,
                                      "peak_lon": 0.5, "mean_ms": 10.0,
@@ -144,7 +144,7 @@ class BuildTick(unittest.TestCase):
 
     def test_failed_render_retries_next_tick(self):
         calls = {"n": 0}
-        def flaky(nc_bytes, meta, geo_dir="."):
+        def flaky(nc_bytes, meta, geo_dir=".", salinity=None):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise ValueError("bad file")
@@ -259,7 +259,7 @@ class RerenderFlag(unittest.TestCase):
         store = LocalStore(tmp)
         passes = BuildTick.PASSES
         def mk(peak):
-            def r(nc_bytes, meta, geo_dir="."):
+            def r(nc_bytes, meta, geo_dir=".", salinity=None):
                 return (b"PNG", b"JPG", {"max_ms": 30.0, "peak_ms": peak,
                                          "peak_kt": 1, "peak_lat": 0,
                                          "peak_lon": 0, "mean_ms": 1,
@@ -282,6 +282,79 @@ class RerenderFlag(unittest.TestCase):
         idx = store.get_json("sar/al012026_arthur/index.json")
         self.assertEqual(len(idx["passes"]), 2)   # replaced, not duplicated
         self.assertTrue(all(p["peak_ms"] == 44.0 for p in idx["passes"]))
+
+
+class Salinity(unittest.TestCase):
+    """SMAP SSS reliability grid: listing parse, pack/read roundtrip, the
+    watermark-gated build, and the render overlay's low-salinity classifier."""
+
+    def _grid(self):
+        import numpy as np
+        lats = np.arange(-89.875, 90.0, 0.25)      # 720, S->N
+        lons = np.arange(0.125, 360.0, 0.25)       # 1440
+        sss = np.full((lats.size, lons.size), 35.0)
+        # a fresh plume patch near (10N, 300E == 60W) below the threshold
+        jy = np.argmin(np.abs(lats - 10.0))
+        jx = np.argmin(np.abs(lons - 300.0))
+        sss[jy - 4:jy + 4, jx - 4:jx + 4] = 28.0
+        sss[0:3, 0:3] = np.nan                     # a land/fill hole
+        return lats, lons, sss
+
+    def test_find_latest_parses_year_block(self):
+        from sarobs import salinity
+        html = ('junk RSS_smap_SSS_L3_8day_running_2026_161_FNL_v06.0.nc more '
+                'RSS_smap_SSS_L3_8day_running_2026_177_FNL_v06.0.nc end '
+                'RSS_smap_SSS_L3_8day_running_2025_360_FNL_v06.0.nc')
+        with mock.patch.object(salinity.fetch, "get_text",
+                               return_value=html):
+            got = salinity.find_latest()
+        self.assertEqual(got, (2026, 177))         # newest DOY in current year
+
+    def test_pack_read_roundtrip_exact(self):
+        import numpy as np
+        from sarobs import salinity
+        lats, lons, sss = self._grid()
+        body = salinity._pack(lats, lons, sss)
+        self.assertGreater(len(body), 0)
+        rlat, rlon, rsss = salinity.read_grid(body)
+        self.assertEqual(rsss.shape, sss.shape)
+        finite = np.isfinite(sss)
+        self.assertTrue(np.allclose(rsss[finite], sss[finite], atol=1e-3))
+        self.assertTrue(np.isnan(rsss[0, 0]))      # NaN fill preserved
+
+    def test_build_watermark_gates(self):
+        import tempfile, shutil
+        from sarobs import salinity
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        store = LocalStore(tmp)
+        lats, lons, sss = self._grid()
+        with mock.patch.object(salinity, "find_latest",
+                               return_value=(2026, 177)),                mock.patch.object(salinity, "fetch_grid",
+                               return_value=(lats, lons, sss)):
+            s1 = salinity.build(store, log=lambda *a: None)
+            s2 = salinity.build(store, log=lambda *a: None)   # same DOY -> no-op
+        self.assertTrue(s1["published"])
+        self.assertFalse(s2["published"])          # watermark gate held
+        meta = store.get_json("sar/salinity/meta.json")
+        self.assertEqual((meta["year"], meta["doy"]), (2026, 177))
+        self.assertIsNotNone(store.get_bytes("sar/salinity/mask.nc"))
+
+    def test_overlay_flags_only_low_water(self):
+        import numpy as np
+        from sarobs import render
+        from matplotlib.figure import Figure
+        lats, lons, sss = self._grid()
+        fig = Figure(); ax = fig.subplots()
+        # extent over the fresh plume (55W..65W, 6N..14N) -> should hatch
+        shown = render._overlay_low_salinity(
+            ax, (-65.0, -55.0, 6.0, 14.0), (lats, lons, sss))
+        self.assertTrue(shown)
+        # extent over open salty water far away -> nothing to hatch
+        ax2 = fig.subplots()
+        shown2 = render._overlay_low_salinity(
+            ax2, (-40.0, -30.0, -20.0, -10.0), (lats, lons, sss))
+        self.assertFalse(shown2)
 
 
 class ColorScale(unittest.TestCase):

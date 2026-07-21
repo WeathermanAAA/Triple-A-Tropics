@@ -23,7 +23,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from . import discover, fetch, render
+from . import discover, fetch, render, salinity
 from .store import make_store
 
 SCHEMA_VERSION = 1
@@ -57,6 +57,16 @@ def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
           extra_years: tuple = (), log=print) -> dict:
     store = make_store(store_spec)
     year = year or _now().year
+    # low-salinity reliability grid (optional, additive): the SAR render
+    # hatches low-salinity water where C-band winds are less reliable. A
+    # missing/failed read just renders without the overlay.
+    salinity_grid = None
+    try:
+        sbytes = store.get_bytes("sar/salinity/mask.nc")
+        if sbytes:
+            salinity_grid = salinity.read_grid(sbytes)
+    except Exception as e:                       # noqa: BLE001 — additive cue
+        log(f"sar: salinity mask unavailable ({type(e).__name__}) - no overlay")
     manifest = store.get_json("sar/manifest.json") or {
         "schema_version": SCHEMA_VERSION, "storms": []}
     by_slug = {s["slug"]: s for s in manifest.get("storms", [])}
@@ -131,7 +141,8 @@ def build(store_spec: str, *, year: int | None = None, max_new: int = 6,
                 png, thumb, stats = render.render_pass(nc, {
                     "stem": p["stem"], "sat": p["sat"], "pol": p["pol"],
                     "t": p["t"], "storm_name": fields["name"],
-                    "atcf": fields["atcf"]}, geo_dir=geo_dir)
+                    "atcf": fields["atcf"]}, geo_dir=geo_dir,
+                    salinity=salinity_grid)
                 store.put(f"sar/{slug}/{p['stem']}.png", png,
                           "image/png", CACHE_MEDIA)
                 store.put(f"sar/{slug}/{p['stem']}_th.jpg", thumb,

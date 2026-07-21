@@ -215,9 +215,47 @@ def despeckled_peak(wind: np.ma.MaskedArray, incid=None, *,
     return float(smooth[iy, ix]), (int(iy), int(ix))
 
 
-def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[bytes, bytes, dict]:
+LOW_SSS_PSU = 33.0
+
+
+def _overlay_low_salinity(ax, ext, salinity) -> bool:
+    """Hatch low-salinity water (SMAP SSS < LOW_SSS_PSU) within the pass
+    extent. Nearest-neighbour samples the regular 0.25 deg SSS grid onto a
+    coarse grid over the extent, then hatches the sub-threshold region.
+    Returns True iff any low-salinity water falls inside the scene."""
+    import matplotlib as mpl
+    slat, slon, sss = salinity
+    gx = np.linspace(ext[0], ext[1], 140)
+    gy = np.linspace(ext[2], ext[3], 100)
+    GX, GY = np.meshgrid(gx, gy)
+    dlon = float(slon[1] - slon[0]); dlat = float(slat[1] - slat[0])
+    li = np.clip(np.round((GX % 360.0 - slon[0]) / dlon).astype(int),
+                 0, slon.size - 1)
+    lj = np.clip(np.round((GY - slat[0]) / dlat).astype(int), 0, slat.size - 1)
+    samp = sss[lj, li]
+    low = np.where(np.isfinite(samp) & (samp < LOW_SSS_PSU), 1.0, 0.0)
+    if low.sum() < 2:
+        return False
+    old_c, old_lw = mpl.rcParams["hatch.color"], mpl.rcParams["hatch.linewidth"]
+    mpl.rcParams["hatch.color"] = "#cfe0f5"
+    mpl.rcParams["hatch.linewidth"] = 0.45
+    try:
+        ax.contourf(GX, GY, low, levels=[0.5, 1.5], colors=[(0, 0, 0, 0)],
+                    hatches=["////"], zorder=2.6)
+        ax.contour(GX, GY, low, levels=[0.5], colors="#cfe0f5",
+                   linewidths=0.6, alpha=0.5, zorder=2.7)
+    finally:
+        mpl.rcParams["hatch.color"] = old_c
+        mpl.rcParams["hatch.linewidth"] = old_lw
+    return True
+
+
+def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".",
+                salinity=None) -> tuple[bytes, bytes, dict]:
     """Render one pass. ``meta``: {stem, sat, pol, t, storm_name, atcf}.
-    Returns (png_bytes, thumb_jpg_bytes, stats)."""
+    ``salinity`` (optional): (lats, lons, sss_grid) SMAP 8-day SSS in PSU on a
+    regular 0.25 deg grid (lons 0-360) — low-salinity water is hatched as a
+    reliability cue. Returns (png_bytes, thumb_jpg_bytes, stats)."""
     d = read_pass(nc_bytes)
     lon, lat, wind, incid = d["lon"], d["lat"], d["wind"], d["incid"]
     t = meta.get("t") or d["t"]
@@ -250,6 +288,16 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     _draw_basemap(ax, ext, geo_dir)
     pm = ax.pcolormesh(lon, lat, wind, cmap=sar_cmap(), vmin=0.0, vmax=VMAX,
                        shading="nearest", zorder=2, rasterized=True)
+
+    # low-salinity reliability overlay (SMAP SSS): hatch water below the
+    # threshold where C-band SAR winds are less reliable. Subtle diagonal
+    # hatch over a transparent fill so the wind field still reads through.
+    sal_shown = False
+    if salinity is not None:
+        try:
+            sal_shown = _overlay_low_salinity(ax, ext, salinity)
+        except Exception:                        # noqa: BLE001 — additive cue
+            sal_shown = False
 
     # robust interior open-water near-peak (edge/coast-eroded, despeckled) +
     # a small dark-haloed hollow ring at its location — pinpoint, not firework.
@@ -329,8 +377,14 @@ def render_pass(nc_bytes: bytes, meta: dict, *, geo_dir: str = ".") -> tuple[byt
     else:
         imagery = "Satellite SAR imagery"
     fig.text(0.055, 0.022,
-             f"{imagery} · Processed at NOAA/NESDIS/STAR/SOCD · ~500 m C-band",
+             f"{imagery} · Processed at NOAA/NESDIS/STAR/SOCD · ~500 m C-band"
+             + (" · salinity: RSS SMAP" if sal_shown else ""),
              color=MUTED, fontsize=7.2, ha="left")
+    if sal_shown:
+        fig.text(0.055, 0.05,
+                 f"Hatched: low-salinity water (SMAP 8-day SSS < "
+                 f"{int(LOW_SSS_PSU)}), where C-band SAR winds are less "
+                 "reliable", color=MUTED, fontsize=7.5, ha="left")
     fig.text(0.885, 0.022, "@WeathermanAAA_", color=MUTED, fontsize=8,
              ha="right", fontweight="bold")
 

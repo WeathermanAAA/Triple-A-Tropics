@@ -29,6 +29,10 @@ class LocalStore:
             return None
         return json.loads(p.read_text())
 
+    def get_bytes(self, key: str):
+        p = self.root / key
+        return p.read_bytes() if p.exists() else None
+
 
 class R2Store:
     def __init__(self, bucket: str | None = None):
@@ -54,6 +58,14 @@ class R2Store:
         except self.c.exceptions.NoSuchKey:
             return None
         return json.loads(r["Body"].read())
+
+    def get_bytes(self, key: str):
+        """Raw object bytes, or None for a missing key."""
+        try:
+            r = self.c.get_object(Bucket=self.bucket, Key=key)
+        except self.c.exceptions.NoSuchKey:
+            return None
+        return r["Body"].read()
 
 
 def make_store(spec: str):
