@@ -4,7 +4,7 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-21 ~07:2x UTC — SAR low-salinity reliability overlay (#10) SHIPPED end-to-end (RSS SMAP SSS ingest + render hatch + box salinity-poller live; mask.nc on CDN; 80 passes backfilled). Extra-MJO (#4) and archived-scatterometer (#14) sources probed and confirmed buildable, but implementation is QUEUED behind a file-tool (vibe-island VS Code bridge) outage + an ECMWF rate-limit — decisions surfaced below. Earlier waves below._
+_Last update: 2026-07-21 ~17:1x UTC — BIG WAVE LANDED: #4 ECMWF MJO models (IFS+ENS selectable on /subseasonal/, @9aa187dc), recon dropsonde Skew-T + full VDM readout + numbered drops (@ece430b7, ingest v2 live via the 90s poller), #14 archived QuikSCAT 1999-2009 (@1da0473e; box backfill chewing AL+EP now, browser appears on /obs/ascat/ as storms publish). Earlier: SAR salinity overlay + fixes. Decisions + follow-ups below._
 
 ---
 
@@ -66,6 +66,49 @@ _Last update: 2026-07-21 ~07:2x UTC — SAR low-salinity reliability overlay (#1
 10. _(agent appends new steps here as the re-kick queue lands)_
 
 ---
+
+## 2026-07-21 (~08:0x-17:1x UTC) — #4 ECMWF MJO + RECON PRODUCTS + #14 QUIKSCAT SHIPPED
+
+**#4 (@9aa187dc on main).** subseasonal/ecmwf_open.py: keyless ECMWF open-data
+fetcher (index-driven coalesced+threaded byte-range GETs, backoff, per-day
+reduced-field disk cache), OPER/ENS adapters mirroring gefs_mean. RMM + OLR
+Hovmoller variants for IFS + ENS, _ifs/_ens suffixes, model selectors on
+/subseasonal/ (freshness-gated; stale variants disappear). CI: additive steps,
+timeout-bounded, per-model isolated — the GEFS publish cannot be taken down.
+Numerically verified (day-1 corr vs GEFS c00: u850 .977/u200 .994/OLR .91;
+tropical OLR ~263 W/m2; ens spread grows). Adversarially reviewed (2 real
+findings fixed: mixed-member-set OLR differencing now tail-breaks; init
+fallback returns newest probed). AIFS dropped per Andrew (no OLR field).
+**First live publish: tomorrow's 15:41Z cron** (today's ran pre-merge; the
+codespace gh token cannot dispatch — 403).
+- Rollback: revert @9aa187dc; the page degrades to GEFS-only automatically.
+
+**Recon (@ece430b7).** reconobs schema v2: full dropsonde profiles + full VDMs
++ two live decode bugs fixed (max_sfc_wind_kt was null on EVERY published VDM).
+Frontend: adaptive-sheet Skew-T canvas + drop selector, VDM chips panel,
+numbered clickable drop markers. Verified headless on live Bertha (AF309/
+NOAA3) with real v2 output. The box recon-poller self-deploys (90s git reset;
+publisher heartbeat re-emits within ~10 min). 67+21 tests green.
+- Rollback: revert @ece430b7 (schema additive; old JS ignores new keys).
+
+**#14 QuikSCAT (@1da0473e).** qscatobs package: pure-numpy decoder for BYU
+HRStorms per-pass 2.5-km winds (reference IDL reader lat formula proven WRONG,
+/180 not /200), colocation-table obs times, house-style renders, resumable R2
+build. /obs/ascat/ gains an Archived-passes browser (hidden until manifest
+exists). Katrina 2005 verified (eye vs best-track aligned). **Backfill running
+on the box** (sar-poller container, AL+EP 1999-2009, /tmp/qscat_backfill.log;
+resumable — rerun the same command if it dies). Honesty call: NO "peak
+retrieved" headline (Ku rain contamination is coherent; despeckle still read
+77 kt on a 30-kt TD).
+
+**#14 remaining — HY-2B + RapidScat:**
+- HY-2B: source PROVED keyless (Copernicus Marine native S3, daily 0.25-deg
+  HSCAT L3 with per-cell times + rain/quality bitmask; 19-43h latency;
+  listing recipe + schema in the scout notes). NOTE: the KNMI-to-CMEMS chain
+  has an ACTIVE outage since 07-16. Build queued next session. The few-hour
+  L2B path needs emailed KNMI OSI SAF WIND-FTP creds — Andrew option (queued).
+- RapidScat: still no EARTHDATA_TOKEN on the box — skipped per instruction,
+  queued (MORNING-TO-DO #9).
 
 ## 2026-07-21 (~05:3x-07:2x UTC) — SAR SALINITY OVERLAY SHIPPED (#10); EXTRA-MJO (#4) + SCATTEROMETERS (#14) ASSESSED + QUEUED
 
