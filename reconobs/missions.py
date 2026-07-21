@@ -406,7 +406,13 @@ def _vdm_enrich(d: dict) -> dict:
                                        d.get("Eye Diameter 1 (nmi)")), 0, 400),
         "eye_diameter2_nmi": _rng(d.get("Eye Diameter 2 (nmi)"), 0, 400),
         "eye_major_nmi": _rng(d.get("Eye Major Axis (nmi)"), 0, 400),
-        "eye_minor_nmi": _rng(d.get("Eye Minor Axis (nmi)"), 0, 400),
+        # the vendored decoder files the MAJOR-axis token under the minor
+        # key too (elliptical G/M lines); a minor equal to the major is
+        # that bug, not data - suppress it rather than publish a false axis
+        "eye_minor_nmi": (lambda mn, mj: None if (mn is not None and
+                          mn == mj) else mn)(
+            _rng(d.get("Eye Minor Axis (nmi)"), 0, 400),
+            _rng(d.get("Eye Major Axis (nmi)"), 0, 400)),
         "eye_orientation_deg": _rng(d.get("Orientation"), 0, 360),
         "temp_out_eye_c": _num_unit(t_out, _RE_C, -100, 60, bare=True),
         "temp_in_eye_c": _num_unit(t_in, _RE_C, -100, 60, bare=True),

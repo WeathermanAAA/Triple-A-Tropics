@@ -841,7 +841,10 @@
   // Vortex Data Message readout: the full decoded fix, chips-only, no
   // interpretation. Fields the aircraft did not report are simply absent.
   // ====================================================================
-  function fmtLatLon(la, lo) {
+  // NOTE: named fmtFixLL, not fmtLatLon - the legacy fmtLatLon declared
+  // later in this IIFE would shadow a duplicate (last declaration wins),
+  // silently dropping VDM hundredths precision and null handling.
+  function fmtFixLL(la, lo) {
     if (la == null || lo == null) return null;
     return Math.abs(la).toFixed(2) + (la >= 0 ? 'N' : 'S') + ' ' +
            Math.abs(lo).toFixed(2) + (lo >= 0 ? 'E' : 'W');
@@ -885,6 +888,10 @@
                   Math.round(f.eye_minor_nmi) + ' nmi' +
                   (f.eye_orientation_deg != null
                     ? ' @ ' + Math.round(f.eye_orientation_deg) + '°' : ''));
+      } else if (f.eye_major_nmi != null) {
+        bits.push('major ' + Math.round(f.eye_major_nmi) + ' nmi' +
+                  (f.eye_orientation_deg != null
+                    ? ' @ ' + Math.round(f.eye_orientation_deg) + '°' : ''));
       } else if (f.eye_diameter_nmi != null) {
         bits.push(Math.round(f.eye_diameter_nmi) +
                   (f.eye_diameter2_nmi != null
@@ -903,7 +910,7 @@
                 ? ' · Td ' + Math.round(f.dewpoint_in_eye_c) + '°' : '');
     }
     var rows = [
-      ['Center', fmtLatLon(f.lat, f.lon)],
+      ['Center', fmtFixLL(f.lat, f.lon)],
       ['Fix time', f.t ? String(f.t).replace('T', ' ').slice(0, 16) + 'Z'
                        : null],
       ['MSLP (center fix)', f.mslp_hpa != null
@@ -996,7 +1003,7 @@
     // header: drop position + time + location tag (honest, data-only)
     if (this.dom.skewtHead) {
       var head = 'Drop ' + (this.curSonde + 1) + ' of ' + sondes.length;
-      var pos = fmtLatLon(s.lat, s.lon);
+      var pos = fmtFixLL(s.lat, s.lon);
       if (pos) head += ' · ' + pos;
       if (s.t) head += ' · ' + String(s.t).replace('T', ' ').slice(0, 16) + 'Z';
       if (s.location) head += ' · ' + String(s.location).toLowerCase();
