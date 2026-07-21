@@ -172,6 +172,9 @@ function serve() {
       cap: tv && tv._loopCapFor ? tv._loopCapFor() : null,
       center: tv && tv.map ? tv.map.getCenter() : null,
       zoom: tv && tv.map ? tv.map.getZoom() : null,
+      pitch: tv && tv.map ? +tv.map.getPitch().toFixed(1) : null,
+      bearing: tv && tv.map ? +tv.map.getBearing().toFixed(1) : null,
+      terrain: !!(tv && tv.map && tv.map.getTerrain && tv.map.getTerrain()),
       armed: !!(tv && tv._armed),
       errShown: !!(err && err.style.display === 'flex'),
       errText: err ? (err.textContent || '').slice(0, 200) : null,
@@ -798,6 +801,98 @@ function serve() {
     });
     console.log("AFTER C02 CLICK FROM RING:", JSON.stringify(st2));
     await page.screenshot({ path: path.join(OUT, "fieldroute_channel.png") });
+  }
+
+  if (scenario === "tilt3d") {
+    // 3D cloud tops: settings toggle -> per-stamp dem twins (tatdem protocol
+    // over the live CDN bt.png) + setTerrain + pitch/rotate. Boot default is
+    // Clean IR (bt on every domain, geo-global included), so the gate passes.
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.jumpTo({ center: [-75, 22], zoom: 4.3 });
+    });
+    await page.waitForTimeout(3500);   // camera resume + any auto-switch settle
+    await page.click("#cx-settings");
+    await page.waitForTimeout(400);
+    const gate = await page.evaluate(() => {
+      const b = document.getElementById("cx-set-3d");
+      const p = window.__cockpit.panes[0];
+      return { disabled: b.disabled, product: p.product && p.product.key,
+               manifestBT: !!(p.tv.manifest && p.tv.manifest.bt) };
+    });
+    console.log("3D GATE:", JSON.stringify(gate));
+    await page.screenshot({ path: path.join(OUT, "tilt3d_1_settings.png") });
+    await page.click("#cx-set-3d");
+    await page.waitForFunction(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      return !!tv.map.getTerrain() && tv.map.getPitch() > 45;
+    }, null, { timeout: 30000 }).catch(() => errors.push("TIMEOUT waiting for terrain+pitch"));
+    await page.evaluate(() => {
+      window.__cockpit.panes[0].tv.map.easeTo({ pitch: 60, bearing: 25, duration: 0 });
+    });
+    await page.waitForTimeout(9000);   // dem tiles synthesize + terrain settles
+    const st1 = await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      const t = tv.map.getTerrain();
+      const chip = document.querySelector(".cx-3d-chip");
+      return { terrain: t ? { source: t.source, ex: t.exaggeration } : null,
+               pitch: +tv.map.getPitch().toFixed(1),
+               bearing: +tv.map.getBearing().toFixed(1),
+               demSources: Object.keys(tv.map.getStyle().sources)
+                 .filter((id) => id.includes("-dem-")).length,
+               rotate: tv.map.dragRotate.isEnabled(),
+               chip: chip ? chip.textContent.slice(0, 90) : null };
+    });
+    console.log("3D STATE:", JSON.stringify(st1));
+    console.log("3D ASSERT terrain+pitch:",
+      st1.terrain && st1.pitch > 45 ? "PASS" : "FAIL");
+    await page.screenshot({ path: path.join(OUT, "tilt3d_2_pitched.png") });
+    // slider: live exaggeration update + persisted keys
+    await page.evaluate(() => {
+      const sl = document.getElementById("cx-set-3dex");
+      sl.value = "12";
+      sl.dispatchEvent(new Event("input"));
+    });
+    await page.waitForTimeout(1200);
+    const st2 = await page.evaluate(() => {
+      const t = window.__cockpit.panes[0].tv.map.getTerrain();
+      let ls = null;
+      try { ls = localStorage.getItem("cx.t3") + "/" + localStorage.getItem("cx.t3ex"); }
+      catch (e) {}
+      return { ex: t && t.exaggeration, ls };
+    });
+    console.log("3D SLIDER:", JSON.stringify(st2));
+    await page.screenshot({ path: path.join(OUT, "tilt3d_3_ex12.png") });
+    // playback under terrain: the per-frame flip rides _reveal's confirmed
+    // gate — the terrain source must advance with the loop, no errors
+    await page.evaluate(() => document.getElementById("cx-play").click());
+    await page.waitForTimeout(6000);
+    const stp = await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      const t = tv.map.getTerrain();
+      return { playing: !!window.__cockpit.playing,
+               frame: tv.frames[tv.frameIdx],
+               terrainSource: t && t.source };
+    });
+    await page.evaluate(() => document.getElementById("cx-play").click());
+    console.log("3D PLAYBACK:", JSON.stringify(stp));
+    console.log("3D PLAYBACK terrain-follows-frame:",
+      stp.terrainSource && stp.terrainSource.endsWith(stp.frame) ? "PASS" : "FAIL");
+    // toggle off: terrain drops, camera eases home, rotate re-disabled,
+    // every dem twin unmounts
+    await page.click("#cx-set-3d");
+    await page.waitForTimeout(1800);
+    const st3 = await page.evaluate(() => {
+      const tv = window.__cockpit.panes[0].tv;
+      return { terrain: !!tv.map.getTerrain(),
+               pitch: +tv.map.getPitch().toFixed(1),
+               bearing: +tv.map.getBearing().toFixed(1),
+               demSources: Object.keys(tv.map.getStyle().sources)
+                 .filter((id) => id.includes("-dem-")).length,
+               rotate: tv.map.dragRotate.isEnabled(),
+               chip: !!document.querySelector(".cx-3d-chip") };
+    });
+    console.log("3D OFF:", JSON.stringify(st3));
+    await page.screenshot({ path: path.join(OUT, "tilt3d_4_back2d.png") });
   }
 
   if (scenario === "nhcpolish") {

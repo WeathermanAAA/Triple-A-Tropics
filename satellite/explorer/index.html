@@ -310,6 +310,16 @@
     letter-spacing:.12em;text-transform:uppercase;color:var(--cx-dim);min-width:220px}
   #cx-setpop .cx-btn{margin-top:8px;width:100%;letter-spacing:.02em;text-transform:none;
     font-size:11.5px;justify-content:center}
+  #cx-setpop .cx-set-sec{margin-top:12px}
+  #cx-setpop .cx-set-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    margin-top:8px;font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--cx-mut)}
+  #cx-setpop .cx-set-row input[type=range]{flex:1;accent-color:var(--cx-teal)}
+  #cx-setpop .cx-set-row input[type=range]:disabled{opacity:.4}
+  /* honest 3D label: relief is a BT proxy, not measured altitude */
+  .cx-3d-chip{position:absolute;right:8px;top:212px;z-index:4;max-width:250px;
+    pointer-events:none;background:rgba(10,13,18,.72);border:1px solid var(--cx-line-soft);
+    border-radius:6px;padding:5px 8px;font-family:'Metropolis',system-ui,sans-serif;
+    font-size:9.5px;font-weight:500;letter-spacing:.02em;line-height:1.45;color:var(--cx-dim)}
   #cx-exppop{position:absolute;left:50%;transform:translateX(-50%);bottom:52px;z-index:9;
     display:none;background:var(--cx-panel);border:1px solid var(--cx-line);border-radius:10px;
     box-shadow:0 10px 26px rgba(0,0,0,.45);padding:11px 12px;min-width:230px;
@@ -533,6 +543,13 @@
       <div id="cx-setpop">
         Playback
         <button type="button" class="cx-btn on" id="cx-set-dwell">6× dwell on newest frame</button>
+        <div class="cx-set-sec">View</div>
+        <button type="button" class="cx-btn" id="cx-set-3d"
+          title="Extrude cloud tops from the IR brightness-temperature raster">3D cloud tops</button>
+        <div class="cx-set-row">
+          <label for="cx-set-3dex">Vertical ×<span id="cx-set-3dexv">8</span></label>
+          <input type="range" id="cx-set-3dex" min="4" max="16" step="1" value="8" disabled>
+        </div>
       </div>
     </div>
 
@@ -632,13 +649,14 @@
 <script src="/sat-health.js?v=2"></script>
 <script src="products.js?v=tm2"></script>
 <script src="bt_probe.js?v=tm2"></script>
-<script src="tiled_viewer.js?v=core15"></script>
+<script src="ir3d.js?v=1"></script>
+<script src="tiled_viewer.js?v=core16"></script>
 <!-- native MW/ASCAT fields: the legacy viewer engines (reused primitives) +
      the cockpit adapters — loaded BEFORE cockpit.js so boot can init them -->
 <script src="/microwave/microwave.js?v=13"></script>
 <script src="/ascat/ascat.js?v=0019"></script>
 <script src="cockpit_fields.js?v=tpw1"></script>
-<script src="cockpit.js?v=core16"></script>
+<script src="cockpit.js?v=core17"></script>
 <!-- objective center + intensity (ARCHER/ADT ports) — panel + compute -->
 <script src="objfix.js?v=ofx2"></script>
 <script src="objfix_sources.js?v=ofx3"></script>

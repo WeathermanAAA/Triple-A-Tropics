@@ -576,6 +576,95 @@
   // ---- frame raster sources (§6.1: per-frame source + opacity toggle) ----
   VP._srcId = function (stamp) { return (this._pfx || 'ir') + '-' + stamp; };
 
+  // ---- 3D cloud-top DEM twins (ir3d.js) ------------------------------------
+  // While 3D is on, every in-loop stamp gets a raster-dem twin (Terrain-RGB
+  // synthesized client-side from the frame's bt.png via the tatdem protocol)
+  // plus an INVISIBLE hillshade layer: MapLibre only fetches raster-dem tiles
+  // for a source something actively uses, and setTerrain uses exactly one
+  // source at a time — the transparent hillshade keeps every twin fetching
+  // through the same MOUNT_AHEAD/park machinery as the imagery, so the
+  // per-frame terrain flip in _reveal lands on already-cached tiles instead
+  // of popping a fresh mesh fetch every advance. All of this is gated on
+  // _dem3d: with 3D off none of it mounts and the 2D path is untouched.
+  VP._demId = function (stamp) { return (this._pfx || 'ir') + '-dem-' + stamp; };
+  VP._registerDem = function () {
+    if (this._dem3d && this.manifest && this.manifest.bt && window.IR3D)
+      window.IR3D.register(this._pfx, this.manifest.bt, this.base);
+  };
+  VP._ensureDem = function (stamp) {
+    if (!this._dem3d || !this.manifest || !this.manifest.bt || !window.IR3D) return;
+    var did = this._demId(stamp), m = this.manifest;
+    if (!this.map.getSource(did)) {
+      this.map.addSource(did, {
+        type: 'raster-dem', tiles: [window.IR3D.urlTemplate(this._pfx, stamp)],
+        tileSize: 256, minzoom: m.minzoom || 0,
+        // the BT raster is 1280/2560 px wide — past z5 it's pure upsample
+        maxzoom: Math.min(m.maxzoom || 5, 5),
+        bounds: m.bounds || undefined, encoding: 'mapbox'
+      });
+    }
+    if (!this.map.getLayer(did)) {
+      var before = this.map.getLayer('grat') ? 'grat' : undefined;
+      this.map.addLayer({ id: did, type: 'hillshade', source: did,
+        paint: { 'hillshade-exaggeration': 0,
+                 'hillshade-shadow-color': 'rgba(0,0,0,0)',
+                 'hillshade-highlight-color': 'rgba(0,0,0,0)',
+                 'hillshade-accent-color': 'rgba(0,0,0,0)' } }, before);
+    }
+    this.map.setLayoutProperty(did, 'visibility',
+      (this._parked[stamp] || this._imgHidden) ? 'none' : 'visible');
+  };
+  VP._dropDem = function (did) {
+    if (this.map.getLayer(did)) this.map.removeLayer(did);
+    if (this.map.getSource(did)) {
+      var t = this.map.getTerrain && this.map.getTerrain();
+      if (t && t.source === did) this.map.setTerrain(null);
+      this.map.removeSource(did);
+    }
+  };
+  VP._flipTerrain = function (did) {
+    if (!this.map.getSource(did)) return;
+    var t = this.map.getTerrain && this.map.getTerrain();
+    if (t && t.source === did && t.exaggeration === this._demEx) return;
+    // setTerrain can emit camera events — the flip must not trip the
+    // camera-parking machinery on every frame advance
+    this._terrainFlip = true;
+    try { this.map.setTerrain({ source: did, exaggeration: this._demEx }); }
+    catch (e) {}
+    this._terrainFlip = false;
+  };
+  VP.setTerrain3D = function (on, ex) {
+    if (ex != null) this._demEx = ex;
+    if (!this._demEx) this._demEx = 8;
+    this._dem3d = !!on;
+    if (!this.map) return;
+    if (on) {
+      this._registerDem();
+      for (var s in this._added) this._ensureDem(s);
+      var cur = this.frames[this.frameIdx];
+      // first enable: attach terrain to the on-screen frame now (an accepted
+      // one-time mesh pop); every later flip rides _reveal's confirmed gate
+      if (cur && this.manifest && this.manifest.bt) this._flipTerrain(this._demId(cur));
+    } else {
+      if (this.map.getTerrain && this.map.getTerrain()) {
+        try { this.map.setTerrain(null); } catch (e) {}
+      }
+      // drop every dem twin on this map — current AND retired product
+      var style = this.map.getStyle();
+      var ids = Object.keys((style && style.sources) || {});
+      for (var i = 0; i < ids.length; i++)
+        if (ids[i].indexOf('-dem-') >= 0) this._dropDem(ids[i]);
+    }
+  };
+  VP.setTerrainEx = function (ex) {
+    this._demEx = ex;
+    var t = this.map && this.map.getTerrain && this.map.getTerrain();
+    if (t) {
+      try { this.map.setTerrain({ source: t.source, exaggeration: ex }); }
+      catch (e) {}
+    }
+  };
+
   VP._ensureFrame = function (stamp, opacity) {
     var sid = this._srcId(stamp);
     if (this._added[stamp]) {
@@ -583,6 +672,7 @@
         this.map.setPaintProperty(sid, 'raster-opacity', opacity);
         if (!this._imgHidden) this.map.setLayoutProperty(sid, 'visibility', 'visible');
       }
+      if (this._dem3d) this._ensureDem(stamp);
       return;
     }
     var m = this.manifest;
@@ -611,6 +701,7 @@
                'raster-resampling': 'linear' } }, before);
     if (this._imgHidden) this.map.setLayoutProperty(sid, 'visibility', 'none');
     this._added[stamp] = true;
+    if (this._dem3d) this._ensureDem(stamp);
     // NOT ready yet: readiness is event-confirmed by _onSourceData/_onIdle.
   };
 
@@ -657,6 +748,8 @@
         delete this._parked[st];
         var id = this._srcId(st);
         if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'visible');
+        if (this._dem3d && this.map.getLayer(this._demId(st)))
+          this.map.setLayoutProperty(this._demId(st), 'visibility', 'visible');
         inflight++;
         continue;
       }
@@ -735,6 +828,7 @@
 
   // ---- camera fetch discipline (contract rule 4) ----
   VP._onCamStart = function () {
+    if (this._terrainFlip) return;   // a terrain source swap is not a camera move
     this._camMoving = true;
     if (this._resumeT) { clearTimeout(this._resumeT); this._resumeT = null; }
     if (this._imgHidden) return;   // field mode already owns visibility
@@ -745,6 +839,10 @@
       if (keep[s] || this._parked[s]) continue;
       var id = this._srcId(s);
       if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'none');
+      if (this._dem3d) {
+        var did = this._demId(s);
+        if (this.map.getLayer(did)) this.map.setLayoutProperty(did, 'visibility', 'none');
+      }
       this._parked[s] = true;
       delete this._ready[s];   // a hidden source's readiness is a lie
     }
@@ -813,6 +911,13 @@
     if (this.map.getLayer(tid)) {
       this.map.setPaintProperty(tid, 'raster-opacity', 1);
       if (!this._imgHidden) this.map.setLayoutProperty(tid, 'visibility', 'visible');
+    }
+    // 3D: flip the terrain to this stamp's dem twin at the SAME gated moment
+    // the imagery cuts — the twin's tiles prefetched via its hillshade, so
+    // the mesh swap rides the same tiles-confirmed reveal, never earlier
+    if (this._dem3d && this.manifest && this.manifest.bt) {
+      this._ensureDem(stamp);
+      this._flipTerrain(this._demId(stamp));
     }
     for (var i = 0; i < this.frames.length; i++) {
       var s = this.frames[i];
@@ -918,6 +1023,7 @@
       var id = r.pfx + '-' + r.stamps[i];
       if (this.map.getLayer(id)) this.map.removeLayer(id);
       if (this.map.getSource(id)) this.map.removeSource(id);
+      this._dropDem(r.pfx + '-dem-' + r.stamps[i]);
     }
     this._retired = null;
   };
@@ -930,6 +1036,8 @@
     for (var i = 0; i < r.stamps.length; i++) {
       var id = r.pfx + '-' + r.stamps[i];
       if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', 'none');
+      var did = r.pfx + '-dem-' + r.stamps[i];
+      if (this.map.getLayer(did)) this.map.setLayoutProperty(did, 'visibility', 'none');
     }
   };
   VP._adoptState = function (st) {
@@ -942,6 +1050,7 @@
     this.frameIdx = Math.min(st.frameIdx, Math.max(0, st.frames.length - 1));
     this._added = st.added || {};
     this._ready = st.ready || {};
+    this._registerDem();   // 3D on: the resurrected product's twins re-mount via ensure
     this.map.setMaxZoom(((st.manifest && st.manifest.maxzoom) || 5) + 1);
     this._pinMinZoom();
   };
@@ -962,6 +1071,7 @@
       delete this._parked[s];
       if (this.map.getLayer(id)) this.map.removeLayer(id);
       if (this.map.getSource(id)) this.map.removeSource(id);
+      this._dropDem(this._demId(s));   // dem twin rolls off with its frame
     }
     this._preloadLoop(quiet);
   };
@@ -1020,6 +1130,7 @@
         self.base = manifestBase(manifestUrl, m.product);
         self._pfx = m.product;
         self.probe = (m.bt && window.BTProbe) ? new window.BTProbe(m.bt, self.base) : null;
+        self._registerDem();             // 3D on: dem twins follow the product
         self._startRamp();               // full-fetch switch = cold mount
         self.frames = self._deriveFrames();
         self.frameIdx = Math.max(0, self.frames.length - 1);
@@ -1127,6 +1238,11 @@
       var id = this._srcId(s);
       if (this.map.getLayer(id))
         this.map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+      if (this._dem3d) {
+        var did = this._demId(s);
+        if (this.map.getLayer(did))
+          this.map.setLayoutProperty(did, 'visibility', on ? 'visible' : 'none');
+      }
     }
     if (on) {
       // hidden sources fetched nothing (and hiding un-trusts their readiness),

@@ -167,6 +167,17 @@
   };
   var PANE_DEFAULTS = ['ir', 'c08', 'truecolor', 'airmass'];
 
+  // 3D cloud tops (ir3d.js dem twins on one pane) — sticky preference,
+  // guarded localStorage like the sibling viewers' ascat.style/ens.* keys
+  var T3 = { on: false, ex: 8, pane: 0 };
+  S.t3 = T3;
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  (function () {
+    var ex = parseInt(lsGet('cx.t3ex') || '', 10);
+    if (ex >= 4 && ex <= 16) T3.ex = ex;
+  })();
+
   // ========================================================================
   // LEFT RAIL — field selector (tabs: RGB/Composites | Channels)
   // ========================================================================
@@ -222,6 +233,7 @@
         row.onclick = function () {
           if (row.classList.contains('coming')) return;
           if (S.tm.on) { flash('MW / ASCAT are live-only — exit Time Machine first'); return; }
+          if (T3.on && T3.pane === S.active) exit3D(true);   // MW/ASCAT fields carry no BT raster
           if (window.CockpitFields) window.CockpitFields.setPaneField(S.active, f.key);
         };
         lists[kind].appendChild(row);
@@ -899,6 +911,7 @@
     var pane = S.panes[i];
     if (!pane || pane._rebuilding) return;
     pane._rebuilding = true;
+    if (T3.on && T3.pane === i) exit3D(true);   // fresh GL context boots flat
     var product = pane.product;
     var cam = null, next = pane.el ? pane.el.nextSibling : null;
     try { cam = { c: pane.tv.map.getCenter(), z: pane.tv.map.getZoom() }; } catch (e) {}
@@ -1192,6 +1205,7 @@
     });
     updateHeader(); markFieldActive();
     if (window.CockpitFields) window.CockpitFields.syncControls();
+    sync3DUI();
   }
 
   function setPaneCount(n) {
@@ -1209,6 +1223,7 @@
         makePane(i, productByKey(pick) || productSet(S.domain)[0]);
       }
     } else {
+      if (T3.on && T3.pane >= n) exit3D(true);   // before its map is removed
       for (var j = cur - 1; j >= n; j--) {
         var pane = S.panes[j];
         if (pane) { if (pane.tv && pane.tv.map) pane.tv.map.remove(); pane.el.remove(); }
@@ -1300,6 +1315,10 @@
       clearTimeout(slow);
       pane.product = p;
       paneTag(i);
+      // 3D rides only BT-raster fields: switching the 3D pane to a field
+      // without one drops back to 2D quietly (the toggle preference sticks)
+      if (T3.on && i === T3.pane && !pane3DReady(pane)) exit3D(true);
+      sync3DUI();
       if (i === S.active) { updateHeader(); markFieldActive(); }
       if (i === 0) drawTimeline();
       persistURL();
@@ -1979,8 +1998,86 @@
     });
   }
 
+  // ========================================================================
+  // 3D CLOUD TOPS — per-stamp raster-dem twins (ir3d.js protocol) on ONE
+  // pane; the viewer owns mount/flip/teardown, this owns the toggle, the
+  // camera (pitch/rotate), the gate and the honest on-screen label. Only
+  // offered where the product row carries a BT raster (bt:true) AND the
+  // live manifest ships the bt descriptor — same self-enable rule as the
+  // BT inspector.
+  // ========================================================================
+  function pane3DReady(pane) {
+    return !!(pane && pane.ready && pane.tv && pane.tv.map &&
+              pane.tv.manifest && pane.tv.manifest.bt &&
+              pane.product && pane.product.bt &&
+              pane.kind !== 'mw' && pane.kind !== 'sc');
+  }
+  function chip3D(pane, show) {
+    var el = pane && pane.el && pane.el.querySelector('.cx-3d-chip');
+    if (!show) { if (el) el.remove(); return; }
+    if (!pane || !pane.el) return;
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'cx-3d-chip';
+      pane.el.appendChild(el);
+    }
+    el.textContent = '3D: cloud-top relief derived from IR brightness temperature ' +
+      '(proxy, not measured altitude) · vertical ×' + T3.ex;
+  }
+  function sync3DUI() {
+    var b = $('cx-set-3d');
+    if (!b) return;
+    b.classList.toggle('on', T3.on);
+    b.disabled = !T3.on && !pane3DReady(S.panes[S.active]);
+    b.title = b.disabled
+      ? 'needs a field with a brightness-temperature raster (IR class)'
+      : 'Extrude cloud tops from the IR brightness-temperature raster';
+    var sl = $('cx-set-3dex');
+    if (sl) { sl.value = String(T3.ex); sl.disabled = !T3.on; }
+    var v = $('cx-set-3dexv');
+    if (v) v.textContent = String(T3.ex);
+  }
+  function enter3D() {
+    var i = S.active, pane = S.panes[i];
+    if (!pane3DReady(pane)) {
+      flash('3D needs a field with a BT raster — pick an IR-class field first');
+      sync3DUI();
+      return;
+    }
+    T3.on = true; T3.pane = i;
+    var tv = pane.tv;
+    tv.setTerrain3D(true, T3.ex);
+    try {
+      tv.map.dragRotate.enable();
+      tv.map.touchZoomRotate.enableRotation();
+      tv.map.easeTo({ pitch: 60, duration: 700 });   // keep center/zoom
+    } catch (e) {}
+    chip3D(pane, true);
+    lsSet('cx.t3', '1');
+    sync3DUI();
+  }
+  // keepPref = an automatic drop (non-BT field, pane teardown): the user's
+  // toggle choice survives for the next BT field / session
+  function exit3D(keepPref) {
+    if (!T3.on) return;
+    T3.on = false;
+    var pane = S.panes[T3.pane];
+    if (pane && pane.tv && pane.tv.map) {
+      try {
+        pane.tv.setTerrain3D(false);
+        pane.tv.map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
+        pane.tv.map.dragRotate.disable();
+        pane.tv.map.touchZoomRotate.disableRotation();
+      } catch (e) {}
+    }
+    chip3D(pane, false);
+    if (!keepPref) lsSet('cx.t3', '0');
+    sync3DUI();
+  }
+
   function resetAll() {
     if (S.tm.on) exitTM();
+    exit3D();
     disarmTools(); stopClock(); clearSketch();
     // drop MW/ASCAT fields + layers back to boot state
     if (window.CockpitFields) {
@@ -2364,6 +2461,7 @@
       return;
     }
     stopClock(); disarmTools();
+    exit3D(true);   // the archive render is a flat finished graphic
     S.tm.on = true;
     // ONE history entry per archive session: the browser Back button then
     // closes Time Machine (popstate -> exitTM) instead of leaving the page
@@ -2643,11 +2741,25 @@
     $('cx-reset').onclick = resetAll;
     $('cx-settings').onclick = function () {
       var pop = $('cx-setpop');
+      sync3DUI();   // gate state can change while the pop is closed
       pop.style.display = pop.style.display === 'block' ? 'none' : 'block';
     };
     $('cx-set-dwell').onclick = function () {
       S.dwell = !S.dwell;
       $('cx-set-dwell').classList.toggle('on', S.dwell);
+    };
+    $('cx-set-3d').onclick = function () { T3.on ? exit3D() : enter3D(); };
+    $('cx-set-3dex').oninput = function () {
+      var ex = Math.max(4, Math.min(16, parseInt(this.value, 10) || 8));
+      T3.ex = ex;
+      lsSet('cx.t3ex', String(ex));
+      var v = $('cx-set-3dexv');
+      if (v) v.textContent = String(ex);
+      if (T3.on) {
+        var pane = S.panes[T3.pane];
+        if (pane && pane.tv) pane.tv.setTerrainEx(ex);
+        chip3D(pane, true);
+      }
     };
     document.querySelectorAll('[data-panes]').forEach(function (b) {
       b.onclick = function () { setPaneCount(+b.dataset.panes); wireSelectMap(); };
@@ -2760,6 +2872,9 @@
       if (applied || !pane0.ready) return;
       applied = true;
       applyURLState(); wireSelectMap(); drawTimeline();
+      // sticky 3D: re-enter where the session left off (gate re-checks)
+      if (lsGet('cx.t3') === '1' && pane3DReady(S.panes[S.active])) enter3D();
+      sync3DUI();
     };
     var poll = setInterval(function () {
       tryApply(); if (applied) clearInterval(poll);
