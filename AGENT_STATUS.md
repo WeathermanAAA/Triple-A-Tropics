@@ -2729,3 +2729,81 @@ QC flag kept not dropped, VDM+sonde sections). reconobs now carries plane_z
 dropped. Box recon-poller clone is at 03612e9; plane_z populates on each
 mission's next republish (new obs / ~10-min heartbeat); older cached
 missions export a blank height column honestly.
+
+## 2026-07-20 · Tester-batch (areas shipped + large features deferred)
+
+SHIPPED THIS PASS (per-area scoped commits, all screenshot/headless-verified):
+- RECON (e6f09fb6): #5 FL→surface converter (Franklin et al. 2003 Table-2
+  factors, level×region toggles, factor table w/ active-cell highlight,
+  honest caveat + citation; center-no-eyewall reuses the non-convective
+  outer factor w/ a stated caveat). #6 synced time-series hover crosshair +
+  Z-time value tooltip (HTML overlay, snapped to nearest ob, touch-friendly,
+  torn down in destroy()). #7 FL-wind labeling: barbs were COLORED by the
+  10-s peak while length showed the average FL wind (colorbar said "Peak
+  10-second Average") — color now uses the same average as the length;
+  colorbar/prose relabeled; 10-s peak stays in the hover/popover.
+- SUBSEASONAL Hovmoller (9990b4af): #1a CDR→forecast gap BRIDGED by per-lon
+  interpolation (continuous field through the init line; == the #1d "2-panel
+  compare / blank panel" report = the analysis+forecast split's blank gap).
+  #1b all-basin genesis (|lat| 25→30N; Arthur/Bertha now mark). #1c label
+  declutter (edge-aware anchor + greedy vertical stagger + leader lines).
+  #1e high-contrast markers (bright dot + dark ring + dark halo, reads on
+  tan AND teal). #2 amplitude percentile fan + #3 RMM audit shipped last
+  turn and confirmed LIVE (cron re-rendered).
+- ASCAT (fd0c6e76): #12 Global-view under-coverage — cap 40→90 so the whole
+  ~60 h window (~68 orbits) draws (density control culls overlap).
+
+DEFERRED — large multi-session features. Each has a concrete plan; none
+started (better than half-shipping into a shared tree). Decisions-for-Andrew
+flagged **[DECISION]**.
+
+- **#4 AIFS + ECMWF-IFS + their ensembles for RMM + Hovmoller** (subseasonal,
+  tester "top priority"). Plan: add per-model open-data fetchers beside
+  subseasonal/gefs_mean.py (ECMWF open-data: IFS/AIFS oper + enfo on the
+  0.25° open set — OLR is NOT in the IFS open-data param list, so RMM needs
+  ttr/OLR proxy or a str-flux derivation; AIFS carries a limited field set —
+  **[DECISION]** confirm AIFS exposes u200/u850 + an OLR-equivalent, else
+  AIFS RMM is winds-only w/ caveat). Reuse rmm_wh04 projection unchanged
+  (one series per model). Frontend: a model selector on the RMM phase/amp +
+  Hovmoller. Effort: high (fetchers + a per-model tail cache + selector UI).
+- **#8 SAR transect tool** (/obs/sar/): client-side draw-a-line → sample the
+  rendered wind field along it → profile chart. Needs the per-pass wind GRID
+  in the browser (today only the PNG + stats ship). Plan: emit a downsampled
+  wind grid JSON per pass (sarobs) OR sample pixel-space against the known
+  colorbar LUT. Effort: medium-high.
+- **#9 SAR quadrant plots**: NE/SE/SW/NW-vs-center wind distributions. Needs
+  the storm CENTER per pass (VDM/best-track join) + the wind grid (as #8).
+  Effort: medium (depends on #8's grid emit).
+- **#10 SAR salinity overlay**: SSS reliability cue (low-salinity/plume/rain
+  degrade C-band). Source: an anonymous SSS product (SMAP/SMOS L3 via PODAAC
+  or Copernicus) — **[DECISION]** confirm a no-cred SSS source; honest
+  "reliability" shading, not a wind edit. Effort: high (new ingest).
+- **#11 TLE overpass prediction (ASCAT+MW+SAR)** (tester "top priority"):
+  pyorbital (already an image dep) + Celestrak TLEs (no cred), cached daily.
+  Per-sensor swath widths → "next/most-recent pass over AOI/storm", with the
+  SAR-is-tasking caveat. Plan: a small box/GH job writing overpass JSON per
+  AOI + a compact schedule widget on the ascat/MW/SAR pages. Effort: high
+  (orbit prop + per-sensor geometry + UI). Pairs with #13/#14.
+- **#12 done** (above).
+- **#13 ASCAT time-machine**: step to older passes. BLOCKED by retention —
+  passes are pruned at 60 h. Needs a longer non-pruned archive (R2) + a
+  time-step UI mirroring the imagery time-machine. Effort: high (retention
+  change + UI). **[DECISION]** how far back to retain (cost vs. utility).
+- **#14 other scatterometers (QuikScat/RapidScat archived)**: add as
+  selectable sources. **[DECISION]** confirm a no-cred archived source
+  (PODAAC L2B) + that this is an ARCHIVE (QuikScat ended 2009, RapidScat
+  2016) — i.e. a historical browser, not live. Effort: high (per-source
+  ingest + decode).
+- **#15 Microwave /obs/ subpage**: mirror the recon/ascat/sar move pattern
+  (the hub already reserves the "Microwave" card). New /obs/microwave/
+  mounting the existing satellite/microwave viewer, redirect the old path,
+  hub card + nav + subnav. Effort: medium — the cleanest next win; no new
+  data, follows a proven pattern.
+- **#16 Explorer 3D-IR view**: extrude the IR field as elevation (colder =
+  taller) in the MapLibre cockpit, tiltable, as a settings toggle. Plan:
+  MapLibre custom layer / raster-DEM-style height from the IR BT LUT while
+  keeping time-lock/loop/product-picker. Effort: high (WebGL/MapLibre 3D).
+
+Rollback: every item above is a single scoped commit; revert the SHA. The
+subseasonal generator changes are R2-only (cron re-renders); ascat/recon
+frontend changes are stamp-bumped.
