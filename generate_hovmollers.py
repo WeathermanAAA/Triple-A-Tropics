@@ -99,7 +99,11 @@ WAVE_SETS = {              # wave-overlay selector -> modes drawn
     "lowfreq": ["lowfreq"], "none": [],
 }
 WAVE_STYLE = {             # mode -> (label, color) on the dark canvas
-    "mjo":    ("MJO", "#e5edf6"),
+    # MJO draws CHARCOAL: near-white contours washed out on the light OLR
+    # shading; charcoal reads on both the tan and teal fills and stays
+    # distinct from Kelvin/ER/MRG-TD. Its legend chip gets a light stroke
+    # so the dark label survives the dark header.
+    "mjo":    ("MJO", "#262c34"),
     "kelvin": ("Kelvin", "#56c8ff"),
     "er":     ("ER", "#ffb83a"),
     "mrg_td": ("MRG–TD", "#ff7a8a"),
@@ -757,7 +761,10 @@ def render_hov(field, dates, lons, *, cmap, vmax, step, cb_label,
         for mode, _ in reversed(overlays):
             label, color = WAVE_STYLE[mode]
             ax.text(x, 1.030, label, transform=ax.transAxes, color=color,
-                    fontsize=9, fontweight="bold", ha="right")
+                    fontsize=9, fontweight="bold", ha="right",
+                    path_effects=([matplotlib.patheffects.withStroke(
+                        linewidth=2.2, foreground="#c9d6e6")]
+                        if mode == "mjo" else None))
             x -= 0.028 + 0.0115 * len(label)
         ax.text(x, 1.030, "waves:", transform=ax.transAxes, color=MUTED,
                 fontsize=8.5, ha="right")
