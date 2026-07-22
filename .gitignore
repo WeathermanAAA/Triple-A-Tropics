@@ -110,3 +110,8 @@ subseasonal/out/
 # wrangler local-dev state + secrets (never commit)
 workers/.dev.vars
 workers/.wrangler/
+
+# TC records engine — computed output (published to R2, never committed) +
+# the HURDAT2 download cache
+records_out/
+records_cache/
