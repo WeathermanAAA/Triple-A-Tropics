@@ -2951,3 +2951,52 @@ flagged **[DECISION]**.
 Rollback: every item above is a single scoped commit; revert the SHA. The
 subseasonal generator changes are R2-only (cron re-renders); ascat/recon
 frontend changes are stamp-bumped.
+
+## 2026-07-22 · TC History Records Phase 1 (SHADOW - engine + static suite)
+
+Built the archive-stats foundation for the TC-history records feature, as a
+live-but-unlinked shadow section (sat-explorer pattern: no nav links anywhere,
+noindex meta, robots.txt Disallow /records/, "(shadow)" titles). NOT merged
+into the climatology hub - waiting on Andrew's approval.
+
+- Engine: tc_records/ package + generate_tc_records.py. HURDAT2 (NHC) is the
+  AL/EP authority (full lifetimes incl. dateline crossers), IBTrACS v04r01
+  the WP authority (JTWC columns via ace_core.WIND_PREFERENCE) and the
+  current-season spine; live ATCF b-decks join via generate_ace_plot's
+  fetch stack. Non-negotiables enforced: sums on 00/06/12/18Z synoptic
+  tropical/subtropical >=34 kt fixes only; per-fix averaging provenance,
+  never silently mixed (10-min /0.88 disclosed); SID identity with
+  genesis-basin+season attribution (Ioke = EP-2006, full 85.3); missing
+  pressure excluded from pressure boards. ~40 leaderboards + season pace
+  matrices (leap-aligned 366-slot grids) + per-season gantt segments.
+- Validation gate (hard-fails publish): Tip 870, Wilma 882 + rank-1 on
+  6/12/24-h deepening (54/83/97 mb), Gilbert 888, Ivan ACE 70.38,
+  Ioke 85.265, John 1994 30.0 d rank 1, AL-2005 28 named. All PASS; 2005
+  per-storm ACE parity vs al_ace_data.json confirmed (site self-consistency).
+- Workflow: update-tc-records.yml, daily 16:23Z + 16:53Z backup, R2-only
+  (contents: read), gate runs before the sync so bad parses never publish.
+  Output: records/v1/{basin}_{records,seasons}.json + global_records.json +
+  meta.json on the media bucket (CDN). First data set seeded from the box
+  (docker aws-cli + tsr-s2 R2 creds) so the shadow pages are reviewable now.
+- Suite: /records/ hub + seasons/intensity/duration/timing/concurrency
+  (the 5 record pages, ~40 tables off the JSON) + pace (count/ACE cumulative
+  vs 1991-2020 climo bands + record traces + current season) + gantt
+  (per-season SSHS-colored storm bars, contiguous 6-h class runs,
+  150 units/month with horizontal scroll). House chrome tokens, ace_core
+  SSHS palette, per-board definition/notes/caveats, basin chips (AL/EP/WP),
+  provenance stamp, satellite-era caveats, cross-basin boards carry the
+  1-min/10-min disclaimer. Tests: tests/test_tc_records_engine.py (11) +
+  playwright screenshot harness (scratchpad) - 14 page/basin combos clean.
+- Art calls made without sign-off (flag for eyeball): overview card emoji
+  set, gantt peak-class chip + ACE readout per row, pace record-trace
+  violet + amber current-season halo (ACE-template grammar), TD segments
+  at 0.55 opacity. TD-only storms show HURDAT2 number-word names (TEN,
+  NINETEEN) rather than "TD 10L" designation labels - divergence from the
+  ACE-iframe gantt naming, revisit if it grates.
+- Spec note: the referenced records spec file was NOT on this machine (or
+  box/transcripts); authored /workspaces/TC-HISTORY-RECORDS-SPEC.md
+  (OUT of repo per instruction) from the brief + domain records canon -
+  review it.
+
+Rollback: three scoped commits (engine+tests / workflow / shadow frontend);
+revert the SHAs. R2 records/v1/ objects are additive-only.
