@@ -1,0 +1,84 @@
+# TC History records engine — per-basin archive-stats JSON for the (shadow)
+# records suite. R2-only (read-only contents, like update-subseasonal /
+# update-hafs): computes records_out/*.json and syncs them to
+# s3://triple-a-tropics-media/records/v1/ (read by the /records/ pages from
+# cdn.triple-a-tropics.com). Nothing is committed to main.
+#
+# Daily at 16:23 UTC (staggered non-round minute — the repo-standard pattern;
+# GitHub sheds :00-family crons) + a :53 backup 30 min later. All-time
+# records move slowly; the daily join keeps the current-season counts, pace
+# curves and Gantt fresh. The engine hard-validates sentinel records (Tip
+# 870, Wilma 882 + the 6/12/24-h deepening boards, Gilbert 888, John 1994
+# duration, Ivan 70.4 / Ioke 85.3 ACE) and exits non-zero on any mismatch,
+# so a parsing regression aborts BEFORE the sync and the last good JSON
+# stays live.
+
+name: update-tc-records
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 16 * * *"
+    - cron: "53 16 * * *"   # backup — GitHub drops scheduled runs under load
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-tc-records
+  cancel-in-progress: false
+
+jobs:
+  records:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+          # ace_core is the single source of truth for wind preference,
+          # NATURE eligibility, SSHS classes and the b-deck parser — the
+          # records engine imports it (and generate_ace_plot's BASINS) so a
+          # storm has the same fix set here as on the ACE/tracks products.
+          pip install ./ace_core
+
+      - name: Download latest IBTrACS CSVs
+        run: |
+          set -euo pipefail
+          BASE="https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv"
+          for code in WP NA EP; do
+            echo "--- Downloading ibtracs.$code.list.v04r01.csv ---"
+            curl -fSL --retry 3 --retry-delay 10 \
+              -o "ibtracs.$code.list.v04r01.csv" \
+              "$BASE/ibtracs.$code.list.v04r01.csv"
+            ls -lh "ibtracs.$code.list.v04r01.csv"
+          done
+
+      - name: Compute records (validation gate inside)
+        run: |
+          set -euo pipefail
+          # HURDAT2 AL/EP files are auto-discovered from the NHC index and
+          # downloaded by the engine itself (records_cache/). The gate makes
+          # this step fail loudly rather than publish wrong numbers.
+          python generate_tc_records.py --out records_out
+
+      - name: Publish to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          aws s3 sync records_out/ s3://triple-a-tropics-media/records/v1/ \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=600" \
+            --exclude "*" --include "*.json"
+          echo "published:"
+          aws s3 ls s3://triple-a-tropics-media/records/v1/ --endpoint-url "$R2_ENDPOINT"
