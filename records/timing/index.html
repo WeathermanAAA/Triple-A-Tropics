@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Timing Records - TC Records (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Tropical cyclone timing records: earliest Nth named storm, earliest hurricanes and majors, latest season starts, latest in-season activity, longest season spans, pre-season storms.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/records/records.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label, nav, header, footer, table, th, td { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+  #boards .rec-board.rec-wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Records sections">
+  <div class="subnav-inner">
+    <a href="/records/">Overview</a>
+    <a href="/records/seasons/">Season Records</a>
+    <a href="/records/intensity/">Intensity</a>
+    <a href="/records/duration/">Duration &amp; Motion</a>
+    <a href="/records/timing/" class="active">Timing</a>
+    <a href="/records/concurrency/">Concurrency</a>
+    <a href="/records/pace/">Pace</a>
+    <a href="/records/gantt/">Season Gantt</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/records/">&larr; Records overview</a></p>
+  <h1>Timing Records</h1>
+  <p>Calendar extremes: earliest and latest formations, season spans, and pre-season activity.</p>
+  <p class="rec-stamp" id="recStamp"></p>
+</header>
+
+<section class="rec-controls">
+  <div id="basinChips"></div>
+</section>
+
+<section class="rec-wrap">
+  <p class="rec-caveat" id="caveat">Timing records reach back to the start of each basin's best track. Seasons before the satellite era undercount real activity, so early-record dates there are less reliable.</p>
+</section>
+
+<div id="boards" class="board-grid"></div>
+
+<footer><div class="footer-inner"><p>Data: NHC HURDAT2 · NOAA NCEI IBTrACS v04r01 · live ATCF b-decks. Built for weather nerds by a weather nerd.</p></div></footer>
+
+<script src="/records/records.js"></script>
+<script>
+  (function () {
+    var boardsEl = document.getElementById('boards');
+    var caveatEl = document.getElementById('caveat');
+    TATRecords.loadRecords(function (data) {
+      boardsEl.textContent = '';
+      if (!data || !data.boards) {
+        TATRecords.error(boardsEl);
+        return;
+      }
+      TATRecords.stamp(data.provenance);
+      var p = data.provenance || {};
+      if (caveatEl && p.records_since && p.satellite_era) {
+        caveatEl.textContent = 'Timing records reach back to ' + p.records_since +
+          '. Seasons before the satellite era (' + p.satellite_era +
+          ') undercount real activity, so early-record dates there are less reliable.';
+      }
+      var rendered = 0;
+      for (var i = 0; i < data.boards.length; i++) {
+        var board = data.boards[i];
+        if (board.page !== 'timing') continue;
+        TATRecords.renderBoard(boardsEl, board);
+        rendered++;
+        /* The Nth-named-storm table runs to N=30 and beyond; give it the full row. */
+        if (board.key === 'timing_earliest_nth' && boardsEl.lastElementChild) {
+          boardsEl.lastElementChild.className += ' rec-wide';
+        }
+      }
+      if (rendered === 0) {
+        TATRecords.error(boardsEl, 'No timing records available for this basin.');
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>

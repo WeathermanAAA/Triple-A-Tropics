@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Season Gantt - TC Records (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Season Gantt chart of tropical cyclone lifespans, one class-colored bar per storm, for every Atlantic, East Pacific, and West Pacific season.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/records/records.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label, nav, header, footer, table, th, td { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+  .gantt-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .gantt-wrap { padding-top: 18px; padding-bottom: 56px; }
+  .gantt-scroll { overflow-x: auto; }
+  .gantt-scroll svg { display: block; width: 100%; min-width: 720px; height: auto; }
+  .gantt-legend {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .gantt-legend .item {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; color: var(--muted);
+  }
+  .gantt-legend .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Records sections">
+  <div class="subnav-inner">
+    <a href="/records/">Overview</a>
+    <a href="/records/seasons/">Season Records</a>
+    <a href="/records/intensity/">Intensity</a>
+    <a href="/records/duration/">Duration &amp; Motion</a>
+    <a href="/records/timing/">Timing</a>
+    <a href="/records/concurrency/">Concurrency</a>
+    <a href="/records/pace/">Pace</a>
+    <a href="/records/gantt/" class="active">Season Gantt</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/records/">&larr; Records overview</a></p>
+  <h1>Season Gantt</h1>
+  <p>Every storm in a season as a class-colored bar across the calendar, sorted by genesis.</p>
+  <p class="rec-stamp" id="recStamp"></p>
+</header>
+
+<section class="rec-controls">
+  <div class="gantt-controls">
+    <div id="basinChips"></div>
+    <label class="sst-select">
+      <span class="sst-select-label">Season</span>
+      <select id="seasonSel"></select>
+    </label>
+  </div>
+</section>
+
+<section class="rec-wrap gantt-wrap">
+  <div id="chartArea"></div>
+  <p class="rec-caveat">Bars span each storm's tropical or subtropical life at 6-hour resolution. Gaps are extratropical or remnant phases. Storms are attributed to their genesis season.</p>
+</section>
+
+<footer><div class="footer-inner"><p>Data: NHC HURDAT2 · NOAA NCEI IBTrACS v04r01 · live ATCF b-decks. Built for weather nerds by a weather nerd.</p></div></footer>
+
+<script src="/records/records.js"></script>
+<script>
+  (function () {
+    'use strict';
+
+    var NS = 'http://www.w3.org/2000/svg';
+    var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var SIX_H = 6 * 3600 * 1000;
+    var CLS_ORDER = ['TD', 'TS', 'C1', 'C2', 'C3', 'C4', 'C5'];
+
+    /* Geometry (SVG user units). The viewBox width scales with the month
+       span (150 units/month) so a 6-hourly class run stays readable
+       (~5 units/day); .gantt-scroll provides horizontal scroll when the
+       rendered chart outgrows the card. */
+    var UNITS_PER_MONTH = 150;
+    var X0 = 110;       /* plot left edge (name gutter is 0..110) */
+    var ROW_H = 26;
+    var ROWS_TOP = 34;
+    var BAR_H = 13;
+
+    var chartArea = document.getElementById('chartArea');
+    var seasonSel = document.getElementById('seasonSel');
+    var curData = null;
+    var chosen = null;
+
+    function ts(iso) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso || '');
+      if (!m) return NaN;
+      return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    }
+
+    function monthFloor(t) {
+      var d = new Date(t);
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+    }
+
+    function monthAfter(t) {
+      var d = new Date(t);
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+    }
+
+    function el(name, attrs) {
+      var n = document.createElementNS(NS, name);
+      if (attrs) {
+        for (var k in attrs) {
+          if (Object.prototype.hasOwnProperty.call(attrs, k)) n.setAttribute(k, attrs[k]);
+        }
+      }
+      return n;
+    }
+
+    function text(str, attrs) {
+      var t = el('text', attrs);
+      t.textContent = str;
+      return t;
+    }
+
+    function colorOf(cls) {
+      return TATRecords.SSHS_COLORS[cls] || '#9199a4';
+    }
+
+    function inkOf(cls) {
+      return TATRecords.SSHS_DARK_INK.indexOf(cls) >= 0 ? '#0a1324' : '#ffffff';
+    }
+
+    function truncName(name) {
+      var s = (name === null || name === undefined) ? '' : String(name);
+      return s.length > 13 ? s.slice(0, 12) + '…' : s;
+    }
+
+    function seasonsOf(data) {
+      var g = (data && data.gantt) || {};
+      var keys = [];
+      for (var k in g) {
+        if (Object.prototype.hasOwnProperty.call(g, k)) keys.push(k);
+      }
+      keys.sort(function (a, b) { return (+b) - (+a); });
+      return keys;
+    }
+
+    function currentSeasonOf(data) {
+      var p = (data && data.provenance) || {};
+      return (p.current_season === null || p.current_season === undefined) ? null : String(p.current_season);
+    }
+
+    function defaultSeason(data) {
+      var list = seasonsOf(data);
+      if (!list.length) return null;
+      var cs = currentSeasonOf(data);
+      if (cs && data.gantt[cs]) return cs;
+      return list[0]; /* list is descending, so [0] is the max season */
+    }
+
+    function rebuildSelect(data) {
+      seasonSel.textContent = '';
+      var list = seasonsOf(data);
+      if (!list.length) {
+        chosen = null;
+        return;
+      }
+      if (chosen === null || list.indexOf(chosen) < 0) chosen = defaultSeason(data);
+      for (var i = 0; i < list.length; i++) {
+        var o = document.createElement('option');
+        o.value = list[i];
+        o.textContent = list[i];
+        seasonSel.appendChild(o);
+      }
+      seasonSel.value = chosen;
+    }
+
+    function buildSVG(basinKey, season, storms) {
+      var y = +season;
+      var n = storms.length;
+      var height = ROWS_TOP + n * ROW_H + 30;
+
+      /* Domain: whole months covering the season's activity, at least
+         May 1 - Dec 31 (al/ep) or Apr 1 - Dec 31 (wp); extends into
+         January when a storm runs past Dec 31. Ends are exclusive
+         month starts, so Dec 31 coverage means Jan 1 of season+1. */
+      var d0 = Date.UTC(y, basinKey === 'wp' ? 3 : 4, 1);
+      var d1 = Date.UTC(y + 1, 0, 1);
+      var i, j;
+      for (i = 0; i < n; i++) {
+        var a = ts(storms[i].t0);
+        var b = ts(storms[i].t1);
+        if (isFinite(a)) d0 = Math.min(d0, monthFloor(a));
+        if (isFinite(b)) d1 = Math.max(d1, monthAfter(b));
+      }
+
+      var months = Math.max(1, Math.round((d1 - d0) / 2629800000));
+      var VBW = X0 + months * UNITS_PER_MONTH + 70;
+      var X1 = VBW - 70;  /* 70 units reserved for peak chip + ace */
+
+      function X(t) {
+        return X0 + (t - d0) / (d1 - d0) * (X1 - X0);
+      }
+
+      var svg = el('svg', {
+        viewBox: '0 0 ' + VBW + ' ' + height,
+        role: 'img',
+        'aria-label': 'Season Gantt, ' + season + ', ' + n + ' storms'
+      });
+      /* 1:1 units-to-pixels floor so busy seasons scroll instead of
+         squashing 6-hour runs below a pixel. */
+      svg.setAttribute('style', 'min-width:' + VBW + 'px');
+
+      /* Month gridlines + labels on top. */
+      var gridBottom = ROWS_TOP + n * ROW_H + 8;
+      var cur = d0;
+      while (cur <= d1) {
+        var gx = X(cur);
+        svg.appendChild(el('line', {
+          x1: gx.toFixed(2), y1: 27, x2: gx.toFixed(2), y2: gridBottom,
+          stroke: 'var(--grid-dim, #232730)', 'stroke-width': 1
+        }));
+        if (cur < d1) {
+          var nx = monthAfter(cur);
+          svg.appendChild(text(MONTHS[new Date(cur).getUTCMonth()], {
+            x: ((gx + X(nx)) / 2).toFixed(2), y: 19,
+            'text-anchor': 'middle', 'font-size': '11', fill: 'var(--muted, #9199a4)'
+          }));
+          cur = nx;
+        } else {
+          break;
+        }
+      }
+
+      /* One row per storm, sorted by t0. */
+      var sorted = storms.slice().sort(function (p, q) {
+        return (ts(p.t0) || 0) - (ts(q.t0) || 0);
+      });
+
+      for (i = 0; i < sorted.length; i++) {
+        var s = sorted[i];
+        var rowY = ROWS_TOP + i * ROW_H;
+        var cy = rowY + ROW_H / 2;
+
+        svg.appendChild(text(truncName(s.name), {
+          x: X0 - 8, y: (cy + 4).toFixed(2),
+          'text-anchor': 'end', 'font-size': '11.5', fill: 'var(--fg, #e8ebef)'
+        }));
+
+        /* Segments: engine intervals are already end-exclusive (a fix
+           stands for the 6 h after it), so [start, end) maps straight to
+           pixels and back-to-back runs stay contiguous. */
+        var segs = s.seg || [];
+        var barEnd = X0;
+        for (j = 0; j < segs.length; j++) {
+          var sa = ts(segs[j][0]);
+          var sb = ts(segs[j][1]);
+          var cls = segs[j][2];
+          if (!isFinite(sa) || !isFinite(sb)) continue;
+          var xa = X(sa);
+          var w = Math.max(X(sb) - xa, 0.8);
+          /* crispEdges + no rounding on narrow runs: at ~3 px/day a
+             6-hourly class run is 1-3 px wide, and antialiased rounded
+             corners read as gaps between contiguous segments. */
+          var rect = el('rect', {
+            x: xa.toFixed(2), y: (rowY + (ROW_H - BAR_H) / 2).toFixed(2),
+            width: w.toFixed(2), height: BAR_H,
+            rx: w >= 10 ? 2 : 0,
+            'shape-rendering': 'crispEdges',
+            fill: colorOf(cls)
+          });
+          if (cls === 'TD') rect.setAttribute('opacity', '0.55');
+          svg.appendChild(rect);
+          barEnd = Math.max(barEnd, xa + w);
+        }
+
+        /* Peak class chip + ace after the bar end. */
+        var pc = s.peak_cls || '';
+        var chipX = Math.min(barEnd + 7, VBW - 62);
+        svg.appendChild(el('rect', {
+          x: chipX.toFixed(2), y: (cy - 7.5).toFixed(2),
+          width: 24, height: 15, rx: 3, fill: colorOf(pc)
+        }));
+        svg.appendChild(text(pc, {
+          x: (chipX + 12).toFixed(2), y: (cy + 3.5).toFixed(2),
+          'text-anchor': 'middle', 'font-size': '10.5', 'font-weight': '700',
+          fill: inkOf(pc)
+        }));
+        if (typeof s.ace === 'number' && isFinite(s.ace)) {
+          svg.appendChild(text(s.ace.toFixed(1), {
+            x: (chipX + 31).toFixed(2), y: (cy + 3.5).toFixed(2),
+            'font-size': '10.5', fill: 'var(--muted, #9199a4)'
+          }));
+        }
+      }
+
+      return svg;
+    }
+
+    function buildLegend() {
+      var leg = document.createElement('div');
+      leg.className = 'gantt-legend';
+      for (var i = 0; i < CLS_ORDER.length; i++) {
+        var cls = CLS_ORDER[i];
+        var item = document.createElement('span');
+        item.className = 'item';
+        var sw = document.createElement('span');
+        sw.className = 'sw';
+        sw.style.background = colorOf(cls);
+        if (cls === 'TD') sw.style.opacity = '0.55';
+        var lab = document.createElement('span');
+        lab.textContent = cls;
+        item.appendChild(sw);
+        item.appendChild(lab);
+        leg.appendChild(item);
+      }
+      return leg;
+    }
+
+    function render() {
+      chartArea.textContent = '';
+      if (!curData || !curData.gantt || chosen === null) {
+        TATRecords.error(chartArea);
+        return;
+      }
+      var storms = curData.gantt[chosen];
+      if (!storms || !storms.length) {
+        var msg = (chosen === currentSeasonOf(curData)) ?
+          'No storms yet this season.' :
+          'No storms recorded for this season.';
+        TATRecords.error(chartArea, msg);
+        return;
+      }
+      var card = document.createElement('div');
+      card.className = 'rec-chart';
+      var scroll = document.createElement('div');
+      scroll.className = 'gantt-scroll';
+      scroll.appendChild(buildSVG(TATRecords.basin(), chosen, storms));
+      card.appendChild(scroll);
+      card.appendChild(buildLegend());
+      chartArea.appendChild(card);
+    }
+
+    seasonSel.addEventListener('change', function () {
+      chosen = seasonSel.value;
+      render();
+    });
+
+    TATRecords.loadSeasons(function (data) {
+      curData = data;
+      if (!data || !data.gantt) {
+        seasonSel.textContent = '';
+        chosen = null;
+        TATRecords.error(chartArea);
+        return;
+      }
+      TATRecords.stamp(data.provenance);
+      rebuildSelect(data);
+      render();
+    });
+  })();
+</script>
+
+</body>
+</html>

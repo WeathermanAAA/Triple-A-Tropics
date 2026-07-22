@@ -1,0 +1,204 @@
+/* =========================================================
+   TC Records (shadow) shared styles.
+   Loaded after /styles.css on every /records/ page; relies on
+   the site tokens (--bg, --panel, --border, --fg, --muted,
+   --accent, --accent-2, --accent-3, --grid-dim).
+
+   Shared building blocks for sibling pages:
+     .subnav / .subnav-inner   records section strip
+     .rec-wrap                 generic 1180px content container
+     .rec-controls             basin chip row container
+     .board-grid + .rec-board  board card grid + one board card
+     .rec-chart                panel card holding an inline SVG
+     .rec-caveat / .rec-error / .rec-stamp / .rec-note
+   ========================================================= */
+
+/* ---- Records subnav ---- */
+.subnav {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.subnav::-webkit-scrollbar { display: none; }
+.subnav-inner {
+  max-width: 1180px; margin: 0 auto;
+  padding: 0 20px;
+  display: flex; gap: 22px;
+}
+.subnav a {
+  display: inline-block;
+  padding: 11px 2px 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s;
+}
+.subnav a:hover { color: var(--fg); text-decoration: none; }
+.subnav a.active { color: var(--fg); border-bottom-color: var(--accent-2); }
+/* Sticky only where the main nav is reliably one line tall (see
+   styles.css nav sizing budget); below that the nav wraps to a
+   variable height and a fixed offset would misalign. */
+@media (min-width: 1150px) {
+  .subnav { position: sticky; top: 56px; z-index: 900; }
+}
+
+/* ---- Generic content container ---- */
+.rec-wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* ---- Provenance stamp (inside .page-head) ---- */
+p.rec-stamp {
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* ---- Basin chips ---- */
+.rec-controls {
+  max-width: 1180px; margin: 0 auto;
+  padding: 4px 20px 0;
+}
+.rec-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.rec-chips button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.rec-chips button:hover { color: var(--fg); }
+.rec-chips button.on { color: var(--accent); border-color: var(--accent); }
+
+/* ---- Caveat block ---- */
+.rec-caveat {
+  border-left: 3px solid var(--border);
+  padding: 2px 0 2px 12px;
+  margin: 16px 0 0;
+  font-size: 12.5px;
+  font-style: italic;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* ---- Board card grid ---- */
+.board-grid {
+  max-width: 1180px; margin: 0 auto;
+  padding: 20px 20px 56px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  align-items: start;
+}
+@media (min-width: 980px) {
+  .board-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ---- One board card ---- */
+.rec-board {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+.rec-board h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.rec-def {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.rec-tablewrap { overflow-x: auto; }
+.rec-board table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.rec-board th {
+  text-align: left;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.rec-board td {
+  padding: 6px 10px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.rec-board tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.rec-board td.rank { color: var(--muted); width: 38px; white-space: nowrap; }
+.rec-board td.val {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rec-board td.date { color: var(--muted); white-space: nowrap; }
+.rec-board td.extra { color: var(--muted); font-size: 12.5px; }
+.rec-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  font-style: italic;
+  font-weight: 500;
+  color: var(--muted);
+}
+.rec-since {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* ---- Chart panel (pace / gantt pages: one inline SVG per card) ---- */
+.rec-chart {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  min-width: 0;
+}
+.rec-chart svg { display: block; width: 100%; height: auto; }
+
+/* ---- Error panel ---- */
+.rec-error {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.board-grid .rec-error { grid-column: 1 / -1; }
+
+/* ---- Mobile ---- */
+@media (max-width: 979px) {
+  .board-grid { padding: 18px 14px 48px; }
+  .rec-board { padding: 14px; }
+  .rec-controls, .rec-wrap { padding-left: 14px; padding-right: 14px; }
+}

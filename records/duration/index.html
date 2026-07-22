@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Duration &amp; Motion Records - TC Records (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Tropical cyclone duration and motion records: longest-lived storms, time at hurricane and major strength, track distance, forward speed, and latitude extremes.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/records/records.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label, nav, header, footer, table, th, td { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Records sections">
+  <div class="subnav-inner">
+    <a href="/records/">Overview</a>
+    <a href="/records/seasons/">Season Records</a>
+    <a href="/records/intensity/">Intensity</a>
+    <a href="/records/duration/" class="active">Duration &amp; Motion</a>
+    <a href="/records/timing/">Timing</a>
+    <a href="/records/concurrency/">Concurrency</a>
+    <a href="/records/pace/">Pace</a>
+    <a href="/records/gantt/">Season Gantt</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/records/">&larr; Records overview</a></p>
+  <h1>Duration &amp; Motion Records</h1>
+  <p>Storm-level extremes in lifetime, time at strength, track distance, forward speed, and latitude.</p>
+  <p class="rec-stamp" id="recStamp"></p>
+</header>
+
+<section class="rec-controls">
+  <div id="basinChips"></div>
+</section>
+
+<section class="rec-wrap">
+  <p class="rec-caveat" id="caveat">Duration, distance, and latitude records depend on complete track coverage. Seasons before the satellite era can miss storm segments, so early-era durations and distances are lower bounds.</p>
+</section>
+
+<div id="boards" class="board-grid"></div>
+
+<footer><div class="footer-inner"><p>Data: NHC HURDAT2 · NOAA NCEI IBTrACS v04r01 · live ATCF b-decks. Built for weather nerds by a weather nerd.</p></div></footer>
+
+<script src="/records/records.js"></script>
+<script>
+  (function () {
+    var boardsEl = document.getElementById('boards');
+    var caveatEl = document.getElementById('caveat');
+    TATRecords.loadRecords(function (data) {
+      boardsEl.textContent = '';
+      if (!data || !data.boards) {
+        TATRecords.error(boardsEl);
+        return;
+      }
+      TATRecords.stamp(data.provenance);
+      var p = data.provenance || {};
+      if (caveatEl && p.records_since && p.satellite_era) {
+        caveatEl.textContent = 'Duration, distance, and latitude records reach back to ' + p.records_since +
+          '. Seasons before the satellite era (' + p.satellite_era +
+          ') can miss storm segments, so early-era durations and distances are lower bounds.';
+      }
+      var shown = 0;
+      for (var i = 0; i < data.boards.length; i++) {
+        if (data.boards[i].page === 'duration') {
+          TATRecords.renderBoard(boardsEl, data.boards[i]);
+          shown++;
+        }
+      }
+      if (!shown) {
+        TATRecords.error(boardsEl, 'No duration records available for this basin yet.');
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Season Pace - TC Records (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Cumulative season pace: storm count and ACE by day of year versus the 1991-2020 climatology, percentile bands, and record seasons.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/records/records.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label, nav, header, footer, table, th, td { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+</style>
+<style>
+  .pace-main { padding-top: 14px; padding-bottom: 56px; }
+  .pace-toggle { margin: 0 0 12px; }
+  .pace-readout {
+    margin: 2px 2px 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .pace-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 18px;
+    margin-top: 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .pace-legend .li { display: inline-flex; align-items: center; gap: 7px; }
+  .pace-legend svg { display: inline-block; width: 22px; height: 10px; flex: none; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Records sections">
+  <div class="subnav-inner">
+    <a href="/records/">Overview</a>
+    <a href="/records/seasons/">Season Records</a>
+    <a href="/records/intensity/">Intensity</a>
+    <a href="/records/duration/">Duration &amp; Motion</a>
+    <a href="/records/timing/">Timing</a>
+    <a href="/records/concurrency/">Concurrency</a>
+    <a href="/records/pace/" class="active">Pace</a>
+    <a href="/records/gantt/">Season Gantt</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/records/">&larr; Records overview</a></p>
+  <h1>Season Pace</h1>
+  <p>Cumulative storm count and ACE through the season versus climatology and record years.</p>
+  <p class="rec-stamp" id="recStamp"></p>
+</header>
+
+<section class="rec-controls">
+  <div id="basinChips"></div>
+</section>
+
+<section class="rec-wrap pace-main">
+  <div class="rec-chips pace-toggle" id="metricChips"></div>
+  <div id="chartHost"></div>
+</section>
+
+<footer><div class="footer-inner"><p>Data: NHC HURDAT2 · NOAA NCEI IBTrACS v04r01 · live ATCF b-decks. Built for weather nerds by a weather nerd.</p></div></footer>
+
+<script src="/records/records.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var NS = 'http://www.w3.org/2000/svg';
+  var W = 960, H = 520, L = 54, R = 50, T = 18, B = 36;
+  var PW = W - L - R, PH = H - T - B;
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /* Leap-year month start indices (0-based day of year); the 366-point
+     pace grids are aligned to a leap calendar. */
+  var MSTART = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
+
+  var GRID = 'var(--grid-dim, #232730)';
+  var AXIS_TXT = 'var(--muted, #9199a4)';
+  var BAND_OUTER = 'rgba(70,180,220,0.18)';
+  var BAND_INNER = 'rgba(80,210,240,0.28)';
+  var EDGE_OUTER = '#3aa2cf';
+  var EDGE_INNER = '#5dd3ff';
+  var CLIMO = '#5dd3ff';
+  var RECORD = '#c084fc';
+  var CURRENT = '#ffb83a';
+  var HALO = 'rgba(255,255,255,0.85)';
+
+  var host = document.getElementById('chartHost');
+  var toggleEl = document.getElementById('metricChips');
+  var metric = 'count';
+  var seasonsData = null;
+
+  /* Today's index into the leap-aligned 366-day grid (UTC). */
+  function todayIdx() {
+    var now = new Date();
+    return MSTART[now.getUTCMonth()] + (now.getUTCDate() - 1);
+  }
+
+  function todayLabel() {
+    var now = new Date();
+    return MONTHS[now.getUTCMonth()] + ' ' + now.getUTCDate();
+  }
+
+  function el(name, attrs) {
+    var e = document.createElementNS(NS, name);
+    if (attrs) for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function div(cls) {
+    var d = document.createElement('div');
+    if (cls) d.className = cls;
+    return d;
+  }
+
+  function num(v) { return (typeof v === 'number' && isFinite(v)) ? v : 0; }
+
+  function fmtVal(v) {
+    if (v === null || v === undefined) return '';
+    if (metric === 'count') {
+      return (Math.abs(v - Math.round(v)) < 1e-9) ? String(Math.round(v)) : v.toFixed(1);
+    }
+    return v.toFixed(1);
+  }
+
+  /* ---- axis scaling ---- */
+  function niceAxis(vmax) {
+    if (!(vmax > 0)) vmax = 1;
+    var target = vmax / 7;
+    var mag = Math.pow(10, Math.floor(Math.log(target) / Math.LN10));
+    var steps = (metric === 'count' && mag < 1) ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10];
+    if (metric === 'count' && mag < 1) mag = 1;
+    var step = mag * 10;
+    for (var i = 0; i < steps.length; i++) {
+      if (mag * steps[i] >= target) { step = mag * steps[i]; break; }
+    }
+    return { step: step, max: Math.ceil(vmax / step) * step };
+  }
+
+  /* ---- path builders ---- */
+  function X(i) { return L + PW * i / 365; }
+
+  function linePath(arr, yfn, stopIdx) {
+    var d = '', pen = false;
+    var last = (stopIdx === undefined) ? arr.length - 1 : Math.min(stopIdx, arr.length - 1);
+    for (var i = 0; i <= last; i++) {
+      var v = arr[i];
+      if (v === null || v === undefined) { pen = false; continue; }
+      d += (pen ? 'L' : 'M') + X(i).toFixed(2) + ' ' + yfn(v).toFixed(2);
+      pen = true;
+    }
+    return d;
+  }
+
+  function bandPath(hi, lo, yfn) {
+    var d = '', i;
+    for (i = 0; i < hi.length; i++) {
+      d += (i === 0 ? 'M' : 'L') + X(i).toFixed(2) + ' ' + yfn(num(hi[i])).toFixed(2);
+    }
+    for (i = lo.length - 1; i >= 0; i--) {
+      d += 'L' + X(i).toFixed(2) + ' ' + yfn(num(lo[i])).toFixed(2);
+    }
+    return d + 'Z';
+  }
+
+  function lastAt(arr, idx) {
+    if (!arr) return null;
+    for (var i = Math.min(idx, arr.length - 1); i >= 0; i--) {
+      if (arr[i] !== null && arr[i] !== undefined) return arr[i];
+    }
+    return null;
+  }
+
+  /* ---- legend ---- */
+  function legendItem(label, build) {
+    var li = document.createElement('span');
+    li.className = 'li';
+    var sw = el('svg', { viewBox: '0 0 22 10', 'aria-hidden': 'true' });
+    build(sw);
+    li.appendChild(sw);
+    var txt = document.createElement('span');
+    txt.textContent = label;
+    li.appendChild(txt);
+    return li;
+  }
+
+  function swLine(sw, color, width, dash, opacity) {
+    var ln = el('line', { x1: 1, y1: 5, x2: 21, y2: 5, stroke: color, 'stroke-width': width, 'stroke-linecap': 'round' });
+    if (dash) ln.setAttribute('stroke-dasharray', dash);
+    if (opacity) ln.setAttribute('opacity', opacity);
+    sw.appendChild(ln);
+  }
+
+  function swBand(sw, fill, edge, edgeOp) {
+    sw.appendChild(el('rect', { x: 0.5, y: 0.5, width: 21, height: 9, fill: fill, stroke: edge, 'stroke-width': 1, 'stroke-opacity': edgeOp }));
+  }
+
+  /* ---- chart ---- */
+  function buildSvg(m, idxT) {
+    var svg = el('svg', {
+      viewBox: '0 0 ' + W + ' ' + H,
+      role: 'img',
+      'aria-label': 'Cumulative season pace chart'
+    });
+    svg.setAttribute('style', 'font-family:"Metropolis","Helvetica Neue",Arial,sans-serif;');
+
+    var vmax = Math.max(
+      num(lastAt(m.p90, 365)),
+      m.rec_max ? num(lastAt(m.rec_max.curve, 365)) : 0,
+      num(lastAt(m.climo_mean, 365)),
+      m.current ? num(lastAt(m.current, idxT)) : 0
+    );
+    var ax = niceAxis(vmax);
+    var ymax = ax.max;
+    function Y(v) { return T + PH * (1 - v / ymax); }
+
+    var i, g;
+
+    /* horizontal gridlines + y labels */
+    g = el('g', {});
+    for (var yv = 0; yv <= ymax + 1e-9; yv += ax.step) {
+      var yy = Y(yv);
+      if (yv > 0) {
+        g.appendChild(el('line', { x1: L, y1: yy.toFixed(2), x2: W - R, y2: yy.toFixed(2), stroke: GRID, 'stroke-width': 1 }));
+      }
+      var lbl = el('text', { x: L - 8, y: (yy + 4).toFixed(2), 'text-anchor': 'end', fill: AXIS_TXT, 'font-size': 12 });
+      lbl.textContent = Number.isInteger(ax.step) ? String(Math.round(yv))
+        : yv.toFixed(ax.step < 1 ? 2 : 1);
+      g.appendChild(lbl);
+    }
+    svg.appendChild(g);
+
+    /* month gridlines + labels */
+    g = el('g', {});
+    for (i = 0; i < 12; i++) {
+      var mx = X(MSTART[i]);
+      if (i > 0) {
+        g.appendChild(el('line', { x1: mx.toFixed(2), y1: T, x2: mx.toFixed(2), y2: T + PH, stroke: GRID, 'stroke-width': 1 }));
+      }
+      var mt = el('text', { x: mx.toFixed(2), y: H - B + 18, 'text-anchor': 'middle', fill: AXIS_TXT, 'font-size': 12 });
+      mt.textContent = MONTHS[i];
+      g.appendChild(mt);
+    }
+    svg.appendChild(g);
+
+    /* baseline */
+    svg.appendChild(el('line', { x1: L, y1: (T + PH).toFixed(2), x2: W - R, y2: (T + PH).toFixed(2), stroke: 'var(--border, #2a2e36)', 'stroke-width': 1 }));
+
+    /* percentile bands */
+    svg.appendChild(el('path', { d: bandPath(m.p90, m.p10, Y), fill: BAND_OUTER, stroke: 'none' }));
+    svg.appendChild(el('path', { d: bandPath(m.p75, m.p25, Y), fill: BAND_INNER, stroke: 'none' }));
+    svg.appendChild(el('path', { d: linePath(m.p10, Y), fill: 'none', stroke: EDGE_OUTER, 'stroke-width': 1.5, opacity: 0.75 }));
+    svg.appendChild(el('path', { d: linePath(m.p90, Y), fill: 'none', stroke: EDGE_OUTER, 'stroke-width': 1.5, opacity: 0.75 }));
+    svg.appendChild(el('path', { d: linePath(m.p25, Y), fill: 'none', stroke: EDGE_INNER, 'stroke-width': 1.7, opacity: 0.85 }));
+    svg.appendChild(el('path', { d: linePath(m.p75, Y), fill: 'none', stroke: EDGE_INNER, 'stroke-width': 1.7, opacity: 0.85 }));
+
+    /* climo mean */
+    svg.appendChild(el('path', { d: linePath(m.climo_mean, Y), fill: 'none', stroke: CLIMO, 'stroke-width': 2.2, 'stroke-dasharray': '6 4' }));
+
+    /* record traces + end labels */
+    var recLabels = [];
+    var recs = [m.rec_max, m.rec_min];
+    for (i = 0; i < recs.length; i++) {
+      var rec = recs[i];
+      if (!rec || !rec.curve) continue;
+      svg.appendChild(el('path', { d: linePath(rec.curve, Y), fill: 'none', stroke: RECORD, 'stroke-width': 2.2, opacity: 0.9 }));
+      var endV = lastAt(rec.curve, 365);
+      if (endV !== null) {
+        var ly = Math.min(Math.max(Y(endV) + 4, T + 10), T + PH - 2);
+        recLabels.push({ y: ly, season: rec.season });
+      }
+    }
+    if (recLabels.length === 2 && Math.abs(recLabels[0].y - recLabels[1].y) < 13) {
+      if (recLabels[0].y <= recLabels[1].y) {
+        recLabels[0].y = recLabels[1].y - 13;
+      } else {
+        recLabels[1].y = recLabels[0].y - 13;
+      }
+    }
+    for (i = 0; i < recLabels.length; i++) {
+      var rl = el('text', { x: W - R + 5, y: recLabels[i].y.toFixed(2), 'text-anchor': 'start', fill: RECORD, 'font-size': 11 });
+      rl.textContent = String(recLabels[i].season);
+      svg.appendChild(rl);
+    }
+
+    /* current season, truncated at today, halo underneath */
+    if (m.current) {
+      var curD = linePath(m.current, Y, idxT);
+      if (curD) {
+        svg.appendChild(el('path', { d: curD, fill: 'none', stroke: HALO, 'stroke-width': 5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+        svg.appendChild(el('path', { d: curD, fill: 'none', stroke: CURRENT, 'stroke-width': 3.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+      }
+    }
+
+    return svg;
+  }
+
+  function buildLegend(m, curYear) {
+    var lg = div('pace-legend');
+    var curVal = m.current ? lastAt(m.current, todayIdx()) : null;
+    if (curVal !== null) {
+      lg.appendChild(legendItem(curYear + ' season to date', function (sw) {
+        swLine(sw, HALO, 5);
+        swLine(sw, CURRENT, 3.5);
+      }));
+    }
+    lg.appendChild(legendItem('Climo mean 1991-2020', function (sw) {
+      swLine(sw, CLIMO, 2.2, '5 3');
+    }));
+    lg.appendChild(legendItem('p25 to p75', function (sw) {
+      swBand(sw, BAND_INNER, EDGE_INNER, 0.85);
+    }));
+    lg.appendChild(legendItem('p10 to p90', function (sw) {
+      swBand(sw, BAND_OUTER, EDGE_OUTER, 0.75);
+    }));
+    var recTxt = 'Record max and min seasons';
+    if (m.rec_max && m.rec_min) {
+      recTxt = 'Record seasons (' + m.rec_max.season + ' max, ' + m.rec_min.season + ' min)';
+    }
+    lg.appendChild(legendItem(recTxt, function (sw) {
+      swLine(sw, RECORD, 2.2, null, 0.9);
+    }));
+    return lg;
+  }
+
+  /* ---- metric toggle ---- */
+  function paintToggle() {
+    var btns = toggleEl.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].className = btns[i].getAttribute('data-metric') === metric ? 'on' : '';
+    }
+  }
+
+  function buildToggle() {
+    var defs = [['count', 'Storm count'], ['ace', 'ACE']];
+    for (var i = 0; i < defs.length; i++) {
+      (function (key, label) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.setAttribute('data-metric', key);
+        b.addEventListener('click', function () {
+          if (metric === key) return;
+          metric = key;
+          paintToggle();
+          render();
+        });
+        toggleEl.appendChild(b);
+      })(defs[i][0], defs[i][1]);
+    }
+    paintToggle();
+  }
+
+  /* ---- full render (clears the container first) ---- */
+  function render() {
+    host.textContent = '';
+    if (!seasonsData || !seasonsData.pace) {
+      TATRecords.error(host);
+      return;
+    }
+    var pace = seasonsData.pace;
+    var m = pace[metric];
+    if (!m || !m.climo_mean || !m.p10 || !m.p25 || !m.p75 || !m.p90) {
+      TATRecords.error(host);
+      return;
+    }
+    var prov = seasonsData.provenance || {};
+    var curYear = prov.current_season || pace.current_season || '';
+    var idxT = todayIdx();
+
+    var card = div('rec-chart');
+
+    /* pace readout */
+    var curVal = m.current ? lastAt(m.current, idxT) : null;
+    if (curVal !== null) {
+      var meanVal = num(lastAt(m.climo_mean, idxT));
+      var ro = document.createElement('p');
+      ro.className = 'pace-readout';
+      var unitWord = metric === 'count' ? ' storms' : ' ACE';
+      ro.textContent = 'Through ' + todayLabel() + ': ' + fmtVal(curVal) + unitWord +
+        ' vs climo mean ' + meanVal.toFixed(1);
+      card.appendChild(ro);
+    }
+
+    card.appendChild(buildSvg(m, idxT));
+    card.appendChild(buildLegend(m, curYear));
+    host.appendChild(card);
+
+    var cv = document.createElement('p');
+    cv.className = 'rec-caveat';
+    var caveat = 'Storm counts before the satellite era undercount real activity. ' +
+      'ACE sums the square of each 6-hourly maximum sustained wind (kt, divided by 10000) while a system is at tropical storm strength or higher.';
+    if (m.env_since) caveat += ' Record traces since ' + m.env_since + '.';
+    cv.textContent = caveat;
+    host.appendChild(cv);
+  }
+
+  buildToggle();
+
+  TATRecords.loadSeasons(function (data) {
+    seasonsData = data;
+    if (data && data.provenance) TATRecords.stamp(data.provenance);
+    render();
+  });
+})();
+</script>
+
+</body>
+</html>

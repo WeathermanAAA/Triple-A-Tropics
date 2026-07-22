@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Concurrency &amp; Cross-Basin Records - TC Records (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Simultaneous storm and hurricane records, calendar month formation and ACE records, plus cross-basin intensity, ACE, and longevity leaderboards.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/records/records.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label, nav, header, footer, table, th, td { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+</style>
+<style>
+  .xb-head h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--fg);
+  }
+  .rec-board h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--fg);
+  }
+  .xb-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    vertical-align: 1px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Records sections">
+  <div class="subnav-inner">
+    <a href="/records/">Overview</a>
+    <a href="/records/seasons/">Season Records</a>
+    <a href="/records/intensity/">Intensity</a>
+    <a href="/records/duration/">Duration &amp; Motion</a>
+    <a href="/records/timing/">Timing</a>
+    <a href="/records/concurrency/" class="active">Concurrency</a>
+    <a href="/records/pace/">Pace</a>
+    <a href="/records/gantt/">Season Gantt</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <p class="crumb"><a href="/records/">&larr; Records overview</a></p>
+  <h1>Concurrency &amp; Cross-Basin Records</h1>
+  <p>Simultaneous storm snapshots, calendar month records, and leaderboards spanning all three basins.</p>
+  <p class="rec-stamp" id="recStamp"></p>
+</header>
+
+<section class="rec-controls">
+  <div id="basinChips"></div>
+</section>
+
+<div id="boards" class="board-grid"></div>
+
+<section class="rec-wrap xb-head">
+  <h2>Across all basins</h2>
+  <p class="rec-caveat" id="xbCaveat" hidden></p>
+</section>
+
+<div id="xbBoards" class="board-grid"></div>
+
+<footer><div class="footer-inner"><p>Data: NHC HURDAT2 · NOAA NCEI IBTrACS v04r01 · live ATCF b-decks. Built for weather nerds by a weather nerd.</p></div></footer>
+
+<script src="/records/records.js"></script>
+<script>
+  (function () {
+    'use strict';
+
+    var boardsEl = document.getElementById('boards');
+    var xbBoardsEl = document.getElementById('xbBoards');
+    var xbCaveatEl = document.getElementById('xbCaveat');
+
+    /* ---- Per-basin concurrency boards (re-render on basin switch) ---- */
+    TATRecords.loadRecords(function (data) {
+      boardsEl.textContent = '';
+      if (!data || !data.boards) {
+        TATRecords.error(boardsEl);
+        return;
+      }
+      TATRecords.stamp(data.provenance);
+      var n = 0;
+      for (var i = 0; i < data.boards.length; i++) {
+        if (data.boards[i].page === 'concurrency') {
+          TATRecords.renderBoard(boardsEl, data.boards[i]);
+          n++;
+        }
+      }
+      if (!n) {
+        TATRecords.error(boardsEl, 'No concurrency records for this basin yet.');
+      }
+    });
+
+    /* ---- Cross-basin boards (fetched once, basin-independent) ----
+       Custom renderer: row.extra is a basin tag (AL/EP/WP) shown as a
+       small muted tag after the storm name, and the shared 1-min/10-min
+       disclaimer note renders once as a caveat above all three tables. */
+    function present(v) {
+      return v !== null && v !== undefined && v !== '';
+    }
+
+    function renderCrossBoard(el, board) {
+      var rows = board.rows || [];
+
+      function has(field) {
+        for (var i = 0; i < rows.length; i++) {
+          if (present(rows[i][field])) return true;
+        }
+        return false;
+      }
+      var showDate = has('date');
+
+      var card = document.createElement('div');
+      card.className = 'rec-board';
+
+      var h = document.createElement('h3');
+      h.textContent = board.title || '';
+      card.appendChild(h);
+
+      if (board.definition) {
+        var def = document.createElement('p');
+        def.className = 'rec-def';
+        def.textContent = board.definition;
+        card.appendChild(def);
+      }
+
+      var wrap = document.createElement('div');
+      wrap.className = 'rec-tablewrap';
+      var table = document.createElement('table');
+      var thead = document.createElement('thead');
+      var trh = document.createElement('tr');
+      var heads = ['#', board.unit ? 'Value (' + board.unit + ')' : 'Value', 'Storm'];
+      if (showDate) heads.push('Date');
+      for (var hI = 0; hI < heads.length; hI++) {
+        var th = document.createElement('th');
+        th.textContent = heads[hI];
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      var tbody = document.createElement('tbody');
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        var tr = document.createElement('tr');
+
+        var tdRank = document.createElement('td');
+        tdRank.className = 'rank';
+        tdRank.textContent = present(r.rank) ? String(r.rank) : '';
+        tr.appendChild(tdRank);
+
+        var tdVal = document.createElement('td');
+        tdVal.className = 'val';
+        tdVal.textContent = present(r.disp) ? String(r.disp) : (present(r.value) ? String(r.value) : '');
+        tr.appendChild(tdVal);
+
+        var tdWho = document.createElement('td');
+        tdWho.className = 'who';
+        if (present(r.name)) {
+          tdWho.appendChild(document.createTextNode(String(r.name)));
+          if (present(r.extra)) {
+            var tag = document.createElement('span');
+            tag.className = 'xb-tag';
+            tag.textContent = String(r.extra);
+            tdWho.appendChild(tag);
+          }
+          if (present(r.season)) {
+            tdWho.appendChild(document.createTextNode(' · ' + r.season));
+          }
+        } else {
+          tdWho.appendChild(document.createTextNode(present(r.season) ? String(r.season) : ''));
+          if (present(r.extra)) {
+            var tag2 = document.createElement('span');
+            tag2.className = 'xb-tag';
+            tag2.textContent = String(r.extra);
+            tdWho.appendChild(tag2);
+          }
+        }
+        tr.appendChild(tdWho);
+
+        if (showDate) {
+          var tdDate = document.createElement('td');
+          tdDate.className = 'date';
+          tdDate.textContent = present(r.date) ? String(r.date) : '';
+          tr.appendChild(tdDate);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      card.appendChild(wrap);
+
+      if (board.note) {
+        var note = document.createElement('p');
+        note.className = 'rec-note';
+        note.textContent = board.note;
+        card.appendChild(note);
+      }
+      if (present(board.since)) {
+        var since = document.createElement('p');
+        since.className = 'rec-since';
+        since.textContent = 'Records since ' + board.since + '.';
+        card.appendChild(since);
+      }
+
+      el.appendChild(card);
+    }
+
+    TATRecords.fetchJSON('global_records.json').then(function (g) {
+      xbBoardsEl.textContent = '';
+      if (!g || !g.boards || !g.boards.length) {
+        TATRecords.error(xbBoardsEl);
+        return;
+      }
+      /* Hoist the disclaimer above the tables only when every cross-basin
+         board carries the same note; otherwise leave notes per-board. */
+      var notes = [];
+      for (var i = 0; i < g.boards.length; i++) {
+        if (g.boards[i].note) notes.push(g.boards[i].note);
+      }
+      var shared = notes.length === g.boards.length &&
+        notes.every(function (n) { return n === notes[0]; });
+      if (shared && notes.length) {
+        xbCaveatEl.textContent = notes[0];
+        xbCaveatEl.hidden = false;
+      }
+      for (var j = 0; j < g.boards.length; j++) {
+        var bd = g.boards[j];
+        renderCrossBoard(xbBoardsEl, shared
+          ? Object.assign({}, bd, { note: '' }) : bd);
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>
