@@ -167,9 +167,10 @@
     if (!el || !board) return;
     var rows = board.rows || [];
     var key = board.key || '';
-    /* Special boards: Nth column instead of rank, or month labels. */
+    /* Special boards: Nth column instead of rank, month or decade labels. */
     var nth = key === 'timing_earliest_nth';
     var monthly = key === 'month_formations' || key === 'month_ace';
+    var decade = key === 'decade_peak';
 
     function has(field) {
       for (var i = 0; i < rows.length; i++) {
@@ -178,7 +179,7 @@
       }
       return false;
     }
-    var showName = !monthly && has('name');
+    var showName = !monthly && !decade && has('name');
     var showDate = has('date');
     var showExtra = has('extra');
 
@@ -201,7 +202,7 @@
     var table = document.createElement('table');
     var thead = document.createElement('thead');
     var trh = document.createElement('tr');
-    head(trh, nth ? 'Nth' : (monthly ? 'Month' : '#'));
+    head(trh, nth ? 'Nth' : (monthly ? 'Month' : (decade ? 'Decade' : '#')));
     head(trh, board.unit ? 'Value (' + board.unit + ')' : 'Value');
     head(trh, showName ? 'Storm' : 'Season');
     if (showDate) head(trh, 'Date');
@@ -213,7 +214,8 @@
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       var tr = document.createElement('tr');
-      cell(tr, 'rank', nth ? r.value : (monthly ? r.name : r.rank));
+      cell(tr, 'rank', nth ? r.value
+        : ((monthly || decade) ? r.name : r.rank));
       cell(tr, 'val', (r.disp === null || r.disp === undefined) ? r.value : r.disp);
       if (showName && r.name !== null && r.name !== undefined && r.name !== '') {
         cell(tr, 'who', r.name + ' · ' + r.season);

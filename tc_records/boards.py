@@ -97,7 +97,11 @@ def build_boards(basin_cfg: dict, storms: pd.DataFrame,
     since = basin_cfg["records_since"]
     sat = basin_cfg["satellite_era"]
     wind_note = basin_cfg["wind_note"]
+    ace_note = basin_cfg["ace_note"]
     hu_word = basin_cfg["hu_word"]
+
+    def with_ace_note(note):
+        return (note + " " + ace_note) if note else ace_note
     complete = seasons_tbl[seasons_tbl["season"] < current_year]
     sat_complete = complete[complete["season"] >= sat]
 
@@ -130,21 +134,29 @@ def build_boards(basin_cfg: dict, storms: pd.DataFrame,
         "storms", "Pre-satellite seasons undercount real activity.", since,
         _rank(_season_rows(seasons_tbl, "major", i0), reverse=True)))
     b.append(_board(
+        "season_most_c5", "seasons", "Most Category 5 storms in a season",
+        "Named storms whose lifetime peak reached ≥137 kt.",
+        "storms", "Pre-satellite seasons undercount real activity; early "
+        "peak intensities rest on sparse observations.", since,
+        _rank(_season_rows(seasons_tbl[seasons_tbl["c5"] > 0], "c5", i0),
+              reverse=True)))
+    b.append(_board(
         "season_top_ace", "seasons", "Highest season ACE",
         "Σ v²/10⁴ over 6-hourly synoptic fixes (00/06/12/18Z) at tropical or "
         "subtropical status and ≥34 kt.",
-        "10⁴ kt²", wind_note, since,
+        "10⁴ kt²", with_ace_note(wind_note), since,
         _rank(_season_rows(seasons_tbl, "ace", i1), reverse=True)))
     b.append(_board(
         "season_low_ace", "seasons", "Lowest season ACE",
         "Same ACE definition, satellite era only; running season excluded.",
-        "10⁴ kt²", f"Satellite era ({sat} onward) only.", sat,
+        "10⁴ kt²", with_ace_note(f"Satellite era ({sat} onward) only."),
+        sat,
         _rank(_season_rows(sat_complete, "ace", i1), reverse=False)))
     b.append(_board(
         "season_top_pdi", "seasons", "Highest season PDI",
         "Σ v³ over the same synoptic ≥34-kt fix set as ACE (power dissipation "
         "index, 6-hourly discrete form).",
-        "10⁶ kt³", wind_note, since,
+        "10⁶ kt³", with_ace_note(wind_note), since,
         _rank(_season_rows(seasons_tbl, "pdi", i1), reverse=True)))
     b.append(_board(
         "season_most_ri", "seasons",
@@ -155,6 +167,57 @@ def build_boards(basin_cfg: dict, storms: pd.DataFrame,
         "unreliable earlier.", sat,
         _rank(_season_rows(seasons_tbl[seasons_tbl["season"] >= sat],
                            "ri_storms", i0), reverse=True)))
+
+    # Strongest storm of each decade (chronological, not ranked).
+    decade_rows = []
+    peaked = storms[storms["peak_wind"].notna()]
+    for d0 in range((since // 10) * 10, current_year + 1, 10):
+        cand = peaked[(peaked["season"] >= max(d0, since))
+                      & (peaked["season"] < d0 + 10)]
+        if cand.empty:
+            continue
+        s = cand.sort_values(["peak_wind", "season"],
+                             ascending=[False, True]).iloc[0]
+        decade_rows.append({
+            "name": f"{d0}s", "value": float(s["peak_wind"]),
+            "disp": f"{s['peak_wind']:.0f}", "season": int(s["season"]),
+            "sid": s["sid"], "date": _d(s["peak_time"]),
+            "extra": s["name"] or (s["atcf"] or "UNNAMED"),
+        })
+    b.append(_board(
+        "decade_peak", "seasons", "Strongest storm of each decade",
+        "Highest lifetime peak wind reached in each decade (running decade "
+        "included to date).",
+        "kt", wind_note, since, decade_rows))
+
+    # Longest consecutive-season streaks with at least one major.
+    major_by_season = {int(r["season"]): int(r["major"])
+                       for _, r in seasons_tbl.iterrows()}
+    streaks = []
+    run_start = None
+    for y in range(since, current_year):
+        if major_by_season.get(y, 0) > 0:
+            if run_start is None:
+                run_start = y
+        elif run_start is not None:
+            streaks.append((y - run_start, run_start, y - 1))
+            run_start = None
+    if run_start is not None:
+        streaks.append((current_year - run_start, run_start,
+                        current_year - 1))
+    streak_rows = [{"value": float(n), "disp": f"{n}",
+                    "season": y0, "date": f"{y0} to {y1}",
+                    "extra": "active"
+                    if y1 == current_year - 1 else ""}
+                   for n, y0, y1 in streaks]
+    b.append(_board(
+        "streak_major", "seasons",
+        "Most consecutive seasons with a major storm",
+        "Longest unbroken runs of seasons producing at least one ≥96 kt "
+        "storm (complete seasons only; a run still alive is marked "
+        "active).",
+        "seasons", "Pre-satellite seasons undercount real activity.", since,
+        _rank(streak_rows, reverse=True)))
 
     # ---------------------------------------------------------------- intensity
     st = storms
@@ -224,12 +287,12 @@ def build_boards(basin_cfg: dict, storms: pd.DataFrame,
         "storm_top_ace", "intensity", "Highest single-storm ACE",
         "Σ v²/10⁴ over the storm's synoptic ≥34-kt tropical/subtropical "
         "fixes over the whole lifetime, attributed to the genesis basin.",
-        "10⁴ kt²", wind_note, since,
+        "10⁴ kt²", with_ace_note(wind_note), since,
         _rank(_storm_rows(st, "ace", i1), reverse=True)))
     b.append(_board(
         "storm_top_pdi", "intensity", "Highest single-storm PDI",
         "Σ v³ over the same fix set as ACE.",
-        "10⁶ kt³", wind_note, since,
+        "10⁶ kt³", with_ace_note(wind_note), since,
         _rank(_storm_rows(st, "pdi", i1), reverse=True)))
 
     # ----------------------------------------------------- duration & motion
@@ -422,6 +485,46 @@ def build_boards(basin_cfg: dict, storms: pd.DataFrame,
             f"({MONTHS[sm - 1]} {sd}).",
             "storms", "", since, _rank(pre_rows, reverse=True)))
 
+    if basin_cfg.get("season_start") and basin_cfg.get("season_end"):
+        sm, sd = basin_cfg["season_start"]
+        em, ed = basin_cfg["season_end"]
+        window_label = (f"{MONTHS[sm - 1]} {sd} to {MONTHS[em - 1]} {ed}")
+
+        def in_window(md):
+            return (sm, sd) <= md <= (em, ed)
+
+        off_rows = []
+        for season, v in by_season.items():
+            n = sum(1 for s in v
+                    if not in_window(_monthday_key(s["formation"])[:2]))
+            if n > 0:
+                off_rows.append({"value": float(n), "disp": f"{n}",
+                                 "season": season})
+        b.append(_board(
+            "timing_offseason_count", "timing",
+            "Most out-of-season storms",
+            f"Named storms forming outside the official season "
+            f"({window_label}), before or after.",
+            "storms", "", since, _rank(off_rows, reverse=True)))
+
+        offace = fixes[fixes["syn"] & fixes["trop"]
+                       & (fixes["wind"] >= 34)].copy()
+        offace = offace.dropna(subset=["wind"])
+        md = list(zip(offace["time"].dt.month, offace["time"].dt.day))
+        outside = [not in_window(x) for x in md]
+        offace = offace[outside]
+        offace["_inc"] = (offace["wind"] * offace["wind"]) / 1e4
+        by_yr = offace.groupby("season")["_inc"].sum()
+        offace_rows = [{"value": round(float(v), 1), "disp": f"{v:.1f}",
+                        "season": int(y)} for y, v in by_yr.items()
+                       if v >= 0.05]
+        b.append(_board(
+            "timing_offseason_ace", "timing", "Most out-of-season ACE",
+            f"ACE accumulated from fixes outside the official season "
+            f"({window_label}), attributed to the storm's genesis season.",
+            "10⁴ kt²", with_ace_note(""), since,
+            _rank(offace_rows, reverse=True)))
+
     # ------------------------------------------------------------- concurrency
     for key, conc, label, floor in (
             ("conc_sim_ts", conc_ts, "storms", 34),
@@ -479,6 +582,6 @@ def build_boards(basin_cfg: dict, storms: pd.DataFrame,
         "month_ace", "concurrency", "Busiest calendar month by ACE",
         "Record ACE accumulated inside each calendar month (record-holding "
         "year shown).",
-        "10⁴ kt²", wind_note, since, ace_month_rows))
+        "10⁴ kt²", with_ace_note(wind_note), since, ace_month_rows))
 
     return b

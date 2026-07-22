@@ -30,7 +30,9 @@ RECORDS_BASINS: dict[str, dict] = {
     "al": {
         "name": "Atlantic", "full_name": "North Atlantic",
         "records_since": 1851, "satellite_era": 1966,
-        "season_start": (6, 1), "hu_word": "hurricane",
+        "season_start": (6, 1), "season_end": (11, 30),
+        "hu_word": "hurricane",
+        "ace_note": "ACE and PDI here apply one subtropical-inclusion policy across all years, so some seasonal totals read slightly above NHC's official operational numbers (2005: 250.1 here vs 245.5 official). This is by design, for internal consistency across eras.",
         "wind_note": "NHC best track, 1-min sustained winds.",
         "sources_note": "HURDAT2 (NHC) through the last complete season; "
                         "IBTrACS v04r01 + live ATCF b-decks for the running "
@@ -42,7 +44,9 @@ RECORDS_BASINS: dict[str, dict] = {
     "ep": {
         "name": "East Pacific", "full_name": "Northeast Pacific",
         "records_since": 1949, "satellite_era": 1971,
-        "season_start": (5, 15), "hu_word": "hurricane",
+        "season_start": (5, 15), "season_end": (11, 30),
+        "hu_word": "hurricane",
+        "ace_note": "ACE and PDI here apply one subtropical-inclusion policy across all years, so seasonal totals can read slightly above official operational numbers for some seasons. This is by design, for internal consistency across eras.",
         "wind_note": "NHC/CPHC best track, 1-min sustained winds.",
         "sources_note": "HURDAT2 NE/NC-Pacific (NHC, includes Central "
                         "Pacific storms) through the last complete season; "
@@ -55,7 +59,9 @@ RECORDS_BASINS: dict[str, dict] = {
     "wp": {
         "name": "West Pacific", "full_name": "Western North Pacific",
         "records_since": 1945, "satellite_era": 1966,
-        "season_start": None, "hu_word": "typhoon",
+        "season_start": None, "season_end": None,
+        "hu_word": "typhoon",
+        "ace_note": "ACE and PDI here apply one subtropical-inclusion policy across all years, so seasonal totals can read slightly above official operational numbers for some seasons. This is by design, for internal consistency across eras.",
         "wind_note": "JTWC 1-min winds where available; JMA/WMO 10-min "
                      "winds ÷0.88 otherwise (1-min equivalent).",
         "sources_note": "IBTrACS v04r01 (JTWC columns) from 1945; live ATCF "
@@ -192,6 +198,10 @@ def validate_or_die(results: dict[str, dict]) -> dict:
         check("AL 2005 named storms = 28",
               len(n2005) and int(n2005.iloc[0]) == 28,
               f"computed {None if not len(n2005) else int(n2005.iloc[0])}")
+        c2005 = tbl[tbl["season"] == 2005]["c5"]
+        check("AL 2005 Category 5 storms = 4",
+              len(c2005) and int(c2005.iloc[0]) == 4,
+              f"computed {None if not len(c2005) else int(c2005.iloc[0])}")
 
     if "ep" in results:
         st = results["ep"]["storms"]
@@ -238,6 +248,7 @@ def emit(results: dict[str, dict], out_dir: Path, validation: dict,
             "generated": generated,
             "engine": ENGINE_VERSION,
             "wind_note": cfg["wind_note"],
+            "ace_note": cfg["ace_note"],
             "sources_note": cfg["sources_note"],
             "records_since": cfg["records_since"],
             "satellite_era": cfg["satellite_era"],

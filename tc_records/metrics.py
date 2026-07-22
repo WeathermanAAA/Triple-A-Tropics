@@ -180,6 +180,7 @@ def compute_storms(fixes: pd.DataFrame) -> pd.DataFrame:
             "named": form is not None,
             "hu": first_hu is not None,
             "major": first_major is not None,
+            "c5": (not math.isnan(peak_wind)) and peak_wind >= 137.0,
             "ri": (not math.isnan(rise24)) and rise24 >= 30.0,
         })
     return pd.DataFrame(out)
@@ -193,6 +194,7 @@ def season_table(storms: pd.DataFrame) -> pd.DataFrame:
         "named": g.size(),
         "hu": g["hu"].sum().astype(int),
         "major": g["major"].sum().astype(int),
+        "c5": g["c5"].sum().astype(int),
         "ace": g["ace"].sum().round(1),
         "pdi": g["pdi"].sum().round(1),
         "ri_storms": g["ri"].sum().astype(int),
