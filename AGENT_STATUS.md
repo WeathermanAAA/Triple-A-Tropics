@@ -3073,3 +3073,11 @@ the deployed site (geo-global-ir_loop.mp4, 456KB, faststart). GIF option
 deferred: needs heavy downscale + another vendored encoder to fit 10MB;
 MP4 covers camera-roll saving. WebCodecs needs a secure context -
 anything driving the exporter headless must serve via localhost/https.
+
+## 2026-07-23 · tat-satellite-render reconciliation: READY, awaiting Andrew's go
+
+reconcile branch (186f47f) = production superset, verified; NOT promoted.
+Backups: tag prod-pre-reconcile (ed6fdca) + codespace-backfill-backup
+(c5da203, already in prod as byte-identical 397d9fe) + box-ops intact.
+Full conflict log + verification in the session report. PROMOTE STEP
+(reconcile -> main, box repoint) waits for Andrew's explicit go.
