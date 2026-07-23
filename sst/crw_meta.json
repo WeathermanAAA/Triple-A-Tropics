@@ -1,6 +1,6 @@
 {
-  "date": "2026-07-21",
-  "updated_utc": "2026-07-22 23:08 UTC",
+  "date": "2026-07-22",
+  "updated_utc": "2026-07-23 15:50 UTC",
   "record_years": [
     1985,
     1986,
@@ -100,7 +100,7 @@
     2020
   ],
   "record_start": 1985,
-  "global_mean_ssta": 0.6584172290988953,
+  "global_mean_ssta": 0.6674258559162654,
   "change_periods": [
     7,
     15,
