@@ -3081,3 +3081,13 @@ Backups: tag prod-pre-reconcile (ed6fdca) + codespace-backfill-backup
 (c5da203, already in prod as byte-identical 397d9fe) + box-ops intact.
 Full conflict log + verification in the session report. PROMOTE STEP
 (reconcile -> main, box repoint) waits for Andrew's explicit go.
+
+## 2026-07-23 · tsr reconciliation PROMOTED (Andrew's go)
+
+origin/main = 186f47f reconcile + runbook discipline (34d75eb). Box clone
+repointed to main; tat-s2 + tat-render images rebuilt from main; all five
+s2 lanes + render stack recreated and verified (lane emits, floater
+mosaics ok on all three sats, guidance heartbeat 5/5 with the cyclolab
+prefix pin live, /health 200). Rollback refs parked on origin: box-ops,
+codespace-backfill-backup, tag prod-pre-reconcile. Discipline recorded in
+RUNBOOK-RENDER/RUNBOOK-S2: box pulls from AND pushes to main only.
