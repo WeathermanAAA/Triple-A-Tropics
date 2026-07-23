@@ -3038,3 +3038,38 @@ subnav; noindex; robots already disallow /records/).
   only for months with data (client hints when absent).
 
 Rollback: revert the SHAs; explorer/v1/ + vendor/ on R2 are additive.
+
+## 2026-07-23 · sat-explorer tester fixes: truecolor z7 + MP4 loop export
+
+1) ZOOM RESOLUTION (box, tat-satellite-render branch box-ops, 9b66862 +
+b86667a + the 14g bump): CONUS truecolor and the 0.5/1 km RGB recipe
+classes now carry a native-z7 ceiling (registry _PX_BY_KM 0.5/1.0 -> 6144
+px, recipe fetch_max_px 4800 -> 6144). The conus-fast lane emits truecolor
+at z7 alongside c02 (which keeps its 10240 px override); cron lanes stay
+capped at --max-zoom 5 so the geometry guard never trips there. First live
+cycles: 485 tiles/frame maxzoom=7, manifest migrated off the old z5
+geometry (lane runs --allow-geometry-change by design), 60-min backfill
+regrew the loop. Verified: z7 Florida tile has 2.4x the edge energy of the
+same-stamp z5 upscale; side-by-side in the session scratchpad
+(tc_compare.png). Ops: one pre-existing-marginality c02 rc=137 at 12g ->
+lane bumped to 14g. NOTE the repo hygiene mess found on the way: the box
+tsr-s2 clone has ~55 commits not on origin/main (now pushed as box-ops)
+and origin/main has 21 the box lacks; ALSO /workspaces/tsr-s2 in the
+Codespace holds 5+ unpushed commits (slot-backfill work) on a diverged
+base. Needs a dedicated reconciliation session - do not force-merge
+casually.
+
+2) LOOP EXPORT (TAT 06df3e3d): .webm testers could not open on iOS/Safari
+(no webm MediaRecorder there; the old code threw uncaught). New
+satellite/explorer/loop_export.js: WebCodecs VideoEncoder avc1 +
+mp4-muxer 5.2.2 vendored at cdn vendor/mp4-muxer/ (faststart in-memory,
+moov first). tiled_viewer gains exportLoop (frame-stepped: showFrame ->
+tile settle -> cockpit composites chrome -> encode; no realtime
+captureStream smear); both cockpit paths go MP4-first with the hardened
+WebM recorder as no-WebCodecs fallback. Budget unchanged (9MB/HQ 24MB,
+8% margin). Verified: headless Chromium encode (ftyp@4, moov<mdat, avc1),
+box ffprobe (h264 yuv420p progressive), and a LIVE UI-driven export off
+the deployed site (geo-global-ir_loop.mp4, 456KB, faststart). GIF option
+deferred: needs heavy downscale + another vendored encoder to fit 10MB;
+MP4 covers camera-roll saving. WebCodecs needs a secure context -
+anything driving the exporter headless must serve via localhost/https.
