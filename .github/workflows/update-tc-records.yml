@@ -61,13 +61,16 @@ jobs:
             ls -lh "ibtracs.$code.list.v04r01.csv"
           done
 
-      - name: Compute records (validation gate inside)
+      - name: Compute records + explorer artifacts (validation gate inside)
         run: |
           set -euo pipefail
           # HURDAT2 AL/EP files are auto-discovered from the NHC index and
           # downloaded by the engine itself (records_cache/). The gate makes
-          # this step fail loudly rather than publish wrong numbers.
-          python generate_tc_records.py --out records_out
+          # this step fail loudly rather than publish wrong numbers. One
+          # compute pass feeds both the records boards and the explorer's
+          # catalog/track/density artifacts.
+          python generate_tc_records.py --out records_out \
+            --explorer-out explorer_out
 
       - name: Publish to R2
         env:
@@ -80,5 +83,13 @@ jobs:
             --endpoint-url "$R2_ENDPOINT" \
             --cache-control "public, max-age=600" \
             --exclude "*" --include "*.json"
+          # Explorer artifacts (catalog + decade track bundles + density
+          # rasters). NO --delete: the gazetteer + vendored map library live
+          # under other prefixes and stale decade bundles are harmless.
+          aws s3 sync explorer_out/ s3://triple-a-tropics-media/explorer/v1/ \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=600" \
+            --exclude "*" --include "*.json" --include "density/*.png"
           echo "published:"
           aws s3 ls s3://triple-a-tropics-media/records/v1/ --endpoint-url "$R2_ENDPOINT"
+          aws s3 ls s3://triple-a-tropics-media/explorer/v1/ --endpoint-url "$R2_ENDPOINT" | head -20
