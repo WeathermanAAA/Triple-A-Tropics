@@ -1397,12 +1397,79 @@
     (this._pins = this._pins || []).push(mk);
   };
 
-  // ---- 90-frame export: encode the loaded frames to WebM (true palette, no GIF
-  // palette drift; Discord-safe <=10 MB at viewer res). Client-only, no server. ----
+  // Wait until the CURRENT frame's tiles are loaded AND painted, so a
+  // frame-stepped export captures finished imagery instead of whatever the
+  // realtime pacing happened to catch. Timeout keeps a stuck tile from
+  // hanging the export (it captures the best available frame instead).
+  VP._awaitFrameSettle = function (timeoutMs) {
+    var map = this.map;
+    return new Promise(function (res) {
+      var done = false;
+      function fin() {
+        if (done) return; done = true;
+        // one paint after idle so the captured canvas holds the frame
+        requestAnimationFrame(function () { res(); });
+      }
+      try {
+        if (map.loaded() && map.areTilesLoaded()) { fin(); return; }
+      } catch (e) {}
+      try { map.once('idle', fin); } catch (e) { fin(); return; }
+      setTimeout(fin, timeoutMs || 1500);
+    });
+  };
+
+  // ---- Loop export, MP4 first: WebCodecs H.264 + faststart muxing via
+  // LoopExport (plays and saves everywhere, incl. iOS/Safari which has no
+  // webm recorder at all). Frame-stepped: show frame -> settle -> caller
+  // composites -> encode. Falls back to the legacy realtime WebM recorder
+  // when WebCodecs/avc1/muxer are unavailable. Client-only, no server. ----
+  VP.exportLoop = function (opts) {
+    opts = opts || {};
+    var self = this;
+    if (!this.frames.length) {
+      if (opts.onError) opts.onError('no frames'); return;
+    }
+    var fps = opts.fps || 8;
+    var N = Math.min(this.frames.length, opts.maxFrames || 90);
+    var canvas = opts.captureCanvas || this.map.getCanvas();
+    var fallback = function () { self.exportWebM(opts); };
+    if (typeof window.LoopExport === 'undefined'
+        || !window.LoopExport.available()) { fallback(); return; }
+    window.LoopExport.create({
+      width: canvas.width, height: canvas.height, fps: fps, frames: N,
+      maxBytes: opts.maxBytes || 9e6, maxBitrate: opts.maxBitrate || 6e6
+    }).then(function (enc) {
+      if (!enc) { fallback(); return; }
+      var i = 0, start = self.frames.length - N;
+      if (opts.onProgress) opts.onProgress(0, N);
+      function fail(e) {
+        try { enc.abort(); } catch (e2) {}
+        if (opts.onError) opts.onError('export failed');
+      }
+      (function step() {
+        self.showFrame(start + i);
+        self._awaitFrameSettle(1500).then(function () {
+          try { if (opts.drawFrame) opts.drawFrame(); } catch (e) {}
+          enc.addFrame(canvas).then(function () {
+            i++;
+            if (opts.onProgress) opts.onProgress(i, N);
+            if (i < N) { step(); return; }
+            enc.finish().then(function (out) {
+              if (opts.onDone) opts.onDone(out.blob, out.ext);
+            }, fail);
+          }, fail);
+        });
+      })();
+    }, fallback);
+  };
+
+  // ---- Legacy 90-frame export: encode the loaded frames to WebM (true palette,
+  // no GIF palette drift; Discord-safe <=10 MB at viewer res). Kept as the
+  // fallback for browsers without WebCodecs H.264. ----
   VP.exportWebM = function (opts) {
     opts = opts || {};
     if (!this.frames.length || typeof MediaRecorder === 'undefined') {
-      if (opts.onError) opts.onError('MediaRecorder unavailable'); return;
+      if (opts.onError) opts.onError('video export unsupported here'); return;
     }
     var self = this, map = this.map, fps = opts.fps || 8;
     var N = Math.min(this.frames.length, opts.maxFrames || 90);
@@ -1417,7 +1484,16 @@
     var secs = Math.max(1, N / fps);
     var bitrate = Math.min(opts.maxBitrate || 6e6,
                            Math.floor((opts.maxBytes || 9e6) * 8 / secs));
-    var rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
+    var rec;
+    try {
+      rec = new MediaRecorder(stream, { mimeType: mime,
+                                        videoBitsPerSecond: bitrate });
+    } catch (e) {
+      // Safari has MediaRecorder but no webm codec — surface it instead of
+      // throwing out of the click handler.
+      if (opts.onError) opts.onError('video export unsupported here');
+      return;
+    }
     var chunks = [];
     rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = function () {

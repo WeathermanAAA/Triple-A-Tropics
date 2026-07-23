@@ -503,7 +503,7 @@
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-share"/></svg><span class="lbl">Share</span></button>
           <button type="button" class="cx-btn" id="cx-png" title="Current pane as PNG">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg><span class="lbl">PNG</span></button>
-          <button type="button" class="cx-btn" id="cx-loop" title="Loop as WebM video">
+          <button type="button" class="cx-btn" id="cx-loop" title="Loop as MP4 video">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><use href="#i-loop"/></svg><span class="lbl">Loop</span></button>
           <button type="button" class="cx-btn" id="cx-hq" title="Export size budget"><span class="lbl">≤10MB</span></button>
         </div>
@@ -650,13 +650,16 @@
 <script src="products.js?v=tm2"></script>
 <script src="bt_probe.js?v=tm2"></script>
 <script src="ir3d.js?v=1"></script>
-<script src="tiled_viewer.js?v=core16"></script>
+<!-- MP4 loop export: vendored muxer (our CDN) + the WebCodecs encoder shim -->
+<script src="https://cdn.triple-a-tropics.com/vendor/mp4-muxer/5.2.2/mp4-muxer.js"></script>
+<script src="loop_export.js?v=1"></script>
+<script src="tiled_viewer.js?v=core17"></script>
 <!-- native MW/ASCAT fields: the legacy viewer engines (reused primitives) +
      the cockpit adapters — loaded BEFORE cockpit.js so boot can init them -->
 <script src="/microwave/microwave.js?v=13"></script>
 <script src="/ascat/ascat.js?v=0019"></script>
 <script src="cockpit_fields.js?v=tpw1"></script>
-<script src="cockpit.js?v=core17"></script>
+<script src="cockpit.js?v=core18"></script>
 <!-- objective center + intensity (ARCHER/ADT ports) — panel + compute -->
 <script src="objfix.js?v=ofx2"></script>
 <script src="objfix_sources.js?v=ofx3"></script>

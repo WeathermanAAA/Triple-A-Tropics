@@ -1964,23 +1964,29 @@
     var tv = lead(), pane = S.panes[0];
     if (!tv || btn.dataset.busy) return;
     btn.dataset.busy = '1'; stopClock();
-    // record a COMPOSITE canvas: map frames + the branded chrome, redrawn
-    // every animation tick so the valid time tracks the playing frame.
+    // record a COMPOSITE canvas: map frames + the branded chrome. The MP4
+    // path composites once per settled frame via drawFrame; the realtime
+    // tick keeps running underneath so the WebM fallback (captureStream)
+    // still records a live picture.
     var c = compositeCanvas(pane), ctx = c.getContext('2d');
-    var compositing = true;
-    (function tick() {
-      if (!compositing) return;
+    var composite = function () {
       ctx.drawImage(pane.tv.map.getCanvas(), 0, 0, c.width, c.height);
       if (window.CockpitFields) window.CockpitFields.compositeOverlays(ctx, pane, c.width, c.height);
       drawChrome(ctx, pane, c.width, c.height, tv.frames[tv.frameIdx]);
+    };
+    var compositing = true;
+    (function tick() {
+      if (!compositing) return;
+      composite();
       requestAnimationFrame(tick);
     })();
     var finish = function (label) {
       compositing = false;
       btn.querySelector('.lbl').textContent = label; delete btn.dataset.busy;
     };
-    tv.exportWebM({
+    tv.exportLoop({
       captureCanvas: c,
+      drawFrame: composite,
       fps: fps,
       maxFrames: nFrames,
       maxBytes: S.hqExport ? 24e6 : 9e6,
@@ -1988,10 +1994,10 @@
       onProgress: function (i, n) {
         btn.querySelector('.lbl').textContent = i < n ? i + '/' + n : 'encoding…';
       },
-      onDone: function (blob) {
+      onDone: function (blob, ext) {
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = pane.product.id + '_loop.webm';
+        a.download = pane.product.id + '_loop.' + (ext || 'mp4');
         a.click(); finish('Loop');
       },
       onError: function (m) { finish(m); }
@@ -2675,30 +2681,66 @@
       var c = document.createElement('canvas');
       c.width = imgs[0].naturalWidth; c.height = imgs[0].naturalHeight;
       var ctx = c.getContext('2d');
-      var stream = c.captureStream(fps);
-      var mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
-        .filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || 'video/webm';
-      var secs = Math.max(1, imgs.length / fps);
       var budget = S.hqExport ? 24e6 : 9e6;
-      var rec = new MediaRecorder(stream, { mimeType: mime,
-        videoBitsPerSecond: Math.min(S.hqExport ? 12e6 : 6e6, Math.floor(budget * 8 / secs)) });
-      var chunks = [];
-      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-      rec.onstop = function () {
+      var cap = S.hqExport ? 12e6 : 6e6;
+      var done = function (blob, ext) {
         var a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
-        a.download = 'archive_' + S.tm.frames[0].stamp + '_loop.webm';
+        a.href = URL.createObjectURL(blob);
+        a.download = 'archive_' + S.tm.frames[0].stamp + '_loop.' + ext;
         a.click();
         btn.querySelector('.lbl').textContent = 'Loop'; delete btn.dataset.busy;
       };
-      var k = 0; rec.start();
-      (function step() {
-        ctx.drawImage(imgs[k % imgs.length], 0, 0, c.width, c.height);
-        btn.querySelector('.lbl').textContent = (k + 1) + '/' + imgs.length;
-        k++;
-        if (k < imgs.length) setTimeout(step, 1000 / fps);
-        else setTimeout(function () { try { rec.stop(); } catch (e) {} }, 2000 / fps);
-      })();
+      var fail = function (m) {
+        btn.querySelector('.lbl').textContent = m || 'export failed';
+        delete btn.dataset.busy;
+      };
+      // MP4 first (frames are already fully loaded — pure frame-by-frame
+      // encode, no realtime pacing); legacy WebM recorder as the fallback.
+      var mp4 = (typeof window.LoopExport !== 'undefined'
+                 && window.LoopExport.available())
+        ? window.LoopExport.create({ width: c.width, height: c.height,
+                                     fps: fps, frames: imgs.length,
+                                     maxBytes: budget, maxBitrate: cap })
+        : Promise.resolve(null);
+      mp4.then(function (enc) {
+        if (!enc) { startWebm(); return; }
+        var k = 0;
+        (function step() {
+          ctx.drawImage(imgs[k], 0, 0, c.width, c.height);
+          btn.querySelector('.lbl').textContent = (k + 1) + '/' + imgs.length;
+          enc.addFrame(c).then(function () {
+            k++;
+            if (k < imgs.length) { step(); return; }
+            btn.querySelector('.lbl').textContent = 'encoding…';
+            enc.finish().then(function (out) { done(out.blob, out.ext); },
+                             function () { fail(); });
+          }, function () { try { enc.abort(); } catch (e) {} startWebm(); });
+        })();
+      }, function () { startWebm(); });
+      function startWebm() {
+        var stream = c.captureStream(fps);
+        var mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+          .filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || 'video/webm';
+        var secs = Math.max(1, imgs.length / fps);
+        var rec;
+        try {
+          rec = new MediaRecorder(stream, { mimeType: mime,
+            videoBitsPerSecond: Math.min(cap, Math.floor(budget * 8 / secs)) });
+        } catch (e) { fail('video export unsupported here'); return; }
+        var chunks = [];
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = function () {
+          done(new Blob(chunks, { type: 'video/webm' }), 'webm');
+        };
+        var k = 0; rec.start();
+        (function step() {
+          ctx.drawImage(imgs[k % imgs.length], 0, 0, c.width, c.height);
+          btn.querySelector('.lbl').textContent = (k + 1) + '/' + imgs.length;
+          k++;
+          if (k < imgs.length) setTimeout(step, 1000 / fps);
+          else setTimeout(function () { try { rec.stop(); } catch (e) {} }, 2000 / fps);
+        })();
+      }
     }
   }
 
