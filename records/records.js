@@ -249,6 +249,7 @@
   window.TATRecords = {
     DATA_BASE: DATA_BASE,
     basin: basin,
+    setBasin: setBasin,
     onBasin: onBasin,
     fetchJSON: fetchJSON,
     loadRecords: loadRecords,

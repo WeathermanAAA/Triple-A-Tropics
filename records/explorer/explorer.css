@@ -1,0 +1,403 @@
+/* =========================================================
+   TC Records (shadow) track explorer styles.
+   Loaded after /styles.css and /records/records.css; relies on
+   the site tokens (--bg, --panel, --border, --fg, --muted,
+   --accent, --accent-2, --accent-3). No animations beyond
+   hover opacity/color per house style.
+   ========================================================= */
+
+.xp-head { padding-bottom: 10px; }
+
+/* ---- Shell ---- */
+.xp-shell {
+  max-width: 1560px;
+  margin: 14px auto 48px;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+/* ---- Side column ---- */
+.xp-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.xp-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+.xp-lab {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.xp-panel > .xp-lab:first-child { margin-top: 0; }
+
+/* inputs and selects */
+.xp-panel input[type="text"],
+.xp-panel input[type="number"],
+.xp-panel select {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 7px 9px;
+  outline: none;
+}
+.xp-panel input:focus,
+.xp-panel select:focus { border-color: var(--accent-2); }
+
+/* buttons (radius clear, era, exports) */
+.xp-panel button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.xp-panel button:hover { color: var(--fg); }
+.xp-panel button.on { color: var(--accent); border-color: var(--accent); }
+.xp-panel button:disabled { opacity: 0.45; cursor: default; }
+
+.xp-radrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.xp-radrow .xp-lab { margin: 0; flex: 0 0 auto; }
+.xp-radrow select { width: auto; flex: 1 1 auto; }
+.xp-radrow button { flex: 0 0 auto; }
+
+.xp-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.xp-hint:empty { display: none; }
+
+.xp-yearrow, .xp-monthrow, .xp-densrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.xp-yearrow input, .xp-monthrow select, .xp-densrow select { min-width: 0; flex: 1 1 0; }
+.xp-to { color: var(--muted); font-size: 12.5px; font-weight: 500; flex: 0 0 auto; }
+.xp-eras { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+/* segmented toggles */
+.xp-seg { display: inline-flex; gap: 0; }
+.xp-seg button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+.xp-seg button:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.xp-seg button:last-child { border-radius: 0 8px 8px 0; }
+.xp-unitrow { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ---- Results ---- */
+.xp-count {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.xp-list {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.xp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.xp-list .xp-row:hover { background: rgba(255,255,255,0.03); color: var(--fg); }
+.xp-row:last-child { border-bottom: 0; }
+.xp-row.sel { background: rgba(93,211,255,0.08); }
+.xp-row .xp-rowname {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xp-row .xp-rowval {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+.xp-listnote {
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.xp-exports { display: flex; gap: 8px; margin-top: 10px; }
+
+/* ---- Category chips ---- */
+.xp-chip {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: 26px;
+  box-sizing: border-box;
+  text-align: center;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: #ffffff;
+}
+.xp-chip.c-TD { background: #3fa4ff; }
+.xp-chip.c-TS { background: #46c56a; color: #0a1324; }
+.xp-chip.c-C1 { background: #ffe14d; color: #0a1324; }
+.xp-chip.c-C2 { background: #ff9a2f; color: #0a1324; }
+.xp-chip.c-C3 { background: #f5333c; }
+.xp-chip.c-C4 { background: #e33ad4; }
+.xp-chip.c-C5 { background: #b03bff; }
+.pal-cb .xp-chip.c-TD { background: #999999; }
+.pal-cb .xp-chip.c-TS { background: #56B4E9; }
+.pal-cb .xp-chip.c-C1 { background: #009E73; }
+.pal-cb .xp-chip.c-C2 { background: #F0E442; }
+.pal-cb .xp-chip.c-C3 { background: #E69F00; color: #ffffff; }
+.pal-cb .xp-chip.c-C4 { background: #D55E00; }
+.pal-cb .xp-chip.c-C5 { background: #CC79A7; }
+
+/* ---- Map ---- */
+.xp-map { position: relative; min-width: 0; }
+#xpMap {
+  height: clamp(520px, calc(100vh - 210px), 900px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #10161d;
+  overflow: hidden;
+}
+.xp-map .rec-error { margin-top: 0; }
+.xp-mapnote {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  max-width: 60%;
+  background: rgba(19,21,25,0.82); /* --bg #131519 at 82% opacity */
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 9px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+  pointer-events: none;
+}
+.xp-mapnote:empty { display: none; }
+
+/* hover popup */
+.xp-pop { font-size: 12.5px; }
+.xp-pop .maplibregl-popup-content {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 8px 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+}
+.xp-pop .maplibregl-popup-tip { border-top-color: var(--border); border-bottom-color: var(--border); }
+.xp-pop .xp-pop-head { color: var(--fg); font-weight: 700; }
+.xp-pop .xp-pop-row { display: flex; gap: 10px; justify-content: space-between; }
+.xp-pop .xp-pop-k { color: var(--muted); }
+.xp-pop .xp-pop-v { color: var(--fg); white-space: nowrap; }
+
+/* ---- Detail card ---- */
+#xpCard {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
+  width: 340px;
+  max-width: calc(100% - 24px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.45);
+}
+#xpCard[hidden] { display: none; }
+.xp-cardhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.xp-cardhead h2 {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.xp-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin: 0 0 10px;
+}
+.xp-stat .k {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.xp-stat .v {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.xp-stat.wide { grid-column: 1 / -1; }
+
+.xp-tl {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 4px 0 10px;
+  background: var(--bg);
+}
+.xp-tl span { display: block; height: 100%; }
+
+#xpCard h3 {
+  margin: 12px 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.xp-lfs { margin: 0; padding: 0; list-style: none; }
+.xp-lfs li {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--fg);
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+.xp-cardnote { margin: 2px 0 0; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+#xpCard a { color: var(--accent-2); text-decoration: none; font-weight: 600; font-size: 13px; }
+#xpCard a:hover { text-decoration: underline; }
+.xp-recs { margin: 0; padding: 0; list-style: none; }
+.xp-recs li { padding: 2px 0; font-size: 12.5px; }
+
+.xp-fixwrap {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.xp-fixwrap td:first-child { padding-right: 2px; }
+.xp-fixwrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.xp-fixwrap th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  text-align: left;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 5px 7px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.xp-fixwrap td {
+  padding: 4px 7px;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.xp-fixwrap tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.xp-fixwrap td .lf { color: var(--accent); font-weight: 700; font-size: 10.5px; margin-left: 4px; }
+.xp-cardbtns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.xp-cardbtns button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.xp-cardbtns button:hover { color: var(--fg); }
+.xp-cardbtns button.on { color: var(--accent); border-color: var(--accent); }
+
+/* ---- Shell-wide error ---- */
+.xp-shell > .rec-error { grid-column: 1 / -1; }
+
+/* ---- Responsive ---- */
+@media (max-width: 1079px) {
+  .xp-shell { grid-template-columns: 1fr; }
+  #xpMap { height: 56vh; }
+  #xpCard {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin-top: 12px;
+    box-shadow: none;
+    overflow-y: visible;
+  }
+  .xp-list { max-height: 260px; }
+}
+@media (max-width: 640px) {
+  .xp-shell { padding: 0 14px; }
+}

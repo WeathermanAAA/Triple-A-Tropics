@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Track Explorer - TC Records (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Interactive tropical cyclone track explorer: filter storms by year, category, month, and place, inspect fixes, and cross-link to record boards.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://cdn.triple-a-tropics.com/vendor/maplibre-gl/5.24.0/maplibre-gl.css">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/records/records.css">
+<link rel="stylesheet" href="/records/explorer/explorer.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, input, select, label, nav, header, footer, table, th, td { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/" class="active">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<nav class="subnav" aria-label="Records sections">
+  <div class="subnav-inner">
+    <a href="/records/">Overview</a>
+    <a href="/records/seasons/">Season Records</a>
+    <a href="/records/intensity/">Intensity</a>
+    <a href="/records/duration/">Duration &amp; Motion</a>
+    <a href="/records/timing/">Timing</a>
+    <a href="/records/concurrency/">Concurrency</a>
+    <a href="/records/pace/">Pace</a>
+    <a href="/records/gantt/">Season Gantt</a>
+    <a href="/records/explorer/" class="active">Explorer</a>
+  </div>
+</nav>
+
+<header class="page-head xp-head">
+  <p class="crumb"><a href="/records/">&larr; Records overview</a></p>
+  <h1>Track Explorer</h1>
+  <p>Every best-track storm on one map: filter by season, category, month, or place, then drill into fixes and landfalls.</p>
+  <p class="rec-stamp" id="recStamp"></p>
+</header>
+
+<section class="xp-shell" id="xpShell">
+  <aside class="xp-side">
+
+    <div class="xp-panel">
+      <label class="xp-lab" for="xpSearch">Search</label>
+      <input id="xpSearch" type="text" placeholder="Name, year, or place" autocomplete="off" spellcheck="false">
+      <div class="xp-radrow">
+        <label class="xp-lab" for="xpRadiusKm">Radius</label>
+        <select id="xpRadiusKm">
+          <option value="50">50 km</option>
+          <option value="100">100 km</option>
+          <option value="150" selected>150 km</option>
+          <option value="250">250 km</option>
+          <option value="500">500 km</option>
+        </select>
+        <button type="button" id="xpRadiusClear">Clear</button>
+      </div>
+      <p class="xp-hint" id="xpSearchHint"></p>
+    </div>
+
+    <div class="xp-panel">
+      <span class="xp-lab">Basin</span>
+      <div id="basinChips"></div>
+
+      <span class="xp-lab">Years</span>
+      <div class="xp-yearrow">
+        <input id="xpY0" type="number" inputmode="numeric" aria-label="Start year">
+        <span class="xp-to">to</span>
+        <input id="xpY1" type="number" inputmode="numeric" aria-label="End year">
+      </div>
+      <div class="xp-eras">
+        <button type="button" data-era="all">All</button>
+        <button type="button" data-era="sat">Satellite era</button>
+        <button type="button" data-era="30">Last 30y</button>
+      </div>
+
+      <label class="xp-lab" for="xpMinCat">Minimum peak category</label>
+      <select id="xpMinCat">
+        <option value="td">Any incl. TD</option>
+        <option value="ts" selected>TS+</option>
+        <option value="c1">Cat 1+</option>
+        <option value="c2">Cat 2+</option>
+        <option value="c3">Cat 3+</option>
+        <option value="c4">Cat 4+</option>
+        <option value="c5">Cat 5</option>
+      </select>
+
+      <span class="xp-lab">Formation months</span>
+      <div class="xp-monthrow">
+        <select id="xpM0" aria-label="From month"></select>
+        <span class="xp-to">to</span>
+        <select id="xpM1" aria-label="To month"></select>
+      </div>
+
+      <label class="xp-lab" for="xpDensity">Density overlay</label>
+      <div class="xp-densrow">
+        <select id="xpDensity">
+          <option value="" selected>None</option>
+          <option value="track_all">Track density</option>
+          <option value="genesis">Genesis</option>
+          <option value="month">Track by month</option>
+        </select>
+        <select id="xpDensMonth" aria-label="Density month" hidden></select>
+      </div>
+      <p class="xp-hint" id="xpDensHint"></p>
+
+      <span class="xp-lab">Palette</span>
+      <div class="xp-seg" id="xpPal">
+        <button type="button" data-pal="std" class="on">Standard</button>
+        <button type="button" data-pal="cb">Colorblind-safe</button>
+      </div>
+
+      <span class="xp-lab">Units</span>
+      <div class="xp-unitrow">
+        <div class="xp-seg" id="xpUnitW">
+          <button type="button" data-u="kt" class="on">kt</button>
+          <button type="button" data-u="mph">mph</button>
+          <button type="button" data-u="kmh">km/h</button>
+        </div>
+        <div class="xp-seg" id="xpUnitP">
+          <button type="button" data-up="mb" class="on">mb</button>
+          <button type="button" data-up="inhg">inHg</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="xp-panel xp-results">
+      <p id="xpCount" class="xp-count"></p>
+      <div id="xpList" class="xp-list" role="listbox" aria-label="Matching storms"></div>
+      <p class="xp-hint" id="xpTrackHint"></p>
+      <div class="xp-exports">
+        <button type="button" id="xpCsv">CSV</button>
+        <button type="button" id="xpGeo">GeoJSON</button>
+      </div>
+      <p class="xp-hint" id="xpExportNote"></p>
+    </div>
+
+    <p class="rec-caveat" id="xpCaveat"></p>
+  </aside>
+
+  <div class="xp-map">
+    <div id="xpMap"></div>
+    <div class="xp-mapnote" id="xpMapNote"></div>
+    <div id="xpCard" hidden></div>
+  </div>
+</section>
+
+<footer><div class="footer-inner"><p>Data: NHC HURDAT2 · NOAA NCEI IBTrACS v04r01 · live ATCF b-decks. Built for weather nerds by a weather nerd.</p></div></footer>
+
+<script src="/records/records.js"></script>
+<script src="https://cdn.triple-a-tropics.com/vendor/maplibre-gl/5.24.0/maplibre-gl.js"></script>
+<script src="/records/explorer/explorer-data.js"></script>
+<script src="/records/explorer/explorer-map.js"></script>
+<script src="/records/explorer/explorer-ui.js"></script>
+
+</body>
+</html>
