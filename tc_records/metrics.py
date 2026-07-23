@@ -68,9 +68,9 @@ def compute_storms(fixes: pd.DataFrame) -> pd.DataFrame:
         syn = trop[trop["syn"]]
         syn_ts = syn[syn["wind"] >= NAMED_KT]
 
-        name = next((n for n in g["name"] if n), "")
+        name = next((n for n in g["name"] if isinstance(n, str) and n), "")
         season = int(g["season"].iloc[0])
-        atcf = next((a for a in g["atcf"] if a), "")
+        atcf = next((a for a in g["atcf"] if isinstance(a, str) and a), "")
 
         # --- Σ metrics (synoptic, ≥34 kt, tropical/subtropical) ---
         w = syn_ts["wind"].to_numpy(dtype=float)

@@ -95,6 +95,10 @@ def main(argv=None) -> int:
                    help="basin(s) to compute (default: all)")
     p.add_argument("--out", default=str(HERE / "records_out"),
                    help="output directory for the JSON files")
+    p.add_argument("--explorer-out", default=None,
+                   help="also emit the track-explorer artifacts (catalog, "
+                        "decade track bundles, density rasters) into this "
+                        "directory - one compute pass feeds both products")
     p.add_argument("--no-live", action="store_true",
                    help="skip the live ATCF b-deck fetch (offline dev)")
     p.add_argument("--ibtracs-dir", default=str(HERE),
@@ -141,6 +145,9 @@ def main(argv=None) -> int:
         validation = publish.validate_or_die(results)
 
     publish.emit(results, out_dir, validation, hurdat2_names, current_year)
+    if args.explorer_out:
+        from tc_records.explorer import emit_explorer
+        emit_explorer(results, Path(args.explorer_out), current_year)
     print(f"[records] done → {out_dir}")
     return 0
 

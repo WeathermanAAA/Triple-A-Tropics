@@ -20,7 +20,7 @@ import pandas as pd
 import ace_core as ac
 
 CANON_COLS = ["sid", "atcf", "name", "season", "time", "lat", "lon",
-              "wind", "pres", "status", "trop", "syn", "src"]
+              "wind", "pres", "status", "trop", "syn", "src", "rec"]
 
 # HURDAT2 tropical/subtropical statuses (EX/LO/WV/DB excluded everywhere).
 HURDAT2_TROP = {"TD", "TS", "HU", "SS", "SD"}
@@ -101,6 +101,9 @@ def parse_hurdat2(path: Path, src: str = "hurdat2") -> pd.DataFrame:
             "trop": status in HURDAT2_TROP,
             "syn": t.hour in SIX_HOURLY and t.minute == 0,
             "src": src,
+            # HURDAT2 record identifier: L = landfall, I/P/S/T etc. kept
+            # verbatim (the explorer derives landfall markers from L rows).
+            "rec": parts[2].upper(),
         })
     df = pd.DataFrame(rows, columns=CANON_COLS)
     # Defensive: one fix per (storm, timestamp) — the L/I row IS the synoptic
@@ -114,7 +117,7 @@ def parse_hurdat2(path: Path, src: str = "hurdat2") -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 _IBTRACS_USECOLS = ["SID", "SEASON", "BASIN", "NAME", "ISO_TIME", "NATURE",
-                    "LAT", "LON", "TRACK_TYPE", "USA_ATCF_ID",
+                    "LAT", "LON", "TRACK_TYPE", "USA_ATCF_ID", "USA_RECORD",
                     "USA_WIND", "USA_PRES", "WMO_WIND", "WMO_PRES",
                     "TOKYO_WIND", "TOKYO_PRES"]
 
@@ -186,7 +189,7 @@ def load_ibtracs(path: Path, basin_short: str,
     out = pd.DataFrame({
         "sid": df["SID"].astype(str),
         "atcf": df["USA_ATCF_ID"].astype(str).str.strip().str.upper()
-                  .replace({"NAN": ""}),
+                  .replace({"NAN": ""}).fillna(""),
         "name": df["NAME"].map(_clean_name),
         "season": df["SEASON"],
         "time": df["ISO_TIME"],
@@ -197,6 +200,8 @@ def load_ibtracs(path: Path, basin_short: str,
         "syn": df["ISO_TIME"].dt.hour.isin(SIX_HOURLY)
                & (df["ISO_TIME"].dt.minute == 0),
         "src": src,
+        "rec": df.get("USA_RECORD", pd.Series("", index=df.index))
+               .fillna("").astype(str).str.strip().str.upper(),
     })
     out["_basin_col"] = df["BASIN"].astype(str).str.strip().str.upper()
     return out.sort_values(["sid", "time"]).reset_index(drop=True)
@@ -246,6 +251,7 @@ def live_canonical(season: int, basin_cfg: dict, log_prefix: str = "[records]",
         "syn": pd.to_datetime(live["time"]).dt.hour.isin(SIX_HOURLY)
                & (pd.to_datetime(live["time"]).dt.minute == 0),
         "src": "live",
+        "rec": "",
     })
     out.loc[out["lon"] > 180, "lon"] -= 360.0
     return out.sort_values(["sid", "time"]).reset_index(drop=True)
