@@ -3000,3 +3000,41 @@ into the climatology hub - waiting on Andrew's approval.
 
 Rollback: three scoped commits (engine+tests / workflow / shadow frontend);
 revert the SHAs. R2 records/v1/ objects are additive-only.
+
+## 2026-07-23 · TC records touch-ups + Phase 2 track explorer (SHADOW)
+
+Phase-1 touch-ups (commit 1fdae5b3): ACE/PDI boards + overview methodology
+now disclose the consistent subtropical-inclusion policy (AL 2005: 250.1
+here vs 245.5 official, by design). Spec gap-check: wind-RI and track
+distance already existed; added most-C5s-per-season, strongest-storm-per-
+decade, consecutive-seasons-with-a-major streaks (AL top 1995 to 2012, 18),
+and out-of-season storm count + ACE (al/ep official windows). New gate
+sentinel: AL 2005 C5 count = 4. Landfall/size/costliest deferred per spec.
+
+Phase 2 (commits e5b925e4 / fe761e5f / 7b1d5dd6): the interactive track
+explorer, shadow at /records/explorer/ (linked only from the records
+subnav; noindex; robots already disallow /records/).
+- Pre-render model: tc_records/explorer.py emits per-basin catalogs
+  (landfalls from HURDAT2 L rows, report links, record-board cross-links
+  per SID), decade track bundles with per-storm unwrapped lons (dateline
+  crossers = one line; Ioke/Genevieve/Paka verified), 1-deg density
+  rasters, manifest -> explorer/v1/ on R2 via the same daily workflow run
+  (one compute pass, gate before sync). 82 objects seeded from the box.
+- Client: vendored MapLibre GL 5.24.0 on OUR CDN (vendor/maplibre-gl/),
+  basemap from repo Natural Earth GeoJSON (no glyphs/labels/tiles).
+  explorer-data.js (pure logic, 72+28 node assertions on real data),
+  explorer-map.js, explorer-ui.js. Radius search via 7k-place NE
+  gazetteer (explorer/v1/gazetteer.json, one-off - the workflow does NOT
+  regenerate it). Overview mode (peak-colored lines) above 800 storms,
+  segment-colored detail + hoverable fixes at or below it.
+- Verified on real storms (screenshots in session scratchpad): Katrina
+  card (902 mb / 150 kt / 20.0 ACE / 3 landfalls / TCR pdf), New Orleans
+  150 km radius ranks Katrina correctly (Cindy 2005 is genuinely closer),
+  Ioke deep-link (continuous dateline track + tops single-storm ACE and
+  PDI boards), WP default viewport, CB palette, units, URL round-trips.
+- Deferred (flag for Andrew): season-vs-season compare overlay (pace page
+  covers vs-climatology; two-storm pinning shipped instead); WP landfall
+  markers (JTWC decks rarely carry L rows); month-density overlays exist
+  only for months with data (client hints when absent).
+
+Rollback: revert the SHAs; explorer/v1/ + vendor/ on R2 are additive.
