@@ -3123,11 +3123,66 @@ SRF -> CIE XYZ -> sRGB 3x3 matrices (JMA TCR/CIRA), applied just before
 cira_stretch, would make the ring identical BY CONSTRUCTION.
 
 QUEUED manual steps (Andrew):
-- **FCI activation** (tat-satellite-render): create/confirm EUMETSAT account
-  key/secret at api.eumetsat.int/api-key/, confirm the MTG FCI L1C licence
-  on user.eumetsat.int covers EO:EUM:DAT:0662 downloads, then on the box add
-  EUMETSAT_CONSUMER_KEY/EUMETSAT_CONSUMER_SECRET to /root/tsr-s2/.env.
-  After creds land the agent finishes activation (satpy layer for the geo
-  lane via requirements-s2-geo.txt, mem_limit re-check ~2.5GB eager FDHSI,
-  registry rows + ring membership). Code is committed and creds-gated
-  (s2_meteosat.fetch_fci_disk); nothing runs until the keys exist.
+- ~~**FCI activation** creds~~ DONE 2026-07-24: keys landed on the box .env,
+  v1 token flow verified live, full activation built (see the 2026-07-24
+  FCI section below). ONE manual step remains — the licence click below.
+
+## 2026-07-24 (later) · MTG FCI ACTIVATED end-to-end (licence click pending)
+
+EUMETSAT creds are on the box `.env` (gitignored; never committed). Token
+mint verified from the box: HTTP 200 at POST api.eumetsat.int/token.
+
+**Auth-migration check (Andrew asked)**: the api-key page banner's "new
+authentication method" = the v2 Data Access Services flow (OAuth2 auth-code
++ PKCE at user.eumetsat.int/cas, live 2026-06-30). It needs an INTERACTIVE
+browser login to bootstrap a 30-day refresh-token chain — wrong shape for a
+headless box. Our POST /token client-credentials flow is the documented v1
+method, still fully supported ("will be depreciated in due time", NO date),
+and is exactly what eumdac 3.1.1 (latest, 2025-12) ships. Verdict: we are
+on the CURRENT supported method; stay on v1 until eumdac gains v2 or a
+deadline appears. Finding + v2 delta documented in s2_meteosat.py.
+
+**tsr build (fci-onboard -> main)**: mtgi1-fd suite (truecolor/ir/irbd) on
+the GK-2A model — FCI_RECIPES + MTGI1_FD_ROWS + produce_fci_truecolor
+through the SHARED assemble_truecolor (sensor="fci", NDVI-hybrid green
+[0.15,0.05] s3, zero FCI-specific compensation); never-miss chunked fetch
+(Range-resume download, 41-chunk completeness gate — a partial slot NEVER
+renders; newest_fci_slot pin + 10-min slot tolerance; emit backfill grid =
+the watermark/idempotent-backfill layer); products.json now SKIPPED on
+total-failure passes (a gated suite can no longer advertise empty
+products); satpy layer in Dockerfile.meso; dedicated mtg lane
+(docker-compose.s2.mtg-lane.yml: 600s interval, 150-min backfill for the
+1-h licence delay, 12g); validate_fci_seam.py (FCI-vs-GOES-East Atlantic
+overlap co-registration, rebuild tolerances 0.02/0.04) ready to run at
+first data. Explorer: Meteosat-12 · 0° picker row + mtgi1-fd domain +
+NADIR auto-switch at 0°, availability-gated off sat/mtgi1/fd/products.json
+(verified headless: row stays greyed pre-licence, GK-2A row un-greys and
+switches with live frames).
+
+**Licence state (verified empirically)**: OpenSearch works; downloads 403:
+`"GeneralLicense required to access this collection"` — same wall on FCI
+(EO:EUM:DAT:0662) AND both SEVIRI collections, so ONE acceptance unlocks
+all three. No API surface for acceptance (probed; 404s) — it is a real
+portal click.
+
+- **LICENCE CLICK (Andrew, the one remaining manual step)**: log in at
+  user.eumetsat.int with the account that owns this consumer key →
+  accept the EUMETSAT **General Licence** (Data Store licensing /
+  data-registration page; the FAQ says acceptance can take up to 1 h to
+  activate — log out/in). Everything downstream is already running and
+  self-heals on the first tick after activation: mtg lane starts emitting,
+  explorer row un-greys, geo-global's SEVIRI wedge members light up.
+  After activation the agent still owes: run validate_fci_seam.py + the
+  live screenshot pass (FCI TC + IR + ring).
+
+**SEVIRI IODC assessment (Andrew asked; report-only, not built)**: WORTH
+ADDING as a BT-only cockpit satellite. The N Indian Ocean is a real gap:
+Arabian Sea sits at 60-75° zenith from MTG-0° and ~65-80° from Himawari;
+Bay of Bengal is past MTG's usable limb — IODC at 45.5°E sees both at
+15-50°. The geo-global BT ring's IODC member is ALREADY COMMITTED (dormant
+kind="seviri" row) and lights up with the same licence click — zero build.
+The remaining build for a picker satellite (msg-iodc-fd: ir/irbd/wv on the
+gk2a row model, reusing fetch_seviri_disk + the existing honest-degrade
+plumbing) is one focused session; ops cost ~270 MB/15-min slot on the
+already-verified key/licence. SEVIRI never joins the true-color ring (no
+blue/green band) — "natural color" only, per standing policy.
