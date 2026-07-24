@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-24T20:21:00Z
+updated: 2026-07-24T20:59:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -55,6 +55,22 @@ items:
     links:
       - label: Explorer
         url: /satellite/explorer/
+  - id: gk2a-explorer-wiring
+    title: GK-2A explorer wiring
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-24
+    note: >-
+      GK-2A AMI picker entry and domain switch are live in the Satellite
+      Explorer. The gk2a-fd domain landed on the availability-gated pattern;
+      verified headless that the row un-greys and switches with live frames.
+      GK-2A stays out of NADIR auto-switch because its footprint sits inside
+      Himawari's.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/9074e204
   - id: explorer-z7-truecolor
     title: Explorer z7 truecolor + MP4 loop export
     area: satellite
@@ -165,6 +181,21 @@ items:
         url: /obs/ascat/
       - label: commit
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/58ac3f8c
+  - id: hy2b-scatterometer
+    title: HY-2B scatterometer
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: >-
+      HY-2B/2C HSCAT delayed-daily 25 km ocean winds via keyless Copernicus
+      Marine S3. The hy2obs/ package plus generate_hy2_winds.py drive it, and
+      ascat/hy2_view.js renders the HY-2 section on /obs/ascat/ (previous-day
+      delayed look, ~1-2 days behind).
+    links:
+      - label: Scatterometer
+        url: /obs/ascat/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/a4603add
   - id: mjo-ecmwf
     title: MJO ECMWF models
     area: models
@@ -187,6 +218,22 @@ items:
         url: /subseasonal/
       - label: commit
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/9990b4af
+  - id: mjo-rebuild-spec
+    title: MJO / Hovmöller rebuild to spec
+    area: models
+    status: shipped
+    date_shipped: 2026-07-21
+    note: >-
+      The Hovmöller forecast half was rebuilt as RMM-reconstructed MJO OLR per
+      spec: generate_hovmollers.py builds the forecast tail from WH04 PC1/PC2
+      via subseasonal/mjo_reconstruct, with RMM phase and amplitude tuned to
+      spec (c31d52f4). Covered by tests/test_mjo_reconstruct.py. Live at
+      /subseasonal/.
+    links:
+      - label: Subseasonal
+        url: /subseasonal/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/33d6364d
   - id: sar-salinity
     title: SAR salinity-reliability overlay
     area: obs
@@ -282,6 +329,36 @@ items:
         url: /satellite/explorer/
       - label: commit
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/aed3c37f
+  - id: hafs-diagnostics
+    title: HAFS diagnostics suite
+    area: models
+    status: shipped
+    date_shipped: 2026-06-28
+    note: >-
+      HAFS diagnostics landed as nine parent-domain environmental products
+      (synoptic maps): precip, 200-850 and 500-850 shear, 200 PV, SST, tropo
+      temp, CAPE, storm-relative helicity, and latent heat flux. Defined in
+      hafs_render's registry and served on /models/ via the R2 manifest.
+    links:
+      - label: Models
+        url: /models/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/20d4508b
+  - id: simulated-mw-hafs
+    title: Simulated microwave for HAFS
+    area: models
+    status: shipped
+    date_shipped: 2026-06-23
+    note: >-
+      Simulated 89 GHz microwave for HAFS: the sim_89h product, a
+      polarization-corrected 89 PCT (1.818*V minus 0.818*H) from SSMIS-F17
+      91.7 GHz channels. Live in the HAFS R2 manifest as "Simulated 89 PCT
+      (from HAFS)" and selectable on /models/.
+    links:
+      - label: Models
+        url: /models/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/2237f14f
 
   # ---- active ----
   - id: fci-activation
@@ -289,30 +366,34 @@ items:
     area: satellite
     status: active
     note: >-
-      EUMETSAT credentials are in and the 41-chunk fetch works end-to-end;
-      final gate is the one-time GeneralLicense click on the EUMETSAT
-      portal, then Meteosat-12 lights up in the ring.
+      Fully built and deployed on the box (mtgi1-fd truecolor/ir/irbd on the
+      shared assemble_truecolor pipeline, with a 41-chunk completeness gate so
+      a partial slot never renders). EUMETSAT creds are on the box and the v1
+      token flow is verified live; the Meteosat-12 picker row landed greyed and
+      un-greys on the first post-licence emit with no further deploy. The sole
+      remaining gate is Andrew clicking the EUMETSAT General Licence in the
+      portal (one acceptance also unlocks SEVIRI).
     links:
       - label: Explorer
         url: /satellite/explorer/
-  - id: gk2a-explorer-wiring
-    title: GK-2A explorer wiring
-    area: satellite
+  - id: cyclolab-stages
+    title: CycloLab stages 1-5
+    area: apps
     status: active
     note: >-
-      GK-2A picker entry has landed; domain-switch behavior and cross-domain
-      verification are the active piece.
+      Substantially built and part-live, not merely planned. The Cloudflare
+      /cyclolab/* route is deployed; box pollers write per-storm
+      advisory/cone/guidance JSON and per-storm pages to R2, analogs run on
+      update-analogs, and the tracks, models and satellite pages wire
+      /cyclolab/{sid}/ entry links. Per-storm pages serve during active storms
+      (off-season now, so none showing). Remaining: the /cyclolab/ root index
+      is still unpublished (Andrew's publish-or-drop call) plus stage-2 and
+      stage-4 art polish.
     links:
-      - label: Explorer
-        url: /satellite/explorer/
-  - id: mjo-rebuild-spec
-    title: MJO / Hovmöller rebuild to spec
-    area: models
-    status: active
-    note: "Forecast half of the Hovmöller rebuilt as RMM-reconstructed OLR per the spec."
-    links:
-      - label: Subseasonal
-        url: /subseasonal/
+      - label: CycloLab route
+        url: /cyclolab/
+      - label: stage-0 commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/0f8203f6
   - id: promo-video
     title: Promo video production
     area: community
@@ -373,6 +454,22 @@ items:
     area: records
     status: needs-andrew
     note: "Go/no-go on records into /climatology/ and explorer onto /satellite/."
+  - id: youtube-stream
+    title: 24/7 YouTube auto stream
+    area: apps
+    status: needs-andrew
+    note: >-
+      Built; broadcast go-live blocked on Andrew's manual steps. The /stream/
+      broadcast page is live (a 1920x1080 canvas that self-hydrates from CDN
+      feeds every 5 min and never blanks). The encoder stack (stream-encoder/:
+      headless Chromium to ffmpeg to YouTube RTMP, Dockerized) is built but not
+      deployed; per RUNBOOK-STREAM.md go-live needs a dedicated VPS plus the
+      YouTube stream key.
+    links:
+      - label: Stream page
+        url: /stream/
+      - label: encoder commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/87f10fbf
 
   # ---- next (specced, queued) ----
   - id: microwave-subpage
@@ -390,11 +487,6 @@ items:
     area: obs
     status: next
     note: "Browse historical ASCAT passes per storm, not just the latest."
-  - id: hy2b-scatterometer
-    title: HY-2B scatterometer
-    area: obs
-    status: next
-    note: "HY-2B winds via keyless CMEMS S3 access."
   - id: sar-transect
     title: SAR transect draw tool
     area: obs
@@ -431,28 +523,11 @@ items:
     title: NEXRAD L2 radar viewer
     area: apps
     status: planned
-  - id: cyclolab-stages
-    title: CycloLab stages 1-5
-    area: apps
-    status: planned
   - id: model-scaling-50
     title: Model platform scaling
     area: models
     status: planned
     note: "Scale the models platform to roughly 50 models."
-  - id: hafs-diagnostics
-    title: HAFS diagnostics suite
-    area: models
-    status: planned
-  - id: simulated-mw-hafs
-    title: Simulated microwave for HAFS
-    area: models
-    status: planned
-  - id: youtube-stream
-    title: 24/7 YouTube auto stream
-    area: apps
-    status: planned
-    note: "Encoder is container-tested; runbook exists. Planned as a product, go-live steps queued."
   - id: discord-bot
     title: Discord changelog bot
     area: community
