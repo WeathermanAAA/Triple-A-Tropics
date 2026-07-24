@@ -11,6 +11,18 @@ Andrew is frequently **unavailable** (traveling, laptop closed) for reviews, dec
 - **Keep the gates that protect the live site.** ACE/data-critical and cross-repo (`ace_core`) changes still get an adversarial review + a byte-identical ACE check (compare `--no-live` data output before/after) **before** merge. No irreversible/destructive ops. But once a change passes its own gate, **land it** — don't hold it for review.
 - **Only real-secret steps (e.g. adding credentials to the render box `.env`) truly need Andrew's hands.** For those: commit + push the code anyway (nothing left uncommitted), and append the exact manual step (repo, command, why) to a single running **QUEUED manual steps** list so it's ready when he's back.
 
+## Roadmap board (standing agent workflow — keeps the board honest)
+
+`roadmap.yml` (repo root) is the single source of truth for the shadow roadmap board at `/roadmap/` — unlinked and noindexed like `/bugs/` and `/records/`, and (like `/records/`) `Disallow:`ed in `robots.txt`. The page (`roadmap/index.html` + `roadmap/roadmap.js`) parses the YAML client-side (strict documented subset — rules live in the file's header comment) and re-fetches it on a content-gated poll, so testers see updates without a reload. No build step, no API calls, no tokens.
+
+Every session follows this, exactly like updating AGENT_STATUS.md:
+
+- **Ship something → flip its `roadmap.yml` item in the SAME scoped commit** (`status: shipped` + `date_shipped: YYYY-MM-DD`, or active → shadow, etc.).
+- **Discover new work → add an item** (kebab-case `id`, short `title`, detail in `note`, optional `links`).
+- **Bump `updated:`** in every commit that touches the file — it is the board's "last updated" stamp (GitHub Pages' `Last-Modified` header is deploy-wide, so this field is the only honest per-file time without API calls).
+- Statuses: `shipped · active · shadow · needs-andrew · next · planned · blocked`; areas: `satellite · obs · records · models · infra · apps · community` (the vocab lives in `roadmap/roadmap.js` and the CSS color pairs in `roadmap/index.html` — change all three together, `tests/test_roadmap_board.py` enforces the lockstep).
+- A bad edit cannot half-render — the parser fails loudly to a red banner on the board. Check edits with `python -m unittest tests.test_roadmap_board` (needs node; the DOM smoke also needs jsdom) before committing.
+
 ## What this repo is
 
 Triple-A-Tropics is a static GitHub Pages site (`triple-a-tropics.com`). Python generator scripts run on scheduled GitHub Actions, re-render data products (charts, maps, GIFs, interactive pages) into plain HTML/PNG/JSON files, and commit them back to `main`. No server, no database — the repo *is* the site. Understand this model before making changes: if a commit lands on `main`, it is live within ~60 s.

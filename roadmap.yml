@@ -1,0 +1,491 @@
+# Triple-A-Tropics roadmap — the single source of truth for /roadmap/
+# (shadow tester board, unlinked + noindexed).
+#
+# AGENT RULE (also in CLAUDE.md): when you ship something, update its item's
+# status HERE in the SAME commit — exactly like AGENT_STATUS.md. New work
+# discovered mid-session gets a new item. Bump `updated:` in every commit
+# that edits this file; it is the board's honest "last updated" stamp
+# (GitHub Pages' Last-Modified header is deploy-wide, so the field is the
+# only per-file truth available without API calls).
+#
+# FORMAT — parsed client-side by roadmap/roadmap.js (tiny YAML subset,
+# validated loudly; a bad edit shows as a red banner on the board):
+#   - 2-space indents, spaces only; no tabs
+#   - one-line values; quote a value if it contains ": " or starts with a
+#     special character; ">-" folds an indented block into one line
+#   - full-line # comments only (no trailing comments)
+#   - no flow collections [ ] { }, no anchors/aliases
+# Item schema:
+#   id            kebab-case, unique, stable (deep links use it)
+#   title         short (<=90 chars); put detail in note
+#   area          satellite | obs | records | models | infra | apps | community
+#   status        shipped | active | shadow | needs-andrew | next | planned | blocked
+#   date_shipped  YYYY-MM-DD, required on shipped items only
+#   note          optional detail (quoted, or ">-" folded block)
+#   links         optional list of {label, url} (site-relative or https)
+# Statuses: shipped = live · active = in progress · shadow = built, awaiting
+# Andrew's review/merge · needs-andrew = blocked on his decision/credential ·
+# next = specced, queued · planned = backlog · blocked = external dependency.
+# Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
+# edit before committing.
+
+updated: 2026-07-24T20:21:00Z
+
+items:
+  # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: truecolor-ring-rebuild
+    title: True-color ring rebuild
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-24
+    note: >-
+      Rayleigh root-cause fix; the per-sensor compensation stack is deleted.
+      One shared Satpy/pyspectral recipe now drives the ABI, AHI and AMI ring
+      members. FCI rides the same recipe once its activation clears (see the
+      active card).
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: gk2a-ring
+    title: GK-2A live ring member
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-24
+    note: "GK-2A AMI joined the live true-color ring; first R2 emit verified on the CDN."
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: explorer-z7-truecolor
+    title: Explorer z7 truecolor + MP4 loop export
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-23
+    note: >-
+      Tester-round fixes: true color to zoom 7, loop export saves as MP4
+      (H.264 faststart, WebM fallback), loop-cadence fixes.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/06df3e3d
+  - id: tsr-reconciliation
+    title: tsr repo reconciliation
+    area: infra
+    status: shipped
+    date_shipped: 2026-07-23
+    note: >-
+      One canonical main for the satellite-render repo; the box pulls and
+      pushes main only. Rollback refs parked (box-ops, prod-pre-reconcile).
+    links:
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/2317d6db
+  - id: tc-records-suite
+    title: TC records suite + track explorer
+    area: records
+    status: shipped
+    date_shipped: 2026-07-22
+    note: >-
+      Shadow /records/ hub: season records, intensity, duration, timing,
+      concurrency, pace, Gantt, and the track explorer. Engine has a
+      validation gate against official best tracks.
+    links:
+      - label: Records hub
+        url: /records/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/e2d7b5a0
+  - id: cloud-tops-3d
+    title: 3D cloud tops
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-21
+    note: "Tilt/rotate IR relief view in the explorer cockpit."
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/bb1dc5f1
+  - id: recon-skewt
+    title: Recon Skew-T + VDM panel
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: >-
+      Dropsonde Skew-T plots, full vortex-data-message readout, and numbered
+      drop markers on the mission map.
+    links:
+      - label: Recon
+        url: /obs/recon/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/7c3c64c8
+  - id: recon-fl-sfc
+    title: Recon FL-to-surface wind converter
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: "Flight-level to surface wind conversion, with the FL-wind labeling fix."
+    links:
+      - label: Recon
+        url: /obs/recon/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/e6f09fb6
+  - id: recon-crosshair-csv
+    title: Recon hover crosshair + CSV export
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: >-
+      Synced time-series hover crosshair; copy stats, copy TSV, and CSV
+      download shipped 07-20, the crosshair completed the pair 07-21.
+    links:
+      - label: Recon
+        url: /obs/recon/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/e6f09fb6
+  - id: ascat-global-fix
+    title: ASCAT global coverage fix
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: "Global view now draws the full ~60 h swath window instead of under-covering."
+    links:
+      - label: ASCAT
+        url: /obs/ascat/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/fd0c6e76
+  - id: quikscat-archive
+    title: QuikSCAT 1999-2009 archive
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: >-
+      Archived QuikSCAT storm-pass winds with a browser on /obs/ascat/; the
+      box backfill populates storms as they publish.
+    links:
+      - label: ASCAT
+        url: /obs/ascat/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/58ac3f8c
+  - id: mjo-ecmwf
+    title: MJO ECMWF models
+    area: models
+    status: shipped
+    date_shipped: 2026-07-21
+    note: "ECMWF IFS + ENS MJO forecasts (open data), selectable on /subseasonal/."
+    links:
+      - label: Subseasonal
+        url: /subseasonal/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/1a88b4fb
+  - id: mjo-hovmoller-fixes
+    title: MJO Hovmöller fixes
+    area: models
+    status: shipped
+    date_shipped: 2026-07-21
+    note: "GEFS-forecast Hovmöller: gap bridge, all-basin genesis markers, declutter, contrast."
+    links:
+      - label: Subseasonal
+        url: /subseasonal/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/9990b4af
+  - id: sar-salinity
+    title: SAR salinity-reliability overlay
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-21
+    note: "Low-salinity reliability flag on SAR winds from RSS SMAP SSS."
+    links:
+      - label: SAR
+        url: /obs/sar/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/6532e4b8
+  - id: sar-peak-wind
+    title: SAR peak-wind readout
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-20
+    note: "Robust interior peak: despeckled, edge/coast eroded, incidence-aware, with a ring marker."
+    links:
+      - label: SAR
+        url: /obs/sar/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/2082c9d3
+  - id: obs-hub
+    title: Obs hub
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-19
+    note: "/obs/ landing hub bundling recon, scatterometer, and the new SAR winds."
+    links:
+      - label: Obs
+        url: /obs/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/3713940d
+  - id: sar-winds-archive
+    title: SAR winds per-storm archive
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-19
+    note: "Per-storm SAR wind-field archive, launched with the obs hub."
+    links:
+      - label: SAR
+        url: /obs/sar/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/3713940d
+  - id: recon-plane-marker
+    title: Recon plane marker + popover
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-19
+    note: "Top-down WC-130 marker with a collision-aware aircraft popover."
+    links:
+      - label: Recon
+        url: /obs/recon/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/8c21c24b
+  - id: obs-lucide-icons
+    title: Obs Lucide icon set
+    area: community
+    status: shipped
+    date_shipped: 2026-07-19
+    note: "Hub icons replaced with real Lucide icons (plane / satellite / radar)."
+    links:
+      - label: Obs
+        url: /obs/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/cc7b8c38
+  - id: repo-size-cleanup
+    title: Repo size cleanup (87 GB)
+    area: infra
+    status: shipped
+    date_shipped: 2026-07-19
+    note: >-
+      Retired the mp4-artifacts orphan-branch publish path; R2 is canonical
+      for animation media. The 87 GB scare was force-push garbage, not
+      history.
+    links:
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/4676a5e8
+  - id: railway-decommission
+    title: Railway decommission
+    area: infra
+    status: shipped
+    date_shipped: 2026-07-19
+    note: "Railway services retired; everything they ran lives on the render box now."
+  - id: uhr-ascat
+    title: UHR ASCAT
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-18
+    note: "Ultra-high-res (2 km-class) storm-cut scatterometer winds in the explorer layer."
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+      - label: commit
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/aed3c37f
+
+  # ---- active ----
+  - id: fci-activation
+    title: MTG FCI activation
+    area: satellite
+    status: active
+    note: >-
+      EUMETSAT credentials are in and the 41-chunk fetch works end-to-end;
+      final gate is the one-time GeneralLicense click on the EUMETSAT
+      portal, then Meteosat-12 lights up in the ring.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: gk2a-explorer-wiring
+    title: GK-2A explorer wiring
+    area: satellite
+    status: active
+    note: >-
+      GK-2A picker entry has landed; domain-switch behavior and cross-domain
+      verification are the active piece.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: mjo-rebuild-spec
+    title: MJO / Hovmöller rebuild to spec
+    area: models
+    status: active
+    note: "Forecast half of the Hovmöller rebuilt as RMM-reconstructed OLR per the spec."
+    links:
+      - label: Subseasonal
+        url: /subseasonal/
+  - id: promo-video
+    title: Promo video production
+    area: community
+    status: active
+    note: "Site promo video for the launch push."
+
+  # ---- shadow (built, awaiting Andrew's review/merge) ----
+  - id: records-hub-merge
+    title: Records hub merge into climatology
+    area: records
+    status: shadow
+    note: >-
+      TC History hub at /records/ + /records/explorer/ is built and live as
+      a shadow; pending merge into /climatology/ once Andrew reviews.
+    links:
+      - label: Records hub
+        url: /records/
+  - id: explorer-promote
+    title: Explorer promotion to main satellite page
+    area: satellite
+    status: shadow
+    note: "Satellite Explorer is feature-complete; pending promotion to the main /satellite/ page."
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: roadmap-page
+    title: Roadmap board
+    area: community
+    status: shadow
+    note: >-
+      This page: roadmap.yml-driven kanban, auto-refreshing, updated by
+      agents in the same commit that ships each item.
+    links:
+      - label: Roadmap
+        url: /roadmap/
+
+  # ---- needs-andrew ----
+  - id: rapidscat-token
+    title: RapidScat archive
+    area: obs
+    status: needs-andrew
+    note: "Blocked on EARTHDATA_TOKEN landing in the render box .env (queued manual step)."
+  - id: records-art-calls
+    title: Records art calls
+    area: records
+    status: needs-andrew
+    note: "Card icons, Gantt chip styling, and TD number-words wording need Andrew's eye."
+    links:
+      - label: Records hub
+        url: /records/
+  - id: guidance-palette
+    title: Guidance palette decision
+    area: models
+    status: needs-andrew
+    note: "Per-tech hue vs peak-SSHWS palette B for model guidance tracks."
+  - id: merge-decisions
+    title: Merge decisions
+    area: records
+    status: needs-andrew
+    note: "Go/no-go on records into /climatology/ and explorer onto /satellite/."
+
+  # ---- next (specced, queued) ----
+  - id: microwave-subpage
+    title: Microwave obs subpage
+    area: obs
+    status: next
+    note: "Move microwave viewing into /obs/microwave/ alongside recon, ASCAT, SAR."
+  - id: overpass-prediction
+    title: Overpass prediction
+    area: obs
+    status: next
+    note: "TLE-based next-pass times for ASCAT / microwave / SAR over active storms."
+  - id: ascat-time-machine
+    title: ASCAT time machine
+    area: obs
+    status: next
+    note: "Browse historical ASCAT passes per storm, not just the latest."
+  - id: hy2b-scatterometer
+    title: HY-2B scatterometer
+    area: obs
+    status: next
+    note: "HY-2B winds via keyless CMEMS S3 access."
+  - id: sar-transect
+    title: SAR transect draw tool
+    area: obs
+    status: next
+    note: "Draw a line across a SAR wind field, get the wind profile along it."
+  - id: sar-quadrant
+    title: SAR quadrant plots
+    area: obs
+    status: next
+    note: "Per-quadrant wind statistics from SAR passes."
+  - id: truecolor-phase2
+    title: Truecolor Phase 2
+    area: satellite
+    status: next
+    note: "CIE-XYZ per-sensor harmonization so ring members match visually."
+  - id: seviri-iodc
+    title: Meteosat SEVIRI IODC
+    area: satellite
+    status: next
+    note: "Indian Ocean Data Coverage as a BT-only ring member."
+
+  # ---- planned (backlog) ----
+  - id: weather-app-rebuild
+    title: Weather app rebuild
+    area: apps
+    status: planned
+    note: "Native iOS vs web decision still to brainstorm."
+  - id: taw-platform
+    title: TAW weather-map platform
+    area: apps
+    status: planned
+    note: "Radar core is milestone 1."
+  - id: nexrad-viewer
+    title: NEXRAD L2 radar viewer
+    area: apps
+    status: planned
+  - id: cyclolab-stages
+    title: CycloLab stages 1-5
+    area: apps
+    status: planned
+  - id: model-scaling-50
+    title: Model platform scaling
+    area: models
+    status: planned
+    note: "Scale the models platform to roughly 50 models."
+  - id: hafs-diagnostics
+    title: HAFS diagnostics suite
+    area: models
+    status: planned
+  - id: simulated-mw-hafs
+    title: Simulated microwave for HAFS
+    area: models
+    status: planned
+  - id: youtube-stream
+    title: 24/7 YouTube auto stream
+    area: apps
+    status: planned
+    note: "Encoder is container-tested; runbook exists. Planned as a product, go-live steps queued."
+  - id: discord-bot
+    title: Discord changelog bot
+    area: community
+    status: planned
+  - id: records-external-data
+    title: Records with external data
+    area: records
+    status: planned
+    note: "Landfall, size, costliest; needs data sources beyond best track."
+  - id: tornado-archive
+    title: Tornado outbreak archive
+    area: records
+    status: planned
+  - id: cyclone-sim-game
+    title: Cyclone sim game
+    area: apps
+    status: planned
+  - id: mobile-pwa
+    title: Mobile app / PWA
+    area: apps
+    status: planned
+    note: "Far future."
+
+  # ---- blocked (external) ----
+  - id: mimic-tpw2
+    title: MIMIC-TPW2
+    area: satellite
+    status: blocked
+    note: >-
+      CIMSS upstream microwave feed has been down since 2026-07-06; the
+      product self-activates when the feed resumes.
+  - id: jtwc-bdeck
+    title: JTWC B-deck restriction
+    area: obs
+    status: blocked
+    note: "Need RSMC-sourced WP/IO/SH wind-radii data; JTWC B-decks are restricted."

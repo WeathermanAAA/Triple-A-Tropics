@@ -39,7 +39,7 @@ ACTIVE_FOR_SECTION = {
 }
 
 # nav-hidden utility pages: standard chrome, but NO section -> zero active
-NO_ACTIVE_SECTIONS = {"bugs"}
+NO_ACTIVE_SECTIONS = {"bugs", "roadmap"}
 
 NAV_BLOCK = re.compile(r'<div class="nav-links">(.*?)</div>', re.S)
 ANCHOR = re.compile(r'<a\s+href="([^"]+)"([^>]*)>([^<]+)</a>')

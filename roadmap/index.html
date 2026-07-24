@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Roadmap (shadow) · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Nav-hidden shadow page: reachable only by direct link (like /bugs/,
+     /records/). Also disallowed in robots.txt. -->
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Live build roadmap for Triple-A-Tropics.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, button, ul, li, nav, header,
+  footer, section {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
+  }
+
+  /* Per-area color pair: --ad deep step (borders/fills/bars — validated
+     7-slot categorical set on the dark panel), --at light step (chip text,
+     all >= 7.8:1 on --panel). Keep in sync with AREAS in roadmap.js. */
+  .a-satellite { --ad: #2d96c8; --at: #6ec4ea; }
+  .a-obs       { --ad: #bd821a; --at: #ffb83a; }
+  .a-records   { --ad: #a06be8; --at: #c9a1f5; }
+  .a-models    { --ad: #39a469; --at: #7fd6a4; }
+  .a-infra     { --ad: #7086e0; --at: #a9b8f0; }
+  .a-apps      { --ad: #d4638f; --at: #f0a1c0; }
+  .a-community { --ad: #93992b; --at: #c9cf6a; }
+
+  .rm-wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  .rm-h3 {
+    margin: 0 0 10px; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--muted);
+  }
+  p.rm-stamp { margin-top: 8px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+
+  .rm-error {
+    margin: 0 0 14px; padding: 10px 14px; border: 1px solid #7a2a24;
+    border-radius: 8px; background: rgba(122, 42, 36, 0.16);
+    color: #ff9d94; font-size: 13px; font-weight: 500; white-space: pre-line;
+  }
+
+  /* ---- top row: progress summary + recently shipped ---- */
+  .rm-top { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 14px; margin-bottom: 14px; }
+  .rm-panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; min-width: 0;
+  }
+  .rm-sumrow { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .rm-sumdot { flex: none; width: 9px; height: 9px; border-radius: 3px; background: var(--ad); }
+  .rm-sumlabel { flex: none; width: 78px; font-size: 12.5px; font-weight: 600; color: var(--fg); }
+  .rm-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--grid-dim); overflow: hidden; }
+  .rm-barfill { display: block; height: 100%; border-radius: 3px; background: var(--ad); }
+  .rm-sumcount { flex: none; width: 38px; text-align: right; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+  .rm-sumfoot { margin: 10px 0 0; font-size: 12px; font-weight: 500; color: var(--muted); }
+
+  .rm-recentrow {
+    display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .rm-mini {
+    flex: 0 0 172px; min-width: 0; cursor: pointer;
+    border: 1px solid var(--border); border-top: 3px solid var(--ad);
+    border-radius: 8px; padding: 8px 10px; background: var(--bg);
+  }
+  .rm-mini:hover, .rm-mini:focus-visible { border-color: var(--ad); outline: none; }
+  .rm-minidate { display: block; font-size: 10.5px; font-weight: 600; color: var(--muted); }
+  .rm-minititle {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; margin: 3px 0 5px; font-size: 12.5px; font-weight: 600;
+    color: var(--fg); line-height: 1.3;
+  }
+  .rm-miniarea { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--at); }
+  .rm-areadot { width: 7px; height: 7px; border-radius: 2px; background: var(--ad); }
+
+  /* ---- area filter chips ---- */
+  .rm-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .rm-chipbtn {
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    border-radius: 999px; padding: 5px 14px; font-size: 13px; font-weight: 600;
+    cursor: pointer;
+  }
+  .rm-chipbtn:hover { color: var(--fg); }
+  .rm-chipbtn.on { color: var(--fg); border-color: var(--accent-2); }
+  .rm-chipbtn.on[class*="a-"] { color: var(--at); border-color: var(--ad); }
+
+  /* ---- kanban board (full-bleed horizontal scroll on desktop) ---- */
+  .rm-boardwrap { overflow-x: auto; padding: 0 20px 40px; -webkit-overflow-scrolling: touch; }
+  .rm-board { display: flex; gap: 12px; align-items: flex-start; width: max-content; margin: 0 auto; }
+  .rm-col {
+    flex: 0 0 250px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 10px 12px;
+  }
+  .rm-colhead { display: flex; align-items: center; gap: 7px; padding: 2px 2px 0; }
+  .rm-statusdot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+  .rm-colname {
+    font-size: 12.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--fg);
+  }
+  .rm-colcount { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+  .rm-colhint { padding: 1px 2px 8px; font-size: 10.5px; font-weight: 500; color: var(--muted); }
+  .rm-colcards {
+    display: flex; flex-direction: column; gap: 8px;
+    max-height: 62vh; overflow-y: auto; scrollbar-width: thin;
+  }
+  .rm-empty { color: var(--muted); font-size: 12px; font-weight: 500; padding: 4px 2px; }
+
+  .rm-card {
+    border: 1px solid var(--border); border-left: 3px solid var(--ad);
+    border-radius: 8px; padding: 8px 10px; background: var(--bg); cursor: pointer;
+  }
+  .rm-card:hover, .rm-card:focus-visible { border-color: var(--ad); outline: none; }
+  .rm-cardtitle { font-size: 13px; font-weight: 600; color: var(--fg); line-height: 1.35; }
+  .rm-cardmeta { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .rm-chip {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px; padding: 1px 8px; border-radius: 10px;
+    border: 1px solid var(--ad); color: var(--at);
+  }
+  .rm-carddate { font-size: 11px; font-weight: 500; color: var(--muted); }
+
+  /* ---- detail modal ---- */
+  .rm-modal {
+    position: fixed; inset: 0; z-index: 1200; background: rgba(8, 10, 13, 0.62);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  /* display:flex above beats the hidden attribute's UA display:none — without
+     this the invisible overlay swallows every click on the page */
+  .rm-modal[hidden] { display: none; }
+  .rm-modalpanel {
+    position: relative; width: 100%; max-width: 560px; max-height: 82vh;
+    overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
+    border-top: 3px solid var(--ad); border-radius: 12px; padding: 18px 20px 16px;
+  }
+  .rm-modalclose {
+    position: absolute; top: 8px; right: 10px; border: 0; background: transparent;
+    color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; padding: 6px;
+  }
+  .rm-modalclose:hover { color: var(--fg); }
+  .rm-modaltitle { margin: 0 18px 10px 0; font-size: 18px; font-weight: 700; color: var(--fg); line-height: 1.3; }
+  .rm-modalchips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .rm-statuschip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-color: var(--border); color: var(--fg);
+  }
+  .rm-modaldate { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .rm-modalnote { margin: 0 0 12px; font-size: 13.5px; font-weight: 500; color: var(--fg); line-height: 1.55; white-space: pre-line; }
+  .rm-modallinks { margin: 0 0 12px; padding: 0; list-style: none; }
+  .rm-modallinks li { margin: 5px 0; font-size: 13px; display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .rm-modallinks a { font-weight: 600; flex: none; }
+  .rm-modalurl { color: var(--muted); font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rm-modalid { margin: 0; font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: 0.3px; }
+
+  .rm-foot { margin: 0 0 40px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+
+  /* ---- mobile: columns stack, board scrolls with the page ---- */
+  @media (max-width: 860px) {
+    .rm-top { grid-template-columns: 1fr; }
+    .rm-boardwrap { overflow-x: visible; padding: 0 16px 32px; }
+    .rm-board { display: block; width: auto; }
+    .rm-col { margin-bottom: 12px; }
+    .rm-colcards { max-height: none; overflow-y: visible; }
+    .rm-modal { align-items: flex-end; padding: 0; }
+    .rm-modalpanel { max-width: none; max-height: 88vh; border-radius: 12px 12px 0 0; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/climatology/">Climatology</a>
+      <a href="/sst/">SST</a>
+      <a href="/satellite/">Satellite</a>
+      <a href="/models/">Models</a>
+      <a href="/subseasonal/">Subseasonal</a>
+      <a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <h1>Roadmap</h1>
+  <p>What's live, what's building, what's queued, straight from
+  <span style="font-weight:700">roadmap.yml</span> in the repo. Every ship
+  updates its card in the same commit.</p>
+  <p class="rm-stamp" id="rmStamp">Loading the board…</p>
+</header>
+
+<div class="rm-wrap">
+  <div class="rm-error" id="rmError" hidden></div>
+  <div class="rm-top">
+    <div class="rm-panel" id="rmSummary"></div>
+    <div class="rm-panel" id="rmRecent"></div>
+  </div>
+  <div class="rm-chips" id="rmChips"></div>
+</div>
+
+<div class="rm-boardwrap" id="rmBoard"></div>
+
+<div class="rm-wrap">
+  <p class="rm-foot">Shadow page: unlinked and noindexed; share by direct
+  URL only. Click any card for detail. Column meanings: shipped = live ·
+  active = in progress · shadow = built, awaiting Andrew's review ·
+  needs&nbsp;Andrew = decision/credential · next = specced · planned =
+  backlog · blocked = external dependency.</p>
+</div>
+
+<div class="rm-modal" id="rmModal" hidden></div>
+
+<script src="/roadmap/roadmap.js"></script>
+<script>TATRoadmap.boot({});</script>
+</body>
+</html>

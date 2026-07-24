@@ -4,7 +4,12 @@ Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
 
-_Last update: 2026-07-21 ~17:1x UTC — BIG WAVE LANDED: #4 ECMWF MJO models (IFS+ENS selectable on /subseasonal/, @9aa187dc), recon dropsonde Skew-T + full VDM readout + numbered drops (@ece430b7, ingest v2 live via the 90s poller), #14 archived QuikSCAT 1999-2009 (@1da0473e; box backfill chewing AL+EP now, browser appears on /obs/ascat/ as storms publish). Earlier: SAR salinity overlay + fixes. Decisions + follow-ups below._
+Standing convention (2026-07-24): every ship also flips its item in
+`roadmap.yml` (drives the `/roadmap/` shadow board) in the same scoped
+commit — status + `date_shipped`, new items for new work, bump `updated:`.
+See CLAUDE.md § Roadmap board.
+
+_Last update: 2026-07-24 ~20:0x UTC — SHADOW ROADMAP BOARD LANDED at `/roadmap/` (unlinked, noindexed, robots-disallowed like /bugs/ + /records/). Graphical kanban by status × area, driven by `roadmap.yml` at the repo root: client-side strict-subset YAML parse (fails loud to a red banner, never half-renders), content-gated 60s poll, area filter chips, recently-shipped strip, progress bars, detail modal. Seeded with the real current state (56 items: 22 shipped w/ git-mined ship dates + anchor commits, 4 active, 3 shadow, 4 needs-Andrew, 8 next, 13 planned, 2 blocked). 7-area palette validated colorblind-safe on the dark panel. New standing rule in CLAUDE.md: every ship flips its roadmap.yml item in the same scoped commit. Tests: tests/test_roadmap_board.py (data + jsdom DOM smoke + shadow-honesty guards) green; screenshot-verified desktop + mobile. Prior wave (2026-07-21): #4 ECMWF MJO models, recon Skew-T/VDM, QuikSCAT 1999-2009; details in git + on the board now._
 
 ---
 
