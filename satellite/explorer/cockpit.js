@@ -19,6 +19,10 @@
   var PRODUCTS = (window.TVProducts && window.TVProducts.products) || [];
   var HW_PRODUCTS = (window.TVProducts && window.TVProducts.himawari9 &&
                      window.TVProducts.himawari9.products) || [];
+  var GK2A_PRODUCTS = (window.TVProducts && window.TVProducts.gk2a &&
+                       window.TVProducts.gk2a.products) || [];
+  var MTG_PRODUCTS = (window.TVProducts && window.TVProducts.mtgi1 &&
+                      window.TVProducts.mtgi1.products) || [];
   var GEO_PRODUCTS = (window.TVProducts && window.TVProducts.geo &&
                       window.TVProducts.geo.products) || [];
   var PBASE = window.TVProducts ? window.TVProducts.base : '';
@@ -36,7 +40,16 @@
     'hw-wpac': { sat: 'himawari9', satLabel: 'Himawari-9', label: 'W Pacific', sector: 'wpac',
                  sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' },
     'hw-fd':   { sat: 'himawari9', satLabel: 'Himawari-9', label: 'Full Disk', sector: 'fd',
-                 sensor: 'AHI', source: 'JMA', scanProd: 'FLDK' },
+                 sensor: 'AHI', source: 'JMA', scanProd: 'FLDK', worldCopies: true },
+    // worldCopies: the disk crosses the antimeridian, so panes render world
+    // copies (the far lobe lives at wrapped longitudes)
+    'gk2a-fd': { sat: 'gk2a', satLabel: 'GK-2A', label: 'Full Disk', sector: 'fd',
+                 sensor: 'AMI', source: 'KMA', scanProd: 'FD', worldCopies: true },
+    // Meteosat-12 (MTG-I1) FCI: the ring's fifth true-color sensor at 0° —
+    // frames ride ≥1 h behind real time by licence (the ≥1 h-latency tier);
+    // the manifest stamp is the honest sensing time, never "live now"
+    'mtgi1-fd': { sat: 'mtgi1', satLabel: 'Meteosat-12', label: 'Full Disk', sector: 'fd',
+                  sensor: 'FCI', source: 'EUMETSAT', scanProd: 'FDHSI' },
     // the GLOBAL DEFAULT: GOES-19 + GOES-18 + Himawari-9 full disks stitched
     // nadir-nearest; the Meteosat sector is an HONEST transparent gap
     global:    { sat: 'geo', satLabel: 'GEO ring', label: 'Global', sector: 'global',
@@ -74,8 +87,14 @@
   function productSet(domain) {
     var sat = domainInfo(domain).sat;
     return sat === 'himawari9' ? HW_PRODUCTS
+      : sat === 'gk2a' ? GK2A_PRODUCTS
+      : sat === 'mtgi1' ? MTG_PRODUCTS
       : sat === 'geo' ? GEO_PRODUCTS
       : PRODUCTS;
+  }
+  function satLabelFor(sat) {
+    for (var d in DOMAINS) if (DOMAINS[d].sat === sat) return DOMAINS[d].satLabel;
+    return sat;
   }
   function productByKey(k, domain) {
     var set = productSet(domain === undefined ? S.domain : domain);
@@ -181,13 +200,14 @@
   // ========================================================================
   // LEFT RAIL — field selector (tabs: RGB/Composites | Channels)
   // ========================================================================
-  var CH_RE = /^([CB])(\d\d) · ([\d.]+ µm) \((.+)\)$/;
+  // band token: ABI/AHI "C13"/"B08" or AMI-style "IR105"/"WV063"
+  var CH_RE = /^([A-Z]{1,2}\d{2,3}) · ([\d.]+ µm) \((.+)\)$/;
   function chParts(p) {
     var m = CH_RE.exec(p.title);
     if (!m) return null;
-    var met = m[4];
+    var met = m[3];
     if (p.key === 'irbd') met = 'Dvorak BD';
-    return { num: m[1] + m[2], wl: m[3], met: met };
+    return { num: m[1], wl: m[2], met: met };
   }
 
   // Microwave + Scatterometer are NATIVE pane fields (cockpit_fields.js):
@@ -391,7 +411,7 @@
       var d = autoDomainFor(tv.map.getCenter());
       if (d) cand.push(d);
     }
-    ['conus', 'hw-wpac', 'fd', 'hw-fd'].forEach(function (d) {
+    ['conus', 'hw-wpac', 'fd', 'hw-fd', 'gk2a-fd', 'mtgi1-fd'].forEach(function (d) {
       if (cand.indexOf(d) < 0 && rowOK(d)) cand.push(d);
     });
     for (var i = 0; i < cand.length; i++) {
@@ -460,7 +480,7 @@
           if (DOMAINS[d].sat === sat && row && !row.classList.contains('coming')) first = d;
         });
         if (first) setDomain(first);
-        else flash('no ' + (sat === 'himawari9' ? 'Himawari-9' : sat) + ' data yet — box emit pending');
+        else flash('no ' + satLabelFor(sat) + ' data yet — box emit pending');
       };
     });
   }
@@ -482,7 +502,7 @@
     var row = document.querySelector('[data-domain="' + d + '"]');
     if (row && row.classList.contains('coming')) return;
     if (S.tm.on && domainInfo(d).sat !== 'goes19') {
-      flash('Time Machine covers the GOES-East archive — exit it to view Himawari');
+      flash('Time Machine covers the GOES-East archive — exit it to view other satellites');
       return;
     }
     var crossSat = domainInfo(d).sat !== domainInfo(S.domain).sat;
@@ -490,10 +510,10 @@
     markDomain();
     updateGapBadges();
     if (crossSat) rebuildProductRows();
-    // re-point every pane at the (mapped) product key in the new domain; the
-    // Himawari full disk crosses the antimeridian, so its panes render world
-    // copies (the eastern lobe lives at wrapped longitudes).
-    var copies = (d === 'hw-fd');
+    // re-point every pane at the (mapped) product key in the new domain;
+    // antimeridian-crossing full disks (DOMAINS worldCopies) render world
+    // copies (the far lobe lives at wrapped longitudes).
+    var copies = !!domainInfo(d).worldCopies;
     S.panes.forEach(function (pane, i) {
       if (pane.tv && pane.tv.map && pane.tv.map.setRenderWorldCopies)
         pane.tv.map.setRenderWorldCopies(copies);
@@ -512,7 +532,10 @@
   // (rail click) suppresses auto until the user is back on the world, so it
   // never fights an explicit choice. GOES-18 joins NADIR when it has data.
   // ========================================================================
-  var NADIR = { goes19: -75.2, himawari9: 140.7 };
+  // GK-2A is deliberately absent: its footprint sits inside Himawari's and
+  // auto-switching between the two by a 12° nadir margin would thrash — it
+  // stays a picker/cycle choice. Meteosat-12 fills a genuine nadir void.
+  var NADIR = { goes19: -75.2, himawari9: 140.7, mtgi1: 0.0 };
   var AUTO_ZOOM_IN = 3.0;     // map zoom where a "region" is clearly framed
   function rowOK(d) {
     var row = document.querySelector('[data-domain="' + d + '"]');
@@ -531,6 +554,7 @@
       if (lon >= -130 && lon <= -60 && lat >= 20 && lat <= 55 && rowOK('conus')) return 'conus';
       return rowOK('fd') ? 'fd' : null;
     }
+    if (sat === 'mtgi1') return rowOK('mtgi1-fd') ? 'mtgi1-fd' : null;
     if (lon >= 95 && lat >= -5 && lat <= 45 && rowOK('hw-wpac')) return 'hw-wpac';
     return rowOK('hw-fd') ? 'hw-fd' : null;
   }
@@ -651,7 +675,9 @@
     [{ d: 'global', url: 'sat/geo/global/products.json' },
      { d: 'fd', url: 'sat/goes19/fd/products.json' },
      { d: 'hw-wpac', url: 'sat/himawari9/wpac/products.json' },
-     { d: 'hw-fd', url: 'sat/himawari9/fd/products.json' }].forEach(function (spec) {
+     { d: 'hw-fd', url: 'sat/himawari9/fd/products.json' },
+     { d: 'gk2a-fd', url: 'sat/gk2a/fd/products.json' },
+     { d: 'mtgi1-fd', url: 'sat/mtgi1/fd/products.json' }].forEach(function (spec) {
       fetch(PBASE + spec.url, { cache: 'no-cache' })
         .then(function (r) { if (!r.ok) throw 0; return r.json(); })
         .then(function (idx) {
@@ -830,7 +856,8 @@
       '<div class="cx-pane-key" id="cx-pk-' + i + '"></div>' +
       '<img class="cx-tm-img" id="cx-tm-img-' + i + '" alt="">' +
       '<div class="cx-pane-probe" id="cx-pp-' + i + '"></div>' +
-      '<div class="cx-load" id="cx-load-' + i + '"><i></i><span>Loading GOES-19 tiles…</span></div>';
+      '<div class="cx-load" id="cx-load-' + i + '"><i></i><span>Loading ' +
+        domainInfo(S.domain).satLabel + ' tiles…</span></div>';
     el.onclick = function () { setActivePane(i); };
     return el;
   }
@@ -868,8 +895,8 @@
         tv.enableInspector();
         tv.map.doubleClickZoom.disable();
         tv.map.on('dblclick', function () { tv.fitData(); });
-        // antimeridian-crossing domain (Himawari full disk): world copies on
-        if (S.domain === 'hw-fd' && tv.map.setRenderWorldCopies)
+        // antimeridian-crossing domain (DOMAINS worldCopies): world copies on
+        if (domainInfo(S.domain).worldCopies && tv.map.setRenderWorldCopies)
           tv.map.setRenderWorldCopies(true);
         applyOverlayState(tv);
         renderPaneChrome(i);
