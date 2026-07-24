@@ -541,22 +541,30 @@
     var row = document.querySelector('[data-domain="' + d + '"]');
     return !!(row && !row.classList.contains('coming'));
   }
-  // nadir-nearest satellite with data, then its tightest domain holding the
-  // viewport center (CONUS / WPAC when inside their footprints, else FD)
+  // nadir-nearest satellite WITH DATA, then its tightest domain holding the
+  // viewport center (CONUS / WPAC when inside their footprints, else FD).
+  // A dark satellite (row still greyed — e.g. Meteosat-12 before its first
+  // post-licence emit) must not open a dead zone: fall through to the
+  // next-nearest live disk instead of returning null.
   function autoDomainFor(c) {
     var lon = ((c.lng + 540) % 360) - 180, lat = c.lat;
-    var sat = null, bd = 1e9;
-    Object.keys(NADIR).forEach(function (s) {
-      var dd = Math.abs(((lon - NADIR[s] + 540) % 360) - 180);
-      if (dd < bd) { bd = dd; sat = s; }
+    var sats = Object.keys(NADIR).sort(function (a, b) {
+      return Math.abs(((lon - NADIR[a] + 540) % 360) - 180)
+           - Math.abs(((lon - NADIR[b] + 540) % 360) - 180);
     });
-    if (sat === 'goes19') {
-      if (lon >= -130 && lon <= -60 && lat >= 20 && lat <= 55 && rowOK('conus')) return 'conus';
-      return rowOK('fd') ? 'fd' : null;
+    for (var i = 0; i < sats.length; i++) {
+      var sat = sats[i];
+      if (sat === 'goes19') {
+        if (lon >= -130 && lon <= -60 && lat >= 20 && lat <= 55 && rowOK('conus')) return 'conus';
+        if (rowOK('fd')) return 'fd';
+      } else if (sat === 'mtgi1') {
+        if (rowOK('mtgi1-fd')) return 'mtgi1-fd';
+      } else {
+        if (lon >= 95 && lat >= -5 && lat <= 45 && rowOK('hw-wpac')) return 'hw-wpac';
+        if (rowOK('hw-fd')) return 'hw-fd';
+      }
     }
-    if (sat === 'mtgi1') return rowOK('mtgi1-fd') ? 'mtgi1-fd' : null;
-    if (lon >= 95 && lat >= -5 && lat <= 45 && rowOK('hw-wpac')) return 'hw-wpac';
-    return rowOK('hw-fd') ? 'hw-fd' : null;
+    return null;
   }
   function autoGo(d, msg) {
     S._autoAt = Date.now();

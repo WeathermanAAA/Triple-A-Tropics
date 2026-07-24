@@ -1358,6 +1358,83 @@ window.TVProducts = {
       }
     ]
   },
+  "mtgi1": {
+    "sector": "fd",
+    "products": [
+      {
+        "key": "ir",
+        "id": "mtgi1-fd-ir",
+        "path": "sat/mtgi1/fd/ir",
+        "title": "IR105 · 10.5 µm (Clean IR)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/rainbow_ir.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      },
+      {
+        "key": "truecolor",
+        "id": "mtgi1-fd-truecolor",
+        "path": "sat/mtgi1/fd/truecolor",
+        "title": "True Color (GeoColor-lite)",
+        "group": "composite",
+        "bt": false,
+        "dayOnly": false,
+        "cbar": null
+      },
+      {
+        "key": "irbd",
+        "id": "mtgi1-fd-irbd",
+        "path": "sat/mtgi1/fd/irbd",
+        "title": "IR105 · 10.5 µm (IR, Dvorak BD)",
+        "group": "channel",
+        "bt": true,
+        "dayOnly": false,
+        "cbar": {
+          "img": "cbars/dvorak.png",
+          "ticks": [
+            {
+              "t": "40",
+              "p": 0.0
+            },
+            {
+              "t": "0",
+              "p": 0.2963
+            },
+            {
+              "t": "−40",
+              "p": 0.5926
+            },
+            {
+              "t": "−80",
+              "p": 0.8889
+            }
+          ],
+          "cap": "Brightness temperature (°C)"
+        }
+      }
+    ]
+  },
   "geo": {
     "sector": "global",
     "products": [
