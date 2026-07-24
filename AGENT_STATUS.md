@@ -3091,3 +3091,43 @@ mosaics ok on all three sats, guidance heartbeat 5/5 with the cyclolab
 prefix pin live, /health 200). Rollback refs parked on origin: box-ops,
 codespace-backfill-backup, tag prod-pre-reconcile. Discipline recorded in
 RUNBOOK-RENDER/RUNBOOK-S2: box pulls from AND pushes to main only.
+
+## 2026-07-24 · tsr TRUE-COLOR RING REBUILT (Satpy/pyspectral recipe) + GK-2A LIVE
+
+truecolor.py rebuilt to the operational recipe, ONE shared pipeline across
+ABI/AHI/AMI/FCI (constants verbatim from Satpy 0.60/pyspectral 0.14):
+rayleigh_only+us-standard LUT with per-sensor SRF effective wavelengths +
+red-keyed cloud relax + 70->95deg high-SZA taper; sunz 1/cos clamped 88deg
+log-tapered to 0 at 95 (Li&Shibata pathlength on the NIR term); per-sensor
+greens aimed at ~0.55um (ABI Bah 0.45/0.45/0.10, AHI+AMI HybridGreen F=0.15,
+FCI NDVI-hybrid [0.15,0.05] s3); satpy SelfSharpened ratio sharpen;
+cira_stretch as the ONE ring tone curve; IR cross-fade rides the same
+88->95 taper; conservative water-gated glint tame. Retired: learned AHI
+green + bump/floor/vibrance/land-relax/highlight-knee/warm-tint stack (all
+compensations for marine-aerosol Rayleigh + the old LUT curve). Verified vs
+SLIDER GeoColor same-scan (pink interior-West cured -> tan, matches SLIDER);
+GOES-E/W overlap + GK-2A-vs-AHI same-slot overlap: neutral cloud tops within
+~0.015-0.02, matched-class |d| ~0.02-0.04 -> ring Layer-A holds. tsr commits
+4b1f366 (rebuild) / f2c7467 (FCI fetcher) / 05bef36 (GK-2A); image rebuilt,
+all five lanes recreated, live conus-fast z7 truecolor emitting clean.
+
+GK-2A AMI is LIVE: s2_gk2a.py (public noaa-gk2a-pds, in-file calibration,
+J2000-NOON epoch gotcha, 1-based CGMS centers, stride reads keep 0.5km
+VI006 at ~120MB), gk2a-fd suite (truecolor/ir/irbd) in the base rotation
+(.env S2_CRON_SUITES) + first R2 emit verified on CDN
+(shadow/sat/gk2a/fd/truecolor). Explorer wiring for the new sat is NOT done
+yet (viewer picker/domain switch) — next session.
+
+Phase 2 (gold standard) documented in truecolor.py docstring: per-sensor
+SRF -> CIE XYZ -> sRGB 3x3 matrices (JMA TCR/CIRA), applied just before
+cira_stretch, would make the ring identical BY CONSTRUCTION.
+
+QUEUED manual steps (Andrew):
+- **FCI activation** (tat-satellite-render): create/confirm EUMETSAT account
+  key/secret at api.eumetsat.int/api-key/, confirm the MTG FCI L1C licence
+  on user.eumetsat.int covers EO:EUM:DAT:0662 downloads, then on the box add
+  EUMETSAT_CONSUMER_KEY/EUMETSAT_CONSUMER_SECRET to /root/tsr-s2/.env.
+  After creds land the agent finishes activation (satpy layer for the geo
+  lane via requirements-s2-geo.txt, mem_limit re-check ~2.5GB eager FDHSI,
+  registry rows + ring membership). Code is committed and creds-gated
+  (s2_meteosat.fetch_fci_disk); nothing runs until the keys exist.
