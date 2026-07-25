@@ -29,10 +29,31 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-25T19:40:00Z
+updated: 2026-07-25T21:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: jtwc-two-leg-feed
+    title: Two-leg JTWC feed — NCEP tcvitals plus public warning text
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-25
+    note: >-
+      JTWC's public a-decks are gone and the b-decks now reach us only through
+      an unofficial mirror that lands about one synoptic cycle late, which is
+      why Noul rendered C1 while it was already an 85 kt C2. WP now runs a
+      second leg beside the b-deck. Leg 1 is NCEP tcvitals (UCAR's season file,
+      NOMADS per-cycle as backup) for position, 1-min wind, MSLP, RMW and 34 kt
+      radii. Leg 2 is JTWC's own warning text off NOAA's tgftp bulletin feed for
+      the storm TYPE, which tcvitals has no field for, plus the FINAL WARNING
+      that is the ACE stop condition. The b-deck still wins wherever it reaches
+      (it is post-analysis and carries 50/64 kt radii); the legs only extend
+      past its newest fix. A fix whose type cannot be established is counted as
+      indeterminate and excluded from ACE rather than guessed. AL/EP are
+      untouched and byte-identical — NHC serves its own decks on time.
+    links:
+      - label: WPac tracks
+        url: /climatology/west-pacific/tracks/
   - id: fleet-conventions
     title: Fleet conventions for multi-box operation
     area: infra
@@ -669,4 +690,8 @@ items:
     title: JTWC B-deck restriction
     area: obs
     status: blocked
-    note: "Need RSMC-sourced WP/IO/SH wind-radii data; JTWC B-decks are restricted."
+    note: >-
+      Partly relieved 2026-07-25 by jtwc-two-leg-feed, which recovers 34 kt
+      radii from NCEP tcvitals and the FULL 34/50/64 kt set from JTWC's public
+      warning text. Still blocked for HISTORY: the warning feed keeps no
+      archive, so radii for past storms remain b-deck-only.
