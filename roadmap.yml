@@ -29,10 +29,61 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-25T09:55:00Z
+updated: 2026-07-25T19:40:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: fleet-conventions
+    title: Fleet conventions for multi-box operation
+    area: infra
+    status: shipped
+    date_shipped: 2026-07-25
+    note: >-
+      Box 2 arrived, so the conventions went in while the fleet was still small
+      enough to change cheaply. fleet.yml is the inventory AND the lane-to-box
+      assignment map; scripts/fleet.sh is the one entry point (status, drift,
+      provision, deploy, setenv, lanes). Git rule is fleet-wide and mechanical -
+      every box tracks origin/main only, and drift is reported as an incident
+      rather than tolerated as a state. provision_box.sh makes box N+1 a step
+      instead of a bespoke build, and anything a future box needs goes in it so
+      box N+2 inherits the fix. Secrets stay in each box's .env with one
+      command to roll a credential fleet-wide. Documented in RUNBOOK-FLEET.md.
+    links:
+      - label: Fleet health
+        url: /fleet/
+  - id: fleet-health-page
+    title: Per-box heartbeat + /fleet/ health page
+    area: infra
+    status: shipped
+    date_shipped: 2026-07-25
+    note: >-
+      Every box publishes liveness to R2 once a minute from the HOST (not a
+      container, so it keeps reporting when every container is dead), and
+      /fleet/ renders it. Closes the "silent box" gap - a dead box used to just
+      stop publishing frames, which is indistinguishable from a quiet basin on
+      the imagery pages. Carries sha/branch/dirty so drift shows up on the
+      health page too, plus load per core, memory, disk, OOM kills, and which
+      lanes are up vs exited.
+    links:
+      - label: Fleet health
+        url: /fleet/
+  - id: box2-migration
+    title: Box 2 online; ring split across two boxes
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-25
+    note: >-
+      Hostinger flagged box1 as pegged. Provisioned box2 (8 vCPU / 31 GB,
+      Boston) with the new provisioning script and moved the two Himawari lanes
+      onto it, then GK-2A, MTG, the GEO composite, and the expensive z7 CONUS
+      lane as heartbeats showed the real balance. box1 load 9-10 -> ~5, free
+      RAM ~1 GB -> ~13 GB. Spent the freed capacity on CONUS at its native
+      5-min grid and on splitting each full disk's loop leads into their own
+      container so lead latency is a ~3 min pass instead of a ~36 min sweep;
+      browse bands went from a 30-min to a 20-min grid.
+    links:
+      - label: Fleet health
+        url: /fleet/
   - id: per-satellite-emit-lanes
     title: Per-satellite emit lanes at native cadence
     area: satellite
@@ -81,7 +132,10 @@ items:
       does not: lead LATENCY is one pass (~36 min measured, so newest frame
       18-28 min old), browse bands sit on a 30-min grid revisited ~142 min,
       and CONUS runs a 10-min grid against its 5-min scan. Closing those
-      needs roughly double the cores and RAM - a bigger box or a second one.
+      needs roughly double the cores and RAM. RESOLVED IN PART 2026-07-25 by
+      box2: CONUS now runs its native 5-min grid, full-disk loop leads have
+      ~3-min-pass latency, and browse bands are on a 20-min grid. Still short
+      of native: browse bands (20 min vs 10), which needs a third box.
     links:
       - label: Explorer
         url: /satellite/explorer/
