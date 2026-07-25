@@ -1122,14 +1122,24 @@
     for (var j = 0; j < feats.length; j++) {
       var p2 = feats[j].properties || {}, g2 = feats[j].geometry || {};
       if (p2.kind === 'active_marker' && g2.type === 'Point') {
-        // marker_type drives the glyph: 'invest_x' -> one red X; anything else
-        // (a NAMED storm's 'hurricane' marker) -> one green category glyph. Record
-        // the id so the is_active track loop below doesn't re-add the SAME named
-        // storm a second time (Arthur was drawing both a red X and a green glyph).
+        // The ATCF NUMBER drives the glyph (house marker rule 2026-07-14):
+        // 90-99 -> one red X; a parseable 01-89 designation is a DESIGNATED
+        // system (glyph) even when a stale feed stamped it invest_x
+        // (pre-0.8.5 writers marked PTCs as invests); no parseable number
+        // falls back to marker_type. Record the id so the is_active track
+        // loop below doesn't re-add the SAME named storm a second time
+        // (Arthur was drawing both a red X and a green glyph).
+        var investKind = (function () {
+          var m = /^(\d{1,2})[A-Z]$/.exec(String(p2.designation || '').toUpperCase());
+          if (m) return parseInt(m[1], 10) >= 90;
+          var s = /^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$/.exec(String(p2.storm_id || '').toUpperCase());
+          if (s) return parseInt(s[1], 10) >= 90;
+          return p2.marker_type === 'invest_x';
+        })();
         out.push({ id: p2.storm_id, name: p2.name || p2.designation || p2.storm_id,
           lat: g2.coordinates[1], lon: g2.coordinates[0], kt: p2.current_intensity_kt, mslp: p2.current_mslp_mb,
           timeMs: Date.parse(p2.last_fix || '') || 0,
-          kind: (p2.marker_type === 'invest_x') ? 'invest' : 'storm' });
+          kind: investKind ? 'invest' : 'storm' });
         seen[p2.storm_id] = true;
       }
     }

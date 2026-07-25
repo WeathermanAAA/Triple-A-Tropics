@@ -94,7 +94,9 @@ class PTCActivationTests(unittest.TestCase):
         self.assertTrue(s["is_ptc"])
         self.assertFalse(s["is_invest"])
         self.assertEqual(s["atcf_id"], "01L")          # REAL designation, padded
-        self.assertEqual(_marker_type(s), "invest_x")  # invest visual identity
+        # NUMBER RULE (2026-07-14): a designated PTC (01-89) renders by
+        # intensity — the glyph, never the invest X.
+        self.assertEqual(_marker_type(s), "hurricane")
 
     def test_absent_from_currentstorms_stays_invisible(self):
         # CurrentStorms cleanly fetched but empty (lagging adv #1) -> the PTC is

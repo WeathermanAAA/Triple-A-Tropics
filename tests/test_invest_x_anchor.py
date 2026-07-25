@@ -134,15 +134,22 @@ class TestPerBasinInvestXAnchor(unittest.TestCase):
                                     gtp.BASINS[self.BASIN]["extent"])
         self._assert_anchored(svg, "92E")
 
-    def test_python_renderer_anchors_x_on_ptc_fix(self):
-        # A PTC anchors its X identically to an invest, labelled "01E".
+    def test_python_renderer_gives_ptc_no_x(self):
+        # NUMBER RULE (2026-07-14, the TD 05E home-map bug): a designated
+        # PTC (01-89) never enters the invest X pass — it renders by
+        # intensity via render_active_icons instead.
         storm = _ptc_storm("PTCTEST", "01E", self.LAT, self.LON)
         svg = gtp.render_tracks_svg([storm],
                                     gtp.BASINS[self.BASIN]["extent"])
-        self._assert_anchored(svg, "01E")
+        self.assertNotIn("invest-current", svg,
+                         "a designated PTC must not draw the invest X")
+        icons = gtp.render_active_icons([storm],
+                                        gtp.BASINS[self.BASIN]["extent"])
+        self.assertIn("active-icon", icons,
+                      "a designated PTC wears the intensity glyph")
 
     @unittest.skipIf(NODE is None, "node not on PATH")
-    def test_js_overlay_anchors_x_on_ptc_fix(self):
+    def test_js_overlay_gives_ptc_no_x(self):
         storm = _ptc_storm("PTCTEST", "01E", self.LAT, self.LON)
         payload = {
             "storms": [json.loads(json.dumps(storm))], "year": 2026,
@@ -150,8 +157,11 @@ class TestPerBasinInvestXAnchor(unittest.TestCase):
                        "total_ace": 0.0},
             "vocab": gtp.BASINS[self.BASIN]["vocab"],
         }
-        svg = run_harness(self.BASIN, payload)["tracks"]
-        self._assert_anchored(svg, "01E")
+        out = run_harness(self.BASIN, payload)
+        self.assertNotIn("invest-current", out["tracks"],
+                         "JS mirror: designated PTC must not draw the X")
+        self.assertIn("active-icon", out["active"],
+                      "JS mirror: designated PTC wears the intensity glyph")
 
     def test_label_length_cannot_shift_x(self):
         short = _invest_storm("XSHORT", "92E", self.LAT, self.LON)
@@ -201,8 +211,10 @@ class TestGlobalMarkerRender(unittest.TestCase):
     FEATURES = [
         _marker_feature("invest_x", "92E", -88.4, 11.3),
         _marker_feature("invest_x", "INVEST-LONGLABEL", 140.0, 20.0),
-        # A Potential Tropical Cyclone: marker_type invest_x (the page keys on
-        # marker_type, not is_invest), labelled with its REAL designation.
+        # A designated PTC STALE-STAMPED invest_x by a pre-0.8.5 writer (the
+        # box poller until its rebuild): the page's ATCF-number gate must
+        # override the stamp and render the intensity glyph — the TD 05E
+        # home-map regression (2026-07-14).
         _marker_feature("invest_x", "01L", -95.0, 27.0, is_ptc=True),
         # LEGACY pre-0.4.0 type — must render as the unified X.
         _marker_feature("L", "91W", 133.3, 32.0),
@@ -273,8 +285,18 @@ class TestGlobalMarkerRender(unittest.TestCase):
             r"\.active-marker svg\s*\{\s*display:\s*block;\s*"
             r"overflow:\s*visible;\s*width:\s*100%;\s*height:\s*100%")
 
+    def test_stale_stamped_designated_renders_glyph_not_x(self):
+        # THE 05E REGRESSION: designation 01L (<=89) stamped invest_x by a
+        # stale feed must render as the intensity glyph via the client
+        # number gate — never the X.
+        m = self.by_name["01L"]
+        self.assertIn("active-hurricane", m["className"])
+        self.assertNotIn("invest-x-marker", m["className"])
+        self.assertRegex(m["html"],
+                         r'class="hurricane-label"[^>]*>\s*D\s*<')
+
     def test_invest_x_centered_label_offset(self):
-        for name in ("92E", "INVEST-LONGLABEL", "01L", "91W"):
+        for name in ("92E", "INVEST-LONGLABEL", "91W"):
             m = self.by_name[name]
             self.assertIn("invest-x-marker", m["className"], name)
             vb = re.search(r'viewBox="([-\d. ]+)"', m["html"])

@@ -39,6 +39,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import re
 import urllib.request
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -210,7 +211,15 @@ def anchors_from_geojson(gj: dict, cycle: dt.datetime) -> List[Anchor]:
             continue
         name = str(props.get("name") or props.get("designation") or sid or "SYSTEM")
         designation = str(props.get("designation") or sid or name)
-        is_invest = bool(props.get("marker_type") == "invest_x")
+        # ATCF-number gate (house marker rule 2026-07-14): 90-99 = invest;
+        # a parseable 01-89 designation is a DESIGNATED system even when a
+        # stale feed stamped it invest_x (pre-0.8.5 writers marked PTCs so).
+        m = (re.match(r"^(\d{1,2})[A-Z]$", designation.strip().upper())
+             or re.match(r"^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$", sid.strip().upper()))
+        if m:
+            is_invest = int(m.group(1)) >= 90
+        else:
+            is_invest = bool(props.get("marker_type") == "invest_x")
 
         track = obs.get(sid) or []
         last_t = _parse_iso(props.get("last_fix"))

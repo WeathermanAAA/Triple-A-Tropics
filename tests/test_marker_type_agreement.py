@@ -82,12 +82,15 @@ CASES = [
     # plays no part in classification anymore. JS must agree.
     (_storm("ACTIVE_NO_PEAK", is_active=True, is_invest=False,
             peak_wind_kt=None), "hurricane"),
-    # A Potential Tropical Cyclone wears the invest X (NOT the glyph), under
-    # its REAL designation — regardless of active state, exactly like an invest.
+    # THE NUMBER RULE (2026-07-14, the TD 05E home-map bug): a Potential
+    # Tropical Cyclone is a DESIGNATED system (01-89) and renders by
+    # intensity — the glyph, NEVER the invest X. The old
+    # PTC-wears-the-invest-identity marker design is retired; is_ptc still
+    # dresses the popup + CycloLab page, just not the map marker.
     (_storm("ACTIVE_PTC", is_active=True, is_invest=False, is_ptc=True,
-            peak_wind_kt=20.0), "invest_x"),
+            peak_wind_kt=20.0), "hurricane"),
     (_storm("INACTIVE_PTC", is_active=False, is_invest=False, is_ptc=True,
-            peak_wind_kt=20.0), "invest_x"),
+            peak_wind_kt=20.0), "hurricane"),
 ]
 
 
@@ -244,13 +247,14 @@ class TestSameStageSameMarker(unittest.TestCase):
         self.assertEqual(js_a, py_a, "JS/Python marker parity broke")
 
 
-class TestEveryPTCGetsTheX(unittest.TestCase):
-    """The PTC rule through the REAL pipeline: a DESIGNATED (01-49) DB/DS
-    system NHC lists in CurrentStorms is activated as a Potential Tropical
-    Cyclone (is_ptc), and — like an invest — wears the invest_x marker under
-    its REAL designation (atcf_id "01L"), NOT the spinning glyph. A regression
-    that routed a PTC to "hurricane" (the active-non-invest default) fails
-    here."""
+class TestEveryPTCRendersByIntensity(unittest.TestCase):
+    """The NUMBER rule through the REAL pipeline (2026-07-14, the TD 05E
+    home-map bug): a DESIGNATED (01-49) DB/DS system NHC lists in
+    CurrentStorms is activated as a Potential Tropical Cyclone (is_ptc)
+    and renders like every designated system — the intensity glyph under
+    its REAL designation, NEVER the invest X. The old PTC-wears-the-X
+    design is retired; a regression that routes a PTC back to "invest_x"
+    fails here."""
 
     def _rows(self, num):
         import datetime as dt
@@ -266,7 +270,7 @@ class TestEveryPTCGetsTheX(unittest.TestCase):
             "source": "live-NHC", "storm_num": num,
         } for i in range(2)]
 
-    def test_designated_db_in_currentstorms_is_invest_x(self):
+    def test_designated_db_in_currentstorms_renders_by_intensity(self):
         import pandas as pd
         from ace_core import merge_and_extract_storms
         cfg = {"short": "al", "agency_name": "NHC", "invest_letter": "L"}
@@ -280,8 +284,9 @@ class TestEveryPTCGetsTheX(unittest.TestCase):
                 self.assertTrue(s["is_ptc"])
                 self.assertFalse(s["is_invest"])
                 self.assertEqual(s["atcf_id"], f"{num:02d}L")
-                self.assertEqual(ace_core_marker_type(s), "invest_x",
-                                 f"{num:02d}L (PTC) must wear the X")
+                self.assertEqual(ace_core_marker_type(s), "hurricane",
+                                 f"{num:02d}L (designated) must wear the "
+                                 f"intensity glyph, never the invest X")
 
     @unittest.skipIf(NODE is None, "node not on PATH")
     def test_ptc_marker_parity_python_js(self):
@@ -296,19 +301,20 @@ class TestEveryPTCGetsTheX(unittest.TestCase):
                        "total_ace": 0.0},
             "vocab": gtp.BASINS["ep"]["vocab"],
         }
-        # render_active_icons must NOT paint a PTC (it carries the X from
-        # render_tracks_svg's invest pass) — so it returns no glyph for it.
+        # A designated PTC (01-89) DRAWS the spinning glyph now — and must
+        # not also carry the invest X from the tracks second pass.
         py_active = gtp.render_active_icons([s], gtp.BASINS["ep"]["extent"])
-        self.assertNotIn("active-icon", py_active,
-                         "a PTC must not get the spinning glyph")
+        self.assertIn("active-icon", py_active,
+                      "a designated PTC gets the intensity glyph")
         js = run_harness("ep", dict(payload, storms=[s]))
         self.assertEqual(js["active"], py_active,
                          "PTC active-layer parity broke (Python vs JS)")
-        self.assertEqual(js["marker_types"][0], "invest_x")
-        # The PTC's red X + its real designation label must appear in the
-        # tracks layer, identical on both sides.
+        self.assertEqual(js["marker_types"][0], "hurricane")
+        # The tracks layer must NOT give a PTC the invest X treatment
+        # (that would double-draw with the glyph above).
         py_tracks = gtp.render_tracks_svg([s], gtp.BASINS["ep"]["extent"])
-        self.assertIn("01E", py_tracks)          # the designation label
+        self.assertNotIn("invest-current", py_tracks,
+                         "a designated PTC must not draw the invest X")
         self.assertEqual(js["tracks"], py_tracks,
                          "PTC tracks-layer parity broke (Python vs JS)")
 

@@ -60,6 +60,7 @@ from ace_core import (
     merge_and_extract_storms,
     sshs_class,
     sshs_label,
+    wears_invest_x,
     _sshs_rank,
 )
 
@@ -956,10 +957,12 @@ def render_tracks_svg(storms: list[dict], extent,
         # TODO: scale invest X glow intensity with NHC/JTWC formation
         # probability (Low/Med/High or %) when a data source is wired
         # up — knackwx doesn't return it today. Tracked in POST_LAUNCH.md.
-        # A Potential Tropical Cyclone (is_ptc) wears the SAME invest identity
-        # here — the red X labelled with its REAL designation (atcf_id "01L") —
-        # so it shares this entire pass; only its CycloLab page differs.
-        if storm.get("is_invest") or storm.get("is_ptc"):
+        # The ATCF NUMBER gates this pass (wears_invest_x, Andrew's 2026-07-14
+        # marker rule): 90-99 wear the X; a DESIGNATED system (01-89) renders
+        # by intensity below even while NHC advises it as a Potential Tropical
+        # Cyclone — the old PTC-wears-the-X design put TD 05E on the map as an
+        # invest and is retired. Mirrored in the JS second pass (parity suite).
+        if wears_invest_x(storm):
             last_idx = len(xy) - 1
             for i, ((x, y), p) in enumerate(zip(xy, pts)):
                 wind = p.get("wind_kt")
@@ -1203,12 +1206,11 @@ def render_active_icons(storms: list[dict], extent,
         title_txt = (f"{disp_name} - Last fix: {last_fix}"
                      if last_fix else disp_name)
         title_el = f'<title>{_xml_escape(title_txt)}</title>' if title_txt else ''
-        # Invests AND Potential Tropical Cyclones never reach the glyph below —
-        # they carry the red X from render_tracks_svg's second pass (a PTC wears
-        # the invest identity). Skipping here is what prevents a PTC from drawing
-        # BOTH the red X and a spinning glyph. Everything else active wears the
-        # spinning glyph; current_category picks its letter + color.
-        if is_invest or is_ptc:
+        # Only 90-99-numbered systems never reach the glyph below — they carry
+        # the red X from render_tracks_svg's second pass. The gate is the ATCF
+        # NUMBER (wears_invest_x): a designated PTC (01-89) draws the intensity
+        # glyph here and is skipped by the X pass, so nothing double-draws.
+        if wears_invest_x(storm):
             continue
 
         cls = storm.get("current_category") or "TD"
@@ -2287,15 +2289,30 @@ LIVE_BASIN_JS = r"""
 
   // ---- Marker classification ----------------------------------------------
 
+  function wearsInvestX(storm) {
+    // Mirror of ace_core.wears_invest_x - the ATCF NUMBER gates the invest
+    // X (Andrew's 2026-07-14 marker rule): 90-99 = invest area, 01-89 =
+    // designated system rendering by intensity (a PTC included). Reads the
+    // storm's own designation, then the SID number token, then falls back
+    // to the is_invest flag when no number is parseable.
+    var m = /^(\d{1,2})[A-Z]$/.exec(String(storm.atcf_id || "").toUpperCase());
+    if (m) return parseInt(m[1], 10) >= 90;
+    var s = /^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$/.exec(String(storm.sid || "").toUpperCase());
+    if (s) return parseInt(s[1], 10) >= 90;
+    return !!storm.is_invest;
+  }
+
   function markerType(storm) {
     // THE single client-side source of the marker classification.
     // Mirrors ace_core.build_global_geojson's marker_type fork
     // (ace_core/ace_core/__init__.py, the "Two flavors" block):
-    //   invest OR PTC (active or not) -> "invest_x"  (NHC invest-area X; a
-    //                                          PTC wears the invest identity
-    //                                          under its REAL designation)
-    //   active (designated)    -> "hurricane"  (glyph; current_category
-    //                                           picks the letter/color)
+    //   ATCF number 90-99 (active or not) -> "invest_x"  (NHC invest-area X)
+    //   designated 01-89, active OR a PTC -> "hurricane" (glyph;
+    //                                        current_category picks the
+    //                                        letter/color - a PTC renders
+    //                                        by intensity, the old
+    //                                        PTC-wears-the-X design is
+    //                                        retired per Andrew 2026-07-14)
     //   otherwise              -> null (no current-position marker)
     // (The old active-invest "L" is retired - every invest wears the X.
     // The old "td_circle" peak<34 ring is retired too: keying on PEAK
@@ -2303,8 +2320,8 @@ LIVE_BASIN_JS = r"""
     // stage different markers. Stage now only picks the glyph letter.)
     // tests/test_marker_type_agreement.py asserts the two implementations
     // agree on every case - keep them in lockstep.
-    if (storm.is_invest || storm.is_ptc) return "invest_x";
-    if (storm.is_active) return "hurricane";
+    if (wearsInvestX(storm)) return "invest_x";
+    if (storm.is_active || storm.is_ptc) return "hurricane";
     return null;
   }
 
@@ -2351,7 +2368,9 @@ LIVE_BASIN_JS = r"""
                    dashAttr + '/>');
       }
 
-      if (storm.is_invest || storm.is_ptc) {
+      // ATCF-number gate, mirroring the Python second pass: only 90-99
+      // wear the invest treatment; a designated PTC renders by intensity.
+      if (wearsInvestX(storm)) {
         var lastIdx = xy.length - 1;
         for (var k = 0; k < xy.length; k++) {
           var x = xy[k][0], y = xy[k][1];
@@ -3626,7 +3645,22 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       el.className = "active-marker";
       var designation = String(props.designation || props.name || "").toUpperCase();
 
-      if (props.marker_type === "invest_x" || props.marker_type === "L") {
+      // DEFENSIVE number gate (Andrew's 2026-07-14 marker rule): the ATCF
+      // NUMBER decides the X, not the feed's marker_type — a geojson written
+      // by a pre-0.8.5 ace_core (the box poller until its next rebuild)
+      // still stamps designated PTCs (TD 05E) as invest_x. 90-99 = invest X;
+      // a parseable 01-89 designation renders by intensity REGARDLESS of the
+      // stamped type; no parseable number falls back to marker_type.
+      var investLike = (function () {
+        var m = /^(\d{1,2})[A-Z]$/.exec(designation);
+        if (m) return parseInt(m[1], 10) >= 90;
+        var s = /^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$/.exec(
+          String(props.storm_id || "").toUpperCase());
+        if (s) return parseInt(s[1], 10) >= 90;
+        return props.marker_type === "invest_x" || props.marker_type === "L";
+      })();
+
+      if (investLike) {
         // EVERY recent invest, active or not (the NHC invest-area X).
         // Per-basin's render_tracks_svg invest_current_positions emits a
         // small red glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at

@@ -333,18 +333,46 @@ def fix_ace_eligible(time, wind_kt, nature, basin: str,
 
 
 def storm_is_invest(points: Iterable[dict]) -> bool:
-    """True if any fix carries an ATCF invest storm number (90-99 by the
-    JTWC/NHC convention; ``parse_bdeck`` sets ``storm_num`` on live rows,
-    IBTrACS rows have none/NaN). The ONE invest definition, shared by the
-    ACE invest guard below and the tracks-feed assembly
-    (``merge_and_extract_storms``)."""
-    for p in points:
+    """True if the storm's CURRENT designation is an ATCF invest number
+    (90-99 by the JTWC/NHC convention; ``parse_bdeck`` sets ``storm_num``
+    on live rows, IBTrACS rows have none/NaN). The NEWEST fix that carries
+    a storm number decides: a promoted invest (96E -> TD 05E) may retain
+    invest-numbered rows in its merged history, but the moment its latest
+    fixes wear the designated number the storm stops being an invest —
+    the number flips on designation and every downstream consumer (marker,
+    cards, ACE guard) must flip with it (2026-07-14 home-map marker bug:
+    the old any-row semantics could hold a promoted system in invest dress
+    forever). The ONE invest definition, shared by the ACE invest guard
+    below and the tracks-feed assembly (``merge_and_extract_storms``)."""
+    for p in reversed(list(points)):
         n = p.get("storm_num")
         if n is None or _is_nan(n):
             continue
-        if int(n) >= 90:
-            return True
+        return int(n) >= 90
     return False
+
+
+_DESIG_NUM_RE = re.compile(r"^(\d{1,2})[A-Z]$")
+_SID_NUM_RE = re.compile(r"^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$")
+
+
+def wears_invest_x(storm: dict) -> bool:
+    """Marker-identity gate — the ATCF NUMBER decides (Andrew's 2026-07-14
+    rule, overriding the earlier PTC-wears-invest-visuals design): 90-99 =
+    invest area (red X); 01-89 = DESIGNATED system, which renders by
+    intensity (current_category glyph) even while NHC is still advising it
+    as a Potential Tropical Cyclone. Reads the storm's own designation
+    (``atcf_id`` like "05E"/"90C", then the SID number token), falling back
+    to the is_invest flag only when no number is parseable. Mirrored in JS
+    by ``wearsInvestX`` (LIVE_BASIN_JS + the global-map template) — any
+    edit here must update both (parity suite)."""
+    m = _DESIG_NUM_RE.match(str(storm.get("atcf_id") or "").strip().upper())
+    if m:
+        return int(m.group(1)) >= 90
+    m = _SID_NUM_RE.match(str(storm.get("sid") or "").strip().upper())
+    if m:
+        return int(m.group(1)) >= 90
+    return bool(storm.get("is_invest"))
 
 
 def storm_ace(points: Iterable[dict], basin: str,
@@ -1868,19 +1896,20 @@ def build_global_geojson(storms: list[dict]) -> dict:
         #     pre-0.5.0 ace_core during the poller repin gap.
         #   * A POTENTIAL TROPICAL CYCLONE (is_ptc) is a designated system NHC
         #     is advising on while still a DB/DS disturbance. It is NOT an
-        #     invest (number 01-49), but it wears the SAME invest_x glyph —
-        #     labeled with its REAL designation (atcf_id "01L", not the 90L it
-        #     spawned from). So it routes to invest_x exactly like an invest;
-        #     the ONLY difference is on its CycloLab page (which keeps the cone
-        #     + advisories + Models a pure invest hides). is_invest and is_ptc
-        #     are mutually exclusive, so this never double-classifies.
+        #     invest (number 01-49) and — per Andrew's 2026-07-14 marker rule,
+        #     which RETIRES the earlier PTC-wears-invest-visuals design — it
+        #     renders like every designated system: the intensity glyph
+        #     (current_category letter/color), never the invest X. The ATCF
+        #     NUMBER is the gate (wears_invest_x): 90-99 = X, 01-89 = glyph.
+        #     is_ptc stays in the properties for the popup + its CycloLab page
+        #     (which keeps the cone + advisories + Models a pure invest hides).
         # All live under kind="active_marker" so the JS marker iteration
         # loop picks them up uniformly; marker_type drives the rendered
         # shape.
         marker_type = None
-        if is_invest or is_ptc:
+        if wears_invest_x(storm):
             marker_type = "invest_x"
-        elif is_active:
+        elif is_active or is_ptc:
             marker_type = "hurricane"
         if marker_type and points:
             last = points[-1]
