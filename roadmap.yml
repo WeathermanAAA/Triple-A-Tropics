@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-25T06:50:00Z
+updated: 2026-07-25T09:55:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -76,10 +76,12 @@ items:
       native cadence needs ~12.6 cores of cut CPU; the box has 8, of which
       ~6 are free after the render stack. RAM binds first - a full-disk cut
       peaks ~4.5 GB and the non-s2 stacks hold ~12 GB of 31 GB, so ~5 heavy
-      lanes is the ceiling (eight tripped the host OOM killer). Loop-lead
-      products hold native cadence today; browse bands cycle ~30 min and
-      CONUS runs a 10-min grid against its 5-min scan. Closing those needs
-      roughly double the cores and RAM - a bigger box or a second one.
+      lanes is the ceiling (eight tripped the host OOM killer). What holds
+      today: native 10-min frame SPACING on every loop-lead product. What
+      does not: lead LATENCY is one pass (~36 min measured, so newest frame
+      18-28 min old), browse bands sit on a 30-min grid revisited ~142 min,
+      and CONUS runs a 10-min grid against its 5-min scan. Closing those
+      needs roughly double the cores and RAM - a bigger box or a second one.
     links:
       - label: Explorer
         url: /satellite/explorer/
