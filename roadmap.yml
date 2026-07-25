@@ -29,10 +29,60 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-24T20:59:00Z
+updated: 2026-07-25T06:50:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: per-satellite-emit-lanes
+    title: Per-satellite emit lanes at native cadence
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-25
+    note: >-
+      Every ring member now emits on its own schedule instead of waiting its
+      turn in one shared rotation, which had GK-2A publishing about every 5 h
+      against a sensor that scans every 10 min. Unblocking it needed the emit
+      cost model fixed first: the manifest rebuild was enumerating every tile
+      of every retained frame (460k keys / 239 s on the ring composite, twice
+      per product-slot), so native cadence was impossible at any core count.
+      Reading the key layout with delimiter listings instead made it ~1.4 s,
+      and threading the tile cut plus dropping the WebP encoder effort to
+      libwebp's default (3x faster at identical PSNR on real tiles) cut the
+      render. Full-disk product-slot 116 s to 39 s; ring composite 363 s to
+      ~60 s; the 28-product CONUS index write 18 min to 52 s.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: fd-availability-id-fix
+    title: Full-disk product gating fixed
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-25
+    note: >-
+      Every product switch on GOES-19 and Himawari-9 Full Disk was silently
+      blocked and every field click ejected to CONUS: the generated catalog
+      freezes one export sector per satellite, so its ids never matched the
+      per-domain availability sets the explorer probes from R2. Ids are now
+      sector-rewritten the same way manifest paths already were.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
+  - id: ring-cadence-ceiling
+    title: Ring cadence ceiling on the current box
+    area: satellite
+    status: shadow
+    note: >-
+      Measured 2026-07-25: the full browse catalog for every ring member at
+      native cadence needs ~12.6 cores of cut CPU; the box has 8, of which
+      ~6 are free after the render stack. RAM binds first - a full-disk cut
+      peaks ~4.5 GB and the non-s2 stacks hold ~12 GB of 31 GB, so ~5 heavy
+      lanes is the ceiling (eight tripped the host OOM killer). Loop-lead
+      products hold native cadence today; browse bands cycle ~30 min and
+      CONUS runs a 10-min grid against its 5-min scan. Closing those needs
+      roughly double the cores and RAM - a bigger box or a second one.
+    links:
+      - label: Explorer
+        url: /satellite/explorer/
   - id: truecolor-ring-rebuild
     title: True-color ring rebuild
     area: satellite
