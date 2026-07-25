@@ -82,24 +82,31 @@
   <div id="fl-error"></div>
   <div class="fl-grid" id="fl-grid"></div>
   <p class="fl-foot">
-    Inventory and the lane→box assignment map live in <code>fleet.yml</code> in
-    tat-satellite-render; <code>scripts/fleet.sh status|drift|deploy</code> is
-    the operator side of this page. A box missing from this grid entirely has
-    never published — check that its heartbeat timer is installed
-    (<code>fleet.sh provision &lt;box&gt;</code>).
+    The roster on this page is published from <code>fleet.yml</code> in
+    tat-satellite-render, so a new box appears here as soon as it is in the
+    inventory — nothing to edit in the site repo.
+    <code>scripts/fleet.sh status|drift|deploy</code> is the operator side.
+    A box showing “no heartbeat” is in the inventory but has never published:
+    check its timer with <code>systemctl status tat-heartbeat.timer</code>.
   </p>
 </div>
 <script src="/nav.js"></script>
 <script>
 (function () {
   var CDN = 'https://cdn.triple-a-tropics.com/';
-  // Boxes we EXPECT. A box that never publishes must still appear (as "no
-  // heartbeat"), otherwise a box that dies before its first beat is invisible
-  // — the exact failure this page exists to catch.
-  var EXPECT = [
+  // The roster comes from fleet/index.json, which every box publishes from
+  // fleet.yml alongside its heartbeat — so box3 appears here the moment it is
+  // in the inventory, with no edit to this repo. A hardcoded list would leave a
+  // new box invisible until someone remembered to come here, which is exactly
+  // the failure this page exists to catch.
+  // FALLBACK is the last-known roster: if index.json is unreadable we still
+  // render the boxes we know about, because an empty grid reads as "nothing to
+  // see" rather than "the fleet is unreachable".
+  var FALLBACK = [
     { name: 'box1', role: 'GOES-19 full disk + CONUS, and every render stack (cyclolab, meso, radar, s1, overlays).' },
-    { name: 'box2', role: 'Satellite emit only: both Himawari lanes, GK-2A, MTG, and the GEO ring composite.' }
+    { name: 'box2', role: 'Satellite emit only: the Himawari lanes, GK-2A, MTG, the GEO ring composite and the z7 CONUS lane.' }
   ];
+  var EXPECT = FALLBACK.slice();
   var WARN_S = 180, DEAD_S = 600;   // 3 min stale = warn, 10 min = dead
 
   function fmtAge(s) {
@@ -166,6 +173,19 @@
       newest ? 'newest heartbeat ' + fmtAge((now - newest) / 1000) : '';
   }
 
+  function loadRoster() {
+    return fetch(CDN + 'fleet/index.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (j && j.boxes && j.boxes.length) {
+          EXPECT = j.boxes.map(function (b) {
+            return { name: b.name, role: b.role || b.tier || '' };
+          });
+        }
+      })
+      .catch(function () { /* keep the fallback roster */ });
+  }
+
   function load() {
     Promise.all(EXPECT.map(function (e) {
       return fetch(CDN + 'fleet/' + e.name + '.json?t=' + Date.now(), { cache: 'no-store' })
@@ -182,8 +202,8 @@
       draw(beats);
     });
   }
-  load();
-  setInterval(load, 60000);
+  loadRoster().then(load);
+  setInterval(function () { loadRoster().then(load); }, 60000);
 })();
 </script>
 </body>
