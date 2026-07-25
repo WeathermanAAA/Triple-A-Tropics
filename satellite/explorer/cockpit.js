@@ -112,9 +112,28 @@
     }
     return 'ir';
   }
+  // POSITIONAL sector rewrite: 'sat/{sat}/{sector}/{band}'. A hardcoded token
+  // list (conus|fd|wpac) silently stops rewriting the first time a new sector
+  // ships — every pane would then point at another sector's path.
   function manifestUrlFor(p, domain) {
-    var path = p.path.replace(/\/(conus|fd|wpac)\//, '/' + domainInfo(domain).sector + '/');
-    return PBASE + path + '/latest_times.json';
+    var seg = p.path.split('/');        // ['sat', sat, sector, band]
+    if (seg.length >= 4) seg[2] = domainInfo(domain).sector;
+    return PBASE + seg.join('/') + '/latest_times.json';
+  }
+  // ID twin of manifestUrlFor: the generated catalog freezes ONE export
+  // sector per satellite (goes19 rows are goes19-conus-*, himawari9 rows
+  // himawari9-wpac-*), but every domain's products.json is keyed by ITS OWN
+  // sector (goes19-fd-*, himawari9-fd-*). So a catalog id must have its
+  // sector token rewritten before it is compared against availSet(domain) —
+  // exactly as manifestUrlFor rewrites the path's sector token. No-op wherever
+  // the catalog sector already equals the domain sector (conus, hw-wpac,
+  // gk2a-fd, mtgi1-fd, global).
+  function productIdFor(p, domain) {
+    if (!p || !p.id) return null;
+    var seg = p.id.split('-');          // 'goes19-conus-ir' -> [sat, sector, key]
+    if (seg.length < 3) return p.id;
+    seg[1] = domainInfo(domain).sector;
+    return seg.join('-');
   }
   function fmtStamp(s) {
     if (!s || s.length < 13) return s || '';
@@ -419,7 +438,7 @@
       var p2 = k2 && productByKey(k2, cand[i]);
       if (!p2) continue;
       var set = availSet(cand[i]);
-      if (!set || set.has(p2.id)) return cand[i];
+      if (!set || set.has(productIdFor(p2, cand[i]))) return cand[i];
     }
     return null;
   }
@@ -429,7 +448,7 @@
     document.querySelectorAll('.cx-field').forEach(function (el) {
       if (el.dataset.embed) return;   // MW/ASCAT rows: their own manifests gate them
       var p = productByKey(el.dataset.key);
-      var ok = p && set.has(p.id);
+      var ok = p && set.has(productIdFor(p, S.domain));
       el.classList.toggle('coming', !ok);
       var meta = el.querySelector('.cx-meta');
       if (!meta) return;
@@ -509,7 +528,8 @@
     S.domain = d;
     markDomain();
     updateGapBadges();
-    if (crossSat) rebuildProductRows();
+    if (crossSat) rebuildProductRows();   // ends in applyAvailability()
+    else applyAvailability();             // same-sat switch: re-gate for d's own emit set
     // re-point every pane at the (mapped) product key in the new domain;
     // antimeridian-crossing full disks (DOMAINS worldCopies) render world
     // copies (the far lobe lives at wrapped longitudes).
@@ -519,6 +539,13 @@
         pane.tv.map.setRenderWorldCopies(copies);
       if (pane.product) {
         var p = productByKey(mapKeyAcross(pane.product.key, d), d) || productByKey('ir', d);
+        // mapKeyAcross only proves CATALOG presence — the mapped field can
+        // still be unemitted in this domain (goes19-fd ships no truecolor).
+        // Fall back to Clean IR rather than letting setPaneProduct's
+        // availability guard silently no-op the switch and strand the rail
+        // on d while the pane keeps rendering the outgoing domain.
+        var avD = availSet(d);
+        if (avD && p && !avD.has(productIdFor(p, d))) p = productByKey('ir', d) || p;
         setPaneProduct(i, p, true);
       }
     });
@@ -1253,7 +1280,7 @@
         var av = availSet(S.domain);
         var pick = PANE_DEFAULTS.filter(function (k) {
           var p = productByKey(k);
-          return used.indexOf(k) < 0 && p && (!av || av.has(p.id));
+          return used.indexOf(k) < 0 && p && (!av || av.has(productIdFor(p, S.domain)));
         })[0] || 'ir';
         makePane(i, productByKey(pick) || productSet(S.domain)[0]);
       }
@@ -1342,7 +1369,13 @@
       return;
     }
     var av = availSet(S.domain);
-    if (av && !av.has(p.id)) return;
+    if (av && !av.has(productIdFor(p, S.domain))) {
+      // genuinely unemitted here (goes19-fd ships no truecolor): SAY so —
+      // a dead click with no feedback reads as a broken viewer
+      flash('no ' + domainInfo(S.domain).satLabel + ' ' +
+            domainInfo(S.domain).label + ' data for ' + p.title + ' yet');
+      return;
+    }
     // busy toast only if the switch is actually slow — an instant swap (warm
     // manifest + retained sources) must not blink UI at the user
     var slow = setTimeout(function () { flash('Loading ' + p.title + '…', true); }, 450);
@@ -1962,7 +1995,8 @@
       c.toBlob(function (blob) {
         if (!blob) { flash('PNG export failed'); return; }
         var name = (pane.kind === 'mw' || pane.kind === 'sc')
-          ? pane.fieldKey : pane.product.id;
+          ? pane.fieldKey
+          : productIdFor(pane.product, paneDomainKey(pane) || S.domain);
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = name + '_' +
@@ -2032,7 +2066,8 @@
       onDone: function (blob, ext) {
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = pane.product.id + '_loop.' + (ext || 'mp4');
+        a.download = productIdFor(pane.product, paneDomainKey(pane) || S.domain) +
+                     '_loop.' + (ext || 'mp4');
         a.click(); finish('Loop');
       },
       onError: function (m) { finish(m); }
@@ -2141,7 +2176,13 @@
         pane0.tv.map.setRenderWorldCopies(false);
     }
     var p = productByKey('ir', 'conus') || PRODUCTS[0];
-    if (S.panes[0].product.id !== p.id) setPaneProduct(0, p);
+    // catalog product objects are SHARED across a satellite's domains, so a
+    // bare product.id compare reads "already there" for a pane sitting on
+    // FD Clean IR — Reset would skip the switch and leave the pane on the FD
+    // manifest under a CONUS rail. Compare the domain-qualified ids.
+    var p0 = S.panes[0];
+    if (productIdFor(p0.product, paneDomainKey(p0) || 'conus') !== productIdFor(p, 'conus'))
+      setPaneProduct(0, p, true);
     var tv = lead();
     if (tv && tv.map) { tv.fitData(); tv.clearPins(); clockShow(tv.frames.length - 1); }
     history.replaceState(null, '', location.pathname);
@@ -2897,7 +2938,7 @@
         manifestUrlFor: function (p) { return manifestUrlFor(p, S.domain); },
         productAvailable: function (p) {
           var av = availSet(S.domain);
-          return !av || av.has(p.id);
+          return !av || av.has(productIdFor(p, S.domain));
         }
       });
     }
