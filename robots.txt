@@ -3,3 +3,4 @@ Disallow: /satellite/explorer/
 Disallow: /stream/
 Disallow: /records/
 Disallow: /roadmap/
+Disallow: /fleet/

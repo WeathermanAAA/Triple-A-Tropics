@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fleet Health · Triple-A-Tropics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Nav-hidden utility page: reachable only by direct link. -->
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Render-box fleet health for Triple-A-Tropics.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  html, body, h1, h2, h3, p, a, span, div, nav, header, footer, td, th {
+    font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif !important;
+  }
+  .fl-wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px 56px; }
+  .fl-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    margin: 0 0 4px; }
+  .fl-head h1 { margin: 0; font-size: 26px; }
+  .fl-sub { color: var(--muted, #8ea2bd); font-size: 13px; margin: 0 0 22px;
+    line-height: 1.55; max-width: 74ch; }
+  .fl-grid { display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .fl-box { background: var(--panel, #0a1324); border: 1px solid var(--border, #1c2b45);
+    border-left-width: 3px; border-radius: 10px; padding: 15px 16px 13px; }
+  .fl-box.ok    { border-left-color: #35b07a; }
+  .fl-box.warn  { border-left-color: #d8a13a; }
+  .fl-box.dead  { border-left-color: #d2544c; }
+  .fl-box.unknown { border-left-color: #4a5b78; }
+  .fl-name { display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin: 0 0 2px; }
+  .fl-name b { font-size: 17px; letter-spacing: .01em; }
+  .fl-state { font-size: 10.5px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+    border: 1px solid currentColor; white-space: nowrap; }
+  .ok .fl-state    { color: #35b07a; }
+  .warn .fl-state  { color: #d8a13a; }
+  .dead .fl-state  { color: #d2544c; }
+  .unknown .fl-state { color: #7e8ea8; }
+  .fl-role { color: var(--muted, #8ea2bd); font-size: 12px; margin: 0 0 12px;
+    line-height: 1.5; }
+  .fl-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px;
+    margin: 0 0 12px; }
+  .fl-m { display: flex; flex-direction: column; gap: 1px; }
+  .fl-m span { color: var(--muted, #8ea2bd); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .09em; }
+  .fl-m b { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .fl-m b.hot { color: #d8a13a; }
+  .fl-m b.bad { color: #d2544c; }
+  .fl-bar { height: 5px; border-radius: 3px; background: #16233c; overflow: hidden;
+    margin-top: 3px; }
+  .fl-bar i { display: block; height: 100%; background: #35b07a; }
+  .fl-bar i.hot { background: #d8a13a; }
+  .fl-bar i.bad { background: #d2544c; }
+  .fl-lanes { border-top: 1px solid var(--border, #1c2b45); padding-top: 9px; }
+  .fl-lanes span { color: var(--muted, #8ea2bd); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .09em; display: block; margin-bottom: 5px; }
+  .fl-chip { display: inline-block; font-size: 11px; padding: 2.5px 7px; margin: 0 4px 4px 0;
+    border-radius: 5px; background: #12203a; border: 1px solid var(--border, #1c2b45);
+    color: #cbd8e8; font-variant-numeric: tabular-nums; }
+  .fl-chip.exited { color: #d2544c; border-color: #4a2320; background: #24100f; }
+  .fl-foot { color: var(--muted, #8ea2bd); font-size: 12px; margin-top: 26px;
+    line-height: 1.6; border-top: 1px solid var(--border, #1c2b45); padding-top: 14px; }
+  code { background: #0d1830; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .fl-err { background: #24100f; border: 1px solid #4a2320; color: #f0b3ae;
+    padding: 12px 14px; border-radius: 8px; margin-bottom: 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="nav-mount"></div>
+<div class="fl-wrap">
+  <div class="fl-head"><h1>Fleet health</h1><span id="fl-age" class="fl-sub" style="margin:0"></span></div>
+  <p class="fl-sub">
+    Every render box publishes a heartbeat to R2 once a minute. The box asserts
+    liveness itself, independently of whether its lanes produced a frame — so a
+    dead box reads as <b>dead</b> here instead of merely looking like a quiet
+    basin on the imagery pages. Freshness is judged on the heartbeat's own
+    timestamp: a stale file means a dead box no matter how healthy its contents
+    look.
+  </p>
+  <div id="fl-error"></div>
+  <div class="fl-grid" id="fl-grid"></div>
+  <p class="fl-foot">
+    Inventory and the lane→box assignment map live in <code>fleet.yml</code> in
+    tat-satellite-render; <code>scripts/fleet.sh status|drift|deploy</code> is
+    the operator side of this page. A box missing from this grid entirely has
+    never published — check that its heartbeat timer is installed
+    (<code>fleet.sh provision &lt;box&gt;</code>).
+  </p>
+</div>
+<script src="/nav.js"></script>
+<script>
+(function () {
+  var CDN = 'https://cdn.triple-a-tropics.com/';
+  // Boxes we EXPECT. A box that never publishes must still appear (as "no
+  // heartbeat"), otherwise a box that dies before its first beat is invisible
+  // — the exact failure this page exists to catch.
+  var EXPECT = [
+    { name: 'box1', role: 'GOES-19 full disk + CONUS, and every render stack (cyclolab, meso, radar, s1, overlays).' },
+    { name: 'box2', role: 'Satellite emit only: both Himawari lanes, GK-2A, MTG, and the GEO ring composite.' }
+  ];
+  var WARN_S = 180, DEAD_S = 600;   // 3 min stale = warn, 10 min = dead
+
+  function fmtAge(s) {
+    if (s < 90) return Math.round(s) + 's ago';
+    if (s < 5400) return (s / 60).toFixed(0) + ' min ago';
+    if (s < 172800) return (s / 3600).toFixed(1) + ' h ago';
+    return (s / 86400).toFixed(1) + ' days ago';
+  }
+
+  function card(exp, hb, now) {
+    var state, label, age = null;
+    if (!hb) { state = 'unknown'; label = 'no heartbeat'; }
+    else {
+      age = (now - Date.parse(hb.ts)) / 1000;
+      if (age > DEAD_S) { state = 'dead'; label = 'silent ' + fmtAge(age); }
+      else if (age > WARN_S) { state = 'warn'; label = 'stale ' + fmtAge(age); }
+      else { state = 'ok'; label = 'live'; }
+    }
+    var el = document.createElement('div');
+    el.className = 'fl-box ' + state;
+    var h = '<div class="fl-name"><b>' + exp.name + '</b>' +
+            '<span class="fl-state">' + label + '</span></div>' +
+            '<p class="fl-role">' + exp.role + '</p>';
+    if (hb) {
+      var lpc = +hb.load_per_core, memPct = 100 * (1 - hb.mem_avail_mb / hb.mem_total_mb);
+      var lc = lpc >= 1.0 ? 'bad' : lpc >= 0.8 ? 'hot' : '';
+      var mc = memPct >= 92 ? 'bad' : memPct >= 80 ? 'hot' : '';
+      h += '<div class="fl-metrics">' +
+        '<div class="fl-m"><span>load / core</span><b class="' + lc + '">' + lpc.toFixed(2) +
+          '</b><i class="fl-bar"><i class="' + lc + '" style="width:' + Math.min(100, lpc * 100) + '%"></i></i></div>' +
+        '<div class="fl-m"><span>memory used</span><b class="' + mc + '">' + memPct.toFixed(0) + '%' +
+          '</b><i class="fl-bar"><i class="' + mc + '" style="width:' + memPct.toFixed(0) + '%"></i></i></div>' +
+        '<div class="fl-m"><span>disk</span><b>' + hb.disk_pct + '%</b></div>' +
+        '<div class="fl-m"><span>oom kills</span><b class="' + (hb.oom_kills > 0 ? 'hot' : '') + '">' +
+          hb.oom_kills + '</b></div>' +
+        '</div>';
+      var up = (hb.lanes_up || '').split(',').filter(Boolean);
+      var dead = (hb.lanes_exited || '').split(',').filter(Boolean);
+      h += '<div class="fl-lanes"><span>' + up.length + ' lane' + (up.length === 1 ? '' : 's') +
+           ' · ' + hb.sha + (hb.branch !== 'main' ? ' on ' + hb.branch + ' (DRIFT)' : '') +
+           (hb.dirty ? ' · ' + hb.dirty + ' dirty' : '') + '</span>';
+      up.forEach(function (l) {
+        h += '<i class="fl-chip">' + l.replace(/^tat-s2-/, '') + '</i>';
+      });
+      dead.forEach(function (l) {
+        if (up.indexOf(l) < 0) h += '<i class="fl-chip exited">' + l.replace(/^tat-s2-/, '') + ' exited</i>';
+      });
+      h += '</div>';
+    }
+    el.innerHTML = h;
+    return el;
+  }
+
+  function draw(beats) {
+    var now = Date.now(), grid = document.getElementById('fl-grid');
+    grid.innerHTML = '';
+    var newest = null;
+    EXPECT.forEach(function (exp) {
+      var hb = beats[exp.name] || null;
+      if (hb && (!newest || Date.parse(hb.ts) > newest)) newest = Date.parse(hb.ts);
+      grid.appendChild(card(exp, hb, now));
+    });
+    document.getElementById('fl-age').textContent =
+      newest ? 'newest heartbeat ' + fmtAge((now - newest) / 1000) : '';
+  }
+
+  function load() {
+    Promise.all(EXPECT.map(function (e) {
+      return fetch(CDN + 'fleet/' + e.name + '.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { return [e.name, j]; })
+        .catch(function () { return [e.name, null]; });
+    })).then(function (pairs) {
+      var beats = {};
+      pairs.forEach(function (p) { if (p[1]) beats[p[0]] = p[1]; });
+      document.getElementById('fl-error').innerHTML =
+        Object.keys(beats).length ? '' :
+        '<div class="fl-err">No heartbeats readable at all. Either every box is down ' +
+        '(check them directly) or the CDN path <code>fleet/</code> is not serving.</div>';
+      draw(beats);
+    });
+  }
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>
