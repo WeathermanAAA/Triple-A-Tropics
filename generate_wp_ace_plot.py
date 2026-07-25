@@ -63,9 +63,21 @@ MODERN_START = 1970
 FETCH_LIVE = True
 FETCH_TIMEOUT = 10  # seconds per request
 
-# Where to pull current-season ATCF best-track files. JTWC doesn't publish
-# a stable directory index, so we try several known patterns. The first
-# one that returns storms wins. If none work, we just skip the fetch.
+# SUPERSEDED — this whole script is the pre-ace_core WP generator, kept only
+# for reference. Nothing on the site renders from it; `generate_ace_plot.py
+# --basin wp` is the live path.
+#
+# Every URL below is DEAD as of 2026-07 and none of them is coming back:
+# JTWC's public a-decks were withdrawn outright, and the b-deck mirrors listed
+# here (NRL, CIMSS, NOAA SSD) no longer serve these files — the only route that
+# still answers is the Cloudflare-proxied natyphoon mirror configured in
+# generate_ace_plot.BASINS, which uses 4-digit-year filenames, not the 2-digit
+# {yy} form below. So FETCH_LIVE here degrades to pure-IBTrACS mode; it does
+# not silently serve stale intensities, it just finds nothing.
+#
+# The live WP path now runs a second leg as well (ace_core.jtwc_live: NCEP
+# tcvitals + JTWC warning text). If this script is ever revived, take that
+# route rather than reviving these hosts.
 JTWC_ATCF_PATTERNS = [
     # Official JTWC public ATCF btk directory
     "https://www.metoc.navy.mil/jtwc/products/atcf/btk/bwp{nn}{yy}.dat",

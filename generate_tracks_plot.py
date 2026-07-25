@@ -52,6 +52,7 @@ import pandas as pd
 # tracks feed reports the IDENTICAL per-storm peak wind + ACE (and season total)
 # as the ACE feed.
 import ace_core as ac
+from ace_core import jtwc_live
 from ace_core import (
     SSHS_COLORS,
     build_global_geojson,
@@ -95,6 +96,10 @@ BASINS: dict[str, dict] = {
         "pressure_preference": ["USA_PRES", "WMO_PRES", "TOKYO_PRES"],
         "ace_natures": {"TS"},
         "atcf_dev_levels": {"TS", "TY", "STY", "HU"},
+        # Second leg for JTWC basins — see the matching comment in
+        # generate_ace_plot.py BASINS. Mirrors that flag exactly; the two
+        # BASINS dicts must stay aligned.
+        "tcvitals": True,
         # Geographic extent for the rendered map (lon_min, lon_max, lat_min, lat_max)
         "extent": (100.0, 180.0, 0.0, 65.0),
         # Labels at bottom of the map (matching standard basin terminology)
@@ -620,6 +625,14 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
             consecutive_misses = 0 if hit else consecutive_misses + 1
             if consecutive_misses >= 3:
                 break
+
+    # Second leg (JTWC basins only — see the "tcvitals" flag in BASINS). Runs
+    # BEFORE the invest merge so it sees only b-deck rows as its watermark, and
+    # so its output goes through the same knackwx dedup below.
+    bdeck_only = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    extended, _ = jtwc_live.extend_with_tcvitals(
+        bdeck_only, season, basin_cfg, log_prefix=log_prefix)
+    frames = [extended] if not extended.empty else []
 
     # Invests (90-99) come from the knackwx API instead of the b-deck
     # mirror chain — see fetch_live_invests for why (mirror was 3 months

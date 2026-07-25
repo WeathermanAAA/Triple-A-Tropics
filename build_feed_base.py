@@ -100,6 +100,14 @@ def _poller_cfg(basin: str) -> dict:
         # Central Pacific systems); pollers ignore the key until their fetch
         # loop learns per-chain sweeps — absent/[] degrades to today's bep-only.
         "atcf_patterns_extra": a.get("atcf_patterns_extra") or [],
+        # Opt-in flag for the JTWC second leg (ace_core.jtwc_live: NCEP
+        # tcvitals for the numbers + JTWC warning text for the type). Shipped
+        # so the box poller turns it on the moment it runs an ace_core new
+        # enough to have the module — ace_core.jtwc_live.extend_with_tcvitals
+        # is a no-op for any basin without this key, and an older poller
+        # simply ignores it. The poller still has to CALL it; see the queued
+        # manual step in ROADMAP/AGENT_STATUS.
+        "tcvitals": bool(a.get("tcvitals")),
     }
 
 

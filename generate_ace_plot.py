@@ -45,6 +45,7 @@ import pandas as pd
 # homepage strip, the climatology page, and the tracks graphic all report the
 # IDENTICAL season ACE and per-storm peaks.
 import ace_core as ac
+from ace_core import jtwc_live
 from ace_core import (
     build_payload,
     climatology,
@@ -80,6 +81,16 @@ BASINS: dict[str, dict] = {
         # Wind preference, ACE-eligible NATURE set, and the v^2/10000 formula
         # all live in ace_core now (ac.WIND_PREFERENCE / ac.ACE_NATURES). WP
         # counts tropical AND subtropical there ({TS, SS, SD}), to match CSU.
+        #
+        # Second leg for JTWC basins (ace_core.jtwc_live): NCEP tcvitals for the
+        # numbers + JTWC public warning text for the storm type. JTWC's a-decks
+        # are gone and the b-decks reach us only through an unofficial mirror
+        # that lags a synoptic cycle, so this is both the freshness fix (Noul
+        # was rendering C1 off a 12Z b-deck while 18Z tcvitals had it at C2) and
+        # the fallback if that mirror stops. OFF for the NHC basins below:
+        # ftp.nhc.noaa.gov serves their decks directly and on time, so there is
+        # nothing to gain and their output stays byte-identical.
+        "tcvitals": True,
         "download_url": "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.WP.list.v04r01.csv",
     },
     "al": {
@@ -325,9 +336,14 @@ def fetch_live_season(season: int, basin_cfg: dict, log_prefix: str) -> pd.DataF
             err_summary = ", ".join(f"{k}×{v}" for k, v in s["errors"].items())
             print(f"{log_prefix}     {host}: {err_summary}")
 
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    bdeck = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    # Second leg (JTWC basins only — see the "tcvitals" flag in BASINS). Adds
+    # the fixes the b-deck has not written yet, typed from JTWC's own warning
+    # text; anything it cannot type is carried but excluded from ACE. Degrades
+    # to `bdeck` unchanged on any failure.
+    extended, _ = jtwc_live.extend_with_tcvitals(
+        bdeck, season, basin_cfg, log_prefix=log_prefix)
+    return extended
 
 
 # ---------------------------------------------------------------------------
