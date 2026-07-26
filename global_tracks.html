@@ -207,11 +207,11 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-07-25 20:36 UTC</div>
+        <div class="sub" id="as-of">As of 2026-07-26 03:50 UTC</div>
       </div>
       <div class="stats">
-        <b>19</b> named storms &middot; <b>6</b> category 1+ storms &middot;
-        <b>2</b> category 5s &middot; <span class="ace">156.44 ACE</span>
+        <b>19</b> named storms &middot; <b>7</b> category 1+ storms &middot;
+        <b>2</b> category 5s &middot; <span class="ace">158.15 ACE</span>
       </div>
     </div>
     <div class="map-svg-wrap">
@@ -633,7 +633,22 @@
       el.className = "active-marker";
       var designation = String(props.designation || props.name || "").toUpperCase();
 
-      if (props.marker_type === "invest_x" || props.marker_type === "L") {
+      // DEFENSIVE number gate (Andrew's 2026-07-14 marker rule): the ATCF
+      // NUMBER decides the X, not the feed's marker_type — a geojson written
+      // by a pre-0.8.5 ace_core (the box poller until its next rebuild)
+      // still stamps designated PTCs (TD 05E) as invest_x. 90-99 = invest X;
+      // a parseable 01-89 designation renders by intensity REGARDLESS of the
+      // stamped type; no parseable number falls back to marker_type.
+      var investLike = (function () {
+        var m = /^(\d{1,2})[A-Z]$/.exec(designation);
+        if (m) return parseInt(m[1], 10) >= 90;
+        var s = /^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$/.exec(
+          String(props.storm_id || "").toUpperCase());
+        if (s) return parseInt(s[1], 10) >= 90;
+        return props.marker_type === "invest_x" || props.marker_type === "L";
+      })();
+
+      if (investLike) {
         // EVERY recent invest, active or not (the NHC invest-area X).
         // Per-basin's render_tracks_svg invest_current_positions emits a
         // small red glowing X (path "M -7 -7 L 7 7 M -7 7 L 7 -7") at

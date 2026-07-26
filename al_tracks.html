@@ -261,7 +261,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-07-25 20:36 UTC</div>
+        <div class="sub" id="as-of">As of 2026-07-26 03:50 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>2</b> named storms · <b>0</b> hurricanes · <b>0</b> category 5s · <span class="ace">2.65 ACE</span></div>
     </div>
@@ -3499,15 +3499,30 @@
 
   // ---- Marker classification ----------------------------------------------
 
+  function wearsInvestX(storm) {
+    // Mirror of ace_core.wears_invest_x - the ATCF NUMBER gates the invest
+    // X (Andrew's 2026-07-14 marker rule): 90-99 = invest area, 01-89 =
+    // designated system rendering by intensity (a PTC included). Reads the
+    // storm's own designation, then the SID number token, then falls back
+    // to the is_invest flag when no number is parseable.
+    var m = /^(\d{1,2})[A-Z]$/.exec(String(storm.atcf_id || "").toUpperCase());
+    if (m) return parseInt(m[1], 10) >= 90;
+    var s = /^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$/.exec(String(storm.sid || "").toUpperCase());
+    if (s) return parseInt(s[1], 10) >= 90;
+    return !!storm.is_invest;
+  }
+
   function markerType(storm) {
     // THE single client-side source of the marker classification.
     // Mirrors ace_core.build_global_geojson's marker_type fork
     // (ace_core/ace_core/__init__.py, the "Two flavors" block):
-    //   invest OR PTC (active or not) -> "invest_x"  (NHC invest-area X; a
-    //                                          PTC wears the invest identity
-    //                                          under its REAL designation)
-    //   active (designated)    -> "hurricane"  (glyph; current_category
-    //                                           picks the letter/color)
+    //   ATCF number 90-99 (active or not) -> "invest_x"  (NHC invest-area X)
+    //   designated 01-89, active OR a PTC -> "hurricane" (glyph;
+    //                                        current_category picks the
+    //                                        letter/color - a PTC renders
+    //                                        by intensity, the old
+    //                                        PTC-wears-the-X design is
+    //                                        retired per Andrew 2026-07-14)
     //   otherwise              -> null (no current-position marker)
     // (The old active-invest "L" is retired - every invest wears the X.
     // The old "td_circle" peak<34 ring is retired too: keying on PEAK
@@ -3515,8 +3530,8 @@
     // stage different markers. Stage now only picks the glyph letter.)
     // tests/test_marker_type_agreement.py asserts the two implementations
     // agree on every case - keep them in lockstep.
-    if (storm.is_invest || storm.is_ptc) return "invest_x";
-    if (storm.is_active) return "hurricane";
+    if (wearsInvestX(storm)) return "invest_x";
+    if (storm.is_active || storm.is_ptc) return "hurricane";
     return null;
   }
 
@@ -3563,7 +3578,9 @@
                    dashAttr + '/>');
       }
 
-      if (storm.is_invest || storm.is_ptc) {
+      // ATCF-number gate, mirroring the Python second pass: only 90-99
+      // wear the invest treatment; a designated PTC renders by intensity.
+      if (wearsInvestX(storm)) {
         var lastIdx = xy.length - 1;
         for (var k = 0; k < xy.length; k++) {
           var x = xy[k][0], y = xy[k][1];
