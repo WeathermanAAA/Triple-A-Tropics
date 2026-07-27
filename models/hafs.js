@@ -160,6 +160,7 @@
       meta:     el('hafs-meta'),
       badge:    el('hafs-badge'),
       pill:     el('hafs-pill'),
+      stale:    el('hafs-stale'),
       buffer:   el('hafs-buffer'),
       player:   el('hafs-player'),
       caption:  el('hafs-caption')
@@ -320,6 +321,17 @@
 
   // Show the cycle toggle group only when >1 cycle. A label reads "18Z" for a
   // complete cycle, "18Z · building" for one still rendering.
+  // 6-h cadence: >9 h means a cycle was missed, >18 h means it is not coming.
+  var STALE_WARN_H = 9, STALE_DEAD_H = 18;
+
+  // "2026071906" -> Date. Returns null on anything that is not a cycle key,
+  // so a malformed manifest degrades to "no banner" rather than "NaN days old".
+  function parseCycleUTC(key) {
+    var m = /^(\d{4})(\d{2})(\d{2})(\d{2})$/.exec(String(key || ''));
+    if (!m) return null;
+    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4]));
+  }
+
   HafsViewer.prototype._buildCyclePicker = function () {
     var group = this.dom.cycleGroup, host = this.dom.cycles;
     if (!group || !host) return;
@@ -820,6 +832,34 @@
     if (this.dom.meta) this.dom.meta.textContent = bits.join('  ·  ');
     this._updateBadge();
     this._updatePill();
+    this._updateStale();
+  };
+
+  // HAFS runs every 6 h. If the newest cycle we can show is much older than
+  // that, the renderer has stopped and the page must SAY so -- on 2026-07-19
+  // the cron was gated off for a box worker that never started, and /models/
+  // then presented an 8-day-old cycle as the current run for eight days. The
+  // age is derived from the cycle's own init time, not from a publish stamp,
+  // so it stays honest even if a manifest is rewritten without new frames.
+  HafsViewer.prototype._updateStale = function () {
+    var el = this.dom.stale;
+    if (!el) return;
+    var key = this.cycle ? this.cycle.cycle : (this.manifest && this.manifest.cycle);
+    var t = key && parseCycleUTC(key);
+    if (!t) { el.style.display = 'none'; return; }
+    var ageH = (Date.now() - t.getTime()) / 3600000;
+    if (ageH < STALE_WARN_H) { el.style.display = 'none'; return; }
+    var dead = ageH >= STALE_DEAD_H;
+    var age = ageH < 48 ? Math.round(ageH) + ' hours'
+                        : (ageH / 24).toFixed(1) + ' days';
+    el.className = 'hafs-stale' + (dead ? ' dead' : '');
+    el.innerHTML = dead
+      ? '<b>These runs are ' + age + ' old.</b> HAFS initialises every 6 hours, ' +
+        'so the renderer has stopped publishing and nothing here reflects the ' +
+        'current forecast. Storms that formed since are missing entirely.'
+      : '<b>Latest run is ' + age + ' old.</b> HAFS initialises every 6 hours; ' +
+        'a newer cycle is late.';
+    el.style.display = '';
   };
 
   // Caption describing the active product's shading. No em-dashes.

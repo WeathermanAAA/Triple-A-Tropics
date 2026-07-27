@@ -92,6 +92,24 @@ jobs:
             fi
           done
 
+      # DEAD-MAN CHECK on the cutover gate. RENDER_HAFS_ON_CRON=false stands
+      # this cron down so another renderer can own models/hafs. On 2026-07-19
+      # it was set while the intended successor -- the box hafs-worker, which
+      # is profile-gated OFF and had never been started on any box -- was
+      # expected to take over. Neither renderer ran, and /models/ served an
+      # 8-day-old cycle as if it were current until a human noticed. The
+      # external watchdog DID detect it every 20 min for 8 days and could only
+      # log "WOULD dispatch ... [no token]".
+      #
+      # So the gate is no longer unconditional: if the PUBLISHED manifest is
+      # stale, this cron renders regardless of the variable. A half-finished
+      # cutover can silence the cron only for as long as something else is
+      # demonstrably still publishing.
+      - name: Probe published manifest freshness
+        id: freshness
+        continue-on-error: true
+        run: python3 scripts/hafs_manifest_age.py --github-output "$GITHUB_OUTPUT"
+
       - name: Generate HAFS plots (latest complete cycle)
         # STAGE-3 CUTOVER ROLLBACK GATE: once the box render worker is the
         # sole renderer (Stage 4), set the repo variable RENDER_HAFS_ON_CRON=false
@@ -106,7 +124,9 @@ jobs:
         # watchdog (tat-satellite-render ens_watchdog.py) fires when the worker
         # falls behind, and the manual unwedge path - it does NOT re-enable the
         # scheduled cron (which stays governed by RENDER_HAFS_ON_CRON).
-        if: github.event_name == 'workflow_dispatch' || vars.RENDER_HAFS_ON_CRON != 'false'
+        if: github.event_name == 'workflow_dispatch'
+          || vars.RENDER_HAFS_ON_CRON != 'false'
+          || steps.freshness.outputs.stale == 'true'
         # Resolves the newest cycle whose storm nest reached f126, enumerates
         # its storms from the public bucket, and renders all frames into
         # models/hafs/ with a manifest.json. Off-season (no storms) it writes
@@ -131,7 +151,9 @@ jobs:
         # cron render is disabled there is nothing to upload, and skipping the
         # sync leaves the worker's live frames untouched. (workflow_dispatch
         # always renders + uploads - the recovery override; see the render step.)
-        if: github.event_name == 'workflow_dispatch' || vars.RENDER_HAFS_ON_CRON != 'false'
+        if: github.event_name == 'workflow_dispatch'
+          || vars.RENDER_HAFS_ON_CRON != 'false'
+          || steps.freshness.outputs.stale == 'true'
         # DUAL-WRITER SAFE. The box render worker co-writes models/hafs/ in
         # the SAME v2 layout (cycle-scoped frames {cycle}/... + a v2 manifest with
         # cycles[]). So this cron must NOT clobber it:
