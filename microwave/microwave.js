@@ -862,7 +862,17 @@
     var bits = [], sensor = (o.sensor || ''); if (o.platform) sensor += ' ' + o.platform;
     if (sensor) bits.push('<b>' + sensor + '</b>');
     if (o.valid_utc) bits.push('Valid ' + fmtTime(o.valid_utc) + ' (' + o.valid_utc.replace('T', ' ').replace('Z', ' UTC') + ')');
+    // A pass mosaicked from several granules shows its real span, and only when
+    // the ends differ at minute resolution (consecutive granules usually round
+    // to the same minute, and "15:04-15:04Z" is noise, not precision).
+    if (o.n_granules > 1 && o.span_start_utc && o.span_end_utc) {
+      var a = String(o.span_start_utc).slice(11, 16), b = String(o.span_end_utc).slice(11, 16);
+      if (a !== b) bits.push('Swath ' + a + '–' + b + 'Z (' + o.n_granules + ' granules)');
+    }
     if (typeof o.intensity_kt === 'number') { var s = o.intensity_kt + ' kt'; if (o.dev_level) s += ' ' + o.dev_level; bits.push(s); }
+    // Honest coverage: the builder sets this false only when the MERGED swath
+    // still misses the centre, so it never fires just because one granule did.
+    if (o.center_covered === false) bits.push('<i>partial coverage — center outside swath</i>');
     bits.push(this._prodLabel());
     var html = bits.join(' &nbsp;·&nbsp; ');
     if (!tileRel(o, this.product)) html += ' &nbsp;·&nbsp; <i>(' + this._prodLabel() + ' not available for this pass)</i>';

@@ -356,6 +356,102 @@ def overpass_time(lat, lon, clat: float, clon: float, start, end):
     return start + (end - start) * frac
 
 
+# ---------------------------------------------------------------------------
+# Overpass grouping + swath mosaicking
+# ---------------------------------------------------------------------------
+
+#: Largest gap between one granule's END and the next one's START that still
+#: counts as the SAME overpass. PPS cuts an orbit into fixed segments (GMI is
+#: 5 min, so a storm sitting near a cut lands in two files seconds apart) and
+#: consecutive segments abut exactly, so the real gap is ~0. 120 s is slack for
+#: clock rounding and the occasional dropped scan, and it is far below the
+#: ~90 min orbital period, so a genuine revisit can never be swallowed.
+MAX_OVERPASS_GAP_S = 120.0
+
+
+def group_overpasses(granules, max_gap_s: float = MAX_OVERPASS_GAP_S):
+    """Group a granule list into ONE entry per real satellite overpass.
+
+    Granules join a group only when they share a sensor AND platform AND follow
+    the previous member within ``max_gap_s`` along the same orbit. Anything else
+    -- a different sensor, a different spacecraft, or a real time gap -- starts a
+    new group, so genuinely separate overpasses stay separate.
+
+    Input is the ``recent_granule_urls`` shape (dicts with sensor/platform/
+    start/end). Returns a list of lists, each sorted by start time, in ascending
+    order of group start.
+
+    Why this exists: the per-granule loop rendered each segment as its own pass,
+    so a storm near a granule boundary appeared twice -- two half-swaths of one
+    overpass, each cropped to a different part of the storm, and (because the
+    two renders could land in different cron runs) each stamped with whatever
+    best-track intensity was current at the time. Live example, DOLPHIN
+    2026-07-27: GMI/GPM granules S150454 and S150954 published as 15:09:52Z at
+    45 kt and 15:09:59Z at 40 kt -- seven seconds and 5 kt apart, one overpass.
+    """
+    out: list[list[dict]] = []
+    cur: list[dict] = []
+    for g in sorted(granules, key=lambda x: (x["sensor"], x["platform"],
+                                             x["start"])):
+        if cur:
+            prev = cur[-1]
+            same = (g["sensor"] == prev["sensor"]
+                    and g["platform"] == prev["platform"])
+            gap = (g["start"] - prev["end"]).total_seconds()
+            if same and gap <= max_gap_s:
+                cur.append(g)
+                continue
+            out.append(cur)
+        cur = [g]
+    if cur:
+        out.append(cur)
+    out.sort(key=lambda grp: grp[0]["start"])
+    return out
+
+
+_BAND_KEYS = ("lat37", "lon37", "tb37v", "tb37h",
+              "lat89", "lon89", "tb89v", "tb89h")
+
+
+def concat_swaths(datas: list):
+    """Mosaic several ``read_1c`` results from ONE overpass into a single swath.
+
+    Joins along the SCAN axis (axis 0) in time order, which is the physically
+    correct join for consecutive segments of one orbit: the granule cut is a
+    scan-line boundary, both sides share the same across-track ray geometry, and
+    the concatenated array is exactly the swath the instrument measured.
+
+    This is deliberately done on the SWATH DATA, before any rendering. Stitching
+    two finished PNGs would leave a seam at the cut and, worse, give the halves
+    independent colour scaling -- the same Tb would be a different colour on
+    either side of the join. Mosaicking first means one grid, one normalisation,
+    one image.
+
+    A band whose across-track width disagrees between granules is dropped rather
+    than force-fitted (never observed for a real same-sensor pair, but a silent
+    mis-join would corrupt the geolocation). A band missing from any member is
+    likewise dropped -- partial mosaics are not published as whole ones.
+    """
+    datas = [d for d in datas if d]
+    if not datas:
+        return None
+    if len(datas) == 1:
+        return datas[0]
+    out = {"sensor": datas[0]["sensor"], "platform": datas[0]["platform"]}
+    for key in _BAND_KEYS:
+        arrays = [d.get(key) for d in datas]
+        if any(a is None for a in arrays):
+            continue
+        arrays = [np.asarray(a) for a in arrays]
+        if len({a.shape[1] for a in arrays}) != 1:
+            print(f"tcprimed: {key} ray count differs across granules "
+                  f"({[a.shape for a in arrays]}); band dropped from mosaic",
+                  file=sys.stderr)
+            continue
+        out[key] = np.concatenate(arrays, axis=0)
+    return out or None
+
+
 def read_1c(path: str, sensor: str, platform: str):
     """Read a PPS 1C granule into the swath arrays tcprimed.render consumes.
 

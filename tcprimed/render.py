@@ -547,6 +547,22 @@ def _common_figure(meta: dict, product_label: str, sub_label: str,
 
     rx = 1.0 - pad_x
     valid_str = meta["valid"].strftime("%Y-%m-%d %H:%MZ")
+    # A pass mosaicked from several granules gets ONE header carrying the real
+    # span, but only when the ends actually differ at minute resolution --
+    # consecutive granules usually round to the same minute, and "15:04-15:04Z"
+    # would be noise dressed up as precision.
+    s_start, s_end = meta.get("span_start"), meta.get("span_end")
+    if s_start is not None and s_end is not None:
+        a, b = s_start.strftime("%H:%M"), s_end.strftime("%H:%M")
+        if a != b:
+            valid_str = (f"{s_start.strftime('%Y-%m-%d')} {a}-{b}Z"
+                         if s_start.date() == s_end.date()
+                         else f"{s_start.strftime('%Y-%m-%d %H:%M')}"
+                              f"-{s_end.strftime('%Y-%m-%d %H:%M')}Z")
+    # Say it plainly when the swath -- already merged at this point -- still
+    # misses the centre, rather than letting a clipped pass imply full coverage.
+    if meta.get("center_covered") is False:
+        valid_str += "   ·   partial coverage (center outside swath)"
     band.text(rx, y_top, right_stat, ha="right", va="center",
               color=TEXT_COLOR, fontsize=11.5, fontweight="bold",
               transform=band.transAxes)
