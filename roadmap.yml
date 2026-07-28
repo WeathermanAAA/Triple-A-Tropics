@@ -29,10 +29,25 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T14:40:00Z
+updated: 2026-07-28T15:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: quantity-palette-registry
+    title: Palette registry keyed by physical quantity
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Colour scales are now owned once per PHYSICAL QUANTITY in
+      tat_palettes.quantities, not per product. At fifty models the same
+      quantity is drawn by dozens of products, and unless every one uses
+      identical fixed levels a side-by-side comparison measures the palette
+      rather than the forecast. Sixteen quantities registered; wind speed is
+      now shared by four products and brightness temperature by three. Keys
+      are granular enough to pin one scale each, so 850 and 500 mb vorticity
+      stay separate. Verified byte-identical: every product's cmap, range,
+      boundaries and nine-point RGBA sample unchanged.
   - id: antimeridian-render-fixes
     title: Dateline rendering fixes — CycloLab plot extents and the global track break
     area: obs
