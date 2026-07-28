@@ -29,10 +29,39 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T20:05:00Z
+updated: 2026-07-28T21:25:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: storm-diagnostic-plate
+    title: Storm diagnostic plate — the four panels as one copy-pasteable PNG
+    area: satellite
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      The pieces existed as separate products, which is fine for a page and
+      wrong for a post — showing someone a storm meant handing them three
+      images and explaining how they line up. One 2x2 PNG under one header
+      carrying storm, intensity, valid time and forecast hour. Top row is the
+      IR window twice, grayscale with BD-step contours and every centre
+      estimate keyed, then the same scene enhanced with the extremes tagged IR
+      / WV / SWIR. Bottom-left is the CycloLab wind/pressure/ACE chart,
+      CAPTURED from the real renderer rather than ported — its ACE projection
+      regrids forecast intensity onto the 6-hourly synoptic grid and resumes
+      from the latest observed fix, and a matplotlib copy of that would keep
+      drawing plausible curves while drifting. Bottom-right is eye structure —
+      a radial IR profile with the BD ladder behind it and the ADT-style eye
+      score, warmest eye pixel against the coldest eyewall ring. A pixel COUNT
+      was the other candidate and was rejected on its merits: it is
+      resolution-dependent, so the same eye counts differently on 2 km ABI
+      than on a 4 km reprojection. The score is withheld, with the reason
+      named, when the method's own scene classifier says there is no eye —
+      live 12W reported 16.8 C off a "warmest eye pixel" of -62.5 C under a
+      UNIFORM CDO before that gate went in. The two-panel plot keeps
+      publishing to its own key; the plate is additive.
+    links:
+      - label: CycloLab
+        url: /cyclolab/
   - id: poller-deck-sweep-latency
     title: Live feed latency — the deck sweep stopped paying for storms that do not exist
     area: obs
