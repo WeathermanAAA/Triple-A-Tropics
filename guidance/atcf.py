@@ -91,6 +91,34 @@ NHC_ADECK_URL = ("https://ftp.nhc.noaa.gov/atcf/aid_public/"
                  "a{basin}{cy:02d}{year}.dat.gz")
 NHC_BDECK_URL = "https://ftp.nhc.noaa.gov/atcf/btk/b{basin}{cy:02d}{year}.dat"
 
+# --- JTWC basins (WP/IO/SH) --------------------------------------------------
+# ftp.nhc.noaa.gov carries ZERO WP/IO/SH decks - verified, its whole listing is
+# AL/EP/CP. UCAR's open repository is the only surviving source for those
+# basins: EMC's public mirror (gc_wmb/vxt/DECKS) now 403s, and so do
+# ospo.noaa.gov and metoc.navy.mil. Best-effort by definition, never a
+# dependency - a JTWC fetch failure degrades that storm to "no guidance", it
+# does not fail the run.
+#
+# The repo already treats this host as PRIMARY for tcvitals
+# (ace_core.jtwc_live), so this adds no new failure domain.
+#
+# Two shape differences from NHC: the a-decks are UNCOMPRESSED (.dat, not
+# .dat.gz) and large (2.9 MB for WP12; up to ~16.5 MB), and the b-decks are
+# nested under a year directory while the a-decks are flat.
+#
+# Do NOT use Last-Modified/ETag as a "new data" signal here: a bulk rsync
+# stamps every deck with an identical mtime each pass, so a conditional GET
+# saves bandwidth but proves nothing about freshness. Compare max DTG instead.
+UCAR_ADECK_URL = ("https://hurricanes.ral.ucar.edu/repository/data/"
+                  "adecks_open/a{basin}{cy:02d}{year}.dat")
+UCAR_BDECK_URL = ("https://hurricanes.ral.ucar.edu/repository/data/"
+                  "bdecks_open/{year}/b{basin}{cy:02d}{year}.dat")
+
+#: Basins NHC publishes decks for.
+NHC_BASINS = frozenset({"al", "ep", "cp"})
+#: Basins served only by the UCAR mirror.
+JTWC_BASINS = frozenset({"wp", "io", "sh"})
+
 #: Aids withheld from the PUBLIC a-deck. Verified absent (0 rows) across every
 #: live 2026 deck while being formally defined in NHC's techlist and present in
 #: the post-season archive. Used to explain an absence rather than to look for
@@ -497,17 +525,35 @@ def _default_opener(url: str, timeout: float = 30.0) -> bytes:
     return r.content
 
 
+def deck_url(basin: str, cy: int, year: int, kind: str = "a") -> str:
+    """The URL for one deck, routed by BASIN.
+
+    AL/EP/CP come from ftp.nhc.noaa.gov (the sole authorized publisher);
+    WP/IO/SH come from UCAR, which is the only surviving source for them.
+    """
+    b = basin.lower()
+    if b in JTWC_BASINS:
+        tmpl = UCAR_ADECK_URL if kind == "a" else UCAR_BDECK_URL
+    else:
+        tmpl = NHC_ADECK_URL if kind == "a" else NHC_BDECK_URL
+    return tmpl.format(basin=b, cy=int(cy), year=int(year))
+
+
 def fetch_deck(basin: str, cy: int, year: int, *, kind: str = "a",
                opener: Optional[Callable] = None) -> Optional[str]:
     """Fetch one deck's TEXT, or None if it does not exist (404).
 
-    ``kind="a"`` is the gzipped aid deck, ``kind="b"`` the plain best track.
-    A missing deck is a normal condition (the storm may not exist yet), so it
-    returns None rather than raising; anything else propagates.
+    ``kind="a"`` is the aid deck, ``kind="b"`` the best track. Source is chosen
+    by basin (see :func:`deck_url`). A missing deck is a NORMAL condition - the
+    storm may not exist yet, and for a JTWC basin the mirror is best-effort -
+    so it returns None rather than raising; anything else propagates.
+
+    Decompression is attempted regardless of source: NHC ships the a-deck
+    gzipped and UCAR ships it plain, and sniffing the bytes is more robust than
+    trusting either the extension or a proxy's Content-Encoding handling.
     """
     opener = opener or _default_opener
-    tmpl = NHC_ADECK_URL if kind == "a" else NHC_BDECK_URL
-    url = tmpl.format(basin=basin.lower(), cy=int(cy), year=int(year))
+    url = deck_url(basin, cy, year, kind)
     try:
         raw = opener(url)
     except Exception as e:  # noqa: BLE001 - a 404 is an expected outcome
@@ -516,9 +562,9 @@ def fetch_deck(basin: str, cy: int, year: int, *, kind: str = "a",
         raise
     if raw is None:
         return None
-    if kind == "a":
+    if raw[:2] == b"\x1f\x8b":       # gzip magic
         try:
             raw = gzip.decompress(raw)
         except (OSError, EOFError):
-            pass   # already-decompressed body (some proxies inflate for us)
+            pass
     return raw.decode("utf-8", errors="replace")

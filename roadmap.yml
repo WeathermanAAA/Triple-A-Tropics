@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T15:35:00Z
+updated: 2026-07-28T16:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -55,18 +55,46 @@ items:
       the NHC FTP, so a historical panel requires continuous harvesting from
       now. Test decks with cyclone numbers 80-89 carry absurd values and must
       be filtered.
-  - id: guidance-page-unification
-    title: Guidance on the same storm-keyed page as the HAFS fields
+  - id: guidance-viewer-component
+    title: Model guidance viewer — spaghetti, OCD5 baseline, membership strip, early/late
     area: models
-    status: next
+    status: shipped
+    date_shipped: 2026-07-28
     note: >-
-      The point of the whole guidance layer: the class of site splits into
-      field viewers and guidance viewers and nobody does both. Two things need
-      deciding first. /models/ has no deep-link scheme at all — no hash, no
-      query params, no history push — so a storm-keyed URL has to be added.
-      And the existing per-storm page is /cyclolab/{sid}/, whose shell
-      generator lives on the render box rather than in this repo, so the
-      unification either extends /models/ or reaches across repos.
+      The guidance layer lands on CycloLab, the storm-keyed surface, as ONE
+      component in the main repo that the per-storm shell lazy-loads — the same
+      pattern the Recon and HAFS tabs already use, so there is no second
+      implementation on the render box. Four panels. Spaghetti tracks: every
+      aid coloured by forecast intensity, with the official forecast and the
+      verifying best track drawn distinctly, because an unlabelled bundle is
+      decoration. Intensity with the OCD5 no-skill baseline drawn heaviest —
+      without it a chart cannot answer whether any aid beats
+      climatology-and-persistence, which is the only question that matters when
+      the aids disagree. A consensus membership strip in THREE states, present
+      / absent / withheld, since rendering a withheld member as merely absent
+      would imply it did not run. And early/late badging on every aid: a late
+      aid's apparent skill is partly hindsight, so they are badged and never
+      blended. Longitude maths runs in a continuous frame throughout, so a
+      dateline storm plots in its own basin.
+    links:
+      - label: CycloLab
+        url: /cyclolab/
+  - id: guidance-basin-scoping
+    title: Guidance basin scoping — full for AL/EP/CP, raw ensembles for JTWC
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      A hard constraint, enforced in the data rather than in the styling.
+      JTWC-basin decks have never carried official, consensus or statistical
+      aids, so the builder refuses to classify any JTWC aid as consensus, emits
+      no membership strip and no skill baseline there, and the viewer drops the
+      consensus tab entirely and says why. This also fixes a live defect: the
+      previous per-storm document listed the GEFS ensemble MEAN (AEMN) under
+      "consensus" for a West Pacific storm, which tells the reader several
+      independent models agree when the truth is that one model was averaged
+      with itself. Ensemble means are now their own kind, distinct from
+      multi-model consensus, in every basin.
   - id: atcf-guidance-ingest
     title: ATCF a-deck/b-deck ingest + QC, with the filtered-deck accounting
     area: models

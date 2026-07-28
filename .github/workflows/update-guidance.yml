@@ -1,0 +1,88 @@
+name: Update Model Guidance
+
+# Per-storm ATCF model-guidance documents for the CycloLab per-storm pages
+# (/cyclolab/{sid}/, Models tab). Fetches each active storm's a-deck + b-deck,
+# QCs them (guidance/atcf.py), classifies every aid (guidance/aids.py), and
+# writes one guidance_v2.json per storm, which is then synced to R2. The
+# viewer component (guidance/guidance.js, served from the house origin) reads
+# it from cdn.triple-a-tropics.com.
+#
+# Cadence. ATCF decks land ~30-90 min after each synoptic hour (measured
+# publish latency for the sibling SHIPS feed: median 52 min, p90 145 min), and
+# the leading-edge cycle carries CARQ only for the first couple of hours - that
+# is NORMAL, not a fetch failure, so we run well clear of it. Four cycles/day
+# at H+1:41 with a backup 40 min later.
+#
+# Non-round minutes per the repo's stagger convention. :41/:21 are clear of
+# every other scheduled slot (ACE :07/:37/:53, HAFS :53/:27, SST 13:17/13:47,
+# subsurface 14:23/14:53, ARMOR3D 14:43/15:13, subseasonal 15:41/16:11 - which
+# uses :41 but only once daily at 15Z, and this job at 13:41 does not collide
+# with it; sub-anim 16:33/17:03, season-gifs 03:23, GIBS 22:07/22:37).
+on:
+  schedule:
+    - cron: "41 1,7,13,19 * * *"
+    - cron: "21 2,8,14,20 * * *"
+  workflow_dispatch: {}
+
+# Read-only: this workflow commits NOTHING to main (same as update-hafs.yml and
+# update-gibs.yml). All output is synced to R2 and read cross-origin.
+permissions:
+  contents: read
+
+# One guidance run at a time: each run rebuilds the whole active set and then
+# syncs, so overlapping runs would duplicate every deck fetch and could race
+# the sync. Don't cancel mid-flight - a partial sync is worse than waiting.
+concurrency:
+  group: update-guidance
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Deliberately minimal: the ingest is stdlib + requests. No pandas, no
+      # numpy - this job parses text decks and writes JSON.
+      - name: Install deps
+        run: pip install requests
+
+      - name: Build per-storm guidance documents
+        run: |
+          set -euo pipefail
+          python -m guidance.build_guidance --out-dir cyclolab_guidance
+
+      # Sync to R2 alongside the existing per-storm CycloLab objects. NOT
+      # --delete: the legacy guidance.json under the same prefix is written by
+      # the render box, and a pruning sync from here would remove it. Each run
+      # rewrites only the keys it built.
+      - name: Sync to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          SRC=cyclolab_guidance
+          if [ ! -d "$SRC" ] || [ -z "$(ls -A "$SRC" 2>/dev/null)" ]; then
+            echo "No guidance documents were built - nothing to sync."
+            echo "(Genuine off-season: no active storms carry decks.)"
+            exit 0
+          fi
+          echo "Documents built:"
+          find "$SRC" -name 'guidance_v2.json' -printf '  %p (%s bytes)\n'
+          # 300 s: the decks update on a 6-hourly cycle, so a 5-minute edge TTL
+          # is well inside the useful window and keeps a stale document from
+          # outliving its cycle on the CDN.
+          aws s3 sync "$SRC/" "s3://triple-a-tropics-media/cyclolab/" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=300" \
+            --content-type "application/json" \
+            --exclude "*" --include "*/guidance_v2.json" \
+            --only-show-errors
+          echo "Synced $(find "$SRC" -name 'guidance_v2.json' | wc -l) document(s) to R2."
