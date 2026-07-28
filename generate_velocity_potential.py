@@ -325,16 +325,19 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     for s in ax.spines.values():
         s.set_color(GRID)
     ax.grid(color=GRID, lw=0.4, alpha=0.5)
+    # near-equatorial guides (match the OLR panel's band of interest):
+    # deliberately faint — under the coastlines and arrows
+    for gy in (-7.5, 7.5):
+        ax.axhline(gy, color=MUTED_COLOR, lw=0.7, linestyle=(0, (1, 3)),
+                   alpha=0.35, zorder=3.8)
 
-    reading = ("green: anomalous upper-level divergence → enhanced deep "
-               "convection" if level == 200 else
-               "green: anomalous LOW-level divergence, enhanced convection "
-               "sits over the brown (low-level convergence) centers")
-    ax.set_title(f"{level}-hPa velocity potential anomaly (χ′, T21) · "
-                 f"{heading} · vs 1991–2020",
+    takeaway = ("Where the rising branches sit" if level == 200
+                else "Where the low-level inflow converges")
+    ax.set_title(f"{takeaway} · {level}-hPa velocity potential anomaly "
+                 f"(χ′) · {heading}",
                  color=TEXT_COLOR, fontsize=12.5, fontweight="bold",
                  loc="left", pad=24)
-    note = reading + " · arrows: anomalous divergent wind"
+    note = "arrows: anomalous divergent wind · dotted guides: 7.5°S and 7.5°N"
     if extra_note:
         note += " · " + extra_note
     ax.text(0.0, 1.018, note, transform=ax.transAxes, color=MUTED_COLOR,
@@ -342,14 +345,20 @@ def render_level(chi_anom: np.ndarray, u_chi: np.ndarray, v_chi: np.ndarray,
     ax.text(1.0, 1.018, WATERMARK, transform=ax.transAxes, ha="right",
             color=MUTED_COLOR, alpha=0.7, fontsize=9)
     cb = fig.colorbar(cf, ax=ax, pad=0.012, fraction=0.035)
-    cb.set_label("χ′ (10⁶ m² s⁻¹)", color=MUTED_COLOR, fontsize=9)
+    # sign meaning lives ON the colorbar, per level (χ′ minima = divergence)
+    cb.set_label("χ′ (10⁶ m² s⁻¹) · green (negative): upper-level "
+                 "divergence, favors deep convection" if level == 200 else
+                 "χ′ (10⁶ m² s⁻¹) · green (negative): low-level divergence; "
+                 "convection favored over brown (convergence)",
+                 color=MUTED_COLOR, fontsize=9)
     cb.ax.tick_params(colors=MUTED_COLOR, labelsize=8)
     cb.outline.set_edgecolor(GRID)
     ax.text(0.0, -0.12,
             credit or
-            "Data: NOAA NCEP GFS analyses (daily means) · climatology: "
-            "ERA5 monthly means 1991–2020 (ECMWF, via UH APDRC), χ solved "
-            "identically · spectral solve truncated T21",
+            "Data: NOAA NCEP GFS analyses (daily means) · anomaly: "
+            "1991–2020 ERA5 monthly χ climatology removed, linearly "
+            "interpolated to the map date (ECMWF, via UH APDRC; χ solved "
+            "identically) · spectral solve truncated T21",
             transform=ax.transAxes, color=MUTED_COLOR, alpha=0.9, fontsize=8)
     fig.tight_layout()
     fig.savefig(out_png, dpi=150, facecolor=BG_COLOR)
@@ -547,9 +556,10 @@ def main() -> None:
             fnote = ("FORECAST: GEFS ensemble mean (NCEP), "
                      "ensemble-mean-smoothed · ~16-day model limit")
             fcredit = ("Data: NOAA NCEP GEFS ensemble-mean forecast · "
-                       "climatology: ERA5 monthly means 1991–2020 (ECMWF, "
-                       "via UH APDRC), χ solved identically · spectral "
-                       "solve truncated T21")
+                       "anomaly: 1991–2020 ERA5 monthly χ climatology "
+                       "removed, linearly interpolated to the valid date "
+                       "(ECMWF, via UH APDRC; χ solved identically) · "
+                       "spectral solve truncated T21")
             render_level(field, u_chi, v_chi, lats, lons, level, heading,
                          fnote, out / f"chi_anom_{level}_{fkey}.png",
                          coast, credit=fcredit)

@@ -2,1042 +2,377 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Triple-A-Tropics · Live Tropics Stream</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
-<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<title>Triple-A-Tropics — 24/7 Live</title>
 <!--
-  TAT BROADCAST CANVAS · /stream/
-  Fixed 1920x1080 stage for the 24/7 stream encoder (scales to fit any
-  viewport; at exactly 1920x1080 the scale is 1.0). Not in the site nav,
-  noindex on purpose.
+  TAT 24/7 automated stream page.  Deploy at /stream/ (same origin as the CDN feeds + /logo.svg + fonts).
+  Rendered headless at 1920x1080 -> ffmpeg -> YouTube RTMP.  Auto-cycles, zero interaction.
+  Chrome matches the site design system exactly: styles.css :root tokens, the metallic nav gradient,
+  Metropolis, the dotted body texture, /logo.svg.  Data: /feeds/{basin}_ace_data.json + /global_storms.geojson.
+  Falls back to a built-in sample so the frame is NEVER blank on air.
 
-  MODES
-    overview     global tropics map + basin ACE tiles (the default)
-    storm focus  entered ONLY while a Cat-1+ system is active
-                 (current_category C1..C5, or current_intensity_kt >= 64
-                 as a belt-and-suspenders check); a full-frame stinger
-                 plays on every entry into focus.
-
-  DATA (hydrated live, 5-min cycle, embedded fallback snapshot below)
-    https://cdn.triple-a-tropics.com/global_storms.geojson
-    https://cdn.triple-a-tropics.com/feeds/{al,ep,wp}_ace_data.json
-    /ne_110m_coastline.geojson  (same-origin, committed at repo root)
-
-  FEED SCHEMA — VERIFIED LIVE 2026-07-14 (agent-checked field by field;
-  parsers below consume EXACTLY these names, defensively):
-    global_storms.geojson: FeatureCollection with top-level
-      generated_utc, latest_fix_valid_utc, staleness_minutes, updated.
-      Each feature carries properties.kind:
-        "active_marker" (Point)  storm_id, name, designation,
-            current_intensity_kt, current_category (TD|TS|C1..C5),
-            current_mslp_mb, marker_type (invest_x|hurricane), is_ptc,
-            last_fix.  NO basin property here: basin joins via storm_id
-            to the matching "track" feature (or the storm_id agency
-            token AL/EP/CP/WP as fallback).  NO boolean "invest"/"active"
-            properties exist: invest = marker_type == "invest_x", and
-            active = presence of an active_marker.
-        "track" (LineString)  storm_id, name, basin (al|ep|wp),
-            peak_intensity, peak_kt, is_active, is_invest, is_ptc,
-            designation.
-        "observation" (Point)  storm_id, storm_name, basin,
-            intensity_kt, mslp_mb, time_iso, sshws_cat (TD|TS|C1..C5),
-            is_subtropical, is_nontropical.
-    {basin}_ace_data.json: generated_utc, staleness_minutes, today_doy,
-      total_seasons, current_rank,
-      current {label, doy[], values[], latest_value},
-      climo {min,p10,p25,mean,p75,p90,max: arrays[366]},
-      storms_by_year {"2026": [{name, formation, dissipation,
-        peak_wind_kt, peak_wind_time, ace_total}, ...]}.
-
-  NEVER-BLANK CONTRACT: first paint renders synchronously from the
-  embedded fallback snapshot; live hydration replaces state atomically;
-  a failed fetch keeps the last good state and surfaces an honest
-  DATA DELAYED chip instead of clearing anything.
+  DATA LAYER RE-POINTED 2026-07-15 (design untouched — Andrew's stream.html
+  used wholesale; the "AGENT: verify prop names" pass):
+   * loadActive reads the REAL feed schema, verified field-by-field live:
+     active systems are the kind=="active_marker" Point features;
+     intensity = current_intensity_kt, category = current_category
+     (TD|TS|C1..C5), pressure = current_mslp_mb. There is NO basin
+     property on markers — basin joins storm_id -> the matching
+     kind=="track" feature (agency token AL/EP/CP/WP in storm_id as
+     fallback). Invest identity is the ATCF-NUMBER gate (90-99 = invest;
+     01-89 designated even when a stale pre-0.8.5 feed stamped it
+     invest_x). Motion is derived from the storm's last two
+     kind=="observation" fixes; peak from the track's peak_kt.
+   * loadAce also fills pct (= latest_value / 1991-2020 climo-mean to
+     today_doy) — the design's ACE bars and crawl want it.
+   * SAMPLE fallback re-baked from the real feeds (2026-07-15 13:5x UTC)
+     so the never-blank frame shows the actual season, not a mock.
+   * The stage's satimg is wired to real products (GIBS true-color / SST
+     anomaly / chi 200 anomaly; per-storm floater / microwave / HAFS via
+     their CDN manifests). A pane with no live asset keeps the cyclone
+     decor; unresolvable per-storm panes are dropped from the rotation.
+   * Storm-focus trigger: any non-invest system at C1+ (current_category
+     C1..C5, or >= 64 kt belt-and-suspenders).
+   * AL name list: SALLY (the 2026 list carries over 2020's — only Laura
+     was replaced, by Leah). WP upcoming names follow the live rotation
+     after MAYSAK: Haishen, Noul, Dolphin, Kujira, Chan-hom.
+   * ?fast=1 compresses the timers ~5-8x for the smoke harness
+     (tests/stream_smoke.cjs); window.__stream exposes read-only state.
 -->
 <style>
-:root {
-  --bg: #131519;
-  --panel: #1b1e24;
-  --panel-2: #15181d;
-  --border: #2a2e36;
-  --fg: #e8ebef;
-  --muted: #9199a4;
-  --accent: #ffb83a;
-  --accent-2: #5dd3ff;
-  --grid-dim: #232730;
-  --live: #ff4545;
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body {
-  width: 100%; height: 100%;
-  background: #0c0e11;
-  overflow: hidden;
-  font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif;
-  color: var(--fg);
-}
-#fit {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-}
-#canvas {
-  width: 1920px; height: 1080px;
-  flex: 0 0 auto;
-  position: relative;
-  background-color: var(--bg);
-  background-image: radial-gradient(circle, rgba(255,255,255,0.055) 1.1px, transparent 1.5px);
-  background-size: 36px 36px;
-  transform-origin: center center;
-  display: flex; flex-direction: column;
-  overflow: hidden;
-}
-
-/* ---------------------------------------------------------- top bar */
-.topbar {
-  height: 92px; flex: 0 0 92px;
-  display: flex; align-items: center;
-  padding: 0 36px;
-  background: linear-gradient(180deg, rgba(27,30,36,0.92), rgba(27,30,36,0.55));
-  border-bottom: 2px solid var(--accent);
-}
-.brand { display: flex; align-items: center; gap: 16px; }
-.brand img { height: 52px; width: 52px; }
-.brand .word { font-size: 30px; font-weight: 800; letter-spacing: 0.5px; }
-.brand .word span { color: var(--accent-2); }
-.top-divider {
-  width: 1px; height: 44px; background: var(--border); margin: 0 26px;
-}
-.live-chip {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 20px; font-weight: 700; letter-spacing: 2.5px;
-  color: var(--fg);
-}
-.live-chip .dot {
-  width: 13px; height: 13px; border-radius: 50%;
-  background: var(--live);
-}
-.delayed-chip {
-  margin-left: 22px;
-  font-size: 15px; font-weight: 700; letter-spacing: 1.5px;
-  color: #131519; background: var(--accent);
-  border-radius: 4px; padding: 5px 12px;
-  display: none;
-}
-.delayed-chip.on { display: inline-block; }
-.topclock { margin-left: auto; text-align: right; }
-.topclock .hms {
-  font-size: 40px; font-weight: 800; letter-spacing: 1px;
-  font-variant-numeric: tabular-nums;
-}
-.topclock .hms small { font-size: 20px; font-weight: 700; color: var(--muted); margin-left: 8px; }
-.topclock .date { font-size: 16px; color: var(--muted); letter-spacing: 1.2px; margin-top: 2px; }
-
-/* ------------------------------------------------------------- body */
-.body {
-  flex: 1 1 auto; min-height: 0;
-  display: flex; gap: 24px;
-  padding: 24px 36px;
-}
-.stage {
-  flex: 1 1 auto; min-width: 0;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  position: relative;
-  overflow: hidden;
-  display: flex; flex-direction: column;
-}
-.stage-pane { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 26px 30px; }
-.stage-pane[hidden] { display: none; }
-
-.stage-head { display: flex; align-items: baseline; gap: 20px; margin-bottom: 14px; }
-.stage-head h1 { font-size: 30px; font-weight: 800; letter-spacing: 1px; }
-.stage-head .sub { font-size: 17px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; }
-.legend { margin-left: auto; display: flex; gap: 14px; align-items: center; }
-.legend .key { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: var(--muted); }
-.legend .sw { width: 13px; height: 13px; border-radius: 3px; }
-
-.mapbox { flex: 0 0 auto; background: #10131a; border: 1px solid var(--grid-dim); border-radius: 8px; overflow: hidden; }
-svg text { font-family: "Metropolis", "Helvetica Neue", Arial, sans-serif; }
-
-.tilerow { display: flex; gap: 18px; margin-top: 18px; flex: 1 1 auto; min-height: 0; }
-.tile {
-  flex: 1; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; padding: 18px 22px 14px;
-  display: flex; flex-direction: column;
-}
-.tile .t-name { font-size: 16px; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
-.tile .t-ace { font-size: 52px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; }
-.tile .t-ace small { font-size: 18px; color: var(--muted); font-weight: 700; margin-left: 8px; }
-.tile .t-ctx { font-size: 16px; color: var(--muted); margin-top: auto; line-height: 1.55; }
-.tile .t-ctx b { color: var(--fg); font-weight: 700; }
-
-/* storm focus */
-.focus-head { display: flex; align-items: center; gap: 22px; margin-bottom: 16px; }
-.focus-kicker {
-  font-size: 15px; font-weight: 800; letter-spacing: 3px;
-  color: #131519; background: var(--accent); border-radius: 4px; padding: 6px 12px;
-}
-.focus-head h1 { font-size: 42px; font-weight: 900; letter-spacing: 1px; }
-.focus-head .desig { font-size: 20px; font-weight: 700; color: var(--muted); }
-.cat-chip {
-  font-size: 20px; font-weight: 900; letter-spacing: 1px;
-  border-radius: 5px; padding: 6px 14px; color: #10131a;
-}
-.focus-body { display: flex; gap: 22px; flex: 1 1 auto; min-height: 0; }
-.focus-mapwrap { flex: 1 1 auto; min-width: 0; background: #10131a; border: 1px solid var(--grid-dim); border-radius: 8px; overflow: hidden; }
-.focus-stats { flex: 0 0 400px; display: flex; flex-direction: column; gap: 14px; }
-.stat {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-  padding: 14px 20px 12px;
-}
-.stat .s-label { font-size: 14px; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
-.stat .s-value { font-size: 40px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.stat .s-value small { font-size: 17px; font-weight: 700; color: var(--muted); margin-left: 7px; }
-.stat.small .s-value { font-size: 26px; }
-.focus-note { font-size: 14px; color: var(--muted); line-height: 1.5; margin-top: auto; }
-
-/* full-frame stinger */
-#stinger {
-  position: absolute; inset: 0; z-index: 40;
-  background: var(--bg);
-  display: flex; align-items: center; justify-content: center;
-  visibility: hidden;
-}
-#stinger .band {
-  position: absolute; top: 0; bottom: 0; width: 260px;
-  background: linear-gradient(90deg, transparent, rgba(255,184,58,0.16) 35%, rgba(255,184,58,0.32) 50%, rgba(255,184,58,0.16) 65%, transparent);
-  transform: skewX(-14deg);
-  left: -400px;
-}
-#stinger.play { visibility: visible; }
-#stinger.play .band { animation: bandsweep 1.7s cubic-bezier(.55,0,.35,1) forwards; }
-@keyframes bandsweep { from { left: -400px; } to { left: 2100px; } }
-#stinger .s-inner { text-align: center; opacity: 0; }
-#stinger.play .s-inner { animation: sfade 1.7s ease forwards; }
-@keyframes sfade { 0% {opacity:0; transform: translateY(14px);} 22% {opacity:1; transform:none;} 78% {opacity:1;} 100% {opacity:0;} }
-#stinger img { height: 96px; width: 96px; }
-#stinger .s-kicker { font-size: 24px; font-weight: 800; letter-spacing: 6px; color: var(--accent); margin-top: 22px; }
-#stinger .s-name { font-size: 64px; font-weight: 900; letter-spacing: 2px; margin-top: 10px; }
-#stinger .s-sub { font-size: 22px; font-weight: 700; color: var(--muted); margin-top: 10px; }
-
-/* ------------------------------------------------------------- rail */
-.rail { flex: 0 0 484px; display: flex; flex-direction: column; gap: 24px; min-height: 0; }
-.card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  overflow: hidden; display: flex; flex-direction: column;
-}
-.card-head {
-  padding: 14px 22px; border-bottom: 1px solid var(--border);
-  font-size: 16px; font-weight: 800; letter-spacing: 2.5px; color: var(--muted);
-  display: flex; align-items: center;
-}
-.card-head .count {
-  margin-left: auto; color: var(--fg); background: var(--panel-2);
-  border: 1px solid var(--border); border-radius: 4px; padding: 2px 10px;
-  font-size: 15px; letter-spacing: 0;
-}
-#active-card { flex: 0 0 auto; max-height: 356px; }
-#active-list { padding: 8px 0; overflow: hidden; }
-.sysrow { display: flex; align-items: center; gap: 14px; padding: 9px 22px; }
-.sysrow .glyph {
-  flex: 0 0 34px; height: 34px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 17px; color: #10131a;
-}
-.sysrow .who { min-width: 0; }
-.sysrow .who .nm { font-size: 20px; font-weight: 800; letter-spacing: 0.4px; white-space: nowrap; }
-.sysrow .who .where { font-size: 14px; color: var(--muted); margin-top: 1px; }
-.sysrow .kt { margin-left: auto; text-align: right; }
-.sysrow .kt .v { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.sysrow .kt .u { font-size: 13px; color: var(--muted); font-weight: 700; }
-.empty { padding: 26px 22px; color: var(--muted); font-size: 17px; line-height: 1.5; }
-
-/* carousel + chevron wipe */
-#carousel { flex: 1 1 auto; min-height: 0; position: relative; }
-.face { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--panel); }
-.face .board { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 6px 0 10px; }
-.face.in { z-index: 2; animation: chevwipe 0.8s cubic-bezier(.6,.05,.3,.95) forwards; }
-@keyframes chevwipe {
-  from { clip-path: polygon(-18% 0, -2% 50%, -18% 100%, -60% 100%, -60% 0); }
-  to   { clip-path: polygon(118% 0, 134% 50%, 118% 100%, -60% 100%, -60% 0); }
-}
-.brow { display: flex; align-items: center; gap: 12px; padding: 8px 22px; }
-.brow .bn { font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brow .pk { margin-left: auto; }
-.brow .ace { flex: 0 0 74px; text-align: right; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); }
-.pk-chip { font-size: 13px; font-weight: 900; border-radius: 4px; padding: 3px 9px; color: #10131a; letter-spacing: 0.5px; }
-.face .foot {
-  border-top: 1px solid var(--border); padding: 12px 22px;
-  font-size: 15px; color: var(--muted); line-height: 1.5;
-}
-.face .foot b { color: var(--fg); }
-.acesum { padding: 10px 22px; }
-.acesum .row { display: flex; align-items: baseline; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--grid-dim); }
-.acesum .row:last-child { border-bottom: none; }
-.acesum .b-name { font-size: 16px; font-weight: 800; letter-spacing: 1.5px; color: var(--muted); flex: 0 0 150px; }
-.acesum .b-val { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.acesum .b-ctx { margin-left: auto; font-size: 14px; color: var(--muted); text-align: right; line-height: 1.45; }
-
-/* ----------------------------------------------------------- ticker */
-.ticker {
-  height: 76px; flex: 0 0 76px;
-  display: flex; align-items: stretch;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-}
-.ticker .t-label {
-  flex: 0 0 auto; display: flex; align-items: center;
-  background: var(--accent); color: #131519;
-  font-size: 19px; font-weight: 900; letter-spacing: 2.5px;
-  padding: 0 26px;
-}
-.t-scroll { flex: 1 1 auto; overflow: hidden; position: relative; display: flex; align-items: center; }
-.t-track { display: inline-flex; white-space: nowrap; will-change: transform; }
-.t-item { font-size: 21px; font-weight: 600; padding: 0 26px; color: var(--fg); }
-.t-item b { font-weight: 800; color: var(--accent-2); }
-.t-sep { color: var(--accent); font-weight: 900; }
-.ticker .t-stamp {
-  flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center;
-  padding: 0 26px; border-left: 1px solid var(--border);
-  font-size: 14px; color: var(--muted); text-align: right; line-height: 1.5;
-}
-.ticker .t-stamp b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  /* --- Metropolis (same as the site: local woff2 + cdnfonts fallback) --- */
+  @import url('https://fonts.cdnfonts.com/css/metropolis');
+  @font-face{font-family:'Metropolis';font-weight:400;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-400-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:500;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-500-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:600;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-600-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:700;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-700-normal.woff2') format('woff2')}
+  @font-face{font-family:'Metropolis';font-weight:800;font-style:normal;font-display:swap;src:url('/assets/fonts/metropolis/metropolis-latin-800-normal.woff2') format('woff2')}
+  /* --- exact site tokens --- */
+  :root{--bg:#131519;--panel:#1b1e24;--border:#2a2e36;--fg:#e8ebef;--muted:#9199a4;--accent:#ffb83a;--accent-2:#5dd3ff;--accent-3:#c084fc;--grid-dim:#232730;--acc:var(--accent)}
+  *{margin:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden}
+  body{background-color:var(--bg);background-image:radial-gradient(circle,rgba(255,255,255,.055) 1.1px,transparent 1.5px);background-size:36px 36px;
+       font-family:"Metropolis","Helvetica Neue",Arial,sans-serif;font-weight:700}
+  #stage{position:absolute;top:50%;left:50%;width:1920px;height:1080px;transform:translate(-50%,-50%);
+         background-color:var(--bg);background-image:radial-gradient(circle,rgba(255,255,255,.055) 1.1px,transparent 1.5px);background-size:36px 36px;
+         color:var(--fg);display:flex;flex-direction:column;overflow:hidden}
+  /* ---- header: the site's metallic brand bar ---- */
+  .hdr{height:88px;display:flex;align-items:center;justify-content:space-between;padding:0 34px;
+       background:linear-gradient(180deg,#0a1a2e 0%,#1d3a5c 22%,#2b4976 50%,#1d3a5c 78%,#0a1a2e 100%);
+       border-bottom:1px solid #050a14;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 3px 10px rgba(0,0,0,.45)}
+  .brand{display:flex;align-items:center;gap:16px;color:#fff;font-weight:700;font-size:38px;line-height:1;letter-spacing:.5px;
+         text-shadow:0 1px 0 rgba(0,0,0,.55),0 2px 4px rgba(0,0,0,.55)}
+  .brand .logo{width:58px;height:58px;flex-shrink:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}
+  .live{font-weight:800;font-size:16px;letter-spacing:.1em;color:#131519;background:var(--accent);border-radius:6px;padding:4px 9px;
+        text-shadow:none;margin-left:2px}
+  .subm{font-size:15px;font-weight:600;letter-spacing:.16em;color:#c8d4e7;text-transform:uppercase}
+  .mtag{display:flex;align-items:center;gap:11px;font-weight:800;font-size:21px;letter-spacing:.1em;color:var(--acc);
+        text-shadow:0 1px 0 rgba(0,0,0,.55)}
+  .mtag i{width:14px;height:14px;border-radius:50%;background:var(--acc);animation:pulse 1.4s ease-in-out infinite}
+  /* ---- body ---- */
+  .body{flex:1;display:flex;min-height:0}
+  .side{position:relative;width:430px;background:var(--panel);border-right:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column}
+  .sideHd{font-weight:800;font-size:19px;letter-spacing:.12em;color:#131519;background:var(--acc);padding:14px 20px;text-align:center;text-transform:uppercase}
+  .sideBody{flex:1;padding:22px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:13px;font-size:22px;padding:10px 0;border-bottom:1px solid var(--border)}
+  .row .k{width:15px;height:15px;border-radius:50%}
+  .row b{font-weight:800}.row .m{margin-left:auto;color:var(--muted);font-weight:600;font-size:19px}
+  .bar{display:flex;align-items:center;gap:11px;font-weight:600;font-size:18px;color:var(--muted);margin:17px 0}
+  .bar .lab{width:74px}.bar .tr{flex:1;height:12px;background:var(--grid-dim);border-radius:6px;overflow:hidden}.bar .fl{height:100%;border-radius:6px}
+  .big{display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--border)}
+  .big .l{font-weight:700;font-size:16px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}.big .v{font-weight:800;font-size:32px}
+  .nmlist{display:flex;flex-direction:column;align-items:center;gap:2px;justify-content:center;height:100%}
+  .nm{font-weight:800;font-size:31px;letter-spacing:.02em;color:var(--muted);text-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .nm.u{color:var(--c);text-shadow:0 0 15px color-mix(in srgb,var(--c) 45%,transparent)}
+  /* chevron wipe over the sidecard (nav-matched blues) */
+  .chev{position:absolute;inset:0;z-index:6;transform:translateY(115%);background:#0a1a2e}
+  .chev.go{animation:sweepUp .9s cubic-bezier(.72,0,.2,1) forwards}
+  .chev svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .chev .scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.06) 0 2px,transparent 2px 9px)}
+  /* ---- main stage ---- */
+  .main{flex:1;position:relative;background:#0d0f13;overflow:hidden;min-width:0}
+  .satimg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.2s ease}
+  .satimg.on{opacity:.92}
+  .grid{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 79px,var(--grid-dim) 79px 80px),repeating-linear-gradient(90deg,transparent 0 105px,var(--grid-dim) 105px 106px);opacity:.5}
+  .kb{position:absolute;inset:0;display:grid;place-items:center;animation:kb 20s ease-in-out infinite alternate}
+  .cyc{width:46%;height:46%;filter:drop-shadow(0 0 42px color-mix(in srgb,var(--acc) 55%,transparent))}
+  .cyc .spin{transform-origin:100px 100px;animation:spin 26s linear infinite}
+  .cyc .arm{fill:none;stroke:var(--acc);stroke-width:9;stroke-linecap:round}.cyc .a2{opacity:.55}.cyc .a3{opacity:.3}
+  .cyc .eye{fill:#0d0f13;stroke:var(--fg);stroke-width:2.5}
+  .vign{position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 40%,transparent 55%,rgba(10,12,16,.78) 100%)}
+  .nowbar{position:absolute;left:34px;bottom:34px;display:flex;gap:16px;z-index:3}
+  .nowbar.anim{animation:l3in .6s cubic-bezier(.16,1,.3,1) both}
+  .nowbar .b{width:7px;border-radius:4px;background:var(--acc)}
+  .nowbar .k{font-weight:700;font-size:18px;letter-spacing:.14em;color:var(--acc);text-transform:uppercase}
+  .nowbar .t{font-weight:800;font-size:40px;margin-top:3px}
+  /* ---- footer ---- */
+  .foot{height:96px;display:flex;background:#0f1115;border-top:1px solid var(--border)}
+  .badge{width:430px;background:var(--acc);color:#131519;display:flex;flex-direction:column;justify-content:center;padding:0 24px}
+  .badge .clk{font-weight:800;font-size:42px;line-height:1}
+  .badge .hl{font-weight:800;font-size:18px;letter-spacing:.1em;margin-top:5px;text-transform:uppercase}
+  .crawlWrap{flex:1;overflow:hidden;display:flex;align-items:center}
+  .crawl{display:inline-flex;white-space:nowrap;animation:crawl 46s linear infinite;font-weight:600;font-size:26px;color:var(--fg)}
+  .crawl b{color:var(--acc);font-weight:800}.crawl .x{color:var(--muted);opacity:.6;padding:0 26px}
+  /* ---- full-frame mode-switch stinger ---- */
+  .stinger{position:absolute;inset:0;z-index:20;transform:translateY(102%);
+           background:linear-gradient(180deg,#0a1a2e 0%,#1d3a5c 40%,#2b4976 50%,#1d3a5c 60%,#0a1a2e 100%);
+           display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .stinger.go{animation:stingIn 2.2s cubic-bezier(.7,0,.2,1) forwards}
+  .stinger svg{position:absolute;inset:0;width:100%;height:100%}
+  .stinger .txt{position:relative;z-index:2;text-align:center;text-shadow:0 4px 20px rgba(0,0,0,.5)}
+  .stinger .k{font-weight:800;font-size:30px;letter-spacing:.28em;color:#bfe0ff}
+  .stinger .t{font-weight:800;font-size:112px;letter-spacing:-.01em;margin-top:8px;color:#fff}
+  .stinger .s{font-weight:700;font-size:30px;color:#dff0ff;margin-top:10px;opacity:.92}
+  .lofi{position:absolute;right:34px;top:104px;z-index:4;display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;letter-spacing:.1em;color:rgba(145,153,164,.75);text-transform:uppercase}
+  .lofi .eq{display:inline-flex;gap:3px;align-items:flex-end;height:16px}
+  .lofi .eq i{width:3px;background:var(--muted);animation:eq 1s ease-in-out infinite}
+  .lofi .eq i:nth-child(2){animation-delay:.2s}.lofi .eq i:nth-child(3){animation-delay:.4s}.lofi .eq i:nth-child(4){animation-delay:.1s}
+  @keyframes eq{0%,100%{height:4px}50%{height:16px}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+  @keyframes kb{from{transform:scale(1.03)}to{transform:scale(1.14)}}
+  @keyframes l3in{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+  @keyframes crawl{to{transform:translateX(-50%)}}
+  @keyframes sweepUp{0%{transform:translateY(115%)}100%{transform:translateY(-115%)}}
+  @keyframes stingIn{0%{transform:translateY(102%)}22%{transform:translateY(0)}70%{transform:translateY(0)}100%{transform:translateY(-102%)}}
 </style>
 </head>
 <body>
-<div id="fit">
-<div id="canvas">
-
-  <header class="topbar">
+<div id="stage">
+  <div class="hdr">
     <div class="brand">
-      <img src="/logo.svg" alt="">
-      <div class="word">Triple-A-<span>Tropics</span></div>
+      <img class="logo" src="/logo.svg" alt="" aria-hidden="true">
+      <span>Triple-A-Tropics</span><span class="live">LIVE</span><span class="subm">24/7 Tropical Weather</span>
     </div>
-    <div class="top-divider"></div>
-    <div class="live-chip"><span class="dot"></span>TROPICS LIVE</div>
-    <span id="delayed" class="delayed-chip">DATA DELAYED</span>
-    <div class="topclock">
-      <div class="hms"><span id="clock-hms">--:--:--</span><small>UTC</small></div>
-      <div class="date" id="clock-date"></div>
+    <div class="mtag"><i></i><span id="mtag">LIVE OVERVIEW</span></div>
+  </div>
+
+  <div class="body">
+    <div class="side">
+      <div class="sideHd" id="sideHd">Active Systems</div>
+      <div class="sideBody" id="sideBody"></div>
+      <div class="chev" id="chev"><svg id="chevsvg" viewBox="0 0 60 104" preserveAspectRatio="none"></svg><div class="scan"></div></div>
     </div>
-  </header>
-
-  <main class="body">
-    <section class="stage">
-
-      <div class="stage-pane" id="pane-overview">
-        <div class="stage-head">
-          <h1>GLOBAL TROPICS</h1>
-          <div class="sub" id="ov-sub"></div>
-          <div class="legend" id="legend"></div>
-        </div>
-        <div class="mapbox"><svg id="worldmap" width="100%" viewBox="0 0 1440 500" preserveAspectRatio="xMidYMid meet"></svg></div>
-        <div class="tilerow" id="ace-tiles"></div>
+    <div class="main" id="main">
+      <img class="satimg" id="satimg" alt="">
+      <div class="kb" id="cycWrap">
+        <svg class="cyc" viewBox="0 0 200 200"><g class="spin">
+          <path class="arm a1" d="M100 100 C 150 78, 168 128, 132 156"/><path class="arm a1" d="M100 100 C 50 122, 32 72, 68 44"/>
+          <path class="arm a2" d="M100 100 C 128 148, 78 172, 50 138"/><path class="arm a2" d="M100 100 C 72 52, 122 28, 150 62"/>
+          <path class="arm a3" d="M100 100 C 158 108, 150 158, 108 158"/><path class="arm a3" d="M100 100 C 42 92, 50 42, 92 42"/>
+        </g><circle class="eye" cx="100" cy="100" r="8.5"/></svg>
       </div>
+      <div class="grid"></div><div class="vign"></div>
+      <div class="lofi"><span class="eq"><i></i><i></i><i></i><i></i></span>Lo-Fi · Tropical Radio</div>
+      <div class="nowbar anim" id="nowbar"><div class="b"></div><div><div class="k" id="nowk">Now Showing</div><div class="t" id="nowt">Global TC Tracks</div></div></div>
+    </div>
+  </div>
 
-      <div class="stage-pane" id="pane-focus" hidden>
-        <div class="focus-head">
-          <span class="focus-kicker">STORM FOCUS</span>
-          <h1 id="f-name"></h1>
-          <span class="desig" id="f-desig"></span>
-          <span class="cat-chip" id="f-cat"></span>
-        </div>
-        <div class="focus-body">
-          <div class="focus-mapwrap"><svg id="focusmap" width="100%" height="100%" preserveAspectRatio="xMidYMid meet"></svg></div>
-          <div class="focus-stats">
-            <div class="stat"><div class="s-label">INTENSITY</div><div class="s-value"><span id="f-kt"></span><small>kt</small></div></div>
-            <div class="stat small"><div class="s-label">MIN PRESSURE</div><div class="s-value"><span id="f-mslp"></span><small>mb</small></div></div>
-            <div class="stat small"><div class="s-label">POSITION</div><div class="s-value" id="f-pos"></div></div>
-            <div class="stat small"><div class="s-label">PEAK THIS STORM</div><div class="s-value" id="f-peak"></div></div>
-            <div class="stat small"><div class="s-label">LAST FIX</div><div class="s-value" id="f-fix"></div></div>
-            <div class="focus-note">Positions and intensities from the Triple-A-Tropics live tracking feed (NHC, CPHC and JTWC advisories). Automated display, never official guidance.</div>
-          </div>
-        </div>
-      </div>
+  <div class="foot">
+    <div class="badge"><div class="clk" id="clk">--:--</div><div class="hl">Live Headlines</div></div>
+    <div class="crawlWrap"><div class="crawl" id="crawl"></div></div>
+  </div>
 
-      <div id="stinger">
-        <div class="band"></div>
-        <div class="s-inner">
-          <img src="/logo.svg" alt="">
-          <div class="s-kicker">STORM FOCUS</div>
-          <div class="s-name" id="stinger-name"></div>
-          <div class="s-sub" id="stinger-sub"></div>
-        </div>
-      </div>
-
-    </section>
-
-    <aside class="rail">
-      <div class="card" id="active-card">
-        <div class="card-head">ACTIVE SYSTEMS <span class="count" id="active-count">0</span></div>
-        <div id="active-list"></div>
-      </div>
-      <div class="card" id="carousel"></div>
-    </aside>
-  </main>
-
-  <footer class="ticker">
-    <div class="t-label">TROPICS NOW</div>
-    <div class="t-scroll"><div class="t-track" id="ticker-track"></div></div>
-    <div class="t-stamp"><span>feeds as of</span><b id="stamp-asof">--:-- UTC</b></div>
-  </footer>
-
-</div>
+  <div class="stinger" id="stinger">
+    <svg viewBox="0 0 60 104" preserveAspectRatio="none" id="stingsvg"></svg>
+    <div class="txt"><div class="k" id="stk">NOW TRACKING</div><div class="t" id="stt">BAVI</div><div class="s" id="sts">Western Pacific · Category 5</div></div>
+  </div>
 </div>
 
-<!-- Fallback snapshot: shape-identical trims of the real feeds, baked at
-     build time so the FIRST paint always has content even fully offline.
-     Live hydration replaces it within seconds when the network is up. -->
-<script id="fallback-data" type="application/json">{"snapshot_utc":"2026-07-14T22:34:04Z","geo":{"type":"FeatureCollection","generated_utc":"2026-07-14T22:34:04Z","latest_fix_valid_utc":"2026-07-14T18:00:00Z","staleness_minutes":274,"updated":"2026-07-14 22:34 UTC","features":[{"type":"Feature","geometry":{"type":"LineString","coordinates":[[-95.4,11.6],[-96.7,11.8],[-98.1,12.0],[-99.5,12.3],[-101.0,12.8],[-102.4,13.5],[-103.5,14.1],[-105.3,14.4],[-107.1,14.5],[-108.6,14.7]]},"properties":{"kind":"track","storm_id":"NHC_EP052026","name":"FIVE-E","basin":"ep","peak_intensity":"TD","peak_kt":30.0,"is_active":true,"is_invest":false,"is_ptc":true,"designation":"05E"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-108.6,14.7]},"properties":{"kind":"active_marker","storm_id":"NHC_EP052026","name":"FIVE-E","designation":"05E","current_intensity_kt":30.0,"current_category":"TD","current_mslp_mb":1006,"marker_type":"invest_x","is_ptc":true,"last_fix":"2026-07-14T18:00:00"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-166.8,10.7]},"properties":{"kind":"active_marker","storm_id":"NHC_CP902026","name":"90C","designation":"90C","current_intensity_kt":25.0,"current_category":"TD","current_mslp_mb":1008,"marker_type":"invest_x","is_ptc":false,"last_fix":"2026-07-14T18:00:00"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-153.3,8.5]},"properties":{"kind":"active_marker","storm_id":"NHC_CP912026","name":"91C","designation":"91C","current_intensity_kt":30.0,"current_category":"TD","current_mslp_mb":1007,"marker_type":"invest_x","is_ptc":false,"last_fix":"2026-07-14T18:00:00"}},{"type":"Feature","geometry":{"type":"LineString","coordinates":[[167.5,3.9],[167.6,4.5],[167.9,4.9],[167.7,5.4],[167.1,5.8],[166.5,6.1],[166.3,6.7],[166.3,7.8],[166.7,8.8],[167.8,9.1],[166.3,9.0],[165.9,9.0],[165.6,8.8],[165.2,8.5],[164.9,8.6],[164.6,8.6],[164.3,8.6],[163.6,8.8],[163.0,9.2],[162.4,9.7],[161.4,10.4],[160.2,11.1],[159.0,11.8],[157.8,12.2],[156.6,12.6],[155.3,12.7],[154.1,12.9],[153.1,12.8],[152.2,12.7],[151.5,12.5],[150.8,12.5],[150.2,12.6],[149.5,12.7],[148.9,12.9],[148.1,13.4],[146.9,13.7],[146.1,14.0],[145.0,14.3],[144.0,14.9],[142.7,15.4],[141.2,15.9],[139.9,16.2],[138.4,16.5],[136.7,16.7],[135.3,16.7],[134.1,16.9],[133.0,16.9],[131.9,17.3],[130.8,17.6],[129.9,18.2],[129.1,18.7],[128.8,19.2],[128.2,20.1],[127.3,20.8],[126.9,21.9],[126.1,22.7],[125.2,23.8],[124.6,25.0],[123.2,26.6],[121.8,27.6],[120.4,28.7],[119.5,29.9],[118.3,31.0],[118.1,32.0],[117.9,32.6],[117.8,33.4],[118.0,34.2],[118.7,34.8],[119.9,35.7],[121.2,36.6],[123.0,37.5],[124.8,38.5],[128.1,39.7]]},"properties":{"kind":"track","storm_id":"JTWC_WP092026","name":"BAVI","basin":"wp","peak_intensity":"C5","peak_kt":155.0,"is_active":true,"is_invest":false,"is_ptc":false,"designation":""}},{"type":"Feature","geometry":{"type":"Point","coordinates":[128.1,39.7]},"properties":{"kind":"active_marker","storm_id":"JTWC_WP092026","name":"BAVI","designation":"BAVI","current_intensity_kt":30.0,"current_category":"TD","current_mslp_mb":991,"marker_type":"hurricane","is_ptc":false,"last_fix":"2026-07-14T18:00:00"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[132.6,15.1]},"properties":{"kind":"active_marker","storm_id":"JTWC_WP972026","name":"97W","designation":"97W","current_intensity_kt":20.0,"current_category":"TD","current_mslp_mb":1005,"marker_type":"invest_x","is_ptc":false,"last_fix":"2026-07-14T06:00:00"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[113.5,22.4]},"properties":{"kind":"active_marker","storm_id":"JTWC_WP992026","name":"99W","designation":"99W","current_intensity_kt":20.0,"current_category":"TD","current_mslp_mb":1001,"marker_type":"invest_x","is_ptc":false,"last_fix":"2026-07-14T06:00:00"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-95.4,11.6]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":25.0,"mslp_mb":null,"time_iso":"2026-07-12T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-96.7,11.8]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":25.0,"mslp_mb":null,"time_iso":"2026-07-12T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-98.1,12.0]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":25.0,"mslp_mb":null,"time_iso":"2026-07-13T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-99.5,12.3]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":25.0,"mslp_mb":null,"time_iso":"2026-07-13T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-101.0,12.8]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":30.0,"mslp_mb":1009,"time_iso":"2026-07-13T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-102.4,13.5]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":30.0,"mslp_mb":1008,"time_iso":"2026-07-13T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-103.5,14.1]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":30.0,"mslp_mb":1009,"time_iso":"2026-07-14T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-105.3,14.4]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":30.0,"mslp_mb":1008,"time_iso":"2026-07-14T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-107.1,14.5]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":30.0,"mslp_mb":1007,"time_iso":"2026-07-14T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-108.6,14.7]},"properties":{"kind":"observation","storm_id":"NHC_EP052026","storm_name":"FIVE-E","basin":"ep","intensity_kt":30.0,"mslp_mb":1006,"time_iso":"2026-07-14T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-166.8,10.7]},"properties":{"kind":"observation","storm_id":"NHC_CP902026","storm_name":"90C","basin":"ep","intensity_kt":25.0,"mslp_mb":1008,"time_iso":"2026-07-14T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[-153.3,8.5]},"properties":{"kind":"observation","storm_id":"NHC_CP912026","storm_name":"91C","basin":"ep","intensity_kt":30.0,"mslp_mb":1007,"time_iso":"2026-07-14T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[167.5,3.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":15.0,"mslp_mb":1006,"time_iso":"2026-06-26T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[167.6,4.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":15.0,"mslp_mb":1006,"time_iso":"2026-06-27T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[167.9,4.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":15.0,"mslp_mb":1006,"time_iso":"2026-06-27T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[167.7,5.4]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":15.0,"mslp_mb":1006,"time_iso":"2026-06-27T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[167.1,5.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":15.0,"mslp_mb":1006,"time_iso":"2026-06-27T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[166.5,6.1]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":1006,"time_iso":"2026-06-28T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[166.3,6.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":1006,"time_iso":"2026-06-28T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[166.3,7.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":1005,"time_iso":"2026-06-28T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[166.7,8.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":1005,"time_iso":"2026-06-28T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[167.8,9.1]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":1006,"time_iso":"2026-06-29T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[166.3,9.0]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1006,"time_iso":"2026-06-29T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[165.9,9.0]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1006,"time_iso":"2026-06-29T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[165.6,8.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1006,"time_iso":"2026-06-29T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[165.2,8.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1006,"time_iso":"2026-06-30T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[164.9,8.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1006,"time_iso":"2026-06-30T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[164.6,8.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1005,"time_iso":"2026-06-30T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[164.3,8.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":1004,"time_iso":"2026-06-30T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[163.6,8.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":1003,"time_iso":"2026-07-01T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[163.0,9.2]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":30.0,"mslp_mb":1001,"time_iso":"2026-07-01T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[162.4,9.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":35.0,"mslp_mb":1001,"time_iso":"2026-07-01T12:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[161.4,10.4]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":40.0,"mslp_mb":998,"time_iso":"2026-07-01T18:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[160.2,11.1]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":45.0,"mslp_mb":997,"time_iso":"2026-07-02T00:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[159.0,11.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":55.0,"mslp_mb":991,"time_iso":"2026-07-02T06:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[157.8,12.2]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":60.0,"mslp_mb":991,"time_iso":"2026-07-02T12:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[156.6,12.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":70.0,"mslp_mb":982,"time_iso":"2026-07-02T18:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[155.3,12.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":85.0,"mslp_mb":974,"time_iso":"2026-07-03T00:00:00","sshws_cat":"C2","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[154.1,12.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":105.0,"mslp_mb":955,"time_iso":"2026-07-03T06:00:00","sshws_cat":"C3","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[153.1,12.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":125.0,"mslp_mb":939,"time_iso":"2026-07-03T12:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[152.2,12.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":135.0,"mslp_mb":926,"time_iso":"2026-07-03T18:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[151.5,12.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":140.0,"mslp_mb":922,"time_iso":"2026-07-04T00:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[150.8,12.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":145.0,"mslp_mb":913,"time_iso":"2026-07-04T06:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[150.2,12.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":140.0,"mslp_mb":919,"time_iso":"2026-07-04T12:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[149.5,12.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":135.0,"mslp_mb":923,"time_iso":"2026-07-04T18:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[148.9,12.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":135.0,"mslp_mb":924,"time_iso":"2026-07-05T00:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[148.1,13.4]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":145.0,"mslp_mb":911,"time_iso":"2026-07-05T06:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[146.9,13.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":155.0,"mslp_mb":901,"time_iso":"2026-07-05T12:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[146.1,14.0]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":155.0,"mslp_mb":901,"time_iso":"2026-07-05T18:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[145.0,14.3]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":150.0,"mslp_mb":906,"time_iso":"2026-07-06T00:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[144.0,14.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":145.0,"mslp_mb":908,"time_iso":"2026-07-06T06:00:00","sshws_cat":"C5","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[142.7,15.4]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":135.0,"mslp_mb":923,"time_iso":"2026-07-06T12:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[141.2,15.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":135.0,"mslp_mb":921,"time_iso":"2026-07-06T18:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[139.9,16.2]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":125.0,"mslp_mb":935,"time_iso":"2026-07-07T00:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[138.4,16.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":125.0,"mslp_mb":933,"time_iso":"2026-07-07T06:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[136.7,16.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":130.0,"mslp_mb":929,"time_iso":"2026-07-07T12:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[135.3,16.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":130.0,"mslp_mb":927,"time_iso":"2026-07-07T18:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[134.1,16.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":135.0,"mslp_mb":923,"time_iso":"2026-07-08T00:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[133.0,16.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":130.0,"mslp_mb":926,"time_iso":"2026-07-08T06:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[131.9,17.3]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":125.0,"mslp_mb":931,"time_iso":"2026-07-08T12:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[130.8,17.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":115.0,"mslp_mb":940,"time_iso":"2026-07-08T18:00:00","sshws_cat":"C4","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[129.9,18.2]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":110.0,"mslp_mb":944,"time_iso":"2026-07-09T00:00:00","sshws_cat":"C3","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[129.1,18.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":100.0,"mslp_mb":954,"time_iso":"2026-07-09T06:00:00","sshws_cat":"C3","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[128.8,19.2]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":95.0,"mslp_mb":957,"time_iso":"2026-07-09T12:00:00","sshws_cat":"C2","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[128.2,20.1]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":85.0,"mslp_mb":958,"time_iso":"2026-07-09T18:00:00","sshws_cat":"C2","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[127.3,20.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":75.0,"mslp_mb":964,"time_iso":"2026-07-10T00:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[126.9,21.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":75.0,"mslp_mb":962,"time_iso":"2026-07-10T06:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[126.1,22.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":80.0,"mslp_mb":958,"time_iso":"2026-07-10T12:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[125.2,23.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":85.0,"mslp_mb":951,"time_iso":"2026-07-10T18:00:00","sshws_cat":"C2","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[124.6,25.0]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":80.0,"mslp_mb":943,"time_iso":"2026-07-11T00:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[123.2,26.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":80.0,"mslp_mb":950,"time_iso":"2026-07-11T06:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[121.8,27.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":80.0,"mslp_mb":952,"time_iso":"2026-07-11T12:00:00","sshws_cat":"C1","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[120.4,28.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":60.0,"mslp_mb":968,"time_iso":"2026-07-11T18:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[119.5,29.9]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":45.0,"mslp_mb":974,"time_iso":"2026-07-12T00:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[118.3,31.0]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":35.0,"mslp_mb":986,"time_iso":"2026-07-12T06:00:00","sshws_cat":"TS","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[118.1,32.0]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":30.0,"mslp_mb":989,"time_iso":"2026-07-12T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[117.9,32.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":990,"time_iso":"2026-07-12T18:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[117.8,33.4]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":992,"time_iso":"2026-07-13T00:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[118.0,34.2]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":992,"time_iso":"2026-07-13T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[118.7,34.8]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":20.0,"mslp_mb":993,"time_iso":"2026-07-13T12:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[119.9,35.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":25.0,"mslp_mb":993,"time_iso":"2026-07-13T18:00:00","sshws_cat":"TD","is_subtropical":true,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[121.2,36.6]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":30.0,"mslp_mb":992,"time_iso":"2026-07-14T00:00:00","sshws_cat":"TD","is_subtropical":true,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[123.0,37.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":30.0,"mslp_mb":992,"time_iso":"2026-07-14T06:00:00","sshws_cat":"TD","is_subtropical":true,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[124.8,38.5]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":30.0,"mslp_mb":992,"time_iso":"2026-07-14T12:00:00","sshws_cat":"TD","is_subtropical":true,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[128.1,39.7]},"properties":{"kind":"observation","storm_id":"JTWC_WP092026","storm_name":"BAVI","basin":"wp","intensity_kt":30.0,"mslp_mb":991,"time_iso":"2026-07-14T18:00:00","sshws_cat":"TD","is_subtropical":true,"is_nontropical":false}},{"type":"Feature","geometry":{"type":"Point","coordinates":[132.6,15.1]},"properties":{"kind":"observation","storm_id":"JTWC_WP972026","storm_name":"97W","basin":"wp","intensity_kt":20.0,"mslp_mb":1005,"time_iso":"2026-07-14T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}},{"type":"Feature","geometry":{"type":"Point","coordinates":[113.5,22.4]},"properties":{"kind":"observation","storm_id":"JTWC_WP992026","storm_name":"99W","basin":"wp","intensity_kt":20.0,"mslp_mb":1001,"time_iso":"2026-07-14T06:00:00","sshws_cat":"TD","is_subtropical":false,"is_nontropical":true}}]},"ace":{"al":{"generated_utc":"2026-07-14T22:36:02Z","staleness_minutes":38796,"today_doy":195,"total_seasons":176,"current_rank":116,"current":{"label":"2026","doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195],"values":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.282,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405,0.405],"latest_value":0.405},"climo":{"mean":[0.035,0.069,0.109,0.139,0.156,0.16,0.16,0.16,0.16,0.16,0.16,0.168,0.197,0.258,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.331,0.378,0.408,0.449,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.469,0.492,0.544,0.569,0.569,0.569,0.569,0.569,0.569,0.569,0.569,0.587,0.611,0.644,0.678,0.694,0.702,0.702,0.702,0.706,0.748,0.831,0.899,0.917,0.926,0.96,1.005,1.023,1.11,1.19,1.251,1.32,1.361,1.384,1.414,1.489,1.536,1.602,1.629,1.653,1.706,1.721,1.721,1.749,1.833,1.912,1.998,2.018,2.043,2.082,2.128,2.181,2.212,2.301,2.437,2.531,2.606,2.724,2.843,2.962,3.119,3.358,3.769,4.204,4.706,5.081,5.41,5.716,6.046,6.407,6.757,7.15,7.503,7.835,8.178,8.323,8.44,8.583,8.772,8.951,9.082,9.183,9.284,9.406,9.435,9.578,9.779,10.007,10.285,10.606,11.036,11.447,11.76,12.03,12.252,12.444,12.689,13.055,13.517,13.978,14.525,15.219,15.895,16.78,17.744,18.733,19.793,20.822,21.821,23.101,24.457,26.123,27.906,29.762,31.48,33.325,35.492,37.978,40.5,42.757,44.601,46.497,48.623,50.739,52.952,55.347,57.76,59.857,61.831,64.111,66.581,69.064,71.335,73.39,75.132,77.041,78.93,80.611,82.386,83.936,85.481,86.936,88.467,89.915,91.232,92.519,93.675,94.99,96.501,97.739,98.813,99.633,100.424,101.356,102.23,102.891,103.575,104.069,104.61,105.176,105.819,106.421,106.997,107.637,108.235,108.871,109.403,109.854,110.312,110.736,111.284,112.064,112.846,113.618,114.205,114.766,115.357,115.639,115.83,116.045,116.306,116.818,117.228,117.374,117.569,117.895,118.244,118.427,118.61,118.719,118.809,118.895,119.046,119.222,119.635,120.041,120.221,120.343,120.464,120.552,120.709,120.915,121.157,121.315,121.457,121.586,121.69,121.805,121.912,121.997,122.078,122.143,122.27,122.386,122.468,122.501,122.532,122.543,122.568,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.585,122.604,122.634,122.634]},"storms_by_year":{"2026":[{"name":"ARTHUR","formation":"2026-06-17T12:00:00","dissipation":"2026-06-18T00:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-06-17T18:00:00","ace_total":0.405}]}},"ep":{"generated_utc":"2026-07-14T22:29:51Z","staleness_minutes":269,"today_doy":195,"total_seasons":83,"current_rank":68,"current":{"label":"2026","doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195],"values":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.245,0.772,1.375,1.742,1.742,2.505,3.315,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.683,3.805,4.295,4.417,4.417,4.417,4.417,4.417,4.417,4.417,4.417,4.417,4.417,4.417,4.418],"latest_value":4.418},"climo":{"mean":[0.0,0.0,0.0,0.0,0.0,0.0,0.011,0.051,0.076,0.096,0.137,0.217,0.286,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.299,0.303,0.334,0.397,0.477,0.585,0.706,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.741,0.753,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.763,0.78,0.78,0.78,0.78,0.78,0.806,0.852,0.911,0.978,1.039,1.084,1.114,1.144,1.204,1.357,1.716,2.119,2.392,2.706,3.129,3.525,3.819,4.091,4.262,4.509,4.744,4.882,5.043,5.189,5.407,5.654,5.953,6.248,6.645,6.925,7.142,7.319,7.593,7.873,8.167,8.468,8.821,9.183,9.7,10.3,11.048,11.967,12.709,13.168,13.539,13.866,14.258,14.687,15.158,15.703,16.134,16.427,16.857,17.474,18.037,18.684,19.306,20.036,20.984,22.21,23.476,24.738,25.839,27.004,28.354,29.825,31.16,32.442,33.584,34.565,35.698,37.022,38.229,39.162,39.894,40.543,41.244,42.029,42.966,44.099,45.247,46.42,47.618,48.88,50.079,51.317,52.567,53.858,55.184,56.577,57.755,58.6,59.429,60.264,61.038,61.889,62.844,63.741,65.03,66.61,68.278,70.002,71.589,72.724,73.717,74.687,75.95,77.792,79.841,81.815,83.178,84.491,85.551,86.547,87.728,88.875,89.701,90.301,90.97,91.945,93.024,94.106,95.225,96.33,97.401,98.341,99.357,100.442,101.481,102.483,103.32,104.289,105.458,106.726,107.82,108.808,109.77,110.651,111.44,112.263,113.243,114.349,115.612,116.597,117.341,118.205,118.95,119.599,120.222,120.65,121.095,121.374,121.63,121.812,122.084,122.614,123.31,123.862,124.454,125.284,126.342,127.474,128.099,128.644,128.93,129.288,129.551,129.664,129.732,129.843,129.994,130.209,130.432,130.598,130.675,130.703,130.751,130.829,130.998,131.133,131.156,131.156,131.156,131.18,131.274,131.394,131.44,131.466,131.512,131.541,131.61,131.789,131.894,131.949,132.035,132.254,132.38,132.392,132.392,132.392,132.392,132.408,132.443,132.48,132.51,132.529,132.536,132.536,132.536,132.536,132.536,132.536,132.536,132.536,132.536,132.536,132.536,132.544,132.544,132.561,132.57,132.57,132.57,132.57,132.57,132.57,132.57,132.57,132.57,132.57,132.57,132.57]},"storms_by_year":{"2026":[{"name":"AMANDA","formation":"2026-06-02T18:00:00","dissipation":"2026-06-07T18:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-06-04T18:00:00","ace_total":1.743},{"name":"BORIS","formation":"2026-06-07T12:00:00","dissipation":"2026-06-09T12:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-06-08T12:00:00","ace_total":0.725},{"name":"CRISTINA","formation":"2026-06-08T12:00:00","dissipation":"2026-06-11T00:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-06-08T12:00:00","ace_total":1.215},{"name":"DOUGLAS","formation":"2026-07-01T06:00:00","dissipation":"2026-07-03T00:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-07-03T06:00:00","ace_total":0.735}]}},"wp":{"generated_utc":"2026-07-14T22:34:04Z","staleness_minutes":274,"today_doy":195,"total_seasons":82,"current_rank":6,"current":{"label":"2026","doy":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195],"values":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.522,1.337,1.46,1.95,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.195,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.76,2.882,3.97,6.797,14.62,23.625,30.023,34.755,38.288,40.62,42.128,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.035,43.525,44.015,44.58,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,44.825,45.23,46.003,47.63,49.59,50.978,52.03,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,52.78,53.063,54.02,56.155,61.705,66.0,67.838,69.468,70.82,71.103,71.103,71.103,71.103,71.385,72.74,78.553,87.303,96.358,104.355,110.86,117.258,121.093,123.58,125.86,126.185,126.185,126.185],"latest_value":126.185},"climo":{"mean":[0.06,0.114,0.263,0.383,0.405,0.454,0.512,0.578,0.634,0.671,0.701,0.745,0.762,0.78,0.818,0.879,0.983,1.062,1.106,1.148,1.175,1.184,1.184,1.184,1.184,1.184,1.184,1.184,1.184,1.184,1.192,1.192,1.192,1.198,1.207,1.207,1.207,1.211,1.247,1.32,1.474,1.513,1.529,1.542,1.551,1.551,1.551,1.567,1.567,1.572,1.609,1.685,1.799,2.002,2.171,2.401,2.557,2.625,2.649,2.725,2.847,3.018,3.278,3.573,3.773,3.86,3.894,3.936,3.977,4.004,4.042,4.102,4.195,4.306,4.445,4.495,4.495,4.499,4.515,4.539,4.582,4.654,4.732,4.781,4.797,4.815,4.89,5.019,5.362,5.746,6.075,6.358,6.64,6.844,6.907,6.988,7.098,7.237,7.416,7.614,7.843,8.076,8.372,8.767,9.217,9.658,10.067,10.571,11.049,11.462,11.724,11.831,11.969,12.216,12.457,12.653,12.773,12.844,12.956,13.135,13.221,13.247,13.287,13.454,13.698,13.941,14.207,14.532,15.024,15.879,16.698,17.355,17.917,18.61,19.488,20.375,21.233,21.865,22.568,23.182,23.565,23.734,23.986,24.306,24.635,25.032,25.356,25.51,25.677,26.012,26.298,26.549,26.883,27.292,27.781,28.242,28.662,28.939,29.215,29.649,30.149,30.549,30.808,31.086,31.333,31.537,31.883,32.584,33.342,33.906,34.324,34.622,34.923,35.3,35.703,36.06,36.374,36.792,37.237,37.769,38.359,38.882,39.409,39.995,40.735,41.699,42.933,44.395,46.005,47.576,48.98,49.904,50.778,51.696,52.528,53.432,54.591,55.887,57.387,58.669,59.87,61.267,62.81,64.222,65.544,66.532,67.341,68.33,69.409,70.472,71.6,72.835,74.069,75.67,77.483,79.365,81.127,83.073,85.659,87.894,89.58,90.981,92.303,93.701,95.101,96.41,97.838,99.341,100.834,102.296,103.953,105.859,108.085,110.34,112.408,114.477,116.508,118.694,120.794,122.884,125.405,128.218,131.354,134.474,137.186,139.316,140.946,142.751,144.504,146.184,147.83,149.545,151.391,153.428,155.405,157.621,160.389,163.208,165.731,167.986,169.92,171.706,173.675,175.81,178.221,180.446,182.923,185.41,187.852,190.473,193.102,195.615,197.786,199.582,201.106,202.709,204.733,206.655,208.271,210.026,211.612,213.082,214.34,215.71,217.202,218.709,220.083,221.545,223.304,225.734,228.261,230.923,233.689,236.236,238.616,241.101,243.835,246.186,247.988,249.432,251.044,252.679,254.061,255.829,257.847,259.628,261.406,263.07,264.743,266.366,267.678,268.512,269.18,270.164,270.985,271.594,272.046,272.422,272.936,273.35,273.664,274.136,274.736,275.457,276.437,277.544,278.562,279.415,280.371,281.408,282.51,283.598,284.586,285.427,286.063,286.893,287.742,288.524,289.091,289.54,289.976,290.6,291.172,291.593,291.958,292.396,292.899,293.42,293.924,294.311,294.766,295.233,295.638,296.011,296.381,296.811,297.31,297.806,298.343,298.795,299.115,299.269,299.405,299.48,299.51,299.551]},"storms_by_year":{"2026":[{"name":"NOKAEN","formation":"2026-01-14T12:00:00","dissipation":"2026-01-22T00:00:00","peak_wind_kt":50.0,"peak_wind_time":"2026-01-17T06:00:00","ace_total":2.195},{"name":"PENHA","formation":"2026-02-04T00:00:00","dissipation":"2026-02-06T12:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-02-05T06:00:00","ace_total":0.565},{"name":"NURI","formation":"2026-03-11T00:00:00","dissipation":"2026-03-11T18:00:00","peak_wind_kt":30.0,"peak_wind_time":"2026-03-10T12:00:00","ace_total":0.0},{"name":"SINLAKU","formation":"2026-04-09T00:00:00","dissipation":"2026-04-19T12:00:00","peak_wind_kt":160.0,"peak_wind_time":"2026-04-12T18:00:00","ace_total":40.275},{"name":"HAGUPIT","formation":"2026-05-05T18:00:00","dissipation":"2026-05-10T18:00:00","peak_wind_kt":40.0,"peak_wind_time":"2026-05-08T00:00:00","ace_total":1.79},{"name":"JANGMI","formation":"2026-05-27T06:00:00","dissipation":"2026-06-03T12:00:00","peak_wind_kt":70.0,"peak_wind_time":"2026-05-31T00:00:00","ace_total":7.955},{"name":"MEKKHALA","formation":"2026-06-18T12:00:00","dissipation":"2026-06-27T06:00:00","peak_wind_kt":125.0,"peak_wind_time":"2026-06-22T12:00:00","ace_total":16.325},{"name":"HIGOS","formation":"2026-06-22T06:00:00","dissipation":"2026-06-26T18:00:00","peak_wind_kt":50.0,"peak_wind_time":"2026-06-26T00:00:00","ace_total":1.997},{"name":"BAVI","formation":"2026-07-01T00:00:00","dissipation":"2026-07-14T18:00:00","peak_wind_kt":155.0,"peak_wind_time":"2026-07-05T12:00:00","ace_total":53.25},{"name":"MAYSAK","formation":"2026-07-01T18:00:00","dissipation":"2026-07-05T18:00:00","peak_wind_kt":50.0,"peak_wind_time":"2026-07-04T12:00:00","ace_total":1.833}]}}}}</script>
+<audio id="bed" loop></audio>
 
 <script>
-(function () {
+(function(){
 "use strict";
-
-/* ------------------------------------------------------------ config */
-var CDN = "https://cdn.triple-a-tropics.com/";
-var GEO_URL = CDN + "global_storms.geojson";
-var ACE_URL = function (b) { return CDN + "feeds/" + b + "_ace_data.json"; };
-var COAST_URL = "/ne_110m_coastline.geojson";
-var BASINS = ["al", "ep", "wp"];
-var BASIN_LABEL = { al: "ATLANTIC", ep: "E+C PACIFIC", wp: "W PACIFIC" };
-/* ?fast=1 compresses every timer ~10x: transition previews + the smoke
-   harness (tests/stream_smoke.cjs) both use it. Data paths unchanged. */
-var FAST = new URLSearchParams(location.search).get("fast") === "1";
-var HYDRATE_MS = FAST ? 30 * 1000 : 5 * 60 * 1000;
-var CAROUSEL_MS = FAST ? 2500 : 12 * 1000;
-var OVERVIEW_MS = FAST ? 4000 : 40 * 1000;
-var FOCUS_MS = FAST ? 5000 : 45 * 1000;
-var STINGER_MS = 1900;
-var DELAYED_MIN = 180;              /* feed age (min) that flips the chip */
-var CAT_COLORS = {                  /* house SSHWS palette (tracks pages) */
-  TD: "#3fa4ff", TS: "#46c56a", C1: "#ffe14d",
-  C2: "#ff9a2f", C3: "#f5333c", C4: "#e33ad4", C5: "#b03bff"
+var CDN="https://cdn.triple-a-tropics.com";
+var FAST=/[?&]fast=1/.test(location.search);   // smoke-harness timer compression
+var CAT=[{lo:137,n:"C5",c:"#c084fc"},{lo:113,n:"C4",c:"#ff5bd0"},{lo:96,n:"C3",c:"#ff5b5b"},{lo:83,n:"C2",c:"#ff9f3a"},{lo:64,n:"C1",c:"#ffb83a"},{lo:34,n:"TS",c:"#3ad07d"},{lo:0,n:"TD",c:"#5dd3ff"}];
+function cat(kt){for(var i=0;i<CAT.length;i++)if(kt>=CAT[i].lo)return CAT[i];return CAT[CAT.length-1];}
+var LISTS={
+ al:["ARTHUR","BERTHA","CRISTOBAL","DOLLY","EDOUARD","FAY","GONZALO","HANNA","ISAIAS","JOSEPHINE","KYLE","LEAH","MARCO","NANA","OMAR","PAULETTE","RENE","SALLY","TEDDY","VICKY","WILFRED"],
+ ep:["AMANDA","BORIS","CRISTINA","DOUGLAS","ELIDA","FAUSTO","GENEVIEVE","HERNAN","ISELLE","JULIO","KARINA","LOWELL","MARIE","NORBERT","ODALYS","POLO","RACHEL","SIMON","TRUDY","VANCE","WINNIE","XAVIER","YOLANDA","ZEKE"],
+ wp_upcoming:["HAISHEN","NOUL","DOLPHIN","KUJIRA","CHAN-HOM"]
 };
-var CAT_ORDER = ["TD", "TS", "C1", "C2", "C3", "C4", "C5"];
-
-/* ------------------------------------------------------------- state */
-var state = {
-  geo: null,          /* parsed global_storms model */
-  ace: {},            /* basin -> parsed ace model */
-  coast: null,        /* [[ [x,y], ... ], ...] in lon(0-360)/lat */
-  lastGoodUtc: null   /* newest generated_utc across feeds */
+var BASINS={al:"ATLANTIC",ep:"EAST PACIFIC",wp:"WEST PACIFIC"};
+/* Fallback baked from the REAL feeds 2026-07-15 (never-blank frame shows
+   the actual season). Live hydration replaces it within seconds. */
+var SAMPLE={"active":[{"name":"ELIDA","desig":"05E","basin":"ep","kt":40,"cat":"TS","invest":false,"mslp":1001,"move":"W 16","peak":40},{"name":"BAVI","desig":"09W","basin":"wp","kt":30,"cat":"TD","invest":false,"mslp":991,"move":"ENE 28","peak":155},{"name":"90C","desig":"90C","basin":"cp","kt":25,"cat":"TD","invest":true,"mslp":1008,"move":null,"peak":25},{"name":"91C","desig":"91C","basin":"cp","kt":25,"cat":"TD","invest":true,"mslp":1007,"move":null,"peak":25}],
+ ace:{al:{ace:0.4,pct:6,rank:"118/176"},ep:{ace:4.7,pct:19,rank:"68/83"},wp:{ace:126.2,pct:236,rank:"7/82"}},
+ storms:{al:[{name:"ARTHUR",kt:40}],
+  ep:[{name:"AMANDA",kt:40},{name:"BORIS",kt:40},{name:"CRISTINA",kt:40},{name:"DOUGLAS",kt:40},{name:"ELIDA",kt:40}],
+  wp:[{name:"NOKAEN",kt:50},{name:"PENHA",kt:40},{name:"NURI",kt:30},{name:"SINLAKU",kt:160},{name:"HAGUPIT",kt:40},{name:"JANGMI",kt:70},{name:"MEKKHALA",kt:125},{name:"HIGOS",kt:50},{name:"BAVI",kt:155},{name:"MAYSAK",kt:50}]}
 };
+var S=JSON.parse(JSON.stringify(SAMPLE));
+var A={};                                       // optional product manifests
 
-/* ----------------------------------------------------------- helpers */
-function $(id) { return document.getElementById(id); }
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-  });
-}
-function num(v, fallback) { var n = Number(v); return isFinite(n) ? n : fallback; }
-function pad2(n) { return (n < 10 ? "0" : "") + n; }
-function catColor(cat) { return CAT_COLORS[cat] || CAT_COLORS.TD; }
-/* glyph letter inside markers: mirrors ace_core.sshs_label (house rule) */
-var SSHS_LABELS = { TD: "D", TS: "S", C1: "1", C2: "2", C3: "3", C4: "4", C5: "5" };
-function sshsLabel(cat) { return SSHS_LABELS[cat] || "D"; }
-function isCat1Plus(sys) {
-  return /^C[1-5]$/.test(sys.cat) || sys.kt >= 64;
-}
-function fmtLat(lat) { return Math.abs(lat).toFixed(1) + "°" + (lat >= 0 ? "N" : "S"); }
-function fmtLon(lon) {
-  var l = ((lon + 180) % 360 + 360) % 360 - 180;
-  return Math.abs(l).toFixed(1) + "°" + (l >= 0 ? "E" : "W");
-}
-function parseIsoUtc(s) {
-  if (!s) return null;
-  var t = Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(s) ? s : s + "Z");
-  return isFinite(t) ? new Date(t) : null;
-}
-function agoLabel(d) {
-  if (!d) return "unknown";
-  var mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
-  if (mins < 60) return mins + " min ago";
-  var h = Math.floor(mins / 60);
-  return h + " h " + (mins % 60) + " min ago";
-}
+function j(u){return fetch(u,{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.json();});}
+function loadAce(){["al","ep","wp"].forEach(function(b){j(CDN+"/feeds/"+b+"_ace_data.json").then(function(d){
+  var sby=d.storms_by_year||{},yr=Object.keys(sby).sort().pop(),list=sby[yr]||[];
+  S.storms[b]=list.map(function(s){return {name:(s.name||"").toUpperCase(),kt:+s.peak_wind_kt||0};});
+  var cur=d.current||{};
+  var ytd=(cur.latest_value!=null)?+cur.latest_value:
+    list.reduce(function(a,s){return a+(+s.ace_total||0);},0);
+  S.ace[b]=S.ace[b]||{};S.ace[b].ace=+ytd.toFixed(1);
+  /* % of the 1991-2020 climatological mean to date (the bars + crawl) */
+  var doy=+d.today_doy,cm=(d.climo||{}).mean;
+  if(doy&&cm&&cm.length>=doy&&+cm[doy-1]>0)S.ace[b].pct=Math.round(ytd/ +cm[doy-1]*100);
+  if(d.current_rank&&d.total_seasons)S.ace[b].rank=d.current_rank+"/"+d.total_seasons;
+}).catch(function(){});});}
+function loadActive(){j(CDN+"/global_storms.geojson").then(function(g){
+  /* VERIFIED live schema: markers carry current_* fields and NO basin;
+     basin joins storm_id -> the "track" feature; invest identity is the
+     ATCF-NUMBER gate (house marker rule — 90-99 invest, 01-89 designated
+     even when a stale pre-0.8.5 feed stamped it invest_x). */
+  var tracks={},obs={},out=[];
+  (g.features||[]).forEach(function(f){var p=f.properties||{};
+    if(p.kind==="track")tracks[p.storm_id]=p;
+    else if(p.kind==="observation"&&f.geometry&&f.geometry.type==="Point"){
+      (obs[p.storm_id]=obs[p.storm_id]||[]).push({t:p.time_iso||"",c:f.geometry.coordinates});}});
+  function investGate(p){
+    var m=/^(\d{1,2})[A-Z]$/.exec(String(p.designation||"").toUpperCase());
+    if(m)return parseInt(m[1],10)>=90;
+    var s=/^[A-Z]+_[A-Z]{2}(\d{2})\d{4}$/.exec(String(p.storm_id||"").toUpperCase());
+    if(s)return parseInt(s[1],10)>=90;
+    return p.marker_type==="invest_x";}
+  function motionOf(sid){
+    var o=(obs[sid]||[]).slice().sort(function(a,b){return a.t<b.t?-1:1;});
+    if(o.length<2)return null;
+    var p0=o[o.length-2],p1=o[o.length-1];
+    var t0=Date.parse(p0.t.replace(/([+-]\d\d:?\d\d|Z)?$/,"Z")),t1=Date.parse(p1.t.replace(/([+-]\d\d:?\d\d|Z)?$/,"Z"));
+    if(!isFinite(t0)||!isFinite(t1)||t1<=t0)return null;
+    var la0=p0.c[1]*Math.PI/180,la1=p1.c[1]*Math.PI/180,dlo=(p1.c[0]-p0.c[0])*Math.PI/180;
+    var y=Math.sin(dlo)*Math.cos(la1),x=Math.cos(la0)*Math.sin(la1)-Math.sin(la0)*Math.cos(la1)*Math.cos(dlo);
+    var brg=(Math.atan2(y,x)*180/Math.PI+360)%360;
+    var cosd=Math.min(1,Math.sin(la0)*Math.sin(la1)+Math.cos(la0)*Math.cos(la1)*Math.cos(dlo));
+    var nm=60*Math.acos(cosd)*180/Math.PI, hrs=(t1-t0)/36e5;
+    var dirs=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return dirs[Math.floor(((brg+11.25)%360)/22.5)]+" "+Math.round(nm/hrs);}
+  (g.features||[]).forEach(function(f){var p=f.properties||{};
+    if(p.kind!=="active_marker")return;
+    var sid=p.storm_id||"",tr=tracks[sid]||{};
+    var tok=(sid.match(/_(AL|EP|CP|WP)\d/i)||[])[1];
+    var kt=+p.current_intensity_kt||0;
+    out.push({name:(p.name||p.designation||"").toString().toUpperCase(),
+      desig:(p.designation||"").toString().toUpperCase(),
+      basin:(tr.basin||(tok?tok.toLowerCase():"")),
+      kt:kt,cat:p.current_category||cat(kt).n,invest:investGate(p),
+      mslp:(+p.current_mslp_mb||null),move:motionOf(sid),
+      peak:(+tr.peak_kt||kt)});});
+  out.sort(function(a,b){return b.kt-a.kt;});
+  S.active=out;   /* a clean fetch always wins — an EMPTY tropics is honest
+                     too; only a FAILED fetch keeps the previous state */
+}).catch(function(){});}
+function loadAssets(){
+  [["floaters","/floaters/manifest.json"],["mw","/microwave/manifest.json"],["hafs","/models/hafs/manifest.json"]]
+  .forEach(function(w){j(CDN+w[1]).then(function(d){A[w[0]]=d;}).catch(function(){});});}
+function refresh(){loadAce();loadActive();loadAssets();}
 
-/* ----------------------------------------------------------- parsers */
-/* global_storms.geojson -> {asOf, staleness, systems[], tracks{}, obs{}} */
-function parseGeo(gj) {
-  if (!gj || gj.type !== "FeatureCollection" || !Array.isArray(gj.features)) return null;
-  var systems = [], tracks = {}, obs = {}, basinOf = {};
-  gj.features.forEach(function (f) {
-    var p = (f && f.properties) || {};
-    var g = (f && f.geometry) || {};
-    if (p.kind === "track" && g.type === "LineString") {
-      if (p.storm_id) basinOf[p.storm_id] = p.basin || "";
-      if (p.is_active && Array.isArray(g.coordinates)) {
-        tracks[p.storm_id] = {
-          coords: g.coordinates.filter(function (c) {
-            return Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]);
-          }),
-          peakKt: num(p.peak_kt, null),
-          peakCat: p.peak_intensity || null
-        };
-      }
-    } else if (p.kind === "observation" && g.type === "Point") {
-      if (!obs[p.storm_id]) obs[p.storm_id] = [];
-      if (Array.isArray(g.coordinates) && isFinite(g.coordinates[0])) {
-        obs[p.storm_id].push({
-          lon: g.coordinates[0], lat: g.coordinates[1],
-          cat: p.sshws_cat || "TD", t: p.time_iso || ""
-        });
-      }
-    } else if (p.kind === "active_marker" && g.type === "Point") {
-      if (!Array.isArray(g.coordinates) || !isFinite(g.coordinates[0])) return;
-      systems.push({
-        id: p.storm_id || "",
-        name: p.name || p.designation || "UNKNOWN",
-        desig: p.designation || "",
-        kt: num(p.current_intensity_kt, 0),
-        cat: p.current_category || "TD",
-        mslp: num(p.current_mslp_mb, null),
-        invest: p.marker_type === "invest_x",
-        ptc: !!p.is_ptc,
-        lastFix: p.last_fix || "",
-        lon: g.coordinates[0], lat: g.coordinates[1]
-      });
-    }
-  });
-  systems.forEach(function (s) {
-    var token = (s.id.match(/_(AL|EP|CP|WP)\d/i) || [])[1];
-    s.basin = basinOf[s.id] || (token ? token.toLowerCase() : "");
-    s.basinTag = token ? token.toUpperCase() : (s.basin || "?").toUpperCase();
-  });
-  systems.sort(function (a, b) { return b.kt - a.kt; });
-  return {
-    asOf: gj.generated_utc || null,
-    staleness: num(gj.staleness_minutes, null),
-    systems: systems, tracks: tracks, obs: obs
-  };
-}
+function bLabel(b){return ({al:"ATL",ep:"E.PAC",wp:"W.PAC",cp:"C.PAC",sh:"S.HEM",io:"N.IND"}[b]||b||"").toUpperCase();}
+function fmtRow(s){var c=s.invest?"#5dd3ff":cat(s.kt).c;var lab=s.invest?"Invest":cat(s.kt).n;
+  return '<div class="row"><span class="k" style="background:'+c+'"></span><b>'+s.name+'</b> '+lab+'<span class="m">'+(s.invest?bLabel(s.basin):s.kt+"kt")+'</span></div>';}
+function significant(){return S.active.some(function(s){return !s.invest&&(/^C[1-5]$/.test(s.cat||"")||s.kt>=64);});}
+function topStorm(){var a=S.active.filter(function(s){return !s.invest;}).sort(function(x,y){return y.kt-x.kt;});return a[0]||S.active[0];}
+function pActive(){return S.active.slice(0,7).map(fmtRow).join("")||'<div class="row">No active systems</div>';}
+function pAce(){return '<div style="margin-top:6px">'+["al","ep","wp"].map(function(b){var a=S.ace[b]||{},pct=Math.min(100,a.pct||0),col=(a.pct||0)>=100?"#ffb83a":((a.pct||0)>=50?"#3ad07d":"#5dd3ff");
+  return '<div class="bar"><span class="lab">'+bLabel(b)+'</span><span class="tr"><span class="fl" style="width:'+pct+'%;background:'+col+'"></span></span>'+(a.ace!=null?a.ace:"–")+'</div>';}).join("")+'</div>';}
+function pSeason(){var named=0,h=0,c5=0,ace=0;["al","ep","wp"].forEach(function(b){(S.storms[b]||[]).forEach(function(s){named++;if(s.kt>=64)h++;if(s.kt>=137)c5++;});ace+=(S.ace[b]&&S.ace[b].ace)||0;});
+  return [["NAMED",named],["HURR / TYPHOONS",h],["CAT 5s",c5],["GLOBAL ACE",Math.round(ace)]].map(function(r){return '<div class="big"><span class="l">'+r[0]+'</span><span class="v">'+r[1]+'</span></div>';}).join("");}
+function pNames(b){var u={};(S.storms[b]||[]).forEach(function(s){u[s.name]=s.kt;});
+  var list=(b==="wp")?(S.storms.wp||[]).map(function(s){return s.name;}).concat(LISTS.wp_upcoming):(LISTS[b]||[]).slice();
+  return {hd:"2026 "+(BASINS[b]||b.toUpperCase())+" NAMES",html:'<div class="nmlist">'+list.map(function(n){if(u[n]!=null){var c=cat(u[n]);return '<div class="nm u" style="--c:'+c.c+'">'+n+'</div>';}return '<div class="nm">'+n+'</div>';}).join("")+'</div>'};}
+function pVitals(){var s=topStorm()||{};return [["CATEGORY",s.kt?cat(s.kt).n.replace("C",""):"–"],["WIND",(s.kt||"–")+" kt"],["PRESSURE",(s.mslp||"–")+(s.mslp?" mb":"")],["MOTION",s.move||"–"],["PEAK",(s.peak||s.kt||"–")+" kt"]].map(function(r){return '<div class="big"><span class="l">'+r[0]+'</span><span class="v">'+r[1]+'</span></div>';}).join("");}
+function overviewPanels(){return [{hd:"Active Systems",html:pActive()},{hd:"Basin ACE vs Normal",html:pAce()},{hd:"2026 Season",html:pSeason()},pNames("al"),pNames("ep"),pNames("wp")];}
+function stormPanels(){var s=topStorm()||{name:"Storm"};return [{hd:s.name+" · Vitals",html:pVitals()},{hd:"Active Systems",html:pActive()},pNames(s.basin||"wp")];}
 
-/* {basin}_ace_data.json -> {ytd, rank, seasons, climoToDate, storms[]} */
-function parseAce(j) {
-  if (!j || !j.current) return null;
-  var cur = j.current || {};
-  var ytd = num(cur.latest_value,
-    Array.isArray(cur.values) && cur.values.length ? cur.values[cur.values.length - 1] : null);
-  var climoToDate = null;
-  var doy = num(j.today_doy, null);
-  if (doy && j.climo && Array.isArray(j.climo.mean) && j.climo.mean.length >= doy) {
-    climoToDate = num(j.climo.mean[doy - 1], null);
-  }
-  var year = String(cur.label || new Date().getUTCFullYear());
-  var storms = (j.storms_by_year && j.storms_by_year[year]) || [];
-  return {
-    year: year,
-    ytd: ytd, rank: num(j.current_rank, null), seasons: num(j.total_seasons, null),
-    climoToDate: climoToDate,
-    asOf: j.generated_utc || null,
-    storms: storms.map(function (s) {
-      return {
-        name: s.name || "UNNAMED",
-        peakKt: num(s.peak_wind_kt, null),
-        ace: num(s.ace_total, null),
-        formed: s.formation || ""
-      };
-    })
-  };
-}
+/* stage sequences: [kicker, title, imgUrl|null, objectFit]. No url (or a
+   failed load) keeps the cyclone decor — never a broken frame. */
+function bust(u){return u+(u.indexOf("?")<0?"?":"&")+"t="+Math.floor(Date.now()/6e5);}
+var OV_STAGE=[["Global","2026 Global TC Tracks",null,null],
+ ["Satellite","True-Color Composite",CDN+"/gibs/global_truecolor.jpg","cover"],
+ ["Ocean","SST Anomaly",CDN+"/sst/global_anomaly.png","contain"],
+ ["Subseasonal","Velocity Potential χ′ 200",CDN+"/subseasonal/chi_anom_200_30d.png","contain"]];
+function floaterUrl(s,done){
+  var m=/^(\d{2})([A-Z])$/.exec(s.desig||""),bmap={L:"al",E:"ep",C:"cp",W:"wp"};
+  var slug=m&&bmap[m[2]]?bmap[m[2]]+m[1]:null;
+  var hit=slug&&A.floaters&&(A.floaters.storms||[]).filter(function(x){return x.slug===slug;})[0];
+  if(!hit)return done(null);
+  j(CDN+"/"+hit.manifest).then(function(man){
+    var fr=(man.frames||[])[Math.max(0,(man.frames||[]).length-1)];
+    done(fr&&fr.key?CDN+"/"+fr.key:null);
+  }).catch(function(){done(null);});}
+function mwUrl(s){
+  var hit=A.mw&&(A.mw.storms||[]).filter(function(x){
+    return String(x.name||"").toUpperCase()===s.name||String(x.atcf||x.id||"").toUpperCase()===s.desig;})[0];
+  var ps=hit&&(hit.overpasses||hit.passes);var o=ps&&ps[ps.length-1];
+  var rel=o&&((o.tiles&&(o.tiles["91H"]||o.tiles["89pct"]||o.tiles.color91))||(o.products&&(o.products["91H"]||o.products.color91)));
+  return rel?CDN+"/microwave/"+rel:null;}
+function hafsUrl(s){
+  var h=A.hafs;if(!h)return null;
+  var cyc=(h.cycles||[]).filter(function(c){return c&&c.storms&&c.storms.length;})[0]||
+          (h.cycle?{cycle:h.cycle,storms:h.storms||[]}:null);
+  if(!cyc)return null;
+  var id=String(s.desig||"").toLowerCase();
+  var hit=(cyc.storms||[]).filter(function(x){return String(x.id||"").toLowerCase()===id;})[0];
+  var fr=hit&&hit.frames&&hit.frames.hafsa&&hit.frames.hafsa.storm&&hit.frames.hafsa.storm.mslp_wind;
+  if(!fr||!fr.length)return null;
+  var fxx=String(fr[Math.min(fr.length-1,Math.max(0,Math.round(fr.length/2)))]);
+  while(fxx.length<3)fxx="0"+fxx;
+  return CDN+"/models/hafs/"+cyc.cycle+"/hafsa/"+id+"/storm/mslp_wind/f"+fxx+".png";}
+function stormStage(){var s=topStorm()||{name:"Storm",desig:""};
+  var seq=[["CycloLab",s.name,null,null]];
+  floaterUrl(s,function(u){if(u)seq.push(["Satellite",s.name+" · IR Floater",u,"cover"]);
+    var mu=mwUrl(s);if(mu)seq.push(["Microwave",s.name+" · 91 GHz",mu,"contain"]);
+    var hu=hafsUrl(s);if(hu)seq.push(["Models","HAFS-A · "+s.name,hu,"contain"]);});
+  return seq;}   /* per-storm panes append as their manifests resolve */
 
-function catFromKt(kt) {
-  if (kt == null) return "TD";
-  if (kt >= 137) return "C5"; if (kt >= 113) return "C4";
-  if (kt >= 96) return "C3"; if (kt >= 83) return "C2";
-  if (kt >= 64) return "C1"; if (kt >= 34) return "TS";
-  return "TD";
-}
+(function(){var blues=['#08182c','#0a1f38','#0e2c50','#123a63','#1a4e86','#2360a8','#2f7bd0','#559ce6','#84bef6','#b3daff','#eaf5ff'];
+ function field(){var W=60,N=blues.length,bh=104/(N-1),dep=bh*0.62,s='';for(var i=0;i<N;i++){var y=104-i*bh;var p=[[0,y+dep],[W/2,y],[W,y+dep],[W,y+bh+dep],[W/2,y+bh],[0,y+bh+dep]];s+='<polygon points="'+p.map(function(a){return a[0]+','+a[1]}).join(' ')+'" fill="'+blues[i]+'"/>';}return s;}
+ document.getElementById('chevsvg').innerHTML=field();document.getElementById('stingsvg').innerHTML=field();})();
 
-/* -------------------------------------------------------- projection */
-/* Pacific-centered equirectangular: x = lon(0..360)*4, y = (75-lat)*4  */
-function projX(lon) { return (((lon % 360) + 360) % 360) * 4; }
-function projY(lat) { return (75 - lat) * 4; }
+var st=document.getElementById('stage'),chev=document.getElementById('chev'),sideHd=document.getElementById('sideHd'),sideBody=document.getElementById('sideBody');
+var nowk=document.getElementById('nowk'),nowt=document.getElementById('nowt'),nowbar=document.getElementById('nowbar'),sg=document.getElementById('stinger');
+var satimg=document.getElementById('satimg');
+var mode="ov",panels=[],seq=[],pI=0,sI=0,pT,sT;
+var MS_SIDE=FAST?1600:7000,MS_STAGE=FAST?2200:9000,MS_MODE=FAST?2500:20000;
+function accFor(m){return m==="sf"?cat((topStorm()||{}).kt||0).c:"#ffb83a";}
+function applyMode(m){mode=m;st.style.setProperty('--acc',accFor(m));document.getElementById('mtag').textContent=m==="sf"?"STORM FOCUS":"LIVE OVERVIEW";
+  panels=(m==="sf")?stormPanels():overviewPanels();seq=(m==="sf")?stormStage():OV_STAGE;pI=0;sI=0;paintSide();paintStage();
+  clearInterval(pT);clearInterval(sT);pT=setInterval(cycleSide,MS_SIDE);sT=setInterval(cycleStage,MS_STAGE);}
+function paintSide(){var p=panels[pI]||{hd:"",html:""};sideHd.textContent=p.hd;sideBody.innerHTML=p.html;}
+function chevSwap(f){chev.classList.remove('go');void chev.offsetWidth;chev.classList.add('go');setTimeout(f,460);}
+function cycleSide(){pI=(pI+1)%panels.length;chevSwap(paintSide);}
+function setStageImg(url,fit){
+  if(!url){satimg.classList.remove('on');satimg.removeAttribute('src');return;}
+  var probe=new Image();
+  probe.onload=function(){satimg.style.objectFit=fit||"cover";satimg.src=probe.src;satimg.classList.add('on');};
+  probe.onerror=function(){satimg.classList.remove('on');};
+  probe.src=bust(url);}
+function paintStage(){var s=seq[sI]||["","",null,null];nowk.textContent=s[0];nowt.textContent=s[1];
+  setStageImg(s[2],s[3]);
+  nowbar.classList.remove('anim');void nowbar.offsetWidth;nowbar.classList.add('anim');}
+function cycleStage(){sI=(sI+1)%seq.length;paintStage();}
+function stinger(m){var a=accFor(m);document.documentElement.style.setProperty('--acc',a);
+  if(m==="sf"){var s=topStorm()||{name:"STORM"};document.getElementById('stk').textContent="NOW TRACKING";document.getElementById('stt').textContent=s.name;document.getElementById('sts').textContent=(bLabel(s.basin)||"")+" · "+(s.kt?cat(s.kt).n:"");}
+  else{document.getElementById('stk').textContent="RETURNING TO";document.getElementById('stt').textContent="Live Overview";document.getElementById('sts').textContent="Global tropics";}
+  sg.classList.remove('go');void sg.offsetWidth;sg.classList.add('go');setTimeout(function(){applyMode(m);},560);}
+function checkMode(){var want=significant()?"sf":"ov";if(want!==mode)stinger(want);}
+function buildCrawl(){var parts=[];S.active.forEach(function(s){parts.push([s.name,(s.invest?"INVEST · "+bLabel(s.basin):(s.kt+" KT · "+cat(s.kt).n+" · "+bLabel(s.basin)))]);});
+  if(!S.active.length)parts.push(["TROPICS","NO ACTIVE SYSTEMS IN THE TRACKING AREAS"]);
+  ["al","ep","wp"].forEach(function(b){var a=S.ace[b]||{};if(a.ace!=null)parts.push([bLabel(b),"ACE "+a.ace+(a.pct?" · "+a.pct+"% OF NORMAL":"")]);});
+  parts.push(["TRIPLE-A-TROPICS.COM","REAL-TIME TROPICAL CYCLONE ANALYSIS · @WEATHERMANAAA_"]);
+  var seg=parts.map(function(p){return '<b>'+p[0]+'</b> '+p[1]+'<span class="x">◆</span>';}).join("");document.getElementById('crawl').innerHTML='<span>'+seg+'</span><span>'+seg+'</span>';}
+function clock(){var d=new Date(),z=function(n){return String(n).padStart(2,'0')};document.getElementById('clk').textContent=z(d.getUTCHours())+':'+z(d.getUTCMinutes())+' UTC';}
 
-/* split a lon/lat polyline where it wraps across the 0/360 seam */
-function seamSplit(coords) {
-  var out = [], cur = [];
-  for (var i = 0; i < coords.length; i++) {
-    var x = projX(coords[i][0]), y = projY(coords[i][1]);
-    if (cur.length) {
-      var px = cur[cur.length - 1][0];
-      if (Math.abs(x - px) > 720) { out.push(cur); cur = []; }
-    }
-    cur.push([x, y]);
-  }
-  if (cur.length > 1) out.push(cur);
-  return out;
-}
+refresh();applyMode("ov");buildCrawl();clock();
+setInterval(clock,1000);
+setInterval(function(){refresh();buildCrawl();},5*60*1000);
+setInterval(checkMode,MS_MODE);
+setTimeout(function(){buildCrawl();applyMode(mode);checkMode();},FAST?1200:4000);
 
-function polyPath(pts) {
-  return "M" + pts.map(function (p) { return p[0].toFixed(1) + " " + p[1].toFixed(1); }).join("L");
-}
-
-/* --------------------------------------------------------- world map */
-function renderWorldMap() {
-  var svg = $("worldmap");
-  var parts = [];
-  /* graticule */
-  parts.push('<g stroke="#20242e" stroke-width="1" fill="none">');
-  for (var lon = 0; lon <= 360; lon += 20) {
-    parts.push('<line x1="' + (lon * 4) + '" y1="0" x2="' + (lon * 4) + '" y2="500"/>');
-  }
-  for (var lat = -40; lat <= 60; lat += 20) {
-    parts.push('<line x1="0" y1="' + projY(lat) + '" x2="1440" y2="' + projY(lat) + '"/>');
-  }
-  parts.push('</g>');
-  /* equator emphasized */
-  parts.push('<line x1="0" y1="' + projY(0) + '" x2="1440" y2="' + projY(0) + '" stroke="#2a2e36" stroke-width="1.4"/>');
-  /* coastlines (fetched; graceful absence) */
-  if (state.coast) {
-    parts.push('<g fill="none" stroke="#4a5261" stroke-width="1.1">');
-    state.coast.forEach(function (seg) {
-      if (seg.length > 1) parts.push('<path d="' + polyPath(seg) + '"/>');
-    });
-    parts.push('</g>');
-  }
-  var geo = state.geo;
-  if (geo) {
-    /* active storm tracks, colored per-observation category */
-    Object.keys(geo.tracks).forEach(function (id) {
-      seamSplit(geo.tracks[id].coords).forEach(function (seg) {
-        parts.push('<path d="' + polyPath(seg) + '" fill="none" stroke="#6b7382" stroke-width="2" stroke-dasharray="1 0" opacity="0.9"/>');
-      });
-      (geo.obs[id] || []).forEach(function (o) {
-        parts.push('<circle cx="' + projX(o.lon).toFixed(1) + '" cy="' + projY(o.lat).toFixed(1) +
-          '" r="3.4" fill="' + catColor(o.cat) + '" stroke="#10131a" stroke-width="0.8"/>');
-      });
-    });
-    /* active markers + labels */
-    geo.systems.forEach(function (s) {
-      var x = projX(s.lon), y = projY(s.lat);
-      var fill = catColor(s.cat);
-      if (s.invest) {
-        parts.push('<g stroke="' + fill + '" stroke-width="4" stroke-linecap="round">' +
-          '<line x1="' + (x - 8) + '" y1="' + (y - 8) + '" x2="' + (x + 8) + '" y2="' + (y + 8) + '"/>' +
-          '<line x1="' + (x - 8) + '" y1="' + (y + 8) + '" x2="' + (x + 8) + '" y2="' + (y - 8) + '"/></g>');
-      } else {
-        parts.push('<circle cx="' + x + '" cy="' + y + '" r="11" fill="' + fill + '" stroke="#10131a" stroke-width="2"/>' +
-          '<text x="' + x + '" y="' + (y + 0.5) + '" text-anchor="middle" dominant-baseline="central" ' +
-          'font-size="12" font-weight="900" fill="#10131a">' + sshsLabel(s.cat) + '</text>');
-      }
-      parts.push('<text x="' + x + '" y="' + (y - 16) + '" text-anchor="middle" font-size="17" font-weight="800" ' +
-        'fill="#e8ebef" paint-order="stroke" stroke="#10131a" stroke-width="3.5" stroke-linejoin="round">' +
-        esc(s.name) + '</text>');
-    });
-  }
-  svg.innerHTML = parts.join("");
-  var n = geo ? geo.systems.length : 0;
-  $("ov-sub").textContent = n === 0 ? "No active systems" :
-    n + (n === 1 ? " active system" : " active systems") + " under watch";
-}
-
-function renderLegend() {
-  $("legend").innerHTML = CAT_ORDER.map(function (c) {
-    return '<span class="key"><span class="sw" style="background:' + catColor(c) + '"></span>' + c + '</span>';
-  }).join("");
-}
-
-/* --------------------------------------------------------- focus map */
-function renderFocus(sys) {
-  $("f-name").textContent = sys.name;
-  $("f-desig").textContent = sys.desig ? "(" + sys.desig + ")" : "";
-  var chip = $("f-cat");
-  chip.textContent = /^C[1-5]$/.test(sys.cat) ? "CATEGORY " + sys.cat.slice(1) : sys.cat;
-  chip.style.background = catColor(sys.cat);
-  $("f-kt").textContent = sys.kt ? Math.round(sys.kt) : "?";
-  $("f-mslp").textContent = sys.mslp != null ? Math.round(sys.mslp) : "n/a";
-  $("f-pos").textContent = fmtLat(sys.lat) + " " + fmtLon(sys.lon);
-  var tr = state.geo && state.geo.tracks[sys.id];
-  $("f-peak").textContent = tr && tr.peakKt != null ?
-    Math.round(tr.peakKt) + " kt (" + (tr.peakCat || catFromKt(tr.peakKt)) + ")" : "n/a";
-  $("f-fix").textContent = agoLabel(parseIsoUtc(sys.lastFix));
-
-  /* zoomed map: bbox = track extent (or marker) padded */
-  var pts = (tr ? tr.coords : []).map(function (c) { return [projX(c[0]), projY(c[1])]; });
-  pts.push([projX(sys.lon), projY(sys.lat)]);
-  var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
-  /* seam guard: if track spans the 0/360 seam the x-extent explodes;
-     fall back to a marker-centered window */
-  var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-  if (x1 - x0 > 800) { x0 = projX(sys.lon) - 90; x1 = projX(sys.lon) + 90; }
-  var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
-  var padX = Math.max(60, (x1 - x0) * 0.22), padY = Math.max(48, (y1 - y0) * 0.22);
-  x0 -= padX; x1 += padX; y0 -= padY; y1 += padY;
-  /* enforce the pane's aspect so degrees stay square */
-  var box = $("focusmap").parentNode.getBoundingClientRect();
-  var aspect = box.width && box.height ? box.width / box.height : 1.6;
-  var w = x1 - x0, h = y1 - y0;
-  if (w / h < aspect) { var nw = h * aspect; x0 -= (nw - w) / 2; w = nw; }
-  else { var nh = w / aspect; y0 -= (nh - h) / 2; h = nh; }
-
-  var parts = [];
-  var step = w > 320 ? 40 : 20;  /* graticule: 10 or 5 deg */
-  parts.push('<g stroke="#20242e" stroke-width="1" fill="none">');
-  for (var gx = Math.floor(x0 / step) * step; gx <= x0 + w; gx += step) {
-    parts.push('<line x1="' + gx + '" y1="' + y0 + '" x2="' + gx + '" y2="' + (y0 + h) + '"/>');
-  }
-  for (var gy = Math.floor(y0 / step) * step; gy <= y0 + h; gy += step) {
-    parts.push('<line x1="' + x0 + '" y1="' + gy + '" x2="' + (x0 + w) + '" y2="' + gy + '"/>');
-  }
-  parts.push('</g>');
-  if (state.coast) {
-    parts.push('<g fill="none" stroke="#4f5866" stroke-width="1.6">');
-    state.coast.forEach(function (seg) {
-      if (seg.length > 1) parts.push('<path d="' + polyPath(seg) + '"/>');
-    });
-    parts.push('</g>');
-  }
-  if (tr) {
-    seamSplit(tr.coords).forEach(function (seg) {
-      parts.push('<path d="' + polyPath(seg) + '" fill="none" stroke="#6b7382" stroke-width="2.6"/>');
-    });
-    (state.geo.obs[sys.id] || []).forEach(function (o) {
-      parts.push('<circle cx="' + projX(o.lon).toFixed(1) + '" cy="' + projY(o.lat).toFixed(1) +
-        '" r="5" fill="' + catColor(o.cat) + '" stroke="#10131a" stroke-width="1.2"/>');
-    });
-  }
-  var mx = projX(sys.lon), my = projY(sys.lat);
-  parts.push('<circle cx="' + mx + '" cy="' + my + '" r="14" fill="' + catColor(sys.cat) + '" stroke="#e8ebef" stroke-width="2.5"/>');
-  parts.push('<text x="' + mx + '" y="' + (my + 0.5) + '" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="900" fill="#10131a">' +
-    sshsLabel(sys.cat) + '</text>');
-  var svg = $("focusmap");
-  svg.setAttribute("viewBox", x0.toFixed(0) + " " + y0.toFixed(0) + " " + w.toFixed(0) + " " + h.toFixed(0));
-  svg.innerHTML = parts.join("");
-}
-
-/* ------------------------------------------------------ active card */
-function renderActive() {
-  var geo = state.geo;
-  var list = $("active-list");
-  var systems = geo ? geo.systems : [];
-  $("active-count").textContent = systems.length;
-  if (!systems.length) {
-    list.innerHTML = '<div class="empty">No active systems in the Atlantic or Pacific tracking areas right now.</div>';
-    return;
-  }
-  list.innerHTML = systems.slice(0, 5).map(function (s) {
-    var glyph = s.invest ? "×" : sshsLabel(s.cat);
-    var kind = s.invest ? "Invest" : (s.ptc ? "PTC" : (/^C/.test(s.cat) ? "Hurricane / Typhoon" : (s.cat === "TS" ? "Tropical Storm" : "Tropical Depression")));
-    return '<div class="sysrow">' +
-      '<div class="glyph" style="background:' + catColor(s.cat) + '">' + glyph + '</div>' +
-      '<div class="who"><div class="nm">' + esc(s.name) + '</div>' +
-      '<div class="where">' + esc(s.basinTag) + ' · ' + esc(kind) + ' · ' + fmtLat(s.lat) + ' ' + fmtLon(s.lon) + '</div></div>' +
-      '<div class="kt"><div class="v">' + Math.round(s.kt) + '</div><div class="u">kt</div></div>' +
-      '</div>';
-  }).join("") + (systems.length > 5 ?
-    '<div class="empty" style="padding:6px 22px 10px">and ' + (systems.length - 5) + ' more</div>' : "");
-}
-
-/* --------------------------------------------------------- carousel */
-function boardFace(basin) {
-  var a = state.ace[basin];
-  var head = '<div class="card-head">' + BASIN_LABEL[basin] + ' · <span style="margin-left:8px;color:var(--fg)">' +
-    (a ? esc(a.year) : "") + ' STORMS</span></div>';
-  if (!a) {
-    return head + '<div class="board"><div class="empty">Feed unavailable · retrying</div></div>';
-  }
-  var rows;
-  if (!a.storms.length) {
-    rows = '<div class="empty">No storms yet this season.</div>';
-  } else {
-    var shown = a.storms.slice(-9);
-    rows = shown.map(function (s) {
-      var cat = catFromKt(s.peakKt);
-      return '<div class="brow"><div class="bn">' + esc(s.name) + '</div>' +
-        '<span class="pk"><span class="pk-chip" style="background:' + catColor(cat) + '">' +
-        cat + (s.peakKt != null ? " · " + Math.round(s.peakKt) : "") + '</span></span>' +
-        '<div class="ace">' + (s.ace != null ? s.ace.toFixed(1) : "–") + '</div></div>';
-    }).join("");
-    if (a.storms.length > 9) {
-      rows = '<div class="brow" style="color:var(--muted);font-size:14px">earlier: ' +
-        a.storms.slice(0, -9).map(function (s) { return esc(s.name); }).join(", ") + '</div>' + rows;
-    }
-  }
-  var foot = '<div class="foot">Season ACE <b>' + (a.ytd != null ? a.ytd.toFixed(1) : "n/a") + '</b>' +
-    (a.climoToDate != null ? ' · climo to date ' + a.climoToDate.toFixed(1) : "") +
-    (a.rank != null && a.seasons ? ' · YTD rank <b>' + a.rank + '</b> of ' + a.seasons : "") + '</div>';
-  return head + '<div class="board">' + rows + '</div>' + foot;
-}
-
-function aceFace() {
-  var rows = BASINS.map(function (b) {
-    var a = state.ace[b];
-    if (!a) {
-      return '<div class="row"><div class="b-name">' + BASIN_LABEL[b] + '</div>' +
-        '<div class="b-ctx">feed unavailable</div></div>';
-    }
-    var vs = "";
-    if (a.ytd != null && a.climoToDate != null && a.climoToDate > 0) {
-      vs = Math.round(a.ytd / a.climoToDate * 100) + "% of climo to date";
-    }
-    return '<div class="row"><div class="b-name">' + BASIN_LABEL[b] + '</div>' +
-      '<div class="b-val">' + (a.ytd != null ? a.ytd.toFixed(1) : "n/a") + '</div>' +
-      '<div class="b-ctx">' + vs + (a.rank != null ? '<br>YTD rank ' + a.rank + ' of ' + a.seasons : "") + '</div></div>';
-  }).join("");
-  return '<div class="card-head">SEASON ACE · ACCUMULATED CYCLONE ENERGY</div>' +
-    '<div class="board"><div class="acesum">' + rows + '</div></div>' +
-    '<div class="foot">ACE in 10⁴ kt² · climatology 1991–2020 · updated every 6 h</div>';
-}
-
-var carousel = { idx: 0, timer: null };
-function carouselFaces() {
-  return [boardFace("al"), boardFace("ep"), boardFace("wp"), aceFace()];
-}
-function showFace(i, wipe) {
-  var host = $("carousel");
-  var faces = carouselFaces();
-  carousel.idx = i % faces.length;
-  var el = document.createElement("div");
-  el.className = "face" + (wipe ? " in" : "");
-  el.innerHTML = faces[carousel.idx];
-  host.appendChild(el);
-  while (host.children.length > 2) host.removeChild(host.firstChild);
-  if (!wipe) while (host.children.length > 1) host.removeChild(host.firstChild);
-}
-function startCarousel() {
-  showFace(0, false);
-  if (carousel.timer) clearInterval(carousel.timer);
-  carousel.timer = setInterval(function () {
-    showFace(carousel.idx + 1, true);
-  }, CAROUSEL_MS);
-}
-
-/* -------------------------------------------------------- ACE tiles */
-function renderAceTiles() {
-  $("ace-tiles").innerHTML = BASINS.map(function (b) {
-    var a = state.ace[b];
-    if (!a) {
-      return '<div class="tile"><div class="t-name">' + BASIN_LABEL[b] + '</div>' +
-        '<div class="t-ctx">feed unavailable · retrying</div></div>';
-    }
-    var pct = (a.ytd != null && a.climoToDate != null && a.climoToDate > 0) ?
-      Math.round(a.ytd / a.climoToDate * 100) : null;
-    return '<div class="tile"><div class="t-name">' + BASIN_LABEL[b] + ' · ACE</div>' +
-      '<div class="t-ace">' + (a.ytd != null ? a.ytd.toFixed(1) : "n/a") +
-      (pct != null ? '<small>' + pct + '% of climo</small>' : "") + '</div>' +
-      '<div class="t-ctx">climo to date <b>' + (a.climoToDate != null ? a.climoToDate.toFixed(1) : "n/a") + '</b>' +
-      (a.rank != null && a.seasons ? ' · YTD rank <b>' + a.rank + '</b> of ' + a.seasons : "") +
-      ' · storms <b>' + a.storms.length + '</b></div></div>';
-  }).join("");
-}
-
-/* ------------------------------------------------------------ ticker */
-function renderTicker() {
-  var items = [];
-  var geo = state.geo;
-  if (geo && geo.systems.length) {
-    geo.systems.forEach(function (s) {
-      var what = s.invest ? "Invest" : (/^C[1-5]$/.test(s.cat) ? "Category " + s.cat.slice(1) : (s.cat === "TS" ? "Tropical Storm" : "Tropical Depression"));
-      items.push("<b>" + esc(s.name) + "</b> (" + esc(s.basinTag) + ") · " + what + " · " +
-        Math.round(s.kt) + " kt" + (s.mslp != null ? " · " + Math.round(s.mslp) + " mb" : "") +
-        " · " + fmtLat(s.lat) + " " + fmtLon(s.lon));
-    });
-  } else {
-    items.push("No active tropical systems in the Atlantic or Pacific tracking areas");
-  }
-  BASINS.forEach(function (b) {
-    var a = state.ace[b];
-    if (!a || a.ytd == null) return;
-    items.push(BASIN_LABEL[b] + " season ACE <b>" + a.ytd.toFixed(1) + "</b>" +
-      (a.climoToDate != null ? " · climo to date " + a.climoToDate.toFixed(1) : "") +
-      (a.rank != null ? " · YTD rank " + a.rank + " of " + a.seasons : ""));
-  });
-  items.push("triple-a-tropics.com · real-time tropical cyclone analysis and tracking · @WeathermanAAA_");
-
-  var html = items.map(function (t) {
-    return '<span class="t-item">' + t + '</span><span class="t-sep">◆</span>';
-  }).join("");
-  var track = $("ticker-track");
-  track.innerHTML = html + html;   /* doubled for a seamless loop */
-  track.style.animation = "none";
-  void track.offsetWidth;          /* restart the animation cleanly */
-  var half = track.scrollWidth / 2;
-  var secs = Math.max(20, half / 95);
-  var style = $("ticker-anim") || (function () {
-    var s = document.createElement("style"); s.id = "ticker-anim";
-    document.head.appendChild(s); return s;
-  })();
-  style.textContent = "@keyframes tickmove { from { transform: translateX(0); } to { transform: translateX(-" + half.toFixed(0) + "px); } }";
-  track.style.animation = "tickmove " + secs.toFixed(1) + "s linear infinite";
-}
-
-/* ----------------------------------------------------- clock + stamp */
-function tickClock() {
-  var d = new Date();
-  $("clock-hms").textContent = pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()) + ":" + pad2(d.getUTCSeconds());
-  var days = ["SUNDAY","MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY"];
-  var mons = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-  $("clock-date").textContent = days[d.getUTCDay()] + " · " + d.getUTCDate() + " " + mons[d.getUTCMonth()] + " " + d.getUTCFullYear();
-  /* honesty chip: newest feed generated_utc too old, or never hydrated */
-  var newest = parseIsoUtc(state.lastGoodUtc);
-  var ageMin = newest ? (Date.now() - newest.getTime()) / 60000 : Infinity;
-  $("delayed").classList.toggle("on", ageMin > DELAYED_MIN);
-}
-function renderStamp() {
-  var d = parseIsoUtc(state.lastGoodUtc);
-  $("stamp-asof").textContent = d ?
-    pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()) + " UTC" : "unavailable";
-}
-
-/* ---------------------------------------------------- mode scheduler */
-var mode = { current: "overview", timer: null, focusIdx: 0 };
-function catQueue() {
-  return state.geo ? state.geo.systems.filter(isCat1Plus) : [];
-}
-function setPane(which) {
-  $("pane-overview").hidden = which !== "overview";
-  $("pane-focus").hidden = which !== "focus";
-  mode.current = which;
-}
-function playStinger(sys, then) {
-  var st = $("stinger");
-  $("stinger-name").textContent = sys.name;
-  $("stinger-sub").textContent =
-    (/^C[1-5]$/.test(sys.cat) ? "CATEGORY " + sys.cat.slice(1) : sys.cat) + " · " +
-    Math.round(sys.kt) + " KT · " + sys.basinTag;
-  st.classList.remove("play");
-  void st.offsetWidth;
-  st.classList.add("play");
-  setTimeout(function () { st.classList.remove("play"); }, STINGER_MS + 100);
-  setTimeout(then, Math.round(STINGER_MS * 0.55));  /* swap under the band */
-}
-function scheduleNext() {
-  if (mode.timer) clearTimeout(mode.timer);
-  var q = catQueue();
-  if (mode.current === "overview") {
-    if (!q.length) {                     /* nothing to focus: stay put */
-      mode.timer = setTimeout(scheduleNext, FAST ? 2000 : 30 * 1000);
-      return;
-    }
-    mode.timer = setTimeout(function () {
-      var sys = q[mode.focusIdx % q.length];
-      mode.focusIdx += 1;
-      playStinger(sys, function () {
-        renderFocus(sys);
-        setPane("focus");
-      });
-      scheduleNextAfter(FOCUS_MS + STINGER_MS);
-    }, OVERVIEW_MS);
-  } else {
-    mode.timer = setTimeout(function () {
-      setPane("overview");
-      scheduleNext();
-    }, 0);
-  }
-}
-function scheduleNextAfter(ms) {
-  if (mode.timer) clearTimeout(mode.timer);
-  mode.timer = setTimeout(function () {
-    setPane("overview");
-    scheduleNext();
-  }, ms);
-}
-
-/* --------------------------------------------------------- hydration */
-function applyGeo(gj) {
-  var parsed = parseGeo(gj);
-  if (!parsed) return false;
-  state.geo = parsed;
-  if (parsed.asOf) state.lastGoodUtc = parsed.asOf;
-  return true;
-}
-function applyAce(basin, j) {
-  var parsed = parseAce(j);
-  if (!parsed) return false;
-  state.ace[basin] = parsed;
-  return true;
-}
-function renderAll() {
-  renderWorldMap();
-  renderActive();
-  renderAceTiles();
-  renderTicker();
-  renderStamp();
-  /* live refresh of an on-screen focus pane */
-  if (mode.current === "focus" && state.geo) {
-    var name = $("f-name").textContent;
-    var sys = state.geo.systems.filter(function (s) { return s.name === name; })[0];
-    if (sys) renderFocus(sys);
-  }
-}
-function fetchJson(url) {
-  return fetch(url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Math.floor(Date.now() / 60000), { cache: "no-store" })
-    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
-}
-function hydrate() {
-  var jobs = [
-    fetchJson(GEO_URL).then(applyGeo),
-    fetchJson(ACE_URL("al")).then(function (j) { return applyAce("al", j); }),
-    fetchJson(ACE_URL("ep")).then(function (j) { return applyAce("ep", j); }),
-    fetchJson(ACE_URL("wp")).then(function (j) { return applyAce("wp", j); })
-  ];
-  Promise.allSettled(jobs).then(function (res) {
-    var any = res.some(function (r) { return r.status === "fulfilled" && r.value; });
-    if (any) renderAll();          /* failures keep the previous state */
-  });
-}
-
-/* --------------------------------------------------------- fit scale */
-function fitScale() {
-  var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-  $("canvas").style.transform = "scale(" + s + ")";
-}
-
-/* --------------------------------------------------------------- go */
-renderLegend();
-tickClock();
-setInterval(tickClock, 250);
-fitScale();
-window.addEventListener("resize", fitScale);
-
-/* 1) synchronous first paint from the embedded fallback (never blank) */
-try {
-  var fb = JSON.parse($("fallback-data").textContent);
-  if (fb) {
-    if (fb.geo) applyGeo(fb.geo);
-    BASINS.forEach(function (b) { if (fb.ace && fb.ace[b]) applyAce(b, fb.ace[b]); });
-  }
-} catch (e) { /* fallback malformed: live hydration still covers us */ }
-renderAll();
-startCarousel();
-scheduleNext();
-
-/* 2) coastlines (progressive; map already renders without them) */
-fetchJson(COAST_URL).then(function (gj) {
-  var segs = [];
-  (gj.features || []).forEach(function (f) {
-    var g = f.geometry || {};
-    var lines = g.type === "LineString" ? [g.coordinates] :
-      g.type === "MultiLineString" ? g.coordinates : [];
-    lines.forEach(function (ln) {
-      var cur = [];
-      for (var i = 0; i < ln.length; i++) {
-        var x = projX(ln[i][0]), y = projY(ln[i][1]);
-        if (cur.length && Math.abs(x - cur[cur.length - 1][0]) > 720) {
-          if (cur.length > 1) segs.push(cur);
-          cur = [];
-        }
-        cur.push([x, y]);
-      }
-      if (cur.length > 1) segs.push(cur);
-    });
-  });
-  state.coast = segs;
-  renderAll();
-}).catch(function () { /* honest degrade: graticule-only basemap */ });
-
-/* 3) live hydration now + every 5 min */
-hydrate();
-setInterval(hydrate, HYDRATE_MS);
-
-/* read-only diagnostics for the smoke harness (and future debugging) */
-window.__stream = { state: state, mode: mode };
-
+/* read-only diagnostics for the smoke harness */
+window.__stream={S:S,assets:A,mode:function(){return mode;},seq:function(){return seq;}};
 })();
 </script>
 </body>

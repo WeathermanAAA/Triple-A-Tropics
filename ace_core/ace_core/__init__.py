@@ -1792,6 +1792,101 @@ def _clean_mslp(val) -> int | None:
     return int(round(f))
 
 
+def _last_point(storm: dict):
+    pts = storm.get("points") or []
+    return pts[-1] if pts else None
+
+
+def _first_point(storm: dict):
+    pts = storm.get("points") or []
+    return pts[0] if pts else None
+
+
+def _nm_between(lat1, lon1, lat2, lon2) -> float:
+    """Great-circle nautical miles, antimeridian-safe."""
+    import math
+    dlon = abs(lon1 - lon2)
+    if dlon > 180.0:                       # 179.7E vs -179.0 is 1.3 deg, not 358.7
+        dlon = 360.0 - dlon
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin(math.radians(lat2 - lat1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(dlon) / 2) ** 2)
+    return 3440.065 * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
+# A designation that crosses a basin boundary is invisible to the per-basin
+# retirement in merge_and_extract_storms: that runs inside ONE basin's frame,
+# collecting superseding invests from designated storms in the SAME frame. When
+# 92C (carried by the EP page as NHC_CP922026) crossed the dateline and became
+# 12W/DOLPHIN (the WP page, JTWC_WP122026), the two never shared a frame, so no
+# amount of correct SPAWNINVEST tagging could retire the invest. It survived
+# only until the 24 h staleness window aged it out -- roughly half a day of the
+# home map drawing one system as two: a red X beside a named storm on one track.
+#
+# The global map is the ONLY surface that sees both, so the cross-basin rule
+# belongs here. The surviving sources give no explicit link (the WP b-deck
+# carries no SPAWNINVEST, and knackwx's transitioned_from named 93C, an invest
+# that exists in neither the CP decks nor tcvitals), so the link is established
+# the way a forecaster reads it: CONTINUITY. An invest whose last fix sits
+# within a short window and a short distance of a designated storm's FIRST fix
+# is the same system, and the invest retires.
+#
+# Deliberately conservative -- it only ever drops an INVEST in favour of an
+# ACTIVE DESIGNATED storm, never designated-vs-designated, and the thresholds
+# are tight enough that two genuinely distinct systems are not merged.
+HANDOFF_MAX_GAP_H = 12.0     # 2 synoptic cycles: designation follows the last invest fix
+HANDOFF_MAX_NM = 300.0       # a designation does not relocate the centre by more
+
+
+def cross_basin_superseded_sids(storms: list[dict]) -> set:
+    """SIDs of invests that a designated storm in ANOTHER basin took over.
+
+    Returns a set so callers can filter without caring how the match was made.
+    """
+    import datetime as _dt
+
+    def _t(p):
+        v = (p or {}).get("time")
+        if isinstance(v, _dt.datetime):
+            return v
+        try:
+            return _dt.datetime.fromisoformat(str(v).replace("Z", ""))
+        except (TypeError, ValueError):
+            return None
+
+    designated = []
+    for s in storms:
+        if not s.get("is_active") or s.get("is_invest"):
+            continue
+        fp = _first_point(s)
+        ft = _t(fp)
+        if fp and ft is not None:
+            designated.append((s, fp, ft))
+    if not designated:
+        return set()
+
+    dropped = set()
+    for s in storms:
+        if not s.get("is_invest"):
+            continue
+        lp = _last_point(s)
+        lt = _t(lp)
+        if lp is None or lt is None:
+            continue
+        for d, fp, ft in designated:
+            if (d.get("basin") or "") == (s.get("basin") or ""):
+                continue                      # same basin: already handled upstream
+            gap_h = (ft - lt).total_seconds() / 3600.0
+            if not (-1.0 <= gap_h <= HANDOFF_MAX_GAP_H):
+                continue                      # designation must FOLLOW the invest
+            if _nm_between(float(lp["lat"]), float(lp["lon"]),
+                           float(fp["lat"]), float(fp["lon"])) > HANDOFF_MAX_NM:
+                continue
+            dropped.add(s.get("sid"))
+            break
+    return dropped
+
+
 def build_global_geojson(storms: list[dict]) -> dict:
     """Assemble the FeatureCollection consumed by MapLibre on
     /global_tracks.html.
@@ -1810,8 +1905,13 @@ def build_global_geojson(storms: list[dict]) -> dict:
         spin animations and label layouts work without WebGL plumbing.
     """
     features: list[dict] = []
+    # One system, one marker: retire an invest that a designated storm in
+    # another basin has taken over (see cross_basin_superseded_sids).
+    superseded = cross_basin_superseded_sids(storms)
     for storm in storms:
         sid = storm.get("sid") or ""
+        if sid in superseded and bool(storm.get("is_invest")):
+            continue
         name = storm.get("name") or "UNNAMED"
         basin = storm.get("basin") or ""
         peak_kt = storm.get("peak_wind_kt")
