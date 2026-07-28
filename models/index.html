@@ -112,6 +112,17 @@
     background: var(--accent-2); color: #06222e; border-color: var(--accent-2);
   }
 
+  /* AI badge on a model chip. Sober and small - it is a provenance marker, not
+     a decoration: it says the field came from a learned emulator, which is also
+     why that model's card carries no intensity number. Outline rather than fill
+     so it reads on both the resting and the active chip. */
+  .hafs-badge-ai {
+    display: inline-block; margin-left: 6px; padding: 0 4px;
+    border: 1px solid currentColor; border-radius: 3px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+    line-height: 14px; vertical-align: 1px; opacity: 0.85;
+  }
+
   /* Image stage. The frame FILLS the gutter's image column (width:100%) so the
      control panel sits flush beside the map at every viewport. The old
      max-height:78vh cap shrank the (square ~1:1) HAFS frame on short laptop
@@ -590,8 +601,9 @@
 </div>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
-<script src="/models/hafs.js?v=2e6712eaf5"></script>
+<script src="/models/telemetry.js?v=edbe6ac804"></script>
+<script src="/models/hafs.js?v=fe93843fca"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>
-<script src="/models/enscenters.js?v=e2f56173dc"></script>
+<script src="/models/enscenters.js?v=bffaca1377"></script>
 </body>
 </html>

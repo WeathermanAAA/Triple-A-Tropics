@@ -33,6 +33,34 @@ updated: 2026-07-28T15:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: product-view-telemetry
+    title: Per-product view telemetry counters
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      The hero-set scheduler needs a popularity term: at fifty models times
+      twenty-one products the render budget cannot cover the cross product,
+      and "which products do people actually open" is the only honest input to
+      deciding what to pre-render. A view is a DISTINCT cycle/storm/model/
+      domain/product tuple, not a call — the selection path fires from nine
+      places including the 45 s manifest poll's selection regrow, so counting
+      calls would inflate a product's score by whatever else the user changed.
+      Dwell seconds accrue alongside, capped, and pause while the tab is
+      hidden. No identifiers of any kind, and Do Not Track plus Global Privacy
+      Control disable collection outright rather than merely withholding
+      transmission. Counters aggregate in localStorage; there is no collector
+      deployed, so nothing is transmitted unless an endpoint is configured.
+  - id: telemetry-collector
+    title: Telemetry collector endpoint
+    area: models
+    status: needs-andrew
+    note: >-
+      The view counters are instrumented and aggregate locally, but turning
+      them into a site-wide popularity signal needs a Worker with a KV or
+      Analytics Engine binding on Andrew's Cloudflare account. None of the
+      three existing Workers has one. Until then the numbers are per-browser
+      and inspectable only via TatTelemetry.snapshot().
   - id: model-record-phase0
     title: Model record — convection treatment, AI paradigm, structural product gating
     area: models

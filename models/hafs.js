@@ -52,6 +52,12 @@
 (function () {
   'use strict';
 
+  // The browser global, or null under the node test harness (which supplies a
+  // document but no `window`). Resolved ONCE here so optional integrations -
+  // telemetry below - can be probed without a bare `window` reference, which
+  // is a hard ReferenceError, not undefined, when the global is absent.
+  var GLOBAL = (typeof window !== 'undefined') ? window : null;
+
   var BASE = 'https://cdn.triple-a-tropics.com';
   var MANIFEST_URL = BASE + '/models/hafs/manifest.json';
   var SPEED_OPTIONS = [0.5, 1, 2, 4];   // playback frames-per-step multiplier
@@ -506,12 +512,34 @@
   };
 
   // Products with frames for the current storm+model+domain, in manifest order.
+  // The model def for a slug, or null. Model defs now carry the ModelSpec meta
+  // (convection treatment, AI paradigm, badge + intensity-stat flags); an older
+  // manifest carries only {slug,label} and every consumer below degrades to the
+  // pre-existing behavior.
+  HafsViewer.prototype._modelDef = function (slug) {
+    var defs = (this.manifest && this.manifest.models) || [];
+    for (var i = 0; i < defs.length; i++) {
+      if (defs[i].slug === slug) return defs[i];
+    }
+    return null;
+  };
+
   HafsViewer.prototype._productsFor = function (storm, model, domain) {
     var out = [];
     var defs = this._productDefs();
     var fr = this._domFrames(storm, model, domain);
+    // STRUCTURAL GATE. A product whose signal IS resolved deep convection
+    // (reflectivity, simulated microwave) is meaningless off a model that
+    // parameterises convection, so it must be unofferable rather than merely
+    // unhelpful. The builder already refuses to render such a pair, so the
+    // frames check below would usually hide it anyway; this makes the rule
+    // explicit at the UI so a stale or hand-edited manifest cannot surface a
+    // chip the physics does not support.
+    var md = this._modelDef(model);
+    var paramConv = !!(md && md.convection_explicit === false);
     for (var i = 0; i < defs.length; i++) {
       var slug = defs[i].slug;
+      if (paramConv && defs[i].requires_explicit_convection) continue;
       if (fr[slug] && fr[slug].length) out.push(defs[i]);
     }
     return out;
@@ -578,6 +606,22 @@
 
   HafsViewer.prototype._selectProduct = function (slug, keepSelection) {
     this.product = slug;
+    // Per-product VIEW counter (the hero-set scheduler's popularity term).
+    // Emitted here, the single place `this.product` is assigned, so no call
+    // path can view a product without being counted. This method fires from
+    // nine paths - including the 45 s manifest poll's selection regrow - so
+    // TatTelemetry dedupes on the full (cycle, storm, model, domain, product)
+    // tuple and ignores a repeat; passing the whole context is what makes that
+    // dedupe correct. Optional module: absent or opted out, this is a no-op.
+    if (GLOBAL && GLOBAL.TatTelemetry) {
+      GLOBAL.TatTelemetry.view({
+        product: slug, model: this.model, domain: this.domain,
+        // storm/cycle are OBJECTS on the viewer; the dedupe tuple needs their
+        // ids, or every tuple would stringify to "[object Object]" and collapse.
+        storm: this.storm && this.storm.id,
+        cycle: this.cycle && this.cycle.cycle
+      });
+    }
     this._highlight(this.dom.products, slug);
     var fr = this._domFrames(this.storm, this.model, this.domain)[slug] || [];
     // Keep the same forecast HOUR across selection changes when possible (Wind
@@ -693,6 +737,21 @@
         b.className = 'hafs-seg' + (def.slug === active ? ' active' : '');
         b.textContent = def[labelKey] || def.label;
         b.title = def.label || def[labelKey] || '';   // full name on hover (cells may ellipsize)
+        // AI BADGE. Only model defs carry `is_ai`, so this is inert for the
+        // product and domain toggles that share this builder. A user comparing
+        // fields across models has to be able to see at a glance which ones are
+        // learned emulators rather than integrations of the equations - and why
+        // those cards show no intensity number.
+        if (def.is_ai) {
+          var badge = document.createElement('span');
+          badge.className = 'hafs-badge-ai';
+          badge.textContent = 'AI';
+          b.appendChild(badge);
+          b.title = (b.title ? b.title + ' — ' : '') +
+            'AI model (' + (def.ai_paradigm || 'learned emulator') +
+            '). Intensity statistics are withheld: current learned emulators ' +
+            'systematically under-deepen tropical cyclones.';
+        }
         b.setAttribute('data-slug', def.slug);
         b.addEventListener('click', function () { onPick(def.slug); });
         container.appendChild(b);
