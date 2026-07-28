@@ -601,6 +601,15 @@ def _compose_manifest_v2(entries: list, models: Sequence[str],
             "name": "equirectangular",
             "lon_lat_linear": True,
             "y_origin": "top",     # axes_px is in image coordinates
+            # Longitudes in storms[].geometry[..].bbox are in the frame's
+            # CONTINUOUS axis and MAY EXCEED +-180 (a West Pacific nest across
+            # the antimeridian is drawn on e.g. 168..188). That is the frame the
+            # axes was drawn in, so it is the only one where pixel <-> lon is
+            # the exact affine; normalising it would make it non-monotonic.
+            # Do the affine in this frame, normalise only for DISPLAY. Frames
+            # where it bites carry "crosses_antimeridian": true.
+            "lon_frame": "continuous",
+            "lon_display_rule": "while lon > 180: lon -= 360",
         },
         "image": {"width": hp.IMAGE_W_PX, "height": hp.IMAGE_H_PX,
                   "dpi": hp.DPI},

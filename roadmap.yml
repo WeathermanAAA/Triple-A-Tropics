@@ -29,10 +29,44 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T15:05:00Z
+updated: 2026-07-28T15:35:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: ships-diagnostics-panel
+    title: SHIPS diagnostic panel from the NHC stext feed
+    area: models
+    status: next
+    note: >-
+      Specced against the live feed (283 files harvested). Filename is
+      YYMMDDHH + basin + number + a TWO-digit storm year, not four. AL/EP/CP
+      only — there are no JTWC-basin SHIPS files, matching the a-deck picture.
+      Every columnar block is fixed-width and must be sliced rather than
+      split: two contribution labels are exactly 22 chars and butt against the
+      first data cell. TOTAL CHANGE equals the sum of its 19 components
+      exactly across 283 files times 16 columns, so the decomposition renders
+      as a waterfall safely. Sentinels are row-specific. The 4-digit year in
+      the banner is the COEFFICIENT year, and the RI predictor table's labels,
+      ordering and column offsets all change between coefficient years and
+      between basins — key it by label string, never by row position. Two
+      corrections to the original premise: RHLO and RHHI are NOT in the stext
+      bulletin, only 700-500 mb RH is, so the low and high RH rows need the
+      1:1 lsdiag sibling; and there is no archive for either feed anywhere on
+      the NHC FTP, so a historical panel requires continuous harvesting from
+      now. Test decks with cyclone numbers 80-89 carry absurd values and must
+      be filtered.
+  - id: guidance-page-unification
+    title: Guidance on the same storm-keyed page as the HAFS fields
+    area: models
+    status: next
+    note: >-
+      The point of the whole guidance layer: the class of site splits into
+      field viewers and guidance viewers and nobody does both. Two things need
+      deciding first. /models/ has no deep-link scheme at all — no hash, no
+      query params, no history push — so a storm-keyed URL has to be added.
+      And the existing per-storm page is /cyclolab/{sid}/, whose shell
+      generator lives on the render box rather than in this repo, so the
+      unification either extends /models/ or reaches across repos.
   - id: atcf-guidance-ingest
     title: ATCF a-deck/b-deck ingest + QC, with the filtered-deck accounting
     area: models

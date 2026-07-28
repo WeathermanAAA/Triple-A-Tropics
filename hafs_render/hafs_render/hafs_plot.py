@@ -1595,9 +1595,13 @@ def render_frame(frame: HafsFrame, out_path: str,
         VMAX (from the .atm winds) and the right stat becomes the coldest BT.
 
     Domain framing differs by ``frame.product`` (the HAFS domain, NOT the field
-    above): the STORM NEST keeps its per-side ``BBOX_TRIM_DEG`` trim, while the
-    PARENT is cropped to a fixed 40 x 40 deg window centered on the storm (see
-    ``PARENT_HALF_DEG``) with a calmer (wider-interval, softer) isobar field. The
+    above): the STORM NEST is cropped to a fixed ``NEST_VIEW_DEG`` (5.5 deg)
+    square window centered on the storm, while the PARENT is cropped to a fixed
+    40 x 40 deg window centered on the storm (see ``PARENT_HALF_DEG``) with a
+    calmer (wider-interval, softer) isobar field. (This line previously
+    described a per-side ``BBOX_TRIM_DEG`` trim on the nest; that constant was
+    removed when the nest moved to the storm-centered window and no longer
+    exists anywhere in this module.) The
     parent center is ``cen_lat`` / ``cen_lon`` (the namesake's track fix at THIS
     forecast hour, from the run's own trak.atcfunix); ``anchor_lat`` /
     ``anchor_lon`` is the LAST KNOWN fix used for framing only when the tracker
@@ -2166,8 +2170,23 @@ def render_frame(frame: HafsFrame, out_path: str,
                     round(pos.width * px_w, 2),
                     round(pos.height * px_h, 2)],
         # Geographic extent of that rect: [W, S, E, N] in degrees.
+        #
+        # LONGITUDES ARE IN THE FRAME'S CONTINUOUS AXIS AND MAY EXCEED +-180.
+        # A nest straddling the antimeridian is non-monotonic in signed
+        # -180..180 (it jumps +180 -> -180), which would blow the extent out to
+        # ~360 deg, so _choose_lon_frame stitches it into a continuous frame
+        # running past +180 (e.g. 168..188). That frame is what the axes was
+        # actually drawn in, so it is the ONLY frame in which pixel <-> lon is
+        # the exact affine this block exists to provide - normalising it here
+        # would make it non-monotonic and silently wrong.
+        #
+        # A consumer must therefore do the affine in THIS frame and normalise
+        # only at display time (`while v > 180: v -= 360`, matching _lon_label).
+        # `lon_frame` in the manifest's projection block declares this, and
+        # `crosses_antimeridian` flags the frames where it actually bites.
         "bbox": [round(float(lon_min), 4), round(float(lat_min), 4),
                  round(float(lon_max), 4), round(float(lat_max), 4)],
+        "crosses_antimeridian": bool(lon_max > 180.0 or lon_min < -180.0),
     }
 
     plt.close(fig)

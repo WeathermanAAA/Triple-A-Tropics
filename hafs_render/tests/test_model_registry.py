@@ -286,6 +286,86 @@ class TestEnsembleMeanPolicy(unittest.TestCase):
                              s.draw_mslp_markers, s.key)
 
 
+class TestGeometryContract(unittest.TestCase):
+    """The manifest geometry block's declared contract.
+
+    These are not render tests - they pin the PROMISES the manifest makes to a
+    client doing pixel -> lon/lat, because a client that trusts a wrong promise
+    fails silently and in the wrong hemisphere.
+    """
+
+    def test_canvas_constants_match_the_published_png(self):
+        """The live published frame measures 1963x1813. If the layout constants
+        and the real canvas ever disagree, every client-side pixel mapping is
+        offset by the difference."""
+        from hafs_render import hafs_plot as hp
+        self.assertEqual((hp.IMAGE_W_PX, hp.IMAGE_H_PX), (1963, 1813))
+        self.assertEqual(hp.IMAGE_W_PX, int(hp.FIG_W_IN * hp.DPI))
+        self.assertEqual(hp.IMAGE_H_PX, int(hp.FIG_H_IN * hp.DPI))
+
+    def test_projection_declares_the_continuous_longitude_frame(self):
+        """A West Pacific nest across the antimeridian is drawn on a CONTINUOUS
+        axis running past +180 (e.g. 168..188), because signed -180..180 is
+        non-monotonic there and would blow the extent out to ~360 deg. That is
+        the frame the affine is valid in, so the manifest must SAY so - a
+        consumer that assumes [-180, 180] puts a WPac storm in the Atlantic,
+        which is precisely the dateline class of bug this repo has already been
+        bitten by twice."""
+        from hafs_render import generate_hafs_plots as g
+        m = g._manifest_skeleton(["hafsa"], ["storm.atm"], g.DEFAULT_PRODUCTS,
+                                 3, None, [])
+        proj = m["projection"]
+        self.assertEqual(proj["lon_frame"], "continuous")
+        self.assertTrue(proj["lon_lat_linear"])
+        self.assertEqual(proj["y_origin"], "top")
+        self.assertIn("180", proj["lon_display_rule"])
+
+    def test_manifest_carries_the_value_planes(self):
+        from hafs_render import generate_hafs_plots as g
+        m = g._manifest_skeleton(["hafsa"], ["storm.atm"], g.DEFAULT_PRODUCTS,
+                                 3, None, [])
+        q = m["quantities"]
+        self.assertIn("wind_speed_kt", q)
+        self.assertEqual(q["wind_speed_kt"]["vmin"], 0.0)
+        self.assertEqual(q["wind_speed_kt"]["vmax"], 165.0)
+        self.assertEqual(q["wind_speed_kt"]["units"], "kt")
+
+    def test_every_product_resolves_to_a_registered_quantity(self):
+        """A product detached from the shared scale is exactly the drift the
+        quantity registry exists to prevent."""
+        from tat_palettes import quantities as tq
+        for s in reg.ordered_specs():
+            self.assertTrue(s.quantity, s.key)
+            self.assertTrue(tq.has_quantity(s.quantity), f"{s.key}:{s.quantity}")
+
+    def test_products_sharing_a_quantity_share_one_scale(self):
+        """The whole point at 50 models: the four wind fills must be one scale,
+        or a side-by-side comparison measures the palette."""
+        from tat_palettes import quantities as tq
+        wind = [s.key for s in reg.ordered_specs()
+                if s.quantity == "wind_speed_kt"]
+        self.assertEqual(sorted(wind), sorted(
+            ["mslp_wind", "hgt_wind_850", "hgt_wind_700", "hgt_wind_500"]))
+        q = tq.get_quantity("wind_speed_kt")
+        self.assertEqual((q.vmin, q.vmax), (0.0, 165.0))
+
+    def test_vorticity_levels_are_separate_quantities(self):
+        """Same physical quantity, genuinely different magnitudes by level - a
+        shared scale would flatten one of them."""
+        from tat_palettes import quantities as tq
+        lo = tq.get_quantity(reg.get_spec("vort_wind_850").quantity)
+        hi = tq.get_quantity(reg.get_spec("vort_wind_500").quantity)
+        self.assertNotEqual(lo.key, hi.key)
+        self.assertEqual(lo.vmax, 300.0)
+        self.assertEqual(hi.vmax, 150.0)
+
+    def test_no_quantity_is_left_without_a_colormap(self):
+        """Externally-owned entries are bound by hafs_plot at import; an unbound
+        one would surface as an unrelated matplotlib error deep in a render."""
+        from tat_palettes import quantities as tq
+        self.assertEqual(tq.unbound_quantities(), [])
+
+
 class TestImportTimeValidation(unittest.TestCase):
     """``_validate_specs`` runs at import; these prove it would actually catch
     the mistakes it claims to, rather than being decorative."""
