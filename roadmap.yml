@@ -29,10 +29,36 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T21:25:00Z
+updated: 2026-07-28T23:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: ships-raw-archive
+    title: SHIPS raw archive — stext + lsdiag siblings copied to R2 before they age out
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      There is no archive of these products anywhere on the NHC FTP —
+      /atcf/archive/ carries zero ships and zero lsdiag files — and the live
+      directories hold ONE SEASON (measured: /atcf/stext/ spans 2026-03-06 to
+      2026-07-28). At season rollover that history is unrecoverable from
+      anywhere, so this shipped before anything that parses the data: archiving
+      is a one-shot opportunity, parsing is a revisable decision. Raw bytes
+      only, keyed by storm and cycle using the same sid CycloLab uses. Both
+      sides are tracked INDEPENDENTLY because the low and high layer RH rows
+      live only in the lsdiag sibling and the two are not strictly 1:1 —
+      measured 270 stems with both, 1 bulletin-only, 7 sibling-only. Test decks
+      (cyclone numbers 80-89, carrying forecast VMAX to 337 kt) never enter the
+      archive. The archive is immutable and append-only, so a truncated re-read
+      can never replace a good capture, and an empty body is refused rather
+      than stored — an empty capture would mark the stem archived and it would
+      never be retried. Losing the index costs one slow run, not the archive:
+      it is rebuilt by listing the bucket. Backfilled the full season on the
+      first run: 548 files across 278 storm-cycles, zero failures.
+    links:
+      - label: Archive index
+        url: https://cdn.triple-a-tropics.com/ships/index.json
   - id: storm-diagnostic-plate
     title: Storm diagnostic plate — the four panels as one copy-pasteable PNG
     area: satellite

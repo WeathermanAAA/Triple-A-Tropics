@@ -1,0 +1,79 @@
+name: Harvest SHIPS Archive
+
+# RAW archiver for NHC's SHIPS diagnostics. Copies /atcf/stext/*_ships.txt and
+# their /atcf/lsdiag/*_lsdiag.dat siblings to R2, keyed by storm and cycle.
+#
+# WHY THIS EXISTS AT ALL. There is no archive of these products anywhere on the
+# NHC FTP - /atcf/archive/{YYYY}/ carries zero *ships* and zero *lsdiag* files.
+# The live directories hold ONE SEASON (measured 2026-07-28: /atcf/stext/ spans
+# 2026-03-06 to 2026-07-28), and at season rollover that history is gone for
+# good. Whatever we have not copied by then is unrecoverable, from anywhere. So
+# this job's only purpose is to not lose data, and it archives RAW bytes - no
+# parsing - because parsing is a revisable decision and archiving is not.
+#
+# BOTH SIDES. The low/high-layer RH rows live ONLY in the lsdiag sibling; the
+# bulletin carries just 700-500 mb RH. They are usually 1:1 but not always
+# (measured: 284 stems with both, 1 bulletin-only, 7 sibling-only), so each side
+# is tracked independently and a missing counterpart is normal.
+#
+# Cadence. SHIPS publishes a median 52 min after the synoptic hour (p90 145
+# min), so H+3 clears p90 comfortably; a backup runs 100 min later. The
+# season-long upstream retention means a missed run is not a loss - the next
+# run simply picks the files up - so this is deliberately unhurried.
+#
+# Non-round minutes per the repo's stagger convention. :09 and :49 are clear of
+# every other scheduled slot (ACE :07/:37/:53, HAFS :53/:27, guidance :41/:21,
+# SST 13:17/13:47, subsurface 14:23/14:53, ARMOR3D 14:43/15:13, subseasonal
+# 15:41/16:11, sub-anim 16:33/17:03, season-gifs 03:23, GIBS 22:07/22:37).
+on:
+  schedule:
+    - cron: "9 3,9,15,21 * * *"
+    - cron: "49 4,10,16,22 * * *"
+  workflow_dispatch:
+    inputs:
+      rebuild_index:
+        description: "Re-derive the archive index from R2 before harvesting"
+        type: boolean
+        default: false
+
+# Read-only: commits nothing to main. The archive lives in R2.
+permissions:
+  contents: read
+
+# One harvester at a time. The index is read-modify-written, so two concurrent
+# runs could each write an index missing the other's additions - the files
+# themselves would survive (they are immutable and content-addressed by name),
+# but the index would under-report and the next run would redundantly re-fetch.
+concurrency:
+  group: harvest-ships
+  cancel-in-progress: false
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests boto3
+
+      - name: Harvest
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: triple-a-tropics-media
+        run: |
+          set -euo pipefail
+          ARGS=""
+          if [ "${{ github.event.inputs.rebuild_index }}" = "true" ]; then
+            ARGS="--rebuild-index"
+          fi
+          # The harvester exits non-zero if files were due but none stored, so
+          # a silent failure cannot masquerade as a quiet no-op here.
+          python -m guidance.harvest_ships $ARGS
