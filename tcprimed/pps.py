@@ -368,26 +368,47 @@ def overpass_time(lat, lon, clat: float, clon: float, start, end):
 #: ~90 min orbital period, so a genuine revisit can never be swallowed.
 MAX_OVERPASS_GAP_S = 120.0
 
+#: Hard ceiling on how long ONE overpass of a single storm may last. A polar
+#: orbiter crosses a given point in minutes; even a wide-swath full-orbit
+#: granule only sees a particular storm briefly. 20 min is generous for the
+#: widest swath and still far below the ~90 min revisit.
+#:
+#: This is a BACKSTOP, not the primary rule -- see ``group_overpasses`` on why
+#: contiguity alone is not sufficient. It exists so that if a caller ever feeds
+#: an unfiltered granule list again, the damage is one over-long pass rather
+#: than an entire day collapsed into a single "overpass".
+MAX_OVERPASS_SPAN_S = 1200.0
 
-def group_overpasses(granules, max_gap_s: float = MAX_OVERPASS_GAP_S):
-    """Group a granule list into ONE entry per real satellite overpass.
 
-    Granules join a group only when they share a sensor AND platform AND follow
-    the previous member within ``max_gap_s`` along the same orbit. Anything else
-    -- a different sensor, a different spacecraft, or a real time gap -- starts a
-    new group, so genuinely separate overpasses stay separate.
+def group_overpasses(granules, max_gap_s: float = MAX_OVERPASS_GAP_S,
+                     max_span_s: float = MAX_OVERPASS_SPAN_S):
+    """Group granules that COVER ONE STORM into one entry per real overpass.
 
-    Input is the ``recent_granule_urls`` shape (dicts with sensor/platform/
-    start/end). Returns a list of lists, each sorted by start time, in ascending
-    order of group start.
+    **The input must already be filtered to granules that cover the storm.**
+    That is not a convenience, it is the correctness condition, and getting it
+    wrong is not subtle: these instruments acquire CONTINUOUSLY. GPM publishes
+    back-to-back 5-minute granules around the clock and AMSR2 full-orbit ones
+    end-to-end, so on a raw listing EVERY granule abuts the next and a pure
+    contiguity rule chains the whole day together. Run against a real 18 h
+    listing on 2026-07-27 that produced a single "overpass" of 215 GMI granules
+    spanning 01:19-19:14Z, and merged genuinely separate passes.
 
-    Why this exists: the per-granule loop rendered each segment as its own pass,
-    so a storm near a granule boundary appeared twice -- two half-swaths of one
-    overpass, each cropped to a different part of the storm, and (because the
+    Filtered to the granules that actually see the storm, contiguity becomes
+    meaningful: a satellite crosses a given storm once per orbit, so the
+    covering granules are one or two adjacent segments and the NEXT orbit's are
+    ~90 min later -- a real gap that correctly starts a new group.
+
+    Granules join a group only when they share a sensor AND platform, follow the
+    previous member within ``max_gap_s``, and keep the group's total span within
+    ``max_span_s``. Returns a list of lists sorted by start time.
+
+    Why any of this exists: the per-granule loop rendered each segment as its own
+    pass, so a storm near a granule boundary appeared twice -- two half-swaths of
+    one overpass, each cropped to a different part of the storm, and (because the
     two renders could land in different cron runs) each stamped with whatever
-    best-track intensity was current at the time. Live example, DOLPHIN
-    2026-07-27: GMI/GPM granules S150454 and S150954 published as 15:09:52Z at
-    45 kt and 15:09:59Z at 40 kt -- seven seconds and 5 kt apart, one overpass.
+    best-track intensity was current then. Live on DOLPHIN 2026-07-27: GMI/GPM
+    granules S150454 and S150954 published as 15:09:52Z at 45 kt and 15:09:59Z
+    at 40 kt -- seven seconds and 5 kt apart, one overpass.
     """
     out: list[list[dict]] = []
     cur: list[dict] = []
@@ -398,7 +419,8 @@ def group_overpasses(granules, max_gap_s: float = MAX_OVERPASS_GAP_S):
             same = (g["sensor"] == prev["sensor"]
                     and g["platform"] == prev["platform"])
             gap = (g["start"] - prev["end"]).total_seconds()
-            if same and gap <= max_gap_s:
+            span = (g["end"] - cur[0]["start"]).total_seconds()
+            if same and gap <= max_gap_s and span <= max_span_s:
                 cur.append(g)
                 continue
             out.append(cur)
@@ -407,6 +429,29 @@ def group_overpasses(granules, max_gap_s: float = MAX_OVERPASS_GAP_S):
         out.append(cur)
     out.sort(key=lambda grp: grp[0]["start"])
     return out
+
+
+def crop_swath_scans(lat, lon, clat: float, clon: float, pad: float = 8.0):
+    """Row (scan) window of a swath covering the storm box, FULL WIDTH.
+
+    Mosaicking needs every member to keep the same across-track ray count, and
+    ``crop_swath`` trims columns to wherever that particular granule crosses the
+    box -- which differs per granule, so cropped pieces cannot be concatenated.
+    This trims scans only; the caller mosaics, then column-crops the result once
+    with ``crop_swath``.
+
+    Returns ``(r0, r1)`` or None when the swath does not reach the box.
+    """
+    la = np.asarray(lat, dtype=float)
+    lo = np.asarray(lon, dtype=float).copy()
+    d = lo - clon
+    lo[d > 180] -= 360.0
+    lo[d < -180] += 360.0
+    box = (np.abs(la - clat) <= pad) & (np.abs(lo - clon) <= pad)
+    if not box.any():
+        return None
+    rows = np.where(box.any(axis=1))[0]
+    return int(rows[0]), int(rows[-1]) + 1
 
 
 _BAND_KEYS = ("lat37", "lon37", "tb37v", "tb37h",

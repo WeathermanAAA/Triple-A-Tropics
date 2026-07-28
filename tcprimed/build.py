@@ -388,99 +388,130 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
         existing_by_slug[slug] = {o["id"]: o for o in doc.get("overpasses", [])
                                   if isinstance(o, dict) and o.get("id")}
 
-    # One group per REAL overpass. PPS cuts an orbit into fixed segments, so a
-    # storm sitting near a cut used to render twice -- two half-swaths of one
-    # pass. Group first, mosaic the swath data, render once.
-    groups = pps.group_overpasses(granules)
-    multi = [grp for grp in groups if len(grp) > 1]
-    print(f"tcprimed live: {len(granules)} granule(s) -> {len(groups)} "
-          f"overpass(es); {len(multi)} spanning multiple granules")
-    for grp in multi:
-        print(f"tcprimed live:   merging {grp[0]['sensor']}/"
-              f"{grp[0]['platform']} x{len(grp)}: "
-              f"{', '.join(x['start'].strftime('%H%M%S') for x in grp)}")
-
-    # Retire the orphans. A pass already published from a LATER member of a
-    # group is the second half of a split overpass: the merged pass keys off the
-    # group's FIRST granule, so without this the viewer would show the fixed
-    # pass AND the leftover half beside it. Only ids this run can actually
-    # rebuild are dropped, so a listing hiccup cannot delete history.
-    superseded = {f"{m['sensor']}_{m['platform']}_"
-                  f"{m['start'].strftime('%Y%m%d%H%M%S')}"
-                  for grp in groups for m in grp[1:]}
+    # TWO PHASES, and the order is the whole point.
+    #
+    # Phase 1 walks the raw granule listing and records, per storm, which
+    # granules actually SEE it. Phase 2 groups those into overpasses.
+    #
+    # Grouping cannot happen on the raw listing. These instruments acquire
+    # continuously -- GPM publishes back-to-back 5-minute granules around the
+    # clock, AMSR2 full-orbit ones end-to-end -- so every granule abuts the next
+    # and a contiguity rule applied there chains the entire day into one "pass".
+    # That shipped on 2026-07-27 and produced a 215-granule GMI "overpass"
+    # spanning 01:19-19:14Z. Filtered to the granules that cover a given storm,
+    # contiguity means what it should: adjacent covering segments are one
+    # crossing, and the next orbit is ~90 min later.
+    #
+    # Granule stamps each storm's published passes were built from, so an
+    # already-complete pass costs no download. Legacy records (pre-merge) carry
+    # no member list, so their own id stamp stands in -- which is exactly right:
+    # it makes a split pass look like it covers only its own granule, so the
+    # sibling granule still gets fetched and the two merge.
     touched: set[str] = set()
+    covered_stamps: dict[str, set] = {}
     for slug, byid in existing_by_slug.items():
-        gone = sorted(superseded & set(byid))
-        for oid in gone:
+        # Purge the 2026-07-27 bad build. That run grouped the RAW listing, so a
+        # record can claim dozens of granules across many hours -- a whole day
+        # welded into one "overpass". It is identifiable exactly: multi-granule
+        # but with no member_stamps, which only the broken writer produced.
+        # Dropping it forces a clean re-render into real passes.
+        bad = [oid for oid, rec in byid.items()
+               if int(rec.get("n_granules") or 1) > 1
+               and not isinstance(rec.get("member_stamps"), list)]
+        for oid in bad:
             byid.pop(oid, None)
-        if gone:
-            # Mark the storm dirty: retiring a fragment changes its
-            # overpasses.json even if no new render happens this run.
+        if bad:
             touched.add(slug)
-            print(f"tcprimed live: {slug}: retired {len(gone)} split-pass "
-                  f"fragment(s): {', '.join(gone)}")
+            print(f"tcprimed live: {slug}: purged {len(bad)} pass(es) from the "
+                  f"bad raw-listing build: {', '.join(sorted(bad))}")
+        seen = set()
+        for oid, rec in byid.items():
+            members = rec.get("member_stamps")
+            seen.update(members if isinstance(members, list)
+                        else [oid.rsplit("_", 1)[-1]])
+        covered_stamps[slug] = seen
+
+    # slug -> [{granule, rows-cropped swath}] for every granule covering it.
+    pending: dict[str, list] = {s["slug"]: [] for s in active}
 
     with tempfile.TemporaryDirectory(prefix="tcprimed_live_") as tmp:
-        for grp in groups:
-            g = grp[0]
+        for g in granules:
             sensor, platform = g["sensor"], g["platform"]
-            # The id keys off the EARLIEST granule in the overpass, so a pass
-            # that was previously published as its first segment alone keeps its
-            # id (and its place in the viewer) when the merge lands.
             stamp = g["start"].strftime("%Y%m%d%H%M%S")
-            oid = f"{sensor}_{platform}_{stamp}"
-            g_start, g_end = g["start"], grp[-1]["end"]
-            # Cheap pre-check: any active storm still NEEDING this pass? A pass
-            # already rendered from FEWER granules than the group now has must
-            # re-render -- that is exactly the split-overpass case being fixed.
-            need = []
-            for s in active:
-                have = existing_by_slug[s["slug"]].get(oid, {})
-                if force or not have.get("products"):
-                    need.append(s)
-                elif int(have.get("n_granules") or 1) < len(grp):
-                    need.append(s)
+            need = [s for s in active
+                    if force or stamp not in covered_stamps[s["slug"]]]
             if not need:
                 continue
-            reads = []
-            for member in grp:
-                try:
-                    local = pps.download(member["url"], email, tmp)
-                    reads.append(pps.read_1c(local, sensor, platform))
-                except Exception as e:  # noqa: BLE001
-                    print(f"tcprimed live: {member['file']} failed: "
-                          f"{type(e).__name__}: {e}", file=sys.stderr)
-            if not reads:
-                continue
-            if len(reads) < len(grp):
-                # Publish what we have rather than nothing, but the span must
-                # describe the data that actually made it in, not the group.
-                print(f"tcprimed live: {oid}: {len(reads)}/{len(grp)} granule(s) "
-                      f"read; rendering partial mosaic", file=sys.stderr)
-                g_end = grp[len(reads) - 1]["end"]
-            # MOSAIC THE SWATH DATA -- not the finished images. See concat_swaths.
-            data = pps.concat_swaths(reads)
-            if not data:
+            try:
+                local = pps.download(g["url"], email, tmp)
+                data = pps.read_1c(local, sensor, platform)
+            except Exception as e:  # noqa: BLE001
+                print(f"tcprimed live: {g['file']} failed: "
+                      f"{type(e).__name__}: {e}", file=sys.stderr)
                 continue
             for s in need:
-                slug = s["slug"]
                 cov89 = st.storm_covers(s, data["lat89"], data["lon89"],
                                         half_deg=pad)
                 cov37 = st.storm_covers(s, data["lat37"], data["lon37"],
                                         half_deg=pad)
                 if not (cov89 or cov37):
                     continue
-                # Pin the valid time to the storm's along-track scan (the granule
-                # mid-time can be ~45 min off for full-orbit AMSR2/SSMIS).
-                tband = ("lat89", "lon89") if cov89 else ("lat37", "lon37")
-                # Interpolated across the MOSAIC against the group's full span,
-                # so one overpass yields one valid time (and, with a single
-                # storm record behind it, one intensity) instead of one per
-                # granule. The rows are concatenated in time order, so the
-                # row-fraction -> time mapping stays linear across the join.
+                # Keep SCANS only, full width. Column-cropping here would give
+                # each granule a different ray range and the pieces could not be
+                # concatenated; the mosaic is column-cropped once, later.
+                keep = {}
+                for band in ("37", "89"):
+                    win = pps.crop_swath_scans(
+                        data[f"lat{band}"], data[f"lon{band}"],
+                        s["lat"], s["lon"], pad)
+                    if win is None:
+                        continue
+                    r0, r1 = win
+                    for key in (f"lat{band}", f"lon{band}",
+                                f"tb{band}v", f"tb{band}h"):
+                        keep[key] = data[key][r0:r1]
+                if keep:
+                    keep["sensor"], keep["platform"] = sensor, platform
+                    pending[s["slug"]].append({"g": g, "data": keep})
+
+        # Phase 2: per storm, group the COVERING granules into real overpasses.
+        for s in active:
+            slug = s["slug"]
+            items = pending.get(slug) or []
+            if not items:
+                continue
+            by_stamp = {it["g"]["start"].strftime("%Y%m%d%H%M%S"): it
+                        for it in items}
+            for grp in pps.group_overpasses([it["g"] for it in items]):
+                first = grp[0]
+                sensor, platform = first["sensor"], first["platform"]
+                # Keyed off the EARLIEST covering granule, so a pass previously
+                # published as its first segment alone keeps its id and its
+                # place in the viewer when the merge lands.
+                oid = (f"{sensor}_{platform}_"
+                       f"{first['start'].strftime('%Y%m%d%H%M%S')}")
+                stamps = [m["start"].strftime("%Y%m%d%H%M%S") for m in grp]
+                reads = [by_stamp[t]["data"] for t in stamps if t in by_stamp]
+                if not reads:
+                    continue
+                g_start, g_end = first["start"], grp[-1]["end"]
+                # MOSAIC THE SWATH DATA -- not the finished images. Stitching two
+                # rendered PNGs would leave a seam at the cut and scale their
+                # colours independently. See pps.concat_swaths.
+                data = pps.concat_swaths(reads)
+                if not data:
+                    continue
+                have89 = "lat89" in data and "tb89v" in data
+                have37 = "lat37" in data and "tb37v" in data
+                if not (have89 or have37):
+                    continue
+                tband = ("lat89", "lon89") if have89 else ("lat37", "lon37")
+                # One valid time per overpass, interpolated across the MOSAIC
+                # against its full span -- so one pass yields one intensity
+                # instead of one per granule. Rows are joined in time order, so
+                # the row-fraction -> time mapping stays linear across the cut.
                 valid = pps.overpass_time(data[tband[0]], data[tband[1]],
-                                          s["lat"], s["lon"],
-                                          g_start, g_end)
+                                          s["lat"], s["lon"], g_start, g_end)
                 meta = {
                     "sensor": sensor, "platform": platform, "atcf": s["atcf"],
                     "basin": s["basin"], "year": s["year"], "valid": valid,
@@ -490,21 +521,19 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     "clat": s["lat"], "clon": s["lon"],
                     "source_label": SOURCE_LIVE,
                     "n_granules": len(reads),
-                    # Honest coverage: does the mosaic actually reach the storm
-                    # CENTRE, or only clip its outskirts? Checked after merging,
-                    # so a pass is only called short when the combined swath is.
+                    # Honest coverage: does the MERGED swath reach the storm
+                    # centre, or only clip its outskirts?
                     "center_covered": st.storm_covers(
                         s, data[tband[0]], data[tband[1]], half_deg=0.75),
                 }
                 if len(reads) > 1:
-                    meta["span_start"] = g_start
-                    meta["span_end"] = g_end
+                    meta["span_start"], meta["span_end"] = g_start, g_end
                 c89 = pps.crop_swath(data["lat89"], data["lon89"],
                                      data["tb89v"], data["tb89h"],
-                                     s["lat"], s["lon"], pad) if cov89 else None
+                                     s["lat"], s["lon"], pad) if have89 else None
                 c37 = pps.crop_swath(data["lat37"], data["lon37"],
                                      data["tb37v"], data["tb37h"],
-                                     s["lat"], s["lon"], pad) if cov37 else None
+                                     s["lat"], s["lon"], pad) if have37 else None
                 if c89:
                     (meta["lat89"], meta["lon89"],
                      meta["tb89v"], meta["tb89h"]) = c89
@@ -520,6 +549,14 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     continue
                 products, tiles = res["products"], res["tiles"]
                 tiles_raw = res.get("tiles_raw", {})
+                # Retire any sibling published as its own pass: the merged pass
+                # keys off the group's FIRST granule, so without this the viewer
+                # would show the fixed pass AND the leftover half beside it.
+                for t in stamps[1:]:
+                    old = f"{sensor}_{platform}_{t}"
+                    if existing_by_slug[slug].pop(old, None) is not None:
+                        print(f"tcprimed live: {slug}: retired split-pass "
+                              f"fragment {old}")
                 # ADDITIVE: EXPERIMENTAL MW-imager objective intensity (mwi).
                 mwi_est = mwi.intensity_record(meta, source="live")
                 existing_by_slug[slug][oid] = {
@@ -527,10 +564,11 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     "valid_utc": _iso(meta["valid"]),
                     "intensity_kt": int(meta["intensity_kt"]),
                     "dev_level": meta["dev_level"],
-                    # How many granules this pass was mosaicked from. Also the
-                    # re-render trigger above: a stored pass with fewer than the
-                    # group now has is a split that predates this fix.
                     "n_granules": len(reads),
+                    # The granules this pass was built from -- the next run's
+                    # skip check, and what lets a later-arriving sibling be
+                    # detected as missing.
+                    "member_stamps": stamps[:len(reads)],
                     **({"span_start_utc": _iso(g_start),
                         "span_end_utc": _iso(g_end)} if len(reads) > 1 else {}),
                     **({} if meta["center_covered"]
@@ -545,11 +583,15 @@ def build_live(out_dir, *, window_hours=6, prior_manifest_url=None,
                     "source": "live",
                 }
                 touched.add(slug)
-                print(f"tcprimed live: rendered {slug} {oid} "
+                extra = (f" x{len(reads)} granules "
+                         f"{g_start:%H%M}-{g_end:%H%M}Z" if len(reads) > 1
+                         else "")
+                print(f"tcprimed live: rendered {slug} {oid}{extra} "
                       f"[{'+'.join(sorted(products))}]")
 
     for slug in touched:
         s = next(x for x in active if x["slug"] == slug)
         _finalize_storm(out_dir, slug, s["atcf"], s["basin"], s["year"],
                         existing_by_slug[slug], union, name=s["name"])
+
     return _write_manifest(out_dir, union, prior_ok, bool(touched), live=True)

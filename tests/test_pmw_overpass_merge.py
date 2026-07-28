@@ -147,5 +147,66 @@ class TestOnePassOneTime(unittest.TestCase):
         self.assertLess(abs((v - self.TM).total_seconds()), 40)
 
 
+
+class TestRawListingMustNotCollapse(unittest.TestCase):
+    """The 2026-07-27 regression, pinned.
+
+    Grouping was applied to the RAW granule listing. These instruments acquire
+    continuously -- GPM publishes back-to-back 5-minute granules around the
+    clock -- so every granule abuts the next and contiguity chained the entire
+    day: one "overpass" of 215 GMI granules spanning 01:19-19:14Z, with
+    genuinely separate passes merged away.
+    """
+
+    def _continuous(self, hours=18, minutes=5):
+        out, t = [], dt.datetime(2026, 7, 27, 1, 19, 55, tzinfo=UTC)
+        end = t + dt.timedelta(hours=hours)
+        while t < end:
+            out.append({"sensor": "GMI", "platform": "GPM", "url": "u",
+                        "file": "x", "start": t,
+                        "end": t + dt.timedelta(minutes=minutes)})
+            t += dt.timedelta(minutes=minutes)
+        return out
+
+    def test_a_days_listing_does_not_become_one_pass(self):
+        raw = self._continuous()
+        groups = pps.group_overpasses(raw)
+        self.assertGreater(len(groups), 1)
+        self.assertLess(max(len(g) for g in groups), 10)
+
+    def test_span_cap_bounds_any_group(self):
+        for g in pps.group_overpasses(self._continuous()):
+            span = (g[-1]["end"] - g[0]["start"]).total_seconds()
+            self.assertLessEqual(span, pps.MAX_OVERPASS_SPAN_S)
+
+    def test_span_cap_is_below_a_revisit(self):
+        self.assertLess(pps.MAX_OVERPASS_SPAN_S, 60 * 60)
+
+    def test_coverage_filtered_input_gives_real_overpasses(self):
+        """Two adjacent covering granules, then two more an orbit later."""
+        raw = self._continuous()
+        covering = [raw[167], raw[168], raw[186], raw[187]]
+        groups = pps.group_overpasses(covering)
+        self.assertEqual([len(g) for g in groups], [2, 2])
+
+    def test_scan_crop_keeps_full_width_so_pieces_can_be_joined(self):
+        """Column-cropping per granule would give each piece a different ray
+        range, and the mosaic could not be built."""
+        a, b = _seg(26.0, 20.5), _seg(20.4, 15.0)
+        wa = pps.crop_swath_scans(a["lat89"], a["lon89"], 20.0, 130.0, pad=8.0)
+        wb = pps.crop_swath_scans(b["lat89"], b["lon89"], 20.0, 130.0, pad=8.0)
+        self.assertIsNotNone(wa)
+        self.assertIsNotNone(wb)
+        ra = a["lat89"][wa[0]:wa[1]]
+        rb = b["lat89"][wb[0]:wb[1]]
+        self.assertEqual(ra.shape[1], rb.shape[1])
+        self.assertEqual(np.concatenate([ra, rb], axis=0).shape[1],
+                         ra.shape[1])
+
+    def test_scan_crop_misses_return_none(self):
+        a = _seg(26.0, 20.5)
+        self.assertIsNone(
+            pps.crop_swath_scans(a["lat89"], a["lon89"], -40.0, 130.0, pad=2.0))
+
 if __name__ == "__main__":
     unittest.main()
