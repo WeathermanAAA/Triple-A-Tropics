@@ -29,10 +29,36 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-25T21:20:00Z
+updated: 2026-07-28T14:40:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: antimeridian-render-fixes
+    title: Dateline rendering fixes — CycloLab plot extents and the global track break
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Two live rendering bugs on DOLPHIN (12W), both rooted in the same thing:
+      longitude measured on raw feed values across the antimeridian, where a
+      crossing arrives as a sign flip from -178.9 to +179.8. On the home map
+      the track split into two polylines that each stopped at their last real
+      fix, leaving a 1.3 degree hole on the dateline that read as missing data;
+      the split now carries the interpolated crossing point so the halves abut,
+      while a genuine reporting gap still renders honestly as a break. In
+      CycloLab the Track History and Wind History maps took the raw midpoint of
+      -178.9 and 179.8 — the antipode, near 0E — as their window centre, so
+      both plots drew over Africa on a near-global grid labelled to 130N and
+      105S with the storm a speck. Those two panels are the only callers of
+      ensureMinExtent, which is why the failure looked like a wind-radii bug;
+      the radii were clean. Extent maths now runs in the shared continuous
+      longitude frame, latitude is clamped to the globe, and non-finite or
+      sentinel geometry (999/9999 nm radii) is rejected rather than propagated.
+    links:
+      - label: Global tracks
+        url: /global_tracks.html
+      - label: CycloLab
+        url: /cyclolab/
   - id: jtwc-two-leg-feed
     title: Two-leg JTWC feed — NCEP tcvitals plus public warning text
     area: obs

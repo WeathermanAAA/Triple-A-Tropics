@@ -1760,15 +1760,54 @@ def _split_at_antimeridian(coords: list[list[float]]) -> list[list[list[float]]]
     GeoJSON spec still requires LineStrings to not cross ±180° as a single
     feature — otherwise the renderer draws a horizontal line across the
     whole world. Each output segment has at least 2 points so it remains a
-    valid LineString geometry."""
+    valid LineString geometry.
+
+    The split CARRIES the crossing point: the latitude where the great-circle
+    leg meets ±180° is interpolated and appended to the outgoing segment as
+    ±180 and prepended to the incoming one as ∓180, so the two halves abut
+    exactly on the dateline. Without it each half stopped at its last real
+    fix and the map showed a hole as wide as one 6-hourly leg — the visible
+    "track break" on DOLPHIN (WP12 2026), whose fixes run -178.9 -> +179.8
+    and left a 1.3° gap that read as missing data. Splitting is a rendering
+    requirement, so it must not also LOOK like a gap in the observations; a
+    genuine gap (a real reporting hole) still renders as a break, because
+    only the ±180 leg gets the inserted vertex."""
     if len(coords) < 2:
         return []
     segments: list[list[list[float]]] = [[coords[0]]]
     for i in range(1, len(coords)):
-        prev_lon = coords[i - 1][0]
-        curr_lon = coords[i][0]
+        prev_lon, prev_lat = coords[i - 1][0], coords[i - 1][1]
+        curr_lon, curr_lat = coords[i][0], coords[i][1]
         if abs(curr_lon - prev_lon) > 180:
-            segments.append([coords[i]])
+            # Unwrap the destination into the previous fix's continuous frame
+            # so the leg is the SHORT hop across the dateline, then solve for
+            # the latitude at the meridian it actually crosses.
+            shifted = curr_lon + (360.0 if curr_lon < prev_lon else -360.0)
+            edge = 180.0 if shifted > prev_lon else -180.0
+            span = shifted - prev_lon
+            if not span:
+                # +180 and -180 are the SAME meridian: the pair is 360 apart
+                # numerically but coincident on the globe, so there is no leg
+                # to bridge. Split (the raw LineString would still sweep the
+                # world) but insert nothing - bridging it would emit a
+                # segment running the full width of the map.
+                segments.append([coords[i]])
+                continue
+            # Clamp so the crossing vertex can never be EXTRAPOLATED off the
+            # leg. frac is naturally in [0,1] for longitudes in [-180,180];
+            # a feed using the 0-360 convention (lon 185) would otherwise
+            # place edge outside [prev, shifted] and invent a latitude
+            # outside the two fixes entirely.
+            frac = min(1.0, max(0.0, (edge - prev_lon) / span))
+            lat_x = round(prev_lat + (curr_lat - prev_lat) * frac, 4)
+            # Skip a duplicate vertex when a fix sits exactly on ±180.
+            if [edge, lat_x] != segments[-1][-1]:
+                segments[-1].append([edge, lat_x])
+            nxt: list[list[float]] = []
+            if [-edge, lat_x] != coords[i]:
+                nxt.append([-edge, lat_x])
+            nxt.append(coords[i])
+            segments.append(nxt)
         else:
             segments[-1].append(coords[i])
     return [s for s in segments if len(s) >= 2]
