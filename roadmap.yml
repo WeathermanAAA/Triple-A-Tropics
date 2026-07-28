@@ -33,6 +33,66 @@ updated: 2026-07-28T15:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: atcf-guidance-ingest
+    title: ATCF a-deck/b-deck ingest + QC, with the filtered-deck accounting
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Guidance ingest off NHC's public FTP, now the sole authorized publisher
+      (EMC's mirror went 403 and ospo no longer serves). Every QC rule is
+      calibrated against the real decks — all 23 live 2026 files, 521,842
+      rows, 106 aids — rather than against the format document. The traps that
+      matter: MSLP zero is MISSING and affects 28.9 percent of rows, whole aid
+      families never populate it; position 0N/0W is a sentinel carried by
+      9,561 rows and is the most dangerous value in the format because it is
+      syntactically valid and lands at null island; -99 is a second
+      independent sentinel; the primary key is basin/cy/DTG/TECH/TAU/RAD, NOT
+      the triple, because the 34/50/64 kt radii records legitimately share it
+      and deduplicating on the triple silently discards ~110k real records;
+      rows are variable width from 18 to 46 fields; TAU can be negative. The
+      motion check runs only after position QC — before it, the sentinel alone
+      manufactures 288 false flags with implied speeds to 754 kt. Verified
+      against live decks: zero malformed rows in 123k, and the single genuine
+      motion flag reproduces exactly.
+  - id: adeck-ecmwf-withheld
+    title: Public a-deck withholds every ECMWF-derived aid
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Confirmed empirically, not assumed: EMX, EMXI, EMX2, EEMN, EMNI, SHPE,
+      DSPE, LGME, EAIO, EAMN, UKM, UKMI, UEMN, FSSE and GFEX have exactly zero
+      rows across every live 2026 deck, and no aid id beginning with E exists
+      at all. It is deliberate withholding rather than the aid not being
+      produced — NHC's own techlist defines them and the post-season archive
+      carries them in quantity. There is no public unfiltered fallback;
+      /atcf/aid/ returns 404. The consequence is now stated on the page rather
+      than glossed: consensus aids like TVCN and RVCN are plottable but NOT
+      independently reproducible, because they were computed upstream from
+      members we cannot see. A present consensus aid does not imply its
+      members are present. Also note nhc_techlist.dat is stale and unusable as
+      an allowlist — HFSA and HFSB, the two highest-volume hurricane-model
+      aids, are absent from it while the HAFA/HAFB ids it defines have zero
+      live rows.
+  - id: jtwc-guidance-scoping
+    title: JTWC-basin guidance — UCAR only, and no official or consensus aids
+    area: models
+    status: next
+    note: >-
+      Re-sampled across cycles to settle it: the feed is STABLE, not stalled,
+      and the reported one-cycle lag does not reproduce. At a simultaneous
+      fetch, WP 12W and the NHC EP decks shared an identical max DTG and an
+      identical 2.1 h lag, and every deck tested showed a gap-free 6-hourly
+      ladder. Two findings reshape the work. First, ftp.nhc.noaa.gov carries
+      ZERO WP/IO/SH decks — UCAR's adecks_open is the only surviving source,
+      though the repo already treats that host as primary for tcvitals so it
+      adds no new failure domain. Second, and more consequential: JTWC-basin
+      decks have never carried official, consensus, or statistical aids — no
+      OFCL, TVCN, IVCN, SHIP, LGEM, HWRF, HFSA or AVNO, 52 techs fewer than
+      NHC. They are raw ensembles only. So computing a member consensus and
+      labelling it TVCN would be factually wrong, and the official track must
+      keep coming from the JTWC warning-text path. Scope as best-effort.
   - id: product-view-telemetry
     title: Per-product view telemetry counters
     area: models
