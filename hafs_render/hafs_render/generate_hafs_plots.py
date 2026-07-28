@@ -83,6 +83,11 @@ import requests
 from hafs_render import hafs_plot as hp
 # Single source of product truth (identity, GRIB channel, color/colorbar/stat).
 from hafs_render import hafs_registry as reg
+# The MODEL registry (convection treatment + AI paradigm + the structural gate
+# they drive). Light import: no numpy/matplotlib.
+from hafs_render import model_registry as mr
+# Quantity-keyed palette registry: supplies the manifest value planes.
+from tat_palettes import quantities as tq
 # Persistent per-cycle field cache (the ingest/render split lives here).
 from hafs_render import hafs_cache as fc
 
@@ -96,7 +101,10 @@ S3_NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 # model slug → (bucket dir / filename token). Both are "hfsX"; kept as one map
 # so a future model with a different token (e.g. an ensemble) is a one-line add.
 MODEL_TOKEN = {"hafsa": "hfsa", "hafsb": "hfsb"}
-MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
+# Labels are DERIVED from the model registry so there is ONE source of model
+# truth (slug/label/convection/AI paradigm all live on the ModelSpec). Kept as a
+# module-level name because callers and tests already import it.
+MODEL_LABEL = mr.model_labels()
 
 # domain raw name (in the S3 filename) → (url slug, human label)
 DOMAINS = {
@@ -439,19 +447,28 @@ def _render_one(job: RenderJob) -> dict:
     sat_parm = reg.sat_parm(job.product)
     sat_pct = reg.sat_pct(job.product)
     try:
+        # Last line of the structural gate. The planner already filtered this
+        # pair, so reaching here with an incompatible one is a BUG - fail the
+        # single product loudly (the pool's per-task isolation turns it into a
+        # logged failure) rather than emitting a meaningless PNG.
+        reg.assert_renderable(job.model, job.product)
         frame = fc.load_frame(Path(job.cache_path), want_refl=want_refl,
                               want_pwat=want_pwat, want_upper=want_upper,
                               want_env=want_env,
                               sat_parm=sat_parm, sat_pct=sat_pct)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
-        hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST, states=_STATES,
-                        product=job.product,
-                        cen_lat=job.cen_lat, cen_lon=job.cen_lon,
-                        anchor_lat=job.anchor_lat, anchor_lon=job.anchor_lon)
+        geom = hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
+                               states=_STATES, product=job.product,
+                               cen_lat=job.cen_lat, cen_lon=job.cen_lon,
+                               anchor_lat=job.anchor_lat,
+                               anchor_lon=job.anchor_lon)
         return {
             "ok": True, "model": job.model, "storm": job.storm,
             "domain": job.domain, "product": job.product, "fxx": job.fxx,
             "valid": frame.valid_time.replace(microsecond=0).isoformat() + "Z",
+            # Per-frame map geometry (axes rect in px + lon/lat extent). Plain
+            # JSON primitives so it survives the ProcessPoolExecutor boundary.
+            "geometry": geom,
         }
     except Exception as e:  # noqa: BLE001 - one bad product must not sink the run
         return {"ok": False, "model": job.model, "storm": job.storm,
@@ -571,7 +588,32 @@ def _compose_manifest_v2(entries: list, models: Sequence[str],
         "generated_at": now_iso or _iso_now(),
         "product": PRODUCTS[products[0]],
         "products": [PRODUCTS[p] for p in products],
-        "models": [{"slug": m, "label": MODEL_LABEL[m]} for m in models],
+        # --- GEOMETRY (frame-invariant half) --------------------------------
+        # The projection and canvas are identical for every frame; only the
+        # axes rect and the lon/lat extent vary, and those ride per frame under
+        # storms[].geometry. Together they make pixel <-> lon/lat an exact
+        # affine on the client. "equirectangular" is literal here: a bare
+        # matplotlib axes with degrees on both axes and no projection kwarg -
+        # this repo does not use cartopy - so lon and lat are linear in x and y
+        # and the only non-unit factor is the per-frame aspect, which is
+        # already baked into axes_px.
+        "projection": {
+            "name": "equirectangular",
+            "lon_lat_linear": True,
+            "y_origin": "top",     # axes_px is in image coordinates
+        },
+        "image": {"width": hp.IMAGE_W_PX, "height": hp.IMAGE_H_PX,
+                  "dpi": hp.DPI},
+        # --- VALUE PLANE ----------------------------------------------------
+        # Per PHYSICAL QUANTITY, so a client can turn a pixel's color back into
+        # a number, and so two models rendering one quantity are guaranteed the
+        # same scale. Products point at these by their "quantity" key.
+        "quantities": tq.value_planes(),
+        # Model defs carry the full ModelSpec meta now (convection treatment, AI
+        # paradigm, badge/intensity-stat flags, ATCF aid ids). {slug,label} stay
+        # first and unchanged, so an older frontend reading only those two keys
+        # is unaffected; everything else is purely additive.
+        "models": [mr.get_model(m).model_meta() for m in models],
         "domains": [{"slug": DOMAINS[d][0], "label": DOMAINS[d][1], "raw": d}
                     for d in domains],
         "fxx_step": fxx_step,
@@ -670,6 +712,21 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     cycle_sat_parms = tuple(sorted({p for prod in products
                                     for p in reg.grib_parms(prod)}))
 
+    # STRUCTURAL model x product gate, resolved ONCE per cycle. A product whose
+    # signal IS resolved deep convection (reflectivity, simulated 89 GHz) is
+    # dropped for any model that parameterises convection - see
+    # hafs_registry.product_allowed and model_registry's docstring. Both HAFS
+    # models are convection-permitting, so this is currently identity; it is the
+    # gate that keeps the first coarse or AI model from silently rendering a
+    # meaningless field.
+    model_products = {m: set(reg.allowed_products_for_model(m, products))
+                      for m in models}
+    for m in models:
+        dropped = [p for p in products if p not in model_products[m]]
+        if dropped:
+            log.info("model %s: %d product(s) gated off (parameterised "
+                     "convection): %s", m, len(dropped), ", ".join(dropped))
+
     # Plan two stages up front: one INGEST task per (model, storm, domain, fxx)
     # frame, and one RENDER task per (product, frame). Ingest writes the field
     # cache; render reads it.
@@ -685,7 +742,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             "basin_label": basin_label,
             "cycle": cycle,
             "init": cycle_dt.replace(microsecond=0).isoformat() + "Z",
-            "frames": {},   # filled from render results
+            "frames": {},     # filled from render results
+            # [model][domain][fxx] -> {"axes_px": [...], "bbox": [...]}. Keyed by
+            # FRAME, not by product (see _record).
+            "geometry": {},
         }
         # cycle_is_complete only confirms HAFS-A's storm nest reached the
         # terminal hour; the second model and the parent domain can still be
@@ -781,6 +841,15 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         pdomains = reg.get_spec(product).domains
                         if pdomains and domain not in pdomains:
                             continue
+                        # STRUCTURAL model gate: a product whose signal IS
+                        # resolved deep convection is never SCHEDULED for a
+                        # model that parameterises it, so the pair never
+                        # renders, never reaches the manifest, and is never
+                        # offered by the frontend. (No-op for HAFS, which is
+                        # convection-permitting on both domains; the gate exists
+                        # so the first coarse model added cannot regress it.)
+                        if product not in model_products[model]:
+                            continue
                         out_path = _frame_out_path(
                             out_dir, cycle, model, storm, dom_slug, product, fxx,
                             cycle_scoped=cycle_scoped)
@@ -849,6 +918,19 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                .setdefault(dom_slug, {})
                .setdefault(res["product"], [])
                .append(res["fxx"]))
+            # GEOMETRY is keyed by FRAME, not by product: every product of one
+            # (model, domain, fxx) is drawn on the same axes with the same
+            # extent, so storing it per product would repeat the identical eight
+            # numbers 21 times. Keyed [model][domain][fxx] instead, which is
+            # what a client needs to map a pixel to lon/lat on a nest whose
+            # extent moves each forecast hour. First writer wins; the values
+            # agree across products by construction.
+            geom = res.get("geometry")
+            if geom:
+                (storm_meta[res["storm"]]["geometry"]
+                    .setdefault(res["model"], {})
+                    .setdefault(dom_slug, {})
+                    .setdefault(str(res["fxx"]), geom))
         else:
             n_fail += 1
             log.warning("render failed: %s %s %s %s f%03d - %s", res["model"],
@@ -880,6 +962,16 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     del meta["frames"][model][dom_slug]
             if not meta["frames"][model]:
                 del meta["frames"][model]
+        # Prune geometry in lockstep with frames, so the manifest can never
+        # advertise an extent for a (model, domain) whose frames were all
+        # dropped - a client that trusted it would map pixels for an image
+        # that is not published.
+        for model in list(meta["geometry"]):
+            for dom_slug in list(meta["geometry"][model]):
+                if dom_slug not in meta["frames"].get(model, {}):
+                    del meta["geometry"][model][dom_slug]
+            if not meta["geometry"][model]:
+                del meta["geometry"][model]
         if meta["frames"]:
             storms_out.append(meta)
 

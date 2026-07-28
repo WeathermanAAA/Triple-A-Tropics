@@ -35,13 +35,45 @@ import matplotlib.colors as mcolors
 # registry references them. hafs_plot does NOT import this module at top level
 # (render_frame imports it lazily), so there is no import cycle.
 from hafs_render import hafs_plot as hp
+from hafs_render import model_registry as mr
 import tat_palettes as tp
+# The PHYSICAL-QUANTITY palette registry: the single owner of every
+# rendered quantity's globally-fixed scale (vmin/vmax/ticks/mask).
+from tat_palettes import quantities as tq
 
 
 class FillMethod(Enum):
     """How the filled field is rasterized onto the map axes."""
     PCOLORMESH = "pcolormesh"               # smooth raster gradient (wind, BT)
     CONTOURF_DISCRETE = "contourf_discrete"  # contourf over a palette's step edges (refl)
+
+
+class MeanSubstitute(Enum):
+    """What to show INSTEAD of an ensemble mean, where the mean is denied.
+
+    Every product that sets ``ensemble_mean_allowed=False`` must name one of
+    these, so the denial is constructive: the frontend never has to fall back to
+    "this is unavailable", it always has a defined better answer to offer.
+    """
+
+    #: The mean is allowed for this product; no substitute applies.
+    NOT_APPLICABLE = "not_applicable"
+    #: Draw every member's trace/contour, unaveraged (tracks, intensity traces,
+    #: single-value-per-member quantities where the spread IS the message).
+    SPAGHETTI = "spaghetti"
+    #: Exceedance probability: P(field > threshold) across members. The right
+    #: answer for extremes (precip maxima, CAPE, vorticity, PV intrusion) where
+    #: the mean is diluted toward zero by member-to-member displacement.
+    PROBABILITY = "probability"
+    #: A named percentile field (10th/50th/90th). Preserves the field's own
+    #: distribution shape instead of the cell-wise average.
+    PERCENTILE = "percentile"
+    #: Member min-max envelope plus the median - the spread as a band.
+    ENVELOPE = "envelope"
+    #: Force an explicit single-member choice. The only honest option for a
+    #: simulated SENSOR field: averaging brightness temperature or reflectivity
+    #: across members produces a radiance no instrument could ever observe.
+    MEMBER_PICKER = "member_picker"
 
 
 @dataclass
@@ -187,6 +219,63 @@ class ProductSpec:
     # generate_hafs_plots gates the render jobs on this.
     domains: tuple = ()
 
+    # --- PHYSICAL QUANTITY --------------------------------------------------
+    # The key into tat_palettes.quantities - the single owner of this product's
+    # color SCALE (vmin/vmax/ticks/mask/step). Two products that render the same
+    # quantity name the same key and therefore cannot drift onto different
+    # scales, which is what keeps a cross-model comparison a comparison of
+    # forecasts rather than of palettes. It also supplies the manifest's
+    # value-plane block, so the frontend can turn a pixel back into a number.
+    # Empty only for a product whose fill has no registered quantity (none
+    # today); ``_validate_specs`` rejects an unknown key.
+    quantity: str = ""
+
+    # --- STRUCTURAL model gate: requires convection-permitting physics --------
+    # True for products whose signal IS resolved deep convection. On a model
+    # that PARAMETERISES convection the field is not merely noisy, it is a
+    # category error (see model_registry's docstring), so such a (model,
+    # product) pair is dropped at render-job planning, refused with an exception
+    # at the renderer, never written to the manifest, and never offered by the
+    # frontend. Set on the reflectivity and simulated-microwave products only:
+    # simulated IR / water-vapor brightness temperature is dominated by
+    # grid-scale cloud and upper-tropospheric humidity and remains meaningful
+    # (if smoother) under a cumulus scheme, so those two are NOT gated.
+    requires_explicit_convection: bool = False
+
+    # --- ENSEMBLE-MEAN policy -------------------------------------------------
+    # ``ensemble_mean_allowed``: may a cell-wise mean across members be rendered
+    # for this product? The flag governs the product's FILL FIELD - the quantity
+    # the product is actually about. Two further rules ride on top of it in
+    # ``ensemble_mean_policy`` so that no spec has to restate them:
+    #
+    #   (a) a STORM-FOLLOWING NEST denies the mean for EVERY product. Members'
+    #       nests are centred on their own forecast positions, so the grids do
+    #       not share coordinates and a cell-wise mean is not a well-defined
+    #       operation - it averages different places.
+    #   (b) the MSLP MINIMUM overlay (the bold L marker + its value label) is
+    #       suppressed in ANY mean render, on every product that draws one. A
+    #       minimum of an averaged pressure field is not a forecast minimum.
+    #       This is why the height products can stay allowed despite drawing an
+    #       L: their fill and their height contours are mean-safe, and the one
+    #       part that is not is dropped rather than dragging the product down.
+    #
+    # Denied fills: TC intensity (10 m wind), precipitation MAXIMA, any
+    # simulated SENSOR radiance, and the sharp displacement-sensitive extremum
+    # fields (vorticity, PV, CAPE, SRH). Allowed fills: the smooth synoptic
+    # mass / environment quantities - pressure-level wind and height, deep-layer
+    # shear, PWAT, layer RH, SST, tropopause temperature, surface fluxes.
+    #
+    # The failure mode being prevented: averaging a displaced feature across
+    # members yields a field NO member contains - two members with a 950 mb
+    # centre 200 km apart average to a broad 985 mb trough, which is not a
+    # forecast of anything. For an extremum the mean is biased toward the
+    # climatological middle by construction; for a radiance it is unphysical.
+    ensemble_mean_allowed: bool = False
+    # What to offer instead where the mean is denied. MUST be NOT_APPLICABLE iff
+    # ``ensemble_mean_allowed`` is True - ``_validate_specs`` enforces the
+    # biconditional at import so the two fields can never silently disagree.
+    mean_substitute: MeanSubstitute = MeanSubstitute.MEMBER_PICKER
+
     def resolve_enhancement(self, override: Optional[str]) -> Optional[str]:
         """The enhancement name to color with: the caller override or the spec
         default (None for non-BT families)."""
@@ -195,8 +284,24 @@ class ProductSpec:
         return override or self.default_enhancement
 
     def product_meta(self) -> dict:
-        """The manifest/PRODUCTS dict shape ({slug, label, short})."""
-        return {"slug": self.slug, "label": self.label, "short": self.short}
+        """The manifest/PRODUCTS dict shape.
+
+        ``{slug,label,short}`` stay FIRST and unchanged (the frontend reads only
+        those three today); the rest is additive. ``quantity`` points at the
+        manifest's ``quantities`` block, which carries the value plane - so the
+        frontend resolves product -> quantity -> vmin/vmax/ticks/units without
+        any per-product color knowledge in JS.
+        """
+        return {
+            "slug": self.slug,
+            "label": self.label,
+            "short": self.short,
+            "quantity": self.quantity,
+            "ensemble_mean_allowed": self.ensemble_mean_allowed,
+            "mean_substitute": self.mean_substitute.value,
+            "requires_explicit_convection": self.requires_explicit_convection,
+            "selectable_enhancements": list(self.selectable_enhancements),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +309,11 @@ class ProductSpec:
 # the EXACT calls render_frame used to make inline.
 # ---------------------------------------------------------------------------
 def _wind_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
-    cmap, norm = hp._wind_cmap_norm()
-    return FillColors(cmap=cmap, norm=norm, field=frame.wind_kt)
+    # 10 m wind on the SHARED wind scale - the same 0-165 kt ramp the
+    # pressure-level wind fills use, so a given speed is one color everywhere.
+    q = tq.get_quantity("wind_speed_kt")
+    return FillColors(cmap=_q_cmap("wind_speed_kt"), norm=q.norm(),
+                      field=frame.wind_kt)
 
 
 def _refl_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
@@ -214,9 +322,10 @@ def _refl_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
 
 
 def _pwat_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
-    # tat_pwat smooth fill over 0..90 mm; masked NaN renders transparent (the
-    # cmap's set_bad). The cmap is the shared canonical singleton - never mutated.
-    return FillColors(cmap=tp.TAT_PWAT_CMAP, norm=tp.pwat_norm(),
+    # tat_pwat smooth fill on the registered PWAT scale; masked NaN renders
+    # transparent (the cmap's set_bad). Never mutated.
+    q = tq.get_quantity("precipitable_water_mm")
+    return FillColors(cmap=_q_cmap("precipitable_water_mm"), norm=q.norm(),
                       field=frame.pwat)
 
 
@@ -258,50 +367,61 @@ def _height_dam(lev):
 
 
 def _hgt_wind_colors(lev):
-    """Fill = wind SPEED (kt) at ``lev`` with the EXISTING tat_wind palette."""
+    """Fill = wind SPEED (kt) at ``lev`` on the shared wind_speed_kt scale."""
+    q = tq.get_quantity("wind_speed_kt")
+
     def f(spec, frame, enh_name) -> FillColors:
-        cmap, norm = hp._wind_cmap_norm()
         _, _, spd = _level_wind_kt(frame, lev)
-        return FillColors(cmap=cmap, norm=norm, field=spd)
+        return FillColors(cmap=_q_cmap("wind_speed_kt"), norm=q.norm(), field=spd)
     return f
 
 
-def _vort_colors(lev, vmax):
-    """Fill = cyclonic relative vorticity at ``lev`` in 1e-5 s^-1, tat_cyclonic_vort
-    over Normalize(0, vmax). Calm/anticyclonic air (< VORT_MASK_BELOW) is masked to
-    NaN so the dark map shows through."""
+def _vort_colors(lev, quantity):
+    """Fill = cyclonic relative vorticity at ``lev`` in 1e-5 s^-1 on the scale
+    registered for ``quantity``. 850 and 500 mb are SEPARATE quantities (low-level
+    vorticity reaches far higher values), each with its own fixed range and its
+    own ticks. Calm/anticyclonic air below the registered mask renders NaN so the
+    dark map shows through."""
+    q = tq.get_quantity(quantity)
+
     def f(spec, frame, enh_name) -> FillColors:
         field = frame.upper[f"relvort_{lev}"] * 1e5      # 1/s -> 1e-5/s
-        field = np.where(field < tp.VORT_MASK_BELOW, np.nan, field)
-        return FillColors(cmap=tp.TAT_CYCLONIC_VORT_CMAP,
-                          norm=mcolors.Normalize(0.0, vmax), field=field)
+        field = np.where(field < q.mask_below, np.nan, field)
+        return FillColors(cmap=_q_cmap(quantity), norm=q.norm(), field=field)
     return f
 
 
 def _rh_colors(spec: ProductSpec, frame, enh_name) -> FillColors:
-    return FillColors(cmap=tp.TAT_RH_CMAP, norm=mcolors.Normalize(0.0, 100.0),
+    q = tq.get_quantity("relative_humidity_pct")
+    return FillColors(cmap=_q_cmap("relative_humidity_pct"), norm=q.norm(),
                       field=frame.upper["rh_layer_700_300"])
 
 
 def _hgt_wind_colorbar(fig, cax, cf, colors: FillColors):
-    # Same knots palette/ticks as the 10 m wind bar, but an honest label (the
+    # Same registered wind scale/ticks as the 10 m bar, but an honest label (the
     # fill is pressure-level wind, not 10 m). mslp_wind keeps _wind_colorbar.
-    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=hp.CBAR_TICKS_KT)
+    q = tq.get_quantity("wind_speed_kt")
+    cb = fig.colorbar(cf, cax=cax, extend=q.extend, ticks=list(q.ticks))
     cb.set_label("Wind speed (kt)", color=hp.TEXT_COLOR, fontsize=10)
     return cb
 
 
-def _vort_colorbar(fig, cax, cf, colors: FillColors):
-    vmax = float(colors.norm.vmax)
-    step = 50 if vmax >= 300 else 30          # 0..300 by 50, 0..150 by 30
-    ticks = list(range(0, int(vmax) + 1, step))
-    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=ticks)
-    cb.set_label("Cyclonic vorticity (10^-5 /s)", color=hp.TEXT_COLOR, fontsize=10)
-    return cb
+def _vort_colorbar(quantity):
+    """Ticks come from the quantity (0..300 by 50 at 850 mb, 0..150 by 30 at
+    500 mb) instead of being re-derived from the norm's vmax at draw time."""
+    q = tq.get_quantity(quantity)
+
+    def f(fig, cax, cf, colors: FillColors):
+        cb = fig.colorbar(cf, cax=cax, extend=q.extend, ticks=list(q.ticks))
+        cb.set_label("Cyclonic vorticity (10^-5 /s)", color=hp.TEXT_COLOR,
+                     fontsize=10)
+        return cb
+    return f
 
 
 def _rh_colorbar(fig, cax, cf, colors: FillColors):
-    cb = fig.colorbar(cf, cax=cax, ticks=tp.RH_TICKS)
+    q = tq.get_quantity("relative_humidity_pct")
+    cb = fig.colorbar(cf, cax=cax, ticks=list(q.ticks))
     cb.set_label("Relative humidity (%)", color=hp.TEXT_COLOR, fontsize=10)
     return cb
 
@@ -311,7 +431,8 @@ def _rh_colorbar(fig, cax, cf, colors: FillColors):
 # the shared tick/outline restyling is applied by render_frame afterwards.
 # ---------------------------------------------------------------------------
 def _wind_colorbar(fig, cax, cf, colors: FillColors):
-    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=hp.CBAR_TICKS_KT)
+    q = tq.get_quantity("wind_speed_kt")
+    cb = fig.colorbar(cf, cax=cax, extend=q.extend, ticks=list(q.ticks))
     cb.set_label("10 m wind speed (kt)", color=hp.TEXT_COLOR, fontsize=10)
     return cb
 
@@ -348,7 +469,8 @@ def _bt_units(spec: ProductSpec) -> str:
 
 
 def _pwat_colorbar(fig, cax, cf, colors: FillColors):
-    cb = fig.colorbar(cf, cax=cax, extend="max", ticks=tp.PWAT_TICKS_MM)
+    q = tq.get_quantity("precipitable_water_mm")
+    cb = fig.colorbar(cf, cax=cax, extend=q.extend, ticks=list(q.ticks))
     cb.set_label("Precipitable Water (mm)", color=hp.TEXT_COLOR, fontsize=10)
     return cb
 
@@ -434,51 +556,55 @@ def _rh_layer_stat(spec: ProductSpec, frame, domain_label, vmax, pmin, scope):
 # env winds / shear vectors; the header stat reduces over the whole domain (these
 # are broad synoptic maps, so scope is domain-wide with no honesty suffix).
 # ---------------------------------------------------------------------------
-def _env_cmap(name, hexes, *, under=None, over=None):
-    cm = mcolors.LinearSegmentedColormap.from_list(name, hexes, N=256)
-    cm.set_bad(alpha=0.0)                          # NaN / off-domain -> transparent
-    if under is not None:
-        cm.set_under(under)
-    if over is not None:
-        cm.set_over(over)
+# The four muted env ramps that used to be defined privately here now live in
+# the shared quantity registry (tat_palettes.quantities) alongside the scale
+# they belong to - per-product ownership of a shared quantity's colors is
+# exactly what that registry exists to end. Colors are unchanged; only the
+# owner moved. Ramps that were ALREADY shared (isotach / cyclonic-vort / SST /
+# z500 rainbow) are reached through the same registry now rather than being
+# re-derived here.
+#
+# Each colormap is built ONCE per quantity and memoized, because the pre-refactor
+# module-level _CMAP_* constants were single instances and matplotlib artists
+# compare them by identity in places.
+_CMAP_CACHE: dict = {}
+
+
+def _q_cmap(quantity: str):
+    """The (memoized) colormap for a quantity key."""
+    cm = _CMAP_CACHE.get(quantity)
+    if cm is None:
+        cm = _CMAP_CACHE[quantity] = tq.get_quantity(quantity).cmap()
     return cm
 
-# Muted scientific ramps - calm bases, warm/saturated only at the active end.
-_CMAP_PRECIP = _env_cmap("tat_env_precip",
-    ["#bfe3c9", "#7cc88e", "#3fa58f", "#2f80b0", "#2b5697", "#5a3f9c",
-     "#8a2f78", "#b23048"])
-# Restyle (data unchanged): shear / PV / SST / tropopause-temp now reuse the
-# canonical shared tat_palettes colortables instead of the local muted ramps, so
-# they match the rest of the site and a color edit propagates from ONE place.
-_CMAP_SHEAR = tp.era5_isotach_cmap()   # ERA5 300 mb isotach: cyan->blue->green->yellow->orange->red->magenta->white
-_CMAP_PV = tp.cyclonic_vort_cmap()     # reuse the cyclonic-vorticity palette (dark #333 -> blue/purple -> magenta -> gold -> pale)
-_CMAP_SST = tp.sst_actual_cmap()       # reuse the site SST rainbow (violet 0 C -> oxblood 32 C); applied over 0..32 below
-_CMAP_TROPT = tp.era5_z500_cmap()      # ERA5 500 mb-height rainbow: purple->blue->cyan->green->yellow->orange->red->dark red
-_CMAP_CAPE = _env_cmap("tat_env_cape",
-    ["#243a3a", "#3f6f5a", "#7fae5a", "#d9c14a", "#d98f43", "#c0453a"],
-    over="#9b2f28")
-_CMAP_SRH = _env_cmap("tat_env_srh",
-    ["#2b2f4a", "#3f5f8f", "#5fae9e", "#d9c14a", "#d9803a", "#c0453a"],
-    over="#9b2f28")
-_CMAP_LHTFL = _env_cmap("tat_env_lhtfl",
-    ["#1f3b4a", "#2f7f8f", "#5fae8f", "#d9c14a", "#d98f43"], over="#c0453a")
 
+def _env_colors(key, quantity):
+    """Fill = ``frame.env[key]`` on the fixed scale registered for ``quantity``.
 
-def _env_colors(key, cmap, vmin, vmax, *, mask_below=None):
-    """Fill = frame.env[key] over Normalize(vmin, vmax) with ``cmap``; cells below
-    ``mask_below`` (when set) render transparent so the map shows through."""
+    vmin/vmax and the transparency floor come from the quantity registry, NOT
+    from this call site - that is the whole point: two products rendering the
+    same quantity cannot drift onto different scales.
+    """
+    q = tq.get_quantity(quantity)
+
     def f(spec, frame, enh_name) -> FillColors:
         field = np.asarray(frame.env[key], dtype=float)
-        if mask_below is not None:
-            field = np.where(field < mask_below, np.nan, field)
-        return FillColors(cmap=cmap, norm=mcolors.Normalize(vmin, vmax), field=field)
+        if q.mask_below is not None:
+            field = np.where(field < q.mask_below, np.nan, field)
+        return FillColors(cmap=_q_cmap(quantity), norm=q.norm(), field=field)
     return f
 
 
-def _env_colorbar(label, *, ticks=None, extend="neither"):
+def _env_colorbar(label, quantity):
+    """Colorbar for an env product: ticks + extend from the quantity registry,
+    LABEL from the product (two products may honestly word the same quantity
+    differently)."""
+    q = tq.get_quantity(quantity)
+
     def f(fig, cax, cf, colors: FillColors):
-        cb = (fig.colorbar(cf, cax=cax, extend=extend, ticks=ticks) if ticks
-              else fig.colorbar(cf, cax=cax, extend=extend))
+        ticks = list(q.ticks) or None
+        cb = (fig.colorbar(cf, cax=cax, extend=q.extend, ticks=ticks) if ticks
+              else fig.colorbar(cf, cax=cax, extend=q.extend))
         cb.set_label(label, color=hp.TEXT_COLOR, fontsize=10)
         return cb
     return f
@@ -513,7 +639,7 @@ def _env200_wind(frame):
 # ---------------------------------------------------------------------------
 _SPECS = (
     ProductSpec(
-        key="mslp_wind", slug="mslp_wind", label="MSLP + 10 m Wind",
+        key="mslp_wind", slug="mslp_wind", quantity="wind_speed_kt", label="MSLP + 10 m Wind",
         short="Wind", order=0,
         grib="atm", sat_parm=None, field_attr="wind_kt", requires_attr=None,
         default_enhancement=None, channel=None, make_colors=_wind_colors,
@@ -523,9 +649,13 @@ _SPECS = (
         make_stat=_wind_stat,
         # The wind product's signature isotach lines (now decoupled from barbs).
         draw_wind_contours=True,
+        # TC INTENSITY. The mean of member 10 m wind is the canonical wrong
+        # answer: displacement across members averages two 120 kt cores into one
+        # 60 kt smear. Members' intensity traces are the honest view.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.SPAGHETTI,
     ),
     ProductSpec(
-        key="refl", slug="refl", label="Composite Reflectivity + MSLP",
+        key="refl", slug="refl", quantity="reflectivity_dbz", label="Composite Reflectivity + MSLP",
         short="Reflectivity", order=1,
         grib="atm", sat_parm=None, field_attr="refl_dbz", requires_attr="refl_dbz",
         default_enhancement=None, channel=None, make_colors=_refl_colors,
@@ -533,9 +663,15 @@ _SPECS = (
         draw_barbs=False,
         coast_color=hp.REFL_COAST_COLOR, coast_lw=1.3, coast_halo=0.0,
         make_stat=_refl_stat,
+        # Reflectivity IS resolved deep convection - meaningless off a model
+        # that parameterises it. Hard gate, not a preference.
+        requires_explicit_convection=True,
+        # Simulated sensor: an averaged echo is a radar return no radar could
+        # produce. Pick a member.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.MEMBER_PICKER,
     ),
     ProductSpec(
-        key="clean_ir", slug="clean_ir",
+        key="clean_ir", slug="clean_ir", quantity="brightness_temperature_c",
         label="Simulated Clean IR (10.3 um) + MSLP", short="Clean IR", order=2,
         grib="sat", sat_parm=58, field_attr="bt_c", requires_attr="bt_c",
         default_enhancement="rainbow_ir", channel="Clean IR (10.3 um)",
@@ -550,9 +686,14 @@ _SPECS = (
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("ir")),
+        # NOT convection-gated: 10.3 um BT is set by grid-scale cloud top and
+        # upper-tropospheric humidity, which a parameterised-convection model
+        # still produces (smoother, but not a category error like reflectivity).
+        # Simulated sensor -> the mean is an unphysical radiance.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.MEMBER_PICKER,
     ),
     ProductSpec(
-        key="water_vapor", slug="water_vapor",
+        key="water_vapor", slug="water_vapor", quantity="brightness_temperature_c",
         label="Simulated Water Vapor (6.2 um) + MSLP", short="Water Vapor",
         order=3,
         grib="sat", sat_parm=53, field_attr="bt_c", requires_attr="bt_c",
@@ -565,6 +706,9 @@ _SPECS = (
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("wv")),
+        # As clean_ir: 6.2 um BT tracks the mid/upper humidity field, so it is
+        # not convection-gated; simulated sensor, so no mean.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.MEMBER_PICKER,
     ),
     ProductSpec(
         # Simulated 89 GHz microwave (SSMIS-F17, 91.7 GHz) -- the canonical
@@ -574,7 +718,7 @@ _SPECS = (
         # H-pol emissivity); PCT removes that so clear ocean is ~ -5 degC (blue)
         # while ice-scattering cores stay cold. V=parm63, H=parm62 (both in every
         # storm+parent .sat). Decoded to degC, fill-masked, clipped [105,290] K.
-        key="sim_89h", slug="sim_89h",
+        key="sim_89h", slug="sim_89h", quantity="brightness_temperature_c",
         label="Simulated 89 PCT (from HAFS)", short="89H", order=3.5,
         grib="sat", sat_parm=None, sat_pct=(63, 62),
         field_attr="bt_c", requires_attr="bt_c",
@@ -588,9 +732,15 @@ _SPECS = (
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_bt_stat,
         selectable_enhancements=tuple(tp.list_enhancements_for_domain("mw")),
+        # SIMULATED MICROWAVE. The entire 89 GHz signal is ice scattering by
+        # convective cores; with convection parameterised there are no cores to
+        # scatter, so the render would be a blue field with no storm in it.
+        # Hard gate, exactly as for reflectivity.
+        requires_explicit_convection=True,
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.MEMBER_PICKER,
     ),
     ProductSpec(
-        key="mslp_pwat", slug="mslp_pwat", label="MSLP & PWAT",
+        key="mslp_pwat", slug="mslp_pwat", quantity="precipitable_water_mm", label="MSLP & PWAT",
         short="PWAT", order=4,
         grib="atm", sat_parm=None, field_attr="pwat", requires_attr="pwat",
         default_enhancement=None, channel=None, make_colors=_pwat_colors,
@@ -604,6 +754,10 @@ _SPECS = (
         # Thin black moisture contours every 10 mm from 50 (only those inside a
         # frame's PWAT range draw), same style as the wind category contours.
         field_contour_levels=(50, 60, 70, 80, 90),
+        # PWAT is a smooth column-integrated moisture field - the ensemble mean
+        # IS a meaningful moisture forecast (and a standard operational product).
+        # Its MSLP L marker is dropped in a mean render by rule (b).
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
     ),
 
     # --- Phase 2 upper-air products (orders 5..10, appended after the existing
@@ -615,7 +769,7 @@ _SPECS = (
     # product keeps MSLP isobars + L. Coast color is per-fill: black over the
     # colorful height and RH fills, neon-green over the dark vorticity fill. ---
     ProductSpec(
-        key="hgt_wind_850", slug="hgt_wind_850", label="850 mb Height & Wind",
+        key="hgt_wind_850", slug="hgt_wind_850", quantity="wind_speed_kt", label="850 mb Height & Wind",
         short="850 H/Wind", order=5,
         grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
         default_enhancement=None, channel=None, make_colors=_hgt_wind_colors(850),
@@ -628,9 +782,12 @@ _SPECS = (
         # Same coast styling as mslp_wind (shared colorful wind fill -> black).
         coast_color=hp.COAST_COLOR, coast_lw=1.2, coast_halo=0.0,
         make_stat=_hgt_wind_stat(850),
+        # Pressure-level wind + geopotential height: smooth synoptic mass
+        # fields, the archetypal mean-safe quantities (rule (b) drops the L).
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
     ),
     ProductSpec(
-        key="hgt_wind_700", slug="hgt_wind_700", label="700 mb Height & Wind",
+        key="hgt_wind_700", slug="hgt_wind_700", quantity="wind_speed_kt", label="700 mb Height & Wind",
         short="700 H/Wind", order=6,
         grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
         default_enhancement=None, channel=None, make_colors=_hgt_wind_colors(700),
@@ -641,9 +798,11 @@ _SPECS = (
         line_contour=LineContourSpec(source=_height_dam(700), interval=3.0),
         coast_color=hp.COAST_COLOR, coast_lw=1.2, coast_halo=0.0,
         make_stat=_hgt_wind_stat(700),
+        # As 850 mb: smooth mass field, mean-safe.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
     ),
     ProductSpec(
-        key="hgt_wind_500", slug="hgt_wind_500", label="500 mb Height & Wind",
+        key="hgt_wind_500", slug="hgt_wind_500", quantity="wind_speed_kt", label="500 mb Height & Wind",
         short="500 H/Wind", order=7,
         grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
         default_enhancement=None, channel=None, make_colors=_hgt_wind_colors(500),
@@ -656,14 +815,19 @@ _SPECS = (
         line_contour=LineContourSpec(source=_height_dam(500), interval=6.0),
         coast_color=hp.COAST_COLOR, coast_lw=1.2, coast_halo=0.0,
         make_stat=_hgt_wind_stat(500),
+        # 500 mb height is the steering-flow field the spec names
+        # explicitly as mean-safe; the ensemble mean 500 mb chart is the
+        # single most standard ensemble product there is.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
     ),
     ProductSpec(
-        key="vort_wind_850", slug="vort_wind_850",
+        key="vort_wind_850", slug="vort_wind_850", quantity="cyclonic_vorticity_850_1e5",
         label="850 mb Cyclonic Vorticity & Wind", short="850 Vort", order=8,
         grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
         default_enhancement=None, channel=None,
-        make_colors=_vort_colors(850, 300.0),
-        fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
+        make_colors=_vort_colors(850, "cyclonic_vorticity_850_1e5"),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_vort_colorbar("cyclonic_vorticity_850_1e5"),
         # No overlays at all: no MSLP isobars, no L marker, and no height
         # contours. Contour lines and the L are a package and the vorticity
         # products carry neither; the vorticity maximum is the feature of
@@ -675,23 +839,30 @@ _SPECS = (
         # through; neon-green coasts read over it exactly like the refl product.
         coast_color=hp.REFL_COAST_COLOR, coast_lw=1.3, coast_halo=0.0,
         make_stat=_vort_stat(850),
+        # Vorticity is a sharp, displacement-sensitive extremum field: the
+        # mean of N offset vorticity maxima is a broad low-amplitude blob no
+        # member contains. P(vort > threshold) is the honest ensemble view.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.PROBABILITY,
     ),
     ProductSpec(
-        key="vort_wind_500", slug="vort_wind_500",
+        key="vort_wind_500", slug="vort_wind_500", quantity="cyclonic_vorticity_500_1e5",
         label="500 mb Cyclonic Vorticity & Wind", short="500 Vort", order=9,
         grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
         default_enhancement=None, channel=None,
-        make_colors=_vort_colors(500, 150.0),
-        fill_method=FillMethod.PCOLORMESH, make_colorbar=_vort_colorbar,
+        make_colors=_vort_colors(500, "cyclonic_vorticity_500_1e5"),
+        fill_method=FillMethod.PCOLORMESH,
+        make_colorbar=_vort_colorbar("cyclonic_vorticity_500_1e5"),
         # No overlays (as at 850 mb): no isobars, no L marker, no height contours.
         draw_barbs=True, draw_wind_contours=False,
         draw_mslp_isobars=False, draw_mslp_markers=False,
         wind_provider=_level_wind_provider(500),
         coast_color=hp.REFL_COAST_COLOR, coast_lw=1.3, coast_halo=0.0,
         make_stat=_vort_stat(500),
+        # As 850 mb vorticity: displacement-sensitive extremum, no mean.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.PROBABILITY,
     ),
     ProductSpec(
-        key="rh_layer", slug="rh_layer",
+        key="rh_layer", slug="rh_layer", quantity="relative_humidity_pct",
         label="700-300 mb Relative Humidity & Wind", short="Layer RH", order=10,
         grib="atm", sat_parm=None, field_attr="upper", requires_attr="upper",
         default_enhancement=None, channel=None, make_colors=_rh_colors,
@@ -705,6 +876,9 @@ _SPECS = (
         # mslp_wind.
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_rh_layer_stat,
+        # Layer-mean relative humidity is a smooth environmental moisture
+        # field; the ensemble mean is a meaningful dry-air-intrusion signal.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
         # Thin black RH contours every 10% from 50 (only those inside a frame's
         # layer-RH range draw), same style as the PWAT / wind category contours.
         field_contour_levels=(50, 60, 70, 80, 90),
@@ -718,148 +892,164 @@ _SPECS = (
     # per field; MSLP isobars carry the synoptic context (off where streamlines /
     # PV barbs already do). Appended last so existing toggle order is unchanged. ---
     ProductSpec(
-        key="env_precip", slug="env_precip", label="Total Precipitation (in)",
+        key="env_precip", slug="env_precip", quantity="total_precip_in", label="Total Precipitation (in)",
         short="Precip", order=11,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("apcp_in", _CMAP_PRECIP, 0.0, 8.0, mask_below=0.05),
+        make_colors=_env_colors("apcp_in", "total_precip_in"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("Total precip (in)",
-                                    ticks=[0, 1, 2, 3, 4, 5, 6, 7, 8], extend="max"),
+        make_colorbar=_env_colorbar("Total precip (in)", "total_precip_in"),
         draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("apcp_in", hp.scope_max, "MAX PRECIP {val:.1f} in",
                             "Total Precipitation (in) & MSLP"),
+        # PRECIP MAXIMA. Averaging displaced rain shields collapses two
+        # 8 in bullseyes into one 2 in blur. P(precip > threshold) instead.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.PROBABILITY,
         synoptic_parent=True, domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_shear_200_850", slug="env_shear_200_850",
+        key="env_shear_200_850", slug="env_shear_200_850", quantity="shear_200_850_kt",
         label="200-850 mb Wind Shear (kt)", short="Shear 200-850", order=12,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("shrmag_200_850", _CMAP_SHEAR, 0.0, 80.0),
+        make_colors=_env_colors("shrmag_200_850", "shear_200_850_kt"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("200-850 mb shear (kt)",
-                                    ticks=[0, 20, 40, 60, 80], extend="max"),
+        make_colorbar=_env_colorbar("200-850 mb shear (kt)", "shear_200_850_kt"),
         draw_barbs=False, draw_mslp_isobars=False, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("shrmag_200_850", hp.scope_max, "MAX SHEAR {val:.0f} kt",
                             "200-850 mb Deep-Layer Shear (kt)"),
+        # Deep-layer shear is the environmental field the spec names as
+        # mean-safe: broad, slowly varying, and what the mean is FOR.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
         synoptic_parent=True, streamline_provider=_shear_streamlines(200, 850),
         domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_shear_500_850", slug="env_shear_500_850",
+        key="env_shear_500_850", slug="env_shear_500_850", quantity="shear_500_850_kt",
         label="500-850 mb Wind Shear (kt)", short="Shear 500-850", order=13,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("shrmag_500_850", _CMAP_SHEAR, 0.0, 60.0),
+        make_colors=_env_colors("shrmag_500_850", "shear_500_850_kt"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("500-850 mb shear (kt)",
-                                    ticks=[0, 15, 30, 45, 60], extend="max"),
+        make_colorbar=_env_colorbar("500-850 mb shear (kt)", "shear_500_850_kt"),
         draw_barbs=False, draw_mslp_isobars=False, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("shrmag_500_850", hp.scope_max, "MAX SHEAR {val:.0f} kt",
                             "500-850 mb Mid-Level Shear (kt)"),
+        # As the 200-850 shear: broad environmental field, mean-safe.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
         synoptic_parent=True, streamline_provider=_shear_streamlines(500, 850),
         domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_pv_200", slug="env_pv_200",
+        key="env_pv_200", slug="env_pv_200", quantity="potential_vorticity_pvu",
         label="200 mb Potential Vorticity (PVU)", short="200 PV", order=14,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("pv_200", _CMAP_PV, 0.0, 10.0),
+        make_colors=_env_colors("pv_200", "potential_vorticity_pvu"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("200 mb PV (PVU)",
-                                    ticks=[0, 2, 4, 6, 8, 10], extend="max"),
+        make_colorbar=_env_colorbar("200 mb PV (PVU)", "potential_vorticity_pvu"),
         # 200 mb wind barbs over the PV fill; no isobars / L (upper-level field).
         draw_barbs=True, wind_provider=_env200_wind,
         draw_mslp_isobars=False, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("pv_200", hp.scope_max, "MAX PV {val:.1f} PVU",
                             "200 mb Potential Vorticity (PVU) & Wind"),
+        # PV is the textbook case AGAINST a mean: upper-level PV lives in
+        # thin filaments, and averaging filaments across members yields a
+        # smeared sheet that misrepresents every member's dynamics.
+        # P(PV > 2 PVU) is the meaningful tropopause-intrusion product.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.PROBABILITY,
         synoptic_parent=True, domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_sst", slug="env_sst", label="Sea-Surface Temp (°C)",
+        key="env_sst", slug="env_sst", quantity="sst_c", label="Sea-Surface Temp (°C)",
         short="SST", order=15,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
         # 0..32 °C == the SST_ACTUAL palette's design range (violet 0 -> oxblood
         # 32), so a given SST reads the SAME color as the site SST maps.
-        make_colors=_env_colors("sst_c", _CMAP_SST, 0.0, 32.0),
+        make_colors=_env_colors("sst_c", "sst_c"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("SST (°C)",
-                                    ticks=[0, 8, 16, 24, 32], extend="both"),
+        make_colorbar=_env_colorbar("SST (°C)", "sst_c"),
         # MSLP isobars for synoptic context (task: SST + MSLP contours).
         draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("sst_c", hp.scope_max, "MAX SST {val:.1f}°C",
                             "Sea-Surface Temperature (°C) & MSLP"),
+        # SST: slowly varying lower boundary condition, explicitly mean-safe.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
         synoptic_parent=True, domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_tropt", slug="env_tropt", label="Tropopause Temperature (°C)",
+        key="env_tropt", slug="env_tropt", quantity="tropopause_temp_c", label="Tropopause Temperature (°C)",
         short="Tropo T", order=16,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("tropt_c", _CMAP_TROPT, -85.0, -45.0),
+        make_colors=_env_colors("tropt_c", "tropopause_temp_c"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("Tropopause temp (°C)",
-                                    ticks=[-85, -75, -65, -55, -45], extend="both"),
+        make_colorbar=_env_colorbar("Tropopause temp (°C)", "tropopause_temp_c"),
         draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("tropt_c", hp.scope_min, "MIN TROP T {val:.1f}°C",
                             "Tropopause Temperature (°C) & MSLP"),
+        # Tropopause temperature is a smooth large-scale thermal field.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
         synoptic_parent=True, domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_cape", slug="env_cape", label="Surface CAPE (J/kg)",
+        key="env_cape", slug="env_cape", quantity="cape_jkg", label="Surface CAPE (J/kg)",
         short="CAPE", order=17,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("cape_jkg", _CMAP_CAPE, 0.0, 4000.0, mask_below=100.0),
+        make_colors=_env_colors("cape_jkg", "cape_jkg"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("Surface CAPE (J/kg)",
-                                    ticks=[0, 1000, 2000, 3000, 4000], extend="max"),
+        make_colorbar=_env_colorbar("Surface CAPE (J/kg)", "cape_jkg"),
         # 10 m wind barbs (default provider) + MSLP isobars.
         draw_barbs=True, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("cape_jkg", hp.scope_max, "MAX CAPE {val:.0f} J/kg",
                             "Surface CAPE (J/kg) & 10 m Wind"),
+        # CAPE is a nonlinear extremum: the mean is biased low everywhere
+        # and marks no member's actual instability axis.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.PROBABILITY,
         synoptic_parent=True, domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_srh", slug="env_srh",
+        key="env_srh", slug="env_srh", quantity="srh_03km_m2s2",
         label="0-3 km Storm-Relative Helicity (m²/s²)", short="0-3 km SRH",
         order=18,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("srh_03km", _CMAP_SRH, 0.0, 500.0, mask_below=25.0),
+        make_colors=_env_colors("srh_03km", "srh_03km_m2s2"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("0-3 km SRH (m²/s²)",
-                                    ticks=[0, 100, 200, 300, 400, 500], extend="max"),
+        make_colorbar=_env_colorbar("0-3 km SRH (m²/s²)", "srh_03km_m2s2"),
         draw_barbs=False, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("srh_03km", hp.scope_max, "MAX SRH {val:.0f} m2/s2",
                             "0-3 km Storm-Relative Helicity & MSLP"),
+        # SRH is sharp and displacement-sensitive, like vorticity.
+        ensemble_mean_allowed=False, mean_substitute=MeanSubstitute.PROBABILITY,
         synoptic_parent=True, domains=("parent.atm",),
     ),
     ProductSpec(
-        key="env_lhtfl", slug="env_lhtfl", label="Latent Heat Flux (W/m²)",
+        key="env_lhtfl", slug="env_lhtfl", quantity="latent_heat_flux_wm2", label="Latent Heat Flux (W/m²)",
         short="Latent Flux", order=19,
         grib="atm", sat_parm=None, field_attr="env", requires_attr="env",
         default_enhancement=None, channel=None,
-        make_colors=_env_colors("lhtfl_wm2", _CMAP_LHTFL, 0.0, 400.0),
+        make_colors=_env_colors("lhtfl_wm2", "latent_heat_flux_wm2"),
         fill_method=FillMethod.PCOLORMESH,
-        make_colorbar=_env_colorbar("Latent heat flux (W/m²)",
-                                    ticks=[0, 100, 200, 300, 400], extend="both"),
+        make_colorbar=_env_colorbar("Latent heat flux (W/m²)", "latent_heat_flux_wm2"),
         # 10 m wind barbs (default provider) + MSLP isobars.
         draw_barbs=True, draw_mslp_isobars=True, draw_mslp_markers=False,
         coast_color=hp.COAST_COLOR, coast_lw=1.1, coast_halo=0.0,
         make_stat=_env_stat("lhtfl_wm2", hp.scope_max, "MAX LHF {val:.0f} W/m2",
                             "Latent Heat Flux (W/m²) & 10 m Wind"),
+        # Surface latent heat flux is a broad air-sea exchange field whose
+        # mean is a meaningful basin-scale energy-supply signal.
+        ensemble_mean_allowed=True, mean_substitute=MeanSubstitute.NOT_APPLICABLE,
         synoptic_parent=True, domains=("parent.atm",),
     ),
 )
@@ -912,3 +1102,215 @@ def grib_parms(key: str) -> tuple:
     if s.sat_pct:
         return tuple(int(p) for p in s.sat_pct)
     return (int(s.sat_parm),) if s.sat_parm is not None else ()
+
+
+# ---------------------------------------------------------------------------
+# STRUCTURAL model x product gate.
+#
+# The rule this enforces is a correctness rule, not a style rule, so it is
+# enforced in DEPTH rather than in one place: ``generate_hafs_plots`` calls
+# ``allowed_products_for_model`` when planning render jobs (the pair is never
+# scheduled), ``hafs_plot.render_frame`` calls ``assert_renderable`` (a caller
+# that reaches the renderer by another path is refused, loudly), and the
+# manifest is composed from the planned jobs (so the pair is never advertised
+# and the frontend never offers it). A product that a model cannot physically
+# support is therefore UNRENDERABLE, not merely discouraged.
+# ---------------------------------------------------------------------------
+class IncompatibleProduct(ValueError):
+    """Raised when a (model, product) pair is physically meaningless.
+
+    Carries both ids so the failure names the pair rather than the symptom.
+    """
+
+    def __init__(self, model_slug: str, product_key: str, reason: str):
+        self.model_slug = model_slug
+        self.product_key = product_key
+        self.reason = reason
+        super().__init__(f"product {product_key!r} is not renderable for model "
+                         f"{model_slug!r}: {reason}")
+
+
+def incompatibility_reason(model_slug: str, product_key: str) -> Optional[str]:
+    """Why this (model, product) pair is refused, or None if it is allowed.
+
+    Unknown ids are refused rather than waved through - a typo'd model or
+    product must not silently render.
+    """
+    spec = REGISTRY.get(product_key)
+    if spec is None:
+        return f"unknown product {product_key!r}"
+    if not mr.has_model(model_slug):
+        return f"unknown model {model_slug!r}"
+    model = mr.get_model(model_slug)
+    if spec.requires_explicit_convection and not model.convection_explicit:
+        return (f"{spec.label} is a resolved-deep-convection product and "
+                f"{model.label} parameterises convection, so the field would be "
+                f"a category error rather than a weak signal")
+    return None
+
+
+def product_allowed(model_slug: str, product_key: str) -> bool:
+    """True when this model may render this product."""
+    return incompatibility_reason(model_slug, product_key) is None
+
+
+def assert_renderable(model_slug: str, product_key: str) -> None:
+    """Raise :class:`IncompatibleProduct` unless the pair is renderable.
+
+    The renderer's own guard - the last line of the structural gate.
+    """
+    reason = incompatibility_reason(model_slug, product_key)
+    if reason is not None:
+        raise IncompatibleProduct(model_slug, product_key, reason)
+
+
+def allowed_products_for_model(model_slug: str,
+                               products: Optional[list] = None) -> list:
+    """The subset of ``products`` (default: every product, in toggle order)
+    that ``model_slug`` may render. The job planner's filter."""
+    keys = products if products is not None else default_order()
+    return [k for k in keys if product_allowed(model_slug, k)]
+
+
+# ---------------------------------------------------------------------------
+# ENSEMBLE-MEAN policy.
+#
+# ``ProductSpec.ensemble_mean_allowed`` states the FILL field's policy; this
+# function layers on the two structural rules documented on that field, so no
+# caller has to remember them and no spec has to restate them.
+# ---------------------------------------------------------------------------
+def ensemble_mean_policy(product_key: str, domain: Optional[str] = None,
+                         model_slug: Optional[str] = None) -> dict:
+    """Whether an ensemble MEAN may be rendered, and what to show if not.
+
+    Returns ``{"allowed": bool, "substitute": <MeanSubstitute value str>,
+    "reason": str|None}``. ``domain`` is the raw HAFS domain name (e.g.
+    ``"storm.atm"``); ``model_slug`` lets a model declare a storm-following nest
+    so the rule applies to any model, not just to a hardcoded domain name.
+
+    Rule (a): a storm-following nest denies the mean for EVERY product - members
+    centre their nests on their own forecast positions, so a cell-wise mean
+    averages different places and is not a defined operation.
+    """
+    spec = REGISTRY.get(product_key)
+    if spec is None:
+        return {"allowed": False,
+                "substitute": MeanSubstitute.MEMBER_PICKER.value,
+                "reason": f"unknown product {product_key!r}"}
+
+    # Rule (a): storm-following nest overrides any product-level allowance.
+    on_moving_nest = bool(domain and domain.startswith("storm"))
+    if model_slug and mr.has_model(model_slug):
+        on_moving_nest = on_moving_nest and mr.get_model(model_slug).storm_following_nest
+    if on_moving_nest:
+        return {
+            "allowed": False,
+            "substitute": MeanSubstitute.MEMBER_PICKER.value,
+            "reason": ("fields on a storm-following nest have no shared grid "
+                       "across members, so a cell-wise mean averages different "
+                       "places"),
+        }
+
+    if spec.ensemble_mean_allowed:
+        return {"allowed": True,
+                "substitute": MeanSubstitute.NOT_APPLICABLE.value,
+                "reason": None}
+    return {"allowed": False, "substitute": spec.mean_substitute.value,
+            "reason": f"{spec.label} is not a mean-safe quantity"}
+
+
+def suppress_mslp_marker_in_mean(spec: ProductSpec) -> bool:
+    """Rule (b): an MSLP MINIMUM marker is never mean-safe, so a mean render
+    drops it on every product that draws one. True when there is one to drop."""
+    return spec.draw_mslp_markers
+
+
+# ---------------------------------------------------------------------------
+# AI intensity-statistic suppression.
+#
+# ``ModelSpec.show_intensity_stat`` is False for every learned emulator. The
+# header's intensity claims are the VMAX reading, the MSLP minimum, and the
+# SSHWS category pill (which is derived from VMAX); those three are withheld,
+# while the product's OWN statistic (MIN BT, MAX dBZ, MAX PWAT, ...) is kept -
+# an AI model's cloud field is still its cloud field, only its intensity is not
+# a forecast.
+#
+# This runs ONLY on the AI path. Physics models never call it, so their headers
+# are byte-identical to before this existed - a requirement, since every cached
+# HAFS frame would otherwise need a cold re-render.
+# ---------------------------------------------------------------------------
+#: The separator every make_stat builder uses between header stat segments.
+STAT_SEP = "   /   "
+
+#: Segment prefixes that constitute an INTENSITY claim.
+INTENSITY_PREFIXES = ("VMAX ", "MSLP ")
+
+#: Shown when suppression removes every segment (the wind product, whose stat is
+#: nothing BUT intensity). Says why rather than leaving the corner blank.
+INTENSITY_WITHHELD = "intensity not shown (AI model)"
+
+
+def strip_intensity(right_stat: str, scope_label: str = "") -> str:
+    """Drop the VMAX / MSLP segments from a header right-stat.
+
+    ``scope_label`` is the honesty suffix (e.g. ``"  (domain-wide)"``) that the
+    stat builders append to their LAST segment - usually the MSLP one. Dropping
+    that segment would drop the label with it, so it is re-attached to whatever
+    survives. Returns :data:`INTENSITY_WITHHELD` when nothing survives.
+    """
+    segs = [s for s in right_stat.split(STAT_SEP) if s]
+    kept = [s for s in segs if not s.startswith(INTENSITY_PREFIXES)]
+    if not kept:
+        return INTENSITY_WITHHELD + (scope_label or "")
+    out = STAT_SEP.join(kept)
+    # Re-attach the scope label exactly once: a kept segment may already carry
+    # it (when MSLP was not the last segment), in which case adding it again
+    # would read "(domain-wide)  (domain-wide)".
+    if scope_label and not out.endswith(scope_label):
+        out += scope_label
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Import-time validation. These are invariants a future edit could silently
+# break, so they are checked once at import rather than left to a test that may
+# not run before a deploy.
+# ---------------------------------------------------------------------------
+def _validate_specs() -> None:
+    seen_orders: dict = {}
+    for s in _SPECS:
+        if s.slug != s.key:
+            raise ValueError(f"spec {s.key!r}: slug {s.slug!r} must equal key")
+        if s.order in seen_orders:
+            raise ValueError(f"spec {s.key!r}: duplicate order {s.order} "
+                             f"(also {seen_orders[s.order]!r})")
+        seen_orders[s.order] = s.key
+        # The mean policy must be stated consistently: a substitute is named
+        # if and ONLY if the mean is denied. Without this biconditional a spec
+        # could claim the mean is allowed while also naming a substitute, and
+        # the frontend would have two contradictory instructions.
+        allowed = s.ensemble_mean_allowed
+        na = s.mean_substitute is MeanSubstitute.NOT_APPLICABLE
+        if allowed != na:
+            raise ValueError(
+                f"spec {s.key!r}: ensemble_mean_allowed={allowed} but "
+                f"mean_substitute={s.mean_substitute.name} - a substitute must "
+                f"be named iff the mean is denied")
+        # Every product names a REGISTERED quantity. A typo would silently
+        # detach the product from the shared scale - exactly the drift the
+        # quantity registry exists to prevent - so it fails at import.
+        if not s.quantity:
+            raise ValueError(f"spec {s.key!r}: no quantity key")
+        if not tq.has_quantity(s.quantity):
+            raise ValueError(f"spec {s.key!r}: unknown quantity "
+                             f"{s.quantity!r} (not in tat_palettes.quantities)")
+        # A convection-gated product must be reachable by at least one model,
+        # or it is dead weight that silently renders nowhere.
+        if s.requires_explicit_convection and not any(
+                m.convection_explicit for m in mr.ordered_models()):
+            raise ValueError(
+                f"spec {s.key!r} requires explicit convection but no registered "
+                f"model provides it - the product would never render")
+
+
+_validate_specs()

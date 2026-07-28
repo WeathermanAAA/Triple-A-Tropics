@@ -22,7 +22,14 @@ from hafs_render.publish_manifest import merge_cycles      # noqa: E402
 # clobbers the other with an incompatible shape.
 V2_KEYS = {"generated_at", "product", "products", "models", "domains",
            "fxx_step", "fxx_pad", "fxx_end", "path_template_cycles", "cycles",
-           "cycle", "storms", "path_template"}
+           "cycle", "storms", "path_template",
+           # Phase 0 foundations. Frame-INVARIANT geometry (the projection and
+           # the pixel canvas; the per-frame axes rect + lon/lat extent ride
+           # under storms[].geometry) plus the quantity-keyed value planes.
+           # Together these are what a lat/lon readout, a value readout, and a
+           # ruler are built from. Additive: every pre-existing key is unchanged,
+           # so the box render worker's manifest stays compatible.
+           "projection", "image", "quantities"}
 ENTRY_KEYS = {"cycle", "in_progress", "frames_done", "frames_expected",
               "started_utc", "storms"}
 

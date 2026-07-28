@@ -33,6 +33,68 @@ updated: 2026-07-28T15:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: model-record-phase0
+    title: Model record — convection treatment, AI paradigm, structural product gating
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Every model now carries two structural claims. convection_explicit says
+      whether deep convection is resolved or parameterised, and it GATES the
+      products whose signal IS resolved convection — reflectivity and
+      simulated 89 GHz microwave. That is a correctness gate, not a
+      preference: a reflectivity field off a parameterised-convection model
+      is a category error, because the convection that would make the echo
+      was removed from the grid by the cumulus scheme, and it renders a
+      plausible-looking image that means nothing. So the pair is
+      unrenderable, not discouraged — dropped at job planning, refused with
+      an exception at the renderer, never written to the manifest, never
+      offered by the frontend. Simulated IR and water vapour are NOT gated;
+      they track grid-scale cloud and humidity and stay meaningful. The
+      ai_paradigm enum drives an AI badge and withholds the intensity
+      statistic — current learned emulators under-deepen tropical cyclones as
+      a consequence of training resolution and loss, so their VMAX and MSLP
+      extrema are artifacts, not forecasts. The field still renders; only the
+      number is withheld. Physics-model output is byte-identical.
+    links:
+      - label: Models
+        url: /models/
+  - id: ensemble-mean-policy
+    title: Ensemble-mean policy with named substitutes
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Each product declares whether a cell-wise mean across members is a
+      meaningful field, and where it is not, WHAT to show instead — so a
+      denial is constructive rather than a dead end. Denied on TC intensity,
+      simulated sensors, precipitation maxima and the sharp
+      displacement-sensitive extrema (vorticity, PV, CAPE, SRH); allowed on
+      the smooth synoptic mass and environment fields — height, deep-layer
+      shear, SST, tropopause temperature, PWAT, layer RH, surface fluxes. Two
+      structural rules ride on top so no spec restates them: a
+      storm-following nest denies the mean for every product (members centre
+      their nests on their own forecast positions, so a cell-wise mean
+      averages different places), and the MSLP minimum marker is dropped in
+      any mean render. An import-time validator enforces that a substitute is
+      named if and only if the mean is denied.
+  - id: manifest-geometry-value-plane
+    title: Manifest geometry + value planes
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      The manifest now carries what a client needs to turn a pixel into a
+      number and a place. Frame-invariant half is the projection and the
+      pixel canvas; the per-frame half is the drawn axes rect in pixels plus
+      its lon/lat extent, keyed by frame rather than by product since all 21
+      products of one frame share it. The axes rect is captured AFTER savefig
+      — the map letterboxes inside its fixed square box and matplotlib only
+      resolves that during the draw, so reading it earlier yields a rect that
+      is wrong by the letterbox margin. Projection is plain linear lon/lat,
+      so pixel-to-latlon is an exact affine — which is the only way to do it
+      on a storm-following nest whose extent moves every forecast hour.
+      Prerequisites for lat/lon readout, value readout and a ruler.
   - id: quantity-palette-registry
     title: Palette registry keyed by physical quantity
     area: models

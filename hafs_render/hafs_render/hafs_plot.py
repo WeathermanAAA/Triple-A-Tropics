@@ -435,6 +435,25 @@ def _refl_colorbar(pal: PalCmap, top: float = REFL_CBAR_TOP):
 
 
 # ---------------------------------------------------------------------------
+# Quantity-registry binding.
+#
+# The quantity registry (tat_palettes.quantities) owns every rendered
+# quantity's globally-fixed SCALE, which is what keeps a cross-model comparison
+# honest. Two ramps are built HERE rather than there - the wind ramp, and the
+# reflectivity table parsed from the .pal asset at render time - so this module
+# completes those two entries at import instead of the registry importing the
+# renderer. See tat_palettes.quantities.bind_cmap.
+# ---------------------------------------------------------------------------
+def _bind_quantity_cmaps() -> None:
+    from tat_palettes import quantities as tq
+    tq.bind_cmap("wind_speed_kt", lambda: _wind_cmap_norm()[0])
+    tq.bind_cmap("reflectivity_dbz", lambda: _refl_pal().cmap)
+
+
+_bind_quantity_cmaps()
+
+
+# ---------------------------------------------------------------------------
 # Herbie HAFS template override (AWS-first, no live storm-name dependency)
 # ---------------------------------------------------------------------------
 def install_hafs_templates() -> None:
@@ -1242,6 +1261,27 @@ MODEL_LABEL = {"hafsa": "HAFS-A", "hafsb": "HAFS-B"}
 # Saffir-Simpson reference: 34 TS, 64 Cat1, 83 Cat2, 96 Cat3, 113 Cat4, 137 Cat5.
 CBAR_TICKS_KT = [34, 64, 83, 96, 113, 137]
 
+# Output raster density. Named (rather than inlined at savefig) because the
+# GEOMETRY block render_frame returns converts the axes rect from figure
+# fractions to PIXELS with it - if the two ever disagreed, every client-side
+# pixel -> lon/lat mapping would be silently offset.
+DPI = 155
+
+# --- Figure layout, inches -------------------------------------------------
+# Promoted from locals inside render_frame to module constants because the
+# manifest now publishes the derived pixel canvas, and a client maps pixels to
+# lon/lat with it. render_frame reads these same names, so the published
+# numbers and the drawn figure cannot drift apart.
+MAP_BOX_IN = 10.5                       # square map box (pinned: see render_frame)
+LEFT_GUTTER_IN, CBAR_GUTTER_IN = 0.62, 1.55   # lat-label / colorbar gutters
+BAND_IN, FOOT_IN, BOTPAD_IN = 0.74, 0.40, 0.06  # header / credit / bottom pad
+FIG_W_IN = LEFT_GUTTER_IN + MAP_BOX_IN + CBAR_GUTTER_IN
+FIG_H_IN = BOTPAD_IN + FOOT_IN + MAP_BOX_IN + BAND_IN
+# Agg truncates the canvas to whole pixels, so int() (not round()) matches the
+# file matplotlib actually writes.
+IMAGE_W_PX = int(FIG_W_IN * DPI)
+IMAGE_H_PX = int(FIG_H_IN * DPI)
+
 # Target number of wind barbs across each axis. The per-axis stride is derived
 # from the grid size, so the (fine, small) nest and the (coarse, large) parent
 # both land near this count and stay readable.
@@ -1529,8 +1569,17 @@ def render_frame(frame: HafsFrame, out_path: str,
                  cen_lon: Optional[float] = None,
                  anchor_lat: Optional[float] = None,
                  anchor_lon: Optional[float] = None,
-                 enhancement: Optional[str] = None) -> None:
-    """Render one TAT-styled HAFS frame.
+                 enhancement: Optional[str] = None) -> dict:
+    """Render one TAT-styled HAFS frame; return its GEOMETRY.
+
+    Returns ``{"axes_px": [x, y, w, h], "bbox": [W, S, E, N]}`` - the drawn map
+    axes in output-PNG pixels (origin top-left) and its geographic extent. The
+    projection is plain linear lon/lat, so those eight numbers make pixel <->
+    lon/lat an exact affine on the client: they are what a lat/lon readout, a
+    value readout, and a ruler are built from, and the only way to do it on a
+    storm-following nest whose extent moves every forecast hour. Previously
+    ``None``; both call sites ignored the value, so returning one is
+    backward-compatible.
 
     ``product`` selects the filled field and its legend/header text, sharing all
     of the layout, MSLP isobars, L marker, coastlines, header band, and footer:
@@ -1570,7 +1619,19 @@ def render_frame(frame: HafsFrame, out_path: str,
     # is read off it - no product-name if/elif chains. Lazy import avoids a
     # module-load cycle (hafs_registry imports primitives from this module).
     from hafs_render import hafs_registry as reg
+    # The MODEL registry: the structural (model x product) gate below and the AI
+    # intensity suppression in the header both read it. Imported here alongside
+    # reg for symmetry; it has no dependency on this module, so no cycle either
+    # way.
+    from hafs_render import model_registry as mr
     spec = reg.get_spec(product)
+    # STRUCTURAL GATE, at the renderer itself. The job planner already drops an
+    # incompatible (model, product) pair, so reaching here with one means some
+    # other caller bypassed the planner - refuse rather than emit a physically
+    # meaningless image. Skipped for a model absent from the registry so ad-hoc
+    # and test renders of unregistered slugs still work.
+    if mr.has_model(frame.model):
+        reg.assert_renderable(frame.model, product)
     if spec.requires_attr and getattr(frame, spec.requires_attr) is None:
         raise ValueError(
             f"render_frame(product={product!r}) needs frame.{spec.requires_attr}; "
@@ -1669,12 +1730,10 @@ def render_frame(frame: HafsFrame, out_path: str,
     # canvas size is pinned. A non-square view simply letterboxes (BAND_BG) inside the
     # constant box; set_anchor('W') keeps the map left-justified so the lat labels
     # stay put and any slack sits between the map and the colorbar.
-    base = 10.5  # map box, inches (square; pinned so the figure never resizes)
-    map_w = map_h = base
-    left_in, cbar_in = 0.62, 1.55     # lat-label gutter / right colorbar gutter
-    band_in, foot_in, botpad_in = 0.74, 0.40, 0.06
-    fig_w = left_in + map_w + cbar_in
-    fig_h = botpad_in + foot_in + map_h + band_in
+    map_w = map_h = MAP_BOX_IN
+    left_in, cbar_in = LEFT_GUTTER_IN, CBAR_GUTTER_IN
+    band_in, foot_in, botpad_in = BAND_IN, FOOT_IN, BOTPAD_IN
+    fig_w, fig_h = FIG_W_IN, FIG_H_IN
     map_bottom = botpad_in + foot_in
 
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor=BAND_BG)
@@ -2015,6 +2074,22 @@ def render_frame(frame: HafsFrame, out_path: str,
     subtitle, right_stat = spec.make_stat(spec, frame, domain_label, vmax,
                                           pmin_hdr, scope)
 
+    # AI models: withhold the INTENSITY claims (VMAX, the MSLP minimum, and the
+    # VMAX-derived SSHWS pill) but keep the product's own statistic. Current
+    # learned emulators are trained on ~0.25 deg reanalysis with a loss that
+    # rewards smooth fields, so they systematically under-deepen TCs - their
+    # intensity extrema are resolution artifacts, not forecasts. The track and
+    # the field are still worth showing; the number is not.
+    #
+    # A model absent from the registry (an unregistered/experimental slug) is
+    # treated as a physics model and keeps its stat, so this can never blank a
+    # header by accident. Physics models skip this branch entirely, so their
+    # headers stay byte-identical.
+    _mspec = mr.MODELS.get(frame.model)
+    _show_intensity = _mspec.show_intensity_stat if _mspec else True
+    if not _show_intensity:
+        right_stat = reg.strip_intensity(right_stat, scope.label)
+
     band = fig.add_axes([0.0, (map_bottom + map_h) / fig_h, 1.0, band_in / fig_h])
     band.set_facecolor(BAND_BG)
     band.set_xlim(0, 1)
@@ -2032,7 +2107,9 @@ def render_frame(frame: HafsFrame, out_path: str,
     # Place the category chip immediately after the title via its measured width.
     # Suppressed for the synoptic env maps: they are not storm-centered, so an
     # SSHWS category pill would imply a storm focus they don't have.
-    if not synoptic:
+    # ...and suppressed for AI models: the pill is a pure VMAX restatement, so
+    # showing it would reinstate exactly the intensity claim just withheld.
+    if not synoptic and _show_intensity:
         try:
             rend = fig.canvas.get_renderer()
             x_after = band.transAxes.inverted().transform(
@@ -2064,9 +2141,38 @@ def render_frame(frame: HafsFrame, out_path: str,
              f"{WATERMARK}  /  triple-a-tropics.com", ha="left", va="center",
              fontsize=9, color=MUTED_COLOR)
 
-    fig.savefig(out_path, dpi=155, facecolor=BAND_BG)
+    fig.savefig(out_path, dpi=DPI, facecolor=BAND_BG)
+
+    # --- GEOMETRY capture (must happen AFTER savefig) ----------------------
+    # The map axes SHRINKS inside its fixed square box: set_aspect(geo_aspect)
+    # + set_anchor("W") letterbox a non-square view, and matplotlib only
+    # resolves that during the draw. Read before savefig, ax.get_position()
+    # returns the UNSHRUNK rect and every pixel->lon/lat mapping built from it
+    # is wrong by the letterbox margin - so it is read here, once the figure
+    # has actually been drawn.
+    #
+    # With a plain linear lon/lat axes (no cartopy, no projection kwarg) the
+    # pixel <-> lon/lat mapping is an exact affine, so these eight numbers are
+    # everything a client needs for a lat/lon readout, a value readout under
+    # the cursor, or a ruler - including on a storm-following nest, whose
+    # extent moves every forecast hour.
+    pos = ax.get_position()
+    px_w, px_h = fig.get_size_inches() * DPI
+    geometry = {
+        # Axes rect in PIXELS of the output PNG, origin TOP-LEFT (the image
+        # convention the browser uses; matplotlib's y0 is bottom-up).
+        "axes_px": [round(pos.x0 * px_w, 2),
+                    round((1.0 - pos.y1) * px_h, 2),
+                    round(pos.width * px_w, 2),
+                    round(pos.height * px_h, 2)],
+        # Geographic extent of that rect: [W, S, E, N] in degrees.
+        "bbox": [round(float(lon_min), 4), round(float(lat_min), 4),
+                 round(float(lon_max), 4), round(float(lat_max), 4)],
+    }
+
     plt.close(fig)
     log.info("wrote %s", out_path)
+    return geometry
 
 
 # ---------------------------------------------------------------------------
