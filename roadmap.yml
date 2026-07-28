@@ -29,10 +29,36 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T23:20:00Z
+updated: 2026-07-29T00:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: ships-panel
+    title: SHIPS panel — intensity traces, environment, contribution waterfall, RI
+    area: models
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      The SHIPS diagnostics land as a tab on the same storm-keyed CycloLab
+      surface as the guidance layer, reading OUR OWN R2 archive rather than
+      NHC so the panel and the archive can never disagree. Four blocks:
+      intensity forecast with the previous cycles ghosted so the trend is
+      visible, environment as small multiples with the current value printed
+      beside each, the per-predictor contribution waterfall, and RI
+      probability shown against its own climatological base rate — an 8
+      percent chance is above climatology at one threshold and below it at
+      another, and the multiple is the only way to tell which. AL/EP/CP only,
+      so the tab is never offered in a JTWC basin where no SHIPS file exists.
+      A CORRECTION TO THE BRIEF: the premise was that TOTAL CHANGE sums exactly
+      to its 19 components. It does not — measured across the archived season,
+      only 43.5 percent of columns agree and the residual reaches 4 kt, because
+      every component and the total are printed rounded to whole knots. The
+      waterfall therefore closes on the published total with the difference
+      drawn as a labelled rounding term, rather than stacking short of its own
+      total or absorbing the gap silently into the last component.
+    links:
+      - label: CycloLab storm page
+        url: /cyclolab/NHC_EP072026/
   - id: ships-raw-archive
     title: SHIPS raw archive — stext + lsdiag siblings copied to R2 before they age out
     area: models

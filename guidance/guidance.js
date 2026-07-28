@@ -193,7 +193,23 @@
       '.gv-note{font-size:11.5px;line-height:1.55;color:var(--muted,#8ea2bd);',
       ' border-left:2px solid var(--accent-2,#3fd0d4);padding:2px 0 2px 10px;}',
       '.gv-warn{border-left-color:#ff9a2f;}',
-      '.gv-status{padding:22px;text-align:center;color:var(--muted,#8ea2bd);font-size:12.5px;}'
+      '.gv-status{padding:22px;text-align:center;color:var(--muted,#8ea2bd);font-size:12.5px;}',
+      // SHIPS: environment small-multiples + the RI probability bars
+      '.gv-sm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));',
+      ' gap:8px;margin-top:8px;}',
+      '.gv-sm{border:1px solid var(--border,#243244);border-radius:7px;padding:7px 9px;}',
+      '.gv-smt{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;',
+      ' color:var(--muted,#8ea2bd);font-weight:700;}',
+      '.gv-smv{font-size:14px;font-weight:700;color:var(--fg,#e8eef6);margin:1px 0 2px;}',
+      '.gv-sm svg{width:100%;height:auto;display:block;}',
+      '.gv-sel{background:var(--bg,#0d1117);color:var(--fg,#e8eef6);font-family:inherit;',
+      ' border:1px solid var(--border,#243244);border-radius:6px;padding:4px 8px;',
+      ' font-size:11.5px;}',
+      '.gv-bar{position:relative;height:12px;background:rgba(150,170,200,.08);',
+      ' border-radius:3px;overflow:hidden;}',
+      '.gv-bar span{position:absolute;left:0;top:0;height:100%;border-radius:3px;}',
+      '.gv-bar-climo{background:rgba(150,170,200,.28);}',
+      '.gv-bar-prob{height:100%;}'
     ].join('');
     d.head.appendChild(s);
   };
@@ -283,6 +299,9 @@
     if ((doc.consensus_membership || []).length) {
       tabs.push({ id: 'consensus', label: 'Consensus' });
     }
+    // SHIPS is AL/EP/CP only - no JTWC-basin SHIPS files exist at all, so the
+    // tab is offered only where the product can exist. It loads on demand.
+    if (this._shipsPossible()) tabs.push({ id: 'ships', label: 'SHIPS' });
     tabs.push({ id: 'aids', label: 'Aids' });
 
     this.dom.tabs.innerHTML = '';
@@ -312,7 +331,15 @@
     if (this.tab === 'tracks') b.appendChild(this._tracksPanel());
     else if (this.tab === 'intensity') b.appendChild(this._intensityPanel());
     else if (this.tab === 'consensus') b.appendChild(this._consensusPanel());
+    else if (this.tab === 'ships') b.appendChild(this._shipsPanel());
     else b.appendChild(this._aidsPanel());
+  };
+
+  /* SHIPS exists only for AL/EP/CP - the JTWC basins publish none at all, so
+   * the tab is never offered there rather than offered and then empty. */
+  GuidanceViewer.prototype._shipsPossible = function () {
+    var b = ((this.doc && this.doc.basin) || '').toLowerCase();
+    return b === 'al' || b === 'ep' || b === 'cp';
   };
 
   // ---- shared helpers -----------------------------------------------------
@@ -705,6 +732,292 @@
     wrap.appendChild(this._sourceNote());
     return wrap;
   };
+
+  // =========================================================================
+  // SHIPS - intensity traces, environment, the contribution waterfall, and RI
+  // =========================================================================
+  GuidanceViewer.prototype._shipsPanel = function () {
+    var self = this, wrap = el('div');
+    if (this.ships === undefined) {
+      // Loaded on demand: the document is ~12 kB and most visitors never open
+      // this tab.
+      this.ships = null;
+      wrap.appendChild(el('div', 'gv-status', 'Loading SHIPS…'));
+      fetch(this.base + '/' + encodeURIComponent(this.stormLock) +
+            '/ships_v2.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (s) { self.ships = s; if (self.tab === 'ships') self._paint(); })
+        .catch(function () { self.ships = false; if (self.tab === 'ships') self._paint(); });
+      return wrap;
+    }
+    if (!this.ships) {
+      wrap.appendChild(el('div', 'gv-status',
+        'No SHIPS bulletin archived for this storm yet.'));
+      return wrap;
+    }
+    var s = this.ships;
+    wrap.appendChild(el('div', 'gv-sub',
+      'SHIPS ' + esc(s.cycle) + 'Z' +
+      (s.header && s.header.coefficient_year
+        ? ' · ' + esc(String(s.header.coefficient_year)) + ' coefficients' : '')));
+
+    wrap.appendChild(this._shipsTraces(s));
+    wrap.appendChild(this._shipsEnv(s));
+    wrap.appendChild(this._shipsWaterfall(s));
+    wrap.appendChild(this._shipsRI(s));
+
+    wrap.appendChild(el('div', 'gv-note',
+      'Source: NHC SHIPS bulletin, archived by Triple-A-Tropics · ' +
+      '<a href="' + esc(s.archive_url) + '" style="color:inherit">raw file</a>'));
+    return wrap;
+  };
+
+  /* Intensity: the SHIPS and LGEM forecasts, with previous cycles ghosted so
+   * the TREND is visible - one cycle alone cannot show whether guidance is
+   * trending up or down. */
+  GuidanceViewer.prototype._shipsTraces = function (s) {
+    var box = el('div');
+    box.appendChild(el('div', 'gv-title', 'Intensity forecast'));
+    var taus = s.taus || [], t1 = taus[taus.length - 1] || 168;
+    var series = [['ships', s.traces.ships, '#ffffff', 'SHIPS'],
+                  ['lgem', s.traces.lgem, '#3fd0d4', 'LGEM']];
+    var all = [];
+    series.forEach(function (x) { (x[1] || []).forEach(function (v) { if (v != null) all.push(v); }); });
+    (s.history || []).forEach(function (h) {
+      (h.ships || []).forEach(function (v) { if (v != null) all.push(v); });
+    });
+    if (!all.length) { box.appendChild(el('div', 'gv-status', 'No intensity trace.')); return box; }
+
+    var W = 760, H = 300, P = { l: 42, r: 12, t: 12, b: 30 };
+    var v1 = Math.max(Math.max.apply(null, all) + 12, 60), iw = W - P.l - P.r, ih = H - P.t - P.b;
+    function X(t) { return P.l + (t / t1) * iw; }
+    function Y(v) { return P.t + (v1 - v) / v1 * ih; }
+    var g = ['<svg class="gv-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
+             'aria-label="SHIPS intensity forecast">'];
+    [[34, 'TS'], [64, 'C1'], [83, 'C2'], [96, 'C3'], [113, 'C4'], [137, 'C5']].forEach(function (b) {
+      if (b[0] > v1) return;
+      g.push('<line x1="' + P.l + '" y1="' + Y(b[0]).toFixed(1) + '" x2="' + (W - P.r) +
+        '" y2="' + Y(b[0]).toFixed(1) + '" stroke="' + SSHS_COLORS[b[1]] +
+        '" stroke-width="1" opacity="0.25" stroke-dasharray="3 4"/>');
+      g.push('<text x="' + (W - P.r - 3) + '" y="' + (Y(b[0]) - 3).toFixed(1) + '" fill="' +
+        SSHS_COLORS[b[1]] + '" font-size="9" text-anchor="end" opacity="0.8">' + b[1] + '</text>');
+    });
+    for (var tk = 0; tk <= t1; tk += 24) {
+      g.push('<line x1="' + X(tk).toFixed(1) + '" y1="' + P.t + '" x2="' + X(tk).toFixed(1) +
+        '" y2="' + (H - P.b) + '" stroke="#1b2635"/>');
+      g.push('<text x="' + X(tk).toFixed(1) + '" y="' + (H - P.b + 14) +
+        '" fill="#6d829e" font-size="9.5" text-anchor="middle">' + tk + 'h</text>');
+    }
+    for (var vk = 0; vk <= v1; vk += 20) {
+      g.push('<text x="' + (P.l - 5) + '" y="' + (Y(vk) + 3).toFixed(1) +
+        '" fill="#6d829e" font-size="9.5" text-anchor="end">' + vk + '</text>');
+    }
+    g.push('<text x="' + (P.l - 5) + '" y="' + (P.t - 3) +
+      '" fill="#8ea2bd" font-size="9.5" text-anchor="end" font-weight="700">kt</text>');
+    // Ghost the older cycles first so the current one reads on top.
+    (s.history || []).slice(0, -1).forEach(function (h) {
+      var pts = [];
+      (h.ships || []).forEach(function (v, i) {
+        if (v != null && taus[i] != null) pts.push(X(taus[i]).toFixed(1) + ' ' + Y(v).toFixed(1));
+      });
+      if (pts.length > 1) {
+        g.push('<path d="M' + pts.join(' L') + '" fill="none" stroke="#43536b" ' +
+          'stroke-width="1.2" opacity="0.5"/>');
+      }
+    });
+    series.forEach(function (x) {
+      var pts = [];
+      (x[1] || []).forEach(function (v, i) {
+        if (v != null && taus[i] != null) pts.push(X(taus[i]).toFixed(1) + ' ' + Y(v).toFixed(1));
+      });
+      if (pts.length > 1) {
+        g.push('<path d="M' + pts.join(' L') + '" fill="none" stroke="' + x[2] +
+          '" stroke-width="2.4" stroke-linejoin="round"/>');
+      }
+    });
+    g.push('</svg>');
+    box.innerHTML += g.join('');
+    box.appendChild(el('div', 'gv-legend',
+      '<span><i style="background:#ffffff"></i>SHIPS</span>' +
+      '<span><i style="background:#3fd0d4"></i>LGEM</span>' +
+      '<span><i style="background:#43536b"></i>previous ' +
+      Math.max((s.history || []).length - 1, 0) + ' cycle(s)</span>'));
+    return box;
+  };
+
+  /* Environment: small multiples. Each row is on its own scale, so the shapes
+   * are comparable but the magnitudes are not - the current value is printed
+   * beside each so the number is never read off the sparkline. */
+  GuidanceViewer.prototype._shipsEnv = function (s) {
+    var box = el('div');
+    box.appendChild(el('div', 'gv-title', 'Environment'));
+    var WANT = [['SHEAR (KT)', '#ffd24d'], ['SST (C)', '#ff7a59'],
+                ['POT. INT. (KT)', '#5aa9ff'], ['700-500 MB RH', '#46c56a'],
+                ['HEAT CONTENT', '#ff9a2f'], ['200 MB DIV', '#7aa0ff'],
+                ['TH_E DEV (C)', '#c08bff'], ['STM SPEED (KT)', '#8ea2bd'],
+                ['LAND (KM)', '#9fb3c8']];
+    var taus = s.taus || [], grid = el('div', 'gv-sm-grid');
+    WANT.forEach(function (p) {
+      var v = (s.env || {})[p[0]];
+      if (!v) return;
+      var cur = null;
+      for (var i = 0; i < v.length; i++) { if (v[i] != null) { cur = v[i]; break; } }
+      var cell = el('div', 'gv-sm');
+      cell.appendChild(el('div', 'gv-smt', esc(p[0])));
+      cell.appendChild(el('div', 'gv-smv', cur == null ? 'n/a' : String(cur)));
+      cell.innerHTML += sparkline(v, taus, 210, 52, p[1]);
+      grid.appendChild(cell);
+    });
+    box.appendChild(grid);
+    return box;
+  };
+
+  /* The contribution WATERFALL, at a chosen forecast hour.
+   *
+   * SHIPS prints every component AND the total rounded to whole knots, so the
+   * components do NOT sum to the printed total - measured 43.5% exact across
+   * the 2026 season, residual up to 4 kt. Stacking them alone would leave the
+   * bar visibly short of its own total. The residual is drawn as its own
+   * labelled ROUNDING segment so the waterfall closes exactly on the published
+   * TOTAL CHANGE and the gap is disclosed instead of being absorbed silently
+   * into the last component. */
+  GuidanceViewer.prototype._shipsWaterfall = function (s) {
+    var self = this, box = el('div');
+    var ctaus = s.contribution_taus || [];
+    if (!ctaus.length || !s.contributions || !s.contributions.length) return box;
+    if (this.wfIdx == null) {
+      var i24 = ctaus.indexOf(24);
+      this.wfIdx = i24 >= 0 ? i24 : 0;
+    }
+    var k = Math.min(this.wfIdx, ctaus.length - 1);
+
+    var head = el('div', 'gv-head');
+    head.appendChild(el('span', 'gv-title', 'Intensity-change contributions'));
+    var sel = document.createElement('select');
+    sel.className = 'gv-sel';
+    ctaus.forEach(function (t, i) {
+      var o = document.createElement('option');
+      o.value = String(i); o.textContent = '+' + t + ' h';
+      sel.appendChild(o);
+    });
+    // Set the value AFTER the options are in the select: assigning .selected on
+    // a detached <option> is unreliable, and the control then disagreed with
+    // the chart it drives (it read "+6 h" while the waterfall drew +24 h).
+    sel.value = String(k);
+    sel.addEventListener('change', function () {
+      self.wfIdx = parseInt(sel.value, 10); self._paint();
+    });
+    head.appendChild(sel);
+    box.appendChild(head);
+
+    var items = s.contributions.map(function (c) {
+      return { label: c.label, v: c.values[k] };
+    }).filter(function (x) { return x.v != null && Math.abs(x.v) > 0.0001; });
+    var resid = (s.rounding_residual || [])[k];
+    if (resid != null && Math.abs(resid) > 0.0001) {
+      items.push({ label: 'ROUNDING', v: resid, resid: true });
+    }
+    var total = (s.total_change || [])[k];
+
+    var W = 760, rowH = 19, P = { l: 178, r: 62, t: 10, b: 26 };
+    var H = P.t + P.b + rowH * (items.length + 1);
+    var run = 0, maxAbs = 0, cum = [];
+    items.forEach(function (x) { cum.push(run); run += x.v; maxAbs = Math.max(maxAbs, Math.abs(run)); });
+    maxAbs = Math.max(maxAbs, Math.abs(total || 0), 5);
+    var iw = W - P.l - P.r;
+    function X(v) { return P.l + iw / 2 + (v / maxAbs) * (iw / 2); }
+
+    var g = ['<svg class="gv-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
+             'aria-label="SHIPS intensity-change contribution waterfall">'];
+    g.push('<line x1="' + X(0).toFixed(1) + '" y1="' + P.t + '" x2="' + X(0).toFixed(1) +
+      '" y2="' + (H - P.b) + '" stroke="#3a4a60" stroke-width="1"/>');
+    items.forEach(function (x, i) {
+      var y = P.t + i * rowH, a = X(cum[i]), b = X(cum[i] + x.v);
+      var col = x.resid ? '#7c8aa0' : (x.v >= 0 ? '#46c56a' : '#f5333c');
+      g.push('<rect x="' + Math.min(a, b).toFixed(1) + '" y="' + (y + 3) + '" width="' +
+        Math.max(Math.abs(b - a), 1).toFixed(1) + '" height="' + (rowH - 7) +
+        '" fill="' + col + '" opacity="' + (x.resid ? 0.55 : 0.85) + '"' +
+        (x.resid ? ' stroke="#9fb3c8" stroke-dasharray="2 2"' : '') + '/>');
+      g.push('<text x="' + (P.l - 6) + '" y="' + (y + rowH / 2 + 3) +
+        '" fill="' + (x.resid ? '#9fb3c8' : '#cfe3f7') +
+        '" font-size="10" text-anchor="end">' + esc(x.label) + '</text>');
+      g.push('<text x="' + (W - P.r + 6) + '" y="' + (y + rowH / 2 + 3) +
+        '" fill="#8ea2bd" font-size="10">' + (x.v > 0 ? '+' : '') + x.v.toFixed(0) + '</text>');
+    });
+    if (total != null) {
+      var yT = P.t + items.length * rowH;
+      g.push('<rect x="' + Math.min(X(0), X(total)).toFixed(1) + '" y="' + (yT + 3) +
+        '" width="' + Math.max(Math.abs(X(total) - X(0)), 1).toFixed(1) + '" height="' +
+        (rowH - 7) + '" fill="#ffffff" opacity="0.9"/>');
+      g.push('<text x="' + (P.l - 6) + '" y="' + (yT + rowH / 2 + 3) +
+        '" fill="#ffffff" font-size="10.5" font-weight="700" text-anchor="end">TOTAL CHANGE</text>');
+      g.push('<text x="' + (W - P.r + 6) + '" y="' + (yT + rowH / 2 + 3) +
+        '" fill="#ffffff" font-size="10.5" font-weight="700">' +
+        (total > 0 ? '+' : '') + total.toFixed(0) + '</text>');
+    }
+    g.push('</svg>');
+    box.innerHTML += g.join('');
+    box.appendChild(el('div', 'gv-note',
+      esc(s.residual_note || '')));
+    return box;
+  };
+
+  /* RI probability against its own climatology - a 8% chance means nothing
+   * without the base rate beside it. */
+  GuidanceViewer.prototype._shipsRI = function (s) {
+    var box = el('div');
+    var probs = s.ri_probabilities || [];
+    if (!probs.length) return box;
+    box.appendChild(el('div', 'gv-title', 'Rapid-intensification probability'));
+    var rows = probs.map(function (p) {
+      var scale = Math.max(p.prob_pct, p.climo_pct, 1) * 1.25;
+      var w1 = (100 * p.prob_pct / scale).toFixed(1);
+      var w2 = (100 * p.climo_pct / scale).toFixed(1);
+      var hot = p.prob_pct > p.climo_pct;
+      return '<tr><td class="k">+' + p.dv_kt + ' kt / ' + p.hours + ' h</td>' +
+        '<td style="width:60%"><div class="gv-bar">' +
+        '<span class="gv-bar-climo" style="width:' + w2 + '%"></span>' +
+        '<span class="gv-bar-prob" style="width:' + w1 + '%;background:' +
+        (hot ? '#ff9a2f' : '#3fd0d4') + '"></span></div></td>' +
+        '<td><b>' + p.prob_pct + '%</b></td>' +
+        '<td class="k">climo ' + p.climo_pct.toFixed(1) + '%</td>' +
+        '<td class="k">' + p.times_climo.toFixed(1) + '×</td></tr>';
+    }).join('');
+    box.innerHTML += '<table class="gv-aids"><tbody>' + rows + '</tbody></table>';
+    box.appendChild(el('div', 'gv-note',
+      'Each probability is shown against its own climatological base rate ' +
+      '(the pale bar): an 8% chance of rapid intensification is above ' +
+      'climatology in one threshold and below it in another, and the ' +
+      'multiple is the only way to tell which.'));
+    return box;
+  };
+
+  /* A tiny inline sparkline. Returns SVG markup. */
+  function sparkline(vals, taus, w, h, color) {
+    var ok = [];
+    vals.forEach(function (v, i) { if (v != null && taus[i] != null) ok.push([taus[i], v]); });
+    if (ok.length < 2) {
+      return '<svg viewBox="0 0 ' + w + ' ' + h + '"><text x="' + (w / 2) + '" y="' +
+        (h / 2) + '" text-anchor="middle" fill="#566b80" font-size="9">no data</text></svg>';
+    }
+    var vs = ok.map(function (o) { return o[1]; });
+    var lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
+    if (hi === lo) { hi += 1; lo -= 1; }
+    var tmax = ok[ok.length - 1][0] || 1, mb = 11, mt = 4;
+    function X(t) { return 2 + (t / tmax) * (w - 4); }
+    function Y(v) { return mt + (h - mt - mb) * (1 - (v - lo) / (hi - lo)); }
+    var d = 'M' + ok.map(function (o) { return X(o[0]).toFixed(1) + ',' + Y(o[1]).toFixed(1); }).join('L');
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '">' +
+      '<line x1="2" y1="' + (h - mb).toFixed(1) + '" x2="' + (w - 2) + '" y2="' +
+      (h - mb).toFixed(1) + '" stroke="rgba(150,170,200,0.18)"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" ' +
+      'stroke-linejoin="round"/>' +
+      '<circle cx="' + X(ok[0][0]).toFixed(1) + '" cy="' + Y(ok[0][1]).toFixed(1) +
+      '" r="2" fill="' + color + '"/>' +
+      '<text x="2" y="' + (h - 2) + '" fill="#566b80" font-size="8">' + lo.toFixed(0) + '</text>' +
+      '<text x="' + (w - 2) + '" y="' + (h - 2) + '" text-anchor="end" fill="#566b80" ' +
+      'font-size="8">' + hi.toFixed(0) + '</text></svg>';
+  }
 
   // ---- shared footer ------------------------------------------------------
   /* The footer is provenance ONLY: cycle + source. The capability explanation

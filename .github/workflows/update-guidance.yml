@@ -57,6 +57,16 @@ jobs:
           set -euo pipefail
           python -m guidance.build_guidance --out-dir cyclolab_guidance
 
+      # SHIPS reads OUR OWN R2 archive rather than NHC, so the panel and the
+      # archive can never disagree and a re-render costs no upstream traffic.
+      # It runs after the harvester's own schedule has had time to land the
+      # current cycle; a storm whose bulletin has not been archived yet simply
+      # keeps its previous document.
+      - name: Build per-storm SHIPS documents
+        run: |
+          set -euo pipefail
+          python -m guidance.build_ships --out-dir cyclolab_ships
+
       # Sync to R2 alongside the existing per-storm CycloLab objects. NOT
       # --delete: the legacy guidance.json under the same prefix is written by
       # the render box, and a pruning sync from here would remove it. Each run
@@ -86,3 +96,18 @@ jobs:
             --exclude "*" --include "*/guidance_v2.json" \
             --only-show-errors
           echo "Synced $(find "$SRC" -name 'guidance_v2.json' | wc -l) document(s) to R2."
+
+          # SHIPS documents land under the same per-storm prefix. Separate
+          # sync (also NOT --delete) so a storm with guidance but no archived
+          # bulletin, or vice versa, is a normal outcome rather than a prune.
+          if [ -d cyclolab_ships ] && [ -n "$(ls -A cyclolab_ships 2>/dev/null)" ]; then
+            aws s3 sync cyclolab_ships/ "s3://triple-a-tropics-media/cyclolab/" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "public, max-age=300" \
+              --content-type "application/json" \
+              --exclude "*" --include "*/ships_v2.json" \
+              --only-show-errors
+            echo "Synced $(find cyclolab_ships -name 'ships_v2.json' | wc -l) SHIPS document(s) to R2."
+          else
+            echo "No SHIPS documents built (no archived bulletins yet)."
+          fi
