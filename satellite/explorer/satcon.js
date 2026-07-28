@@ -663,6 +663,17 @@
       S.results = results || [];
       redraw();
     },
+    // READ-ONLY OPS SEAM (mirrors window.ObjFixPanel's): the headless
+    // collector that publishes the objective fixes server-side reads the
+    // consensus from here instead of scraping the rendered table. Returns
+    // null when the method's own membership rule is unmet (>= 2 coincident
+    // members, V&H 2c) -- callers must render "no consensus" honestly rather
+    // than falling back to the bare ADT and calling it SATCON.
+    latest: latestConsensus,
+    state: function () {
+      return { slug: S.slug, mwState: S.mwState, members: (S.mws || []).length,
+               results: (S.results || []).length };
+    },
     // pure core (node tests + reuse)
     core: {
       adtScene: adtScene,
