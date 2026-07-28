@@ -29,10 +29,36 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-28T16:20:00Z
+updated: 2026-07-28T20:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: poller-deck-sweep-latency
+    title: Live feed latency — the deck sweep stopped paying for storms that do not exist
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-28
+    note: >-
+      Dolphin's 28/18Z fix (125 kt / 937 mb) reached the b-deck at 19:13:54Z and
+      the site at 19:19Z. Five of those minutes were ours, on every advisory in
+      every basin. The box intensity poller walks a mirror chain per storm
+      number and was giving EACH mirror the full retry policy, four attempts on
+      a 2/4/8 s backoff, before trying the next one. That defeats the point of
+      having a second mirror, and it turned expensive because our own ATCF proxy
+      Worker answers an upstream 404 with a 502, so the three consecutive
+      absences that END each basin's sweep burned the whole retry budget every
+      cycle. Measured on the box against the live chain, 100.4 s for WP, 57.3 s
+      for AL, 113.0 s for EP, 270.7 s per cycle of pure backoff, which is why
+      the poller's real period was ~7.2 min against a configured 120 s. The
+      chain is now walked with retries OFF and escalated to the full policy only
+      when NOTHING in it answered, so a genuine outage still gets the budget
+      while an absent storm number costs one request per mirror. Same sweep in
+      4.4 s, 61x, and the frames compare identical in all three basins. The
+      tcvitals leg was firing correctly throughout and had nothing to add here
+      because the b-deck led it this cycle.
+    links:
+      - label: WPac tracks
+        url: /climatology/west-pacific/tracks/
   - id: ships-diagnostics-panel
     title: SHIPS diagnostic panel from the NHC stext feed
     area: models
@@ -811,6 +837,20 @@ items:
         url: /roadmap/
 
   # ---- needs-andrew ----
+  - id: atcf-proxy-404
+    title: ATCF proxy Worker should answer an absent deck with 404, not 502
+    area: infra
+    status: needs-andrew
+    note: >-
+      The Worker collapses "upstream says this file is absent" into "upstream
+      failed" and returns 502 where natyphoon and ftp.nhc both return a clean
+      404. Every consumer then correctly treats it as transient and retries with
+      backoff, so discovering that storm number 13 does not exist costs ~30 s
+      instead of ~1 s. The poller is now immune either way (see
+      poller-deck-sweep-latency), but the 6-hourly cron generators still sweep
+      the same chain and still pay it. Blocked on Andrew because the Worker's
+      source lives only in the Cloudflare dashboard and has never been
+      back-vendored into workers/, which is the second half of this item.
   - id: rapidscat-token
     title: RapidScat archive
     area: obs
