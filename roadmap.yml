@@ -29,10 +29,31 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T00:05:00Z
+updated: 2026-07-29T00:55:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: ensemble-paintball
+    title: Ensemble track paintball — ECMWF ENS 51 members + GEFS 31, ingest landed
+    area: models
+    status: active
+    note: >-
+      Ingest and decode are done and verified; the on-page paintball rendering
+      is not, so this is active rather than shipped. ECMWF ENS comes from
+      ECMWF's own open-data cyclone-track BUFR — one 1.4 MB file per cycle
+      carrying every storm, all 51 members and every step to 360 h — and GEFS
+      comes free from the ATCF a-deck already ingested. No tracking is done
+      here; both centres publish their own tracker's output. Works in EVERY
+      basin, which the deck-derived guidance does not, so a West Pacific storm
+      gets a real 51-member ECMWF paintball even where no consensus or official
+      aid exists. Two traps found and pinned by tests. The BUFR is COMPRESSED
+      with one subset per member and eccodes ignores extractSubset entirely,
+      returning identical arrays for every subset — the real layout is
+      subset-minor, and the naive member-major read produces tracks that jitter
+      by whole degrees between 6-hourly steps rather than failing. And ECMWF's
+      storm number is its own sequence: DOLPHIN is 15W to ECMWF and WP12 to
+      JTWC, where WP12 is a different system entirely, so matching runs on name
+      first and drops anything ambiguous rather than guessing.
   - id: ships-panel
     title: SHIPS panel — intensity traces, environment, contribution waterfall, RI
     area: models
