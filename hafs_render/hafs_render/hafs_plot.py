@@ -54,6 +54,12 @@ from typing import Optional, Sequence
 
 import numpy as np
 
+# Shared SSHWS category palette (the site-wide single source of truth for the
+# header chip). tat_palettes is provided by the environment, not declared in
+# hafs-render's pyproject - see this package's __init__ docstring.
+from tat_palettes.categories import (CATEGORY_HEX, CATEGORY_INK,
+                                     CATEGORY_MIN_KT, CATEGORY_ORDER)
+
 import matplotlib
 
 matplotlib.use("Agg")  # headless
@@ -1527,24 +1533,25 @@ L_SNAP_RADIUS_DEG = 2.0
 # like the site nav bar.
 BAND_BG = "#11161f"
 
-# SSHWS category chip colors (TAT intensity system), keyed off the frame VMAX:
-# TD blue, TS lime, C1 yellow, C2 amber, C3 red, C4 pink, C5 violet. Each entry
-# is (kt threshold, label, fill, text color).
+# SSHWS category chip (kt threshold, label, fill, text color), strongest-first,
+# built from the shared category palette. This used to be a hand-tuned
+# DESATURATED variant of the house ramp (TD #4d8bb0 against the site's blue) -
+# the same storm wore one color on a HAFS plate and another on every other
+# surface. It is now the same seven colors as the maps, banner and CycloLab.
 _CAT_CHIP = [
-    (137, "C5", "#b06bd8", "#ffffff"),
-    (113, "C4", "#ee5da6", "#0a1324"),
-    (96,  "C3", "#ef4a3c", "#ffffff"),
-    (83,  "C2", "#f7a83a", "#0a1324"),
-    (64,  "C1", "#f2e641", "#0a1324"),
-    (34,  "TS", "#8ce05a", "#0a1324"),
-    (0,   "TD", "#4d8bb0", "#ffffff"),
+    (CATEGORY_MIN_KT[c], c, CATEGORY_HEX[c], CATEGORY_INK[c])
+    for c in reversed(CATEGORY_ORDER)
 ]
+
+# No usable VMAX: a neutral slate chip that is deliberately NOT any category
+# color, so "we don't know" can never be misread as an intensity.
+_CAT_CHIP_NA = ("NA", "#5a6b87", "#ffffff")
 
 
 def _sshws_chip(vmax_kt: float) -> tuple[str, str, str]:
     """Return (category label, chip fill, chip text color) for a 10 m VMAX (kt)."""
     if not np.isfinite(vmax_kt):
-        return "NA", "#5a6b87", "#ffffff"
+        return _CAT_CHIP_NA
     for thresh, label, fill, txt in _CAT_CHIP:
         if vmax_kt >= thresh:
             return label, fill, txt

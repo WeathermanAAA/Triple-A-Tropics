@@ -1,0 +1,26 @@
+/* GENERATED FILE - DO NOT EDIT.
+ * Source of truth: palette/tat_palettes/categories.py
+ * Regenerate:      python -m tat_palettes.emit --out-dir .
+ * A hand-edit here is caught by tests/test_category_palette_ssot.py.
+ *
+ * Canonical SSHWS category custom properties. Link this before any stylesheet
+ * that colors a category chip, badge or track, then use var(--cat-c3) /
+ * var(--cat-c3-ink) - never a literal hex.
+ */
+:root {
+  --cat-td: #6eebf9;
+  --cat-ts: #9cf94d;
+  --cat-c1: #fdfc53;
+  --cat-c2: #f1af3d;
+  --cat-c3: #e63222;
+  --cat-c4: #e732f4;
+  --cat-c5: #f6c5fb;
+
+  --cat-td-ink: #0a1324;
+  --cat-ts-ink: #0a1324;
+  --cat-c1-ink: #0a1324;
+  --cat-c2-ink: #0a1324;
+  --cat-c3-ink: #ffffff;
+  --cat-c4-ink: #0a1324;
+  --cat-c5-ink: #0a1324;
+}

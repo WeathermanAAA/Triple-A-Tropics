@@ -32,6 +32,9 @@ import datetime as _dt
 import math
 from typing import Optional
 
+# Shared SSHWS thresholds (the site-wide category single source of truth).
+from tat_palettes.categories import category_for_kt
+
 # --------------------------------------------------------------------------
 # Tunables (the published-metric constants; do not drift without a met review)
 # --------------------------------------------------------------------------
@@ -204,23 +207,13 @@ def _tsai_polygon_area_km2(la, lo_a, lb, lo_b):
 
 
 def sshs_category(peak_vmax_kt) -> str:
-    """Peak Saffir-Simpson category label from peak 1-min Vmax (kt)."""
-    v = peak_vmax_kt
-    if v is None or (isinstance(v, float) and math.isnan(v)):
-        return "TD"
-    if v < 34:
-        return "TD"
-    if v < 64:
-        return "TS"
-    if v < 83:
-        return "C1"
-    if v < 96:
-        return "C2"
-    if v < 113:
-        return "C3"
-    if v < 137:
-        return "C4"
-    return "C5"
+    """Peak Saffir-Simpson category label from peak 1-min Vmax (kt).
+
+    Thin wrapper over the shared thresholds so this module cannot drift from
+    ace_core / the tracks maps / CycloLab; kept as a local name because the
+    analog payload builders below call it in several places.
+    """
+    return category_for_kt(peak_vmax_kt)
 
 
 def confidence_label(score, overlap_hours, mode) -> str:

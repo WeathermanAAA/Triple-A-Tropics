@@ -50,7 +50,10 @@ jobs:
           # future streaming poller on one identical assembly. Both generators
           # `import ace_core` from the installed package (the ace_core/ subdir
           # at repo root is just the package source; the install wins).
-          pip install ./ace_core
+          # tat_palettes: the canonical SSHWS category palette. ace_core and the
+          # generators import it; it is NOT a declared dependency of ace-core
+          # (not on PyPI - the environment provides it, the hafs-render pattern).
+          pip install ./palette ./ace_core
 
       - name: Download latest IBTrACS CSVs
         run: |

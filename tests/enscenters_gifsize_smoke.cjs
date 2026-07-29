@@ -61,6 +61,9 @@ let lastDownload = null;
 win.HTMLAnchorElement.prototype.click = function () { if (this.download) lastDownload = this.download; };
 win.fetch = function () { return Promise.resolve({ ok: true, status: 200,
   json: () => Promise.resolve({ type: "FeatureCollection", features: [] }) }); };
+// The shared SSHWS palette, as the real page loads it (ordered before
+// the viewer). enscenters.js holds no fallback copy by design.
+win.eval(fs.readFileSync(path.join(__dirname, "..", "tat_palette.js"), "utf8"));
 win.eval(fs.readFileSync(REGIONS, "utf8"));
 win.eval(fs.readFileSync(JS, "utf8"));
 const flush = () => new Promise((r) => setTimeout(r, 0));

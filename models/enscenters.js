@@ -86,17 +86,19 @@
   var HURRICANE_PATH2D = (typeof Path2D !== 'undefined') ? new Path2D(HURRICANE_PATH_D) : null;
   var GLYPH_SCALE = 0.5;          // x the +/-30-unit path -> ~30 px glyph
   var INVEST_RED = '#ff2a2a';
-  // SSHWS stage -> {fill color, letter} for the active-storm glyph (matches
-  // ace_core.SSHS_COLORS + sshs_class/sshs_label thresholds, 1-min wind in kt).
+  // Canonical SSHWS palette (tat_palette.js, generated from
+  // palette/tat_palettes/categories.py). This file used to carry the de-facto
+  // house ramp that several other surfaces were copied from - and its C3 had
+  // already drifted a shade off ace_core's. No local fallback copy.
+  function TATP() {
+    var p = window.TATPalette;
+    if (!p) throw new Error('enscenters.js: load /tat_palette.js first');
+    return p;
+  }
+  // SSHWS stage -> {fill color, letter} for the active-storm glyph.
   function sshsMark(kt) {
-    if (kt == null || isNaN(kt)) return { color: '#3fa4ff', letter: 'D' };
-    if (kt < 34) return { color: '#3fa4ff', letter: 'D' };
-    if (kt < 64) return { color: '#46c56a', letter: 'S' };
-    if (kt < 83) return { color: '#ffe14d', letter: '1' };
-    if (kt < 96) return { color: '#ff9a2f', letter: '2' };
-    if (kt < 113) return { color: '#ff4d3b', letter: '3' };
-    if (kt < 137) return { color: '#e33ad4', letter: '4' };
-    return { color: '#b03bff', letter: '5' };
+    var pal = TATP(), c = pal.catForKt(kt);
+    return { color: pal.cats[c], letter: pal.glyphs[c] };
   }
   var COMPASS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   var MIN_FIG_W = 760;     // figure renders at least this wide (legible PNG; scales on mobile)
@@ -116,19 +118,10 @@
                    'p930_950', 'p910_930', 'lt910'];
   // SSHWS wind-category palette for the Vmax plume ONLY. The plume is a WIND
   // product, so a Saffir-Simpson ramp is a genuinely different, meaningful
-  // encoding from the pressure-bin centers (and reads "warmer = stronger" at a
-  // glance). Ramp matches the live active-banner: TD blue -> TS green -> C1
-  // yellow -> C2 orange -> C3 red -> C4 magenta -> C5 purple. Confined to the
+  // encoding from the pressure-bin centers. It is the shared category palette,
+  // so the plume, the glyph and every other surface agree. Confined to the
   // boxed inset (labeled "kt"), so it never competes with the field's bin colors.
-  var SSHWS_RAMP = [
-    [33, '#3fa4ff'], [63, '#46c56a'], [82, '#ffe14d'], [95, '#ff9a2f'],
-    [112, '#ff4d3b'], [136, '#e33ad4']
-  ];
-  function sshwsColor(kt) {
-    if (kt == null || isNaN(kt)) return '#3fa4ff';
-    for (var i = 0; i < SSHWS_RAMP.length; i++) if (kt <= SSHWS_RAMP[i][0]) return SSHWS_RAMP[i][1];
-    return '#b03bff';   // C5
-  }
+  function sshwsColor(kt) { return TATP().colorForKt(kt); }
   // Expand an extent [w,e,s,n] symmetrically on its DEFICIENT axis until its geo
   // aspect (lonSpan/latSpan) equals `aspect`, so it fills the fixed-aspect map box
   // undistorted with NO crop + NO letterbox (we only ever ADD surrounding ocean,

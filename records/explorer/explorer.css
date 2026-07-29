@@ -185,13 +185,16 @@
   letter-spacing: 0.3px;
   color: #ffffff;
 }
-.xp-chip.c-TD { background: #3fa4ff; }
-.xp-chip.c-TS { background: #46c56a; color: #0a1324; }
-.xp-chip.c-C1 { background: #ffe14d; color: #0a1324; }
-.xp-chip.c-C2 { background: #ff9a2f; color: #0a1324; }
-.xp-chip.c-C3 { background: #f5333c; }
-.xp-chip.c-C4 { background: #e33ad4; }
-.xp-chip.c-C5 { background: #b03bff; }
+/* Canonical SSHWS palette via /tat_palette.css (generated from
+   palette/tat_palettes/categories.py). Ink comes from the palette too, so a
+   recolor that flips a swatch light/dark carries its text color with it. */
+.xp-chip.c-TD { background: var(--cat-td); color: var(--cat-td-ink); }
+.xp-chip.c-TS { background: var(--cat-ts); color: var(--cat-ts-ink); }
+.xp-chip.c-C1 { background: var(--cat-c1); color: var(--cat-c1-ink); }
+.xp-chip.c-C2 { background: var(--cat-c2); color: var(--cat-c2-ink); }
+.xp-chip.c-C3 { background: var(--cat-c3); color: var(--cat-c3-ink); }
+.xp-chip.c-C4 { background: var(--cat-c4); color: var(--cat-c4-ink); }
+.xp-chip.c-C5 { background: var(--cat-c5); color: var(--cat-c5-ink); }
 .pal-cb .xp-chip.c-TD { background: #999999; }
 .pal-cb .xp-chip.c-TS { background: #56B4E9; }
 .pal-cb .xp-chip.c-C1 { background: #009E73; }

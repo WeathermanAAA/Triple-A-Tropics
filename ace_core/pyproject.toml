@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ace-core"
-version = "0.8.8"
+version = "0.8.9"
 description = "Single source of truth for Accumulated Cyclone Energy (ACE) and the ACE/tracks feed-assembly logic, shared by the Triple-A-Tropics cron generators and the streaming intensity poller so the two writers never drift."
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "pandas",
 ]
+# tat_palettes (the canonical SSHWS category palette, imported by
+# ace_core.SSHS_COLORS) is deliberately NOT listed: it is not on PyPI, so
+# declaring it would break `pip install ace-core@<tag>`. The environment
+# provides it - the workflows `pip install ./palette ./ace_core`, and the box
+# pins `tat-palettes` in tsr's requirements.txt. Same arrangement hafs-render
+# uses; keep the two pins moving in lockstep.
 
 [tool.setuptools]
 packages = ["ace_core"]

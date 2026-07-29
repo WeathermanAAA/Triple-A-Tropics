@@ -51,6 +51,16 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+# Site-wide SSHWS category palette + thresholds - the ONE definition of the
+# seven category colors, their kt boundaries and their glyph letters, shared
+# with the tracks maps, CycloLab, the season animation, recon, models and the
+# records explorer. Runtime dependency intentionally NOT declared in pyproject
+# (tat_palettes is not on PyPI; the environment provides it - see the note
+# above SSHS_COLORS below and the comment in pyproject.toml).
+from tat_palettes.categories import (CATEGORY_GLYPH, CATEGORY_HEX,
+                                     CATEGORY_MIN_KT, CATEGORY_ORDER,
+                                     UNKNOWN_CATEGORY)
+
 # ---------------------------------------------------------------------------
 # Constants / per-basin ACE config (the ONE place these live)
 # ---------------------------------------------------------------------------
@@ -855,45 +865,43 @@ def fetch_nhc_active_sids(timeout: float = 20.0,
 
 
 # --- Saffir-Simpson Hurricane Wind Scale vocabulary (shared) ---
+#
+# The colors, thresholds and glyph letters are NOT defined here any more. They
+# live in ``tat_palettes.categories``, the site-wide single source of truth, so
+# that the feed, the tracks maps, CycloLab, the season animation, recon, the
+# models pages and the records explorer cannot drift apart the way they had.
+# ``SSHS_COLORS`` stays as a name because a dozen call sites and the injected
+# chart templates use it; it is now an alias for the shared table.
+#
+# tat_palettes is deliberately NOT a declared dependency of ace-core (it is not
+# on PyPI - the same arrangement hafs-render uses). The environment provides it:
+# the workflows ``pip install ./palette`` alongside ``./ace_core``, and the box
+# pins ``tat-palettes`` in tsr's requirements.txt.
 
-SSHS_COLORS = {
-    "TD": "#3fa4ff",    # depression - blue
-    "TS": "#46c56a",    # tropical storm - green
-    "C1": "#ffe14d",    # cat 1 - yellow
-    "C2": "#ff9a2f",    # cat 2 - orange
-    "C3": "#f5333c",    # cat 3 - clean red (distinct from C2 orange; was #ff4d3b which read orange)
-    "C4": "#e33ad4",    # cat 4 - magenta/pink
-    "C5": "#b03bff",    # cat 5 - purple
-}
+SSHS_COLORS = CATEGORY_HEX
 
 
 def sshs_class(wind_kt: float, nature: str | None = None) -> str:
     """Map a wind speed (kt, 1-min sustained) to SSHWS class code.
     Non-tropical storms fall through to TD (weakest)."""
+    # The None/NaN guard stays explicit rather than leaning on
+    # category_for_kt's own coercion: this feeds the named / cat1plus / cat3plus
+    # season counts, so it keeps raising on genuinely non-numeric input instead
+    # of silently counting it as a depression.
     if wind_kt is None or (isinstance(wind_kt, float) and math.isnan(wind_kt)):
-        return "TD"
-    if wind_kt < 34:
-        return "TD"
-    if wind_kt < 64:
-        return "TS"
-    if wind_kt < 83:
-        return "C1"
-    if wind_kt < 96:
-        return "C2"
-    if wind_kt < 113:
-        return "C3"
-    if wind_kt < 137:
-        return "C4"
-    return "C5"
+        return UNKNOWN_CATEGORY
+    for cls in reversed(CATEGORY_ORDER):
+        if wind_kt >= CATEGORY_MIN_KT[cls]:
+            return cls
+    return UNKNOWN_CATEGORY
 
 
 def sshs_label(cls: str) -> str:
     """Short label shown inside the active-storm icon."""
-    return {"TD": "D", "TS": "S",
-            "C1": "1", "C2": "2", "C3": "3", "C4": "4", "C5": "5"}[cls]
+    return CATEGORY_GLYPH[cls]
 
 
-_SSHS_RANK = {"TD": 0, "TS": 1, "C1": 2, "C2": 3, "C3": 4, "C4": 5, "C5": 6}
+_SSHS_RANK = {cls: i for i, cls in enumerate(CATEGORY_ORDER)}
 
 
 def _sshs_rank(cls: str) -> int:

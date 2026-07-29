@@ -50,18 +50,23 @@
 
   var CDN = 'https://cdn.triple-a-tropics.com';
 
-  // Shared SSHWS palette - the SAME hues as cyclolab_map.js and the track
-  // pages, so an intensity reads as one colour everywhere on the site.
-  var SSHS_COLORS = {
-    TD: '#3fa4ff', TS: '#46c56a', C1: '#ffe14d',
-    C2: '#ff9a2f', C3: '#f5333c', C4: '#e33ad4', C5: '#b03bff'
-  };
-  function ktToCat(kt) {
-    kt = +kt || 0;
-    return kt >= 137 ? 'C5' : kt >= 113 ? 'C4' : kt >= 96 ? 'C3'
-      : kt >= 83 ? 'C2' : kt >= 64 ? 'C1' : kt >= 34 ? 'TS' : 'TD';
+  // Shared SSHWS palette (tat_palette.js, generated from
+  // palette/tat_palettes/categories.py) - the SAME hues as cyclolab_map.js and
+  // the track pages, so an intensity reads as one colour everywhere on the
+  // site. The CycloLab shell loads the palette ahead of this component.
+  function TATP() {
+    var p = w.TATPalette;
+    if (!p) throw new Error('guidance.js: load /tat_palette.js first');
+    return p;
   }
-  function ktColor(kt) { return SSHS_COLORS[ktToCat(kt)]; }
+  function ktToCat(kt) { return TATP().catForKt(+kt || 0); }
+  function ktColor(kt) { return TATP().colorForKt(+kt || 0); }
+  // The category boundary lines both intensity charts draw: every class above
+  // the weakest, as (kt, code) pairs, straight off the shared thresholds.
+  function catBands() {
+    var pal = TATP();
+    return pal.order.slice(1).map(function (c) { return [pal.minKt[c], c]; });
+  }
 
   // Distinct, non-SSHWS strokes for the two reference traces, so neither can
   // be mistaken for one of the aids.
@@ -498,8 +503,8 @@
       leg.push('<span><i style="background:#43536b;border-top:1px dashed #8ea2bd"></i>' +
         'dashed = LATE aid</span>');
     }
-    ['TD', 'TS', 'C1', 'C2', 'C3', 'C4', 'C5'].forEach(function (c) {
-      leg.push('<span><i class="dot" style="background:' + SSHS_COLORS[c] + '"></i>' + c + '</span>');
+    TATP().order.forEach(function (c) {
+      leg.push('<span><i class="dot" style="background:' + TATP().cats[c] + '"></i>' + c + '</span>');
     });
     wrap.appendChild(el('div', 'gv-legend', leg.join('')));
 
@@ -562,13 +567,13 @@
                'aria-label="Model forecast intensity guidance">'];
 
     // SSHWS threshold bands - the category boundaries the eye actually reads.
-    [[34, 'TS'], [64, 'C1'], [83, 'C2'], [96, 'C3'], [113, 'C4'], [137, 'C5']].forEach(function (b) {
+    catBands().forEach(function (b) {
       if (b[0] > v1) return;
       svg.push('<line x1="' + PAD.l + '" y1="' + Y(b[0]).toFixed(1) + '" x2="' + (W - PAD.r) +
-        '" y2="' + Y(b[0]).toFixed(1) + '" stroke="' + SSHS_COLORS[b[1]] +
+        '" y2="' + Y(b[0]).toFixed(1) + '" stroke="' + TATP().cats[b[1]] +
         '" stroke-width="1" opacity="0.28" stroke-dasharray="3 4"/>');
       svg.push('<text x="' + (W - PAD.r - 3) + '" y="' + (Y(b[0]) - 3).toFixed(1) +
-        '" fill="' + SSHS_COLORS[b[1]] + '" font-size="9" text-anchor="end" opacity="0.8">' +
+        '" fill="' + TATP().cats[b[1]] + '" font-size="9" text-anchor="end" opacity="0.8">' +
         b[1] + '</text>');
     });
     for (var tk = 0; tk <= t1; tk += 24) {
@@ -794,13 +799,13 @@
     function Y(v) { return P.t + (v1 - v) / v1 * ih; }
     var g = ['<svg class="gv-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
              'aria-label="SHIPS intensity forecast">'];
-    [[34, 'TS'], [64, 'C1'], [83, 'C2'], [96, 'C3'], [113, 'C4'], [137, 'C5']].forEach(function (b) {
+    catBands().forEach(function (b) {
       if (b[0] > v1) return;
       g.push('<line x1="' + P.l + '" y1="' + Y(b[0]).toFixed(1) + '" x2="' + (W - P.r) +
-        '" y2="' + Y(b[0]).toFixed(1) + '" stroke="' + SSHS_COLORS[b[1]] +
+        '" y2="' + Y(b[0]).toFixed(1) + '" stroke="' + TATP().cats[b[1]] +
         '" stroke-width="1" opacity="0.25" stroke-dasharray="3 4"/>');
       g.push('<text x="' + (W - P.r - 3) + '" y="' + (Y(b[0]) - 3).toFixed(1) + '" fill="' +
-        SSHS_COLORS[b[1]] + '" font-size="9" text-anchor="end" opacity="0.8">' + b[1] + '</text>');
+        TATP().cats[b[1]] + '" font-size="9" text-anchor="end" opacity="0.8">' + b[1] + '</text>');
     });
     for (var tk = 0; tk <= t1; tk += 24) {
       g.push('<line x1="' + X(tk).toFixed(1) + '" y1="' + P.t + '" x2="' + X(tk).toFixed(1) +

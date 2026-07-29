@@ -47,21 +47,17 @@
                                        // not more clutter. 40 left a day of
                                        // orbits undrawn -> empty regions.
 
-  // ---- TC kt color scale (hard bins), shared with recon for cross-product
-  // consistency. Each entry [minKt, color]; a speed picks the LAST bin it meets.
-  // RED STARTS AT 64 kt (hurricane). 34 green, 64/83/96 reds, 113 magenta, 137 purple.
-  var KT_SCALE = [
-    [0, '#3563d4'], [10, '#2f93e8'], [20, '#1fc3d6'], [30, '#18c79a'],
-    [34, '#2fbf52'], [40, '#7fd038'], [45, '#c3df3a'], [50, '#ffe534'],
-    [55, '#ffb91f'], [60, '#ff8a1f'], [64, '#f5333c'], [83, '#c81f4a'],
-    [96, '#d61f6a'], [113, '#b23bff'], [137, '#e6a8ff']
-  ];
-  var KT_SCALE_HC = [
-    [0, '#3a6dff'], [10, '#2aa6ff'], [20, '#16d6ec'], [30, '#11e6b0'],
-    [34, '#34e85f'], [40, '#95ef3a'], [45, '#dbff3a'], [50, '#fff23a'],
-    [55, '#ffc91f'], [60, '#ff9a14'], [64, '#ff2f3a'], [83, '#e0143f'],
-    [96, '#ff2a86'], [113, '#c45bff'], [137, '#f0c2ff']
-  ];
+  // ---- TC kt color scale (hard bins), genuinely shared with recon now: both
+  // read the SAME derived ramp from the canonical palette instead of each
+  // carrying a verbatim copy of it. Each entry [minKt, color]; a speed picks
+  // the LAST bin it meets. Category-exact at every SSHWS threshold.
+  function TATP() {
+    var p = window.TATPalette;
+    if (!p) throw new Error('ascat.js: load /tat_palette.js first');
+    return p;
+  }
+  var KT_SCALE = TATP().windRamp;
+  var KT_SCALE_HC = KT_SCALE;
 
   var STYLES = {
     sshws: {

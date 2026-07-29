@@ -69,11 +69,75 @@ def stamp(repo_root: pathlib.Path, write: bool = True) -> Tuple[bool, Dict[str, 
     return changed, versions
 
 
+# ---------------------------------------------------------------------------
+# Shared category palette (/tat_palette.js + /tat_palette.css)
+# ---------------------------------------------------------------------------
+# These two are generated from palette/tat_palettes/categories.py and consumed
+# by pages ALL OVER the site, not just /models/. That makes stale caching worse
+# here than anywhere else: the whole point of the palette is that ONE edit
+# recolors every surface, and a browser holding last week's tat_palette.js
+# would leave exactly the drift this consolidation removed. So every page that
+# references them gets its ?v= restamped, repo-wide.
+PALETTE_ASSETS = ("/tat_palette.js", "/tat_palette.css")
+PALETTE_RE = re.compile(
+    r'((?:src|href)=")(/tat_palette\.(?:js|css))(\?[^"]*)?(")'
+)
+# Directories with no hand-maintained HTML worth walking (build output, deps,
+# and the generated per-basin pages, which bake their colors at render time).
+_SKIP_DIRS = {".git", "node_modules", "__pycache__", "build", ".venv"}
+
+
+def stamp_palette_html(html: str, repo_root: pathlib.Path) -> Tuple[str, bool, Dict[str, str]]:
+    """Rewrite ``?v=`` on any /tat_palette.{js,css} reference in one document."""
+    versions: Dict[str, str] = {}
+
+    def repl(m: "re.Match") -> str:
+        prefix, src, _oldv, suffix = m.group(1), m.group(2), m.group(3), m.group(4)
+        fpath = repo_root / src.lstrip("/")
+        if not fpath.is_file():
+            return m.group(0)
+        h = file_hash(fpath)
+        versions[src] = h
+        return f"{prefix}{src}?v={h}{suffix}"
+
+    new_html = PALETTE_RE.sub(repl, html)
+    return new_html, (new_html != html), versions
+
+
+def iter_html(repo_root: pathlib.Path):
+    """Every hand-maintained .html file in the repo."""
+    for path in sorted(repo_root.rglob("*.html")):
+        if any(part in _SKIP_DIRS for part in path.relative_to(repo_root).parts):
+            continue
+        yield path
+
+
+def stamp_palette(repo_root: pathlib.Path, write: bool = True) -> Tuple[bool, Dict[str, str]]:
+    """Restamp the palette assets across every page. Returns (changed, {page: hash})."""
+    changed_any = False
+    touched: Dict[str, str] = {}
+    for path in iter_html(repo_root):
+        html = path.read_text()
+        if not any(a in html for a in PALETTE_ASSETS):
+            continue
+        new_html, changed, versions = stamp_palette_html(html, repo_root)
+        if changed:
+            changed_any = True
+            if write:
+                path.write_text(new_html)
+        for src, h in versions.items():
+            touched[f"{path.relative_to(repo_root)}{src}"] = h
+    return changed_any, touched
+
+
 def main(argv=None) -> int:
     repo_root = pathlib.Path(__file__).resolve().parent.parent
     changed, versions = stamp(repo_root, write=True)
     for src, h in sorted(versions.items()):
         print(f"  {src}?v={h}")
+    pal_changed, pal_versions = stamp_palette(repo_root, write=True)
+    print(f"  palette: {len(pal_versions)} reference(s) across the site")
+    changed = changed or pal_changed
     print("stamped (changed)" if changed else "already current (no change)")
     return 0
 

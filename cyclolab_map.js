@@ -3,7 +3,7 @@
  * Ports the canonical MapLibre engine from global_tracks.html (inline Protomaps
  * vector STYLE - no Mapbox token; storm track + intensity-colored observation
  * shapes + hover popups) and the spinning hurricane glyph from active-banner.js
- * (HURRICANE_PATH + the D/S/1-5 label, SSHS_COLORS), and adds:
+ * (HURRICANE_PATH + the D/S/1-5 label, the shared SSHWS palette), and adds:
  *   - a RASTER-LAYER FRAMEWORK (type:image 4-corner source + type:raster layer
  *     drawn beforeId "tracks-line-solid", swapped per frame via updateImage) that
  *     is READY to receive satellite / microwave / model frames once a producer
@@ -32,29 +32,22 @@
   // ===================================================================
   // Reused constants (verbatim from global_tracks.html / active-banner.js)
   // ===================================================================
-  var SSHS_COLORS = {
-    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
-    "C2": "#ff9a2f", "C3": "#f5333c", "C4": "#e33ad4", "C5": "#b03bff"
-  };
-  var CAT_LABELS = {
-    "TD": "Depression", "TS": "Tropical Storm",
-    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
-    "C4": "Category 4", "C5": "Category 5"
-  };
-  // SSHWS category from 1-min Vmax (kt) -> the canonical breakpoints (mirrors the
-  // track-dot COLOR_STEP). Used to color the timeline ticks by intensity even when
-  // a fix has no precomputed `cls` field.
-  function ktToCat(kt) {
-    kt = +kt || 0;
-    return kt >= 137 ? "C5" : kt >= 113 ? "C4" : kt >= 96 ? "C3"
-      : kt >= 83 ? "C2" : kt >= 64 ? "C1" : kt >= 34 ? "TS" : "TD";
+  // Canonical SSHWS palette + thresholds (tat_palette.js, generated from
+  // palette/tat_palettes/categories.py). The CycloLab shell loads it ahead of
+  // this component; no local fallback copy, which is what let this file's ramp
+  // drift from the home map's in the first place.
+  function TATP() {
+    var p = window.TATPalette;
+    if (!p) throw new Error("cyclolab_map.js: load /tat_palette.js first");
+    return p;
   }
   // SSHWS hue for a track fix: prefer an explicit valid `cls`, else derive from
   // wind_kt so the tick reads as the intensity history (the reported bug: fixes
   // lacking `cls` all defaulted to TD-blue).
   function fixCatColor(p) {
-    if (p && p.cls && SSHS_COLORS[p.cls]) return SSHS_COLORS[p.cls];
-    return SSHS_COLORS[ktToCat(p && p.wind_kt)] || "#3fa4ff";
+    var pal = TATP();
+    if (p && p.cls && pal.cats[p.cls]) return pal.cats[p.cls];
+    return pal.colorForKt(p && p.wind_kt != null ? +p.wind_kt : 0);
   }
   function _lsGet(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
   function _lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -152,12 +145,13 @@
     ]
   };
 
-  // Shared paint expressions (verbatim from global_tracks.html addStormLayers).
-  var COLOR_STEP = [
-    "step", ["coalesce", ["get", "intensity_kt"], 0],
-    "#3fa4ff", 34, "#46c56a", 64, "#ffe14d", 83, "#ff9a2f",
-    96, "#f5333c", 113, "#e33ad4", 137, "#b03bff"
-  ];
+  // Shared paint expressions (the same ramp global_tracks.html bakes).
+  // A function, not a constant: the palette global is guaranteed present by
+  // the time a layer is added, but not necessarily at this file's parse time.
+  function colorStep() {
+    return ["step", ["coalesce", ["get", "intensity_kt"], 0]]
+      .concat(TATP().stepExpr());
+  }
   var ZOOM_RADIUS = ["interpolate", ["linear"], ["zoom"],
     0, 2.0, 4, 3.0, 8, 4.0, 12, 5.0];
   var ZOOM_ICON_SIZE = ["interpolate", ["linear"], ["zoom"],
@@ -302,25 +296,25 @@
       "text-transform:uppercase;color:var(--muted,#8ea2bd);}",
     ".clm-row{display:flex;align-items:center;gap:8px;padding:6px 11px;",
       "border-left:2px solid transparent;cursor:pointer;}",
-    ".clm-row.active{border-left-color:var(--cat-accent,#3fa4ff);",
+    ".clm-row.active{border-left-color:var(--cat-accent,var(--cat-td));",
       "background:rgba(63,164,255,.08);}",
     ".clm-row .clm-eye{flex:0 0 auto;width:26px;height:16px;border-radius:9px;",
       "background:#2a3343;position:relative;transition:background .15s;}",
     ".clm-row .clm-eye::after{content:'';position:absolute;top:2px;left:2px;",
       "width:12px;height:12px;border-radius:50%;background:#8ea2bd;transition:transform .15s,background .15s;}",
-    ".clm-row.on .clm-eye{background:var(--cat-accent,#3fa4ff);}",
+    ".clm-row.on .clm-eye{background:var(--cat-accent,var(--cat-td));}",
     ".clm-row.on .clm-eye::after{transform:translateX(10px);background:#fff;}",
     ".clm-row .clm-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;",
       "white-space:nowrap;color:var(--fg,#e8eef5);}",
     ".clm-row .clm-sw{flex:0 0 auto;width:11px;height:11px;border-radius:3px;}",
     ".clm-op{padding:0 11px 8px 41px;}",
-    ".clm-op input[type=range]{width:100%;accent-color:var(--cat-accent,#3fa4ff);height:3px;}",
+    ".clm-op input[type=range]{width:100%;accent-color:var(--cat-accent,var(--cat-td));height:3px;}",
     ".clm-empty{padding:4px 11px 8px 11px;color:var(--muted,#8ea2bd);font-size:11px;font-style:italic;}",
     ".clm-row.unavailable{opacity:.5;cursor:default;}",
     ".clm-row.unavailable .clm-na{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8ea2bd);}",
     ".clm-drag{flex:0 0 auto;cursor:grab;color:var(--muted,#8ea2bd);font-size:11px;",
       "letter-spacing:-2px;touch-action:none;user-select:none;}",
-    ".clm-row.clm-drop{box-shadow:inset 0 2px 0 var(--cat-accent,#3fa4ff);}",
+    ".clm-row.clm-drop{box-shadow:inset 0 2px 0 var(--cat-accent,var(--cat-td));}",
     ".clm-subp{padding:0 11px 6px 41px;}",
     ".clm-subp select{width:100%;background:var(--panel,#11161f);color:var(--fg,#e8eef5);",
       "border:1px solid var(--border,#232a36);border-radius:6px;font-size:11px;padding:4px 6px;}",
@@ -341,8 +335,8 @@
     ".clm-toolb{display:flex;align-items:center;gap:7px;background:var(--panel,#11161f);",
       "color:var(--fg,#e8eef5);border:1px solid var(--border,#232a36);border-radius:8px;",
       "padding:8px 9px;font-size:12px;font-weight:600;cursor:pointer;text-align:left;}",
-    ".clm-toolb:hover{border-color:var(--cat-accent,#3fa4ff);}",
-    ".clm-toolb.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-toolb:hover{border-color:var(--cat-accent,var(--cat-td));}",
+    ".clm-toolb.on{background:var(--cat-accent,var(--cat-td));color:#06121f;border-color:transparent;}",
     ".clm-toolb .clm-ti{font-size:14px;line-height:1;}",
     ".clm-toolpanel{padding:0 8px 10px;font-size:11px;color:var(--fg,#e8eef5);}",
     ".clm-tp-h{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;",
@@ -353,7 +347,7 @@
     ".clm-tp-btn{display:inline-block;margin:6px 4px 0 0;background:var(--panel,#11161f);",
       "color:var(--fg,#e8eef5);border:1px solid var(--border,#232a36);border-radius:7px;",
       "padding:5px 9px;font-size:11px;cursor:pointer;}",
-    ".clm-tp-btn.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-tp-btn.on{background:var(--cat-accent,var(--cat-td));color:#06121f;border-color:transparent;}",
     ".clm-tp-modes{display:flex;gap:5px;}",
     ".clm-tp-colors{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px;}",
     ".clm-tp-color{width:18px;height:18px;border-radius:50%;cursor:pointer;",
@@ -363,7 +357,7 @@
     ".clm-shape{width:30px;height:28px;display:flex;align-items:center;justify-content:center;",
       "background:var(--panel,#11161f);color:var(--fg,#e8eef5);border:1px solid var(--border,#232a36);",
       "border-radius:7px;cursor:pointer;font-size:14px;line-height:1;}",
-    ".clm-shape.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-shape.on{background:var(--cat-accent,var(--cat-td));color:#06121f;border-color:transparent;}",
     ".clm-colorrow{display:flex;align-items:center;gap:8px;margin:2px 0;}",
     ".clm-colorpick{width:30px;height:26px;padding:0;border:1px solid var(--border,#232a36);",
       "border-radius:6px;background:none;cursor:pointer;flex:0 0 auto;}",
@@ -381,10 +375,10 @@
     ".clm-tb{background:var(--panel,#11161f);border:1px solid var(--border,#232a36);",
       "color:var(--fg,#e8eef5);border-radius:7px;width:30px;height:28px;cursor:pointer;",
       "font-size:13px;display:flex;align-items:center;justify-content:center;line-height:1;}",
-    ".clm-tb:hover{border-color:var(--cat-accent,#3fa4ff);}",
-    ".clm-tb.on{background:var(--cat-accent,#3fa4ff);color:#06121f;border-color:transparent;}",
+    ".clm-tb:hover{border-color:var(--cat-accent,var(--cat-td));}",
+    ".clm-tb.on{background:var(--cat-accent,var(--cat-td));color:#06121f;border-color:transparent;}",
     ".clm-scrub{flex:1 1 auto;min-width:0;position:relative;}",
-    ".clm-scrub input[type=range]{width:100%;accent-color:var(--cat-accent,#3fa4ff);}",
+    ".clm-scrub input[type=range]{width:100%;accent-color:var(--cat-accent,var(--cat-td));}",
     ".clm-ticks{position:relative;height:6px;margin-top:-2px;}",
     ".clm-ticks i{position:absolute;top:0;width:2px;height:6px;border-radius:1px;transform:translateX(-1px);}",
     ".clm-ticks i.clm-tick-r{top:2px;height:4px;width:3px;opacity:.8;}",
@@ -523,7 +517,7 @@
     }
     el.classList.add("active-hurricane");
     var cls = storm.current_category || "TD";
-    var color = SSHS_COLORS[cls] || "#888";
+    var color = TATP().cats[cls] || "#888";
     el.style.color = color;
     el.innerHTML =
       '<svg viewBox="-34 -34 68 68" xmlns="http://www.w3.org/2000/svg">' +
@@ -720,7 +714,7 @@
         ["!=", ["get", "is_subtropical"], true],
         ["!=", ["get", "is_nontropical"], true]],
       paint: {
-        "circle-color": COLOR_STEP, "circle-radius": ZOOM_RADIUS,
+        "circle-color": colorStep(), "circle-radius": ZOOM_RADIUS,
         "circle-stroke-color": ["step", ["coalesce", ["get", "intensity_kt"], 0],
           "rgba(63,164,255,0)", 34, "#ffffff"],
         "circle-stroke-width": ["step", ["coalesce", ["get", "intensity_kt"], 0], 0, 34, 0.5],
@@ -733,7 +727,7 @@
         ["==", ["get", "kind"], "observation"], ["==", ["get", "is_subtropical"], true]],
       layout: { "icon-image": "phase-square", "icon-size": ZOOM_ICON_SIZE,
         "icon-allow-overlap": true, "icon-ignore-placement": true },
-      paint: { "icon-color": COLOR_STEP, "icon-halo-color": "#ffffff", "icon-halo-width": 1.0 }
+      paint: { "icon-color": colorStep(), "icon-halo-color": "#ffffff", "icon-halo-width": 1.0 }
     });
     map.addLayer({
       id: "observations-nontropical", type: "symbol", source: "storms",
@@ -741,7 +735,7 @@
         ["==", ["get", "kind"], "observation"], ["==", ["get", "is_nontropical"], true]],
       layout: { "icon-image": "phase-triangle", "icon-size": ZOOM_ICON_SIZE,
         "icon-allow-overlap": true, "icon-ignore-placement": true },
-      paint: { "icon-color": COLOR_STEP, "icon-halo-color": "#ffffff", "icon-halo-width": 1.0 }
+      paint: { "icon-color": colorStep(), "icon-halo-color": "#ffffff", "icon-halo-width": 1.0 }
     });
     this._wireObsPopups();
   };
@@ -756,7 +750,7 @@
       while (e.lngLat.lng - coords[0] > 180) coords[0] += 360;
       while (e.lngLat.lng - coords[0] < -180) coords[0] -= 360;
       var kt = props.intensity_kt, pres = props.mslp_mb, cls = props.sshws_cat || "TD";
-      var color = SSHS_COLORS[cls] || "#888";
+      var color = TATP().cats[cls] || "#888";
       var windTxt = (kt != null && kt !== "" && !isNaN(parseFloat(kt)))
         ? (Math.round(parseFloat(kt)) + " kt &middot; " + ktToMph5(parseFloat(kt)) + " mph") : "-";
       var presTxt = (pres != null && pres !== "" && !isNaN(parseFloat(pres)))
@@ -764,7 +758,7 @@
       var html = '<div class="tt-name">' + escapeHtml(props.storm_name || "Storm") + '</div>' +
         '<div class="tt-time">' + fmtTime(props.time_iso) + '</div>' +
         '<div class="tt-row"><span class="tt-cat" style="background:' + color + '">' +
-          (CAT_LABELS[cls] || cls) + '</span></div>' +
+          (TATP().labels[cls] || cls) + '</span></div>' +
         '<div class="tt-row"><span class="tt-lbl">Wind</span><span class="tt-val">' + windTxt + '</span></div>' +
         '<div class="tt-row"><span class="tt-lbl">Pressure</span><span class="tt-val">' + presTxt + '</span></div>';
       if (popup) popup.remove();
@@ -1160,11 +1154,13 @@
   P._legendHtml = function (L) {
     if (!L) return "";
     if (L.type === "track") {
-      var rows = [["TD", "<34"], ["TS", "34-63"], ["C1", "64-82"], ["C2", "83-95"],
-                  ["C3", "96-112"], ["C4", "113-136"], ["C5", "≥137"]];
+      var pal = TATP();
       return '<div class="clm-leg-t">SSHWS (kt)</div><div class="clm-leg-sshs">' +
-        rows.map(function (r) {
-          return '<span><i style="background:' + SSHS_COLORS[r[0]] + '"></i>' + r[1] + '</span>';
+        pal.order.map(function (c, i) {
+          var lo = pal.minKt[c], hi = pal.maxKt[c];
+          var span = i === 0 ? "<" + (hi + 1)
+            : (hi == null ? "≥" + lo : lo + "-" + hi);
+          return '<span><i style="background:' + pal.cats[c] + '"></i>' + span + '</span>';
         }).join("") + '</div>';
     }
     if (L.legendHtml) return L.legendHtml;
@@ -1186,7 +1182,7 @@
     var self = this;
     var s = this.storm;
     var cls = s.current_category || (s.max_category || "TD");
-    var color = SSHS_COLORS[cls] || "#3fa4ff";
+    var color = TATP().cats[cls] || TATP().cats[TATP().unknown];
     var idTxt = escapeHtml(s.name || s.atcf_id || s.sid || "Storm");
     var sub = escapeHtml([s.basin_label || "", s.season || s.year || ""].filter(Boolean).join(" · ")) ||
       (s.is_invest ? "Invest" : "Tropical cyclone");
@@ -1499,7 +1495,7 @@
     var pts = this.storm.points || [];
     var p = pts[idx]; if (!p || p.lat == null || p.lon == null) return;
     var isInvest = !!(this.storm.is_invest || this.storm.is_ptc);
-    var cls = p.cls || ktToCat(p.wind_kt);
+    var cls = p.cls || TATP().catForKt(p.wind_kt);
     // PRESERVE the rotating glyph node across scrubber steps. Recreating the SVG
     // every frame re-armed the CSS spin -> choppy (same repaint lesson as the
     // cone-reveal). Build once; afterwards MOVE it + update color/label in place
@@ -1519,7 +1515,7 @@
       this.activeMarker.setLngLat([p.lon, p.lat]);     // move only -> spin continues
       if (!isInvest && cls !== this._glyphCls) {        // category changed: recolor in place
         var elx = this.activeMarker.getElement();
-        var color = SSHS_COLORS[cls] || "#888";
+        var color = TATP().cats[cls] || "#888";
         elx.style.color = color;
         var path = elx.querySelector(".spinning path"); if (path) path.setAttribute("fill", color);
         var lbl = elx.querySelector(".hurricane-label"); if (lbl) lbl.textContent = sshsLabel(cls);
@@ -1754,7 +1750,7 @@
       var awayKm = this._haversineKm([lng, lat], [p.lon, p.lat]);
       bits.push('Nearest fix ' + fmtTime(p.t) + ' &middot; ' +
         (p.wind_kt != null ? Math.round(p.wind_kt) + ' kt' : '&mdash;') + ' ' +
-        sshsLabel(p.cls || ktToCat(p.wind_kt)) +
+        sshsLabel(p.cls || TATP().catForKt(p.wind_kt)) +
         (p.pressure_mb != null ? ' &middot; ' + Math.round(p.pressure_mb) + ' mb' : '') +
         ' <small>(' + Math.round(awayKm) + ' km away)</small>');
     }

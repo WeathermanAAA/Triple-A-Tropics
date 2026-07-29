@@ -12,10 +12,14 @@
   var MC_KEYS = { td: 1, ts: 1, c1: 1, c2: 1, c3: 1, c4: 1, c5: 1 };
   var U_KEYS = { kt: 1, mph: 1, kmh: 1 };
   var UP_KEYS = { mb: 1, inhg: 1 };
-  var PAL_LOCAL = {
-    std: { TD: '#3fa4ff', TS: '#46c56a', C1: '#ffe14d', C2: '#ff9a2f', C3: '#f5333c', C4: '#e33ad4', C5: '#b03bff' },
-    cb: { TD: '#999999', TS: '#56B4E9', C1: '#009E73', C2: '#F0E442', C3: '#E69F00', C4: '#D55E00', C5: '#CC79A7' }
-  };
+  // 'std' is the canonical SSHWS palette (tat_palette.js); 'cb' is the
+  // Okabe-Ito colorblind-safe ALTERNATIVE the user can switch to - a
+  // deliberately different encoding, not a drifted copy, so it stays local.
+  var PAL_CB = { TD: '#999999', TS: '#56B4E9', C1: '#009E73', C2: '#F0E442',
+                 C3: '#E69F00', C4: '#D55E00', C5: '#CC79A7' };
+  function palLocal(key) {
+    return key === 'cb' ? PAL_CB : window.TATPalette.cats;
+  }
   var LIST_CAP = 400;
   var DETAIL_MAX = 800;
   var EXPORT_CAP = 2000;
@@ -58,8 +62,8 @@
   function p2(n) { return (n < 10 ? '0' : '') + n; }
 
   function palette() {
-    var p = (window.XPMap && XPMap.PALETTES && XPMap.PALETTES[state.pal]) || PAL_LOCAL[state.pal];
-    return p || PAL_LOCAL.std;
+    var p = (window.XPMap && XPMap.PALETTES && XPMap.PALETTES[state.pal]) || palLocal(state.pal);
+    return p || palLocal('std');
   }
 
   /* ---- data shortcuts ---- */

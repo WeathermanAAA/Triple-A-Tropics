@@ -10,9 +10,14 @@
   :root {
     --bg: #07101c; --panel: #0f1a2a; --border: #1a2840;
     --fg: #e5edf6; --muted: #8ea2bd;
-    --td: #3fa4ff; --ts: #46c56a;
-    --c1: #ffe14d; --c2: #ff9a2f; --c3: #f5333c;
-    --c4: #e33ad4; --c5: #b03bff;
+    --td: #6eebf9; --ts: #9cf94d;
+    --c1: #fdfc53; --c2: #f1af3d;
+    --c3: #e63222; --c4: #e732f4;
+    --c5: #f6c5fb;
+    --td-ink: #0a1324; --ts-ink: #0a1324;
+    --c1-ink: #0a1324; --c2-ink: #0a1324;
+    --c3-ink: #ffffff; --c4-ink: #0a1324;
+    --c5-ink: #0a1324;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--fg);
@@ -207,7 +212,7 @@
         <!-- Baked build-time stamp = fallback; when the geojson carries the
              poller's live freshness stamps (Phase 3), the fetch handler below
              overwrites this at runtime with the map's TRUE data freshness. -->
-        <div class="sub" id="as-of">As of 2026-07-29 14:39 UTC</div>
+        <div class="sub" id="as-of">As of 2026-07-29 16:44 UTC</div>
       </div>
       <div class="stats">
         <b>19</b> named storms &middot; <b>7</b> category 1+ storms &middot;
@@ -238,15 +243,9 @@
 
 <script>
 (function () {
-  var SSHS_COLORS = {
-    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
-    "C2": "#ff9a2f", "C3": "#f5333c", "C4": "#e33ad4", "C5": "#b03bff"
-  };
-  var CAT_LABELS = {
-    "TD": "Depression", "TS": "Tropical Storm",
-    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
-    "C4": "Category 4", "C5": "Category 5"
-  };
+  // Baked from tat_palettes at render time (see _apply_icon_tokens).
+  var SSHS_COLORS = {"TD": "#6eebf9", "TS": "#9cf94d", "C1": "#fdfc53", "C2": "#f1af3d", "C3": "#e63222", "C4": "#e732f4", "C5": "#f6c5fb"};
+  var CAT_LABELS = {"TD": "Depression", "TS": "Tropical Storm", "C1": "Category 1", "C2": "Category 2", "C3": "Category 3", "C4": "Category 4", "C5": "Category 5"};
   function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
@@ -420,13 +419,13 @@
     // mismatching the legend swatch.
     var COLOR_STEP = [
       "step", ["coalesce", ["get", "intensity_kt"], 0],
-      "#3fa4ff",       // <34 kt: TD (default below first stop)
-      34,  "#46c56a",  // 34-63: TS
-      64,  "#ffe14d",  // 64-82: C1
-      83,  "#ff9a2f",  // 83-95: C2
-      96,  "#f5333c",  // 96-112: C3
-      113, "#e33ad4",  // 113-136: C4
-      137, "#b03bff"   // ≥137: C5
+      "#6eebf9",       // <34 kt: TD (default below first stop)
+      34, "#9cf94d",  // 34-63: TS
+      64, "#fdfc53",  // 64-82: C1
+      83, "#f1af3d",  // 83-95: C2
+      96, "#e63222",  // 96-112: C3
+      113, "#e732f4",  // 113-136: C4
+      137, "#f6c5fb"   // >=137: C5
     ];
     // Shared zoom-radius/icon-size ramp so circles and symbols read at
     // the same physical pixel footprint (the per-basin SVG uses r=3 for

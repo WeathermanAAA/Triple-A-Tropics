@@ -90,5 +90,29 @@ class TestAssetVersioning(unittest.TestCase):
             self.assertFalse(changed2)                  # idempotent
 
 
+class TestPaletteVersioning(unittest.TestCase):
+    """The shared category palette is referenced site-wide, so a stale ?v=
+    would leave one page rendering last week's colors - the exact drift the
+    palette consolidation exists to prevent."""
+
+    def test_palette_refs_are_current(self):
+        changed, versions = stamp.stamp_palette(REPO, write=False)
+        self.assertFalse(
+            changed,
+            "/tat_palette.{js,css} ?v= hashes are STALE - run "
+            "`python scripts/stamp_model_assets.py` and commit.")
+        self.assertTrue(versions, "no page references the shared palette")
+
+    def test_every_palette_ref_is_versioned(self):
+        bare = []
+        for path in stamp.iter_html(REPO):
+            html = path.read_text()
+            for m in re.finditer(
+                    r'(?:src|href)="(/tat_palette\.(?:js|css))([^"]*)"', html):
+                if not re.fullmatch(r"\?v=[0-9a-f]{6,}", m.group(2)):
+                    bare.append(f"{path.relative_to(REPO)}: {m.group(1)}{m.group(2)}")
+        self.assertFalse(bare, "unversioned palette references: " + ", ".join(bare))
+
+
 if __name__ == "__main__":
     unittest.main()
