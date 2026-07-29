@@ -41,6 +41,12 @@ BORDER        = "#2a2e36"
 FG            = "#e8ebef"
 MUTED         = "#9199a4"
 ACCENT_AMBER  = "#ffb83a"
+
+#: ONE active-storm glyph size, in degrees. Size encodes nothing here either:
+#: the glyph's colour and its category label already carry intensity. Set to
+#: the midpoint of the retired 1.8-3.0 wind ramp so a typical storm looks
+#: unchanged and the basin stops being crowded by the strongest ones.
+ICON_SIZE_DEG = 2.4
 ACCENT_CYAN   = "#5dd3ff"
 ACCENT_VIOLET = "#c084fc"
 HURRICANE_BLUE = "#1e3a8a"
@@ -537,7 +543,13 @@ def render(basin: str, year: int,
 
         actives.sort(key=lambda x: -x[4])  # strongest first
         for i, (s, lat, lon, bearing, w, idx) in enumerate(actives):
-            size_deg = 1.8 + max(0, min(1.0, (w - 30) / 130.0)) * 1.2
+            # ONE glyph size for every active storm. This used to scale with
+            # wind (1.8 deg at 30 kt growing to 3.0 at 160), which is size
+            # encoding intensity — the same double-encoding removed from the
+            # track dots. Intensity is already carried by the glyph's colour
+            # and by the labelled category; the size was a third channel
+            # saying the same thing, and it made majors crowd the basin.
+            size_deg = ICON_SIZE_DEG
             rot = ICON_IMG.rotate(spin - bearing,
                                   resample=Image.BICUBIC, expand=False)
             half = size_deg / 2.0
