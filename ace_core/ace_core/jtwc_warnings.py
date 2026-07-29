@@ -313,6 +313,56 @@ def _parse_latlon(lat_raw: str, lon_raw: str) -> Optional[tuple]:
 # Prose (3x) parser
 # ---------------------------------------------------------------------------
 
+#: Everything below this heading is FORECAST, not analysis. Both sections use
+#: the same "DDHHMMZ --- lat lon" / "MAX SUSTAINED WINDS - NNN KT" / "RADIUS OF"
+#: shapes, so the analysis parsers MUST run on the truncated text or they will
+#: happily read a +12 h forecast as the current fix. Observed live on 12W
+#: (2026-07-29): analysis 130 kt, first forecast 140 kt — a whole SSHWS
+#: category apart, and the forecast is the one that reads as "ahead".
+_FORECAST_CUT_RE = re.compile(r"^\s*FORECASTS?:", re.M | re.I)
+
+#: The analysis position line, under "WARNING POSITION:":
+#:     291200Z --- NEAR 15.2N 167.7E
+#: The ``NEAR`` is the analysis marker — forecast lines are bare ``---``. Both
+#: that word and the section cut above are required; either alone has been
+#: enough to mis-read a bulletin in some basin's formatting.
+_PROSE_POS_RE = re.compile(
+    r"^\s*(?P<ddhhmm>\d{6})Z\s+-+\s+NEAR\s+"
+    r"(?P<lat>\d+(?:\.\d+)?)\s*(?P<ns>[NS])\s+"
+    r"(?P<lon>\d+(?:\.\d+)?)\s*(?P<ew>[EW])", re.M | re.I)
+
+#: "MAX SUSTAINED WINDS - 130 KT, GUSTS 160 KT". The units sentence higher up
+#: ("MAX SUSTAINED WINDS BASED ON ONE-MINUTE AVERAGE") has no "- NNN KT" and
+#: correctly does not match.
+_PROSE_WIND_RE = re.compile(
+    r"MAX\s+SUSTAINED\s+WINDS\s*-\s*(?P<kt>\d+)\s*KT"
+    r"(?:\s*,\s*GUSTS\s+(?P<gust>\d+)\s*KT)?", re.I)
+
+#: "RADIUS OF 064 KT WINDS - 025 NM NORTHEAST QUADRANT" plus three continuation
+#: lines. JTWC hard-wraps and indents the other three quadrants, so this spans
+#: newlines by design.
+_PROSE_RAD_RE = re.compile(
+    r"RADIUS\s+OF\s+0*(?P<thr>\d{2,3})\s+KT\s+WINDS\s*-\s*"
+    r"(?P<ne>\d+)\s*NM\s+NORTHEAST\s+QUADRANT\s+"
+    r"(?P<se>\d+)\s*NM\s+SOUTHEAST\s+QUADRANT\s+"
+    r"(?P<sw>\d+)\s*NM\s+SOUTHWEST\s+QUADRANT\s+"
+    r"(?P<nw>\d+)\s*NM\s+NORTHWEST\s+QUADRANT", re.I)
+
+
+def analysis_section(text: str) -> str:
+    """The part of a prose bulletin that describes NOW, not the forecast.
+
+    Everything from the top down to the ``FORECASTS:`` heading. Returns the
+    whole text when there is no forecast section (final warnings often have
+    none), which is safe — with no forecast block there are no forecast lines
+    to confuse the analysis parsers.
+    """
+    if not text:
+        return ""
+    m = _FORECAST_CUT_RE.search(text)
+    return text[:m.start()] if m else text
+
+
 def detect_final(text: str) -> tuple[bool, Optional[str]]:
     """``(is_final, reason)`` from a warning bulletin.
 
@@ -383,6 +433,50 @@ def parse_prose(text: str) -> Optional[dict]:
             break
     m_nr = _WARNING_NR_RE.search(primary) or _WARNING_NR_RE.search(subj)
     is_final, reason = detect_final(text)
+
+    # --- the analysis fix -------------------------------------------------
+    # Read ONLY from above the FORECASTS: heading. ``fix_ddhhmm`` is returned
+    # raw because it cannot be resolved to an absolute time here — see
+    # ``resolve_prose_time``, which needs an anchor the parser does not have.
+    section = analysis_section(text)
+    m_pos = _PROSE_POS_RE.search(section)
+    fix_ddhhmm = lat = lon = None
+    if m_pos:
+        fix_ddhhmm = m_pos.group("ddhhmm")
+        try:
+            lat = float(m_pos.group("lat"))
+            lon = float(m_pos.group("lon"))
+        except (TypeError, ValueError):
+            fix_ddhhmm = lat = lon = None
+        else:
+            # Prose is DECIMAL degrees ("15.2N"), unlike the ATCG form's tenths
+            # ("152N"). Do not route this through _parse_latlon.
+            if m_pos.group("ns").upper() == "S":
+                lat = -lat
+            if m_pos.group("ew").upper() == "W":
+                lon = -lon
+
+    m_wind = _PROSE_WIND_RE.search(section)
+    wind_kt = gust_kt = None
+    if m_wind:
+        try:
+            wind_kt = float(m_wind.group("kt"))
+        except (TypeError, ValueError):
+            wind_kt = None
+        if m_wind.group("gust"):
+            try:
+                gust_kt = float(m_wind.group("gust"))
+            except (TypeError, ValueError):
+                gust_kt = None
+
+    radii: dict[int, list[int]] = {}
+    for m in _PROSE_RAD_RE.finditer(section):
+        try:
+            radii[int(m.group("thr"))] = [
+                int(m.group(q)) for q in ("ne", "se", "sw", "nw")]
+        except (TypeError, ValueError):
+            continue
+
     return {
         "atcf_id": storm_id,
         "name": name,
@@ -392,6 +486,12 @@ def parse_prose(text: str) -> Optional[dict]:
         "is_final": is_final,
         "final_reason": reason,
         "is_tcfa": is_tcfa,
+        "fix_ddhhmm": fix_ddhhmm,
+        "lat": lat,
+        "lon": lon,
+        "wind_kt": wind_kt,
+        "gust_kt": gust_kt,
+        "radii": radii,
     }
 
 
@@ -430,7 +530,79 @@ def select_current(fixes: Iterable[dict], now: Optional[dt.datetime] = None,
     return out
 
 
-def merge_slot(atcg: Optional[dict], prose: Optional[dict]) -> Optional[dict]:
+#: How far AHEAD of its ATCG twin a prose analysis may resolve. JTWC warns
+#: 6-hourly and the prose bulletin is written first, so one full cycle ahead is
+#: the normal divergence and two is the generous bound. Anything further apart
+#: is a slot mismatch, not a lead.
+PROSE_MAX_LEAD_H = 12.0
+#: How far BEHIND its twin it may resolve. Only used to decide the DDHHMM is
+#: plausible; a prose fix older than the ATCG never overrides it.
+PROSE_MAX_LAG_H = 30.0
+
+
+def resolve_prose_time(ddhhmm: Optional[str], anchor: Optional[dt.datetime],
+                       now: Optional[dt.datetime] = None,
+                       max_lead_h: float = PROSE_MAX_LEAD_H,
+                       max_lag_h: float = PROSE_MAX_LAG_H
+                       ) -> Optional[dt.datetime]:
+    """Resolve a prose ``DDHHMM`` against the ATCG's full ``YYYYMMDDHH`` stamp.
+
+    The prose header and its position line carry no month and no year, which is
+    why this module long refused to read a fix out of them. An ANCHOR removes
+    the ambiguity: the ATCG twin from the same slot pair, already validated by
+    ``select_current``, supplies the year and month, and the day-of-month then
+    picks a unique datetime within that neighbourhood.
+
+    Candidates are built in the anchor's month and both adjacent months, so a
+    bulletin written on the 1st that analyses the 31st still resolves. The
+    closest candidate to the anchor wins, and it is rejected outright unless it
+    lands inside ``[anchor - max_lag_h, anchor + max_lead_h]``.
+
+    Returns None with no anchor. That is deliberate and is the whole stale-slot
+    defence: a leftover bulletin's DDHHMM would otherwise resolve against the
+    current month and could land within hours of now purely by coincidence
+    (a ~1-in-15 chance per stale slot, which is not a safety margin). No anchor,
+    no fix — the type half of the prose is still used, exactly as before.
+    """
+    if not ddhhmm or anchor is None:
+        return None
+    raw = str(ddhhmm).strip()
+    if len(raw) != 6 or not raw.isdigit():
+        return None
+    day, hour, minute = int(raw[0:2]), int(raw[2:4]), int(raw[4:6])
+    if not (1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    best = None
+    for delta in (-1, 0, 1):
+        month = anchor.month + delta
+        year = anchor.year
+        if month < 1:
+            month, year = 12, year - 1
+        elif month > 12:
+            month, year = 1, year + 1
+        try:
+            cand = dt.datetime(year, month, day, hour, minute)
+        except ValueError:
+            continue           # e.g. the 31st of a 30-day month
+        if best is None or abs(cand - anchor) < abs(best - anchor):
+            best = cand
+    if best is None:
+        return None
+
+    lead_h = (best - anchor).total_seconds() / 3600.0
+    if lead_h > max_lead_h or lead_h < -max_lag_h:
+        return None
+    # An analysis is never in the future. Clock skew or a mis-stamped product
+    # must degrade to "no prose fix", never to the newest thing we know.
+    now = now or _utcnow()
+    if (best - now).total_seconds() / 3600.0 > 1.0:
+        return None
+    return best
+
+
+def merge_slot(atcg: Optional[dict], prose: Optional[dict],
+               now: Optional[dt.datetime] = None) -> Optional[dict]:
     """Combine a slot's ATCG (numbers + time) and prose (type) halves.
 
     The two are only merged when they agree on ``atcf_id``; JTWC writes the
@@ -442,12 +614,22 @@ def merge_slot(atcg: Optional[dict], prose: Optional[dict]) -> Optional[dict]:
 
     ``is_final`` is the OR of both halves: JTWC repeats the final-warning
     sentence in both families, and either one asserting it is enough to stop.
+
+    THE LEADING EDGE. The two families are written from the same warning but
+    are not published in lockstep, and the prose is the one that goes first.
+    Observed live on 12W (2026-07-29 19:07Z): ``wtpn31`` held WARNING NR 011,
+    analysis 291200Z at 130 kt, while ``wtpn51`` still held NR 010, analysis
+    290600Z at 120 kt — a 6 h, 10 kt gap in the direction that matters. When
+    the prose analysis resolves NEWER than its twin's, it supersedes the
+    numbers wholesale: time, position, wind and radii together, never a mix of
+    the two hours. ``fix_source`` records which family the numbers came from.
     """
     if atcg is None:
         return None
     out = dict(atcg)
     out.setdefault("nature", None)
     out.setdefault("dev_label", None)
+    out["fix_source"] = "atcg"
     if prose is None:
         return out
     if prose.get("atcf_id") and prose["atcf_id"] != atcg.get("atcf_id"):
@@ -458,4 +640,23 @@ def merge_slot(atcg: Optional[dict], prose: Optional[dict]) -> Optional[dict]:
     out["is_final"] = bool(atcg.get("is_final")) or bool(prose.get("is_final"))
     out["final_reason"] = (atcg.get("final_reason")
                            or prose.get("final_reason"))
+
+    p_time = resolve_prose_time(prose.get("fix_ddhhmm"), atcg.get("time"),
+                                now=now)
+    if (p_time is not None and atcg.get("time") is not None
+            and p_time > atcg["time"]
+            and prose.get("lat") is not None
+            and prose.get("lon") is not None
+            and prose.get("wind_kt") is not None):
+        out["time"] = p_time
+        out["lat"] = prose["lat"]
+        out["lon"] = prose["lon"]
+        out["wind_kt"] = prose["wind_kt"]
+        # Radii belong to the hour they were measured. Taking the prose's
+        # position at 12Z with the ATCG's radii from 06Z would publish a wind
+        # field that never existed; carry the prose's own or carry none.
+        out["radii"] = prose.get("radii") or {}
+        if prose.get("warning_nr") is not None:
+            out["warning_nr"] = prose["warning_nr"]
+        out["fix_source"] = "prose"
     return out

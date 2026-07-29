@@ -39,10 +39,17 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import io
+import re
 import urllib.error
 import urllib.request
 from typing import Callable, Iterable, Optional
 
+from . import (
+    RADII_COLS,
+    RADII_QUADS,
+    RADII_THRESHOLDS,
+    SIX_HOURLY,
+)
 from . import tcvitals as tcv
 from . import jtwc_warnings as jw
 
@@ -299,6 +306,112 @@ def fetch_warnings(tokens: Iterable[str] = ("pn", "io", "ps", "xs"),
 
 
 # ---------------------------------------------------------------------------
+# Leg 3 — the warning's own analysis, as fixes
+# ---------------------------------------------------------------------------
+
+#: Provenance tag for a fix recovered from the warning text itself. Free-form,
+#: like ``tcv.TCVITALS_SOURCE``; nothing branches on it.
+WARNING_SOURCE = "live-warning"
+
+_ATCF_SHORT_RE = re.compile(r"(\d{2})([A-Z])")
+
+
+def warning_fixes(warnings: Iterable[dict], season: int, basin_cfg: dict):
+    """Merged warning records -> ``parse_bdeck``-schema fix rows.
+
+    WHY THIS LEG EXISTS. JTWC publishes an analysis in the warning text before
+    it reaches any of the machine-readable products we poll. Measured on 12W
+    at 2026-07-29 19:07Z, the four sources stood at:
+
+        b-deck mirror   290600Z   120 kt      13 h old
+        ATCG wtpn51     290600Z   120 kt      13 h old
+        tcvitals        291200Z   130 kt       7 h old
+        prose wtpn31    291200Z   130 kt       7 h old   <- and issued first
+
+    Before this leg the feed's leading edge was ``b-deck ∪ tcvitals``, so
+    whenever tcvitals lagged a cycle the site sat on the 13-hour-old b-deck
+    edge while JTWC's current analysis was sitting in a text bulletin we were
+    already downloading and reading — for the storm TYPE only.
+
+    Emits the same schema as ``parse_tcvitals`` so every downstream consumer
+    works unchanged, and leaves ``nature`` indeterminate for
+    ``resolve_fix_types`` to stamp — one type-resolution path, not two.
+
+    ``pressure_mb`` is NaN: neither the prose nor the ATCG form carries MSLP.
+    That is why the caller prefers a tcvitals row at the same (SID, hour) —
+    this leg is for hours nothing else reaches, never a substitute.
+    """
+    import pandas as pd
+
+    short = str(basin_cfg.get("short") or "").strip().lower()
+    letters = set(tcv.BASIN_LETTERS.get(short, ()))
+    agency = str(basin_cfg.get("agency_name") or "").strip()
+
+    rows: list[dict] = []
+    seen: dict[tuple, int] = {}
+    for w in warnings or ():
+        t = w.get("time")
+        m = _ATCF_SHORT_RE.fullmatch(str(w.get("atcf_id") or "").upper())
+        if t is None or not m:
+            continue
+        storm_num, letter = int(m.group(1)), m.group(2)
+        if letters and letter not in letters:
+            continue
+        atcf_token = tcv.LETTER_TO_ATCF.get(letter)
+        if atcf_token is None:
+            continue
+        # Same two gates parse_tcvitals applies, for the same reasons: an
+        # off-cycle special bulletin must never enter the ACE fix set, and the
+        # season must match or the SID would not line up with the b-deck's.
+        if t.hour not in SIX_HOURLY or t.minute != 0:
+            continue
+        if t.year != int(season):
+            continue
+        lat, lon = w.get("lat"), w.get("lon")
+        wind = w.get("wind_kt")
+        if lat is None or lon is None or wind is None:
+            continue
+
+        rec = {
+            "SID": f"{agency}_{atcf_token}{storm_num:02d}{int(season)}",
+            "NAME": tcv._clean_name(str(w.get("name") or ""),
+                                    storm_num, letter),
+            "season": int(season),
+            "time": t,
+            "lat": float(lat),
+            "lon": float(lon),
+            "wind_kt": float(wind),
+            "pressure_mb": float("nan"),
+            "nature": tcv.NATURE_INDETERMINATE,
+            "ace_nature": tcv.NATURE_INDETERMINATE,
+            "source": WARNING_SOURCE,
+            "storm_num": storm_num,
+            "atcf_short": f"{storm_num:02d}{letter}",
+            "type_status": tcv.TYPE_INDETERMINATE,
+            "spawn_invest": None,
+            "spawn_invest_letter": None,
+            "rmw_nm": None,
+        }
+        for col in RADII_COLS:
+            rec[col] = None
+        # Unlike tcvitals, the warning text carries all three thresholds.
+        for thr, quads in (w.get("radii") or {}).items():
+            if thr not in RADII_THRESHOLDS or len(quads) != 4:
+                continue
+            for q, val in zip(RADII_QUADS, quads):
+                rec[f"r{thr}_{q}"] = int(val)
+
+        key = (rec["SID"], t)
+        if key in seen:
+            rows[seen[key]] = rec
+            continue
+        seen[key] = len(rows)
+        rows.append(rec)
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -327,6 +440,28 @@ def poll_jtwc(season: int, basin_cfg: dict, bdeck_df=None,
     warnings, src_b = fetch_warnings(now=now, getter=getter)
 
     kept = tcv.prefer_bdeck(bdeck_df, df)
+
+    # Leg 3. Precedence is b-deck > tcvitals > warning, strictly by richness:
+    # the b-deck is the revised post-analysis, tcvitals carries MSLP and RMW,
+    # the warning text carries neither but is published FIRST. So a warning fix
+    # is only ever added for an (SID, hour) the other two do not reach — which
+    # makes this leg purely additive. When tcvitals is current the output is
+    # unchanged, fix for fix.
+    wfx = warning_fixes(warnings, season, basin_cfg)
+    added_from_warnings = 0
+    if wfx is not None and not getattr(wfx, "empty", True):
+        wfx = tcv.prefer_bdeck(bdeck_df, wfx)
+    if wfx is not None and not getattr(wfx, "empty", True):
+        wfx = tcv.prefer_bdeck(kept, wfx)
+    if wfx is not None and not getattr(wfx, "empty", True):
+        import pandas as pd
+        added_from_warnings = len(wfx)
+        if kept is None or getattr(kept, "empty", True):
+            kept = wfx.reset_index(drop=True)
+        else:
+            kept = pd.concat([kept, wfx], ignore_index=True)
+        kept = kept.sort_values(["SID", "time"]).reset_index(drop=True)
+
     # Scope bound BEFORE type resolution — see LEAD_WINDOW_H. Anything older
     # than the window is a season back-fill, not a leading edge, and is dropped
     # rather than published into the live frame.
@@ -345,6 +480,7 @@ def poll_jtwc(season: int, basin_cfg: dict, bdeck_df=None,
         "coverage": tcv.coverage_report(bdeck_df, resolved),
         "watermark": watermark,
         "outside_lead_window": dropped,
+        "from_warnings": added_from_warnings,
     }
 
 

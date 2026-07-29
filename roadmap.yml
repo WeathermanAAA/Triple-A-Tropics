@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T17:40:00Z
+updated: 2026-07-29T19:45:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -457,6 +457,35 @@ items:
       past its newest fix. A fix whose type cannot be established is counted as
       indeterminate and excluded from ACE rather than guessed. AL/EP are
       untouched and byte-identical — NHC serves its own decks on time.
+    links:
+      - label: WPac tracks
+        url: /climatology/west-pacific/tracks/
+  - id: jtwc-warning-fix-leg
+    title: The warning text becomes a FIX source, not just a type source
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-29
+    note: >-
+      Third recurrence of "our intensity trails everyone else" (100-vs-125, then
+      failing to lead on 125, then C4-vs-C5 on Dolphin). Diagnosed rather than
+      patched this time. Ground truth for 12W at 2026-07-29 19:07Z: the b-deck
+      mirror and the machine-readable ATCG bulletin both sat at 06Z/120 kt while
+      tcvitals and the prose warning both had 12Z/130 kt — so the leading edge
+      was b-deck-union-tcvitals, and whenever tcvitals lagged a cycle the site
+      fell back to a 13-hour-old b-deck fix even though JTWC's current analysis
+      was sitting in a text bulletin we were already downloading and parsing for
+      the storm type alone. parse_prose now also reads the analysis position,
+      1-min wind and all three radii thresholds; a DDHHMM with no month or year
+      is resolved against the ATCG twin's full synoptic stamp (no anchor, no
+      fix — that is the stale-slot defence), and when the prose resolves NEWER
+      it supersedes the ATCG numbers wholesale, never a 12Z position wearing 06Z
+      radii. The leg is strictly additive: b-deck beats tcvitals beats warning at
+      a shared (SID, hour), so it only ever fills an hour nothing else reaches
+      and cannot double-count into ACE. Warning fixes carry no MSLP (neither
+      bulletin family publishes it), which is exactly why they lose ties.
+      Verified byte-identical on --no-live for all three basins, and on captured
+      live inputs the output is unchanged when tcvitals is current while the
+      lagging case recovers one fix worth exactly 130^2/10^4 = 1.690 ACE.
     links:
       - label: WPac tracks
         url: /climatology/west-pacific/tracks/
