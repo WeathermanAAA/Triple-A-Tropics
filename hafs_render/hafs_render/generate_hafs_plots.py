@@ -389,6 +389,12 @@ def _frame_key(model: str, storm: str, domain: str, fxx: int) -> tuple:
     return (model, storm, domain, fxx)
 
 
+# How often a running pool reports progress. Both stages take hours; without a
+# heartbeat their logs are silent from "planned N tasks" to "done N tasks", so a
+# stage that is merely slow is indistinguishable from one that is wedged until
+# the job's timeout kills it.
+_POOL_HEARTBEAT_SECS = 120
+
 _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
                       # the file is there, so a short retry clears the hole. This
                       # is the ONLY stage that touches the network now.
@@ -637,10 +643,22 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
     cost is a one-off geojson basemap that recycling would just re-pay.
     """
     if jobs <= 1:
+        # Serial path gets the same heartbeat as the pool below - it is the path
+        # a memory-clamped host lands on, i.e. exactly the slow case where being
+        # able to see progress matters most.
         if initializer is not None:
             initializer()
-        for job in jobs_list:
+        t0 = last_beat = time.time()
+        for n, job in enumerate(jobs_list, 1):
             record(fn(job))
+            now = time.time()
+            if now - last_beat >= _POOL_HEARTBEAT_SECS:
+                el = now - t0
+                rate = n / el if el > 0 else 0.0
+                eta = (len(jobs_list) - n) / rate if rate > 0 else float("nan")
+                log.info("  ... %d/%d done in %.0fs (%.2f/s, eta %.0fs, serial)",
+                         n, len(jobs_list), el, rate, eta)
+                last_beat = now
         return
     remaining = list(jobs_list)
     width = max(1, jobs)
@@ -664,10 +682,27 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                                         initializer=initializer,
                                         **pool_kw) as ex:
                 fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
+                t_pool = last_beat = time.time()
+                done = 0
                 for fut in cf.as_completed(fut_to_i):
                     i = fut_to_i[fut]
                     record(fut.result())
                     not_done.discard(i)
+                    # HEARTBEAT. Without it this loop is silent for as long as it
+                    # takes - a stage that ran 5h50m and never finished looked
+                    # identical in the log to one that hung on the first task, and
+                    # the whole cycle timed out before anyone could tell which.
+                    # A rate + ETA every _POOL_HEARTBEAT_SECS makes "slow" and
+                    # "stuck" distinguishable from the run log alone.
+                    done += 1
+                    now = time.time()
+                    if now - last_beat >= _POOL_HEARTBEAT_SECS:
+                        el = now - t_pool
+                        rate = done / el if el > 0 else 0.0
+                        eta = (len(batch) - done) / rate if rate > 0 else float("nan")
+                        log.info("  ... %d/%d done in %.0fs (%.2f/s, eta %.0fs, "
+                                 "width %d)", done, len(batch), el, rate, eta, width)
+                        last_beat = now
         except BrokenProcessPool:
             remaining = [batch[i] for i in sorted(not_done)]
             width = max(1, width // 2)

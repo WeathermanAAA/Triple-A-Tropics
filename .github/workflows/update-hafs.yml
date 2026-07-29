@@ -141,15 +141,19 @@ jobs:
           # per worker and clamps the width to what the host can actually hold
           # (_fit_ingest_width, which also honours a container limit).
           #
-          # So 4 here is intent, not a bet on the runner class: a 16 GB runner
-          # runs 4-wide, a 7 GB one clamps itself to 2, and neither OOMs. That
-          # matters because the old value was picked against a "7 GB runner"
-          # assumption that predates GitHub's public-repo runner upgrade and was
-          # never re-checked - the guard removes the need to re-guess it at all.
-          # The effective width is logged, so the run itself tells you.
+          # BACK TO 2 PENDING DIAGNOSIS. The runner is confirmed 16 GB class
+          # (run 30434658444 logged "ingest width 4 (14972 MB available, room
+          # for 6)"), so the guard did NOT clamp and memory was not the limit -
+          # but that run's ingest did not finish 430 frames in 5h50m and the job
+          # timed out, against 91 min for the SAME 430 frames at width 2 on the
+          # previous release. No pool death, no OOM, no failed frames in the log.
+          # Width and the v0.13.0 ingest rework changed in the same run, so this
+          # returns the width to the last known-good value to separate them; the
+          # heartbeat added alongside this will show where the time actually
+          # goes. Do not raise this again until a run reports a healthy rate.
           # The render pool stays 4 (CPU-bound, and a render task now
           # materialises only the fields its product draws - 289 MB, not 908).
-          python generate_hafs_plots.py --jobs 4 --ingest-jobs 4 --cycle-scoped
+          python generate_hafs_plots.py --jobs 4 --ingest-jobs 2 --cycle-scoped
           echo "---- rendered frames (cycle-scoped) ----"
           find models/hafs -name '*.png' | wc -l
           echo "---- manifest (v2) ----"
