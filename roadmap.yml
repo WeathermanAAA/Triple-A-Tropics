@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T06:10:00Z
+updated: 2026-07-29T06:25:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1076,6 +1076,27 @@ items:
     links:
       - label: models
         url: /models/
+  - id: hafs-fieldcache-retention
+    title: HAFS field cache has no retention policy — unbounded on a persistent volume
+    area: models
+    status: next
+    note: >-
+      Found while profiling the ingest, not yet a live fault. Nothing on either
+      side deletes the per-fxx field cache: hafs_cache only ever writes under
+      save_dir/fieldcache/{version}/{cycle}/..., and every "prune" in the box
+      poller is about R2 PNGs. Harmless on GitHub Actions, where HERBIE_DATA is
+      runner.temp and dies with the runner — but the box hafs-worker mounts a
+      PERSISTENT docker volume (herbie_data:/data/herbie), so it would grow
+      forever. Measured entry sizes are 166–195 MB per parent frame and 15–21 MB
+      per storm frame; at 43 forecast hours x 2 domains x 3 storms that is
+      ~25 GB per cycle and ~100 GB/day at 4 cycles, which fills box1's 325 GB
+      free in about three days (half that at six storms). A CACHE_VERSION bump
+      strands the previous generation on top. NOT urgent: the worker is
+      profile-gated off and has never run, so no herbie volume exists on either
+      box today — but this must land BEFORE it is enabled, and the fix needs a
+      deliberate retention rule (keep N cycles? drop on cycle completion?), not
+      a reflexive rmtree, because the cache is also what makes a re-run or the
+      backup cron skip work it already did.
   - id: model-scaling-50
     title: Model platform scaling
     area: models
