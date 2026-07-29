@@ -2716,6 +2716,22 @@ is tidier post-rewrite.
 
 ## QUEUED manual steps (Andrew)
 
+- **2026-07-29 · HAFS cron wedged behind a doomed run; I cannot cancel it.**
+  `gh run cancel` and `gh workflow run` both 403 from this Codespace (the token
+  has no Actions write). Run **30459587743** started 17:20 UTC on `5fa39de7`,
+  which PREDATES the width-2 + heartbeat fix (`b6b09f30`); it is the same
+  `--ingest-jobs 4` config whose identical predecessor (30434658444) failed to
+  finish 430 ingest frames in 5h50m. It holds the `update-hafs` concurrency slot
+  until its 23:10 UTC timeout, with run **30486383133** (which HAS the fix)
+  queued behind it. Safe to cancel: its Upload-to-R2 step never ran, so no
+  partial sync is possible and the prior cycle stays live - the workflow's
+  "don't cancel mid-flight" warning covers the sync phase only.
+      gh run cancel 30459587743        # or the Actions UI
+  NOT required: it self-clears at 23:10 and the fixed run then starts on its own.
+  Cancelling only saves ~2.5 h of extra staleness on `/models/` (already ~15 h
+  stale). The underlying gap, if worth closing: this Codespace's token cannot
+  cancel or dispatch Actions runs, so it cannot unwedge this class of problem.
+
 - **Optional, accelerates reclaim:** ask GitHub Support to run a GC on
   WeathermanAAA/Triple-A-Tropics ("we deleted a branch that accumulated
   ~85 GB of unreachable objects from daily force-pushes; please GC").
