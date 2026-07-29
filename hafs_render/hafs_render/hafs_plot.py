@@ -113,15 +113,25 @@ WATERMARK = "@WeathermanAAA_"
 
 KT_PER_MS = 1.94384  # m s-1 → knots
 
-# The parent grid the ingest MEMORY BUDGET was calibrated on: 1361 x 1681, the
-# hafsa parent .atm domain measured 2026-07-29. Every byte in that budget scales
-# linearly with cell count, so a materially larger grid silently invalidates it -
-# generate_hafs_plots._fit_ingest_width would then permit more workers than fit
-# and OOM the pool. We cannot know every basin's parent grid from here, so make
-# the assumption FALSIFIABLE FROM A RUN LOG instead of trusting it: warn once a
-# grid exceeds the headroom the budget actually carries.
+# The parent grid the ingest MEMORY BUDGET is calibrated on. SURVEYED, not
+# assumed: the hafsa parent .atm domain is 1361 x 1681 (81.6 x 100.8 deg at
+# 0.06 deg) in EVERY basin HAFS has run - al, ep, cp, wp, io and sh all probed
+# 2026-07-29 and all identical. The domain is storm-following in POSITION, not
+# in size, so the calibration grid is also the largest grid.
+#
+# That makes this a regression detector rather than an expected event, and it is
+# worth keeping precisely because the invariant is invisible: every byte of the
+# budget scales linearly with cell count, so a model or config change that grew
+# the domain would silently let _fit_ingest_width over-subscribe and OOM the
+# pool with no stated cause. The tolerance is tight (5%) because the budget only
+# carries ~6% margin over the measured worker high-water - there is no room for
+# a bigger grid, so any real growth should say so in the run log.
+#
+# (An earlier note here claimed ~17% grid variance. That was inferred from cache
+# FILE sizes, which vary 166-192 MB across storms - that spread is the weather's
+# compressibility, not geometry. The grids are identical.)
 BUDGET_REF_CELLS = 1361 * 1681
-BUDGET_HEADROOM = 1.17          # matches the +17% in _INGEST_FRAME_BUDGET_MB
+BUDGET_HEADROOM = 1.05
 
 # ---------------------------------------------------------------------------
 # FIELD DTYPE POLICY - read this before changing any dtype below

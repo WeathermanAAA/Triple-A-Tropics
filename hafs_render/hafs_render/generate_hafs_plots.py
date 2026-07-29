@@ -393,25 +393,37 @@ _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
                       # the file is there, so a short retry clears the hole. This
                       # is the ONLY stage that touches the network now.
 
-# Ingest workers are recycled after this many frames. A frame's peak allocation
-# is ~10x what it retains, and glibc does not hand a freed 300 MB arena back to
-# the OS just because Python released it - so a long-lived worker's RSS ratchets
-# up to its worst frame and STAYS there, which is what turns a per-frame peak
-# into a per-pool ceiling. Recycling caps that ratchet at a bounded number of
-# frames; the cost is one interpreter start (~1 s) per N frames.
+# Ingest workers are recycled after this many frames. NOT a nicety - it is what
+# makes the current pool widths possible at all.
+#
+# Measured: a worker's high-water RSS climbs +21 MB per frame, LINEARLY, with no
+# sign of plateauing over 12 frames (1914.7 MB after the first, 2170.7 after the
+# twelfth), and malloc_trim does not reclaim it. Extrapolated over a cycle's ~258
+# frames an unrecycled worker would reach ~7.3 GB and OOM every host we run on.
+# Recycling bounds it:  high-water ~= 1915 + 21 * (N - 1) MB.
+#
+# 12 costs one interpreter start per 12 frames - ~2 s against ~583 s of work,
+# 0.3% - and lands the high-water at ~2.15 GB, which is what
+# _INGEST_FRAME_BUDGET_MB below is sized from. Lowering N lowers the budget and
+# vice versa; the two constants are coupled and must move together.
 _INGEST_TASKS_PER_CHILD = 12
 
-# Memory one ingest worker needs for the heaviest frame it can draw: a parent
-# .atm with the environmental + upper-air field set. Measured 1.96 GB peak RSS
-# per worker (and peak is INDEPENDENT of pool width - two workers at width 2
-# peaked at 1956 and 1927 MB), plus ~17% for the largest parent grid observed.
+# Memory one ingest WORKER needs over its whole life - not what one frame costs.
+# Those differ by more than the margin, which is why the distinction is spelled
+# out: a single parent .atm env frame peaks at 1914 MB (measured on three storms
+# in two basins: 1913.9 / 1913.8 / 1913.9 - the grid is fixed, so it is
+# essentially deterministic), but a worker's high-water reaches 2171 MB by its
+# twelfth frame because of the +21 MB/frame ratchet documented at
+# _INGEST_TASKS_PER_CHILD. 2300 is that 2171 plus ~6%.
+#
+# Peak is INDEPENDENT of pool width (two workers at width 2 peaked at 1956 and
+# 1927 MB), so width x this budget is the right model.
 #
 # THIS CONSTANT IS THE GATE, NOT THE CODE. _fit_ingest_width divides by it, so
 # lowering the actual peak buys nothing until this is re-measured and lowered to
 # match - a future optimisation that forgets it delivers exactly zero extra
 # concurrency while looking like it worked. Re-measure whenever the ingest's
-# allocation profile changes, and remember the number scales with the parent
-# grid (hafs_plot.BUDGET_REF_CELLS warns when a basin exceeds the calibration).
+# allocation profile OR _INGEST_TASKS_PER_CHILD changes.
 _INGEST_FRAME_BUDGET_MB = 2300
 # Held back for the parent process, the OS, and page cache.
 _HOST_RESERVE_MB = 1024
