@@ -132,7 +132,8 @@ class TestOnlyFxxPlanning(unittest.TestCase):
         from pathlib import Path
         captured = {"ingest": [], "render": []}
 
-        def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None):
+        def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None,
+                      max_tasks_per_child=None):
             stage = "ingest" if jobs_list and isinstance(
                 jobs_list[0], gen.IngestJob) else "render"
             captured[stage] = list(jobs_list)
@@ -192,7 +193,8 @@ class TestOnlyFxxPlanning(unittest.TestCase):
                  gen.hp.fetch_hafs_track)
         cen_seen = {}
 
-        def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None):
+        def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None,
+                      max_tasks_per_child=None):
             for j in jobs_list:
                 if isinstance(j, gen.RenderJob):
                     cen_seen[j.fxx] = (j.cen_lat, j.cen_lon)
