@@ -1126,7 +1126,15 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
         # lockstep (the mslp|wind mask already bounds them).
         env = {k: _r8(a[r0:r1, c0:c1]) for k, a in env.items()}
     if bt is not None:
-        bt = bt[r0:r1, c0:c1]
+        # _r8 like every other optional field. A NO-OP today (bt is derived, so
+        # it is cached float64 already) and kept deliberately: it is the only
+        # field that reached matplotlib without passing the render boundary, and
+        # the dtype policy above claims every field passes it. Narrowing bt to
+        # float32 later - the obvious next storage saving, since its float32
+        # Kelvin original is exact - would otherwise hand streamplot/contour a
+        # float32 array with nothing to catch it and a comment saying it cannot
+        # happen.
+        bt = _r8(bt[r0:r1, c0:c1])
         # Degenerate-frame guard (mirrors the satellite render's scalar-IR guard):
         # a healthy sim-sat nest is ~fully finite inside its trimmed rectangle, so
         # a mostly-NaN or flat (no spread) field means the channel didn't render -

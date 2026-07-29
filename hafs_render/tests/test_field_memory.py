@@ -135,6 +135,50 @@ def test_pack_frame_hands_the_renderer_float64():
         assert a.dtype == np.float32
 
 
+def test_render_boundary_is_an_identity_on_already_float64():
+    """Why routing bt through the render boundary was free.
+
+    bt is DERIVED (K -> degC, or the PCT combination), so it is cached float64
+    and the widen is `np.asarray(x, float64)` on a float64 array - which numpy
+    returns UNCHANGED, the same object, even for the non-contiguous slice
+    _pack_frame hands it. That identity is what makes adding the widen provably
+    output-neutral rather than merely probably so; pin it, because the whole
+    argument collapses if numpy ever starts copying here.
+    """
+    full = np.arange(40 * 50, dtype=np.float64).reshape(40, 50)
+    sl = full[3:37, 5:45]
+    assert not sl.flags["C_CONTIGUOUS"], "want the awkward case"
+    assert np.asarray(sl, dtype=hp.RENDER_DTYPE) is sl
+    # and it genuinely copies when it has to
+    assert np.asarray(sl.astype(np.float32), dtype=hp.RENDER_DTYPE) is not sl
+
+
+def test_bt_reaches_the_renderer_float64_on_both_paths():
+    """Single-channel and PCT both have to arrive float64 - the render boundary
+    can only be an identity if bt is already float64 when it gets there."""
+    ny, nx = 20, 26
+    lat = np.linspace(12.0, 24.0, ny)
+    lon = np.linspace(-72.0, -58.0, nx)
+    f32 = lambda v: np.full((ny, nx), v, dtype=np.float32)
+    # a scene with enough spread to clear the degenerate-BT guard
+    scene = np.linspace(-70.0, 10.0, ny * nx).reshape(ny, nx)
+    base = {
+        "model": "hafsa", "storm": "13l", "product": "storm.atm", "fxx": 12,
+        "init_time": None, "valid_time": None, "lat": lat, "lon": lon,
+        "mslp_hpa": f32(1004.0), "wind_kt": f32(35.0),
+        "u_kt": f32(20.0), "v_kt": f32(-8.0),
+        "refl_dbz": None, "pwat": None, "upper": None, "env": None,
+    }
+
+    single = hp._pack_frame({**base, "bt": {58: scene.copy()}}, sat_parm=58)
+    assert single.bt_c.dtype == np.float64
+
+    pct = hp._pack_frame(
+        {**base, "bt": {63: scene.copy(), 62: (scene - 4.0)}},
+        sat_pct=(63, 62))
+    assert pct.bt_c.dtype == np.float64
+
+
 def test_as_store_preserves_nan_and_shape():
     a = np.array([[1.5, np.nan], [-3.25, np.inf]], dtype=np.float64)
     out = hp._as_store(a)
