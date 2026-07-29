@@ -402,10 +402,23 @@ _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
 # frames an unrecycled worker would reach ~7.3 GB and OOM every host we run on.
 # Recycling bounds it:  high-water ~= 1915 + 21 * (N - 1) MB.
 #
-# 12 costs one interpreter start per 12 frames - ~2 s against ~583 s of work,
-# 0.3% - and lands the high-water at ~2.15 GB, which is what
-# _INGEST_FRAME_BUDGET_MB below is sized from. Lowering N lowers the budget and
-# vice versa; the two constants are coupled and must move together.
+# 12 costs one interpreter start per 12 frames - measured 1.0-2.2 s to import
+# this package fresh, against ~588 s of work, so ~0.3% - and lands the
+# high-water at ~2.15 GB, which is what _INGEST_FRAME_BUDGET_MB below is sized
+# from. Lowering N lowers the budget and vice versa; the two constants are
+# coupled and must move together.
+#
+# SIDE EFFECT, and it is a sharp one: passing max_tasks_per_child makes
+# ProcessPoolExecutor use the SPAWN start method instead of fork. Two
+# consequences worth knowing before editing anything here.
+#   1. The entry point MUST stay under `if __name__ == "__main__"` (it is, at
+#      the bottom of this file). A spawned worker re-imports the main module, so
+#      module-level work re-executes in every child and the pool dies with
+#      "An attempt has been made to start a new process before the current
+#      process has finished its bootstrapping phase". Verified end to end.
+#   2. Spawned workers share nothing with the parent - no copy-on-write of the
+#      imported modules - so width x per-worker budget really is the right model
+#      for _fit_ingest_width, rather than an over-estimate.
 _INGEST_TASKS_PER_CHILD = 12
 
 # Memory one ingest WORKER needs over its whole life - not what one frame costs.
