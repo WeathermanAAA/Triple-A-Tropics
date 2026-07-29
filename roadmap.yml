@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T00:55:00Z
+updated: 2026-07-29T05:40:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1045,11 +1045,41 @@ items:
     title: NEXRAD L2 radar viewer
     area: apps
     status: planned
+  - id: hafs-ingest-memory
+    title: HAFS ingest memory rework — parent-frame peak 3.64 GB → 1.96 GB, byte-identical
+    area: models
+    status: shipped
+    date_shipped: 2026-07-29
+    note: >-
+      Profiled the HAFS ingest instead of guessing at it. The peak was not the
+      GRIB decode or the cache — it was the MetPy 200 mb PV solve, 1848 MB of a
+      3438 MB parent-frame peak, run over a 7-level pressure stack when the
+      calculation's 3-point vertical stencil can only see 3 of them; trimming to
+      the mapped level plus its two neighbours is bit-identical and provably so.
+      Plus the three 17-level layer-mean integrals (level selection now happens
+      on the decoded float32 stack and widens once), cfgrib datasets now closed,
+      malloc_trim between frames, ingest workers recycled, and a render task now
+      reads only the fields its product draws (289 MB, not 908). The float32
+      end-to-end idea was tested and REJECTED on evidence — it moves pixels,
+      because matplotlib's streamline integrator amplifies a last-ulp dtype
+      difference (5.0% of pixels on env_shear_500_850, and 0.8% on hgt_wind_700
+      whose values were bit-identical). float32 is kept for pass-through storage
+      only and widened at the render boundary. Verified 87/87 PNGs
+      byte-identical across 21 products x 5 real frames. Per-worker peak is
+      independent of pool width, so the box worker's ingest concurrency doubles
+      4 → 8 in the same 24 GB.
+    links:
+      - label: models
+        url: /models/
   - id: model-scaling-50
     title: Model platform scaling
     area: models
     status: planned
-    note: "Scale the models platform to roughly 50 models."
+    note: >-
+      Scale the models platform to roughly 50 models. RAM per concurrent
+      ingest worker is the unit that sets box count; hafs-ingest-memory cut it
+      46% (3.64 GB → 1.96 GB), so a fixed RAM budget now buys ~1.9x the ingest
+      concurrency.
   - id: discord-bot
     title: Discord changelog bot
     area: community

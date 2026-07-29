@@ -114,6 +114,67 @@ WATERMARK = "@WeathermanAAA_"
 KT_PER_MS = 1.94384  # m s-1 → knots
 
 # ---------------------------------------------------------------------------
+# FIELD DTYPE POLICY - read this before changing any dtype below
+# ---------------------------------------------------------------------------
+# GRIB2 packs values as scaled integers and cfgrib unpacks them to float32:
+# measured on a parent-domain frame, ALL 38 GRIB reads an ingest makes hand back
+# float32. Every one of them then went through ``.astype(float)`` - float64 - so
+# the pipeline carried, cached and rendered each field at twice the footprint
+# while holding exactly the same information.
+#
+# The policy that replaces that, in three parts:
+#
+# 1. A field that is a PURE PASS-THROUGH of a decoded message is cached at
+#    STORE_DTYPE (float32). Narrowing a float64 that came from float32 is
+#    lossless, so the cached VALUE is bit-for-bit what it always was - verified
+#    field-by-field, not assumed.
+#
+# 2. A DERIVED field (unit conversion, difference, integral, PV solve) is
+#    computed in float64 and CACHED in float64. Narrowing it would round a value
+#    that has no float32 original to return to. Measured, that rounding is ~6e-8
+#    relative - and it is NOT harmless: see (3).
+#
+# 3. RENDER_DTYPE: _pack_frame widens every field back to float64 before it
+#    reaches matplotlib, because matplotlib's own arithmetic is dtype-sensitive.
+#    This is the counter-intuitive part and the reason the policy is written down
+#    rather than inferred: handing streamplot a float32 field whose values are
+#    BIT-IDENTICAL still moved 0.8% of the pixels on hgt_wind_700 and 5.0% on
+#    env_shear_500_850 - streamline integration is an ODE solve, so it amplifies
+#    a last-ulp difference into a visibly different trajectory. Wind/MSLP stay
+#    float32 exactly as they always were (cfgrib float32 x a Python float is
+#    float32 under NEP 50, so those four were never float64 to begin with).
+#
+# Net: the ingest holds less, while every array the renderer sees is bit-for-bit
+# the array it saw before (verified: 87/87 PNGs byte-identical, 175/175 field
+# values bit-identical, across 21 products x 5 real frames).
+#
+# The win here is MEMORY, not disk - measured, and worth stating because the
+# obvious assumption is wrong. Narrowing the pass-through fields moved the cache
+# entry only 1.3%, because a float64 widened from float32 has 29 trailing zero
+# mantissa bits in every value and zlib was already compressing those away: on
+# disk it was ALREADY costing about what float32 costs. In memory it was not -
+# there it was the full 2x. (The derived float64 fields are genuine float64 and
+# are the part that compresses poorly, which is what the old "zlib compresses
+# float64 height/vort grids less" note in hafs_cache was really observing.)
+# tests/test_field_memory.py pins the invariants; the render parity gate proves
+# the output.
+STORE_DTYPE = np.float32
+RENDER_DTYPE = np.float64
+
+
+def _as_store(a: np.ndarray) -> np.ndarray:
+    """Narrow a PASS-THROUGH field to the cache storage dtype (see the policy
+    above). Only valid where the value originated as float32 - the narrowing is
+    then exact. Never apply to a derived field."""
+    return np.asarray(a, dtype=STORE_DTYPE)
+
+
+def _f8(a: np.ndarray) -> np.ndarray:
+    """Widen to float64 for a DERIVATION that must keep its historical dtype."""
+    return np.asarray(a, dtype=np.float64)
+
+
+# ---------------------------------------------------------------------------
 # Pressure-level (upper-air) field set - Phase 2 shared plumbing
 # ---------------------------------------------------------------------------
 # HAFS .atm carries 45 isobaric levels; we cache ONLY the specific levels/fields
@@ -161,7 +222,19 @@ def upper_field_names() -> tuple:
 # straight, exactly like the upper-air fields read frame.upper[...].
 SHEAR_LAYERS = ((200, 850), (500, 850))    # (upper, lower) mb deep-layer shear
 PV_MAP_LEVEL = 200                          # mb level the PV map shows
-PV_STACK_LEVELS = (300, 250, 225, 200, 175, 150, 100)  # thin stack for the PV calc
+# The stack MetPy differentiates for the 200 mb PV map. Exactly the level being
+# mapped plus its two vertical neighbours - and no more, because that is all the
+# calculation can see: potential_vorticity_baroclinic takes the vertical
+# derivative with a 3-point stencil, so an INTERIOR level's PV depends only on
+# itself and its immediate neighbours. Levels beyond that changed nothing while
+# costing (nlev x ny x nx) float64 in every array MetPy allocates - and the PV
+# solve is the single largest allocation in the whole parent-domain ingest
+# (measured +1848 MB at 7 levels on a 1361x1681 parent grid). Verified, not
+# assumed: PV at 200 mb from this 3-level stack is BIT-IDENTICAL to the old
+# 7-level (300..100 mb) stack. 200 mb must stay INTERIOR here - putting the
+# mapped level at either end would make its derivative one-sided and change the
+# answer. See tests/test_field_memory.py.
+PV_STACK_LEVELS = (225, 200, 175)
 MM_PER_IN = 25.4
 ENV_WIND_LEVELS = (200, 500, 850)           # mb winds the shear + PV-barbs need
 
@@ -196,43 +269,62 @@ def _read_env_fields(H, remove_grib: bool) -> dict:
     out: dict[str, np.ndarray] = {}
 
     def _read_2d(search: str, prefer: str | None = None) -> np.ndarray:
+        """One single-level read, in its DECODED float32. Callers that derive
+        from it widen with _f8; callers that store it straight do not, so a
+        pass-through field never materialises a float64 copy at all."""
         ds = H.xarray(search, remove_grib=remove_grib)
         if isinstance(ds, list):
             ds = ds[0]
         var = prefer if (prefer and prefer in ds.data_vars) else list(ds.data_vars)[0]
-        return ds[var].values.astype(float)
+        arr = np.ascontiguousarray(ds[var].values)
+        ds.close()          # drop the cfgrib handle + its eccodes index now
+        return arr
 
     def _read_levels(search: str, prefer: str | None = None):
-        """Multi-level read -> (pressures hPa, stack (nlev, lat, lon))."""
+        """Multi-level read -> (pressures hPa, stack (nlev, lat, lon)).
+
+        The stack stays in its DECODED float32 here - it is the largest single
+        allocation the ingest makes, and its only consumer (``_pv_at_level``)
+        widens it to float64 itself after the lat reorder. Widening is exact and
+        elementwise, so the float64 stack MetPy eventually sees is bit-for-bit
+        the one this function used to build eagerly, at half the transient cost.
+        """
         ds = H.xarray(search, remove_grib=remove_grib)
         if isinstance(ds, list):
             ds = ds[0]
         var = prefer if (prefer and prefer in ds.data_vars) else list(ds.data_vars)[0]
         da = ds[var]
         p = da["isobaricInhPa"].values.astype(float)
-        vals = np.moveaxis(da.values.astype(float),
-                           da.dims.index("isobaricInhPa"), 0)
+        vals = np.moveaxis(da.values, da.dims.index("isobaricInhPa"), 0)
+        vals = np.ascontiguousarray(vals)   # detach from the dataset before close
+        ds.close()
         return p, vals
 
     # --- direct single-level reads (render-ready units) ---
-    out["apcp_in"] = _read_2d(":APCP:surface:0-", "tp") / MM_PER_IN  # run-total mm->in
-    wtmp = _read_2d(":WTMP:surface:", "wtmp")
+    # DERIVED (a unit conversion happens) -> float64, per the dtype policy.
+    out["apcp_in"] = _f8(_read_2d(":APCP:surface:0-", "tp")) / MM_PER_IN
+    wtmp = _f8(_read_2d(":WTMP:surface:", "wtmp"))
     try:                                   # mask SST to ocean (land-sea mask 1=land)
         land = _read_2d(":LAND:surface:", "lsm")
         wtmp = np.where(land >= 0.5, np.nan, wtmp)
+        del land
     except Exception:                      # noqa: BLE001 - mask absent -> show all
         pass
     out["sst_c"] = wtmp - 273.15
-    out["tropt_c"] = _read_2d(":TMP:tropopause:", "t") - 273.15
-    out["cape_jkg"] = _read_2d(":CAPE:surface:", "cape")
-    out["lhtfl_wm2"] = _read_2d(":LHTFL:surface:", "lhtfl")
-    out["srh_03km"] = _read_2d(":HLCY:3000-0 m above ground:", "hlcy")
+    del wtmp
+    out["tropt_c"] = _f8(_read_2d(":TMP:tropopause:", "t")) - 273.15
+    # PASS-THROUGH (stored exactly as decoded) -> float32.
+    out["cape_jkg"] = _as_store(_read_2d(":CAPE:surface:", "cape"))
+    out["lhtfl_wm2"] = _as_store(_read_2d(":LHTFL:surface:", "lhtfl"))
+    out["srh_03km"] = _as_store(_read_2d(":HLCY:3000-0 m above ground:", "hlcy"))
 
     # --- deep-layer shear (a simple layer wind difference; m/s -> kt) ---
+    # Derived, so float64 throughout; the level winds are dropped as soon as the
+    # vectors are built rather than living to the end of the function.
     lev_winds = {}
     for lev in ENV_WIND_LEVELS:
-        lev_winds[lev] = (_read_2d(f":UGRD:{lev} mb:", "u") * KT_PER_MS,
-                          _read_2d(f":VGRD:{lev} mb:", "v") * KT_PER_MS)
+        lev_winds[lev] = (_f8(_read_2d(f":UGRD:{lev} mb:", "u")) * KT_PER_MS,
+                          _f8(_read_2d(f":VGRD:{lev} mb:", "v")) * KT_PER_MS)
     out["u_200"], out["v_200"] = lev_winds[200]      # PV map's 200 mb wind barbs
     for up, lo in SHEAR_LAYERS:
         du = lev_winds[up][0] - lev_winds[lo][0]
@@ -240,6 +332,7 @@ def _read_env_fields(H, remove_grib: bool) -> dict:
         out[f"shru_{up}_{lo}"] = du
         out[f"shrv_{up}_{lo}"] = dv
         out[f"shrmag_{up}_{lo}"] = np.hypot(du, dv)
+    lev_winds.clear()
 
     # --- thin pressure stack for the 200 mb PV calc (computed after reorder) ---
     lev_alt = "(" + "|".join(str(lv) for lv in PV_STACK_LEVELS) + ")"
@@ -262,8 +355,14 @@ def _pv_at_level(p_hpa, t_stack, u_stack, v_stack, lat, lon, level) -> np.ndarra
     from scipy.ndimage import gaussian_filter
 
     order = np.argsort(p_hpa)[::-1]                 # descending pressure (sfc->top)
-    p, t = p_hpa[order], t_stack[order]
-    u, v = u_stack[order], v_stack[order]
+    # Widen the decoded float32 stacks HERE, so every derivative MetPy takes runs
+    # in float64 exactly as it always did. The stacks arrive float32 purely to
+    # keep the ingest's largest transient half-size (see _read_levels); widening
+    # is exact, so the arrays below are bit-for-bit the old ones.
+    p = p_hpa[order]
+    t = np.asarray(t_stack[order], dtype=np.float64)
+    u = np.asarray(u_stack[order], dtype=np.float64)
+    v = np.asarray(v_stack[order], dtype=np.float64)
     pres = (p[:, None, None] * np.ones_like(t)) * units.hPa
     theta = mpcalc.potential_temperature(pres, t * units.K)
     dx, dy = mpcalc.lat_lon_grid_deltas(lon, lat)
@@ -302,6 +401,7 @@ def _finalize_env(env: dict, lat: np.ndarray, lon: np.ndarray) -> None:
             pv = _pv_at_level(p, t, u, v, lat, lon, PV_MAP_LEVEL)
         except Exception as e:                      # noqa: BLE001
             log.warning("env PV compute failed: %s: %s", type(e).__name__, e)
+    # Derived (a MetPy solve) -> stays float64, per the dtype policy.
     env["pv_200"] = pv if pv is not None else np.full((lat.size, lon.size), np.nan)
 
 
@@ -618,15 +718,27 @@ def _read_upper_air(H, remove_grib: bool) -> dict:
     out: dict[str, np.ndarray] = {}
 
     def _read_2d(search: str, prefer: str) -> np.ndarray:
+        """One single-level read, in its DECODED float32 (see the dtype policy)."""
         ds = H.xarray(search, remove_grib=remove_grib)
         if isinstance(ds, list):
             ds = ds[0]
         var = prefer if prefer in ds.data_vars else list(ds.data_vars)[0]
-        return ds[var].values.astype(float)
+        arr = np.ascontiguousarray(ds[var].values)
+        ds.close()          # drop the cfgrib handle + its eccodes index now
+        return arr
 
     def _layer_mean(search: str, prefer: str) -> np.ndarray:
         """ONE multi-level read over the 700-300 mb layer, collapsed to a
-        mass/pressure-weighted (trapezoidal-in-pressure) vertical mean (2-D)."""
+        mass/pressure-weighted (trapezoidal-in-pressure) vertical mean (2-D).
+
+        The level SELECTION and ORDERING happen on the decoded float32 stack, in
+        a single fancy-index, and the widening to float64 happens once on the
+        result. That is bit-for-bit what selecting and ordering a pre-widened
+        float64 stack produced - float32 -> float64 is exact and elementwise, so
+        it commutes with permutation - but it never holds three full float64
+        copies of a (17, ny, nx) stack at once, which on the parent grid was
+        ~890 MB of the ingest's peak for a field that ends up 8.7 MB.
+        """
         ds = H.xarray(search, remove_grib=remove_grib)
         if isinstance(ds, list):
             ds = ds[0]
@@ -634,27 +746,39 @@ def _read_upper_air(H, remove_grib: bool) -> dict:
         da = ds[var]
         levname = "isobaricInhPa"
         p = da[levname].values.astype(float)
-        vals = np.moveaxis(da.values.astype(float), da.dims.index(levname), 0)
-        keep = np.isin(np.round(p).astype(int), np.array(RH_LAYER_LEVELS))
-        p, vals = p[keep], vals[keep]
-        order = np.argsort(p)            # ascending pressure for the integral
-        p_s, vals_s = p[order], vals[order]
+        keep = np.where(np.isin(np.round(p).astype(int),
+                                np.array(RH_LAYER_LEVELS)))[0]
+        p_keep = p[keep]
+        order = np.argsort(p_keep)       # ascending pressure for the integral
+        p_s = p_keep[order]
+        stack = np.moveaxis(da.values, da.dims.index(levname), 0)[keep[order]]
+        ds.close()
+        del ds, da
+        vals_s = np.asarray(stack, dtype=np.float64)
+        del stack
         # Trapezoidal integral over pressure (axis 0), normalized by the layer
         # thickness. By hand (np.trapz removed in NumPy 2.x) -> version-independent.
         dp = np.diff(p_s)                              # (L-1,)
-        seg = 0.5 * (vals_s[1:] + vals_s[:-1])         # (L-1, lat, lon)
+        seg = vals_s[1:] + vals_s[:-1]                 # (L-1, lat, lon)
+        seg *= 0.5                                     # in place: one temp, not two
+        del vals_s
         return np.tensordot(dp, seg, axes=(0, 0)) / (p_s[-1] - p_s[0])
 
+    # PASS-THROUGH fields -> float32 (see the dtype policy).
     for lev in UPPER_LEVELS:
-        out[f"gh_{lev}"] = _read_2d(f":HGT:{lev} mb:", "gh")
-        out[f"u_{lev}"] = _read_2d(f":UGRD:{lev} mb:", "u")
-        out[f"v_{lev}"] = _read_2d(f":VGRD:{lev} mb:", "v")
+        out[f"gh_{lev}"] = _as_store(_read_2d(f":HGT:{lev} mb:", "gh"))
+        out[f"u_{lev}"] = _as_store(_read_2d(f":UGRD:{lev} mb:", "u"))
+        out[f"v_{lev}"] = _as_store(_read_2d(f":VGRD:{lev} mb:", "v"))
     for lev in VORT_LEVELS:
-        out[f"absv_{lev}"] = _read_2d(f":ABSV:{lev} mb:", "absv")
+        # ABSV is TRANSIENT - the caller subtracts the planetary term after the
+        # lat reorder and drops it - and that difference of two same-magnitude
+        # ~1e-4 quantities is derived, so it is widened here and stays float64.
+        out[f"absv_{lev}"] = _f8(_read_2d(f":ABSV:{lev} mb:", "absv"))
 
     # Layer means over the 17 levels (700..300 mb). RH selects on its own
     # isobaric levels; u/v use an explicit level alternation so the multi-level
     # read pulls ONLY those 17 (a bare :UGRD: would match all 45 isobaric levels).
+    # DERIVED (a vertical integral) -> float64.
     lev_alt = "(" + "|".join(str(lev) for lev in RH_LAYER_LEVELS) + ")"
     out[RH_LAYER_NAME] = _layer_mean(f":RH:{lev_alt} mb:", "r")
     out["ulayer_700_300"] = _layer_mean(f":UGRD:{lev_alt} mb:", "u")
@@ -729,7 +853,9 @@ def _read_raw_fields(
             ds_r = ds_r[0]
         # cfgrib names the message 'refc'; fall back to the lone data var.
         rvar = "refc" if "refc" in ds_r.data_vars else list(ds_r.data_vars)[0]
-        refl = ds_r[rvar].values.astype(float)
+        refl = _as_store(ds_r[rvar].values)
+        ds_r.close()
+        del ds_r
 
     pwat = None
     if want_pwat:
@@ -744,7 +870,9 @@ def _read_raw_fields(
         if isinstance(ds_pw, list):
             ds_pw = ds_pw[0]
         pvar = "pwat" if "pwat" in ds_pw.data_vars else list(ds_pw.data_vars)[0]
-        pwat = ds_pw[pvar].values.astype(float)
+        pwat = _as_store(ds_pw[pvar].values)
+        ds_pw.close()
+        del ds_pw
 
     bt: dict[int, np.ndarray] = {}
     if sat_parms:
@@ -765,14 +893,17 @@ def _read_raw_fields(
             if isinstance(ds_s, list):
                 ds_s = ds_s[0]
             svar = list(ds_s.data_vars)[0]
-            vals = ds_s[svar].values.astype(float)
+            vals = ds_s[svar].values.astype(float)   # derived (K -> degC below)
+            ds_s.close()
+            del ds_s
             # MASK FILL before anything: the GRIB missingValue (9999) marks the
             # ~56% of the storm-nest grid that is off-nest fill. cfgrib usually
             # pre-masks it to NaN, but mask >=9990 defensively so fill never
             # enters stats / PCT / colorize on any decode path. Applied to ALL
             # bt channels (each parm here).
             vals[vals >= 9990.0] = np.nan
-            bt[int(parm)] = vals - 273.15  # K -> degC
+            bt[int(parm)] = vals - 273.15  # K -> degC (derived -> float64)
+            del vals
 
     # Pressure-level (upper-air) fields from the SAME .atm file. Native-grid 2-D
     # arrays incl. the transient ABSV levels; relative vorticity is derived below
@@ -793,12 +924,15 @@ def _read_raw_fields(
     # West Pacific nests; plain signed -180..180 otherwise).
     lon = _choose_lon_frame(ds_p["longitude"].values)
 
-    mslp = ds_p["prmsl"].values / 100.0  # Pa -> hPa
+    mslp = _as_store(ds_p["prmsl"].values / 100.0)  # Pa -> hPa
     # Keep the vector components (for barbs) AND the magnitude (for the fill);
     # all three are reordered/trimmed in lockstep below so they stay aligned.
-    u_kt = ds_w["u10"].values * KT_PER_MS
-    v_kt = ds_w["v10"].values * KT_PER_MS
+    u_kt = _as_store(ds_w["u10"].values * KT_PER_MS)
+    v_kt = _as_store(ds_w["v10"].values * KT_PER_MS)
     wind = np.hypot(u_kt, v_kt)
+    # init/valid time come off ds_p, which stays open until they are read below.
+    ds_w.close()
+    del ds_w
 
     # Ensure ascending lat/lon so contour/imshow orient correctly. Reordering
     # the axes only reorders grid columns/rows; the physical u (eastward) and
@@ -843,7 +977,10 @@ def _read_raw_fields(
         f = 2.0 * EARTH_OMEGA * np.sin(np.deg2rad(lat.astype(float)))
         for lev in VORT_LEVELS:
             absv = upper.pop(f"absv_{lev}")
+            # Derived, so the float64 difference is what gets cached (absv is
+            # widened upstream for exactly this).
             upper[f"relvort_{lev}"] = absv - f[:, None]
+            del absv
 
     # Compute 200 mb PV from the (now lat-final) pressure stack and drop the
     # transient _pv_* stack so only render-ready 2-D env fields are returned.
@@ -852,6 +989,8 @@ def _read_raw_fields(
 
     init_time = (ds_p["time"].values.astype("datetime64[s]").astype(dt.datetime))
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
+    ds_p.close()
+    del ds_p
 
     return {
         "model": model, "storm": storm, "product": product, "fxx": fxx,
@@ -896,6 +1035,11 @@ def compute_pct89(bt: dict, v_parm: int, h_parm: int):
     H = bt.get(int(h_parm))
     if V is None or H is None:
         return None
+    # The correction is a DIFFERENCE of two same-magnitude channels, so it is
+    # pinned to float64 regardless of how the channels arrive (they are cached
+    # float64 today; this keeps the math right if that ever changes).
+    V = np.asarray(V, dtype=np.float64)
+    H = np.asarray(H, dtype=np.float64)
     clear = (V > PCT_CLEAR_OCEAN_C) & (H > PCT_CLEAR_OCEAN_C)
     if clear.any() and np.nanmedian(H[clear]) > np.nanmedian(V[clear]):
         V, H = H, V          # V must be the warmer-over-clear-ocean channel
@@ -920,6 +1064,21 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     exactly (the bbox is built from mslp|wind, plus bt when present).
     """
     lon, lat = raw["lon"], raw["lat"]
+    # RENDER BOUNDARY (see the dtype policy near STORE_DTYPE): every field that
+    # reached matplotlib as float64 before the cache went float32 must reach it
+    # as float64 still. Not cosmetic - streamline integration is an ODE solve and
+    # amplifies a last-ulp dtype difference into a different trajectory, so a
+    # float32 field with BIT-IDENTICAL values still moved 0.8% of the pixels on
+    # hgt_wind_700 and 5.0% on env_shear_500_850 when this was measured.
+    # mslp/wind/u/v are deliberately NOT widened: cfgrib hands back float32 and
+    # NEP 50 keeps their unit conversions float32, so float32 is what the
+    # renderer has always received for those four.
+    # Applied to the TRIMMED slice below, not the full grid, so the widening
+    # copies the sub-rectangle the product actually draws. A field already at
+    # RENDER_DTYPE (the derived ones) passes through untouched, no copy.
+    def _r8(a):
+        return None if a is None else np.asarray(a, dtype=RENDER_DTYPE)
+
     mslp, wind = raw["mslp_hpa"], raw["wind_kt"]
     u_kt, v_kt = raw["u_kt"], raw["v_kt"]
     refl = raw["refl_dbz"] if want_refl else None
@@ -952,20 +1111,20 @@ def _pack_frame(raw: dict, *, want_refl: bool = False,
     mslp, wind = mslp[r0:r1, c0:c1], wind[r0:r1, c0:c1]
     u_kt, v_kt = u_kt[r0:r1, c0:c1], v_kt[r0:r1, c0:c1]
     if refl is not None:
-        refl = refl[r0:r1, c0:c1]
+        refl = _r8(refl[r0:r1, c0:c1])
     if pwat is not None:
         # PWAT lives on the same .atm grid as mslp/wind, so the mslp|wind finite
         # mask already bounds it; slice to the SAME rectangle in lockstep (like
         # refl) - it is not folded into the mask.
-        pwat = pwat[r0:r1, c0:c1]
+        pwat = _r8(pwat[r0:r1, c0:c1])
     if upper is not None:
         # Upper-air fields share the .atm grid; slice to the SAME rectangle in
         # lockstep (the mslp|wind mask already bounds them).
-        upper = {k: a[r0:r1, c0:c1] for k, a in upper.items()}
+        upper = {k: _r8(a[r0:r1, c0:c1]) for k, a in upper.items()}
     if env is not None:
         # Env fields share the .atm grid too; slice to the SAME rectangle in
         # lockstep (the mslp|wind mask already bounds them).
-        env = {k: a[r0:r1, c0:c1] for k, a in env.items()}
+        env = {k: _r8(a[r0:r1, c0:c1]) for k, a in env.items()}
     if bt is not None:
         bt = bt[r0:r1, c0:c1]
         # Degenerate-frame guard (mirrors the satellite render's scalar-IR guard):

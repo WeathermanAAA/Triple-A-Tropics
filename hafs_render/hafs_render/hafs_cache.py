@@ -28,6 +28,13 @@ CACHE FORMAT: per-fxx NetCDF (netCDF4 backend). Chosen over npz and Zarr:
   parent for all the fields), so we store the product-neutral PRE-TRIM grid and
   let each product's _pack_frame apply its own trim/guard.
 
+DTYPE: pass-through fields are stored float32 (``hafs_plot.STORE_DTYPE``) -
+  GRIB2 packs to scaled integers and cfgrib unpacks at float32, so the float64
+  this cache used to hold was a widening that carried no information. Derived
+  fields stay float64, and ``_pack_frame`` widens everything back before it
+  reaches matplotlib. The full reasoning, including why that last step is not
+  optional, is the dtype policy block in ``hafs_plot``.
+
 CACHE VERSION: ``CACHE_VERSION`` is baked into the key/path, so invalidation is a
 version bump (old paths are simply not looked at), not a delete - matching the
 repo's path-based cache-busting convention (cf. the SST animator).
@@ -63,7 +70,12 @@ log = logging.getLogger("hafs-cache")
 #     SST, tropopause T, surface CAPE, latent-heat flux, 0-3 km SRH, 200 mb PV +
 #     wind, and the 200-850 / 500-850 mb shear vectors) - ingested only for
 #     parent.atm frames when an env product is in the cycle.
-CACHE_VERSION = "v5"
+# v6: PASS-THROUGH fields are stored float32 (hafs_plot.STORE_DTYPE); derived
+#     fields stay float64. See the dtype policy in hafs_plot. A version bump
+#     rather than an in-place change because a v5 entry is all-float64: mixing
+#     the two would let a warm cache and a cold ingest of the same frame
+#     disagree, which is exactly what the version path exists to prevent.
+CACHE_VERSION = "v6"
 
 # Sub-root under save_dir where the local field cache lives.
 CACHE_DIRNAME = "fieldcache"
@@ -127,7 +139,10 @@ def ingest_frame(model: str, storm: str, domain: str, cycle_dt: dt.datetime,
 def _write_cache(raw: dict, path: Path) -> None:
     """Serialize a raw field dict (full pre-trim grid) to a per-fxx NetCDF, native
     dtypes + zlib. Metadata that _pack_frame needs (model/storm/domain/fxx, init
-    + valid times) rides as dataset attributes."""
+    + valid times) rides as dataset attributes. Fields arrive at the dtype the
+    policy assigns them (float32 pass-through / float64 derived); lat/lon coords
+    stay float64 - they drive the map extent, the tick placement and the
+    published pixel<->lon/lat affine, and cost a few KB."""
     import xarray as xr
 
     data_vars = {
@@ -173,12 +188,41 @@ def _write_cache(raw: dict, path: Path) -> None:
     tmp.replace(path)
 
 
-def _read_cache(path: Path) -> dict:
+def _read_cache(path: Path, *, want_refl: bool = True, want_pwat: bool = True,
+                want_upper: bool = True, want_env: bool = True,
+                need_parms: Optional[Sequence[int]] = None) -> dict:
     """Read a cache entry back into the raw field dict _pack_frame expects (the
-    inverse of _write_cache); bt vars are collected into ``{parm: array}``."""
+    inverse of _write_cache); bt vars are collected into ``{parm: array}``.
+
+    SELECTIVE by default-off-nothing: an entry holds the UNION of every product's
+    fields (39 on a parent frame), but a render task draws ONE product and
+    _pack_frame throws the rest away. Materialising all of them cost every render
+    worker the whole entry - ~646 MB on a parent frame for a product that needs
+    four fields - so the flags here skip the reads instead of the arrays. They
+    mirror ``load_frame``'s, and default to loading everything so a caller that
+    wants the full entry (tests, a debugger, a future on-demand renderer) still
+    gets it by passing nothing. Values are untouched: this changes WHICH
+    variables are read out of the NetCDF, never what they contain.
+    """
     import xarray as xr
 
+    keep_bt = None if need_parms is None else {int(p) for p in need_parms}
+
+    def _wanted(name: str) -> bool:
+        if name.startswith(_BT_PREFIX):
+            return keep_bt is None or int(name[len(_BT_PREFIX):]) in keep_bt
+        if name in ("refl_dbz",):
+            return want_refl
+        if name in ("pwat",):
+            return want_pwat
+        if name in hp.upper_field_names():
+            return want_upper
+        if name in hp.env_field_names():
+            return want_env
+        return True          # mslp/wind/u/v - every product overlays them
+
     with xr.open_dataset(path) as ds:
+        ds = ds[[v for v in ds.data_vars if _wanted(v)]]
         ds.load()
         bt = {}
         for name in ds.data_vars:
@@ -219,10 +263,15 @@ def load_frame(path: Path, *, want_refl: bool = False, want_pwat: bool = False,
     never-ingested channel), which the render orchestration treats as a
     per-product skip - never fatal to the rest of the frame.
     """
-    raw = _read_cache(path)
     # PCT products need BOTH V/H channels cached; single-channel products need one.
     need_parms = list(sat_pct) if sat_pct is not None else (
         [sat_parm] if sat_parm is not None else [])
+    # Read ONLY what this product draws (see _read_cache): a render worker has no
+    # use for the other 35 fields in a parent entry, and materialising them was
+    # most of its footprint.
+    raw = _read_cache(path, want_refl=want_refl, want_pwat=want_pwat,
+                      want_upper=want_upper, want_env=want_env,
+                      need_parms=need_parms)
     for p in need_parms:
         if int(p) not in raw["bt"]:
             raise KeyError(f"BT channel parm={p} not in cache {path.name}")

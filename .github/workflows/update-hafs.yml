@@ -134,12 +134,21 @@ jobs:
         env:
           HERBIE_DATA: ${{ runner.temp }}/herbie_data
         run: |
-          # --ingest-jobs 2: the parent-domain environmental products (v0.11.0)
-          # make the parent .atm ingest memory-heavier (the PV pressure stack +
-          # the extra surface/level reads), so cap the ingest pool at 2 like the
-          # box worker (ingest_jobs=2) - 4-wide env-parent ingests OOM the
-          # 7 GB runner and the halving-backoff thrash blows the 120 min budget.
-          # The render pool stays 4 (CPU-bound, light memory).
+          # --ingest-jobs 2 on THIS runner, and it is no longer the memory cliff
+          # it used to be. A parent .atm env frame peaked at 3.64 GB before the
+          # v0.13.0 ingest rework and peaks at 1.96 GB after (measured per
+          # worker, and per-worker peak is independent of pool width - 1956 and
+          # 1927 MB for the two workers at width 2). Worst observed parent grid
+          # runs ~17% larger, so budget ~2.3 GB/worker.
+          #
+          # 2 stays here anyway: on a 7 GB runner 3 x 2.3 GB = 6.9 GB leaves no
+          # room, and an OOM costs far more than the third worker earns (pool
+          # death -> halving backoff -> the whole cycle re-walks). The BOX worker,
+          # with a 24 GB container, is where the headroom is spent: it goes 4 ->
+          # 8 (tat-satellite-render HAFS_INGEST_JOBS). Raise this to 3 only after
+          # confirming the runner is the 16 GB class, not the 7 GB one.
+          # The render pool stays 4 (CPU-bound, and a render task now
+          # materialises only the fields its product draws - 289 MB, not 908).
           python generate_hafs_plots.py --jobs 4 --ingest-jobs 2 --cycle-scoped
           echo "---- rendered frames (cycle-scoped) ----"
           find models/hafs -name '*.png' | wc -l

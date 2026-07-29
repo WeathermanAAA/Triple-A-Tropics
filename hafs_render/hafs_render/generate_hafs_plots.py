@@ -393,6 +393,29 @@ _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
                       # the file is there, so a short retry clears the hole. This
                       # is the ONLY stage that touches the network now.
 
+# Ingest workers are recycled after this many frames. A frame's peak allocation
+# is ~10x what it retains, and glibc does not hand a freed 300 MB arena back to
+# the OS just because Python released it - so a long-lived worker's RSS ratchets
+# up to its worst frame and STAYS there, which is what turns a per-frame peak
+# into a per-pool ceiling. Recycling caps that ratchet at a bounded number of
+# frames; the cost is one interpreter start (~1 s) per N frames.
+_INGEST_TASKS_PER_CHILD = 12
+
+
+def _trim_malloc() -> None:
+    """Return freed heap back to the OS (glibc ``malloc_trim``).
+
+    Python releasing an array only returns it to the allocator, not to the
+    kernel. Without this an ingest worker's RSS is a high-water mark, so the
+    concurrency the pool can safely run is set by the worst frame any worker
+    ever touched rather than by the frame it is on. No-op off glibc.
+    """
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # noqa: BLE001 - musl/macOS/anything else: just skip
+        pass
+
 
 def _ingest_one(job: IngestJob) -> dict:
     """INGEST one frame into the field cache. Returns a result dict (never raises).
@@ -420,6 +443,12 @@ def _ingest_one(job: IngestJob) -> dict:
             last_err = e
             if attempt < _INGEST_RETRIES:
                 time.sleep(0.6 * attempt)
+        finally:
+            # Hand this frame's arenas back before the worker picks up the next
+            # one, so a pool's memory tracks the frame in flight rather than the
+            # worst frame it has ever seen. Runs on the failure path too - a
+            # frame that died mid-decode is exactly the one holding the most.
+            _trim_malloc()
     return {"ok": False, "model": job.model, "storm": job.storm,
             "domain": job.domain, "fxx": job.fxx,
             "error": f"{type(last_err).__name__}: {last_err}"}
@@ -477,7 +506,7 @@ def _render_one(job: RenderJob) -> dict:
 
 
 def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
-              initializer=None) -> None:
+              initializer=None, max_tasks_per_child: Optional[int] = None) -> None:
     """Run ``fn`` over ``jobs_list`` in a process pool, calling ``record(result)``
     for each, with the BrokenProcessPool retry + per-task failure isolation shared
     by BOTH the ingest and render stages.
@@ -489,6 +518,11 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
     failed (via ``straggler(job)``) so the run still publishes everything that did
     complete. ``initializer`` runs once per worker (geojson for render; None for
     ingest, which doesn't draw).
+
+    ``max_tasks_per_child`` recycles a worker after that many tasks - the ingest
+    stage uses it so a worker's RSS cannot ratchet to its worst frame and stay
+    there (see _INGEST_TASKS_PER_CHILD). Left None for render, whose per-worker
+    cost is a one-off geojson basemap that recycling would just re-pay.
     """
     if jobs <= 1:
         if initializer is not None:
@@ -511,8 +545,12 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
         batch, remaining = remaining, []
         not_done = set(range(len(batch)))
         try:
+            pool_kw = {}
+            if max_tasks_per_child:
+                pool_kw["max_tasks_per_child"] = max_tasks_per_child
             with cf.ProcessPoolExecutor(max_workers=width,
-                                        initializer=initializer) as ex:
+                                        initializer=initializer,
+                                        **pool_kw) as ex:
                 fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
                 for fut in cf.as_completed(fut_to_i):
                     i = fut_to_i[fut]
@@ -899,8 +937,11 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     # Ingest workers don't draw, so no geojson initializer (saves memory/time).
     # Sized by ingest_jobs (<= jobs): the GRIB decode is memory-bound, so a lower
     # width than the CPU-bound render avoids OOMing the pool on heavy frames.
+    # Workers are recycled every _INGEST_TASKS_PER_CHILD frames so their RSS
+    # tracks the frame in flight rather than the heaviest frame they have seen.
     _run_pool(ingest_jobs, _ingest_one, ingest_width, _record_ingest,
-              _ingest_straggler)
+              _ingest_straggler,
+              max_tasks_per_child=_INGEST_TASKS_PER_CHILD)
     log.info("ingested %d/%d frame(s) ok (%d failed) in %.0fs",
              len(ingested_ok), len(ingest_jobs), n_ingest_fail, time.time() - t0)
 
