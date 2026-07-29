@@ -401,6 +401,86 @@ _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
 # frames; the cost is one interpreter start (~1 s) per N frames.
 _INGEST_TASKS_PER_CHILD = 12
 
+# Memory one ingest worker needs for the heaviest frame it can draw: a parent
+# .atm with the environmental + upper-air field set. Measured 1.96 GB peak RSS
+# per worker (and peak is INDEPENDENT of pool width - two workers at width 2
+# peaked at 1956 and 1927 MB), plus ~17% for the largest parent grid observed.
+_INGEST_FRAME_BUDGET_MB = 2300
+# Held back for the parent process, the OS, and page cache.
+_HOST_RESERVE_MB = 1024
+
+
+def _cgroup_limit_mb() -> Optional[int]:
+    """This process's container memory limit, or None if unlimited/not in one.
+
+    Load-bearing inside Docker: /proc/meminfo reports the HOST's RAM, so a
+    worker in a 24 GB container on a 31 GB box would otherwise size itself
+    against 31 GB and get OOM-killed by the cgroup, not by the kernel.
+    """
+    for p, unlimited in (("/sys/fs/cgroup/memory.max", "max"),               # v2
+                         ("/sys/fs/cgroup/memory/memory.limit_in_bytes", None)):  # v1
+        try:
+            raw = Path(p).read_text().strip()
+        except OSError:
+            continue
+        if raw == unlimited:
+            return None
+        try:
+            v = int(raw)
+        except ValueError:
+            continue
+        # v1 reports a sentinel near 2^63 for "no limit".
+        if v <= 0 or v >= (1 << 62):
+            return None
+        return v // (1024 * 1024)
+    return None
+
+
+def _available_mb() -> Optional[int]:
+    """Memory this process may actually use, honouring a container limit."""
+    avail = None
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                avail = int(line.split()[1]) // 1024
+                break
+    except (OSError, ValueError, IndexError):
+        pass
+    lim = _cgroup_limit_mb()
+    if lim is not None:
+        avail = lim if avail is None else min(avail, lim)
+    return avail
+
+
+def _fit_ingest_width(requested: int) -> int:
+    """Clamp the ingest pool to what memory can actually hold.
+
+    ``requested`` is a CEILING, never a target: this only ever lowers it. That
+    asymmetry is the whole point - the flag says how wide we WANT to go, and the
+    host says how wide it can afford, so the same command is correct on a 7 GB
+    runner, a 16 GB runner and a 24 GB box container without anyone re-guessing
+    a constant every time the memory profile or the runner class changes. An
+    OOM here is expensive out of all proportion: the pool dies, the halving
+    backoff re-walks the unfinished frames, and a cycle that would have
+    finished does not.
+
+    Unknown memory (no /proc, an odd platform) -> honour the request unchanged;
+    this is a guard, not a gate.
+    """
+    avail = _available_mb()
+    if not avail or requested <= 1:
+        return requested
+    fits = max(1, (avail - _HOST_RESERVE_MB) // _INGEST_FRAME_BUDGET_MB)
+    width = min(requested, int(fits))
+    if width < requested:
+        log.warning("ingest width %d -> %d: %d MB available, %d MB reserved, "
+                    "%d MB per worker", requested, width, avail,
+                    _HOST_RESERVE_MB, _INGEST_FRAME_BUDGET_MB)
+    else:
+        log.info("ingest width %d (%d MB available, room for %d)",
+                 width, avail, fits)
+    return width
+
 
 def _trim_malloc() -> None:
     """Return freed heap back to the OS (glibc ``malloc_trim``).
@@ -938,9 +1018,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     # Sized by ingest_jobs (<= jobs): the GRIB decode is memory-bound, so a lower
     # width than the CPU-bound render avoids OOMing the pool on heavy frames.
     # Workers are recycled every _INGEST_TASKS_PER_CHILD frames so their RSS
-    # tracks the frame in flight rather than the heaviest frame they have seen.
-    _run_pool(ingest_jobs, _ingest_one, ingest_width, _record_ingest,
-              _ingest_straggler,
+    # tracks the frame in flight rather than the heaviest frame they have seen,
+    # and the width is clamped to what this host's memory can actually hold.
+    _run_pool(ingest_jobs, _ingest_one, _fit_ingest_width(ingest_width),
+              _record_ingest, _ingest_straggler,
               max_tasks_per_child=_INGEST_TASKS_PER_CHILD)
     log.info("ingested %d/%d frame(s) ok (%d failed) in %.0fs",
              len(ingested_ok), len(ingest_jobs), n_ingest_fail, time.time() - t0)

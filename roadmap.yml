@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T05:40:00Z
+updated: 2026-07-29T06:10:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1067,7 +1067,12 @@ items:
       only and widened at the render boundary. Verified 87/87 PNGs
       byte-identical across 21 products x 5 real frames. Per-worker peak is
       independent of pool width, so the box worker's ingest concurrency doubles
-      4 → 8 in the same 24 GB.
+      4 → 8 in the same 24 GB. --ingest-jobs is now a CEILING rather than a bet:
+      the builder budgets ~2.3 GB/worker and clamps the width to what the host
+      (or container) can hold, so the same command is right on a 7 GB runner, a
+      16 GB one and the 24 GB box — the old value had been picked against a
+      "7 GB runner" assumption that predates GitHub's public-repo runner upgrade
+      and was never re-checked.
     links:
       - label: models
         url: /models/
