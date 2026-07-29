@@ -405,6 +405,13 @@ _INGEST_TASKS_PER_CHILD = 12
 # .atm with the environmental + upper-air field set. Measured 1.96 GB peak RSS
 # per worker (and peak is INDEPENDENT of pool width - two workers at width 2
 # peaked at 1956 and 1927 MB), plus ~17% for the largest parent grid observed.
+#
+# THIS CONSTANT IS THE GATE, NOT THE CODE. _fit_ingest_width divides by it, so
+# lowering the actual peak buys nothing until this is re-measured and lowered to
+# match - a future optimisation that forgets it delivers exactly zero extra
+# concurrency while looking like it worked. Re-measure whenever the ingest's
+# allocation profile changes, and remember the number scales with the parent
+# grid (hafs_plot.BUDGET_REF_CELLS warns when a basin exceeds the calibration).
 _INGEST_FRAME_BUDGET_MB = 2300
 # Held back for the parent process, the OS, and page cache.
 _HOST_RESERVE_MB = 1024

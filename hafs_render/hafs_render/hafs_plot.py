@@ -113,6 +113,16 @@ WATERMARK = "@WeathermanAAA_"
 
 KT_PER_MS = 1.94384  # m s-1 → knots
 
+# The parent grid the ingest MEMORY BUDGET was calibrated on: 1361 x 1681, the
+# hafsa parent .atm domain measured 2026-07-29. Every byte in that budget scales
+# linearly with cell count, so a materially larger grid silently invalidates it -
+# generate_hafs_plots._fit_ingest_width would then permit more workers than fit
+# and OOM the pool. We cannot know every basin's parent grid from here, so make
+# the assumption FALSIFIABLE FROM A RUN LOG instead of trusting it: warn once a
+# grid exceeds the headroom the budget actually carries.
+BUDGET_REF_CELLS = 1361 * 1681
+BUDGET_HEADROOM = 1.17          # matches the +17% in _INGEST_FRAME_BUDGET_MB
+
 # ---------------------------------------------------------------------------
 # FIELD DTYPE POLICY - read this before changing any dtype below
 # ---------------------------------------------------------------------------
@@ -991,6 +1001,19 @@ def _read_raw_fields(
     valid_time = (ds_p["valid_time"].values.astype("datetime64[s]").astype(dt.datetime))
     ds_p.close()
     del ds_p
+
+    # Make the memory-budget assumption falsifiable from a run log rather than
+    # trusting it (see BUDGET_REF_CELLS). Silent on the calibration grid, so a
+    # normal cycle logs nothing; a bigger basin says so once per frame instead of
+    # OOM-ing the pool with no explanation.
+    if mslp.size > BUDGET_REF_CELLS * BUDGET_HEADROOM:
+        log.warning(
+            "%s %s %s f%03d grid is %dx%d = %d cells, %.0f%% larger than the "
+            "%d-cell grid the ingest memory budget was calibrated on - "
+            "_fit_ingest_width may allow more workers than fit",
+            model, storm, product, fxx, mslp.shape[0], mslp.shape[1],
+            mslp.size, 100.0 * (mslp.size / BUDGET_REF_CELLS - 1.0),
+            BUDGET_REF_CELLS)
 
     return {
         "model": model, "storm": storm, "product": product, "fxx": fxx,
