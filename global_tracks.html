@@ -427,17 +427,12 @@
       113, "#e732f4",  // 113-136: C4
       137, "#f6c5fb"   // >=137: C5
     ];
-    // Shared zoom-radius/icon-size ramp so circles and symbols read at the
-    // same physical pixel footprint. The ramp is a function of ZOOM ONLY —
-    // intensity is carried by colour and nature by shape, and size carries
-    // nothing. (It used to be described as approximating a per-intensity
-    // r=3/4/5 progression; that progression is gone from the SVG renderers
-    // too, so the comment would have outlived the thing it referred to.)
+    // Shared zoom-radius/icon-size ramp so circles and symbols read at
+    // the same physical pixel footprint (the per-basin SVG uses r=3 for
+    // TD, r=4 for TS, r=5 for major; this approximates that progression
+    // across MapLibre's zoom range).
     var ZOOM_RADIUS = ["interpolate", ["linear"], ["zoom"],
       0, 2.0, 4, 3.0, 8, 4.0, 12, 5.0];
-    // One outline for every fix, whatever its intensity.
-    var DOT_STROKE = "#0e1520";
-    var DOT_STROKE_W = 0.6;
     // For 24px-base SDF icons, icon-size = displayDiameter / 24.
     // Targeting ~4/6/8/10 px diameters at zoom 0/4/8/12.
     var ZOOM_ICON_SIZE = ["interpolate", ["linear"], ["zoom"],
@@ -461,21 +456,17 @@
       paint: {
         "circle-color": COLOR_STEP,
         "circle-radius": ZOOM_RADIUS,
-        // SIZE ENCODES NOTHING. The radius was already uniform, but the halo
-        // was not: TD drew no stroke and TS+ drew a 0.5 px white one, so a
-        // stronger fix rendered a pixel wider than a weaker one at the same
-        // zoom. That is intensity leaking into size, which colour already
-        // carries. One stroke for every fix.
-        //
-        // Dark rather than white, which is what let the halo be conditional
-        // in the first place: a white ring over a 2-3 px dot washes the fill
-        // toward white, and it did it worst on the weakest (palest) fixes.
-        // A dark ring never tints the fill and still separates overlapping
-        // dots in the dense WPAC - the same choice the records explorer map
-        // already makes.
-        "circle-stroke-color": DOT_STROKE,
-        "circle-stroke-width": DOT_STROKE_W,
-        "circle-stroke-opacity": 0.85
+        "circle-stroke-color": [
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          "rgba(63,164,255,0)",  // TD: transparent (no visible halo)
+          34, "#ffffff"          // TS+: white halo
+        ],
+        "circle-stroke-width": [
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          0,    // TD: no stroke
+          34, 0.5
+        ],
+        "circle-stroke-opacity": 0.7
       }
     });
 

@@ -70,21 +70,6 @@ from ace_core import (
 from tat_palettes.categories import (CATEGORY_INK, CATEGORY_LABEL,
                                      CATEGORY_ORDER, step_pairs)
 
-#: ONE track-fix marker size, everywhere. Size encodes nothing: intensity is
-#: the colour (CATEGORY_*) and nature is the shape (circle tropical, square
-#: subtropical, triangle non-tropical).
-#:
-#: An INT, not 3.5, and that matters: the Python and JS renderers are
-#: byte-identical mirrors, and a half-pixel radius makes the square's
-#: width 7.0 in Python and 7 in JS — the parity test caught it immediately.
-#: Any future value must stay integral for the same reason.
-#:
-#: 4 is the retired TS value, i.e. the size the most common category already
-#: had. Majors shrink from 5, so the busiest tracks get quieter rather than
-#: louder; the global map is unaffected either way since it sizes by ZOOM
-#: only.
-TRACK_DOT_R = 4
-
 # ---------------------------------------------------------------------------
 # Basin configuration (mirrors generate_ace_plot.py so they stay aligned)
 # ---------------------------------------------------------------------------
@@ -1053,15 +1038,14 @@ def render_tracks_svg(storms: list[dict], extent,
             t = p.get("t") or ""
             nature = (p.get("nature") or "").upper()
             color = SSHS_COLORS.get(cls, SSHS_COLORS["TD"])
-            # ONE marker size for every fix (radius from centroid to apex for
-            # the triangle/square forms too). Size encodes NOTHING: intensity
-            # is the colour, nature is the shape. A 3/4/5 ladder by category
-            # double-encoded intensity and, worse, made the densest part of a
-            # major hurricane's track the part most likely to merge into a
-            # blob at global zoom. TRACK_DOT_R sits between the old TD and TS
-            # values, so weak fixes gain a little and majors lose more than
-            # they gain — net density at the default view goes DOWN.
-            r = TRACK_DOT_R
+            # Bigger marker for stronger systems (applies to both circle
+            # and triangle — measured as radius from centroid to apex).
+            if cls == "TD":
+                r = 3
+            elif cls == "TS":
+                r = 4
+            else:
+                r = 5
 
             # Phase classification is purely by nature code — wind speed
             # is not a tiebreaker.
@@ -1742,14 +1726,8 @@ LIVE_BASIN_JS = r"""
     mapW: __LIVE_MAP_W__,
     mapH: __LIVE_MAP_H__,
     feedUrl: "__LIVE_FEED_URL__",
-    colors: __LIVE_SSHS_COLORS__,     // ace_core.SSHS_COLORS
-    dotR: __LIVE_DOT_R__              // TRACK_DOT_R — substituted, not copied
+    colors: __LIVE_SSHS_COLORS__      // ace_core.SSHS_COLORS
   };
-
-  // The Python renderer's TRACK_DOT_R, threaded through CFG rather than
-  // re-typed here: these two renderers are byte-identical mirrors and a
-  // hand-copied number is exactly how they drift apart.
-  var TRACK_DOT_R = CFG.dotR;
 
   // Mirrors ace_core.sshs_label() — the SSHS letter inside the glyph.
   var SSHS_LABELS = {"TD": "D", "TS": "S",
@@ -1987,10 +1965,7 @@ LIVE_BASIN_JS = r"""
         var t2 = p2o.t || "";
         var nature = String(p2o.nature || "").toUpperCase();
         var color = CFG.colors[cls2] !== undefined ? CFG.colors[cls2] : CFG.colors.TD;
-        // ONE size for every fix — the byte-identical mirror of the Python
-        // renderer's TRACK_DOT_R. Size encodes nothing; colour carries
-        // intensity and shape carries nature.
-        var r2 = TRACK_DOT_R;
+        var r2 = cls2 === "TD" ? 3 : (cls2 === "TS" ? 4 : 5);
         var phase;
         if (nature === "SS") {
           phase = "st";
@@ -2573,7 +2548,6 @@ def build_live_overlay_js(basin: str, year: int) -> str:
           .replace("__LIVE_MAP_H__", str(MAP_H))
           .replace("__LIVE_FEED_URL__", f"{FEEDS_BASE_URL}{basin}_tracks_data.json")
           .replace("__LIVE_SSHS_COLORS__", json.dumps(SSHS_COLORS))
-          .replace("__LIVE_DOT_R__", repr(TRACK_DOT_R))
           .replace("__LIVE_HURRICANE_PATH__", HURRICANE_PATH))
     return f"<script>\n{js}\n</script>"
 
@@ -3009,17 +2983,12 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       "step", ["coalesce", ["get", "intensity_kt"], 0],
       __CAT_COLOR_STEP__
     ];
-    // Shared zoom-radius/icon-size ramp so circles and symbols read at the
-    // same physical pixel footprint. The ramp is a function of ZOOM ONLY —
-    // intensity is carried by colour and nature by shape, and size carries
-    // nothing. (It used to be described as approximating a per-intensity
-    // r=3/4/5 progression; that progression is gone from the SVG renderers
-    // too, so the comment would have outlived the thing it referred to.)
+    // Shared zoom-radius/icon-size ramp so circles and symbols read at
+    // the same physical pixel footprint (the per-basin SVG uses r=3 for
+    // TD, r=4 for TS, r=5 for major; this approximates that progression
+    // across MapLibre's zoom range).
     var ZOOM_RADIUS = ["interpolate", ["linear"], ["zoom"],
       0, 2.0, 4, 3.0, 8, 4.0, 12, 5.0];
-    // One outline for every fix, whatever its intensity.
-    var DOT_STROKE = "#0e1520";
-    var DOT_STROKE_W = 0.6;
     // For 24px-base SDF icons, icon-size = displayDiameter / 24.
     // Targeting ~4/6/8/10 px diameters at zoom 0/4/8/12.
     var ZOOM_ICON_SIZE = ["interpolate", ["linear"], ["zoom"],
@@ -3043,21 +3012,17 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
       paint: {
         "circle-color": COLOR_STEP,
         "circle-radius": ZOOM_RADIUS,
-        // SIZE ENCODES NOTHING. The radius was already uniform, but the halo
-        // was not: TD drew no stroke and TS+ drew a 0.5 px white one, so a
-        // stronger fix rendered a pixel wider than a weaker one at the same
-        // zoom. That is intensity leaking into size, which colour already
-        // carries. One stroke for every fix.
-        //
-        // Dark rather than white, which is what let the halo be conditional
-        // in the first place: a white ring over a 2-3 px dot washes the fill
-        // toward white, and it did it worst on the weakest (palest) fixes.
-        // A dark ring never tints the fill and still separates overlapping
-        // dots in the dense WPAC - the same choice the records explorer map
-        // already makes.
-        "circle-stroke-color": DOT_STROKE,
-        "circle-stroke-width": DOT_STROKE_W,
-        "circle-stroke-opacity": 0.85
+        "circle-stroke-color": [
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          "rgba(63,164,255,0)",  // TD: transparent (no visible halo)
+          34, "#ffffff"          // TS+: white halo
+        ],
+        "circle-stroke-width": [
+          "step", ["coalesce", ["get", "intensity_kt"], 0],
+          0,    // TD: no stroke
+          34, 0.5
+        ],
+        "circle-stroke-opacity": 0.7
       }
     });
 
