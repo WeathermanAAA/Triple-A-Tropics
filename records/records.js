@@ -9,15 +9,6 @@
   var BASINS = { al: 'Atlantic', ep: 'East Pacific', wp: 'West Pacific' };
   var BASIN_ORDER = ['al', 'ep', 'wp'];
 
-  // Canonical SSHWS palette (tat_palette.js, generated from
-  // palette/tat_palettes/categories.py); every /records/ page loads it ahead
-  // of this file.
-  function TATP() {
-    var p = window.TATPalette;
-    if (!p) throw new Error('records.js: load /tat_palette.js first');
-    return p;
-  }
-
   function param(name) {
     try {
       return new URLSearchParams(window.location.search).get(name) || null;
@@ -266,15 +257,7 @@
     renderBoard: renderBoard,
     stamp: stamp,
     error: error,
-    // Canonical SSHWS palette (tat_palette.js, generated from
-    // palette/tat_palettes/categories.py). Getters, not a snapshot, so a
-    // consumer always reads the live table; SSHS_DARK_INK is derived from the
-    // palette's own ink rather than a separately-maintained list of "bright"
-    // categories that had to be kept in step by hand.
-    get SSHS_COLORS() { return TATP().cats; },
-    get SSHS_DARK_INK() {
-      var ink = TATP().ink;
-      return TATP().order.filter(function (c) { return ink[c] !== '#ffffff'; });
-    }
+    SSHS_COLORS: { TD: '#3fa4ff', TS: '#46c56a', C1: '#ffe14d', C2: '#ff9a2f', C3: '#f5333c', C4: '#e33ad4', C5: '#b03bff' },
+    SSHS_DARK_INK: ['TS', 'C1', 'C2']
   };
 })();

@@ -1439,13 +1439,8 @@
   // NHC layer: cones/areas as in-GL vector layers; storm icons as canvas
   // glyphs with the home-map SSHWS identity (D/S/1-5 letters, invest = X)
   // ========================================================================
-  // Canonical SSHWS palette (tat_palette.js), so an explorer storm glyph is
-  // the same color as the same storm on the home map.
-  function TATP() {
-    var p = window.TATPalette;
-    if (!p) throw new Error('cockpit_fields.js: load /tat_palette.js first');
-    return p;
-  }
+  var SSHS_COLORS = { TD: '#3fa4ff', TS: '#46c56a', C1: '#ffe14d',
+                      C2: '#ff9a2f', C3: '#f5333c', C4: '#e33ad4', C5: '#b03bff' };
   function nhcState(pane) {
     if (!pane.nhc) pane.nhc = { on: false };
     return pane.nhc;
@@ -1661,7 +1656,7 @@
         g.beginPath(); g.arc(xy.x, xy.y, 7, 0, Math.PI * 2);
         g.fillStyle = 'rgba(5,10,20,0.85)'; g.fill();
         g.beginPath(); g.arc(xy.x, xy.y, 5.6, 0, Math.PI * 2);
-        g.fillStyle = TATP().cats[cat]; g.fill();
+        g.fillStyle = SSHS_COLORS[cat]; g.fill();
         g.font = 'bold 9px "Segoe UI", system-ui, sans-serif';
         g.fillStyle = '#0a0d12';
         g.fillText(letter, xy.x, xy.y + 3);
@@ -1699,7 +1694,7 @@
         g.lineWidth = 2.4; g.strokeStyle = '#f5333c'; g.stroke();
       } else {
         var cat = p.current_category || 'TD';
-        var col = TATP().cats[cat] || TATP().cats[TATP().unknown];
+        var col = SSHS_COLORS[cat] || SSHS_COLORS.TD;
         var letter = cat === 'TD' ? 'D' : cat === 'TS' ? 'S' : cat.slice(1);
         g.beginPath(); g.arc(xy.x, xy.y, 9, 0, Math.PI * 2);
         g.fillStyle = 'rgba(5,10,20,0.85)'; g.fill();

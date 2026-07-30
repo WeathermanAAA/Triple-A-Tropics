@@ -11,12 +11,6 @@ dependencies = [
     "numpy",
     "pandas",
 ]
-# tat_palettes (the canonical SSHWS category palette, imported by
-# ace_core.SSHS_COLORS) is deliberately NOT listed: it is not on PyPI, so
-# declaring it would break `pip install ace-core@<tag>`. The environment
-# provides it - the workflows `pip install ./palette ./ace_core`, and the box
-# pins `tat-palettes` in tsr's requirements.txt. Same arrangement hafs-render
-# uses; keep the two pins moving in lockstep.
 
 [tool.setuptools]
 packages = ["ace_core"]

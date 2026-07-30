@@ -20,7 +20,6 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const SRC = path.join(__dirname, '..', 'guidance', 'guidance.js');
-const PALETTE = path.join(__dirname, '..', 'tat_palette.js');
 
 let failures = 0;
 function ok(cond, msg) {
@@ -37,9 +36,6 @@ async function mount(page, doc) {
   await page.route('**/guidance.json*', route => route.fulfill({ status: 404, body: '' }));
 
   await page.setContent('<!doctype html><html><body><div id="g"></div></body></html>');
-  // The shared SSHWS palette first, as every real page loads it: guidance.js
-  // keeps no fallback copy of the category colors on purpose.
-  await page.addScriptTag({ path: PALETTE });
   await page.addScriptTag({ path: SRC });
   await page.evaluate((sid) => {
     window.__v = new window.GuidanceViewer(document.getElementById('g'),

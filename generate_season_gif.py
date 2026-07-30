@@ -27,8 +27,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Polygon as MPLPoly
-
-from tat_palettes.categories import CATEGORY_HEX
 import imageio.v2 as imageio
 from PIL import Image
 
@@ -45,11 +43,15 @@ ACCENT_CYAN   = "#5dd3ff"
 ACCENT_VIOLET = "#c084fc"
 HURRICANE_BLUE = "#1e3a8a"
 
-# The canonical SSHWS category palette, imported not copied. This module used
-# to carry its own coral/rose ramp - the same one season_animation.js had - so
-# a storm was one color in the baked GIF and another in the live animation
-# sitting directly above it on the same page.
-CAT_COLORS = CATEGORY_HEX
+CAT_COLORS = {
+    "TD":  "#6bb7ff",
+    "TS":  "#6ff0a0",
+    "C1":  "#ffd166",
+    "C2":  "#ffa34f",
+    "C3":  "#ff6b4d",
+    "C4":  "#e53f71",
+    "C5":  "#c084fc",
+}
 
 # ---------------------------------------------------------------------------
 # Basin configuration

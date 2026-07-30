@@ -43,16 +43,21 @@
     // without competing visually with the storm tracks.
     land: '#6b7280', coast: '#9ca3af',
   };
-  // Canonical SSHWS palette (tat_palette.js, generated from
-  // palette/tat_palettes/categories.py). This file used to carry its own
-  // coral/rose ramp (C3 #ff6b4d, C4 #e53f71) — the same storm was a different
-  // color here than on the tracks map it sits under. No local fallback.
-  function P() {
-    const p = window.TATPalette;
-    if (!p) throw new Error('season_animation.js: load /tat_palette.js first');
-    return p;
+  const CAT_COLORS = {
+    TD: '#6bb7ff', TS: '#6ff0a0',
+    C1: '#ffd166', C2: '#ffa34f', C3: '#ff6b4d',
+    C4: '#e53f71', C5: '#c084fc',
+  };
+  function windToCat(w) {
+    if (w == null || isNaN(w)) return 'TD';
+    if (w < 34)  return 'TD';
+    if (w < 64)  return 'TS';
+    if (w < 83)  return 'C1';
+    if (w < 96)  return 'C2';
+    if (w < 113) return 'C3';
+    if (w < 137) return 'C4';
+    return 'C5';
   }
-  function catColor(w) { return P().colorForKt(w); }
 
   // --- basin config (mirrors generate_season_gif.py) ---------------
   const BASIN_CFG = {
@@ -780,7 +785,7 @@
           if (prev !== null) {
             // Skip dateline-jump segments.
             if (Math.abs(lo - prev._lon) < 180) {
-              ctx.strokeStyle = catColor(pts[i].wind_kt);
+              ctx.strokeStyle = CAT_COLORS[windToCat(pts[i].wind_kt)] || '#6bb7ff';
               ctx.beginPath();
               ctx.moveTo(prevPos[0], prevPos[1]);
               ctx.lineTo(cx, cy);
@@ -811,7 +816,7 @@
       actives.forEach((a, i) => {
         const cx = p2x(a.p._lon), cy = p2y(a.p.lat);
         const wKt = a.p.wind_kt || 30;
-        const color = catColor(wKt);
+        const color = CAT_COLORS[windToCat(wKt)] || '#6bb7ff';
         // Small dot colored by current intensity, with a thin white
         // halo so it reads against the storm-track line underneath.
         ctx.fillStyle = color;

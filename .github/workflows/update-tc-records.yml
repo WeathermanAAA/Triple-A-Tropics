@@ -47,10 +47,7 @@ jobs:
           # NATURE eligibility, SSHS classes and the b-deck parser — the
           # records engine imports it (and generate_ace_plot's BASINS) so a
           # storm has the same fix set here as on the ACE/tracks products.
-          # tat_palettes: the canonical SSHWS category palette. ace_core and the
-          # generators import it; it is NOT a declared dependency of ace-core
-          # (not on PyPI - the environment provides it, the hafs-render pattern).
-          pip install ./palette ./ace_core
+          pip install ./ace_core
 
       - name: Download latest IBTrACS CSVs
         run: |

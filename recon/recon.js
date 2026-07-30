@@ -34,25 +34,49 @@
   var FONT = 'Metropolis, "Helvetica Neue", Arial, sans-serif';
   var DISCLOSURE = 'SFMR unreliable in heavy rain / very high wind; obs are point-in-time.';
 
-  // ---- TC kt color scale (hard bins). THE canonical SSHWS palette, derived:
-  // every category threshold (34/64/83/96/113/137) is exactly the shared
-  // category color, and the finer sub-threshold bins blend toward the next
-  // category so sub-hurricane winds keep their resolution. Each entry is
-  // [minKt, color]; a speed picks the LAST bin whose minKt it meets. Shared by
-  // barbs, the legend, and the time-series traces.
-  //
-  // This used to be a hand-tuned ramp of its own (duplicated verbatim in
-  // ascat.js, plus a second hand-tuned high-contrast copy of each) whose
-  // "canonical TAT red" matched nothing else on the site. The high-contrast
-  // STYLE still differs - darker basemap, brighter coastlines, heavier barbs -
-  // but it no longer carries a second, separately-drifting color ramp.
-  function TATP() {
-    var p = window.TATPalette;
-    if (!p) throw new Error('recon.js: load /tat_palette.js first');
-    return p;
-  }
-  var KT_SCALE = TATP().windRamp;
-  var KT_SCALE_HC = KT_SCALE;
+  // ---- TC kt color scale (hard bins). Anchored to SSHWS at the category
+  // thresholds (34 green, 64/83/96 reds, 113 magenta, 137 purple), vivid on
+  // dark. Each entry is [minKt, color]; a speed picks the LAST bin whose
+  // minKt it meets. Shared by barbs, the legend, and the time-series traces.
+  // RED STARTS AT 64 kt (hurricane threshold): cool -> green -> yellow -> orange
+  // BELOW 64, a clean RED at 64, then deeper red -> magenta -> purple -> pink for
+  // 83/96/113/137. (64 is the canonical TAT red #f5333c, promoted from 83.)
+  var KT_SCALE = [
+    [0,   '#3563d4'],
+    [10,  '#2f93e8'],
+    [20,  '#1fc3d6'],
+    [30,  '#18c79a'],
+    [34,  '#2fbf52'],
+    [40,  '#7fd038'],
+    [45,  '#c3df3a'],
+    [50,  '#ffe534'],
+    [55,  '#ffb91f'],
+    [60,  '#ff8a1f'],
+    [64,  '#f5333c'],
+    [83,  '#c81f4a'],
+    [96,  '#d61f6a'],
+    [113, '#b23bff'],
+    [137, '#e6a8ff']
+  ];
+
+  // High-contrast variant: brighter / bolder, same bin edges.
+  var KT_SCALE_HC = [
+    [0,   '#3a6dff'],
+    [10,  '#2aa6ff'],
+    [20,  '#16d6ec'],
+    [30,  '#11e6b0'],
+    [34,  '#34e85f'],
+    [40,  '#95ef3a'],
+    [45,  '#dbff3a'],
+    [50,  '#fff23a'],
+    [55,  '#ffc91f'],
+    [60,  '#ff9a14'],
+    [64,  '#ff2f3a'],
+    [83,  '#e0143f'],
+    [96,  '#ff2a86'],
+    [113, '#c45bff'],
+    [137, '#f0c2ff']
+  ];
 
   // ---- styles. "muted" is RETIRED; only two remain. A style = a kt ramp +
   // basemap / stroke tones. Persisted in localStorage; a stored "muted" coerces

@@ -43,16 +43,6 @@ Presets:
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 
-# Storm-category (SSHWS) palette - the site-wide single source of truth for the
-# seven category colors, their thresholds, labels and ink. Re-exported here so
-# ``from tat_palettes import CATEGORY_HEX`` works; it lives in its own module
-# because it must stay importable on the pandas+numpy-only ACE/tracks/records
-# footprint, which has no matplotlib (see categories.py).
-from .categories import (CATEGORY_GLYPH, CATEGORY_HEX, CATEGORY_INK,  # noqa: F401
-                         CATEGORY_LABEL, CATEGORY_MAX_KT, CATEGORY_MIN_KT,
-                         CATEGORY_ORDER, UNKNOWN_CATEGORY, category_for_kt,
-                         color_for_kt, ink_for_kt, step_pairs)
-
 
 # ---------------------------------------------------------------------------
 # builder helper

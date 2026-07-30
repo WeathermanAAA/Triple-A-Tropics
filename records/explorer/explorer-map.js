@@ -10,11 +10,9 @@
   var BASE = 'https://cdn.triple-a-tropics.com/explorer/v1';
 
   var PALETTES = {
-    /* the canonical SSHWS palette (tat_palette.js, generated from
-       palette/tat_palettes/categories.py) */
-    get std() { return window.TATPalette.cats; },
-    /* Okabe-Ito, colorblind-safe - a deliberate ALTERNATIVE encoding for the
-       palette switcher, not a copy of the house ramp, so it lives here */
+    /* matches TATRecords.SSHS_COLORS */
+    std: { TD: '#3fa4ff', TS: '#46c56a', C1: '#ffe14d', C2: '#ff9a2f', C3: '#f5333c', C4: '#e33ad4', C5: '#b03bff' },
+    /* Okabe-Ito, colorblind-safe */
     cb: { TD: '#999999', TS: '#56B4E9', C1: '#009E73', C2: '#F0E442', C3: '#E69F00', C4: '#D55E00', C5: '#CC79A7' }
   };
 

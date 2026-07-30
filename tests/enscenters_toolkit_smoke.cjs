@@ -128,9 +128,6 @@ win.fetch = function (url) {
   else body = {};
   return Promise.resolve({ ok: ok, status: ok ? 200 : 404, json: () => Promise.resolve(body) });
 };
-// The shared SSHWS palette, as the real page loads it (ordered before
-// the viewer). enscenters.js holds no fallback copy by design.
-win.eval(fs.readFileSync(path.join(__dirname, "..", "tat_palette.js"), "utf8"));
 win.eval(fs.readFileSync(REGIONS, "utf8"));
 win.eval(fs.readFileSync(JS, "utf8"));
 const flush = () => new Promise((r) => setTimeout(r, 0));

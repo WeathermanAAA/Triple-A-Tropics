@@ -64,11 +64,6 @@ from ace_core import (
     wears_invest_x,
     _sshs_rank,
 )
-# SSHWS category palette. ace_core re-exports the shared table as SSHS_COLORS
-# (imported above); the extras below are what the PAGE templates need - labels
-# for the storm cards and the ordered thresholds for the MapLibre step ramp.
-from tat_palettes.categories import (CATEGORY_INK, CATEGORY_LABEL,
-                                     CATEGORY_ORDER, step_pairs)
 
 # ---------------------------------------------------------------------------
 # Basin configuration (mirrors generate_ace_plot.py so they stay aligned)
@@ -1280,6 +1275,513 @@ SVG_DEFS = (
 
 
 # ---------------------------------------------------------------------------
+# Client-side JS: hover tooltip on every dot, click-to-expand detail
+# placard (current intensity banner + wind-history chart) on active storms.
+# Kept as a raw string — no Python .format() — so we don't have to escape
+# the many braces in the JS body.
+# ---------------------------------------------------------------------------
+
+TRACKS_JS = r"""
+(function() {
+  var SSHS_COLORS = {
+    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
+    "C2": "#ff9a2f", "C3": "#f5333c", "C4": "#e33ad4", "C5": "#b03bff"
+  };
+  var CAT_LABELS = {
+    "TD": "Depression", "TS": "Tropical Storm",
+    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
+    "C4": "Category 4", "C5": "Category 5"
+  };
+  function ktToMph(k) { return Math.round(k * 1.15077945); }
+  // Storm intensity is conventionally reported in nearest 5 mph
+  // increments (NHC/JTWC operational practice). Movement speed still
+  // uses the 1-mph ktToMph() above.
+  function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
+  function ktToKmh(k) { return Math.round(k * 1.852); }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function fmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var hh = String(d.getUTCHours()).padStart(2,"0");
+    var mm = String(d.getUTCMinutes()).padStart(2,"0");
+    return m[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + hh + ":" + mm + "Z";
+  }
+  function fmtLatLon(lat, lon) {
+    while (lon > 180) lon -= 360;
+    while (lon < -180) lon += 360;
+    var la = Math.abs(lat).toFixed(1) + "\u00B0 " + (lat >= 0 ? "N" : "S");
+    var lo = Math.abs(lon).toFixed(1) + "\u00B0 " + (lon >= 0 ? "E" : "W");
+    return la + "   " + lo;
+  }
+  function compass(b) {
+    var dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return dirs[Math.round(b / 22.5) % 16];
+  }
+
+  // ---- Load payload ----
+  var payloadEl = document.getElementById("storms-payload");
+  var STORMS = [];
+  try { STORMS = JSON.parse(payloadEl.textContent || "[]"); }
+  catch (e) { STORMS = []; }
+  // Payload contains the full page object; pick off the storms list.
+  if (STORMS && STORMS.storms) STORMS = STORMS.storms;
+  var storemap = {};
+  STORMS.forEach(function(s) { storemap[s.sid] = s; });
+
+  // ---- Hover tooltip ----
+  var tip = document.getElementById("dot-tooltip");
+  function showTip(e) {
+    var d = e.currentTarget.dataset;
+    var windKt = d.wind ? parseFloat(d.wind) : null;
+    var windTxt = windKt != null && !isNaN(windKt)
+      ? (Math.round(windKt) + " kt · " + ktToMph5(windKt) + " mph")
+      : "-";
+    var presTxt = d.pres && d.pres !== "" ? (Math.round(parseFloat(d.pres)) + " mb") : "-";
+    var cls = d.cls || "TD";
+    var catTxt = CAT_LABELS[cls] || cls;
+    tip.innerHTML =
+      '<div class="tt-name">' + escapeHtml(d.name) + '</div>' +
+      '<div class="tt-time">' + fmtTime(d.t) + '</div>' +
+      '<div class="tt-row"><span class="tt-cat" style="background:' +
+        (SSHS_COLORS[cls] || "#888") + '">' + catTxt + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Wind</span><span class="tt-val">' + windTxt + '</span></div>' +
+      '<div class="tt-row"><span class="tt-lbl">Pressure</span><span class="tt-val">' + presTxt + '</span></div>';
+    tip.hidden = false;
+    moveTip(e);
+  }
+  function moveTip(e) {
+    var pad = 14;
+    var x = e.clientX + pad;
+    var y = e.clientY + pad;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    if (x + tw > window.innerWidth - 6) x = e.clientX - tw - pad;
+    if (y + th > window.innerHeight - 6) y = e.clientY - th - pad;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  }
+  function hideTip() { tip.hidden = true; }
+  var dots = document.querySelectorAll(".track-dot");
+  dots.forEach(function(dot) {
+    dot.addEventListener("mouseenter", showTip);
+    dot.addEventListener("mousemove", moveTip);
+    dot.addEventListener("mouseleave", hideTip);
+    dot.addEventListener("click", function(e) {
+      var sid = dot.dataset.sid;
+      if (sid && storemap[sid] && storemap[sid].is_active) {
+        openPlacard(sid);
+      }
+    });
+  });
+
+  // ---- Click handling ----
+  // Every storm card has an inline placard slot.
+  //   - INACTIVE cards expand to show a peak-intensity banner + wind chart.
+  //   - ACTIVE cards expand to show just the wind-history chart — the
+  //     parent page already shows the live intensity banner at the top,
+  //     so we don't repeat it here. Clicking the spinning map icon does
+  //     the same thing (scrolls to the card and opens the chart).
+  function renderActiveInline(storm) {
+    var pts = (storm.points || []).filter(function(p) { return p.wind_kt != null; });
+    return '<div class="placard-chart-label">Wind history</div>' +
+           renderWindChart(pts);
+  }
+  function openInline(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    var s = storemap[sid];
+    if (!el || !s) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = s.is_active ? renderActiveInline(s) : renderPeakPlacard(s);
+      el.dataset.rendered = "1";
+    }
+    el.hidden = false;
+    if (card) {
+      card.classList.add("open");
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  function toggleInline(sid) {
+    var el = document.getElementById("placard-" + sid);
+    var card = document.getElementById("card-" + sid);
+    var s = storemap[sid];
+    if (!el || !s) return;
+    if (!el.dataset.rendered) {
+      el.innerHTML = s.is_active ? renderActiveInline(s) : renderPeakPlacard(s);
+      el.dataset.rendered = "1";
+    }
+    var nowOpen = el.hidden;
+    el.hidden = !el.hidden;
+    if (card) card.classList.toggle("open", nowOpen);
+    if (nowOpen && card) {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+  document.querySelectorAll(".storm-card.clickable").forEach(function(card) {
+    card.addEventListener("click", function(ev) {
+      // a real link inside the card (the CycloLab entry) navigates;
+      // the placard toggle must not swallow it.
+      if (ev.target.closest("a")) return;
+      toggleInline(card.dataset.sid);
+    });
+  });
+  // Spinning map icon → reveal that active storm's wind-history chart
+  // in the sidebar card.
+  document.querySelectorAll(".active-icon").forEach(function(g) {
+    g.addEventListener("click", function(e) {
+      e.stopPropagation();
+      openInline(g.dataset.sid);
+    });
+  });
+
+  // ---- CycloLab pre-launch dialog (FG-R3 #3) --------------------------------
+  // "Open in CycloLab ▸" (storm cards + map popup) opens a house dialog
+  // the FIRST time: storm name, a category-accent Launch button, and an
+  // optional wind-units choice. The choice is persisted in localStorage
+  // (SAME-ORIGIN, so the CycloLab shell reads it) and handed off via
+  // ?units= too; after the first launch the click goes straight in. A
+  // modified click (new tab) or no-JS keeps the plain <a href>.
+  (function () {
+    var LKEY = "cyclolab:launched", SKEY = "cyclolab:settings";
+    var UNITS = [["kt", "kt"], ["mph", "mph"], ["kmh", "km/h"]];
+    function ls(get, key, val) {
+      try { return get ? localStorage.getItem(key)
+                       : localStorage.setItem(key, val); }
+      catch (e) { return null; }
+    }
+    function storedUnit() {
+      try { var s = JSON.parse(ls(1, SKEY) || "{}");
+        return s && s.windUnits || "kt"; } catch (e) { return "kt"; }
+    }
+    function go(href, unit) {
+      ls(0, LKEY, "1");
+      ls(0, SKEY, JSON.stringify({ windUnits: unit }));
+      var u = href + (href.indexOf("?") < 0 ? "?" : "&") + "units=" + unit;
+      // CycloLab is a web app and lives in its OWN tab: open a NEW tab so
+      // the map stays behind in the original tab. Nothing loads same-tab.
+      window.open(u, "_blank", "noopener");
+    }
+    var dlg = null, pickUnit = "kt";
+    function ensureDialog() {
+      if (dlg) return dlg;
+      var css = document.createElement("style");
+      css.textContent =
+        ".cl-launch-back{position:fixed;inset:0;z-index:9999;display:flex;" +
+        "align-items:center;justify-content:center;background:rgba(4,8,14,.6);" +
+        "padding:20px}.cl-launch-back[hidden]{display:none}" +
+        ".cl-launch{width:min(380px,100%);background:#121a26;border:1px solid " +
+        "#26354a;border-radius:16px;padding:22px 22px 20px;color:#e8eef5;" +
+        "font-family:Metropolis,system-ui,sans-serif;box-shadow:0 20px 60px " +
+        "rgba(0,0,0,.55)}.cl-launch h2{margin:0 0 2px;font-size:19px;" +
+        "font-weight:800;letter-spacing:.2px}.cl-launch .cl-eyebrow{font-size:" +
+        "11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;" +
+        "color:#8ba0bd;margin-bottom:10px}.cl-launch .cl-go{display:block;" +
+        "width:100%;margin:16px 0 4px;padding:12px;border:0;border-radius:10px;" +
+        "font:inherit;font-size:15px;font-weight:800;color:#06101c;cursor:" +
+        "pointer}.cl-launch .cl-customize{background:none;border:0;color:" +
+        "#8ba0bd;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;" +
+        "padding:6px 0;text-decoration:underline}.cl-launch .cl-units{display:" +
+        "none;margin:10px 0 2px}.cl-launch .cl-units.open{display:block}" +
+        ".cl-launch .cl-units-lbl{font-size:11px;font-weight:700;letter-" +
+        "spacing:1px;text-transform:uppercase;color:#8ba0bd;margin-bottom:7px}" +
+        ".cl-seg{display:flex}.cl-seg button{flex:1;background:#0d141f;color:" +
+        "#8ba0bd;border:1px solid #26354a;padding:9px 0;font:inherit;font-" +
+        "size:13px;font-weight:700;cursor:pointer}.cl-seg button:first-child{" +
+        "border-radius:8px 0 0 8px}.cl-seg button:last-child{border-radius:0 " +
+        "8px 8px 0;border-left:0}.cl-seg button:not(:first-child):not(:last-" +
+        "child){border-left:0}.cl-seg button.on{color:#06101c}.cl-note{margin:" +
+        "12px 0 0;font-size:11px;line-height:1.5;color:#7e90a9}";
+      document.head.appendChild(css);
+      var back = document.createElement("div");
+      back.className = "cl-launch-back"; back.hidden = true;
+      back.innerHTML =
+        '<div class="cl-launch" role="dialog" aria-modal="true" ' +
+        'aria-label="Launch CycloLab"><div class="cl-eyebrow">CycloLab</div>' +
+        '<h2 class="cl-storm"></h2>' +
+        '<button class="cl-go" type="button">Launch CycloLab</button>' +
+        '<button class="cl-customize" type="button">Customize settings</button>' +
+        '<div class="cl-units"><div class="cl-units-lbl">Wind units</div>' +
+        '<div class="cl-seg"></div>' +
+        '<p class="cl-note">Display only. Agency forecasts are issued in ' +
+        'knots; other units are converted in CycloLab.</p></div></div>';
+      document.body.appendChild(back);
+      var seg = back.querySelector(".cl-seg");
+      UNITS.forEach(function (u) {
+        var b = document.createElement("button");
+        b.type = "button"; b.textContent = u[1];
+        b.setAttribute("data-u", u[0]);
+        b.addEventListener("click", function () {
+          pickUnit = u[0]; paintSeg(); });
+        seg.appendChild(b);
+      });
+      function paintSeg() {
+        seg.querySelectorAll("button").forEach(function (b) {
+          var on = b.getAttribute("data-u") === pickUnit;
+          b.classList.toggle("on", on);
+          b.style.background = on ? back._accent : "";
+          b.style.borderColor = on ? back._accent : "";
+        });
+      }
+      back._paintSeg = paintSeg;
+      back.querySelector(".cl-customize").addEventListener("click",
+        function () { back.querySelector(".cl-units").classList.toggle("open"); });
+      back.addEventListener("click", function (e) {
+        if (e.target === back) back.hidden = true; });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") back.hidden = true; });
+      dlg = back;
+      return back;
+    }
+    function openDialog(href, name, accent) {
+      var d = ensureDialog();
+      pickUnit = storedUnit();
+      d._accent = accent || "#3b82f6";
+      d.querySelector(".cl-storm").textContent = name || "This storm";
+      var go1 = d.querySelector(".cl-go");
+      go1.style.background = d._accent;
+      d.querySelector(".cl-units").classList.remove("open");
+      d._paintSeg();
+      go1.onclick = function () { d.hidden = true; go(href, pickUnit); };
+      d.hidden = false;
+      go1.focus();
+    }
+    document.addEventListener("click", function (e) {
+      var a = e.target.closest && e.target.closest("a.cyclolab-link");
+      if (!a) return;
+      // modified click / non-left button: let the browser do its thing
+      // (new tab etc.); no-JS already navigates the href.
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey ||
+          e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      var href = a.getAttribute("href");
+      if (ls(1, LKEY)) { go(href, storedUnit()); return; }  // straight in
+      openDialog(href, a.getAttribute("data-name"),
+                 a.getAttribute("data-accent"));
+    });
+  })();
+
+  // ---- Placard rendering ----
+  // Hurricane glyph path — same one used for the spinning map icons,
+  // reused here as a small corner accent on each placard.
+  var HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z";
+  function sshsLabel(cls) {
+    if (cls === "TD") return "D";
+    if (cls === "TS") return "S";
+    return (cls || "").replace("C", "") || "D";  // C1→1, C2→2, etc.
+  }
+  function spinnerSvg(color, cls) {
+    // <animateTransform> spins ONLY the hurricane path, leaving the
+    // center label (D/S/1-5) stationary. Label matches the map icon.
+    var label = sshsLabel(cls);
+    return '<div class="placard-spinner">' +
+      '<svg viewBox="-34 -34 68 68">' +
+        '<g>' +
+          '<path d="' + HURRICANE_PATH + '" fill="' + color + '" ' +
+            'stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/>' +
+          '<animateTransform attributeName="transform" attributeType="XML" ' +
+            'type="rotate" from="360" to="0" dur="2.6s" repeatCount="indefinite"/>' +
+        '</g>' +
+        '<text x="0" y="0" text-anchor="middle" dominant-baseline="central" ' +
+          'font-size="22" font-weight="900" fill="#ffffff" ' +
+          'paint-order="stroke" stroke="rgba(0,0,0,0.55)" stroke-width="2" ' +
+          'stroke-linejoin="round">' + label + '</text>' +
+      '</svg>' +
+    '</div>';
+  }
+  function computeMovement(pts) {
+    for (var i = pts.length - 2; i >= 0; i--) {
+      var a = pts[i], b = pts[pts.length - 1];
+      var ta = new Date(a.t).getTime(), tb = new Date(b.t).getTime();
+      var dtH = (tb - ta) / 3600000;
+      if (dtH < 1) continue;
+      var latm = (b.lat - a.lat) * 60;
+      var lonm = (b.lon - a.lon) * 60 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+      var distNm = Math.sqrt(latm*latm + lonm*lonm);
+      if (distNm < 0.5) return "Nearly stationary";
+      var speedKt = distNm / dtH;
+      var bearing = (Math.atan2(lonm, latm) * 180 / Math.PI + 360) % 360;
+      return compass(bearing) + " at " + ktToMph(speedKt) + " mph";
+    }
+    return "-";
+  }
+  // Dark vs. white banner text based on category color luminance.
+  function bannerTextColor(cls) {
+    return (cls === "TS" || cls === "C1" || cls === "C2") ? "#0a1324" : "#ffffff";
+  }
+  // Live/current-intensity variant. Used by the pinned "Active Now" panel.
+  function renderCurrentPlacard(storm) {
+    if (!storm) return '<div class="chart-empty">No data.</div>';
+    var pts = (storm.points || []).slice();
+    var validPts = pts.filter(function(p) { return p.wind_kt != null; });
+    var last = pts[pts.length - 1] || {};
+    var lastValid = validPts[validPts.length - 1] || last;
+    var cls = storm.current_category || "TD";
+    var color = SSHS_COLORS[cls] || "#888";
+    var catLabel = CAT_LABELS[cls] || cls;
+    var windKt = lastValid.wind_kt || 0;
+    var pres = lastValid.pressure_mb;
+    var loc = fmtLatLon(last.lat, last.lon);
+    var movement = computeMovement(pts);
+    var chart = renderWindChart(validPts);
+    var txtColor = bannerTextColor(cls);
+    return (
+      '<div class="storm-placard">' +
+      '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        spinnerSvg(color, cls) +
+        '<div class="pl-row1"><span class="pl-cat">' + catLabel + '</span><b>' +
+          escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
+        '<div class="pl-intensity">' +
+          '<div class="pl-big">' + ktToMph5(windKt) + '</div>' +
+          '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
+        '</div>' +
+        '<div class="pl-deets">' +
+          '<div><span>Updated</span><b>' + fmtTime(last.t) + '</b></div>' +
+          '<div><span>Location</span><b>' + loc + '</b></div>' +
+          '<div><span>Pressure</span><b>' + (pres ? Math.round(pres) + " mb" : "-") + '</b></div>' +
+          '<div><span>Movement</span><b>' + movement + '</b></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="placard-chart-label">Wind history</div>' +
+      chart +
+      '</div>'
+    );
+  }
+  // Peak-intensity variant. Used inline for every storm (including the
+  // already-dissipated ones that have a historical max).
+  function renderPeakPlacard(storm) {
+    if (!storm) return '<div class="chart-empty">No data.</div>';
+    var pts = (storm.points || []).slice();
+    var validPts = pts.filter(function(p) { return p.wind_kt != null; });
+    if (!validPts.length) return '<div class="chart-empty">No wind observations.</div>';
+    // Observation with the strongest wind (ties broken by earliest).
+    var peak = validPts[0];
+    for (var i = 1; i < validPts.length; i++) {
+      if (validPts[i].wind_kt > peak.wind_kt) peak = validPts[i];
+    }
+    // Lowest pressure may be at a different time; report it separately.
+    var minPres = null;
+    validPts.forEach(function(p) {
+      if (p.pressure_mb != null && (minPres == null || p.pressure_mb < minPres)) {
+        minPres = p.pressure_mb;
+      }
+    });
+    var cls = peak.cls || "TD";
+    var color = SSHS_COLORS[cls] || "#888";
+    var catLabel = CAT_LABELS[cls] || cls;
+    var windKt = peak.wind_kt;
+    var loc = fmtLatLon(peak.lat, peak.lon);
+    var chart = renderWindChart(validPts);
+    var txtColor = bannerTextColor(cls);
+    return (
+      '<div class="placard-banner" style="background:' + color + ';color:' + txtColor + '">' +
+        spinnerSvg(color, cls) +
+        '<div class="pl-row1"><span class="pl-cat">PEAK · ' + catLabel + '</span><b>' +
+          escapeHtml(storm.name || "UNNAMED") + '</b></div>' +
+        '<div class="pl-intensity">' +
+          '<div class="pl-big">' + ktToMph5(windKt) + '</div>' +
+          '<div class="pl-units">mph<br>' + ktToKmh(windKt) + ' km/h</div>' +
+        '</div>' +
+        '<div class="pl-deets">' +
+          '<div><span>Reached</span><b>' + fmtTime(peak.t) + '</b></div>' +
+          '<div><span>Location</span><b>' + loc + '</b></div>' +
+          '<div><span>Min pressure</span><b>' + (minPres ? Math.round(minPres) + " mb" : "-") + '</b></div>' +
+          '<div><span>ACE</span><b>' + (storm.ace != null ? storm.ace.toFixed(2) : "-") + '</b></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="placard-chart-label">Wind history</div>' +
+      chart
+    );
+  }
+
+  function renderWindChart(pts) {
+    if (!pts.length) {
+      return '<div class="chart-empty">No wind observations yet.</div>';
+    }
+    var W = 320, H = 190;
+    var padL = 34, padR = 8, padT = 8, padB = 26;
+    var plotW = W - padL - padR;
+    var plotH = H - padT - padB;
+    var times = pts.map(function(p) { return new Date(p.t).getTime(); });
+    var tMin = Math.min.apply(null, times);
+    var tMax = Math.max.apply(null, times);
+    var maxWind = Math.max(160, Math.max.apply(null, pts.map(function(p) { return p.wind_kt || 0; })));
+    function yScale(w) { return padT + plotH - (w / maxWind) * plotH; }
+    function xScale(t) {
+      if (tMax === tMin) return padL + plotW / 2;
+      return padL + (t - tMin) / (tMax - tMin) * plotW;
+    }
+    var bands = [
+      [0, 34, SSHS_COLORS.TD],
+      [34, 64, SSHS_COLORS.TS],
+      [64, 83, SSHS_COLORS.C1],
+      [83, 96, SSHS_COLORS.C2],
+      [96, 113, SSHS_COLORS.C3],
+      [113, 137, SSHS_COLORS.C4],
+      [137, maxWind, SSHS_COLORS.C5]
+    ];
+    var bandRects = bands.map(function(b) {
+      var lo = b[0], hi = b[1], c = b[2];
+      var y1 = yScale(Math.min(hi, maxWind));
+      var y2 = yScale(lo);
+      return '<rect x="' + padL + '" y="' + y1 + '" width="' + plotW +
+             '" height="' + (y2 - y1) + '" fill="' + c + '" fill-opacity="0.38"/>';
+    }).join("");
+    var pathD = "M " + pts.map(function(p) {
+      return xScale(new Date(p.t).getTime()).toFixed(1) + "," +
+             yScale(p.wind_kt || 0).toFixed(1);
+    }).join(" L ");
+    var dotsSvg = pts.map(function(p) {
+      var x = xScale(new Date(p.t).getTime()).toFixed(1);
+      var y = yScale(p.wind_kt || 0).toFixed(1);
+      return '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#0a1324" ' +
+             'stroke="#ffffff" stroke-width="1.3"/>';
+    }).join("");
+    var ticks = [0, 35, 65, 85, 100, 115, 140, 160];
+    var yLabels = ticks.filter(function(v) { return v <= maxWind; }).map(function(v) {
+      var y = yScale(v);
+      return '<g><line x1="' + (padL - 3) + '" y1="' + y + '" x2="' + padL +
+             '" y2="' + y + '" stroke="#3a4d6e" stroke-width="0.6"/>' +
+             '<text x="' + (padL - 6) + '" y="' + (y + 3) +
+             '" text-anchor="end" font-size="9" fill="#8ea2bd">' + v + '</text></g>';
+    }).join("");
+    var nTicks = 3;
+    var xLabels = "";
+    for (var i = 0; i < nTicks; i++) {
+      var t = tMin + (i * (tMax - tMin) / (nTicks - 1 || 1));
+      var x = xScale(t);
+      var d = new Date(t);
+      var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      var label = m[d.getUTCMonth()] + " " + d.getUTCDate();
+      xLabels += '<text x="' + x + '" y="' + (H - padB + 13) +
+                 '" text-anchor="middle" font-size="9" fill="#8ea2bd">' + label + '</text>';
+    }
+    // Rendering order matters: background + bands + axis first, then the
+    // outer border rect, then the line and dots ON TOP so nothing —
+    // including band seams — paints over them.
+    return (
+      '<svg class="wind-chart" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="xMidYMid meet">' +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
+          '" height="' + plotH + '" fill="#07101c"/>' +
+        bandRects +
+        yLabels + xLabels +
+        '<rect x="' + padL + '" y="' + padT + '" width="' + plotW +
+          '" height="' + plotH + '" fill="none" stroke="#243452"/>' +
+        '<path d="' + pathD + '" fill="none" stroke="#ffffff" ' +
+          'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        dotsSvg +
+      '</svg>'
+    );
+  }
+})();
+"""
+
+
+# ---------------------------------------------------------------------------
 # Global GeoJSON (consumed client-side by MapLibre on /global_tracks.html)
 # ---------------------------------------------------------------------------
 
@@ -1308,54 +1810,10 @@ ICON_HBOX = 68           # hurricane marker viewBox == CSS box (1:1)
 # designated TDs wear the standard glyph with a blue "D" now.)
 
 
-# --- SSHWS palette tokens -------------------------------------------------
-# Both page templates are BAKED artifacts: the browser gets literal colors, so
-# they cannot read window.TATPalette the way the site's standalone scripts do.
-# They carry tokens instead, filled from tat_palettes at render time. That
-# keeps this generator's SOURCE free of category hexes (the consolidation
-# invariant tests/test_category_palette_ssot.py enforces) while the OUTPUT
-# stays fully self-contained - no CDN, no runtime fetch, iframes still work.
-
-
-def _cat_css_vars(indent: str = "    ") -> str:
-    """The `:root` custom properties both templates style categories with.
-
-    Two per category (`--c3` / `--c3-ink`), plus the `--td`/`--ts` aliases the
-    existing template CSS is written against. Emitted two categories per line
-    to match the hand-written block this replaced.
-    """
-    rows = []
-    for table, suffix in ((SSHS_COLORS, ""), (CATEGORY_INK, "-ink")):
-        for i in range(0, len(CATEGORY_ORDER), 2):
-            rows.append(indent + " ".join(
-                f"--{c.lower()}{suffix}: {table[c]};"
-                for c in CATEGORY_ORDER[i:i + 2]))
-    return "\n".join(rows).strip()
-
-
-def _cat_color_step() -> str:
-    """The MapLibre `["step", ...]` tail for intensity_kt -> category color.
-
-    Step (not interpolate) because each category is a flat band: an
-    interpolate would render a 25 kt TD 73% of the way along the TD->TS
-    gradient (visibly green) and mismatch the legend swatch.
-    """
-    pairs = step_pairs()
-    lines = [f'      "{pairs[0][1]}",       // <{pairs[1][0]} kt: '
-             f'{CATEGORY_ORDER[0]} (default below first stop)']
-    for i, (kt, hex_) in enumerate(pairs[1:], start=1):
-        cat = CATEGORY_ORDER[i]
-        hi = pairs[i + 1][0] - 1 if i + 1 < len(pairs) else None
-        span = f"{kt}-{hi}" if hi is not None else f">={kt}"
-        sep = "," if i + 1 < len(pairs) else " "
-        lines.append(f'      {kt}, "{hex_}"{sep}  // {span}: {cat}')
-    return "\n".join(lines).strip()
-
-
 def _apply_icon_tokens(html: str) -> str:
-    """Inject the canonical icon sizes and SSHWS palette into a rendered page
-    (both page templates carry __ICON_*__ and __CAT_*__ tokens), so marker
-    geometry and category colors each have exactly one source of truth."""
+    """Inject the canonical icon sizes into a rendered page (both page
+    templates carry __ICON_*__ tokens), so marker geometry has exactly one
+    source of truth above."""
     for token, value in (
         ("__ICON_GLYPH_SCALE__", ICON_GLYPH_SCALE),
         ("__ICON_LETTER_PT__", ICON_LETTER_PT),
@@ -1363,10 +1821,6 @@ def _apply_icon_tokens(html: str) -> str:
         ("__ICON_NAME_X__", ICON_NAME_X),
         ("__ICON_NAME_Y__", ICON_NAME_Y),
         ("__ICON_HBOX__", ICON_HBOX),
-        ("__CAT_CSS_VARS__", _cat_css_vars()),
-        ("__CAT_COLORS_JSON__", json.dumps(SSHS_COLORS)),
-        ("__CAT_LABELS_JSON__", json.dumps(CATEGORY_LABEL)),
-        ("__CAT_COLOR_STEP__", _cat_color_step()),
     ):
         html = html.replace(token, str(value))
     return html
@@ -1393,7 +1847,9 @@ HTML_TEMPLATE = """<!doctype html>
   :root {{
     --bg: #07101c; --panel: #0f1a2a; --border: #1a2840;
     --fg: #e5edf6; --muted: #8ea2bd;
-    __CAT_CSS_VARS__
+    --td: #3fa4ff; --ts: #46c56a;
+    --c1: #ffe14d; --c2: #ff9a2f; --c3: #f5333c;
+    --c4: #e33ad4; --c5: #b03bff;
   }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; background: var(--bg); color: var(--fg);
@@ -2579,7 +3035,9 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
   :root {
     --bg: #07101c; --panel: #0f1a2a; --border: #1a2840;
     --fg: #e5edf6; --muted: #8ea2bd;
-    __CAT_CSS_VARS__
+    --td: #3fa4ff; --ts: #46c56a;
+    --c1: #ffe14d; --c2: #ff9a2f; --c3: #f5333c;
+    --c4: #e33ad4; --c5: #b03bff;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--fg);
@@ -2805,9 +3263,15 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
 
 <script>
 (function () {
-  // Baked from tat_palettes at render time (see _apply_icon_tokens).
-  var SSHS_COLORS = __CAT_COLORS_JSON__;
-  var CAT_LABELS = __CAT_LABELS_JSON__;
+  var SSHS_COLORS = {
+    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
+    "C2": "#ff9a2f", "C3": "#f5333c", "C4": "#e33ad4", "C5": "#b03bff"
+  };
+  var CAT_LABELS = {
+    "TD": "Depression", "TS": "Tropical Storm",
+    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
+    "C4": "Category 4", "C5": "Category 5"
+  };
   function ktToMph5(k) { return Math.round(k * 1.15077945 / 5) * 5; }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
@@ -2981,7 +3445,13 @@ GLOBAL_MAPLIBRE_HTML = r"""<!doctype html>
     // mismatching the legend swatch.
     var COLOR_STEP = [
       "step", ["coalesce", ["get", "intensity_kt"], 0],
-      __CAT_COLOR_STEP__
+      "#3fa4ff",       // <34 kt: TD (default below first stop)
+      34,  "#46c56a",  // 34-63: TS
+      64,  "#ffe14d",  // 64-82: C1
+      83,  "#ff9a2f",  // 83-95: C2
+      96,  "#f5333c",  // 96-112: C3
+      113, "#e33ad4",  // 113-136: C4
+      137, "#b03bff"   // ≥137: C5
     ];
     // Shared zoom-radius/icon-size ramp so circles and symbols read at
     // the same physical pixel footprint (the per-basin SVG uses r=3 for

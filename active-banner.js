@@ -13,15 +13,15 @@
 // If no storm is active, the wrap stays empty (and CSS hides it).
 
 (function () {
-  // Canonical SSHWS palette (tat_palette.js, generated from
-  // palette/tat_palettes/categories.py). No local fallback copy on purpose:
-  // this file used to carry its own C3 (#ff4d3b) which had already drifted a
-  // shade off ace_core's, and a silent fallback is exactly how that happens.
-  function P() {
-    var p = window.TATPalette;
-    if (!p) throw new Error("active-banner.js: load /tat_palette.js first");
-    return p;
-  }
+  var SSHS_COLORS = {
+    "TD": "#3fa4ff", "TS": "#46c56a", "C1": "#ffe14d",
+    "C2": "#ff9a2f", "C3": "#ff4d3b", "C4": "#e33ad4", "C5": "#b03bff"
+  };
+  var CAT_LABELS = {
+    "TD": "Depression", "TS": "Tropical Storm",
+    "C1": "Category 1", "C2": "Category 2", "C3": "Category 3",
+    "C4": "Category 4", "C5": "Category 5"
+  };
   // Same icon path the map uses, so the banner's corner spinner matches
   // the spinning hurricane placed over the active storm.
   var HURRICANE_PATH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z";
@@ -70,12 +70,13 @@
     return "-";
   }
   function bannerTextColor(cls) {
-    // Ink is a property of the swatch, so it comes from the palette rather
-    // than a per-consumer guess at which fills are "bright".
-    return P().ink[cls] || "#ffffff";
+    // Dark text on bright yellow/green/orange; white on the reds/magenta/purples.
+    return (cls === "TS" || cls === "C1" || cls === "C2") ? "#0a1324" : "#ffffff";
   }
   function sshsLabel(cls) {
-    return P().glyphs[cls] || P().glyphs[P().unknown];
+    if (cls === "TD") return "D";
+    if (cls === "TS") return "S";
+    return (cls || "").replace("C", "") || "D";  // C1→1, C2→2, etc.
   }
   function spinnerSvg(color, cls) {
     // <animateTransform> spins the hurricane path only; the center
@@ -103,9 +104,9 @@
     var last = pts[pts.length - 1] || {};
     var lastValid = valid[valid.length - 1] || last;
     var cls = storm.current_category || "TD";
-    var color = P().cats[cls] || "#888";
+    var color = SSHS_COLORS[cls] || "#888";
     var txt = bannerTextColor(cls);
-    var cat = P().labels[cls] || cls;
+    var cat = CAT_LABELS[cls] || cls;
     var windKt = lastValid.wind_kt || 0;
     var pres = lastValid.pressure_mb;
     var loc = (last.lat != null && last.lon != null) ? fmtLatLon(last.lat, last.lon) : "-";

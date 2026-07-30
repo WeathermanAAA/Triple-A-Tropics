@@ -29,35 +29,10 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T19:45:00Z
+updated: 2026-07-29T21:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
-  - id: sshws-palette-ssot
-    title: SSHWS category palette consolidated into tat_palettes — one definition, site-wide
-    area: infra
-    status: shipped
-    date_shipped: 2026-07-29
-    note: >-
-      The seven storm-category colours had at least EIGHT disagreeing
-      definitions in the tree and had drifted badly: ace_core, the tracks
-      generators, models/enscenters.js, season_animation.js (its own
-      coral/rose C3-C4), generate_season_gif.py (a ninth ramp again),
-      recon/recon.js and ascat/ascat.js (a shared-by-copy 15-bin ramp whose
-      comment called a red "the canonical TAT red" when nothing else used it),
-      hafs_plot's desaturated chip table, the records explorer, the CycloLab
-      shell, tsr/render.py's satellite badge and tsr/centerfix_plot.py — the
-      last of which imported the palette but kept a stale hardcoded fallback
-      underneath. All of it now reads tat_palettes.categories, the shared
-      package both repos already pin. The browser gets a GENERATED mirror
-      (tat_palette.js / tat_palette.css) so JS and CSS consume the same source;
-      a test regenerates and diffs it, and a second test fails the build if a
-      category hex appears literally anywhere outside the palette module.
-      Colours adopted verbatim from Andrew's reference image. ACE gate: wp/al/ep
-      --no-live output identical modulo wall-clock stamps.
-    links:
-      - label: Roadmap board
-        url: /roadmap/
   - id: ensemble-paintball
     title: Ensemble track paintball — ECMWF ENS 51 members + GEFS 31, ingest landed
     area: models

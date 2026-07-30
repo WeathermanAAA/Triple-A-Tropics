@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tat-palettes"
-version = "0.3.0"
+version = "0.2.2"
 description = "Canonical Triple-A-Tropics color palettes (IR/WV satellite enhancements), shared by the satellite backend and the HAFS model pipeline."
 requires-python = ">=3.10"
 dependencies = [
