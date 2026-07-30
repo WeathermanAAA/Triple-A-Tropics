@@ -679,10 +679,28 @@ REVISION_WINDOW_H = 48.0
 #: products stamps a per-record publication time. The order is measured, not
 #: assumed — see the 12W case in ``resolve_conflicts``.
 LEG_RANK_LEADING = {
-    "live-knackwx": 40,     # refreshed on every JTWC/NHC bulletin push
-    "live-tcvitals": 30,    # NCEP syndata, derived from the same warning
-    "live-warning": 20,     # our own read of the bulletin; no MSLP, no RMW
-    "bdeck": 10,            # the mirror, which lags at the leading edge
+    # Ordered by whether a source REVISES an hour after first publishing it,
+    # which is the only property that makes "newest published" decidable
+    # without a per-record timestamp. Measured on 12W, 03:16Z -> 06:31Z:
+    #
+    #     DTG      b-deck            tcvitals          knackwx
+    #     29 18Z   140 -> 150 / 909  145 / 915 (both)  --
+    #     30 00Z   140 -> 145 / 917  140 / 921 (both)  145 / 917
+    #
+    # tcvitals NEVER MOVED at either hour: it is a one-shot record frozen at
+    # warning issuance. The deck revised both, and knackwx tracked the revision
+    # (matching the deck's 145 / 917 at 00Z while tcvitals still said 140/921).
+    # A deck row is therefore not "the laggard" -- it is the only JTWC source
+    # that self-corrects, and ranking a frozen leg above it publishes a stale
+    # value for as long as the window lasts. The first cut of this table had
+    # tcvitals at 30 and the deck at 10, and within three hours that pinned the
+    # site to 145 kt while JTWC's own deck said 150 kt / 909 mb.
+    "live-knackwx": 40,     # revises; refreshed on every JTWC/NHC bulletin push
+    "bdeck": 30,            # revises; JTWC's own record once it reaches an hour
+    "live-tcvitals": 20,    # FROZEN at issuance -- leads only where the deck has
+                            # not reached the hour at all (a gap, not a
+                            # disagreement), which prefer_bdeck already handles
+    "live-warning": 10,     # frozen too, and carries no MSLP/RMW
 }
 
 #: Outside the window the deck is post-analysis and authoritative.

@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-30T04:00:00Z
+updated: 2026-07-30T06:45:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -432,6 +432,35 @@ items:
       past its newest fix. A fix whose type cannot be established is counted as
       indeterminate and excluded from ACE rather than guessed. AL/EP are
       untouched and byte-identical — NHC serves its own decks on time.
+    links:
+      - label: WPac tracks
+        url: /climatology/west-pacific/tracks/
+  - id: leg-precedence-correction
+    title: Precedence corrected — the b-deck REVISES, tcvitals is frozen at issuance
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-30
+    note: >-
+      The first cut of resolve_conflicts ranked the real-time legs above the
+      b-deck inside the revision window, on the reading that the deck mirror
+      lags. Three hours of live data falsified that. Measured on 12W between
+      03:16Z and 06:31Z, the deck moved 18Z from 140 to 150 kt / 909 mb and 00Z
+      from 140 to 145 / 917, while tcvitals never moved off 145 / 915 and
+      140 / 921 at those same hours. tcvitals is a ONE-SHOT record frozen at
+      warning issuance; the deck is the only JTWC source that self-corrects,
+      and knackwx tracks the correction (it carried the deck's revised 145 / 917
+      at 00Z while tcvitals still said 140 / 921). Ranking a frozen leg above a
+      revising one had therefore pinned the site to a stale 145 kt while JTWC's
+      own deck said 150 — the same class of under-report the leg was added to
+      fix, in the opposite direction. The table is now ordered by whether a
+      source revises: knackwx, then the deck, then tcvitals, then the warning
+      text. The frozen legs still lead where the deck has not reached an hour at
+      all, which is a gap rather than a disagreement. A new test asserts no
+      untyped leg can outrank a typed one, because that invariant is what keeps
+      the nature-inheritance guard from being load-bearing. Dolphin now reads
+      its revised peak, 150 kt / 909 mb, and knackwx supplies the 06Z fix the
+      deck has not published yet — the leg genuinely leading rather than only
+      filling gaps.
     links:
       - label: WPac tracks
         url: /climatology/west-pacific/tracks/

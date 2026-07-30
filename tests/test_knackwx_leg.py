@@ -161,15 +161,38 @@ class ResolveConflictsTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(int((out.groupby(["SID", "time"]).size() > 1).sum()), 0)
 
-    def test_leading_edge_tcvitals_beats_the_deck(self):
-        """The 12W case: 145/915 must survive."""
+    def test_deck_beats_frozen_tcvitals_because_the_deck_revises(self):
+        """THE CORRECTION. The first cut ranked tcvitals above the deck and,
+        three hours later, was publishing 145 kt while JTWC's own deck had
+        revised 18Z to 150 kt / 909 mb. tcvitals never moved off its
+        issuance-time 145/915 at that hour -- it is frozen, the deck is not."""
         df = pd.DataFrame([
-            _row("live-JTWC", self.T18, 140, 921, "TS"),
+            _row("live-JTWC", self.T18, 150, 909, "TS"),
             _row("live-tcvitals", self.T18, 145, 915),
         ])
         out = ac.resolve_conflicts(df, now=NOW)
+        self.assertEqual(out.iloc[0]["wind_kt"], 150.0)
+        self.assertEqual(out.iloc[0]["pressure_mb"], 909.0)
+
+    def test_tcvitals_still_fills_an_hour_the_deck_lacks(self):
+        """Frozen does not mean useless: where the deck has no row at all it is
+        a gap, not a disagreement, and tcvitals is the leading edge."""
+        df = pd.DataFrame([_row("live-tcvitals", self.T18, 145, 915, "TS")])
+        out = ac.resolve_conflicts(df, now=NOW)
+        self.assertEqual(len(out), 1)
         self.assertEqual(out.iloc[0]["wind_kt"], 145.0)
-        self.assertEqual(out.iloc[0]["pressure_mb"], 915.0)
+
+    def test_knackwx_leads_the_deck_at_the_current_analysis(self):
+        """knackwx tracks the revision too, and is the one leg allowed to lead
+        the deck -- measured at 00Z, where it carried the deck's revised
+        145/917 while tcvitals was still on 140/921."""
+        df = pd.DataFrame([
+            _row("live-JTWC", self.T00, 140, 921, "TS"),
+            _row("live-knackwx", self.T00, 145, 917, "TS"),
+        ])
+        out = ac.resolve_conflicts(df, now=NOW)
+        self.assertEqual(out.iloc[0]["source"], "live-knackwx")
+        self.assertEqual(out.iloc[0]["wind_kt"], 145.0)
 
     def test_settled_fixes_go_back_to_the_deck(self):
         """Outside the revision window the deck is post-analysis and wins."""
@@ -191,20 +214,26 @@ class ResolveConflictsTests(unittest.TestCase):
 
     # ---- the ACE-integrity guard ------------------------------------------
     def test_untyped_winner_inherits_the_nature_of_a_typed_peer(self):
-        """Without this, an override silently DELETES the fix from ACE."""
+        """The ACE-deletion guard. Every UNTYPED leg now ranks below every typed
+        one, so this is defence in depth rather than a path taken daily -- but
+        it is what stopped storm ACE falling 12.460 -> 2.805 when the ranking
+        DID put an untyped leg on top, and it must survive any future reorder.
+        tcvitals (rank 20, untyped) over the warning leg (rank 10, typed here)
+        exercises it directly."""
         df = pd.DataFrame([
-            _row("live-JTWC", self.T18, 140, 921, "TS"),
             _row("live-tcvitals", self.T18, 145, 915),        # nature IND
+            _row("live-warning", self.T18, 140, float("nan"), "TS"),
         ])
         out = ac.resolve_conflicts(df, now=NOW)
+        self.assertEqual(out.iloc[0]["source"], "live-tcvitals")
         self.assertEqual(out.iloc[0]["wind_kt"], 145.0)
         self.assertEqual(out.iloc[0]["ace_nature"], "TS")
         self.assertTrue(tcv.is_resolved(out.iloc[0]["ace_nature"]))
 
     def test_untyped_winner_keeps_the_fix_ace_eligible(self):
         df = pd.DataFrame([
-            _row("live-JTWC", self.T18, 140, 921, "TS"),
             _row("live-tcvitals", self.T18, 145, 915),
+            _row("live-warning", self.T18, 140, float("nan"), "TS"),
         ])
         out = ac.resolve_conflicts(df, now=NOW)
         pts = [{"time": r.time, "wind_kt": r.wind_kt,
@@ -212,6 +241,16 @@ class ResolveConflictsTests(unittest.TestCase):
                for r in out.itertuples()]
         self.assertAlmostEqual(ac.storm_ace(pts, "wp", True),
                                round(145 ** 2 / 1e4, 3), places=3)
+
+    def test_no_untyped_leg_outranks_a_typed_one(self):
+        """The invariant that makes the guard above rarely fire. If a reorder
+        ever breaks this, the guard is the only thing between a ranking change
+        and silently deleted ACE."""
+        typed = {"live-knackwx", "bdeck"}
+        worst_typed = min(ac.LEG_RANK_LEADING[k] for k in typed)
+        best_untyped = max(v for k, v in ac.LEG_RANK_LEADING.items()
+                           if k not in typed)
+        self.assertGreater(worst_typed, best_untyped)
 
     def test_nature_enrichment_does_not_invent_one(self):
         df = pd.DataFrame([
@@ -311,12 +350,18 @@ class LegFailureIsolationTests(unittest.TestCase):
                     self.assertTrue(all(tcv.is_resolved(v)
                                         for v in out["ace_nature"]))
 
-    def test_tcvitals_is_the_leg_carrying_the_145(self):
-        with_tcv = ac.resolve_conflicts(self._frame(("tcvitals",)), now=NOW)
-        without = ac.resolve_conflicts(self._frame(("knackwx", "warning")),
-                                       now=NOW)
-        self.assertEqual(with_tcv["wind_kt"].max(), 145.0)
-        self.assertEqual(without["wind_kt"].max(), 140.0)
+    def test_a_frozen_leg_cannot_pull_the_deck_backwards(self):
+        """With the deck revised to 150, no combination of the frozen legs may
+        drag the published value back down to their issuance-time numbers."""
+        for live in ((), ("tcvitals",), ("warning",), ("tcvitals", "warning")):
+            rows = [_row("live-JTWC", self.T18, 150, 909, "TS")]
+            if "tcvitals" in live:
+                rows.append(_row("live-tcvitals", self.T18, 145, 915))
+            if "warning" in live:
+                rows.append(_row("live-warning", self.T18, 145))
+            out = ac.resolve_conflicts(pd.DataFrame(rows), now=NOW)
+            with self.subTest(live=live or ("deck only",)):
+                self.assertEqual(out.iloc[0]["wind_kt"], 150.0)
 
     def test_total_outage_degrades_to_the_deck(self):
         out = ac.resolve_conflicts(self._frame(()), now=NOW)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ace-core"
-version = "0.8.11"
+version = "0.8.12"
 description = "Single source of truth for Accumulated Cyclone Energy (ACE) and the ACE/tracks feed-assembly logic, shared by the Triple-A-Tropics cron generators and the streaming intensity poller so the two writers never drift."
 requires-python = ">=3.10"
 dependencies = [
