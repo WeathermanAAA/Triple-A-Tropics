@@ -49,9 +49,33 @@ from . import (
     RADII_QUADS,
     RADII_THRESHOLDS,
     SIX_HOURLY,
+    resolve_conflicts,
 )
 from . import tcvitals as tcv
 from . import jtwc_warnings as jw
+from . import knackwx as kx
+
+
+def _overlap_rows(bdeck_df, other_df):
+    """The rows ``prefer_bdeck`` would DROP — i.e. the hours both sources claim.
+
+    Exactly the complement of ``prefer_bdeck``, on the same (SID, time) key, so
+    ``prefer_bdeck(b, d)`` and ``_overlap_rows(b, d)`` partition ``d`` with no
+    row lost and none duplicated.
+    """
+    import pandas as pd
+
+    if other_df is None or getattr(other_df, "empty", True):
+        return pd.DataFrame()
+    if bdeck_df is None or getattr(bdeck_df, "empty", True):
+        return pd.DataFrame()
+    if "SID" not in bdeck_df.columns or "time" not in bdeck_df.columns:
+        return pd.DataFrame()
+    have = set(zip(bdeck_df["SID"], bdeck_df["time"]))
+    if not have:
+        return pd.DataFrame()
+    hit = [k in have for k in zip(other_df["SID"], other_df["time"])]
+    return other_df[hit].reset_index(drop=True)
 
 #: Identify ourselves. Several of these hosts reject the default urllib UA.
 FETCH_UA = "triple-a-tropics/1.0 (+https://triple-a-tropics.com)"
@@ -439,7 +463,38 @@ def poll_jtwc(season: int, basin_cfg: dict, bdeck_df=None,
                                now=now, getter=getter)
     warnings, src_b = fetch_warnings(now=now, getter=getter)
 
+    # Leg 4 — RyanKnack's ATCF aggregator. Independent of the other three: its
+    # own fetch, its own guards, its own failure. One fix per storm (the current
+    # analysis), self-typed from the payload's dev level.
+    kdf, k_ok, k_detail = kx.fetch_knackwx(season, basin_cfg, now=now)
+    src_c = [SourceResult("knackwx", kx.KNACKWX_URL, ok=k_ok,
+                          records=0 if kdf is None else len(kdf),
+                          newest=_newest(kdf),
+                          error=None if k_ok else k_detail)]
+
     kept = tcv.prefer_bdeck(bdeck_df, df)
+
+    # CONTENDERS. Rows the b-deck already covers are no longer simply discarded:
+    # they are carried separately so ``resolve_conflicts`` can decide the hour on
+    # the documented precedence instead of the deck winning unconditionally. This
+    # is what lets a leg LEAD rather than only fill gaps. They deliberately skip
+    # the lead-window trim below — a contender is by definition an hour the deck
+    # already has, so it is never a season back-fill.
+    contenders = _overlap_rows(bdeck_df, df)
+    if kdf is not None and not getattr(kdf, "empty", True):
+        import pandas as pd
+        k_new = tcv.prefer_bdeck(bdeck_df, kdf)
+        k_over = _overlap_rows(bdeck_df, kdf)
+        if k_new is not None and not getattr(k_new, "empty", True):
+            kept = (k_new.reset_index(drop=True)
+                    if kept is None or getattr(kept, "empty", True)
+                    else pd.concat([kept, tcv.prefer_bdeck(kept, k_new)],
+                                   ignore_index=True))
+        if k_over is not None and not getattr(k_over, "empty", True):
+            contenders = (k_over if contenders is None
+                          or getattr(contenders, "empty", True)
+                          else pd.concat([contenders, k_over],
+                                         ignore_index=True))
 
     # Leg 3. Precedence is b-deck > tcvitals > warning, strictly by richness:
     # the b-deck is the revised post-analysis, tcvitals carries MSLP and RMW,
@@ -481,6 +536,11 @@ def poll_jtwc(season: int, basin_cfg: dict, bdeck_df=None,
         "watermark": watermark,
         "outside_lead_window": dropped,
         "from_warnings": added_from_warnings,
+        # Rows that overlap the b-deck and may take the hour from it. The caller
+        # concatenates these and runs ``resolve_conflicts`` — they are NOT
+        # already merged, precisely so a caller that does not resolve keeps the
+        # old deck-always-wins behaviour.
+        "contenders": contenders,
     }
 
 
@@ -536,18 +596,42 @@ def extend_with_tcvitals(bdeck_df, season: int, basin_cfg: dict,
         print(f"{log_prefix}     {info['outside_lead_window']} fix(es) older "
               f"than the {LEAD_WINDOW_H:.0f} h lead window (season back-fill, "
               f"not published)")
-    if fixes is None or fixes.empty:
+    contenders = out.get("contenders")
+    has_contenders = (contenders is not None
+                      and not getattr(contenders, "empty", True))
+    if (fixes is None or fixes.empty) and not has_contenders:
         print(f"{log_prefix}   tcvitals: no fixes beyond the b-deck")
         return bdeck_df, info
+    if fixes is None or fixes.empty:
+        # No hour to ADD, but a live leg disagrees with the deck on an hour it
+        # already has. Returning early here would silently drop every override —
+        # the common case once the deck catches up on time.
+        print(f"{log_prefix}   tcvitals: no fixes beyond the b-deck "
+              f"({len(contenders)} contender(s) for hours it already has)")
+        fixes = fixes if fixes is not None else pd.DataFrame()
 
     base = bdeck_df
     if base is not None and not getattr(base, "empty", True):
         base = base.copy()
         if "type_status" not in base.columns:
             base["type_status"] = BDECK_TYPE_STATUS
-        combined = pd.concat([base, fixes], ignore_index=True)
+        combined = (base.reset_index(drop=True) if fixes.empty
+                    else pd.concat([base, fixes], ignore_index=True))
     else:
         combined = fixes.reset_index(drop=True)
+
+    # THE OVERRIDE STEP. Contenders are hours the deck already has; folding them
+    # in and resolving is what lets a live leg correct the deck rather than only
+    # extend it. resolve_conflicts guarantees one row per (SID, hour) out, so
+    # this can never double-count into ACE however many legs saw the fix.
+    contenders = out.get("contenders")
+    if contenders is not None and not getattr(contenders, "empty", True):
+        combined = pd.concat([combined, contenders], ignore_index=True)
+    before_rows = len(combined)
+    combined = resolve_conflicts(combined, now=now,
+                                 log=lambda m: print(f"{log_prefix}{m}"))
+    info["contenders"] = 0 if contenders is None else len(contenders)
+    info["collapsed"] = before_rows - len(combined)
 
     counts = out["types"]
     unresolved = sum(v for k, v in counts.items()

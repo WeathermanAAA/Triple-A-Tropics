@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-29T21:05:00Z
+updated: 2026-07-30T04:00:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -432,6 +432,41 @@ items:
       past its newest fix. A fix whose type cannot be established is counted as
       indeterminate and excluded from ACE rather than guessed. AL/EP are
       untouched and byte-identical — NHC serves its own decks on time.
+    links:
+      - label: WPac tracks
+        url: /climatology/west-pacific/tracks/
+  - id: knackwx-leg-and-conflict-resolution
+    title: A fourth intensity leg, and legs that can LEAD rather than only fill gaps
+    area: obs
+    status: shipped
+    date_shipped: 2026-07-30
+    note: >-
+      Dolphin sat at 140 kt / 921 mb while every other site had 145 / 915. The
+      number was never missing and no new source was needed to find it: tcvitals
+      carried 2026-07-29 18Z at 145 kt / 915 mb, the b-deck carried the same hour
+      and the same position at 140 / 921, and prefer_bdeck discarded the tcvitals
+      row because the deck always won a shared hour. The deck had 18Z by 19:22Z
+      while tcvitals still stopped at 12Z, so tcvitals published that hour LATER
+      and higher. Two changes. RyanKnack's api.knackwx.com/atcf/v2 becomes a
+      fourth leg for DESIGNATED storms (the repo already used it for invests, and
+      that code's docstring left designated systems explicitly unconfirmed — they
+      are listed); it is one fix per storm, the current analysis only, so it can
+      lead the leading edge but can never fill a past hour, and it is the only
+      live leg that is self-typing because the payload carries the ATCF dev
+      level. And resolve_conflicts replaces deck-always-wins with a documented
+      precedence — knackwx, then tcvitals, then the warning text, then the deck
+      — for fixes inside a 48 h revision window, with the deck taking settled
+      hours back as post-analysis. One row per (SID, synoptic hour) comes out
+      however many legs saw the fix, so ACE cannot double-count. The subtle part
+      is nature: tcvitals has no dev-level field, and an untyped winner replacing
+      a typed deck row silently drops the fix from ACE — measured at storm ACE
+      12.460 falling to 2.805 with the track still looking healthy — so nature is
+      inherited from a typed peer independently of the wind guard that stops a
+      915 mb reading being stapled onto a 140 kt analysis. Dolphin now reads
+      145 kt / 915 mb / C5, peak ACE 12.460 -> 12.602 (+0.1425 exact before the
+      3 dp rounding policy), WP season 143.395 -> 143.537, one storm changed of
+      570. AL/EP are untouched by construction — the whole live path is gated on
+      basin_cfg tcvitals, which is False for both.
     links:
       - label: WPac tracks
         url: /climatology/west-pacific/tracks/

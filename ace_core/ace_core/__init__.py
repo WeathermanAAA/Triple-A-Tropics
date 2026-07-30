@@ -664,6 +664,171 @@ def parse_bdeck(text: str, season: int, basin_cfg: dict):
 
 
 # ---------------------------------------------------------------------------
+# Multi-leg conflict resolution — ONE fix per (SID, synoptic hour)
+# ---------------------------------------------------------------------------
+
+#: How long a fix stays inside the window where a REAL-TIME leg outranks the
+#: b-deck mirror. JTWC issues 6-hourly and revises the deck behind that; inside
+#: this window the mirror's row for an hour is routinely the agency's first
+#: working value while the real-time legs already carry the issued warning.
+#: Outside it, the deck is genuine post-analysis and takes the hour back.
+REVISION_WINDOW_H = 48.0
+
+#: Conflict precedence INSIDE the revision window (higher wins). This is the
+#: "newest published wins" policy expressed as a ranking, because none of these
+#: products stamps a per-record publication time. The order is measured, not
+#: assumed — see the 12W case in ``resolve_conflicts``.
+LEG_RANK_LEADING = {
+    "live-knackwx": 40,     # refreshed on every JTWC/NHC bulletin push
+    "live-tcvitals": 30,    # NCEP syndata, derived from the same warning
+    "live-warning": 20,     # our own read of the bulletin; no MSLP, no RMW
+    "bdeck": 10,            # the mirror, which lags at the leading edge
+}
+
+#: Outside the window the deck is post-analysis and authoritative.
+LEG_RANK_SETTLED = dict(LEG_RANK_LEADING, bdeck=100)
+
+#: Fields worth recovering from a LOWER-ranked row when the winner lacks them.
+#: Only ever filled from a row that agrees with the winner on wind (see below).
+_ENRICH_COLS = ["pressure_mb", "rmw_nm"] + list(RADII_COLS)
+
+#: The indeterminate-nature sentinel, mirrored from ``ace_core.tcvitals`` (which
+#: imports from here, so it cannot be imported back).
+_IND_NATURE = "IND"
+
+
+def _nature_resolved(val) -> bool:
+    if val is None:
+        return False
+    if isinstance(val, float) and val != val:
+        return False
+    return str(val).strip().upper() not in ("", _IND_NATURE)
+
+
+def _leg_of(source) -> str:
+    """Map a row's ``source`` to a rank key. Anything unknown reads as deck."""
+    s = str(source or "")
+    return s if s in LEG_RANK_LEADING else "bdeck"
+
+
+def _absent(val) -> bool:
+    if val is None:
+        return True
+    try:
+        return float(val) != float(val)          # NaN
+    except (TypeError, ValueError):
+        return False
+
+
+def resolve_conflicts(df, now=None, revision_window_h: float = REVISION_WINDOW_H,
+                      log=None):
+    """Collapse a multi-leg fix frame to ONE row per (SID, synoptic hour).
+
+    THE DEDUP GUARANTEE. Every leg emits ``parse_bdeck``'s schema and they are
+    concatenated freely; this is the single place that decides who wins an hour.
+    Whatever comes in, exactly one row per (SID, time) comes out, so a fix can
+    never be double-counted into ACE no matter how many legs saw it.
+
+    WHY A RANKING RATHER THAN A TIMESTAMP. "Newest published wins" is the policy,
+    but none of these products carries a per-record publication time, so the
+    ranking encodes measured publication behaviour instead. The case that set it,
+    12W (Dolphin) at 2026-07-30 03:16Z:
+
+        DTG        b-deck            tcvitals
+        29 12Z     130 kt / 934 mb   130 kt / 935 mb
+        29 18Z     140 kt / 921 mb   145 kt / 915 mb   <- same position, 5 kt apart
+        30 00Z     140 kt / 921 mb   140 kt / 921 mb
+
+    The deck had 18Z by 19:22Z on the 29th while tcvitals still stopped at 12Z,
+    so tcvitals published its 18Z value LATER — and higher. The old rule
+    (``prefer_bdeck``, deck always wins) discarded it, and the site reported a
+    140 kt peak for a storm every other site had at 145 kt / 915 mb.
+
+    ENRICHMENT, NOT MIXING. A winner missing ``pressure_mb``/``rmw_nm``/radii
+    takes them from the best-ranked other row at the same hour **that agrees on
+    wind**. That is what lets the pressure-less warning leg win an hour without
+    dropping the MSLP another leg has, while never stapling a 915 mb from a
+    145 kt analysis onto a 140 kt one.
+
+    ``log`` receives one line per overridden hour, so a leg taking an hour off
+    the deck is visible in the workflow output rather than silent.
+    """
+    import pandas as pd
+
+    if df is None or getattr(df, "empty", True):
+        return df
+    if "SID" not in df.columns or "time" not in df.columns:
+        return df
+    now = now or dt.datetime.utcnow()
+
+    cutoff = now - dt.timedelta(hours=float(revision_window_h))
+    rows = df.to_dict("records")
+    best: dict[tuple, dict] = {}
+    peers: dict[tuple, list] = {}
+    for rec in rows:
+        key = (rec.get("SID"), rec.get("time"))
+        peers.setdefault(key, []).append(rec)
+
+    out = []
+    for key, group in peers.items():
+        t = key[1]
+        leading = (t is not None and t >= cutoff)
+        ranks = LEG_RANK_LEADING if leading else LEG_RANK_SETTLED
+        group = sorted(group, key=lambda r: ranks.get(_leg_of(r.get("source")), 0),
+                       reverse=True)
+        winner = dict(group[0])
+        if len(group) > 1:
+            # NATURE FIRST, and deliberately WITHOUT the wind guard below.
+            # A leg that wins an hour on intensity may still be untyped
+            # (tcvitals has no dev-level field at all), and an untyped fix is
+            # excluded from ACE — so letting an untyped winner overwrite a typed
+            # peer would silently DELETE ACE that the deck had already
+            # established. Measured on 12W: without this, storm ACE fell from
+            # 12.460 to 2.805 while the track looked perfectly healthy. The two
+            # legs agree it is the same system at the same hour; a 5 kt
+            # disagreement about intensity says nothing about the dev level.
+            if not _nature_resolved(winner.get("ace_nature")):
+                for other in group[1:]:
+                    if _nature_resolved(other.get("ace_nature")):
+                        winner["nature"] = other.get("nature")
+                        winner["ace_nature"] = other.get("ace_nature")
+                        if _absent(winner.get("type_status")) or \
+                                winner.get("type_status") == "indeterminate":
+                            winner["type_status"] = other.get("type_status")
+                        break
+            w_wind = winner.get("wind_kt")
+            for col in _ENRICH_COLS:
+                if not _absent(winner.get(col)):
+                    continue
+                for other in group[1:]:
+                    # Same hour AND same analysed intensity, or we would be
+                    # describing a wind field the winner never had.
+                    if other.get("wind_kt") != w_wind:
+                        continue
+                    if not _absent(other.get(col)):
+                        winner[col] = other[col]
+                        break
+            # Log only a REAL override: a live leg taking an hour off the deck
+            # with a different intensity. The deck winning is the long-standing
+            # behaviour and printing it once per historical disagreement buries
+            # the two lines that matter under hundreds that do not.
+            loser = group[1]
+            if (log is not None
+                    and _leg_of(winner.get("source")) != "bdeck"
+                    and loser.get("wind_kt") != winner.get("wind_kt")):
+                log(f"      {key[0]} {t:%Y-%m-%d %HZ}: "
+                    f"{winner.get('source')} {winner.get('wind_kt'):.0f} kt "
+                    f"OVERRIDES {loser.get('source')} "
+                    f"{loser.get('wind_kt'):.0f} kt")
+        out.append(winner)
+
+    res = pd.DataFrame(out)
+    if not res.empty:
+        res = res.sort_values(["SID", "time"]).reset_index(drop=True)
+    return res
+
+
+# ---------------------------------------------------------------------------
 # Shared IBTrACS-vs-live storm merge (one storm per name, no double counting)
 # ---------------------------------------------------------------------------
 
