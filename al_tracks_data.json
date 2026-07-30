@@ -2,16 +2,16 @@
   "basin": "al",
   "basin_name": "North Atlantic",
   "year": 2026,
-  "updated": "2026-06-02 06:26 UTC",
-  "generated_utc": "2026-06-02T06:26:27Z",
-  "latest_fix_valid_utc": null,
-  "staleness_minutes": null,
+  "updated": "2026-07-30 03:22 UTC",
+  "generated_utc": "2026-07-30T03:22:37Z",
+  "latest_fix_valid_utc": "2026-07-24T00:00:00Z",
+  "staleness_minutes": 8842,
   "header": {
-    "named": 0,
+    "named": 2,
     "cat1plus": 0,
     "cat3plus": 0,
     "cat5": 0,
-    "total_ace": 0.0
+    "total_ace": 2.647
   },
   "vocab": {
     "named": "named storms",
@@ -19,5 +19,554 @@
     "cat3plus": "major hurricanes",
     "cat5": "category 5s"
   },
-  "storms": []
+  "storms": [
+    {
+      "sid": "NHC_AL022026",
+      "name": "BERTHA",
+      "season": 2026,
+      "start": "2026-07-21T00:00:00",
+      "end": "2026-07-23T18:00:00",
+      "peak_wind_kt": 50.0,
+      "peak_pressure_mb": 995.0,
+      "ace": 2.242,
+      "latest_fix_valid_utc": "2026-07-24T00:00:00Z",
+      "max_category": "TS",
+      "current_category": "TD",
+      "is_active": false,
+      "is_invest": false,
+      "is_ptc": false,
+      "spawn_sid": "NHC_AL912026",
+      "recent_invest": false,
+      "atcf_id": null,
+      "points": [
+        {
+          "t": "2026-07-17T12:00:00",
+          "lat": 25.6,
+          "lon": -83.5,
+          "wind_kt": 20.0,
+          "pressure_mb": 1018.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-17T18:00:00",
+          "lat": 25.8,
+          "lon": -83.6,
+          "wind_kt": 20.0,
+          "pressure_mb": 1017.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-18T00:00:00",
+          "lat": 26.0,
+          "lon": -83.7,
+          "wind_kt": 20.0,
+          "pressure_mb": 1016.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-18T06:00:00",
+          "lat": 26.2,
+          "lon": -84.0,
+          "wind_kt": 20.0,
+          "pressure_mb": 1016.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-18T12:00:00",
+          "lat": 26.7,
+          "lon": -84.0,
+          "wind_kt": 20.0,
+          "pressure_mb": 1015.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-18T18:00:00",
+          "lat": 27.3,
+          "lon": -84.1,
+          "wind_kt": 20.0,
+          "pressure_mb": 1015.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-19T00:00:00",
+          "lat": 27.7,
+          "lon": -84.6,
+          "wind_kt": 25.0,
+          "pressure_mb": 1013.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-19T06:00:00",
+          "lat": 27.8,
+          "lon": -85.3,
+          "wind_kt": 25.0,
+          "pressure_mb": 1012.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-07-19T12:00:00",
+          "lat": 27.9,
+          "lon": -85.3,
+          "wind_kt": 25.0,
+          "pressure_mb": 1011.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-07-19T18:00:00",
+          "lat": 27.5,
+          "lon": -85.0,
+          "wind_kt": 25.0,
+          "pressure_mb": 1010.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-07-20T00:00:00",
+          "lat": 27.7,
+          "lon": -85.0,
+          "wind_kt": 25.0,
+          "pressure_mb": 1008.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-07-20T06:00:00",
+          "lat": 28.4,
+          "lon": -85.3,
+          "wind_kt": 30.0,
+          "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-07-20T12:00:00",
+          "lat": 28.4,
+          "lon": -85.5,
+          "wind_kt": 30.0,
+          "pressure_mb": 1006.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-07-20T18:00:00",
+          "lat": 28.6,
+          "lon": -85.7,
+          "wind_kt": 30.0,
+          "pressure_mb": 1005.0,
+          "cls": "TD",
+          "nature": "TS"
+        },
+        {
+          "t": "2026-07-21T00:00:00",
+          "lat": 28.5,
+          "lon": -86.0,
+          "wind_kt": 35.0,
+          "pressure_mb": 1003.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              0,
+              60,
+              60,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-21T06:00:00",
+          "lat": 28.5,
+          "lon": -86.1,
+          "wind_kt": 45.0,
+          "pressure_mb": 998.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              0,
+              70,
+              70,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-21T12:00:00",
+          "lat": 28.8,
+          "lon": -86.2,
+          "wind_kt": 50.0,
+          "pressure_mb": 996.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              40,
+              80,
+              80,
+              0
+            ],
+            "50": [
+              0,
+              40,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-21T18:00:00",
+          "lat": 29.3,
+          "lon": -86.8,
+          "wind_kt": 50.0,
+          "pressure_mb": 995.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              70,
+              100,
+              40,
+              40
+            ],
+            "50": [
+              0,
+              40,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-22T00:00:00",
+          "lat": 29.4,
+          "lon": -87.4,
+          "wind_kt": 50.0,
+          "pressure_mb": 996.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              70,
+              100,
+              40,
+              40
+            ],
+            "50": [
+              0,
+              40,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-22T06:00:00",
+          "lat": 29.4,
+          "lon": -87.9,
+          "wind_kt": 45.0,
+          "pressure_mb": 998.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              60,
+              90,
+              60,
+              40
+            ]
+          }
+        },
+        {
+          "t": "2026-07-22T12:00:00",
+          "lat": 29.6,
+          "lon": -88.5,
+          "wind_kt": 45.0,
+          "pressure_mb": 998.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              60,
+              90,
+              60,
+              40
+            ]
+          }
+        },
+        {
+          "t": "2026-07-22T18:00:00",
+          "lat": 29.9,
+          "lon": -89.2,
+          "wind_kt": 40.0,
+          "pressure_mb": 1000.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              50,
+              140,
+              140,
+              30
+            ]
+          }
+        },
+        {
+          "t": "2026-07-23T00:00:00",
+          "lat": 29.4,
+          "lon": -90.5,
+          "wind_kt": 40.0,
+          "pressure_mb": 1002.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              50,
+              140,
+              140,
+              30
+            ]
+          }
+        },
+        {
+          "t": "2026-07-23T06:00:00",
+          "lat": 28.9,
+          "lon": -91.7,
+          "wind_kt": 40.0,
+          "pressure_mb": 1003.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              50,
+              140,
+              140,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-23T12:00:00",
+          "lat": 29.5,
+          "lon": -92.6,
+          "wind_kt": 40.0,
+          "pressure_mb": 1003.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              20,
+              140,
+              140,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-23T18:00:00",
+          "lat": 29.8,
+          "lon": -93.9,
+          "wind_kt": 35.0,
+          "pressure_mb": 1006.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              0,
+              120,
+              120,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-07-24T00:00:00",
+          "lat": 30.0,
+          "lon": -95.2,
+          "wind_kt": 30.0,
+          "pressure_mb": 1008.0,
+          "cls": "TD",
+          "nature": "DS",
+          "radii": {
+            "34": [
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sid": "NHC_AL012026",
+      "name": "ARTHUR",
+      "season": 2026,
+      "start": "2026-06-17T12:00:00",
+      "end": "2026-06-18T00:00:00",
+      "peak_wind_kt": 40.0,
+      "peak_pressure_mb": 999.0,
+      "ace": 0.405,
+      "latest_fix_valid_utc": "2026-06-18T00:00:00Z",
+      "max_category": "TS",
+      "current_category": "TS",
+      "is_active": false,
+      "is_invest": false,
+      "is_ptc": false,
+      "spawn_sid": "NHC_AL902026",
+      "recent_invest": false,
+      "atcf_id": null,
+      "points": [
+        {
+          "t": "2026-06-15T00:00:00",
+          "lat": 23.5,
+          "lon": -100.3,
+          "wind_kt": 15.0,
+          "pressure_mb": 1011.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-15T06:00:00",
+          "lat": 24.3,
+          "lon": -100.5,
+          "wind_kt": 15.0,
+          "pressure_mb": 1011.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-15T12:00:00",
+          "lat": 25.0,
+          "lon": -100.8,
+          "wind_kt": 15.0,
+          "pressure_mb": 1011.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-15T18:00:00",
+          "lat": 25.7,
+          "lon": -100.5,
+          "wind_kt": 15.0,
+          "pressure_mb": 1011.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-16T00:00:00",
+          "lat": 26.3,
+          "lon": -100.0,
+          "wind_kt": 15.0,
+          "pressure_mb": 1009.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-16T06:00:00",
+          "lat": 26.7,
+          "lon": -99.2,
+          "wind_kt": 20.0,
+          "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-16T12:00:00",
+          "lat": 26.9,
+          "lon": -98.3,
+          "wind_kt": 20.0,
+          "pressure_mb": 1007.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-16T18:00:00",
+          "lat": 27.1,
+          "lon": -97.8,
+          "wind_kt": 25.0,
+          "pressure_mb": 1005.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-17T00:00:00",
+          "lat": 27.4,
+          "lon": -97.4,
+          "wind_kt": 25.0,
+          "pressure_mb": 1004.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-17T06:00:00",
+          "lat": 27.7,
+          "lon": -97.1,
+          "wind_kt": 30.0,
+          "pressure_mb": 1003.0,
+          "cls": "TD",
+          "nature": "DS"
+        },
+        {
+          "t": "2026-06-17T12:00:00",
+          "lat": 28.4,
+          "lon": -96.1,
+          "wind_kt": 35.0,
+          "pressure_mb": 1001.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              150,
+              150,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-06-17T18:00:00",
+          "lat": 28.8,
+          "lon": -96.1,
+          "wind_kt": 40.0,
+          "pressure_mb": 1001.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              0,
+              150,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "t": "2026-06-18T00:00:00",
+          "lat": 29.4,
+          "lon": -94.8,
+          "wind_kt": 35.0,
+          "pressure_mb": 999.0,
+          "cls": "TS",
+          "nature": "TS",
+          "radii": {
+            "34": [
+              0,
+              150,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    }
+  ]
 }
