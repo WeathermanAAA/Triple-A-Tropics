@@ -275,5 +275,54 @@ class OverlapPartitionTests(unittest.TestCase):
         self.assertTrue(jl._overlap_rows(pd.DataFrame(), other).empty)
 
 
+class LegFailureIsolationTests(unittest.TestCase):
+    """One dead leg must cost that leg and nothing else.
+
+    Four legs poll independently, so there are combinations where a partial
+    outage could plausibly produce a corrupt frame rather than a smaller one.
+    The invariant under EVERY combination is the same: one row per (SID, hour),
+    no untyped fix, and a clean degrade towards the b-deck.
+    """
+
+    T18 = dt.datetime(2026, 7, 29, 18)
+    T00 = dt.datetime(2026, 7, 30, 0)
+
+    def _frame(self, legs):
+        rows = [_row("live-JTWC", self.T18, 140, 921, "TS"),
+                _row("live-JTWC", self.T00, 140, 921, "TS")]
+        if "tcvitals" in legs:
+            rows.append(_row("live-tcvitals", self.T18, 145, 915))
+        if "knackwx" in legs:
+            rows.append(_row("live-knackwx", self.T00, 140, 921, "TS"))
+        if "warning" in legs:
+            rows.append(_row("live-warning", self.T00, 140))
+        return pd.DataFrame(rows)
+
+    def test_every_outage_combination_keeps_the_frame_sound(self):
+        import itertools
+        all_legs = ("tcvitals", "knackwx", "warning")
+        for n in range(len(all_legs) + 1):
+            for live in itertools.combinations(all_legs, n):
+                out = ac.resolve_conflicts(self._frame(live), now=NOW)
+                with self.subTest(live=live or ("none",)):
+                    self.assertEqual(len(out), 2)
+                    self.assertEqual(
+                        int((out.groupby(["SID", "time"]).size() > 1).sum()), 0)
+                    self.assertTrue(all(tcv.is_resolved(v)
+                                        for v in out["ace_nature"]))
+
+    def test_tcvitals_is_the_leg_carrying_the_145(self):
+        with_tcv = ac.resolve_conflicts(self._frame(("tcvitals",)), now=NOW)
+        without = ac.resolve_conflicts(self._frame(("knackwx", "warning")),
+                                       now=NOW)
+        self.assertEqual(with_tcv["wind_kt"].max(), 145.0)
+        self.assertEqual(without["wind_kt"].max(), 140.0)
+
+    def test_total_outage_degrades_to_the_deck(self):
+        out = ac.resolve_conflicts(self._frame(()), now=NOW)
+        self.assertEqual(list(out["source"]), ["live-JTWC", "live-JTWC"])
+        self.assertEqual(out["wind_kt"].max(), 140.0)
+
+
 if __name__ == "__main__":
     unittest.main()
