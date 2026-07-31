@@ -209,7 +209,20 @@
       ' border-radius:3px;overflow:hidden;}',
       '.gv-bar span{position:absolute;left:0;top:0;height:100%;border-radius:3px;}',
       '.gv-bar-climo{background:rgba(150,170,200,.28);}',
-      '.gv-bar-prob{height:100%;}'
+      '.gv-bar-prob{height:100%;}',
+      // Ensemble paintball: member chips + hover/solo affordances. CSS class
+      // beats a presentation attribute, so .gv-ens-hot overrides the inline
+      // stroke-width/opacity without !important.
+      '.gv-ens-track{cursor:pointer;}',
+      '.gv-ens-track.gv-ens-hot{stroke-width:3px;opacity:1;}',
+      '.gv-ens-hit{cursor:pointer;}',
+      '.gv-ens-strip{display:flex;flex-wrap:wrap;gap:3px;margin-top:8px;}',
+      '.gv-ens-chip{width:16px;height:16px;border-radius:3px;padding:0;',
+      ' border:1px solid var(--border,#243244);cursor:pointer;opacity:.85;}',
+      '.gv-ens-chip.solo{outline:2px solid #ffffff;opacity:1;}',
+      '.gv-ens-chip.off{opacity:.18;}',
+      '.gv-ens-readout{font-size:11px;color:var(--muted,#8ea2bd);min-height:16px;',
+      ' margin-top:6px;}'
     ].join('');
     d.head.appendChild(s);
   };
@@ -302,6 +315,10 @@
     // SHIPS is AL/EP/CP only - no JTWC-basin SHIPS files exist at all, so the
     // tab is offered only where the product can exist. It loads on demand.
     if (this._shipsPossible()) tabs.push({ id: 'ships', label: 'SHIPS' });
+    // The ensemble paintball is offered in EVERY basin: the ECMWF track BUFR
+    // is global and does not depend on any agency's deck, so it is the one
+    // guidance product with equal quality everywhere. Loads on demand.
+    tabs.push({ id: 'ensemble', label: 'Ensemble' });
     tabs.push({ id: 'aids', label: 'Aids' });
 
     this.dom.tabs.innerHTML = '';
@@ -317,6 +334,7 @@
   };
 
   GuidanceViewer.prototype._select = function (id) {
+    if (id !== 'ensemble') this._stopSweep();
     this.tab = id;
     var btns = this.dom.tabs.querySelectorAll('.gv-tab');
     for (var i = 0; i < btns.length; i++) {
@@ -332,6 +350,7 @@
     else if (this.tab === 'intensity') b.appendChild(this._intensityPanel());
     else if (this.tab === 'consensus') b.appendChild(this._consensusPanel());
     else if (this.tab === 'ships') b.appendChild(this._shipsPanel());
+    else if (this.tab === 'ensemble') b.appendChild(this._ensemblePanel());
     else b.appendChild(this._aidsPanel());
   };
 
@@ -992,6 +1011,361 @@
     return box;
   };
 
+  // =========================================================================
+  // ENSEMBLE PAINTBALL - member tracks as VECTORS, so member selection,
+  // brushing, solo/hide and the member-axis sweep are free client-side
+  // interactions on the same document, not render jobs.
+  // =========================================================================
+  GuidanceViewer.prototype._stopSweep = function () {
+    if (this.ensTimer) { clearInterval(this.ensTimer); this.ensTimer = null; }
+    this.ensPlaying = false;
+  };
+
+  /* The member-axis animation: solo each visible member in turn. Animating
+   * across MEMBERS (rather than time) is what a vector document buys - a
+   * pre-rendered paintball PNG cannot do this at all. */
+  GuidanceViewer.prototype._toggleSweep = function () {
+    var self = this;
+    if (this.ensPlaying) { this._stopSweep(); this._paint(); return; }
+    this.ensPlaying = true;
+    this.ensTimer = setInterval(function () {
+      // The sweep repaints the CURRENT tab, so it must stop itself the moment
+      // the user navigates away - otherwise it keeps redrawing whatever tab
+      // they switched to, every tick.
+      if (self.tab !== 'ensemble' || !self.ens || !self.ens.sources) {
+        self._stopSweep();
+        return;
+      }
+      var src = self.ens.sources[self.ensSrcIdx] || {};
+      var ids = (src.members || []).map(function (m) { return String(m.id); })
+        .filter(function (id) { return !self.ensHidden[id]; });
+      if (!ids.length) { self._stopSweep(); self._paint(); return; }
+      self.ensSolo = ids[(ids.indexOf(self.ensSolo) + 1) % ids.length];
+      self._paint();
+    }, 320);
+    this._paint();
+  };
+
+  function memberLabel(src, id) {
+    // ECMWF members are numbered 1..51; GEFS members carry their aid id.
+    return /^\d+$/.test(id) ? 'member ' + id : id;
+  }
+
+  GuidanceViewer.prototype._ensemblePanel = function () {
+    var self = this, wrap = el('div');
+
+    // Load on demand, like SHIPS: three states so a re-paint mid-fetch shows
+    // "loading" rather than a premature "none".
+    if (this.ens === undefined) {
+      this.ens = null;
+      fetch(this.base + '/' + encodeURIComponent(this.stormLock) +
+            '/ensemble_v2.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d2) { self.ens = d2; if (self.tab === 'ensemble') self._paint(); })
+        .catch(function () { self.ens = false; if (self.tab === 'ensemble') self._paint(); });
+    }
+    if (this.ens === null) {
+      wrap.appendChild(el('div', 'gv-status', 'Loading ensemble tracks…'));
+      return wrap;
+    }
+    if (!this.ens) {
+      wrap.appendChild(el('div', 'gv-status',
+        'No ensemble-track document for this storm yet.'));
+      return wrap;
+    }
+    var doc = this.ens, sources = doc.sources || [];
+    if (!sources.length) {
+      wrap.appendChild(el('div', 'gv-status', 'Document carries no ensemble source.'));
+      return wrap;
+    }
+    if (this.ensSrcIdx == null || this.ensSrcIdx >= sources.length) {
+      this.ensSrcIdx = 0;
+      for (var si = 0; si < sources.length; si++) {
+        if (sources[si].model === 'ecmwf_ens') { this.ensSrcIdx = si; break; }
+      }
+    }
+    if (!this.ensHidden) this.ensHidden = {};
+    var src = sources[this.ensSrcIdx];
+
+    // ---- controls: one source at a time (two SSHWS-coloured bundles on one
+    // map would be indistinguishable), plus the member sweep -----------------
+    var bar = el('div', 'gv-head');
+    var seg = el('div', 'gv-tabs');
+    sources.forEach(function (s2, i) {
+      var b = el('button', 'gv-tab' + (i === self.ensSrcIdx ? ' active' : ''),
+                 esc(s2.label) + ' · ' + s2.n_members);
+      b.type = 'button';
+      b.addEventListener('click', function () {
+        self.ensSrcIdx = i; self.ensSolo = null; self.ensHidden = {};
+        self._stopSweep(); self._paint();
+      });
+      seg.appendChild(b);
+    });
+    bar.appendChild(seg);
+    var play = el('button', 'gv-tab' + (this.ensPlaying ? ' active' : ''),
+                  this.ensPlaying ? 'Stop sweep' : 'Sweep members');
+    play.type = 'button';
+    play.setAttribute('data-role', 'sweep');
+    play.addEventListener('click', function () { self._toggleSweep(); });
+    bar.appendChild(play);
+    bar.appendChild(el('span', 'gv-sub',
+      (src.cycle ? 'cycle ' + esc(src.cycle) + 'Z · ' : '') +
+      (src.matched_by === 'name'
+        ? 'matched by name (upstream id ' + esc(src.upstream_id || '?') + ')'
+        : 'matched by ' + esc(src.matched_by || '?'))));
+    wrap.appendChild(bar);
+
+    // ---- geometry: continuous-longitude frame, unwrapped SEQUENTIALLY so a
+    // member that crosses the antimeridian keeps a monotone axis -------------
+    var best = ((this.doc && this.doc.best_track) || []).filter(function (p) {
+      return p.lat != null && p.lon != null;
+    });
+    var ref = best.length ? best[0].lon : null;
+    for (var mi = 0; ref == null && mi < src.members.length; mi++) {
+      var ll = src.members[mi].lon || [];
+      for (var k0 = 0; k0 < ll.length; k0++) {
+        if (ll[k0] != null) { ref = ll[k0]; break; }
+      }
+    }
+    if (ref == null) {
+      wrap.appendChild(el('div', 'gv-status', 'No positioned members in this source.'));
+      return wrap;
+    }
+    function unwrap(lons) {
+      var out = [], prev = null;
+      for (var i2 = 0; i2 < lons.length; i2++) {
+        var v = lons[i2];
+        if (v == null) { out.push(null); continue; }
+        var w2 = contLon(v, prev == null ? ref : prev);
+        out.push(w2); prev = w2;
+      }
+      return out;
+    }
+
+    var taus = src.taus || [];
+    var tracks = src.members.map(function (m) {
+      var lon = unwrap(m.lon || []);
+      var peak = null, pmin = null;
+      (m.vmax || []).forEach(function (v) {
+        if (v != null && (peak == null || v > peak)) peak = v;
+      });
+      (m.mslp || []).forEach(function (v) {
+        if (v != null && (pmin == null || v < pmin)) pmin = v;
+      });
+      var pts = [];
+      for (var i3 = 0; i3 < (m.lat || []).length; i3++) {
+        pts.push((m.lat[i3] == null || lon[i3] == null) ? null
+          : [lon[i3], m.lat[i3], (m.vmax || [])[i3], taus[i3]]);
+      }
+      return { id: String(m.id), pts: pts, peak: peak, pmin: pmin };
+    });
+    var bestLon = unwrap(best.map(function (p) { return p.lon; }));
+    var bestPts = best.map(function (p, i4) {
+      return bestLon[i4] == null ? null : [bestLon[i4], p.lat, p.vmax];
+    }).filter(Boolean);
+
+    // Extent over the VISIBLE members (all members when everything is hidden),
+    // never over the solo alone - the frame must hold still during a sweep or
+    // the map rescales on every tick and nothing is comparable.
+    var xs = [], ys = [];
+    function accum(t3) {
+      t3.pts.forEach(function (p2) {
+        if (p2) { xs.push(p2[0]); ys.push(p2[1]); }
+      });
+    }
+    tracks.forEach(function (t3) { if (!self.ensHidden[t3.id]) accum(t3); });
+    if (!xs.length) tracks.forEach(accum);
+    bestPts.forEach(function (p2) { xs.push(p2[0]); ys.push(p2[1]); });
+    if (!xs.length) {
+      wrap.appendChild(el('div', 'gv-status', 'No positioned members in this source.'));
+      return wrap;
+    }
+
+    var W = 760, H = 480, PAD = { l: 44, r: 14, t: 14, b: 34 };
+    var lo = Math.min.apply(null, xs), hi = Math.max.apply(null, xs);
+    var la = Math.min.apply(null, ys), ha = Math.max.apply(null, ys);
+    var mx = Math.max((hi - lo) * 0.06, 0.75), my = Math.max((ha - la) * 0.06, 0.75);
+    lo -= mx; hi += mx; la -= my; ha += my;
+    var iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
+    function X(v) { return PAD.l + (v - lo) / (hi - lo) * iw; }
+    function Y(v) { return PAD.t + (ha - v) / (ha - la) * ih; }
+    function pathD(pts) {
+      var d3 = [], pen = false;
+      for (var i5 = 0; i5 < pts.length; i5++) {
+        var p3 = pts[i5];
+        if (!p3) { pen = false; continue; }
+        d3.push((pen ? 'L' : 'M') + X(p3[0]).toFixed(1) + ' ' + Y(p3[1]).toFixed(1));
+        pen = true;
+      }
+      return d3.join(' ');
+    }
+
+    var svg = ['<svg class="gv-svg" viewBox="0 0 ' + W + ' ' + H +
+               '" preserveAspectRatio="xMidYMid meet" role="img" ' +
+               'aria-label="Ensemble member forecast tracks">'];
+    var gs = niceStep((hi - lo) / 6);
+    for (var gx = Math.ceil(lo / gs) * gs; gx <= hi; gx += gs) {
+      svg.push('<line x1="' + X(gx).toFixed(1) + '" y1="' + PAD.t + '" x2="' +
+        X(gx).toFixed(1) + '" y2="' + (H - PAD.b) + '" stroke="#1b2635" stroke-width="1"/>');
+      svg.push('<text x="' + X(gx).toFixed(1) + '" y="' + (H - PAD.b + 14) +
+        '" fill="#6d829e" font-size="9.5" text-anchor="middle">' + esc(fmtLon(gx)) + '</text>');
+    }
+    for (var gy = Math.ceil(la / gs) * gs; gy <= ha; gy += gs) {
+      svg.push('<line x1="' + PAD.l + '" y1="' + Y(gy).toFixed(1) + '" x2="' + (W - PAD.r) +
+        '" y2="' + Y(gy).toFixed(1) + '" stroke="#1b2635" stroke-width="1"/>');
+      svg.push('<text x="' + (PAD.l - 5) + '" y="' + (Y(gy) + 3).toFixed(1) +
+        '" fill="#6d829e" font-size="9.5" text-anchor="end">' +
+        Math.abs(gy).toFixed(gs < 1 ? 1 : 0) + (gy < 0 ? '°S' : '°N') + '</text>');
+    }
+
+    // Verifying best track under the bundle, for the same reason the spaghetti
+    // panel draws it: an unanchored bundle is decoration.
+    if (bestPts.length > 1) {
+      svg.push('<path d="' + bestPts.map(function (p4, i6) {
+        return (i6 ? 'L' : 'M') + X(p4[0]).toFixed(1) + ' ' + Y(p4[1]).toFixed(1);
+      }).join(' ') + '" fill="none" stroke="' + BEST_COLOR +
+        '" stroke-width="2.2" stroke-linejoin="round" opacity="0.9"/>');
+    }
+
+    // Member spines: one path per member, coloured by the member's PEAK
+    // intensity (the paintball convention). Solo mode dims the rest instead of
+    // removing them, so the soloed track keeps its context.
+    var soloTrack = null;
+    tracks.forEach(function (t4) {
+      if (self.ensHidden[t4.id]) return;
+      if (self.ensSolo === t4.id) { soloTrack = t4; }
+      var dim = self.ensSolo != null && self.ensSolo !== t4.id;
+      var col = t4.peak == null ? '#5d6b80' : ktColor(t4.peak);
+      svg.push('<path class="gv-ens-track" data-track="' + esc(t4.id) + '" d="' +
+        pathD(t4.pts) + '" fill="none" stroke="' + col + '" stroke-width="' +
+        (dim ? 1 : 1.5) + '" stroke-linejoin="round" opacity="' +
+        (dim ? 0.10 : 0.55) + '"/>');
+    });
+
+    // The soloed member re-drawn on top with per-leg SSHWS colour and daily
+    // dots - the detail view the dimmed bundle is context for.
+    if (soloTrack) {
+      var prev3 = null;
+      soloTrack.pts.forEach(function (p5) {
+        if (!p5) { prev3 = null; return; }
+        if (prev3) {
+          svg.push('<line x1="' + X(prev3[0]).toFixed(1) + '" y1="' + Y(prev3[1]).toFixed(1) +
+            '" x2="' + X(p5[0]).toFixed(1) + '" y2="' + Y(p5[1]).toFixed(1) +
+            '" stroke="' + (p5[2] != null ? ktColor(p5[2]) : '#cfd8e6') +
+            '" stroke-width="2.6" stroke-linecap="round"/>');
+        }
+        prev3 = p5;
+      });
+      soloTrack.pts.forEach(function (p5) {
+        if (!p5 || p5[3] == null || p5[3] % 24 !== 0) return;
+        svg.push('<circle cx="' + X(p5[0]).toFixed(1) + '" cy="' + Y(p5[1]).toFixed(1) +
+          '" r="2.6" fill="' + (p5[2] != null ? ktColor(p5[2]) : '#cfd8e6') +
+          '" stroke="#0a0d12" stroke-width="0.7"/>');
+        if (p5[3] % 48 === 0) {
+          svg.push('<text x="' + (X(p5[0]) + 5).toFixed(1) + '" y="' + (Y(p5[1]) - 4).toFixed(1) +
+            '" fill="#cfe3f7" font-size="8.5" font-weight="700">' + p5[3] + 'h</text>');
+        }
+      });
+    }
+
+    // Invisible wide hit paths on top: the brushing targets. A 1.5 px stroke
+    // is not a hoverable object; 9 px of transparent stroke is.
+    tracks.forEach(function (t5) {
+      if (self.ensHidden[t5.id]) return;
+      svg.push('<path class="gv-ens-hit" data-mid="' + esc(t5.id) + '" d="' +
+        pathD(t5.pts) + '" fill="none" stroke="rgba(0,0,0,0)" stroke-width="9"/>');
+    });
+    svg.push('</svg>');
+
+    // The SVG gets its OWN container: innerHTML on a node that already holds
+    // the control bar would serialize and re-parse it, silently detaching every
+    // button listener bound above.
+    var stage = el('div');
+    stage.innerHTML = svg.join('');
+    wrap.appendChild(stage);
+
+    var readout = el('div', 'gv-ens-readout', '');
+    wrap.appendChild(readout);
+
+    // ---- member strip: one chip per member, the "member axis" made tangible.
+    var strip = el('div', 'gv-ens-strip');
+    tracks.forEach(function (t6) {
+      var c = d.createElement('button');
+      c.type = 'button';
+      c.className = 'gv-ens-chip' + (self.ensSolo === t6.id ? ' solo' : '') +
+                    (self.ensHidden[t6.id] ? ' off' : '');
+      c.style.background = t6.peak == null ? '#5d6b80' : ktColor(t6.peak);
+      c.title = memberLabel(src, t6.id) +
+        (t6.peak != null ? ' · peak ' + Math.round(t6.peak) + ' kt' : '') +
+        ' — click to solo, Ctrl/⌘-click to hide';
+      c.setAttribute('data-mid', t6.id);
+      strip.appendChild(c);
+    });
+    wrap.appendChild(strip);
+
+    // ---- shared interaction handler for tracks AND chips -------------------
+    function trackOf(mid) {
+      for (var i7 = 0; i7 < tracks.length; i7++) {
+        if (tracks[i7].id === mid) return tracks[i7];
+      }
+      return null;
+    }
+    function onPick(e) {
+      var mid = e.target && e.target.getAttribute &&
+                e.target.getAttribute('data-mid');
+      if (!mid) return;
+      self._stopSweep();
+      if (e.ctrlKey || e.metaKey) {
+        if (self.ensHidden[mid]) delete self.ensHidden[mid];
+        else self.ensHidden[mid] = true;
+        if (self.ensSolo === mid) self.ensSolo = null;
+      } else {
+        self.ensSolo = (self.ensSolo === mid) ? null : mid;
+      }
+      self._paint();
+    }
+    stage.addEventListener('click', onPick);
+    strip.addEventListener('click', onPick);
+    stage.addEventListener('pointerover', function (e) {
+      var mid = e.target && e.target.getAttribute &&
+                e.target.getAttribute('data-mid');
+      if (!mid) return;
+      var main = stage.querySelector('[data-track="' + mid + '"]');
+      if (main) main.classList.add('gv-ens-hot');
+      var t7 = trackOf(mid);
+      readout.textContent = memberLabel(src, mid) +
+        (t7 && t7.peak != null
+          ? ' · peak ' + Math.round(t7.peak) + ' kt (' + ktToCat(t7.peak) + ')' : '') +
+        (t7 && t7.pmin != null ? ' · min ' + Math.round(t7.pmin) + ' hPa' : '');
+    });
+    stage.addEventListener('pointerout', function (e) {
+      var mid = e.target && e.target.getAttribute &&
+                e.target.getAttribute('data-mid');
+      if (!mid) return;
+      var main = stage.querySelector('[data-track="' + mid + '"]');
+      if (main) main.classList.remove('gv-ens-hot');
+      readout.textContent = '';
+    });
+
+    // ---- legend + notes ----------------------------------------------------
+    var visible = tracks.filter(function (t8) { return !self.ensHidden[t8.id]; }).length;
+    var leg = [];
+    if (bestPts.length > 1) {
+      leg.push('<span><i style="background:' + BEST_COLOR + '"></i>Best track (verifying)</span>');
+    }
+    leg.push('<span><i style="background:#43536b"></i>' + visible + ' of ' +
+      tracks.length + ' member tracks · coloured by peak intensity</span>');
+    ['TD', 'TS', 'C1', 'C2', 'C3', 'C4', 'C5'].forEach(function (cat) {
+      leg.push('<span><i class="dot" style="background:' + SSHS_COLORS[cat] + '"></i>' + cat + '</span>');
+    });
+    wrap.appendChild(el('div', 'gv-legend', leg.join('')));
+    wrap.appendChild(el('div', 'gv-note',
+      'Hover a track or chip to inspect a member · click to solo · ' +
+      'Ctrl/⌘-click to hide · Sweep steps through members one at a time. ' +
+      esc(doc.note || '')));
+    return wrap;
+  };
+
   /* A tiny inline sparkline. Returns SVG markup. */
   function sparkline(vals, taus, w, h, color) {
     var ok = [];
@@ -1033,10 +1407,11 @@
   };
 
   // ---- lifecycle (the shell pauses a hidden tab) --------------------------
-  GuidanceViewer.prototype._pause = function () { /* no timers to stop */ };
+  GuidanceViewer.prototype._pause = function () { this._stopSweep(); };
   GuidanceViewer.prototype._resume = function () { /* re-render is not needed */ };
   GuidanceViewer.prototype.destroy = function () {
     this._dead = true;
+    this._stopSweep();
     if (this.root) this.root.innerHTML = '';
   };
 

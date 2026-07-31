@@ -211,8 +211,28 @@ def _one_bufr_storm(ec, h) -> Optional[dict]:
     }
 
 
+def _dedupe_storms(storms: list) -> list:
+    """One record per ECMWF storm id, keeping the one with the most members.
+
+    A cycle's BUFR can carry more messages than distinct systems; letting a
+    genuine duplicate through would make the NAME match ambiguous and drop a
+    storm that actually has a perfectly good ensemble.
+    """
+    best: dict = {}
+    for s in storms:
+        k = s["storm_id"]
+        if k not in best or len(s["members"]) > len(best[k]["members"]):
+            best[k] = s
+    return list(best.values())
+
+
 def fetch_ecmwf(cycle: str, opener: Optional[Callable] = None) -> list:
-    """Decode the ECMWF ensemble tracks for ``YYYYMMDDHH``, or [] if absent."""
+    """Decode the ECMWF ensemble tracks for ``YYYYMMDDHH``, or [] if absent.
+
+    Also [] when eccodes is not importable or the decode fails: the paintball
+    then degrades to GEFS-only rather than failing the whole publish - the
+    a-deck half needs no BUFR machinery at all.
+    """
     opener = opener or _http_get
     ymd, hh = cycle[:8], cycle[8:10]
     if hh not in ECMWF_CYCLES:
@@ -223,10 +243,44 @@ def fetch_ecmwf(cycle: str, opener: Optional[Callable] = None) -> list:
     except Exception as e:  # noqa: BLE001 - a not-yet-published cycle is normal
         log.info("  ECMWF %s not available (%s)", cycle, e)
         return []
-    storms = decode_ecmwf_bufr(raw)
+    try:
+        storms = _dedupe_storms(decode_ecmwf_bufr(raw))
+    except Exception as e:  # noqa: BLE001 - incl. ImportError: no eccodes
+        log.warning("  ECMWF %s: decode failed (%s: %s) - GEFS-only",
+                    cycle, type(e).__name__, e)
+        return []
     log.info("  ECMWF %s: %d storm(s), %d member(s) each",
              cycle, len(storms), storms[0]["members"].__len__() if storms else 0)
     return storms
+
+
+def cycle_candidates(now: Optional[dt.datetime] = None) -> list:
+    """The 00/12Z cycles worth trying, newest first.
+
+    ECMWF open data publishes the ENS track file ~7-9 h after cycle time, so
+    the newest candidate often 404s - that costs one request and the fallback
+    finds the previous cycle.
+    """
+    t = now or dt.datetime.now(dt.timezone.utc)
+    out: list = []
+    for _ in range(4):
+        hh = 12 if t.hour >= 12 else 0
+        c = t.replace(hour=hh, minute=0, second=0, microsecond=0)
+        s = c.strftime("%Y%m%d%H")
+        if s not in out:
+            out.append(s)
+        t = c - dt.timedelta(hours=12)
+    return out
+
+
+def latest_ecmwf(opener: Optional[Callable] = None,
+                 now: Optional[dt.datetime] = None) -> tuple:
+    """``(cycle, storms)`` for the newest PUBLISHED cycle, or ``(None, [])``."""
+    for c in cycle_candidates(now):
+        storms = fetch_ecmwf(c, opener)
+        if storms:
+            return c, storms
+    return None, []
 
 
 def _norm_name(s: str) -> str:
@@ -242,7 +296,10 @@ def match_ecmwf(storms: list, sid: str, name: str) -> Optional[dict]:
     only as a fallback for unnamed systems, and only when it is unambiguous.
     """
     want_name = _norm_name(name)
-    if want_name and want_name not in ("INVEST",):
+    # A name is only an identity when it IS one: "INVEST" is a placeholder
+    # shared by every invest, and a numberish "EP95" normalises to the 2-letter
+    # basin, which is not a name either. Those fall through to the id path.
+    if len(want_name) >= 3 and want_name != "INVEST":
         hits = [s for s in storms if _norm_name(s["name"]) == want_name]
         if len(hits) == 1:
             return hits[0]
@@ -273,15 +330,26 @@ def gefs_from_adeck(basin: str, cy: int, year: int,
     rows, _qc = atcf.parse_deck(text)
     if not rows:
         return None
-    cycle = max(r.dtg for r in rows)
+    # The deck's newest DTG is often the CARQ-only leading edge - guidance
+    # lands a couple of hours after the analysis, four times a day. Walk back
+    # through recent cycles and take the newest one that actually carries
+    # members, rather than reporting "no GEFS" during every leading-edge
+    # window.
+    cycles = sorted({r.dtg for r in rows}, reverse=True)[:3]
     per: dict = {}
-    for r in rows:
-        if r.dtg != cycle or r.rad not in (None, 34):
-            continue
-        kind, _ = aidcat.classify(r.tech, basin)
-        if kind is not aidcat.AidKind.ENSEMBLE_MEMBER:
-            continue
-        per.setdefault(r.tech, {})[r.tau] = r
+    cycle = None
+    for cand in cycles:
+        per = {}
+        for r in rows:
+            if r.dtg != cand or r.rad not in (None, 34):
+                continue
+            kind, _ = aidcat.classify(r.tech, basin)
+            if kind is not aidcat.AidKind.ENSEMBLE_MEMBER:
+                continue
+            per.setdefault(r.tech, {})[r.tau] = r
+        if per:
+            cycle = cand
+            break
     if not per:
         return None
     taus = sorted({t for v in per.values() for t in v})
@@ -301,7 +369,8 @@ def gefs_from_adeck(basin: str, cy: int, year: int,
 
 # ---------------------------------------------------------------------------
 def build_document(sid: str, name: str, basin: str, cy: int, year: int, *,
-                   ecmwf_storms: list, opener: Optional[Callable] = None,
+                   ecmwf_storms: list, ecmwf_cycle: Optional[str] = None,
+                   opener: Optional[Callable] = None,
                    now_iso: Optional[str] = None) -> Optional[dict]:
     sources = []
 
@@ -309,9 +378,11 @@ def build_document(sid: str, name: str, basin: str, cy: int, year: int, *,
     if ec_rec:
         sources.append({
             "model": "ecmwf_ens", "label": "ECMWF ENS",
+            "cycle": ecmwf_cycle,
             "n_members": len(ec_rec["members"]),
             "taus": ec_rec["taus"], "members": ec_rec["members"],
-            "matched_by": "name" if _norm_name(name) else "id",
+            "matched_by": ("name" if len(_norm_name(name)) >= 3
+                           and _norm_name(name) != "INVEST" else "id"),
             "upstream_id": ec_rec["storm_id"],
         })
 
@@ -341,56 +412,92 @@ def build_document(sid: str, name: str, basin: str, cy: int, year: int, *,
     }
 
 
+#: The site's live-storm feed - the ONE place that has both the sid CycloLab
+#: keys pages on AND the storm's NAME. The name is what the ECMWF match runs
+#: on (the id is untrustworthy across agencies), so the storm list comes from
+#: here rather than from deck discovery, which would neither carry names nor
+#: see JTWC-basin storms at all.
+FEED_URL = "https://cdn.triple-a-tropics.com/global_storms.geojson"
+
+_SID_RE = re.compile(r"^(?:NHC|JTWC)_([A-Z]{2})(\d{2})(\d{4})$")
+
+
+def active_storms_from_feed(opener: Optional[Callable] = None) -> list:
+    """``[{sid, name, basin, cy, year}]`` for every active storm on the site."""
+    opener = opener or _http_get
+    gj = json.loads(opener(FEED_URL))
+    out: dict = {}
+    for f in gj.get("features", []):
+        p = f.get("properties") or {}
+        sid = p.get("storm_id")
+        if not sid or not p.get("is_active"):
+            continue
+        m = _SID_RE.match(sid)
+        if not m:
+            continue
+        out.setdefault(sid, {
+            "sid": sid,
+            "name": (p.get("name") or "").strip(),
+            "basin": m.group(1).lower(),
+            "cy": int(m.group(2)),
+            "year": int(m.group(3)),
+        })
+    return list(out.values())
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out-dir", default="cyclolab_ens")
-    ap.add_argument("--cycle", default=None, help="YYYYMMDDHH (default: newest)")
-    ap.add_argument("--year", type=int, default=dt.date.today().year)
+    ap.add_argument("--cycle", default=None,
+                    help="ECMWF cycle YYYYMMDDHH (default: newest published)")
+    ap.add_argument("--sid", action="append", default=None,
+                    help="build only these sids (repeatable)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    cycle = a.cycle
-    if not cycle:
-        now = dt.datetime.now(dt.timezone.utc)
-        hh = "12" if now.hour >= 16 else "00"
-        d = now if now.hour >= 4 else now - dt.timedelta(days=1)
-        cycle = d.strftime("%Y%m%d") + hh
-    log.info("ensemble: cycle %s", cycle)
-    ecmwf = fetch_ecmwf(cycle)
+    storms = active_storms_from_feed()
+    if a.sid:
+        want = set(a.sid)
+        storms = [s for s in storms if s["sid"] in want]
+    log.info("ensemble: %d active storm(s) in the feed", len(storms))
 
-    from guidance.build_guidance import BASIN_AGENCY, discover_storms, sid_for
-    targets = discover_storms(a.year)
-    # ECMWF is global, so JTWC-basin storms get a paintball too even though
-    # NHC publishes no decks for them. They are added from the BUFR itself.
-    names: dict = {}
-    for s in ecmwf:
-        b = s["basin"]
-        if not b or not s["storm_id"][:2].isdigit():
-            continue
-        agency = BASIN_AGENCY.get(b, "NHC")
-        names[f"{agency}_{b.upper()}{int(s['storm_id'][:2]):02d}{a.year}"] = s
+    if a.cycle:
+        ec_cycle, ecmwf = a.cycle, fetch_ecmwf(a.cycle)
+    else:
+        ec_cycle, ecmwf = latest_ecmwf()
+    if not ecmwf:
+        log.warning("ensemble: no ECMWF cycle available - GEFS-only documents")
 
     out_dir = Path(a.out_dir)
     n = 0
-    seen = set()
-    for basin, cy in targets:
-        sid = sid_for(basin, cy, a.year)
-        rec = match_ecmwf(ecmwf, sid, "")
-        doc = build_document(sid, (rec or {}).get("name", ""), basin, cy, a.year,
-                             ecmwf_storms=ecmwf)
-        if not doc:
+    for st in storms:
+        try:
+            doc = build_document(st["sid"], st["name"], st["basin"], st["cy"],
+                                 st["year"], ecmwf_storms=ecmwf,
+                                 ecmwf_cycle=ec_cycle)
+        except Exception as e:  # noqa: BLE001 - one storm must not sink the run
+            log.warning("  %s: FAILED %s: %s", st["sid"], type(e).__name__, e)
             continue
-        seen.add(sid)
-        d = out_dir / sid
+        if not doc:
+            log.info("  %s: no ensemble source (skipped)", st["sid"])
+            continue
+        d = out_dir / st["sid"]
         d.mkdir(parents=True, exist_ok=True)
         (d / "ensemble_v2.json").write_text(
             json.dumps(doc, separators=(",", ":")), encoding="utf-8")
         n += 1
-        log.info("  %s -> %s", sid,
-                 ", ".join(f"{s['label']} {s['n_members']}m" for s in doc["sources"]))
+        log.info("  %s (%s) -> %s", st["sid"], st["name"] or "unnamed",
+                 ", ".join(f"{s['label']} {s['n_members']}m"
+                           for s in doc["sources"]))
     log.info("ensemble: wrote %d document(s) to %s", n, out_dir)
+    # Active storms with NOTHING built is a broken run, not a quiet basin -
+    # GEFS alone should cover any NHC storm, and ECMWF any JTWC storm.
+    if storms and n == 0:
+        log.error("ensemble: %d active storm(s) but nothing was built",
+                  len(storms))
+        return 1
     return 0
 
 

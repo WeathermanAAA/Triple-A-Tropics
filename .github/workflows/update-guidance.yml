@@ -47,10 +47,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Deliberately minimal: the ingest is stdlib + requests. No pandas, no
-      # numpy - this job parses text decks and writes JSON.
+      # Deliberately minimal: the deck/SHIPS ingest is stdlib + requests.
+      # eccodes (its modern wheels bundle the C library) is only for the
+      # ensemble builder's ECMWF BUFR decode - and if it ever fails to import
+      # on a runner, fetch_ecmwf catches it and the ensemble documents degrade
+      # to GEFS-only rather than failing the job.
       - name: Install deps
-        run: pip install requests
+        run: pip install requests eccodes
 
       - name: Build per-storm guidance documents
         run: |
@@ -66,6 +69,17 @@ jobs:
         run: |
           set -euo pipefail
           python -m guidance.build_ships --out-dir cyclolab_ships
+
+      # Ensemble paintball documents: ECMWF ENS from the open-data track BUFR
+      # (newest published 00/12Z cycle, found by walking back) + GEFS members
+      # from the same a-decks the guidance build reads. The storm list comes
+      # from the site's live feed because that is the one source carrying both
+      # the CycloLab sid AND the storm NAME - and the ECMWF match runs on the
+      # name, since ECMWF numbers storms on its own sequence.
+      - name: Build per-storm ensemble documents
+        run: |
+          set -euo pipefail
+          python -m guidance.build_ensemble --out-dir cyclolab_ens
 
       # Sync to R2 alongside the existing per-storm CycloLab objects. NOT
       # --delete: the legacy guidance.json under the same prefix is written by
@@ -110,4 +124,17 @@ jobs:
             echo "Synced $(find cyclolab_ships -name 'ships_v2.json' | wc -l) SHIPS document(s) to R2."
           else
             echo "No SHIPS documents built (no archived bulletins yet)."
+          fi
+
+          # Ensemble documents, same posture: own include, never --delete.
+          if [ -d cyclolab_ens ] && [ -n "$(ls -A cyclolab_ens 2>/dev/null)" ]; then
+            aws s3 sync cyclolab_ens/ "s3://triple-a-tropics-media/cyclolab/" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "public, max-age=300" \
+              --content-type "application/json" \
+              --exclude "*" --include "*/ensemble_v2.json" \
+              --only-show-errors
+            echo "Synced $(find cyclolab_ens -name 'ensemble_v2.json' | wc -l) ensemble document(s) to R2."
+          else
+            echo "No ensemble documents built."
           fi

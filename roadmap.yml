@@ -29,17 +29,25 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-30T06:45:00Z
+updated: 2026-07-31T02:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
   - id: ensemble-paintball
-    title: Ensemble track paintball — ECMWF ENS 51 members + GEFS 31, ingest landed
+    title: Ensemble track paintball — ECMWF ENS 51 members + GEFS 31, on CycloLab
     area: models
-    status: active
+    status: shipped
+    date_shipped: 2026-07-31
     note: >-
-      Ingest and decode are done and verified; the on-page paintball rendering
-      is not, so this is active rather than shipped. ECMWF ENS comes from
+      Live as an Ensemble tab on the CycloLab storm page. Member tracks ship
+      as VECTORS in one per-storm document, so member selection, hover
+      brushing, solo and hide, and the member-axis sweep are free client-side
+      interactions on the same data — none of them is a render job, and a
+      pre-rendered paintball PNG could do none of them. One source shown at a
+      time (two SSHWS-coloured bundles on one map would be indistinguishable),
+      each member coloured by its peak intensity, the verifying best track
+      underneath, and the solo view redrawn with per-leg category colour and
+      daily dots. ECMWF ENS comes from
       ECMWF's own open-data cyclone-track BUFR — one 1.4 MB file per cycle
       carrying every storm, all 51 members and every step to 360 h — and GEFS
       comes free from the ATCF a-deck already ingested. No tracking is done
@@ -53,7 +61,13 @@ items:
       by whole degrees between 6-hourly steps rather than failing. And ECMWF's
       storm number is its own sequence: DOLPHIN is 15W to ECMWF and WP12 to
       JTWC, where WP12 is a different system entirely, so matching runs on name
-      first and drops anything ambiguous rather than guessing.
+      first and drops anything ambiguous rather than guessing. The GEFS side
+      walks back past the CARQ-only leading edge to the newest deck cycle that
+      actually carries members, so the panel does not lose GEFS for two hours
+      four times a day.
+    links:
+      - label: CycloLab storm page
+        url: /cyclolab/NHC_EP072026/
   - id: ships-panel
     title: SHIPS panel — intensity traces, environment, contribution waterfall, RI
     area: models
