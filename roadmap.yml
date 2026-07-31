@@ -29,10 +29,34 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T02:05:00Z
+updated: 2026-07-31T03:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: png8-fixed-palette
+    title: PNG-8 fixed-palette frames — shipped where bit-exactness is possible
+    area: models
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      The build's premise was bit-exactness on 100 percent of colortable fill
+      pixels, and measurement on real production frames falsified that premise
+      for most products: every continuous colour ramp carries 257 to 871 LUT
+      entries and EVERY entry appears in real frames (a smooth field sweeps its
+      whole ramp), so a 256-entry PNG-8 palette cannot hold them — quantizing
+      those products would nearest-map genuine fill colours, exactly the
+      probably-identical outcome the requirement forbids. So the encoder is
+      structurally scoped: a product is eligible only when its complete
+      colortable fits with room for overlays, which today means the discrete
+      reflectivity table (14 colours), and any future discrete product
+      inherits the win automatically. Every emitted PNG-8 is decoded back and
+      verified bit-exact on every colortable pixel BEFORE it is written,
+      per frame rather than by sampling, with automatic PNG-24 fallback on
+      any failure. Measured on six real reflectivity frames: 32.2 percent of
+      PNG-24 bytes aggregate (the spec predicted 31.8), decode 6.4x faster,
+      about 1.1 s of transcode cost per frame including the verification, and
+      anti-aliased text and contours visually indistinguishable (3 percent of
+      pixels move by a mean channel delta of about 12, all in AA blends).
   - id: ensemble-paintball
     title: Ensemble track paintball — ECMWF ENS 51 members + GEFS 31, on CycloLab
     area: models

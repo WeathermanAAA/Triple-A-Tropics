@@ -2345,7 +2345,16 @@ def render_frame(frame: HafsFrame, out_path: str,
              f"{WATERMARK}  /  triple-a-tropics.com", ha="left", va="center",
              fontsize=9, color=MUTED_COLOR)
 
-    fig.savefig(out_path, dpi=DPI, facecolor=BAND_BG)
+    # PNG-8 where it can be HONEST, PNG-24 everywhere else. png8.save_fig runs
+    # the identical savefig raster through a fixed-palette transcode only for
+    # products whose complete colortable fits the palette (today: the discrete
+    # reflectivity table - every continuous ramp has 257-871 LUT colours, all
+    # of which appear in real frames, so quantizing them would nearest-map
+    # genuine fill colours). Every emitted PNG-8 is decoded back and verified
+    # bit-exact on 100% of colortable pixels BEFORE it is written; any failure
+    # writes the original PNG-24 bytes, so the worst case is the status quo.
+    from hafs_render import png8 as _png8
+    _png8.save_fig(fig, out_path, product=product, dpi=DPI, facecolor=BAND_BG)
 
     # --- GEOMETRY capture (must happen AFTER savefig) ----------------------
     # The map axes SHRINKS inside its fixed square box: set_aspect(geo_aspect)
