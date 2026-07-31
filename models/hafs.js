@@ -673,6 +673,45 @@
   // disabled while pending. Rebuilt whole on selection change and poll
   // diff-merge (cheap: <=43 buttons) - the merge path re-pins the current hour
   // first, so a rebuild never moves the user's frame.
+  // The EXPECTED forecast hours for the current (storm, model, domain) pair -
+  // what upstream posted, whether or not it has rendered yet. null on a
+  // manifest that predates the field (the strip then degrades to the old
+  // two-state view rather than guessing).
+  HafsViewer.prototype._expectedFxx = function () {
+    var s = this.storm;
+    if (!s || !s.expected || !this.model || !this.domain) return null;
+    var byModel = s.expected[this.model];
+    var list = byModel && byModel[this.domain];
+    return Array.isArray(list) ? list : null;
+  };
+
+  /* The FIVE-STATE availability model. PENDING vs UNAVAILABLE is the state
+   * that matters most: "wait ~90 seconds" vs "stop waiting". It needs the
+   * manifest's per-pair `expected` hours - present hours alone cannot tell a
+   * frame that has not rendered YET from one that never will.
+   *
+   *   available   rendered, clickable            (+ `active` when displayed)
+   *   pending     expected, not yet rendered, cycle still building
+   *   unavailable expected, not rendered, cycle COMPLETE - it failed; stop
+   *               waiting, this frame is not coming
+   *   unscheduled not in expected at all - upstream never posted it (the
+   *               storm ended, or the model stopped publishing)
+   */
+  HafsViewer.prototype._hourState = function (fxx, renderedSet, expectedSet) {
+    if (renderedSet[fxx]) return 'lit';
+    if (!expectedSet) return 'pending';          // legacy manifest: two-state
+    var building = !!(this.cycle && this.cycle.in_progress);
+    if (expectedSet[fxx]) return building ? 'pending' : 'unavail';
+    return 'unsched';
+  };
+
+  var HOUR_STATE_TITLE = {
+    lit: '',
+    pending: ' · rendering — expected shortly',
+    unavail: ' · did not render in this run (not coming)',
+    unsched: ' · not produced for this storm/run'
+  };
+
   HafsViewer.prototype._buildHourGrid = function () {
     var host = this.dom.hours;
     if (!host) return;
@@ -682,16 +721,24 @@
     host.style.display = '';
     var renderedSet = {};
     for (var i = 0; i < this.fxxList.length; i++) renderedSet[this.fxxList[i]] = true;
+    var expected = this._expectedFxx();
+    var expectedSet = null;
+    if (expected) {
+      expectedSet = {};
+      for (var j = 0; j < expected.length; j++) expectedSet[expected[j]] = true;
+    }
     var self = this;
     for (var k = 0; k < n; k++) {
       (function (fxx) {
-        var lit = !!renderedSet[fxx];
+        var state = self._hourState(fxx, renderedSet, expectedSet);
+        var lit = state === 'lit';
         var b = document.createElement('button');
         b.type = 'button';
-        b.className = 'hafs-hr ' + (lit ? 'lit' : 'pending');
+        b.className = 'hafs-hr ' + state;
         b.textContent = pad(fxx, 3);
         b.setAttribute('data-fxx', String(fxx));
-        b.title = 'F' + pad(fxx, 3) + (lit ? '' : ' · pending');
+        b.setAttribute('data-state', state);
+        b.title = 'F' + pad(fxx, 3) + (HOUR_STATE_TITLE[state] || '');
         b.disabled = !lit;
         if (lit) {
           b.addEventListener('click', function () {

@@ -234,6 +234,8 @@ function snapshot(v) {
       pending: b.classList.contains("pending"),
       current: b.classList.contains("current"),
       disabled: !!b.disabled,
+      // five-state availability (item 17): lit / pending / unavail / unsched
+      state: b.getAttribute("data-state") || null,
     })),
     cyclePickerShown: getEl("hafs-cycle-group").style.display !== "none",
     cycleButtons: getEl("hafs-cycles").children.map((b) => ({

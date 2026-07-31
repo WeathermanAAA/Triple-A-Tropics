@@ -488,3 +488,84 @@ class TestMountConfig(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+# ---------------------------------------------------------------------------
+# Item 17: the five-state availability model. PENDING vs UNAVAILABLE is the
+# state that matters most - "wait ~90 seconds" vs "stop waiting" - and it
+# needs the manifest's per-pair `expected` hours: present hours alone cannot
+# tell a frame that has not rendered YET from one that never will.
+# ---------------------------------------------------------------------------
+def _man_expected(in_progress, frames, expected, fxx_end=12):
+    return {
+        "generated_at": "t", "fxx_step": 3, "fxx_pad": 3, "fxx_end": fxx_end,
+        "products": [{"slug": "mslp_wind", "label": "Wind", "short": "Wind"}],
+        "models": [{"slug": "hafsa", "label": "HAFS-A"}],
+        "domains": [{"slug": "storm", "label": "Storm nest", "raw": "storm.atm"}],
+        "path_template_cycles": "{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+        "cycles": [{
+            "cycle": "2026073100", "in_progress": in_progress,
+            "frames_done": len(frames), "frames_expected": len(expected),
+            "started_utc": "t",
+            "storms": [{
+                "id": "07e", "name": "07E", "basin": "ep",
+                "cycle": "2026073100", "init": "2026-07-31T00:00:00Z",
+                "frames": {"hafsa": {"storm": {"mslp_wind": frames}}},
+                "expected": {"hafsa": {"storm": expected}},
+            }],
+        }],
+    }
+
+
+class TestFiveStateAvailability(unittest.TestCase):
+
+    def _states(self, step):
+        return {h["fxx"]: h["state"] for h in step["hours"]}
+
+    def test_building_cycle_pending_vs_unscheduled(self):
+        """While the cycle builds: rendered hours are lit, expected-but-absent
+        hours are PENDING (keep waiting), hours upstream never posted are
+        UNSCHEDULED - three visibly different answers, not one grey."""
+        steps = run_plan([_man_expected(True, [0, 3], [0, 3, 6, 9])])
+        st = self._states(steps[0])
+        self.assertEqual(st[0], "lit")
+        self.assertEqual(st[3], "lit")
+        self.assertEqual(st[6], "pending")
+        self.assertEqual(st[9], "pending")
+        self.assertEqual(st[12], "unsched")
+
+    def test_complete_cycle_flips_pending_to_unavailable(self):
+        """The SAME missing hours on a COMPLETE cycle mean something different:
+        the frame failed and is not coming. Stop waiting - which is precisely
+        the distinction the two-state strip could not make."""
+        steps = run_plan([_man_expected(False, [0, 3], [0, 3, 6, 9])])
+        st = self._states(steps[0])
+        self.assertEqual(st[6], "unavail")
+        self.assertEqual(st[9], "unavail")
+        self.assertEqual(st[12], "unsched")
+
+    def test_only_rendered_hours_are_interactive(self):
+        steps = run_plan([_man_expected(True, [0, 3], [0, 3, 6, 9])])
+        for h in steps[0]["hours"]:
+            self.assertEqual(not h["disabled"], h["state"] == "lit",
+                             f"fxx {h['fxx']}")
+
+    def test_manifest_without_expected_degrades_to_two_state(self):
+        """An older manifest (no `expected`) must render exactly the old
+        behaviour: every non-rendered hour is generic pending. No guessing."""
+        m = _man_expected(False, [0, 3], [0, 3, 6, 9])
+        del m["cycles"][0]["storms"][0]["expected"]
+        steps = run_plan([m])
+        st = self._states(steps[0])
+        self.assertEqual(st[6], "pending")
+        self.assertEqual(st[12], "pending")
+
+    def test_expected_survives_the_poll_merge(self):
+        """The 45 s poll replaces cycle entries; the five states must be
+        recomputed from the NEW manifest, not frozen from the first paint."""
+        m1 = _man_expected(True, [0, 3], [0, 3, 6, 9])
+        m2 = _man_expected(False, [0, 3, 6], [0, 3, 6, 9])
+        steps = run_plan([m1, m2], actions=[{"op": "poll"}])
+        st = self._states(steps[-1])
+        self.assertEqual(st[6], "lit")
+        self.assertEqual(st[9], "unavail")
+

@@ -940,6 +940,13 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             # [model][domain][fxx] -> {"axes_px": [...], "bbox": [...]}. Keyed by
             # FRAME, not by product (see _record).
             "geometry": {},
+            # [model][domain] -> the forecast hours upstream has POSTED for the
+            # pair (step-filtered, BEFORE any progressive-subset narrowing).
+            # This is what lets a client tell PENDING from UNAVAILABLE: an hour
+            # in `expected` but not in `frames` is still coming while the cycle
+            # is in progress and has failed once it is complete, and an hour
+            # absent from `expected` was never going to exist at all.
+            "expected": {},
         }
         # cycle_is_complete only confirms HAFS-A's storm nest reached the
         # terminal hour; the second model and the parent domain can still be
@@ -983,6 +990,12 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             for domain in domains:
                 avail = list_fxx(model, date, hh, storm, domain, session=session)
                 avail = [f for f in avail if f <= max_fxx and f % fxx_step == 0]
+                # EXPECTED = what upstream has posted for this pair, captured
+                # BEFORE the progressive-subset narrowing below: the worker's
+                # only_fxx ledger names what to render THIS pass, not what the
+                # pair will eventually have, and expected must mean the latter
+                # or PENDING hours would read as never-coming.
+                posted = list(avail)
                 if only_fxx is not None:
                     # Progressive subset: the caller names the exact hours.
                     # Intersecting with the posted list keeps this safe when
@@ -1009,6 +1022,8 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                              model, storm, domain, max(avail), terminal)
                     continue
                 dom_slug = DOMAINS[domain][0]
+                (storm_meta[storm]["expected"]
+                    .setdefault(model, {}))[dom_slug] = posted
                 # The env fields are parent-only: ingest them only for parent.atm
                 # frames (and only when this cycle renders an env product).
                 want_env_frame = cycle_has_env and (domain == "parent.atm")
@@ -1160,16 +1175,18 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     del meta["frames"][model][dom_slug]
             if not meta["frames"][model]:
                 del meta["frames"][model]
-        # Prune geometry in lockstep with frames, so the manifest can never
-        # advertise an extent for a (model, domain) whose frames were all
-        # dropped - a client that trusted it would map pixels for an image
-        # that is not published.
-        for model in list(meta["geometry"]):
-            for dom_slug in list(meta["geometry"][model]):
-                if dom_slug not in meta["frames"].get(model, {}):
-                    del meta["geometry"][model][dom_slug]
-            if not meta["geometry"][model]:
-                del meta["geometry"][model]
+        # Prune geometry AND expected in lockstep with frames, so the manifest
+        # can never advertise an extent - or promise pending hours - for a
+        # (model, domain) whose frames were all dropped: the frontend only
+        # offers pairs with frames, so orphaned entries would be dead weight a
+        # client could still trip over.
+        for aux in ("geometry", "expected"):
+            for model in list(meta[aux]):
+                for dom_slug in list(meta[aux][model]):
+                    if dom_slug not in meta["frames"].get(model, {}):
+                        del meta[aux][model][dom_slug]
+                if not meta[aux][model]:
+                    del meta[aux][model]
         if meta["frames"]:
             storms_out.append(meta)
 

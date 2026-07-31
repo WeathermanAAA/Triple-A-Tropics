@@ -194,10 +194,25 @@
   }
   .hafs-hr.lit:hover { border-color: var(--accent-2); color: var(--accent-2); }
   .hafs-hr.pending {
-    /* Single-dimmed (muted color + modest opacity): greyed but still
-       readable, so the run can be watched filling in. */
-    color: var(--muted); background: transparent; opacity: 0.6;
-    cursor: default;
+    /* PENDING = expected but not rendered yet, cycle still building: greyed
+       but clearly alive (dashed border + readable text), because the honest
+       message is "wait ~90 seconds", not "gone". */
+    color: var(--muted); background: transparent; opacity: 0.65;
+    border-style: dashed; cursor: default;
+  }
+  .hafs-hr.unavail {
+    /* UNAVAILABLE = expected, never rendered, cycle COMPLETE: it failed and
+       is not coming. Struck through so nobody watches it - the whole point
+       of the five-state model is separating this from pending. */
+    color: var(--muted); background: transparent; opacity: 0.45;
+    text-decoration: line-through; cursor: default;
+  }
+  .hafs-hr.unsched {
+    /* NOT EXPECTED = upstream never posted this hour (storm ended, model
+       stopped publishing). Near-invisible: it is not data that is late or
+       lost, it is an hour that does not exist for this pair. */
+    color: var(--muted); background: transparent; opacity: 0.18;
+    border-color: transparent; cursor: default;
   }
   .hafs-hr.current {
     background: var(--accent-2); color: #06222e;
@@ -602,7 +617,7 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/telemetry.js?v=edbe6ac804"></script>
-<script src="/models/hafs.js?v=fe93843fca"></script>
+<script src="/models/hafs.js?v=153a335b9a"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>
 <script src="/models/enscenters.js?v=bffaca1377"></script>
 </body>

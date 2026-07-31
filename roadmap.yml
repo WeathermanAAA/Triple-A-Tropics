@@ -29,10 +29,36 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T17:05:00Z
+updated: 2026-07-31T18:10:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: five-state-availability
+    title: Five-state availability — pending vs unavailable, told apart honestly
+    area: models
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      The hour strip on /models/ now distinguishes the state that matters
+      most: PENDING (expected, not yet rendered, cycle still building — wait
+      about 90 seconds) from UNAVAILABLE (expected, cycle complete, never
+      rendered — it failed, stop waiting) from UNSCHEDULED (upstream never
+      posted the hour at all: the storm ended or the model stopped
+      publishing), alongside available and active. Present hours alone cannot
+      make that distinction, so the manifest now carries per-pair EXPECTED
+      hours — captured at render planning from what upstream posted, before
+      the progressive-subset narrowing, because the worker's per-pass ledger
+      names what to render now, not what the pair will eventually have. Styles
+      stay in the existing availability-tick idiom: pending is dashed and
+      readable, unavailable is struck through, unscheduled is near-invisible.
+      An older manifest without the field degrades to the previous two-state
+      strip rather than guessing. The live manifest gains expected on the next
+      render cycle; the client is verified against synthetic manifests in the
+      harness, including the poll-merge path where pending flips to
+      unavailable as a building cycle completes.
+    links:
+      - label: Models page
+        url: /models/
   - id: verification-scoreboard
     title: Homogeneous verification scoreboard — the headline differentiator
     area: models
