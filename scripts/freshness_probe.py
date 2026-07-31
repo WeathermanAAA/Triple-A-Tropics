@@ -193,13 +193,22 @@ REGISTRY = [
      git_path("armor3d"), None),
     ("season gif wpac (R2)", "GH update-season-gifs.yml", 1440,
      head_lm(f"wpac_{dt.date.today().year}_season.gif"), None),
-    ("sst animations (mp4-artifacts branch)", "GH update-sst.yml job 2", 1440,
-     git_branch("mp4-artifacts"), None),
+    # Repointed 2026-07-31: this entry still probed the mp4-artifacts ORPHAN
+    # BRANCH, which was retired on 2026-07-19 (R2 is canonical) - a dead probe
+    # that read as permanently stale. The live manifest is sst/manifest.json.
+    ("sst animations (R2 manifest)", "GH update-sst.yml", 1440,
+     j("sst/manifest.json", "generated_at"), None),
 
     # models
+    # RE-ARMED 2026-07-31. This entry carried a known-down annotation left
+    # over from the FIRST HAFS staleness incident ("gated off via
+    # RENDER_HAFS_ON_CRON; manifest fix in flight") - and known-down products
+    # never alarm, so the SECOND and THIRD incidents ran silent: three stalls
+    # in two weeks and not one alert reached a human before the stale banner
+    # reached users. A silencer without an expiry becomes a blindfold; if HAFS
+    # must ever be muted again, put the reason AND the re-arm condition here.
     ("models/hafs/manifest.json", "GH update-hafs.yml", 360,
-     j("models/hafs/manifest.json", "generated_at", "cycle"),
-     "gated off via RENDER_HAFS_ON_CRON; manifest fix in flight"),
+     j("models/hafs/manifest.json", "generated_at", "cycle"), None),
     ("models/enscenters/manifest.json", "GH enscenters workflows", 360,
      j("models/enscenters/manifest.json", "generated_at"), None),
 
@@ -254,6 +263,21 @@ REGISTRY = [
 ]
 
 
+def doc_ts(t: "dt.datetime") -> str:
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_ts(v):
+    """Rollup timestamp -> aware datetime, or None (absent/garbage)."""
+    if not v:
+        return None
+    try:
+        return dt.datetime.strptime(str(v), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+
+
 def main() -> None:
     now = dt.datetime.now(dt.timezone.utc)
     rows, stale_names = [], []
@@ -282,8 +306,51 @@ def main() -> None:
               f"age={rows[-1]['age_min']} min (limit {stale_at})"
               + (f" · {note}" if note else ""))
 
+    # Prior rollup FIRST: the alerting state (stale_since / last_alarm) is
+    # carried through the published document, so it must be read before this
+    # run's document is written.
+    try:
+        prior = _json(PRIOR_URL + f"?t={int(time.time())}")
+        prior_stale = set(prior.get("stale") or [])
+        prior_rows = {r.get("name"): r for r in (prior.get("products") or [])}
+    except Exception:  # noqa: BLE001 — first run / CDN hiccup: no alerting
+        prior_stale = set(stale_names)  # treat everything as already known
+        prior_rows = {}
+
+    # ESCALATING RE-ALARM (2026-07-31, after the third silent HAFS stall).
+    # Red-once alerting fires ONE email the moment a product goes stale, and
+    # never again - one missed email at 05:49 became a three-day outage that
+    # users saw before anyone did. Detection now escalates: a product that
+    # STAYS stale re-alarms every REALARM_H hours until it recovers. The
+    # cadence is hours, not the probe's half-hour tick, so a real outage
+    # nags without becoming spam that trains people to ignore it.
+    REALARM_H = 6.0
+    newly, realarm = [], []
+    for r in rows:
+        if not r["stale"]:
+            continue
+        p = prior_rows.get(r["name"]) or {}
+        r["stale_since"] = p.get("stale_since") or doc_ts(now)
+        r["last_alarm"] = p.get("last_alarm")
+        if r["known_down"]:
+            continue
+        if r["name"] not in prior_stale:
+            newly.append(r["name"])
+            r["last_alarm"] = doc_ts(now)
+        else:
+            last = _parse_ts(r.get("last_alarm"))
+            if last is None or (now - last).total_seconds() >= REALARM_H * 3600:
+                hours = None
+                since = _parse_ts(r.get("stale_since"))
+                if since is not None:
+                    hours = (now - since).total_seconds() / 3600.0
+                realarm.append(f"{r['name']} (stale "
+                               f"{hours:.0f}h)" if hours is not None
+                               else r["name"])
+                r["last_alarm"] = doc_ts(now)
+
     doc = {"schema": "tat-freshness/1",
-           "generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "generated_utc": doc_ts(now),
            "n": len(rows), "n_stale": len(stale_names),
            "stale": stale_names, "products": rows}
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
@@ -291,18 +358,15 @@ def main() -> None:
         json.dump(doc, f, separators=(",", ":"))
     print(f"wrote {OUT}: {len(stale_names)}/{len(rows)} stale")
 
-    # red-once alerting: fail only when a NOT-known-down product is stale
-    # now but was fresh in the prior published rollup
-    try:
-        prior = _json(PRIOR_URL + f"?t={int(time.time())}")
-        prior_stale = set(prior.get("stale") or [])
-    except Exception:  # noqa: BLE001 — first run / CDN hiccup: no alerting
-        prior_stale = set(stale_names)  # treat everything as already known
-    newly = [r["name"] for r in rows
-             if r["stale"] and not r["known_down"]
-             and r["name"] not in prior_stale]
-    if newly:
-        raise SystemExit("NEWLY STALE since last rollup: " + ", ".join(newly))
+    if newly or realarm:
+        parts = []
+        if newly:
+            parts.append("NEWLY STALE since last rollup: " + ", ".join(newly))
+        if realarm:
+            parts.append("STILL STALE (re-alarm, every "
+                         f"{REALARM_H:.0f}h until recovery): "
+                         + ", ".join(realarm))
+        raise SystemExit(" | ".join(parts))
 
 
 if __name__ == "__main__":

@@ -395,6 +395,49 @@ def _frame_key(model: str, storm: str, domain: str, fxx: int) -> tuple:
 # the job's timeout kills it.
 _POOL_HEARTBEAT_SECS = 120
 
+# ---------------------------------------------------------------------------
+# INGEST HANG-PROOFING (2026-07-31 incident, the third HAFS staleness in two
+# weeks). From Jul 29 ~02Z every Actions run wedged the same way: ingest
+# reached ~23/258 frames in ~7 minutes, then the log went SILENT for 5h43m
+# until timeout-minutes killed the job with zero frames rendered and nothing
+# published. Same code, same dependency versions, same runner image on both
+# sides of the boundary, and the very frames in the stall window ingest in
+# 14-17 s from a codespace - the stall is the Actions-egress path to
+# noaa-nws-hafs-pds, which is outside our control. What IS ours: the fetch
+# path had NO TIMEOUT of any kind, so one stalled read wedged a worker
+# forever, two wedged the whole stage, and the job burned its entire budget
+# producing nothing. Three layers of defence, all env-tunable:
+#
+#   * a default SOCKET timeout in every ingest worker - a stalled read
+#     becomes an exception in <= _INGEST_SOCKET_TIMEOUT_S rather than a
+#     permanent wedge;
+#   * a SIGALRM deadline around each ingest attempt - covers any non-socket
+#     hang, turns it into a normal retryable failure (the pipeline already
+#     tolerates missing frames and publishes partial coverage);
+#   * a whole-stage DEADLINE - if the network is truly blackholed, stop
+#     waiting, render what was ingested, and PUBLISH. A partial current
+#     cycle beats a perfect 3-day-old one, and the five-state hour strip
+#     shows the missing tail honestly.
+_INGEST_SOCKET_TIMEOUT_S = int(os.environ.get("HAFS_INGEST_SOCKET_TIMEOUT_S",
+                                              "120"))
+_INGEST_TASK_TIMEOUT_S = int(os.environ.get("HAFS_INGEST_TASK_TIMEOUT_S",
+                                            "300"))
+_INGEST_DEADLINE_S = int(os.environ.get("HAFS_INGEST_DEADLINE_S",
+                                        str(200 * 60)))
+
+
+class IngestStalled(Exception):
+    """An ingest attempt exceeded its wall-clock deadline (SIGALRM)."""
+
+
+def _ingest_worker_init() -> None:
+    """Per-worker setup for the ingest pool: the socket-level timeout that the
+    fetch stack lacks. Set in the WORKER, not the parent - the parent's own
+    S3 listing calls carry explicit timeouts already."""
+    import socket
+    socket.setdefaulttimeout(_INGEST_SOCKET_TIMEOUT_S)
+
+
 _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
                       # the file is there, so a short retry clears the hole. This
                       # is the ONLY stage that touches the network now.
@@ -544,9 +587,22 @@ def _ingest_one(job: IngestJob) -> dict:
     transient S3 5xx on the existence check is indistinguishable from a real 404;
     since we only plan frames ``list_fxx`` reported present, retrying is right.
     """
+    import signal
+
+    def _stalled(signum, frame):
+        raise IngestStalled(
+            f"ingest exceeded {_INGEST_TASK_TIMEOUT_S}s wall clock")
+
     last_err: Optional[Exception] = None
     for attempt in range(1, _INGEST_RETRIES + 1):
         try:
+            # Hard per-attempt deadline. A stalled S3 read used to block a
+            # worker FOREVER (no timeout anywhere in the fetch stack); the
+            # alarm turns that into a retryable failure like any other, and
+            # the retry gets fresh connections. Installed per attempt so it
+            # is correct under both fork and spawn workers.
+            signal.signal(signal.SIGALRM, _stalled)
+            signal.alarm(_INGEST_TASK_TIMEOUT_S)
             fc.ingest_frame(
                 job.model, job.storm, job.domain, job.cycle_dt, job.fxx,
                 Path(job.cache_path), job.save_dir,
@@ -558,10 +614,17 @@ def _ingest_one(job: IngestJob) -> dict:
             return {"ok": True, "model": job.model, "storm": job.storm,
                     "domain": job.domain, "fxx": job.fxx}
         except Exception as e:  # noqa: BLE001 - one bad frame must not sink the run
+            # Disarm BEFORE the retry sleep: except runs before finally, and a
+            # still-armed alarm firing mid-sleep would raise out of the
+            # "never raises" contract.
+            signal.alarm(0)
             last_err = e
             if attempt < _INGEST_RETRIES:
                 time.sleep(0.6 * attempt)
         finally:
+            # ALWAYS disarm - covers the success path (and is a no-op after
+            # the except path already did it).
+            signal.alarm(0)
             # Hand this frame's arenas back before the worker picks up the next
             # one, so a pool's memory tracks the frame in flight rather than the
             # worst frame it has ever seen. Runs on the failure path too - a
@@ -624,7 +687,8 @@ def _render_one(job: RenderJob) -> dict:
 
 
 def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
-              initializer=None, max_tasks_per_child: Optional[int] = None) -> None:
+              initializer=None, max_tasks_per_child: Optional[int] = None,
+              stage_deadline_s: Optional[int] = None) -> None:
     """Run ``fn`` over ``jobs_list`` in a process pool, calling ``record(result)``
     for each, with the BrokenProcessPool retry + per-task failure isolation shared
     by BOTH the ingest and render stages.
@@ -662,6 +726,14 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
         return
     remaining = list(jobs_list)
     width = max(1, jobs)
+    # Stage deadline (the ingest stage sets one): a hard wall-clock bound on
+    # the WHOLE stage. If the upstream network is blackholed - every fetch
+    # stalling to its per-task alarm - the per-task deadlines alone still sum
+    # to hours; this stops the stage outright so the run continues with what
+    # completed and PUBLISHES. A partial current cycle beats a perfect stale
+    # one.
+    stage_end = (time.time() + stage_deadline_s) if stage_deadline_s else None
+    deadline_hit = False
     # 4 attempts; on each pool death HALVE the width (jobs -> jobs/2 -> ... -> 1).
     # A dead pool is almost always OOM: a heavy GRIB decode that doesn't fit at
     # this width. Retrying the unfinished frames at the SAME width just OOMs again
@@ -684,25 +756,55 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                 fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
                 t_pool = last_beat = time.time()
                 done = 0
-                for fut in cf.as_completed(fut_to_i):
-                    i = fut_to_i[fut]
-                    record(fut.result())
-                    not_done.discard(i)
-                    # HEARTBEAT. Without it this loop is silent for as long as it
-                    # takes - a stage that ran 5h50m and never finished looked
-                    # identical in the log to one that hung on the first task, and
-                    # the whole cycle timed out before anyone could tell which.
-                    # A rate + ETA every _POOL_HEARTBEAT_SECS makes "slow" and
-                    # "stuck" distinguishable from the run log alone.
-                    done += 1
-                    now = time.time()
-                    if now - last_beat >= _POOL_HEARTBEAT_SECS:
-                        el = now - t_pool
-                        rate = done / el if el > 0 else 0.0
-                        eta = (len(batch) - done) / rate if rate > 0 else float("nan")
-                        log.info("  ... %d/%d done in %.0fs (%.2f/s, eta %.0fs, "
-                                 "width %d)", done, len(batch), el, rate, eta, width)
-                        last_beat = now
+                as_completed_kw = {}
+                if stage_end is not None:
+                    as_completed_kw["timeout"] = max(1.0, stage_end - time.time())
+                try:
+                    for fut in cf.as_completed(fut_to_i, **as_completed_kw):
+                        i = fut_to_i[fut]
+                        record(fut.result())
+                        not_done.discard(i)
+                        done += 1
+                        now = time.time()
+                        if now - last_beat >= _POOL_HEARTBEAT_SECS:
+                            el = now - t_pool
+                            rate = done / el if el > 0 else 0.0
+                            eta = ((len(batch) - done) / rate
+                                   if rate > 0 else float("nan"))
+                            log.info("  ... %d/%d done in %.0fs (%.2f/s, "
+                                     "eta %.0fs, width %d)", done, len(batch),
+                                     el, rate, eta, width)
+                            last_beat = now
+                except cf.TimeoutError:
+                    # THE STAGE DEADLINE - caught INSIDE the with-block on
+                    # purpose: letting it unwind through __exit__ would call
+                    # shutdown(wait=True) and join the wedged workers forever,
+                    # which is the exact hang this exists to break. Terminate
+                    # the workers first so the exit join returns promptly.
+                    deadline_hit = True
+                    log.error("stage deadline (%ss) reached with %d task(s) "
+                              "unfinished - terminating the pool and "
+                              "continuing with what completed",
+                              stage_deadline_s, len(not_done))
+                    try:
+                        for p in list(getattr(ex, "_processes", {})
+                                      .values() or []):
+                            try:
+                                p.terminate()
+                            except Exception:  # noqa: BLE001
+                                pass
+                        ex.shutdown(wait=False, cancel_futures=True)
+                    except Exception:  # noqa: BLE001 - teardown must not mask
+                        pass
+            if deadline_hit:
+                # No retry: the deadline exists precisely because retrying a
+                # blackholed network buys nothing. Record the unfinished tasks
+                # as stragglers so the run continues to render + publish what
+                # it has.
+                for i in sorted(not_done):
+                    record(straggler(batch[i]))
+                remaining = []
+                break
         except BrokenProcessPool:
             remaining = [batch[i] for i in sorted(not_done)]
             width = max(1, width // 2)
@@ -1104,7 +1206,9 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     # and the width is clamped to what this host's memory can actually hold.
     _run_pool(ingest_jobs, _ingest_one, _fit_ingest_width(ingest_width),
               _record_ingest, _ingest_straggler,
-              max_tasks_per_child=_INGEST_TASKS_PER_CHILD)
+              initializer=_ingest_worker_init,
+              max_tasks_per_child=_INGEST_TASKS_PER_CHILD,
+              stage_deadline_s=_INGEST_DEADLINE_S)
     log.info("ingested %d/%d frame(s) ok (%d failed) in %.0fs",
              len(ingested_ok), len(ingest_jobs), n_ingest_fail, time.time() - t0)
 

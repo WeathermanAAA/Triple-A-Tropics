@@ -29,10 +29,41 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T19:50:00Z
+updated: 2026-07-31T21:30:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: hafs-hang-incident-3
+    title: HAFS staleness incident 3 — ingest hang-proofed, alerting re-armed
+    area: infra
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      Diagnosed rather than restarted. The cycles were NOT over budget: every
+      Actions run since Jul 29 02Z wedged the same way — ingest reached about
+      23 of 258 frames in seven minutes, then sat silent for 5h43m until the
+      350-minute timeout killed it with zero frames rendered. Same code, same
+      dependency versions, same runner image on both sides of the boundary,
+      and the very frames in the stall window ingest in 14-17 seconds from a
+      codespace — the stall is the Actions-egress path to the HAFS S3 bucket,
+      outside our control. The defect at our layer: no timeout of any kind in
+      the fetch path, so one stalled read wedged a worker forever. Three
+      defences now: a socket-level default timeout in every ingest worker, a
+      SIGALRM deadline around each ingest attempt that turns a hang into an
+      ordinary retryable failure, and a whole-stage deadline that terminates a
+      blackholed pool and publishes partial coverage — a partial current cycle
+      beats a perfect three-day-old one. The watchdog was NOT livelocked: its
+      concurrency guard correctly saw a run always in flight and declined,
+      which is the guard working while the runs themselves were the failure.
+      The boxes were irrelevant — the HAFS worker lane is profile-gated off
+      and the manifest shows only cron writes. And the reason nobody was
+      alerted across three incidents: the freshness monitor's HAFS entry still
+      carried a known-down silencer from incident one, so it could never
+      alarm. The silencer is removed and alerting now ESCALATES — a product
+      that stays stale re-alarms every six hours until it recovers, instead
+      of one missable email per incident. The re-armed monitor immediately
+      surfaced a fourth silent staleness: cyclolab analogs, stale since
+      Jul 16 with its workflow failing.
   - id: models-keyboard-layer
     title: Expert keyboard layer — run trend on up/down, WCAG-compliant
     area: models
