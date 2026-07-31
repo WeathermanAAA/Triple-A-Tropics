@@ -1518,21 +1518,168 @@
       if (self.playing) self.lastTick = 0;
     });
 
-    // Keyboard: ←/→ step, space play/pause. Skip when focus is on a form
-    // control (the storm <select> or a transport button) so its native
-    // arrow/space behavior wins — EXCEPT the hour-grid buttons: a click
-    // leaves them focused (Chrome/Firefox/Edge), buttons have no native
-    // arrow behavior, and space would just re-click the same hour, so the
-    // "pick an hour, then arrow through frames" path must keep working.
-    this.root.addEventListener('keydown', function (e) {
+    this._wireKeyboard();
+  };
+
+  // ---- expert keyboard layer (item 9) -------------------------------------
+  // Left/right for forecast hour is universal across the class; UP/DOWN for
+  // RUN TREND - the SAME VALID TIME across successive inits - is the analyst
+  // move: hold the moment fixed and watch how the forecast for it changed
+  // run over run. Plus space (play/pause), Home/End, Esc, and ? for the
+  // shortcut sheet.
+  //
+  // WCAG 2.1.4: single-CHARACTER shortcuts (space, ?) sit behind a persisted
+  // toggle in the shortcut sheet, so they can be disabled by anyone whose
+  // speech or switch input they would collide with. Arrow/Home/End/Esc are
+  // not character keys and stay active. The sheet is also reachable from a
+  // visible button, so turning the character keys off cannot lock the sheet
+  // (and the toggle) away.
+
+  var KBD_PREF = 'tat.models.kbd.charkeys';
+
+  HafsViewer.prototype._charKeysOn = function () {
+    try { return localStorage.getItem(KBD_PREF) !== 'off'; }
+    catch (e) { return true; }
+  };
+
+  HafsViewer.prototype._setCharKeys = function (on) {
+    try { localStorage.setItem(KBD_PREF, on ? 'on' : 'off'); }
+    catch (e) { /* private mode: session-only default */ }
+  };
+
+  // RUN TREND: switch to the adjacent init and land on the SAME VALID TIME.
+  // dir +1 = newer run, -1 = older. valid = init + fxx, cycles are 6 h apart,
+  // so the target hour is fxx + (thisInit - targetInit).
+  HafsViewer.prototype._runTrend = function (dir) {
+    if (!this.cycle || !this.cycles.length || !this.fxxList.length) return;
+    var order = [];
+    for (var i = 0; i < this.cycles.length; i++) order.push(this.cycles[i].cycle);
+    var at = order.indexOf(this.cycle.cycle);
+    var tgt = dir > 0 ? at - 1 : at + 1;         // list is newest-first
+    if (tgt < 0 || tgt >= order.length) {
+      this._toast(dir > 0 ? 'No newer run available.' : 'No older run available.');
+      return;
+    }
+    var cur = parseCycleUTC(this.cycle.cycle), nxt = parseCycleUTC(order[tgt]);
+    if (!cur || !nxt) return;
+    var wantF = this.fxxList[this.idx] + Math.round((cur - nxt) / 3600000);
+    this._pause();
+    this._selectCycle(order[tgt], true, true);
+    if (!this.fxxList.length) {
+      this._toast('That run has no frames for this selection.');
+      return;
+    }
+    var j = this.fxxList.indexOf(wantF);
+    if (j >= 0) {
+      this._show(j);
+      this._toast('Run ' + cycleDayTag(order[tgt]) + ' · same valid time (F' +
+                  pad(wantF, 3) + ')');
+    } else {
+      // The exact valid time is not rendered in that run (an older run's tail,
+      // or a hole). Show the nearest frame and SAY so, never silently.
+      this._show(this._renderedIndexNear(wantF));
+      this._toast('No frame at this valid time in that run — showing F' +
+                  pad(this.fxxList[this.idx], 3) + '.');
+    }
+    this._syncUrl(true);
+  };
+
+  HafsViewer.prototype._wireKeyboard = function () {
+    var self = this;
+    if (typeof document === 'undefined' || !document.addEventListener) return;
+
+    // A visible way into the sheet (required: with character keys toggled
+    // off, "?" cannot be the only door).
+    if (this.dom.player && typeof document.createElement === 'function') {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hafs-btn hafs-kbd-btn';
+      btn.textContent = '⌨ Shortcuts';
+      btn.title = 'Keyboard shortcuts (?)';
+      btn.addEventListener('click', function () { self._toggleSheet(); });
+      this.dom.player.appendChild(btn);
+    }
+
+    document.addEventListener('keydown', function (e) {
+      // Only when THIS viewer is on screen (the CycloLab embed lives in a
+      // tab that may be hidden), never with a modifier, and never when the
+      // user is typing in a control - native behavior always wins there.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      var stage = self.dom.stage;
+      if (!stage || stage.offsetParent === null) return;
       var t = e.target, tag = t && t.tagName;
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' ||
+          (t && t.isContentEditable)) return;
+      // Buttons: skip so space/enter keep their native click - EXCEPT the
+      // hour grid, where a click leaves focus and "pick an hour, then arrow
+      // through frames" must keep working.
       var hourBtn = tag === 'BUTTON' && t.classList &&
                     t.classList.contains('hafs-hr');
-      if ((tag === 'SELECT' || tag === 'INPUT' || tag === 'BUTTON') && !hourBtn) return;
-      if (e.key === 'ArrowLeft')  { self._pause(); self._step(-1); e.preventDefault(); }
-      else if (e.key === 'ArrowRight') { self._pause(); self._step(1); e.preventDefault(); }
-      else if (e.key === ' ' || e.key === 'Spacebar') { self._togglePlay(); e.preventDefault(); }
+      if (tag === 'BUTTON' && !hourBtn &&
+          (e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter')) return;
+
+      var chars = self._charKeysOn();
+      switch (e.key) {
+        case 'ArrowLeft':  self._pause(); self._step(-1); e.preventDefault(); break;
+        case 'ArrowRight': self._pause(); self._step(1); e.preventDefault(); break;
+        case 'ArrowUp':    self._runTrend(1); e.preventDefault(); break;
+        case 'ArrowDown':  self._runTrend(-1); e.preventDefault(); break;
+        case 'Home':
+          if (self.fxxList.length) { self._pause(); self._show(0); e.preventDefault(); }
+          break;
+        case 'End':
+          if (self.fxxList.length) {
+            self._pause(); self._show(self.fxxList.length - 1); e.preventDefault();
+          }
+          break;
+        case 'Escape':
+          if (self._sheetEl && self._sheetEl.style.display !== 'none') {
+            self._toggleSheet(false);
+          } else { self._pause(); }
+          break;
+        case ' ': case 'Spacebar':
+          if (chars) { self._togglePlay(); self._syncUrl(true); e.preventDefault(); }
+          break;
+        case '?':
+          if (chars) { self._toggleSheet(); e.preventDefault(); }
+          break;
+      }
     });
+  };
+
+  HafsViewer.prototype._toggleSheet = function (force) {
+    var self = this;
+    if (!this._sheetEl) {
+      var sheet = document.createElement('div');
+      sheet.className = 'hafs-kbd-sheet';
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-label', 'Keyboard shortcuts');
+      sheet.innerHTML =
+        '<div class="hafs-kbd-head">Keyboard shortcuts</div>' +
+        '<table><tbody>' +
+        '<tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>previous / next forecast hour</td></tr>' +
+        '<tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td><strong>run trend</strong> — newer / older init, ' +
+        'same valid time (watch how the forecast for one moment changed run over run)</td></tr>' +
+        '<tr><td><kbd>Space</kbd></td><td>play / pause</td></tr>' +
+        '<tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>first / last rendered hour</td></tr>' +
+        '<tr><td><kbd>Esc</kbd></td><td>pause · close this sheet</td></tr>' +
+        '<tr><td><kbd>?</kbd></td><td>this sheet</td></tr>' +
+        '</tbody></table>' +
+        '<label class="hafs-kbd-toggle"><input type="checkbox"> ' +
+        'Enable single-key shortcuts (<kbd>Space</kbd>, <kbd>?</kbd>) — ' +
+        'arrow and function keys always work</label>' +
+        '<button type="button" class="hafs-btn hafs-kbd-close">Close</button>';
+      this.root.appendChild(sheet);
+      this._sheetEl = sheet;
+      var cb = sheet.querySelector('input');
+      cb.checked = this._charKeysOn();
+      cb.addEventListener('change', function () { self._setCharKeys(cb.checked); });
+      sheet.querySelector('.hafs-kbd-close')
+        .addEventListener('click', function () { self._toggleSheet(false); });
+    }
+    var show = force !== undefined ? force
+      : this._sheetEl.style.display === 'none' || !this._sheetEl.style.display;
+    this._sheetEl.style.display = show ? 'block' : 'none';
   };
 
   if (typeof document !== 'undefined' && document.addEventListener) {

@@ -29,10 +29,34 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T19:20:00Z
+updated: 2026-07-31T19:50:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: models-keyboard-layer
+    title: Expert keyboard layer — run trend on up/down, WCAG-compliant
+    area: models
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      Left/right for forecast hour is universal across the class; UP/DOWN for
+      RUN TREND is the analyst move nobody else ships — hold one valid time
+      fixed and watch how the forecast for that moment changed across
+      successive inits. The hour arithmetic is exact (valid = init + fxx, so
+      stepping to the 6-hour-older run lands on fxx+6), the move is narrated
+      in a transient notice, and a run that lacks the exact valid time shows
+      the nearest frame and says so rather than switching silently. Space
+      plays and pauses, Home/End jump to the first and last rendered hour,
+      Esc pauses or closes the sheet, and ? opens the shortcut sheet. WCAG
+      2.1.4: the single-character keys (Space, ?) sit behind a persisted
+      toggle in the sheet — arrows and function keys are not character keys
+      and stay active — and a visible Shortcuts button means turning them off
+      can never lock the sheet away. Keys fire only while the viewer is on
+      screen and never while typing in a control. All browser-proven,
+      including the toggle actually disabling Space.
+    links:
+      - label: Models page
+        url: /models/
   - id: models-smart-default
     title: Smart default — land on the strongest active named storm
     area: models

@@ -141,6 +141,32 @@
     display: block; width: 100%; height: auto;
     max-width: 100%; max-height: none;
   }
+  /* Keyboard shortcut sheet + its opener. Sober: a small dark dialog pinned
+     inside the viewer, no dimmed backdrop, dismissed by Esc / ? / Close. */
+  .hafs-kbd-btn { font-size: 11.5px; }
+  /* The sheet anchors to the viewer, not the page. */
+  #hafs-viewer { position: relative; }
+  .hafs-kbd-sheet {
+    position: absolute; top: 16px; right: 16px; z-index: 6;
+    width: min(400px, 92%); padding: 14px 16px;
+    background: rgba(10, 16, 24, 0.97); border: 1px solid var(--border);
+    border-radius: 9px; color: var(--fg); font-size: 12.5px;
+    display: none;
+  }
+  .hafs-kbd-head { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+  .hafs-kbd-sheet table { border-collapse: collapse; width: 100%; }
+  .hafs-kbd-sheet td { padding: 4px 8px 4px 0; vertical-align: top;
+    color: var(--muted); }
+  .hafs-kbd-sheet td:first-child { white-space: nowrap; color: var(--fg); }
+  .hafs-kbd-sheet kbd {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg);
+    font-size: 11px; font-family: inherit;
+  }
+  .hafs-kbd-toggle { display: block; margin: 10px 0 10px;
+    color: var(--muted); line-height: 1.5; cursor: pointer; }
+  .hafs-kbd-toggle input { margin-right: 6px; }
+
   /* Transient notice inside the stage (expired shared runs, keyboard
      feedback). Small, bottom-centered, fades on a timer; never interactive. */
   .hafs-toast {
@@ -629,7 +655,7 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/telemetry.js?v=edbe6ac804"></script>
-<script src="/models/hafs.js?v=43cfa32556"></script>
+<script src="/models/hafs.js?v=ab870d1fdb"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>
 <script src="/models/enscenters.js?v=bffaca1377"></script>
 </body>

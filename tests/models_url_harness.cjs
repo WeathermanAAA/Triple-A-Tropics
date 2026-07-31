@@ -179,6 +179,70 @@ function manifest() {
   ok(await page.evaluate(() => window.__hafsViewer.storm.id) === '07e',
      'an explicit URL storm still beats the smart default');
 
+  // ---- 7. expert keyboard layer (item 9) ----------------------------------
+  console.log('# keyboard layer');
+  await page.goto(base + '?storm=07e&fxx=6', { waitUntil: 'load' });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer;
+    return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 });
+  await page.click('#hafs-stage');   // ensure focus is not on a control
+  const fx = () => page.evaluate(() => {
+    const v = window.__hafsViewer;
+    return { fxx: v.fxxList[v.idx], run: v.cycle.cycle, playing: v.playing };
+  });
+  await page.keyboard.press('ArrowRight');
+  ok((await fx()).fxx === 9, 'ArrowRight steps the forecast hour');
+  await page.keyboard.press('ArrowLeft');
+  ok((await fx()).fxx === 6, 'ArrowLeft steps back');
+
+  // RUN TREND: same valid time across inits. 2026073100 F6 -> older run
+  // 2026073018 is 6 h earlier, so the same valid time is F12 there.
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(200);
+  let s7 = await fx();
+  ok(s7.run === '2026073018' && s7.fxx === 12,
+     'ArrowDown = older run, SAME VALID TIME (F6@00Z -> F12@18Z): got ' +
+     s7.run + ' F' + s7.fxx);
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(200);
+  s7 = await fx();
+  ok(s7.run === '2026073100' && s7.fxx === 6,
+     'ArrowUp returns to the newer run at the same valid time');
+  const trendToast = await page.evaluate(() =>
+    (document.querySelector('.hafs-toast') || {}).textContent || '');
+  ok(/same valid time/.test(trendToast), 'the trend move is narrated: ' + trendToast.slice(0, 50));
+
+  await page.keyboard.press('End');
+  ok((await fx()).fxx === 24, 'End jumps to the last rendered hour');
+  await page.keyboard.press('Home');
+  ok((await fx()).fxx === 0, 'Home jumps to the first');
+
+  await page.keyboard.press(' ');
+  ok((await fx()).playing === true, 'Space starts playback');
+  await page.keyboard.press('Escape');
+  ok((await fx()).playing === false, 'Esc pauses');
+
+  await page.keyboard.press('?');
+  ok(await page.evaluate(() =>
+       document.querySelector('.hafs-kbd-sheet').style.display === 'block'),
+     '? opens the shortcut sheet');
+  // WCAG 2.1.4: disable character keys via the sheet toggle.
+  await page.evaluate(() => {
+    const cb = document.querySelector('.hafs-kbd-sheet input');
+    cb.checked = false; cb.dispatchEvent(new Event('change'));
+  });
+  await page.evaluate(() =>
+    document.querySelector('.hafs-kbd-close').click());
+  await page.keyboard.press(' ');
+  ok((await fx()).playing === false,
+     'with the toggle OFF, Space no longer plays (WCAG 2.1.4)');
+  await page.keyboard.press('ArrowRight');
+  ok((await fx()).fxx === 3, 'arrow keys still work with character keys off');
+  ok(await page.evaluate(() =>
+       !!document.querySelector('.hafs-kbd-btn')),
+     'a visible Shortcuts button exists, so the sheet is reachable without ?');
+
   await browser.close();
   server.close();
   console.log(failures ? `\n${failures} assertion(s) FAILED` : '\nall assertions passed');
