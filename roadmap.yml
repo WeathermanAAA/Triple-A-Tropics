@@ -29,10 +29,32 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T18:55:00Z
+updated: 2026-07-31T19:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: models-smart-default
+    title: Smart default — land on the strongest active named storm
+    area: models
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      /models/ now lands on a storm when storms are active, and the pick is
+      DETERMINISTIC with the ordering stated rather than "whatever the
+      manifest lists first": named systems before invests, always; within
+      each group the strongest by current-season peak intensity from the live
+      storm feed; feed unavailable, lower storm number (the deck's own stable
+      ordering) so the answer is deterministic with or without it; id string
+      as the final tie. The feed is fetched in parallel with the manifest and
+      raced against a 1.2-second timeout, so it can never delay boot. Peak
+      rather than instantaneous intensity is a stated choice: it is what the
+      feed carries for every storm, and the difference only matters when a
+      decaying ex-major coexists with a strengthening storm. Browser-proven:
+      the default beats manifest order, an invest never outranks a named
+      storm even when stronger, and an explicit URL storm still wins.
+    links:
+      - label: Models page
+        url: /models/
   - id: models-url-scheme
     title: Orthogonal URL scheme with a disciplined history policy
     area: models

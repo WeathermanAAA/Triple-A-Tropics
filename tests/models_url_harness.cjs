@@ -47,7 +47,8 @@ function manifest() {
     models: [{ slug: 'hafsa', label: 'HAFS-A' }, { slug: 'hafsb', label: 'HAFS-B' }],
     domains: [{ slug: 'storm', label: 'Storm nest', raw: 'storm.atm' }],
     path_template_cycles: '{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png',
-    cycles: [cyc('2026073100', [storm('07e', 'ep'), storm('12w', 'wp')]),
+    cycles: [cyc('2026073100', [storm('95e', 'ep'), storm('07e', 'ep'),
+                                storm('12w', 'wp')]),
              cyc('2026073018', [storm('07e', 'ep')])],
   };
 }
@@ -78,6 +79,15 @@ function manifest() {
     if (/manifest\.json/.test(r.request().url())) return r.fallback();
     r.fulfill({ status: 404, body: '' });
   });
+  await page.route('**/global_storms.geojson*', r => r.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      features: [
+        // 12W is the STRONGEST active storm; 07E weaker; 95E is an invest.
+        { properties: { storm_id: 'JTWC_WP122026', is_active: true, peak_kt: 95 } },
+        { properties: { storm_id: 'NHC_EP072026', is_active: true, peak_kt: 60 } },
+        { properties: { storm_id: 'NHC_EP952026', is_active: true, peak_kt: 120 } },
+      ]
+    }) }));
   await page.route('**/cdnjs.cloudflare.com/**', r => r.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
   await page.route('**/fonts.cdnfonts.com/**', r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
 
@@ -149,6 +159,25 @@ function manifest() {
   ok(exp.product === 'refl' && exp.fxx === 6,
      'the REST of the link still applied (product + hour)');
   ok(/expired/.test(exp.toast), 'the fallback is said out loud: ' + exp.toast.slice(0, 60));
+
+  // ---- 6. smart default (item 11): deterministic, strongest active storm --
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer;
+    return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 });
+  const smart = await page.evaluate(() => window.__hafsViewer.storm.id);
+  console.log('# smart default');
+  ok(smart === '12w',
+     'default = strongest active NAMED storm (12w @95kt), beating manifest ' +
+     'order (95e listed first) and a stronger INVEST (95e @120kt): got ' + smart);
+  const url = await page.goto(base + '?storm=07e', { waitUntil: 'load' });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer;
+    return v && v.storm && v.storm.id === '07e';
+  }, { timeout: 15000 }).catch(() => {});
+  ok(await page.evaluate(() => window.__hafsViewer.storm.id) === '07e',
+     'an explicit URL storm still beats the smart default');
 
   await browser.close();
   server.close();

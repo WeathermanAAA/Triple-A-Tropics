@@ -195,8 +195,38 @@
   HafsViewer.prototype._load = function () {
     var self = this;
     this._setStatus('Loading manifest…', true);
-    this._fetchManifest()
-      .then(function (m) { self._onManifest(m); })
+    // The live-storm feed ranks the smart default (strongest active storm
+    // first). Fetched IN PARALLEL with the manifest and raced against a short
+    // timeout, so a slow or failed feed can only cost ~1.2 s and never blocks
+    // the viewer - the ordering then falls back to the deck's own numbering,
+    // which is deterministic without it. A storm-locked mount skips it.
+    var feed = Promise.resolve(null);
+    // Browser-only: the node test harness stubs the manifest fetch but must
+    // never trigger a real network call for the feed.
+    if (!this.stormLock && typeof window !== 'undefined' &&
+        typeof fetch === 'function') {
+      feed = Promise.race([
+        fetch(BASE + '/global_storms.geojson', { cache: 'no-store' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (gj) {
+            if (!gj || !gj.features) return null;
+            var rank = {};
+            for (var i = 0; i < gj.features.length; i++) {
+              var p = gj.features[i].properties || {};
+              if (p.storm_id && p.is_active && rank[p.storm_id] == null) {
+                rank[p.storm_id] = { peak_kt: p.peak_kt };
+              }
+            }
+            return rank;
+          }),
+        new Promise(function (res) { setTimeout(function () { res(null); }, 1200); })
+      ]).catch(function () { return null; });
+    }
+    Promise.all([this._fetchManifest(), feed])
+      .then(function (r) {
+        self.stormRank = r[1];
+        self._onManifest(r[0]);
+      })
       .catch(function (e) {
         console.error('hafs: manifest load failed', e);
         self._setStatus('Could not load model data. Try again shortly.', true);
@@ -465,9 +495,53 @@
     return false;
   };
 
-  // Placeholder until the smart default lands (item 11): manifest order.
+  // ---- smart default on the active storm (item 11) ------------------------
+  // When storms are active, land on one - and pick it DETERMINISTICALLY, not
+  // "whatever the manifest lists first". The ordering, explicitly:
+  //
+  //   1. named systems before invests (storm number < 90 before >= 90) - an
+  //      invest is never the default while a designated storm exists;
+  //   2. within each group, the STRONGEST first: current-season peak intensity
+  //      (kt) from the site's live storm feed, fetched in parallel with the
+  //      manifest and never allowed to delay boot by more than ~1.2 s;
+  //   3. feed unavailable (or a storm missing from it): lower storm number
+  //      first - the deck's own stable ordering - so the pick is deterministic
+  //      with or without the feed;
+  //   4. final tie: id string.
+  //
+  // "Strongest" is season-peak rather than instantaneous intensity because
+  // peak is what the feed carries for every storm; the difference only
+  // matters when a decaying ex-major coexists with a strengthening storm,
+  // and either answer is defensible - this one is stated and fixed.
+  HafsViewer.prototype._stormNum = function (id) {
+    var m = /^(\d+)/.exec(String(id || ''));
+    return m ? parseInt(m[1], 10) : 999;
+  };
+
+  HafsViewer.prototype._feedPeak = function (s) {
+    if (!this.stormRank || !s) return null;
+    var year = String(s.cycle || '').slice(0, 4);
+    var b = String(s.basin || '').toLowerCase();
+    var pre = (b === 'wp' || b === 'io' || b === 'sh') ? 'JTWC_' : 'NHC_';
+    var sid = pre + b.toUpperCase() + pad(this._stormNum(s.id), 2) + year;
+    var r = this.stormRank[sid];
+    return (r && typeof r.peak_kt === 'number') ? r.peak_kt : null;
+  };
+
   HafsViewer.prototype._defaultStormId = function (storms) {
-    return storms[0] && storms[0].id;
+    if (!storms || !storms.length) return null;
+    var self = this;
+    var ranked = storms.slice().sort(function (a, b) {
+      var ia = self._stormNum(a.id) >= 90 ? 1 : 0;
+      var ib = self._stormNum(b.id) >= 90 ? 1 : 0;
+      if (ia !== ib) return ia - ib;                       // named before invests
+      var pa = self._feedPeak(a), pb = self._feedPeak(b);
+      if (pa !== pb) return (pb == null ? -1 : pb) - (pa == null ? -1 : pa);
+      var na = self._stormNum(a.id), nb = self._stormNum(b.id);
+      if (na !== nb) return na - nb;                       // deck order
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    return ranked[0].id;
   };
 
   HafsViewer.prototype._stormById = function (id) {
