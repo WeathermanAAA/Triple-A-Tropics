@@ -319,6 +319,10 @@
     // is global and does not depend on any agency's deck, so it is the one
     // guidance product with equal quality everywhere. Loads on demand.
     tabs.push({ id: 'ensemble', label: 'Ensemble' });
+    // The verification scoreboard. Offered everywhere; JTWC basins render the
+    // structural explanation instead of a board (their decks carry no
+    // official, consensus, statistical or baseline aids to score).
+    tabs.push({ id: 'scores', label: 'Scores' });
     tabs.push({ id: 'aids', label: 'Aids' });
 
     this.dom.tabs.innerHTML = '';
@@ -351,6 +355,7 @@
     else if (this.tab === 'consensus') b.appendChild(this._consensusPanel());
     else if (this.tab === 'ships') b.appendChild(this._shipsPanel());
     else if (this.tab === 'ensemble') b.appendChild(this._ensemblePanel());
+    else if (this.tab === 'scores') b.appendChild(this._scoresPanel());
     else b.appendChild(this._aidsPanel());
   };
 
@@ -1364,6 +1369,258 @@
       'Ctrl/⌘-click to hide · Sweep steps through members one at a time. ' +
       esc(doc.note || '')));
     return wrap;
+  };
+
+  // =========================================================================
+  // VERIFICATION SCOREBOARD - homogeneous panels, N under every point,
+  // storm-block bootstrap intervals, OCD5 baseline, early/late never pooled.
+  // =========================================================================
+  var SCORE_HUES = {
+    OFCL: '#ffffff', OCD5: '#8ea2bd',
+    TVCN: '#3fd0d4', HCCA: '#c08bff', RVCN: '#46c56a',
+    AVNI: '#5aa9ff', HFAI: '#ff9a2f', HFBI: '#ffd24d', HWFI: '#f5333c',
+    HMNI: '#ff7a59', CTCI: '#7aa0ff', NVGI: '#9fe08a', UKXI: '#e88ac0',
+    IVCN: '#3fd0d4', DSHP: '#5aa9ff', SHIP: '#7aa0ff', LGEM: '#46c56a',
+    NNIC: '#c08bff',
+    AVNO: '#5aa9ff', HFSA: '#ff9a2f', HFSB: '#ffd24d', HWRF: '#f5333c',
+    HMON: '#ff7a59', CTCX: '#7aa0ff', NVGM: '#9fe08a', CMC: '#e88ac0'
+  };
+  var SCORE_FALLBACK = ['#d9c14a', '#8fd3ff', '#f2a0ff', '#a0ffc8'];
+
+  GuidanceViewer.prototype._scoresPanel = function () {
+    var self = this, wrap = el('div');
+    var basin = ((this.doc && this.doc.basin) || '').toLowerCase();
+
+    // JTWC basins: the board is structurally impossible from public data, and
+    // the honest render is the reason, not an empty table.
+    if (basin && basin !== 'al' && basin !== 'ep' && basin !== 'cp') {
+      wrap.appendChild(el('div', 'gv-note gv-warn',
+        '<strong>No verification scoreboard for this basin.</strong> ' +
+        'JTWC-basin decks carry no official, consensus, statistical or ' +
+        'baseline aids — raw ensembles only — so an official/consensus ' +
+        'scoreboard cannot be computed here from public data. This is a ' +
+        'property of the feed, not a gap in the site.'));
+      return wrap;
+    }
+
+    if (this.scores === undefined) {
+      this.scores = null;
+      var year = this.doc.year ||
+        parseInt(String(this.doc.init_cycle || '2026').slice(0, 4), 10);
+      fetch(CDN + '/verification/' + basin + year + '.json?t=' + Date.now(),
+            { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d2) { self.scores = d2; if (self.tab === 'scores') self._paint(); })
+        .catch(function () { self.scores = false; if (self.tab === 'scores') self._paint(); });
+    }
+    if (this.scores === null) {
+      wrap.appendChild(el('div', 'gv-status', 'Loading verification…'));
+      return wrap;
+    }
+    if (!this.scores) {
+      wrap.appendChild(el('div', 'gv-status',
+        'No verification document for this basin yet.'));
+      return wrap;
+    }
+    var doc = this.scores;
+    if (this.scMetric == null) this.scMetric = 'track';
+    if (this.scTiming == null) this.scTiming = 'early';
+    var panel = ((doc.panels || {})[this.scTiming] || {})[this.scMetric];
+
+    // ---- controls ----------------------------------------------------------
+    var bar = el('div', 'gv-head');
+    function seg(pairs, cur, onpick) {
+      var s2 = el('div', 'gv-tabs');
+      pairs.forEach(function (p2) {
+        var b = el('button', 'gv-tab' + (p2[0] === cur ? ' active' : ''), p2[1]);
+        b.type = 'button';
+        b.addEventListener('click', function () { onpick(p2[0]); });
+        s2.appendChild(b);
+      });
+      return s2;
+    }
+    bar.appendChild(seg([['track', 'Track (nm)'], ['intensity', 'Intensity (kt)']],
+      this.scMetric, function (v) { self.scMetric = v; self._paint(); }));
+    bar.appendChild(seg([['early', 'Early aids'], ['late', 'Late (raw) models']],
+      this.scTiming, function (v) { self.scTiming = v; self._paint(); }));
+    var nStorms = (doc.storms || []).length;
+    bar.appendChild(el('span', 'gv-sub',
+      esc(basin.toUpperCase()) + ' ' + esc(String(doc.year)) + ' season to date · ' +
+      nStorms + ' storm' + (nStorms === 1 ? '' : 's') + ' · homogeneous sample'));
+    wrap.appendChild(bar);
+
+    if (!panel) {
+      wrap.appendChild(el('div', 'gv-status', 'No panel for this selection.'));
+      return wrap;
+    }
+    var taus = panel.taus || [];
+    var shown = taus.filter(function (t) {
+      var e = panel.per_tau[String(t)];
+      return e && !e.omitted;
+    });
+    if (!shown.length) {
+      wrap.appendChild(el('div', 'gv-note gv-warn',
+        '<strong>Not enough homogeneous cases yet.</strong> Every lead time ' +
+        'falls below the ' + esc(String(doc.min_cases)) + '-case minimum once ' +
+        'the every-model-must-have-a-forecast filter is applied. The filter ' +
+        'is not relaxed to fill the board; the board waits for the season.'));
+      wrap.appendChild(this._scoreCaveats(doc));
+      return wrap;
+    }
+
+    // Model list: baseline first, then by mean error at the longest shown tau.
+    var lastE = panel.per_tau[String(shown[shown.length - 1])];
+    var models = Object.keys(lastE.models || {});
+    models.sort(function (a, b2) {
+      var ba = lastE.models[a], bb = lastE.models[b2];
+      var pa = (panel.model_meta[a] || {}).is_baseline ? -1 : (ba ? ba.mean : 1e9);
+      var pb = (panel.model_meta[b2] || {}).is_baseline ? -1 : (bb ? bb.mean : 1e9);
+      return pa - pb;
+    });
+    var hue = {}, fi = 0;
+    models.forEach(function (m) {
+      hue[m] = SCORE_HUES[m] || SCORE_FALLBACK[(fi++) % SCORE_FALLBACK.length];
+    });
+
+    // ---- chart: mean error vs lead time, N under every point ---------------
+    var W = 760, H = 380, PAD = { l: 48, r: 120, t: 14, b: 52 };
+    var maxY = 0;
+    shown.forEach(function (t) {
+      var e = panel.per_tau[String(t)];
+      models.forEach(function (m) {
+        var r = e.models[m];
+        if (r) maxY = Math.max(maxY, r.ci ? r.ci[1] : r.mean);
+      });
+    });
+    maxY = Math.max(maxY * 1.08, 10);
+    var t1 = shown[shown.length - 1];
+    var iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
+    function X(t) { return PAD.l + (t / t1) * iw; }
+    function Y(v) { return PAD.t + (1 - v / maxY) * ih; }
+
+    var svg = ['<svg class="gv-svg" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="xMidYMid meet" role="img" ' +
+      'aria-label="Homogeneous model verification, mean error by lead time">'];
+    var ystep = niceStep(maxY / 5);
+    for (var gv = 0; gv <= maxY; gv += ystep) {
+      svg.push('<line x1="' + PAD.l + '" y1="' + Y(gv).toFixed(1) + '" x2="' +
+        (W - PAD.r) + '" y2="' + Y(gv).toFixed(1) + '" stroke="#1b2635"/>');
+      svg.push('<text x="' + (PAD.l - 5) + '" y="' + (Y(gv) + 3).toFixed(1) +
+        '" fill="#6d829e" font-size="9.5" text-anchor="end">' + Math.round(gv) + '</text>');
+    }
+    svg.push('<text x="' + (PAD.l - 5) + '" y="' + (PAD.t - 4) +
+      '" fill="#8ea2bd" font-size="9.5" text-anchor="end" font-weight="700">' +
+      (this.scMetric === 'track' ? 'nm' : 'kt') + '</text>');
+    shown.forEach(function (t) {
+      var e = panel.per_tau[String(t)];
+      svg.push('<line x1="' + X(t).toFixed(1) + '" y1="' + PAD.t + '" x2="' +
+        X(t).toFixed(1) + '" y2="' + (H - PAD.b + 4) + '" stroke="#1b2635"/>');
+      svg.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - PAD.b + 16) +
+        '" fill="#8ea2bd" font-size="10" text-anchor="middle" font-weight="700">' +
+        t + 'h</text>');
+      // THE RULE: sample size under every plotted point, always.
+      svg.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - PAD.b + 28) +
+        '" fill="#6d829e" font-size="8.5" text-anchor="middle">n=' + e.n + '</text>');
+      svg.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - PAD.b + 39) +
+        '" fill="#566b80" font-size="8" text-anchor="middle">' +
+        e.n_storms + ' storm' + (e.n_storms === 1 ? '' : 's') + '</text>');
+    });
+    // Omitted taus: said, not hidden.
+    taus.forEach(function (t) {
+      var e = panel.per_tau[String(t)];
+      if (!e || !e.omitted || t > t1) return;
+      svg.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - PAD.b + 16) +
+        '" fill="#4a5a70" font-size="9" text-anchor="middle">' + t + 'h omitted (n=' +
+        e.n + ')</text>');
+    });
+
+    models.forEach(function (m) {
+      var meta = panel.model_meta[m] || {};
+      var pts = [];
+      shown.forEach(function (t) {
+        var r = panel.per_tau[String(t)].models[m];
+        if (r) pts.push([t, r.mean]);
+      });
+      if (pts.length < 1) return;
+      var dash = meta.is_baseline ? ' stroke-dasharray="7 4"' : '';
+      var wgt = m === 'OFCL' || meta.is_baseline ? 2.6 : 1.7;
+      if (pts.length > 1) {
+        svg.push('<path d="' + pts.map(function (p2, i2) {
+          return (i2 ? 'L' : 'M') + X(p2[0]).toFixed(1) + ' ' + Y(p2[1]).toFixed(1);
+        }).join(' ') + '" fill="none" stroke="' + hue[m] + '" stroke-width="' +
+          wgt + '" stroke-linejoin="round"' + dash + ' opacity="0.95"/>');
+      }
+      pts.forEach(function (p2) {
+        svg.push('<circle cx="' + X(p2[0]).toFixed(1) + '" cy="' + Y(p2[1]).toFixed(1) +
+          '" r="2.4" fill="' + hue[m] + '"/>');
+      });
+      var last = pts[pts.length - 1];
+      svg.push('<text x="' + (X(last[0]) + 7).toFixed(1) + '" y="' +
+        (Y(last[1]) + 3).toFixed(1) + '" fill="' + hue[m] +
+        '" font-size="9.5" font-weight="700">' + esc(m) +
+        (meta.is_baseline ? ' (no skill)' : '') + '</text>');
+    });
+    svg.push('</svg>');
+    var stage = el('div');
+    stage.innerHTML = svg.join('');
+    wrap.appendChild(stage);
+
+    // ---- table: mean [95% CI] and skill vs OCD5 ---------------------------
+    var html = ['<table class="gv-aids"><thead><tr><th>Model</th>'];
+    shown.forEach(function (t) { html.push('<th>' + t + ' h</th>'); });
+    html.push('</tr></thead><tbody>');
+    models.forEach(function (m) {
+      var meta = panel.model_meta[m] || {};
+      html.push('<tr><td><strong style="color:' + hue[m] + '">' + esc(m) +
+        '</strong><div class="k">' + esc(meta.label || '') +
+        (meta.is_baseline ? ' — no-skill baseline' : '') + '</div></td>');
+      shown.forEach(function (t) {
+        var r = panel.per_tau[String(t)].models[m];
+        if (!r) { html.push('<td class="k">—</td>'); return; }
+        var ci = r.ci ? ' <span class="k">[' + r.ci[0] + '–' + r.ci[1] + ']</span>'
+                      : ' <span class="k">[single storm]</span>';
+        var sk = (r.skill_pct != null)
+          ? '<div class="k">' + (r.skill_pct >= 0 ? '+' : '') + r.skill_pct +
+            '% vs OCD5</div>' : '';
+        html.push('<td><b>' + r.mean + '</b>' + ci + sk + '</td>');
+      });
+      html.push('</tr>');
+    });
+    html.push('</tbody></table>');
+    var tbl = el('div');
+    tbl.innerHTML = html.join('');
+    wrap.appendChild(tbl);
+
+    // Dropped models: the homogeneity filter's exclusions, said out loud.
+    var dropped = panel.dropped || {};
+    var dKeys = Object.keys(dropped);
+    if (dKeys.length) {
+      var parts = dKeys.map(function (t) {
+        return t + 'h: ' + dropped[t].map(function (d2) { return d2.tech; }).join(', ');
+      });
+      wrap.appendChild(el('div', 'gv-note',
+        '<strong>Dropped for coverage</strong> (homogeneity kept, models ' +
+        'removed rather than the filter relaxed): ' + esc(parts.join(' · '))));
+    }
+    wrap.appendChild(this._scoreCaveats(doc));
+    return wrap;
+  };
+
+  GuidanceViewer.prototype._scoreCaveats = function (doc) {
+    var box = el('div');
+    var c = doc.caveats || {};
+    box.appendChild(el('div', 'gv-note gv-warn',
+      '<strong>Provisional.</strong> ' + esc(c.provisional || '')));
+    box.appendChild(el('div', 'gv-note gv-warn',
+      '<strong>The models you cannot see here.</strong> ' +
+      esc(c.filtered_deck || '')));
+    ['homogeneity', 'blocks', 'early_late'].forEach(function (k) {
+      if (c[k]) box.appendChild(el('div', 'gv-note', esc(c[k])));
+    });
+    box.appendChild(el('div', 'gv-note',
+      'Truth: ' + esc(doc.truth || '') + ' · generated ' +
+      esc(doc.generated_at || '')));
+    return box;
   };
 
   /* A tiny inline sparkline. Returns SVG markup. */

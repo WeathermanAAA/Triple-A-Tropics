@@ -22,6 +22,17 @@ on:
   schedule:
     - cron: "41 1,7,13,19 * * *"
     - cron: "21 2,8,14,20 * * *"
+  # A push that changes the guidance code (or this workflow) republishes the
+  # documents immediately: the builders are pure functions of upstream data +
+  # code, so fresh code should mean fresh documents, not documents from the
+  # old code until the next cron. (Also the only self-service publish path
+  # when the fleet boxes are unreachable - gh dispatch is 403 from the
+  # codespace.)
+  push:
+    branches: [main]
+    paths:
+      - "guidance/**"
+      - ".github/workflows/update-guidance.yml"
   workflow_dispatch: {}
 
 # Read-only: this workflow commits NOTHING to main (same as update-hafs.yml and
@@ -84,6 +95,14 @@ jobs:
           set -euo pipefail
           python -m guidance.build_ensemble --out-dir cyclolab_ens
 
+      # The verification scoreboard: season a-decks scored against the season
+      # b-decks per NHC basin. JTWC basins are structurally out of scope
+      # (their decks carry no official/consensus/statistical/baseline aids).
+      - name: Build verification scoreboards
+        run: |
+          set -euo pipefail
+          python -m guidance.build_verification --out-dir verification_out
+
       # Sync to R2 alongside the existing per-storm CycloLab objects. NOT
       # --delete: the legacy guidance.json under the same prefix is written by
       # the render box, and a pruning sync from here would remove it. Each run
@@ -140,4 +159,18 @@ jobs:
             echo "Synced $(find cyclolab_ens -name 'ensemble_v2.json' | wc -l) ensemble document(s) to R2."
           else
             echo "No ensemble documents built."
+          fi
+
+          # Verification scoreboards live under their own prefix (they are
+          # per-basin, not per-storm).
+          if [ -d verification_out ] && [ -n "$(ls -A verification_out 2>/dev/null)" ]; then
+            aws s3 sync verification_out/ "s3://triple-a-tropics-media/verification/" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "public, max-age=300" \
+              --content-type "application/json" \
+              --exclude "*" --include "*.json" \
+              --only-show-errors
+            echo "Synced $(ls verification_out/*.json | wc -l) verification document(s) to R2."
+          else
+            echo "No verification documents built."
           fi

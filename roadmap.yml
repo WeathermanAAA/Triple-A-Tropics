@@ -29,10 +29,47 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T03:20:00Z
+updated: 2026-07-31T17:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: verification-scoreboard
+    title: Homogeneous verification scoreboard — the headline differentiator
+    area: models
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      Model track and intensity error verification on the storm-keyed CycloLab
+      page, season to date per NHC basin — the item the spec rates impact 10
+      because nobody in the class ships one. The rules are the product.
+      HOMOGENEITY IS A HARD FILTER: models are compared only on cases where
+      every model in the panel has a forecast, so a model cannot look better by
+      skipping hard cases; when the filter starves the sample, models are
+      dropped (least coverage first, recorded and shown) rather than the filter
+      relaxed, and lead times still short are omitted with their n printed. N
+      UNDER EVERY POINT, always, plus the storm count. Confidence intervals
+      BLOCK-BOOTSTRAP OVER STORMS because consecutive 6-hourly forecasts of one
+      storm are near-duplicates; a single-storm sample shows no interval rather
+      than a fake one. EARLY AND LATE ARE NEVER POOLED — separate panels, since
+      a late aid's apparent skill is partly hindsight. OCD5 is the protected
+      no-skill baseline that coverage pressure can never evict, and every model
+      carries its skill percentage against it. The page states plainly that the
+      operational b-deck SELF-CORRECTS (observed: a published 140 kt fix
+      revised to 150/909), so all scores are provisional until post-season
+      reanalysis, and that the public a-deck withholds every ECMWF-derived and
+      UKMET aid — the board is not silently omitting the models people most
+      want compared; no public feed can score them. One engine catch made the
+      cut: NNIC is an intensity consensus whose positions are not track
+      forecasts (628 nm at 120 h against TVCN's 82 in the same homogeneous
+      sample), so intensity-consensus aids are excluded from track panels while
+      staying fully eligible for intensity. JTWC basins render the structural
+      explanation instead of a board. First real numbers, EP 2026 to date,
+      seven storms, 864 cases: OFCL 18.7 nm at 12 h to 59.9 at 120 h, the
+      consensus cluster at 82-92, OCD5 climbing to 269 — textbook shapes, which
+      is the sanity check passing.
+    links:
+      - label: CycloLab storm page (Scores tab)
+        url: /cyclolab/NHC_EP072026/
   - id: png8-fixed-palette
     title: PNG-8 fixed-palette frames — shipped where bit-exactness is possible
     area: models
