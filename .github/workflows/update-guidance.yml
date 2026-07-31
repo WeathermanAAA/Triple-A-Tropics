@@ -49,11 +49,14 @@ jobs:
 
       # Deliberately minimal: the deck/SHIPS ingest is stdlib + requests.
       # eccodes (its modern wheels bundle the C library) is only for the
-      # ensemble builder's ECMWF BUFR decode - and if it ever fails to import
-      # on a runner, fetch_ecmwf catches it and the ensemble documents degrade
-      # to GEFS-only rather than failing the job.
+      # ensemble builder's ECMWF BUFR decode, so its install is allowed to
+      # fail SEPARATELY: fetch_ecmwf catches the ImportError and the ensemble
+      # documents degrade to GEFS-only. A wheel hiccup must not take down the
+      # guidance and SHIPS publishes that share this job.
       - name: Install deps
-        run: pip install requests eccodes
+        run: |
+          pip install requests
+          pip install eccodes || echo "eccodes unavailable - ensemble degrades to GEFS-only"
 
       - name: Build per-storm guidance documents
         run: |
