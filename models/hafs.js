@@ -132,6 +132,16 @@
     this.idx = 0;          // index into fxxList (rendered frames only)
     this.playing = false;
     this.speed = 1;
+    // ---- orthogonal URL state (item 18) ----------------------------------
+    // Every view is shareable: run/storm/model/domain/product/fxx/mode ride
+    // as independent query params. Enabled only for the standalone /models/
+    // mount - a storm-locked CycloLab embed must never rewrite ITS page URL.
+    this.urlSync = opts.urlSync !== false && !this.stormLock &&
+                   typeof window !== 'undefined' && !!window.history &&
+                   typeof location !== 'undefined';
+    this._urlBoot = this.urlSync ? this._readUrl() : null;   // consumed once
+    this._urlTimer = null;
+    this._expiredRun = null;
     // Playback pacing: a single requestAnimationFrame loop with a timestamp
     // threshold (the satellite sat-simple canon), NOT setInterval — vsync-
     // aligned, drift-free, and it never advances onto an undecoded frame.
@@ -292,6 +302,14 @@
     this.pendingCycleKey = null;
 
     var defKey = this._defaultCycleKey();
+    // A shared link may name a run. If it still exists, honor it; if it has
+    // EXPIRED (rotated out of the manifest), fall back to the default run and
+    // say so - the rest of the link (storm/product/hour) still applies.
+    var wantRun = this._urlTake('run');
+    if (wantRun) {
+      if (this._cycleByKey(wantRun)) defKey = wantRun;
+      else this._expiredRun = wantRun;
+    }
     var selCycle = this._cycleByKey(defKey);
     var storms = selCycle ? (selCycle.storms || []) : [];
 
@@ -321,6 +339,14 @@
     this._selectCycle(defKey, false, false);
     this._updateFooter();
     this._schedulePoll();
+    if (this._expiredRun) {
+      this._toast('The linked run ' + this._expiredRun +
+                  ' has expired — showing the latest run instead.');
+      this._expiredRun = null;
+    }
+    // Canonicalize the address bar to the resolved state (replace, not push:
+    // landing is not a navigation).
+    this._syncUrl(false);
   };
 
   // ---- cycle picker -----------------------------------------------------
@@ -422,9 +448,26 @@
     if (prevStorm) {
       for (var j = 0; j < storms.length; j++) if (storms[j].id === prevStorm) keepId = prevStorm;
     }
-    this._selectStorm(keepId || (storms[0] && storms[0].id), keepSelection);
+    // Boot/restore precedence: an explicit URL storm > the kept selection >
+    // the smart default (strongest active storm) > manifest order.
+    var urlStorm = this._urlTake('storm');
+    if (urlStorm && !this._stormInList(storms, urlStorm)) urlStorm = null;
+    this._selectStorm(urlStorm || keepId || this._defaultStormId(storms),
+                      keepSelection);
     this._buildCyclePicker();
     this._updateFooter();
+  };
+
+  HafsViewer.prototype._stormInList = function (storms, id) {
+    for (var i = 0; i < storms.length; i++) {
+      if (storms[i].id === id) return true;
+    }
+    return false;
+  };
+
+  // Placeholder until the smart default lands (item 11): manifest order.
+  HafsViewer.prototype._defaultStormId = function (storms) {
+    return storms[0] && storms[0].id;
   };
 
   HafsViewer.prototype._stormById = function (id) {
@@ -554,9 +597,11 @@
     if (keepSelection !== false) {
       for (var i = 0; i < models.length; i++) if (models[i].slug === this.model) keep = this.model;
     }
-    this._buildToggle(this.dom.models, models, keep || (models[0] && models[0].slug),
-                      this._selectModel.bind(this));
-    this._selectModel(keep || (models[0] && models[0].slug), keepSelection);
+    var urlModel = this._urlTake('model');
+    if (urlModel && !models.some(function (m) { return m.slug === urlModel; })) urlModel = null;
+    var pickM = urlModel || keep || (models[0] && models[0].slug);
+    this._buildToggle(this.dom.models, models, pickM, this._selectModel.bind(this));
+    this._selectModel(pickM, keepSelection);
   };
 
   HafsViewer.prototype._selectModel = function (slug, keepSelection) {
@@ -567,9 +612,11 @@
     if (keepSelection !== false) {
       for (var i = 0; i < domains.length; i++) if (domains[i].slug === this.domain) keep = this.domain;
     }
-    this._buildToggle(this.dom.domains, domains, keep || (domains[0] && domains[0].slug),
-                      this._selectDomain.bind(this));
-    this._selectDomain(keep || (domains[0] && domains[0].slug), keepSelection);
+    var urlDomain = this._urlTake('domain');
+    if (urlDomain && !domains.some(function (d) { return d.slug === urlDomain; })) urlDomain = null;
+    var pickD = urlDomain || keep || (domains[0] && domains[0].slug);
+    this._buildToggle(this.dom.domains, domains, pickD, this._selectDomain.bind(this));
+    this._selectDomain(pickD, keepSelection);
   };
 
   HafsViewer.prototype._selectDomain = function (slug, keepSelection) {
@@ -583,7 +630,9 @@
     if (keepSelection !== false) {
       for (var i = 0; i < products.length; i++) if (products[i].slug === this.product) keep = this.product;
     }
-    var pick = keep || (products[0] && products[0].slug);
+    var urlProduct = this._urlTake('product');
+    if (urlProduct && !products.some(function (p) { return p.slug === urlProduct; })) urlProduct = null;
+    var pick = urlProduct || keep || (products[0] && products[0].slug);
     this._buildToggle(this.dom.products, products, pick,
                       this._selectProduct.bind(this), 'short');
     this._selectProduct(pick, keepSelection);
@@ -643,10 +692,19 @@
     }
     this.idx = Math.max(0, Math.min(this.idx, Math.max(0, this.fxxList.length - 1)));
 
+    // A shared link's hour and mode land last, once the rendered list exists.
+    var urlFxx = this._urlTake('fxx');
+    if (urlFxx != null) {
+      var wantF = parseInt(urlFxx, 10);
+      if (!isNaN(wantF)) this.idx = this._renderedIndexNear(wantF);
+    }
+    var urlMode = this._urlTake('mode');
+
     this._buildHourGrid();
     this._updateCaption();
     this._show(this.idx);
     this._preloadAll();
+    if (urlMode === 'play' && !this.playing) this._play();
   };
 
   // ---- availability-aware forecast-hour grid ----------------------------
@@ -775,6 +833,7 @@
   // which field labels the buttons (default 'label'; the product toggle uses
   // 'short' so it reads "Wind" / "Reflectivity").
   HafsViewer.prototype._buildToggle = function (container, defs, active, onPick, labelKey) {
+    var viewer = this;
     container.innerHTML = '';
     labelKey = labelKey || 'label';
     for (var i = 0; i < defs.length; i++) {
@@ -800,7 +859,14 @@
             'systematically under-deepen tropical cyclones.';
         }
         b.setAttribute('data-slug', def.slug);
-        b.addEventListener('click', function () { onPick(def.slug); });
+        b.addEventListener('click', function () {
+          onPick(def.slug);
+          // Every toggle in this builder is push-worthy navigation (cycle,
+          // model, domain, product) - and ONLY this user-click path pushes:
+          // the poll's programmatic regrow calls the same _select* functions
+          // without ever passing through here, so it can never spam history.
+          viewer._syncUrl(true);
+        });
         container.appendChild(b);
       })(defs[i]);
     }
@@ -863,6 +929,10 @@
       '  ·  Init ' + fmtUTC(init);
     this._highlightHour();
     this._updatePill();
+    // Scrubbing (clicks, arrows, playback ticks) rewrites the address bar via
+    // debounced replaceState only - 43 forecast hours must never become 43
+    // back-button presses.
+    this._syncUrl(false);
   };
 
   // ---- in-progress pill, pre-announce badge, footer --------------------
@@ -1244,12 +1314,108 @@
     if (newUrls.length) this._preloadUrls(newUrls, this.preloadGen, false);
   };
 
+  // ---- orthogonal URL scheme + history policy (item 18) -------------------
+  // Params: run, storm, model, domain, product, fxx, mode - each independent,
+  // so any view is shareable and restorable. HISTORY POLICY: pushState only on
+  // run/storm/model/domain/product/mode (real navigation); the fxx scrub uses
+  // replaceState debounced 250 ms, because 43 forecast hours must never become
+  // 43 back-button presses.
+
+  HafsViewer.prototype._readUrl = function () {
+    try {
+      var q = new URLSearchParams(location.search);
+      var out = {};
+      ['run', 'storm', 'model', 'domain', 'product', 'fxx', 'mode']
+        .forEach(function (k) { if (q.get(k)) out[k] = q.get(k); });
+      return out;
+    } catch (e) { return {}; }
+  };
+
+  // Consume a boot/restore override once: each selection level takes its own
+  // param as the chain runs, then it is gone - a later user action must never
+  // be fought by a stale URL value.
+  HafsViewer.prototype._urlTake = function (key) {
+    if (!this._urlBoot || this._urlBoot[key] == null) return null;
+    var v = this._urlBoot[key];
+    delete this._urlBoot[key];
+    return v;
+  };
+
+  HafsViewer.prototype._urlQuery = function () {
+    var p = [];
+    function add(k, v) { if (v != null && v !== '') p.push(k + '=' + encodeURIComponent(v)); }
+    add('run', this.cycle && this.cycle.cycle);
+    add('storm', this.storm && this.storm.id);
+    add('model', this.model);
+    add('domain', this.domain);
+    add('product', this.product);
+    if (this.fxxList.length) add('fxx', this.fxxList[this.idx]);
+    if (this.playing) add('mode', 'play');
+    return p.join('&');
+  };
+
+  HafsViewer.prototype._syncUrl = function (push) {
+    if (!this.urlSync || !this.storm) return;
+    var self = this;
+    var q = this._urlQuery();
+    var target = location.pathname + (q ? '?' + q : '') + location.hash;
+    var current = location.pathname + location.search + location.hash;
+    if (target === current) return;
+    if (push) {
+      if (this._urlTimer) { clearTimeout(this._urlTimer); this._urlTimer = null; }
+      try { history.pushState(null, '', target); } catch (e) { /* sandboxed */ }
+      return;
+    }
+    // Scrub path: debounced replaceState. Never history entries.
+    if (this._urlTimer) clearTimeout(this._urlTimer);
+    this._urlTimer = setTimeout(function () {
+      self._urlTimer = null;
+      var q2 = self._urlQuery();
+      var t2 = location.pathname + (q2 ? '?' + q2 : '') + location.hash;
+      if (t2 !== location.pathname + location.search + location.hash) {
+        try { history.replaceState(null, '', t2); } catch (e) { /* sandboxed */ }
+      }
+    }, 250);
+  };
+
+  // Back/forward: re-run the selection chain from the URL, silently (the
+  // restore itself must not push).
+  HafsViewer.prototype._applyUrlState = function () {
+    if (!this.urlSync || !this.cycles.length) return;
+    this._urlBoot = this._readUrl();
+    var run = this._urlTake('run');
+    var key = (run && this._cycleByKey(run)) ? run : this._defaultCycleKey();
+    this._pause();
+    this._selectCycle(key, false, false);
+  };
+
+  // A small transient notice (expired shared runs, keyboard feedback). One
+  // element, reused; fades on a timer; never blocks anything.
+  HafsViewer.prototype._toast = function (msg) {
+    var host = this.dom.stage;
+    if (!host) return;
+    if (!this._toastEl) {
+      this._toastEl = document.createElement('div');
+      this._toastEl.className = 'hafs-toast';
+      host.appendChild(this._toastEl);
+    }
+    var t = this._toastEl;
+    t.textContent = msg;
+    t.classList.add('show');
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3200);
+  };
+
   HafsViewer.prototype._wire = function () {
     var self = this;
     this.dom.stormSel.addEventListener('change', function () {
       self._pause(); self._selectStorm(this.value, false);
+      self._syncUrl(true);      // storm switch = navigation
     });
-    this.dom.play.addEventListener('click', function () { self._togglePlay(); });
+    this.dom.play.addEventListener('click', function () {
+      self._togglePlay();
+      self._syncUrl(true);      // mode change = navigation (spec: push on mode)
+    });
     this.dom.stepB.addEventListener('click', function () { self._pause(); self._step(-1); });
     this.dom.stepF.addEventListener('click', function () { self._pause(); self._step(1); });
 
@@ -1262,6 +1428,14 @@
       if (SPEED_OPTIONS[i] === 1) o.selected = true;
       sp.appendChild(o);
     }
+    // Back/forward restores the full view from the URL, silently - the
+    // restore itself must never push (that would trap the user in a loop).
+    if (this.urlSync && typeof window !== 'undefined') {
+      window.addEventListener('popstate', function () {
+        self._applyUrlState();
+      });
+    }
+
     sp.addEventListener('change', function () {
       self.speed = parseFloat(this.value);
       // _tick reads _frameMs() fresh each frame, so the new cadence applies on
@@ -1290,7 +1464,13 @@
   if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('DOMContentLoaded', function () {
       var root = el('hafs-viewer');
-      if (root) new HafsViewer(root);
+      // The instance is exposed for the browser test harnesses and for
+      // console debugging; nothing on the page reads it.
+      if (root && typeof window !== 'undefined') {
+        window.__hafsViewer = new HafsViewer(root);
+      } else if (root) {
+        new HafsViewer(root);
+      }
     });
   }
 

@@ -141,6 +141,18 @@
     display: block; width: 100%; height: auto;
     max-width: 100%; max-height: none;
   }
+  /* Transient notice inside the stage (expired shared runs, keyboard
+     feedback). Small, bottom-centered, fades on a timer; never interactive. */
+  .hafs-toast {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    max-width: 86%; padding: 7px 14px; border-radius: 7px;
+    background: rgba(10, 16, 24, 0.92); border: 1px solid var(--border);
+    color: var(--fg); font-size: 12.5px; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    z-index: 5;
+  }
+  .hafs-toast.show { opacity: 1; }
+
   .hafs-statusbox {
     position: absolute; inset: 0;
     display: none; align-items: center; justify-content: center;
@@ -617,7 +629,7 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/telemetry.js?v=edbe6ac804"></script>
-<script src="/models/hafs.js?v=153a335b9a"></script>
+<script src="/models/hafs.js?v=00d153e357"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>
 <script src="/models/enscenters.js?v=bffaca1377"></script>
 </body>

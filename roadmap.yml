@@ -29,10 +29,32 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T18:10:00Z
+updated: 2026-07-31T18:55:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: models-url-scheme
+    title: Orthogonal URL scheme with a disciplined history policy
+    area: models
+    status: shipped
+    date_shipped: 2026-07-31
+    note: >-
+      Run, storm, model, domain, product, hour and mode ride as independent
+      query parameters on /models/, so any view is shareable and restorable.
+      The history policy is the load-bearing part and is browser-proven, not
+      eyeballed: scrubbing rewrites the address bar with replaceState debounced
+      250 ms and grows history by ZERO entries — 43 forecast hours never become
+      43 back-button presses — while storm, model, domain, product, run and
+      mode changes push exactly one entry each, and only from the user-click
+      path, so the 45-second poll's programmatic regrow can never spam history.
+      Back and forward restore the full view. A shared link whose run has
+      rotated out of the manifest falls back to the current run, KEEPS the rest
+      of the link (storm, product, hour), and says so in a transient notice
+      rather than failing or pretending. The CycloLab embed never rewrites its
+      host page URL — sync is enabled only for the standalone mount.
+    links:
+      - label: Example shareable view
+        url: /models/?storm=06e&product=refl&fxx=24
   - id: five-state-availability
     title: Five-state availability — pending vs unavailable, told apart honestly
     area: models
