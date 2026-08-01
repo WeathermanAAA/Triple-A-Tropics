@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-07-31T21:30:00Z
+updated: 2026-08-01T03:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1369,6 +1369,41 @@ items:
     links:
       - label: models
         url: /models/
+  - id: vortex-removed-shear
+    title: Vortex-removed deep-layer shear — the number, computed honestly
+    area: models
+    status: shadow
+    note: >-
+      BUILT + fully verified 2026-08-01, HELD on branch shear-26-4-held — the
+      incident-#3 gate (one clean production run before anything lands on the
+      pipeline) failed when the recovery run stalled again (incident #4, see
+      AGENT_STATUS). 850–200 hPa shear per (model, storm, forecast hour) with
+      the model's OWN vortex removed (azimuthal-mean method about the model's
+      own trak.atcfunix centre, 0–500 km, parent domain — SHIPS SHRD's
+      construction), published as numbers in the HAFS manifest with the naive
+      layer-difference alongside; method/layer/radius are named parameters,
+      Helmholtz is a named seam. No ingest change needed (the field cache
+      already carries the 200–850 shear vector; the azimuthal mean is
+      linear). Verified vs SHIPS SHRD same storm+cycle (n=8, mean −1.5 kt),
+      on a 133 kt WPAC storm on a frame spanning lon 180, and in unit tests
+      where naive contamination grows with intensity on clipped discs while
+      the removed value stays flat. Flips to shipped when the branch lands.
+  - id: shear-relative-view
+    title: Shear-relative view — quadrant frame + shear vector on the storm view
+    area: models
+    status: shadow
+    note: >-
+      BUILT + verified 2026-08-01, HELD with vortex-removed-shear on
+      branch shear-26-4-held (same gate — the view is worthless without the
+      number). Toggle on the existing storm-centred frames, no new renders:
+      the raster stays north-up and an SVG overlay rotates the shear vector +
+      DR/DL/UR/UL quadrant frame to the published heading, removed and naive
+      numbers in a chip. Quadrants are defined purely by rotation from the
+      shear vector so the geometry is identical in both hemispheres; the chip
+      states the convective preference both ways (downshear-left NH,
+      downshear-right SH). URL param shear=1 via replaceState only; S key in
+      the expert layer; honest per-hour degradation when the model has no
+      vortex fix. Screenshot-verified over a real published frame.
   - id: hafs-fieldcache-retention
     title: HAFS field cache has no retention policy — unbounded on a persistent volume
     area: models

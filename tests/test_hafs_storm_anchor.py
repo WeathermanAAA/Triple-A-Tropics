@@ -133,7 +133,7 @@ class TestOnlyFxxPlanning(unittest.TestCase):
         captured = {"ingest": [], "render": []}
 
         def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None,
-                      max_tasks_per_child=None):
+                      max_tasks_per_child=None, stage_deadline_s=None):
             stage = "ingest" if jobs_list and isinstance(
                 jobs_list[0], gen.IngestJob) else "render"
             captured[stage] = list(jobs_list)
@@ -194,7 +194,7 @@ class TestOnlyFxxPlanning(unittest.TestCase):
         cen_seen = {}
 
         def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None,
-                      max_tasks_per_child=None):
+                      max_tasks_per_child=None, stage_deadline_s=None):
             for j in jobs_list:
                 if isinstance(j, gen.RenderJob):
                     cen_seen[j.fxx] = (j.cen_lat, j.cen_lon)
