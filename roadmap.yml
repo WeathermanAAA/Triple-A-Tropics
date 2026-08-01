@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-01T03:20:00Z
+updated: 2026-08-01T05:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1369,6 +1369,30 @@ items:
     links:
       - label: models
         url: /models/
+  - id: hafs-teardown-commit-point
+    title: HAFS builder — a finished build can never again be lost to teardown
+    area: models
+    status: shipped
+    date_shipped: 2026-08-01
+    note: >-
+      Incident #4's second defect, fixed first (cheapest, and it cost a
+      finished cycle): the stage-deadline path now SIGKILLs and reaps wedged
+      workers (terminate()'s SIGTERM is a no-op against a call blocked inside
+      a C extension — signals only run between bytecodes; both workers
+      outlived it by 2.5 h, keeping a queue pipe open whose unbounded
+      multiprocessing finalizer join then hung the MAIN thread from cyclic GC
+      one second short of the manifest write), the manifest write is the
+      documented commit point with nothing blockable ahead of it, and the
+      entrypoint hard-exits via os._exit so no join, atexit hook or finaliser
+      can hold a finished build hostage. Proven behaviourally: a pool of
+      deliberately unkillable workers (SIGTERM masked, wedged in one long C
+      call) is salvaged at the deadline, actually dies, and the post-stage
+      gc.collect() that killed run 30661097361 returns instantly. Also armed:
+      STALL FORENSICS — if ingest completions stop for 8 min the builder
+      captures py-spy stacks, /proc State/wchan/syscall/kernel stacks and the
+      full process tree from the LIVE wedge, so the next stall reports where
+      it blocks instead of dying silently; the fetch-path bound gets chosen
+      from that evidence, not from a third guessed Python-level timeout.
   - id: vortex-removed-shear
     title: Vortex-removed deep-layer shear — the number, computed honestly
     area: models

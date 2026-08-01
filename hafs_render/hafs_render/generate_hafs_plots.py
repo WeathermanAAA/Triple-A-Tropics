@@ -68,7 +68,9 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -394,6 +396,85 @@ def _frame_key(model: str, storm: str, domain: str, fxx: int) -> tuple:
 # stage that is merely slow is indistinguishable from one that is wedged until
 # the job's timeout kills it.
 _POOL_HEARTBEAT_SECS = 120
+
+# STALL FORENSICS: after this many seconds with ZERO task completions (in a
+# stage with a deadline, i.e. ingest), capture evidence from every worker
+# process ONCE - Python stacks (py-spy if installed), /proc State/wchan/
+# syscall/stack, and the process tree. Incidents #3/#4 wedged at identical
+# coordinates with nothing in the logs to say WHERE: two Python-level timeouts
+# and SIGTERM all proved no-ops because a call blocked inside a C extension
+# never returns to the interpreter, so the bound has to come from a layer the
+# interpreter isn't involved in - and choosing that layer needs the evidence
+# this captures (in-process C call vs subprocess vs kernel state). Capture
+# only; the stage deadline still does the salvaging.
+_FORENSICS_AFTER_S = int(os.environ.get("HAFS_STALL_FORENSICS_S", "480"))
+
+
+def _read_proc(pid: int, name: str) -> str:
+    try:
+        txt = Path(f"/proc/{pid}/{name}").read_text(errors="replace").strip()
+        return txt or "<empty>"
+    except Exception as e:  # noqa: BLE001 - forensics never raise
+        return f"<unreadable: {e}>"
+
+
+def _capture_cmd(cmd: list, timeout: float = 20.0) -> str:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        return out or f"<no output, rc={r.returncode}>"
+    except Exception as e:  # noqa: BLE001
+        return f"<capture failed: {e}>"
+
+
+def _stall_forensics(pids: list) -> None:
+    """ONE-SHOT evidence dump for wedged workers. Every capture is individually
+    guarded and time-bounded so the forensics themselves can never hang the
+    build - the parent stays in charge throughout."""
+    log.error("STALL FORENSICS - no task completion for %ds; capturing "
+              "worker state (pids %s)", _FORENSICS_AFTER_S, pids)
+    # The whole process tree first: worker CHILDREN (a curl/external helper)
+    # are exactly what py-spy can't see and what decides subprocess-vs-inproc.
+    tree = _capture_cmd(["ps", "-eo", "pid,ppid,stat,wchan:30,etimes,cmd"])
+    mine = {os.getpid()}
+    lines = tree.splitlines()
+    kept = [lines[0]] if lines else []
+    changed = True
+    while changed:            # transitive descendants of this builder
+        changed = False
+        for ln in lines[1:]:
+            parts = ln.split(None, 2)
+            if len(parts) >= 2:
+                try:
+                    pid, ppid = int(parts[0]), int(parts[1])
+                except ValueError:
+                    continue
+                if ppid in mine and pid not in mine:
+                    mine.add(pid)
+                    changed = True
+    for ln in lines[1:]:
+        try:
+            if int(ln.split(None, 1)[0]) in mine:
+                kept.append(ln)
+        except (ValueError, IndexError):
+            continue
+    log.error("STALL FORENSICS process tree:\n%s", "\n".join(kept))
+    for pid in pids:
+        state = next((ln for ln in _read_proc(pid, "status").splitlines()
+                      if ln.startswith("State:")), "State: <unknown>")
+        log.error("STALL FORENSICS pid %d: %s | wchan=%s | syscall=%s",
+                  pid, state.strip(), _read_proc(pid, "wchan"),
+                  _read_proc(pid, "syscall"))
+        # Kernel stack needs root; Actions runners have passwordless sudo.
+        log.error("STALL FORENSICS pid %d kernel stack:\n%s", pid,
+                  _capture_cmd(["sudo", "-n", "cat", f"/proc/{pid}/stack"]))
+        # Python stack: py-spy is optional (workflow installs it); try plain
+        # then sudo (ptrace scope).
+        spy = _capture_cmd(["py-spy", "dump", "--pid", str(pid)])
+        if "capture failed" in spy or "Permission" in spy:
+            spy = _capture_cmd(["sudo", "-n", "py-spy", "dump",
+                                "--pid", str(pid)])
+        log.error("STALL FORENSICS pid %d python stack:\n%s", pid, spy)
 
 # ---------------------------------------------------------------------------
 # INGEST HANG-PROOFING (2026-07-31 incident, the third HAFS staleness in two
@@ -746,6 +827,7 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
             break
         batch, remaining = remaining, []
         not_done = set(range(len(batch)))
+        watch_stop = None
         try:
             pool_kw = {}
             if max_tasks_per_child:
@@ -756,6 +838,33 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                 fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
                 t_pool = last_beat = time.time()
                 done = 0
+                # Stall forensics (deadline stages only): a daemon watcher
+                # that fires ONCE if completions stop for _FORENSICS_AFTER_S,
+                # capturing worker stacks/kernel state while the wedge is
+                # LIVE - the deadline salvage below then proceeds as usual.
+                watch_stop = None
+                if stage_end is not None:
+                    watch_stop = threading.Event()
+                    progress = {"t": time.time(), "fired": False}
+
+                    def _watch(ev=watch_stop, pr=progress, pool=ex):
+                        while not ev.wait(15):
+                            if pr["fired"]:
+                                return
+                            if time.time() - pr["t"] > _FORENSICS_AFTER_S:
+                                pr["fired"] = True
+                                try:
+                                    _stall_forensics(
+                                        list(getattr(pool, "_processes", {})
+                                             or {}))
+                                except Exception:  # noqa: BLE001
+                                    log.exception("stall forensics failed")
+                                return
+
+                    threading.Thread(target=_watch, daemon=True,
+                                     name="stall-forensics").start()
+                else:
+                    progress = None
                 as_completed_kw = {}
                 if stage_end is not None:
                     as_completed_kw["timeout"] = max(1.0, stage_end - time.time())
@@ -765,6 +874,8 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                         record(fut.result())
                         not_done.discard(i)
                         done += 1
+                        if progress is not None:
+                            progress["t"] = time.time()
                         now = time.time()
                         if now - last_beat >= _POOL_HEARTBEAT_SECS:
                             el = now - t_pool
@@ -783,14 +894,32 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                     # the workers first so the exit join returns promptly.
                     deadline_hit = True
                     log.error("stage deadline (%ss) reached with %d task(s) "
-                              "unfinished - terminating the pool and "
+                              "unfinished - killing the pool and "
                               "continuing with what completed",
                               stage_deadline_s, len(not_done))
+                    # SIGKILL + reap, NOT terminate(): run 30661097361 proved
+                    # SIGTERM does nothing to a worker wedged inside a C call
+                    # (signals are delivered between bytecodes; a blocked
+                    # native call never returns to the interpreter) - both
+                    # workers were still alive 2.5 h later, which kept the
+                    # call-queue pipe open, which left the queue's feeder
+                    # thread blocked, which let multiprocessing's UNBOUNDED
+                    # Queue._finalize_join hang the MAIN thread at whatever
+                    # later allocation triggered cyclic GC - one second short
+                    # of the manifest write. SIGKILL needs no interpreter
+                    # participation; dead readers break the pipe and every
+                    # downstream join returns.
                     try:
-                        for p in list(getattr(ex, "_processes", {})
-                                      .values() or []):
+                        procs = list(getattr(ex, "_processes", {})
+                                     .values() or [])
+                        for p in procs:
                             try:
-                                p.terminate()
+                                p.kill()
+                            except Exception:  # noqa: BLE001
+                                pass
+                        for p in procs:       # reap so no zombie/finalizer waits
+                            try:
+                                p.join(timeout=10)
                             except Exception:  # noqa: BLE001
                                 pass
                         ex.shutdown(wait=False, cancel_futures=True)
@@ -811,6 +940,9 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
             log.warning("worker pool died (attempt %d) - retrying %d unfinished "
                         "task(s) in a fresh pool at width %d",
                         pool_attempt, len(remaining), width)
+        finally:
+            if watch_stop is not None:
+                watch_stop.set()
     for job in remaining:
         record(straggler(job))
 
@@ -1408,6 +1540,10 @@ def main() -> int:
         return 1
 
     manifest_path = out_dir / "manifest.json"
+    # THE COMMIT POINT. Everything before this line is the build; everything
+    # after it is expendable. Nothing that can block (pool teardown, joins,
+    # finalizers) is permitted between render completion and this write - and
+    # nothing at all runs after it except the log line and the hard exit below.
     manifest_path.write_text(json.dumps(manifest, indent=2))
     log.info("wrote %s - %d storm(s), cycle %s", manifest_path,
              len(manifest["storms"]), manifest["cycle"])
@@ -1415,4 +1551,17 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # os._exit, not sys.exit: run 30661097361 finished its build and then hung
+    # 2h27m in teardown territory (a multiprocessing finalizer joining a thread
+    # blocked on a wedge-survivor's pipe can fire from cyclic GC at ANY
+    # allocation, and interpreter exit joins non-daemon threads). A finished
+    # build must never be held hostage by cleanup: flush what the workflow log
+    # needs, then leave without running any join, atexit hook, or finaliser.
+    _rc = main()
+    logging.shutdown()
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(_rc)
