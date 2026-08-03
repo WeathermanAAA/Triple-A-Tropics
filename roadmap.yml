@@ -34,10 +34,9 @@ updated: 2026-08-03T18:40:00Z
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
   - id: r2-cost-list-kill
-    title: R2 cost incident — emitter listing discipline shipped fleet-wide; tile tar-containers staged
+    title: R2 cost incident — emitter listing discipline live; tar-containers staged
     area: infra
     status: active
-    date_shipped: 2026-08-03
     note: >-
       The ~7M LIST-pages/day term (65% of the bill): coverage listing is now
       tail-bounded to the backfill window, slot re-checks are in-memory,
