@@ -33,6 +33,26 @@ updated: 2026-08-03T18:40:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: r2-cost-list-kill
+    title: R2 cost incident — emitter listing discipline shipped fleet-wide; tile tar-containers staged
+    area: infra
+    status: active
+    date_shipped: 2026-08-03
+    note: >-
+      The ~7M LIST-pages/day term (65% of the bill): coverage listing is now
+      tail-bounded to the backfill window, slot re-checks are in-memory,
+      manifests append incrementally (one Class B GET instead of a
+      200-probe rebuild per frame), products.json is gated+throttled, and
+      every lane logs measured per-pass request counts. A 16-agent
+      adversarial panel confirmed 12 findings pre-deploy (stall-pin dedup,
+      silent manifest-PUT failures, prune resurrection race) — all fixed,
+      85 s2 tests green. Deployed to both boxes with a new prune lane
+      (nothing had pruned since 07-25). Staged behind a default-off flag:
+      tar-container tile publishing (the hafs #27 port, ~305 objects/frame
+      → ~6) with the viewer's s2c ranged-read protocol already live and
+      verified end-to-end — legacy fallback per frame, no Worker in the
+      path. Remaining: flip lanes to containers after canary; confirm the
+      billing rate drop tomorrow.
   - id: r2-cost-stopgap-retirement
     title: R2 cost incident — the three GH stopgap emitters retired (first cut)
     area: infra

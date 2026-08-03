@@ -113,6 +113,92 @@
     return base + tileTemplate.replace('{t}', stamp);
   }
 
+  // ---- container frames (s2 tar blocks + byte-range reads; the hafs #27 ----
+  // pattern, emit side in tsr s2_container.py). A frame may publish as a few
+  // zoom-banded USTAR blocks + a tiles.z{N}.json byte-offset index instead of
+  // one object per tile (~305 -> ~6 Class A writes per full-disk frame, the
+  // 2026-08 R2 cost incident). EVERY frame's tiles route through the 's2c'
+  // protocol; the handler resolves per stamp: index present -> ONE ranged
+  // fetch per tile (exact bytes, same WebP the per-tile path would return;
+  // CDN caches the block after first touch so a viewport is edge-ranges);
+  // index 404 -> the legacy per-tile object, byte-for-byte the old behavior.
+  // No worker, no server: the same maplibregl.addProtocol machinery ir3d's
+  // 'tatdem' DEM synth already relies on. Index fetches dedupe in-flight and
+  // cache per stamp URL (immutable content).
+  var S2C = 's2c://';
+  var s2cIndexCache = {};        // stampDirUrl -> Promise<index|null>
+  // 1x1 transparent PNG, canvas-encoded (the ir3d pngBytes technique -- a
+  // hand-typed base64 here shipped a tile the decoder rejected, which turned
+  // every skip_empty tile into an ERROR and stalled the readiness-gated
+  // preload pipeline). A tile absent from the index was skip_empty at the
+  // cutter: render transparent, exactly the missing-object slippy contract.
+  var s2cEmptyP = null;
+  function s2cEmptyTile() {
+    if (!s2cEmptyP) {
+      s2cEmptyP = new Promise(function (res, rej) {
+        var c = document.createElement('canvas');
+        c.width = 1; c.height = 1;
+        c.getContext('2d');           // blank canvas = fully transparent
+        c.toBlob(function (b) {
+          if (!b) { rej(new Error('s2c: empty-tile encode failed')); return; }
+          b.arrayBuffer().then(res, rej);
+        }, 'image/png');
+      });
+    }
+    return s2cEmptyP.then(function (buf) { return buf.slice(0); });
+  }
+  function s2cIndex(dir, mz) {
+    var key = dir + '|' + mz;
+    if (!s2cIndexCache[key]) {
+      s2cIndexCache[key] = fetch(dir + '/tiles.z' + mz + '.json')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; });
+    }
+    return s2cIndexCache[key];
+  }
+  function s2cHandler(params) {
+    // url: s2c://<stampDirUrl>|<maxzoom>|<z>/<x>/<y><ext>
+    var parts = params.url.slice(S2C.length).split('|');
+    var dir = parts[0], mz = parts[1], tile = parts[2];
+    return s2cIndex(dir, mz).then(function (idx) {
+      if (!idx || !idx.tiles) {
+        // legacy per-tile frame (or index fetch failed): the old read path,
+        // with a 404 rendered transparent instead of a console error
+        return fetch(dir + '/' + tile).then(function (r) {
+          if (r.status === 404 || r.status === 403) return s2cEmptyTile();
+          if (!r.ok) throw new Error('s2c tile HTTP ' + r.status);
+          return r.arrayBuffer();
+        }).then(function (b) { return { data: b }; });
+      }
+      var m = idx.tiles[tile];
+      if (!m)                                       // skip_empty: transparent
+        return s2cEmptyTile().then(function (b) { return { data: b }; });
+      var off = m[1], len = m[2];
+      return fetch(dir + '/' + m[0],
+                   { headers: { Range: 'bytes=' + off + '-' + (off + len - 1) } })
+        .then(function (r) {
+          if (r.status !== 206 && r.status !== 200)
+            throw new Error('s2c range HTTP ' + r.status);
+          return r.arrayBuffer().then(function (b) {
+            // a 200 (range unsupported on some path) is the WHOLE block:
+            // slice locally so the viewer still gets exactly its tile
+            if (r.status === 200 && b.byteLength > len) b = b.slice(off, off + len);
+            return { data: b };
+          });
+        });
+    });
+  }
+  if (typeof maplibregl !== 'undefined' && maplibregl.addProtocol)
+    maplibregl.addProtocol('s2c', s2cHandler);
+  function s2cFrameTiles(base, tileTemplate, stamp, maxzoom) {
+    var legacy = frameTiles(base, tileTemplate, stamp);
+    var cut = legacy.indexOf('/{z}/');
+    if (cut < 0 || typeof maplibregl === 'undefined' || !maplibregl.addProtocol)
+      return legacy;                            // unknown shape: legacy direct
+    return S2C + legacy.slice(0, cut) + '|' + (maxzoom || 5) + '|' +
+           legacy.slice(cut + 1);
+  }
+
   // ===========================================================================
   function TiledViewer(opts) {
     this.el = opts.container;
@@ -676,7 +762,11 @@
       return;
     }
     var m = this.manifest;
-    var url = frameTiles(this.base, m.tile, stamp);
+    // s2c routes container frames through ranged reads and legacy frames
+    // through their per-tile objects -- per-frame, transparently (see the
+    // protocol block above). Mixed manifests during the container
+    // transition need no special casing here.
+    var url = s2cFrameTiles(this.base, m.tile, stamp, m.maxzoom);
     // @2x on HiDPI: declaring the physical 512-px tile at half size pulls
     // one pyramid level deeper -- native-res pixels instead of the 2x
     // upsample testers read as "blurry at the default view". The pyramid
