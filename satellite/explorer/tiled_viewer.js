@@ -126,12 +126,22 @@
   // 'tatdem' DEM synth already relies on. Index fetches dedupe in-flight and
   // cache per stamp URL (immutable content).
   var S2C = 's2c://';
-  var s2cIndexCache = {};        // stampDirUrl -> Promise<index|null>
+  // Index cache: stampDir|mz -> Promise<index|null>. null is cached ONLY for
+  // a definitive 404/403 (a genuinely legacy frame); transient failures
+  // (network, 5xx) clear the entry so the NEXT tile retries, and the failing
+  // request itself falls back to the legacy per-tile object -- a hiccup can
+  // cost one fallback fetch, never a permanently blank frame (review finding
+  // 2026-08-03). LRU-capped: stamps roll off the loop constantly and a
+  // long-lived cockpit tab must not grow this without bound.
+  var s2cIndexCache = new Map();
+  var S2C_INDEX_CACHE_MAX = 240;
   // 1x1 transparent PNG, canvas-encoded (the ir3d pngBytes technique -- a
   // hand-typed base64 here shipped a tile the decoder rejected, which turned
   // every skip_empty tile into an ERROR and stalled the readiness-gated
-  // preload pipeline). A tile absent from the index was skip_empty at the
-  // cutter: render transparent, exactly the missing-object slippy contract.
+  // preload). A tile absent from the index was skip_empty at the cutter:
+  // render transparent, exactly the missing-object slippy contract. A failed
+  // encode clears the memo so the next tile retries instead of erroring
+  // forever.
   var s2cEmptyP = null;
   function s2cEmptyTile() {
     if (!s2cEmptyP) {
@@ -144,38 +154,58 @@
           b.arrayBuffer().then(res, rej);
         }, 'image/png');
       });
+      s2cEmptyP.catch(function () { s2cEmptyP = null; });
     }
     return s2cEmptyP.then(function (buf) { return buf.slice(0); });
   }
   function s2cIndex(dir, mz) {
     var key = dir + '|' + mz;
-    if (!s2cIndexCache[key]) {
-      s2cIndexCache[key] = fetch(dir + '/tiles.z' + mz + '.json')
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .catch(function () { return null; });
+    var hit = s2cIndexCache.get(key);
+    if (hit) return hit;
+    var p = fetch(dir + '/tiles.z' + mz + '.json')
+      .then(function (r) {
+        if (r.status === 404 || r.status === 403) return null;   // legacy: cache
+        if (!r.ok) throw new Error('s2c index HTTP ' + r.status);
+        return r.json();
+      })
+      .catch(function (e) {
+        s2cIndexCache.delete(key);      // transient: retry on the next tile
+        throw e;
+      });
+    s2cIndexCache.set(key, p);
+    if (s2cIndexCache.size > S2C_INDEX_CACHE_MAX) {
+      var oldest = s2cIndexCache.keys().next().value;
+      s2cIndexCache.delete(oldest);
     }
-    return s2cIndexCache[key];
+    return p;
   }
-  function s2cHandler(params) {
-    // url: s2c://<stampDirUrl>|<maxzoom>|<z>/<x>/<y><ext>
+  function s2cLegacyFetch(dir, tile, signal) {
+    return fetch(dir + '/' + tile, { signal: signal }).then(function (r) {
+      if (r.status === 404 || r.status === 403) return s2cEmptyTile();
+      if (!r.ok) throw new Error('s2c tile HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then(function (b) { return { data: b }; });
+  }
+  function s2cHandler(params, abortController) {
+    // url: s2c://<stampDirUrl>|<maxzoom>|<hint>|<z>/<x>/<y><ext>
+    // hint=1 -> the manifest says this product publishes containers, probe
+    // the index; hint=0 -> pure legacy product, skip the probe entirely (no
+    // per-frame 404 GET on never-flipped products -- review finding). The
+    // hint is sticky through rollback on the emitter side, so container
+    // frames stay readable after the flag is turned off.
+    var signal = abortController && abortController.signal;
     var parts = params.url.slice(S2C.length).split('|');
-    var dir = parts[0], mz = parts[1], tile = parts[2];
+    var dir = parts[0], mz = parts[1], hinted = parts[2] === '1', tile = parts[3];
+    if (!hinted) return s2cLegacyFetch(dir, tile, signal);
     return s2cIndex(dir, mz).then(function (idx) {
-      if (!idx || !idx.tiles) {
-        // legacy per-tile frame (or index fetch failed): the old read path,
-        // with a 404 rendered transparent instead of a console error
-        return fetch(dir + '/' + tile).then(function (r) {
-          if (r.status === 404 || r.status === 403) return s2cEmptyTile();
-          if (!r.ok) throw new Error('s2c tile HTTP ' + r.status);
-          return r.arrayBuffer();
-        }).then(function (b) { return { data: b }; });
-      }
+      if (!idx || !idx.tiles) return s2cLegacyFetch(dir, tile, signal);
       var m = idx.tiles[tile];
       if (!m)                                       // skip_empty: transparent
         return s2cEmptyTile().then(function (b) { return { data: b }; });
       var off = m[1], len = m[2];
       return fetch(dir + '/' + m[0],
-                   { headers: { Range: 'bytes=' + off + '-' + (off + len - 1) } })
+                   { signal: signal,
+                     headers: { Range: 'bytes=' + off + '-' + (off + len - 1) } })
         .then(function (r) {
           if (r.status !== 206 && r.status !== 200)
             throw new Error('s2c range HTTP ' + r.status);
@@ -186,16 +216,21 @@
             return { data: b };
           });
         });
+    }, function () {
+      // index fetch failed transiently: this tile takes the legacy path;
+      // the cleared cache entry retries the index on a later tile
+      return s2cLegacyFetch(dir, tile, signal);
     });
   }
   if (typeof maplibregl !== 'undefined' && maplibregl.addProtocol)
     maplibregl.addProtocol('s2c', s2cHandler);
-  function s2cFrameTiles(base, tileTemplate, stamp, maxzoom) {
+  function s2cFrameTiles(base, tileTemplate, stamp, maxzoom, hinted) {
     var legacy = frameTiles(base, tileTemplate, stamp);
     var cut = legacy.indexOf('/{z}/');
     if (cut < 0 || typeof maplibregl === 'undefined' || !maplibregl.addProtocol)
       return legacy;                            // unknown shape: legacy direct
-    return S2C + legacy.slice(0, cut) + '|' + (maxzoom || 5) + '|' +
+    return S2C + legacy.slice(0, cut) + '|' +
+           (maxzoom == null ? 5 : maxzoom) + '|' + (hinted ? '1' : '0') + '|' +
            legacy.slice(cut + 1);
   }
 
@@ -252,7 +287,8 @@
       container: this.el, style: darkStyle(),
       bounds: b ? [[b[0], b[1]], [b[2], b[3]]] : [[-160, -60], [10, 60]],
       fitBoundsOptions: { padding: 24 },
-      minZoom: (m.minzoom || 0), maxZoom: (m.maxzoom || 5) + 1,   // native + 1 over-zoom level
+      minZoom: (m.minzoom || 0),
+      maxZoom: (m.maxzoom == null ? 5 : m.maxzoom) + 1,   // native + 1 over-zoom level
       renderWorldCopies: false, attributionControl: false, cooperativeGestures: true,
       preserveDrawingBuffer: true
     });
@@ -566,7 +602,7 @@
     // reload. Re-apply it here so deeper native tiles unlock in place.
     if (this.map && this.manifest) {
       try {
-        var wantMax = (this.manifest.maxzoom || 5) + 1;
+        var wantMax = (this.manifest.maxzoom == null ? 5 : this.manifest.maxzoom) + 1;
         if (this.map.getMaxZoom() !== wantMax) {
           this.map.setMaxZoom(wantMax);
           this._pinMinZoom();
@@ -766,7 +802,8 @@
     // through their per-tile objects -- per-frame, transparently (see the
     // protocol block above). Mixed manifests during the container
     // transition need no special casing here.
-    var url = s2cFrameTiles(this.base, m.tile, stamp, m.maxzoom);
+    var url = s2cFrameTiles(this.base, m.tile, stamp, m.maxzoom,
+                            !!m.containers);
     // @2x on HiDPI: declaring the physical 512-px tile at half size pulls
     // one pyramid level deeper -- native-res pixels instead of the 2x
     // upsample testers read as "blurry at the default view". The pyramid
@@ -775,7 +812,8 @@
     this.map.addSource(sid, {
       type: 'raster', tiles: [url],
       tileSize: PERF.hiDpi ? (m.tile_size || 512) / 2 : (m.tile_size || 512),
-      minzoom: m.minzoom || 0, maxzoom: m.maxzoom || 5,
+      minzoom: m.minzoom || 0,
+      maxzoom: m.maxzoom == null ? 5 : m.maxzoom,
       bounds: m.bounds || undefined, scheme: 'xyz'
     });
     // insert imagery BELOW the first furniture layer (grat/coast) if present
@@ -1224,7 +1262,7 @@
         self._startRamp();               // full-fetch switch = cold mount
         self.frames = self._deriveFrames();
         self.frameIdx = Math.max(0, self.frames.length - 1);
-        self.map.setMaxZoom((m.maxzoom || 5) + 1);   // per-product native zoom
+        self.map.setMaxZoom((m.maxzoom == null ? 5 : m.maxzoom) + 1);   // per-product native zoom
         self._pinMinZoom();
         if (self.frames.length) {
           // showFrame holds the retired product on screen until the new
