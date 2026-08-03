@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T21:05:00Z
+updated: 2026-08-03T21:35:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -565,13 +565,19 @@ items:
       resolved it). Bindingless Cloudflare Worker (the codespace CF token
       cannot bind KV/D1/R2 — verified) relays batches via repository_dispatch
       to an ingest workflow that writes R2, compacted 4x daily into
-      telemetry/summary.json by update-guidance. Headroom: worker 100k
-      req/day free; dispatch ~5k/hr; Actions minutes free (public repo); R2
-      one write/batch vs 1M/mo free tier. Ceiling is Actions-run noise —
-      revisit at ~500 batches/day. Client flush (shipped in Phase 0, dormant)
-      now armed via TAT_TELEMETRY_ENDPOINT. Unblocks the hero-set scheduler
-      (spec 30). Proven end-to-end: 403 wrong-origin, 204 valid, ingest run
-      success, batch on R2.
+      telemetry/summary.json by update-guidance. CORRECTION 2026-08-03: the
+      zone route /telemetry/* attached fine all along (the "route failed"
+      readout was edge-propagation noise) — the page posts to the same-zone
+      URL; workers.dev stays as a smoke surface. The D1/KV/R2 gap on THIS
+      token is real (re-verified against the list endpoints, code 10000
+      each); the relay stands, and would collapse to a direct R2 put only if
+      the existing Triple-a-Weather token were added to the Codespace — no
+      new credential needed for anything. Headroom: worker 100k req/day;
+      dispatch ~5k/hr; Actions minutes free (public repo); R2 one
+      write/batch vs 1M/mo free tier; ceiling is Actions-run noise, revisit
+      ~500 batches/day. Unblocks the hero-set scheduler (spec 30). Proven:
+      403 wrong-origin, 204 valid on BOTH surfaces, ingest run success,
+      batch on R2.
   - id: model-record-phase0
     title: Model record — convection treatment, AI paradigm, structural product gating
     area: models

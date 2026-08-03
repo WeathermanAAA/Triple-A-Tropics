@@ -4,6 +4,10 @@
 name = "telemetry-collector"
 main = "telemetry-collector.js"
 compatibility_date = "2026-06-01"
+# workers.dev stays on as a deploy-smoke surface; the PAGE uses the zone
+# route (the 2026-08-03 "route failed" readout was propagation noise - the
+# route attached fine and this token manages routes).
+workers_dev = true
 
 routes = [
   { pattern = "triple-a-tropics.com/telemetry/*", zone_name = "triple-a-tropics.com" }

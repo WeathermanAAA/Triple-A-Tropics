@@ -9,11 +9,14 @@
  * and update-guidance compacts the inbox into telemetry/summary.json. No
  * accounts, no cookies, no IPs stored — product tallies and nothing else.
  *
- * WHY THE RELAY: the codespace's Cloudflare token can deploy workers but
- * cannot create/bind KV, D1, or R2 (verified 2026-08-03: auth error 10000
- * on all three), and the local AWS keys are not R2 keys. The dispatch hop
- * uses only credentials that already exist. When Andrew mints an R2-scoped
- * worker credential, the relay collapses to a direct R2 put.
+ * WHY THE RELAY: the codespace's Cloudflare token (tat-codespace-deploy,
+ * id 3b5eb373...) deploys workers AND manages zone routes, but cannot
+ * list/create/bind KV, D1, or R2 (re-verified 2026-08-03 against the list
+ * endpoints: code 10000 on all three, exact errors in AGENT_STATUS), and
+ * the local AWS keys are real AWS, not R2. The dispatch hop uses only
+ * credentials that already exist. If the EXISTING "Triple-a-Weather" token
+ * (Account.D1 + more, all accounts) is ever added to the Codespace, the
+ * relay collapses to a direct put - no new token needed.
  *
  * Headroom (stated, per the gate): worker requests — free tier 100k/day;
  * repository_dispatch — API limit ~5k/hr (client flush-throttle >=10 min/tab
@@ -59,13 +62,18 @@ export default {
     try { batch = JSON.parse(text); } catch (e) {
       return new Response("json", { status: 400, headers: cors(origin) });
     }
-    const rows = Array.isArray(batch && batch.rows) ? batch.rows.slice(0, MAX_ROWS) : [];
+    // The shipped client (models/telemetry.js flush()) sends
+    // {page, day, products: {slug: {views, dwell_s}}}; accept that shape
+    // directly and normalise to rows.
+    const prods = (batch && batch.products && typeof batch.products === "object")
+      ? batch.products : {};
     const clean = [];
-    for (const r of rows) {
-      if (!r || !SLUG.test(String(r.p || ""))) continue;
-      const v = Math.min(Math.max(0, r.v | 0), 500);
-      const d = Math.min(Math.max(0, r.d | 0), 36000);
-      if (v || d) clean.push({ p: r.p, v, d });
+    for (const k of Object.keys(prods).slice(0, MAX_ROWS)) {
+      if (!SLUG.test(k)) continue;
+      const b = prods[k] || {};
+      const v = Math.min(Math.max(0, b.views | 0), 500);
+      const d = Math.min(Math.max(0, b.dwell_s | 0), 36000);
+      if (v || d) clean.push({ p: k, v, d });
     }
     if (!clean.length) {
       return new Response("empty", { status: 204, headers: cors(origin) });
