@@ -29,29 +29,27 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T21:35:00Z
+updated: 2026-08-03T23:25:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
   - id: r2-cost-list-kill
-    title: R2 cost incident — emitter listing discipline live; tar-containers staged
+    title: R2 cost incident — listing discipline live fleet-wide; container canary UP
     area: infra
     status: active
     note: >-
-      The ~7M LIST-pages/day term (65% of the bill): coverage listing is now
-      tail-bounded to the backfill window, slot re-checks are in-memory,
-      manifests append incrementally (one Class B GET instead of a
-      200-probe rebuild per frame), products.json is gated+throttled, and
-      every lane logs measured per-pass request counts. A 16-agent
-      adversarial panel confirmed 12 findings pre-deploy (stall-pin dedup,
-      silent manifest-PUT failures, prune resurrection race) — all fixed,
-      85 s2 tests green. Deployed to both boxes with a new prune lane
-      (nothing had pruned since 07-25). Staged behind a default-off flag:
-      tar-container tile publishing (the hafs #27 port, ~305 objects/frame
-      → ~6) with the viewer's s2c ranged-read protocol already live and
-      verified end-to-end — legacy fallback per frame, no Worker in the
-      path. Remaining: flip lanes to containers after canary; confirm the
-      billing rate drop tomorrow.
+      Listing discipline deployed to all 11 lanes and MEASURED: warm passes
+      run 3-129 LIST pages (was 300-1,800); fleet projection ~2.25M
+      ops/day from 10.7M. Prune running again (per-product walk after the
+      whole-tree listing OOM-died). The tar-container canary is LIVE on
+      conus-fast since 23:00Z: truecolor publishes 485 z7 tiles as 7
+      objects (was ~488), ranged reads byte-match on the deployed
+      explorer, and an automatic-rollback watchdog (no human required:
+      unreadable-frame, byte-mismatch, staleness, lane-failure trips)
+      watches for 12 h. Its false-trip during arming proved the full
+      rollback path end-to-end before any container frame existed.
+      Next: watchdog PASS -> flip remaining lanes; next-day [ops] sweep vs
+      the 10.7M baseline + Andrew eyeballs the billing page.
   - id: r2-cost-stopgap-retirement
     title: R2 cost incident — the three GH stopgap emitters retired (first cut)
     area: infra
