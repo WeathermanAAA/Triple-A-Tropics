@@ -14,16 +14,24 @@ class TestGeometricPlan(unittest.TestCase):
     def test_full_row_43_hours(self):
         fxx = list(range(0, 127, 3))          # 43 hours
         blocks = hc.plan_blocks(fxx)
-        self.assertEqual([len(b) for b in blocks], [1, 2, 4, 8, 16, 12])
+        # Spec S7.3: growth capped at 8 - the progressive-delay bound.
+        self.assertEqual([len(b) for b in blocks], [1, 2, 4, 8, 8, 8, 8, 4])
         self.assertEqual(blocks[0], [0])       # f000 alone: instant publish
         self.assertEqual(sum(blocks, []), fxx) # nothing lost, order kept
+
+    def test_uncapped_mode_doubles(self):
+        """block_cap=None gives pure doubling - fewer writes, bigger trailing
+        blocks; for pipelines where progressive latency genuinely never
+        matters."""
+        blocks = hc.plan_blocks(list(range(0, 127, 3)), block_cap=None)
+        self.assertEqual([len(b) for b in blocks], [1, 2, 4, 8, 16, 12])
 
     def test_salvage_prefix_plans_the_same_way(self):
         """A deadline salvage's truncated hour list is a valid plan: complete
         leading blocks, one short trailing block - something ALWAYS ships."""
         fxx = list(range(0, 70, 3))            # f000..f069 (24 hours)
         blocks = hc.plan_blocks(fxx)
-        self.assertEqual([len(b) for b in blocks], [1, 2, 4, 8, 9])
+        self.assertEqual([len(b) for b in blocks], [1, 2, 4, 8, 8, 1])
         self.assertEqual(blocks[0], [0])
 
     def test_degenerate_rows(self):
@@ -98,8 +106,11 @@ class TestBlockWriteAndRangeRead(unittest.TestCase):
         """The headline number, from the REAL cycle shape (165 rows x 43
         hours, measured 2026-08-03 on cycle 2026072818): 6 blocks per row."""
         per_row = len(hc.plan_blocks(list(range(0, 127, 3))))
-        self.assertEqual(per_row, 6)
-        self.assertAlmostEqual((165 * per_row) / 7095, 0.1395, places=3)
+        self.assertEqual(per_row, 8)
+        # Cap-8 (spec design): 18.6% of per-frame writes on the real catalog.
+        # (Uncapped doubling gives 6 rows -> 14.0%; the cap buys the
+        # progressive-delay bound for ~4.6 points of write ratio.)
+        self.assertAlmostEqual((165 * per_row) / 7095, 0.1861, places=3)
 
 
 if __name__ == "__main__":

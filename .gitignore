@@ -115,3 +115,8 @@ workers/.wrangler/
 # the HURDAT2 download cache
 records_out/
 records_cache/
+
+# Models build spec lives OUT of repo at /workspaces/ (competitor observations - never public)
+models_page_build_spec*.md
+build_order*.csv
+tc_product_catalog*.csv

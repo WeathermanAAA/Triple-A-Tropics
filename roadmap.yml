@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T16:05:00Z
+updated: 2026-08-03T18:40:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -412,25 +412,12 @@ items:
   - id: ships-diagnostics-panel
     title: SHIPS diagnostic panel from the NHC stext feed
     area: models
-    status: next
+    status: shipped
+    date_shipped: 2026-07-30
     note: >-
-      Specced against the live feed (283 files harvested). Filename is
-      YYMMDDHH + basin + number + a TWO-digit storm year, not four. AL/EP/CP
-      only — there are no JTWC-basin SHIPS files, matching the a-deck picture.
-      Every columnar block is fixed-width and must be sliced rather than
-      split: two contribution labels are exactly 22 chars and butt against the
-      first data cell. TOTAL CHANGE equals the sum of its 19 components
-      exactly across 283 files times 16 columns, so the decomposition renders
-      as a waterfall safely. Sentinels are row-specific. The 4-digit year in
-      the banner is the COEFFICIENT year, and the RI predictor table's labels,
-      ordering and column offsets all change between coefficient years and
-      between basins — key it by label string, never by row position. Two
-      corrections to the original premise: RHLO and RHHI are NOT in the stext
-      bulletin, only 700-500 mb RH is, so the low and high RH rows need the
-      1:1 lsdiag sibling; and there is no archive for either feed anywhere on
-      the NHC FTP, so a historical panel requires continuous harvesting from
-      now. Test decks with cyclone numbers 80-89 carry absurd values and must
-      be filtered.
+      Retired as a separate item 2026-08-03: this was a stale duplicate of
+      the shipped SHIPS panel (canonical spec item 5) — the panel, the raw
+      harvester and the waterfall have been live on CycloLab since 07-30.
   - id: guidance-viewer-component
     title: Model guidance viewer — spaghetti, OCD5 baseline, membership strip, early/late
     area: models
@@ -1418,26 +1405,21 @@ items:
       - label: models
         url: /models/
   - id: tar-container-publishing
-    title: Tar-container frame publishing with geometric blocks — 14.0% of per-frame writes
+    title: Tar-container frame publishing with geometric blocks — live in dual-publish
     area: models
     status: active
     note: >-
-      Spec #27. Measured on the real 2026072818 catalog (not projected): 165
-      rows x 43 hours = 7,095 frames; geometric blocks (1,2,4,8,16,+12) = 6
-      objects per row -> 990 writes/cycle = 14.0% of baseline (spec said
-      ~17%). The salvage constraint overrides the savings BY CONSTRUCTION:
-      blocks are planned over the frames that EXIST, f000 is a complete tar
-      of one and publishes instantly, a deadline salvage packs complete
-      leading blocks + one short trailing block. Reads stay per-frame: the
-      manifest carries exact member byte offsets and the client issues one
-      HTTP Range request per frame (probed live from the real site origin:
-      206, exact bytes, no CORS preflight failure). #28 value planes are
-      reserved as (fxx, kind) members in the same blocks. NOW LIVE:
-      dual-publish - tars + per-frame PNGs both upload, frontend prefers
-      ranged blocks with automatic per-frame fallback. The write REDUCTION
-      lands when the PNG include is dropped from the sync after a live
-      container cycle verifies end-to-end; then this flips to shipped with
-      the actual measured write count from that run.
+      Spec item 27. LIVE 2026-08-03 on cycle 2026080306: 396 block objects vs
+      2,838 frames (14.0%), and a ranged read from the real CDN block is
+      BYTE-IDENTICAL to the per-frame PNG. Aligned to the spec's cap-8 block
+      growth (bounds progressive-publish delay to ~18 min — the property that
+      ports to the satellite tile pipeline, whose $448/16-day Class A bill is
+      the reason this is now the highest-value code in either repo): future
+      cycles publish 8 blocks/row = 18.6% of per-frame writes; the container
+      core was split into a domain-agnostic write/verify/plan layer for the
+      tsr port. Remaining: drop the PNG sync include once cached frontends
+      age out (that flip is the write saving), then flip this to shipped
+      with the measured post-flip write count.
   - id: hafs-stall-root-cause
     title: HAFS staleness root cause found and killed — it was never the network
     area: models
