@@ -964,6 +964,27 @@
     }
   };
 
+  // ---- container read path (spec #27) ----------------------------------
+  // Rows may also publish as geometric tar blocks (manifest.containers +
+  // storms[].blocks). A frame inside a block is read with ONE HTTP Range
+  // request for exactly its bytes - same PNG, ~86% fewer object writes on
+  // the publish side. Frames not covered by blocks use the per-frame path.
+  HafsViewer.prototype._blockFor = function (fxx) {
+    if (this.legacyMode || !this.manifest || !this.manifest.containers ||
+        !this.storm || !this.storm.blocks) return null;
+    var m = this.storm.blocks[this.model];
+    var d = m && m[this.domain];
+    var arr = d && d[this.product];
+    if (!arr) return null;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].fxx.indexOf(fxx) !== -1) {
+        var mem = arr[i].members && arr[i].members['f' + pad(fxx, 3) + '.png'];
+        if (mem) return { key: arr[i].key, off: mem[0], len: mem[1] };
+      }
+    }
+    return null;
+  };
+
   HafsViewer.prototype._frameUrl = function (fxx) {
     var m = this.manifest;
     var pad3 = pad(fxx, m.fxx_pad || 3);
@@ -982,7 +1003,25 @@
       var u = this.assetBase + rel;
       return this.cacheBust ? (u + '?v=' + this.cacheBust) : u;
     }
-    // CYCLES MODE: cycle-scoped immutable keys -> path_template_cycles with
+    // CYCLES MODE. Container-first: when a block covers this frame, the
+    // "URL" is the block object plus a #r=off,len,fxx marker - a stable
+    // cache key for the preload maps, resolved by the loader into a ranged
+    // fetch (an <img> src cannot carry a Range header). Per-frame PNG
+    // otherwise, and as the loader's fallback if the ranged read fails.
+    var blk = this._blockFor(fxx);
+    if (blk) {
+      var btmpl = this.manifest.containers.path_template;
+      var brel = btmpl
+        .replace('{cycle}', this.cycle.cycle)
+        .replace('{model}', this.model)
+        .replace('{storm}', this.storm.id)
+        .replace('{domain}', this.domain)
+        .replace('{product}', this.product || '')
+        .replace('{key}', blk.key)
+        .replace(/\/{2,}/g, '/');
+      return this.assetBase + brel + '#r=' + blk.off + ',' + blk.len + ',' + fxx;
+    }
+    // Cycle-scoped immutable keys -> path_template_cycles with
     // {cycle} substituted, NO ?v= (the key itself busts on a new cycle).
     var ctmpl = m.path_template_cycles ||
       '{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png';
@@ -1003,7 +1042,17 @@
     this.idx = Math.max(0, Math.min(i, this.fxxList.length - 1));
     var fxx = this.fxxList[this.idx];
     var url = this._frameUrl(fxx);
-    this.dom.img.src = url;
+    if (url.indexOf('#r=') !== -1) {
+      // Ranged frame: an <img> cannot fetch a byte range itself. Use the
+      // decoded blob if it's here; otherwise kick the loader - its settle
+      // re-shows this index, so the current frame holds (no blank flash)
+      // until the bytes land.
+      var pre = this.preloaded[url];
+      if (pre && pre.src) this.dom.img.src = pre.src;
+      else this._preloadUrls([url], this.preloadGen, false);
+    } else {
+      this.dom.img.src = url;
+    }
     this.dom.fhour.textContent = 'F' + pad(fxx, 3);
     // Valid time uses the SELECTED cycle's storm init.
     var init = new Date(this.storm.init);
@@ -1154,6 +1203,14 @@
     var gen = ++this.preloadGen;
     this.preloaded = {};
     this.ready = {};
+    // Ranged frames hold blob object URLs - release them with the selection
+    // or every selection change leaks the decoded bytes.
+    if (this._blobUrls) {
+      for (var bu in this._blobUrls) {
+        try { URL.revokeObjectURL(this._blobUrls[bu]); } catch (e) { /* gone */ }
+      }
+    }
+    this._blobUrls = {};
     this._preloadUrls(this.fxxList.map(function (f) { return self._frameUrl(f); }), gen, true);
   };
 
@@ -1183,6 +1240,10 @@
         if (gen !== self.preloadGen) return;   // superseded by a newer selection
         self.preloaded[u] = im;
         if (ok) self.ready[u] = true;
+        if (ok && u.indexOf('#r=') !== -1 && self.fxxList.length &&
+            self._frameUrl(self.fxxList[self.idx]) === u) {
+          self.dom.img.src = im.src;       // the frame being waited on
+        }
         self._bufDone = (self._bufDone || 0) + 1;
         self.dom.buffer.textContent = 'Buffering ' + self._bufDone + '/' + self._bufTotal;
         if (self._bufDone >= self._bufTotal) self.dom.buffer.style.display = 'none';
@@ -1195,7 +1256,32 @@
         else { settle(true); }
       };
       im.onerror = function () { settle(false); };
-      im.src = u;
+      var r = u.indexOf('#r=');
+      if (r === -1) {
+        im.src = u;
+      } else {
+        // Container member: ranged fetch -> blob -> object URL. On ANY
+        // failure fall back to the per-frame PNG (dual-published), so a
+        // missing tar or a CORS surprise degrades to exactly the old path.
+        var base = u.slice(0, r);
+        var q = u.slice(r + 3).split(',');
+        var off = +q[0], len = +q[1], ffxx = +q[2];
+        fetch(base, { headers: { Range: 'bytes=' + off + '-' + (off + len - 1) } })
+          .then(function (resp) {
+            if (resp.status !== 206 && !resp.ok) throw new Error('http ' + resp.status);
+            return resp.blob();
+          })
+          .then(function (blob) {
+            if (gen !== self.preloadGen) return;
+            self._blobUrls = self._blobUrls || {};
+            self._blobUrls[u] = URL.createObjectURL(blob);
+            im.src = self._blobUrls[u];
+          })
+          .catch(function () {
+            im.src = base.replace(/b[0-9]+-[0-9]+\.tar$/,
+                                  'f' + pad(ffxx, 3) + '.png');
+          });
+      }
     });
   };
 

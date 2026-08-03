@@ -265,3 +265,62 @@ class TestStatScope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestContainerBlocks(unittest.TestCase):
+    """Builder glue for spec #27: a build whose render stage produces real
+    files must publish storms[].blocks whose geometric coverage equals the
+    rendered hours, with the tars actually on disk beside the PNGs."""
+
+    def test_blocks_cover_rendered_hours(self):
+        from hafs_render import generate_hafs_plots as gen
+        import json as _json
+        import tempfile
+        from pathlib import Path
+
+        posted = [0, 3, 6, 9, 12]
+
+        def fake_pool(jobs_list, fn, jobs, record, straggler, initializer=None,
+                      max_tasks_per_child=None, stage_deadline_s=None):
+            for j in jobs_list:
+                res = {"ok": True, "model": j.model, "storm": j.storm,
+                       "domain": j.domain, "fxx": j.fxx}
+                if hasattr(j, "product"):          # render: write real bytes
+                    res["product"] = j.product
+                    p = Path(j.out_path)
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(b"P" * (700 + 13 * j.fxx))
+                record(res)
+
+        saved = (gen._run_pool, gen.list_storms, gen.list_fxx,
+                 gen.hp.fetch_hafs_track)
+        gen._run_pool = fake_pool
+        gen.list_storms = lambda model, date, hh, session=None: ["01e"]
+        gen.list_fxx = (lambda model, date, hh, storm, domain, session=None:
+                        list(posted))
+        gen.hp.fetch_hafs_track = lambda *a, **k: {}
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                manifest, _, _, _ = gen.build_cycle(
+                    "20260604", "18", Path(td), models=["hafsa"],
+                    domains=["storm.atm"], products=["mslp_wind"],
+                    max_fxx=12, jobs=1, save_dir=td, cycle_scoped=True)
+                st = manifest["cycles"][0]["storms"][0]
+                blocks = st["blocks"]["hafsa"]["storm"]["mslp_wind"]
+                covered = sorted(f for b in blocks for f in b["fxx"])
+                self.assertEqual(covered, posted)
+                self.assertEqual([len(b["fxx"]) for b in blocks], [1, 2, 2])
+                # Tars exist on disk beside the PNGs, offsets serve the bytes.
+                row = (Path(td) / st["cycle"] / "hafsa" / "01e" / "storm"
+                       / "mslp_wind")
+                for b in blocks:
+                    blob = (row / b["key"]).read_bytes()
+                    for fxx in b["fxx"]:
+                        off, size = b["members"][f"f{fxx:03d}.png"]
+                        self.assertEqual(blob[off:off + size],
+                                         b"P" * (700 + 13 * fxx))
+                # JSON-serializable end to end (the manifest write).
+                _json.dumps(manifest)
+        finally:
+            (gen._run_pool, gen.list_storms, gen.list_fxx,
+             gen.hp.fetch_hafs_track) = saved

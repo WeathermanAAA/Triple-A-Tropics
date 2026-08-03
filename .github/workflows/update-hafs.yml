@@ -206,6 +206,13 @@ jobs:
             aws s3 sync "$SRC/$CYCLE/" "${DST}${CYCLE}/" --endpoint-url "$R2_ENDPOINT" \
               --cache-control "$CC" --content-type "image/png" \
               --exclude "*" --include "*.png" --delete --only-show-errors
+            # Container blocks (#27): same prefix, own content type. Filters
+            # scope --delete to orphan tars only. Dual-publish transition:
+            # PNGs keep uploading until a live container cycle verifies, then
+            # the PNG include above is dropped (that flip is the write saving).
+            aws s3 sync "$SRC/$CYCLE/" "${DST}${CYCLE}/" --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "$CC" --content-type "application/x-tar" \
+              --exclude "*" --include "*.tar" --delete --only-show-errors
           else
             echo "No cycle frames to sync (off-season or empty render)."
           fi

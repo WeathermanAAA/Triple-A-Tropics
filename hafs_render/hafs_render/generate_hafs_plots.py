@@ -94,6 +94,8 @@ from tat_palettes import quantities as tq
 from hafs_render import hafs_cache as fc
 # Vortex-removed deep-layer shear: the published NUMBERS (spec #26).
 from hafs_render import shear_diag as sd
+# Tar-container frame publishing with geometric blocks (spec #27).
+from hafs_render import hafs_container as hc
 
 log = logging.getLogger("hafs-build")
 
@@ -1158,6 +1160,18 @@ def _compose_manifest_v2(entries: list, models: Sequence[str],
         "fxx_end": fxx_end,
         "path_template_cycles":
             "{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png",
+        # Container read path (#27): rows also publish as geometric tar
+        # blocks; storms[].blocks carries per-row block lists with exact
+        # member byte offsets, and a client issues ONE HTTP Range request per
+        # frame against this template. Frames absent from blocks (older
+        # cycles, or a container-build failure) fall back to the per-frame
+        # template above.
+        "containers": {
+            "format": "ustar-v1",
+            "read": "range",
+            "path_template":
+                "{cycle}/{model}/{storm}/{domain}/{product}/{key}",
+        },
         "cycles": entries,
         # legacy single-cycle view (old frontend), cycle baked into the template:
         "cycle": legacy["cycle"] if legacy else None,
@@ -1559,6 +1573,41 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
             storms_out.append(meta)
 
     log.info("rendered %d ok, %d failed in %.0fs", n_ok, n_fail, time.time() - t0)
+
+    # ----- Containers (#27): geometric tar blocks per row, DUAL-PUBLISH. -----
+    # Built from the PRUNED frame lists (only what actually rendered), so a
+    # deadline salvage packs exactly its salvage - complete leading blocks +
+    # one short trailing block; f000 is a complete tar of one and publishes
+    # instantly. Frames keep publishing alongside until a live container
+    # cycle verifies (the PNG-include drop in update-hafs.yml is the actual
+    # write saving). Failures log and skip - containers can degrade to
+    # nothing, never sink the build.
+    if os.environ.get("HAFS_CONTAINERS", "1") != "0" and storms_out:
+        t_c = time.time()
+        n_blk = 0
+        for meta in storms_out:
+            for model, doms in meta["frames"].items():
+                for dom_slug, prods in doms.items():
+                    for product, fxxs in prods.items():
+                        if not fxxs:
+                            continue
+                        try:
+                            fmap = {f: _frame_out_path(
+                                out_dir, cycle, model, meta["id"], dom_slug,
+                                product, f, cycle_scoped=cycle_scoped)
+                                for f in fxxs}
+                            row_dir = Path(fmap[fxxs[0]]).parent
+                            blocks = hc.row_container_plan(fmap, row_dir)
+                            ((meta.setdefault("blocks", {})
+                                  .setdefault(model, {})
+                                  .setdefault(dom_slug, {}))[product]) = blocks
+                            n_blk += len(blocks)
+                        except Exception as e:  # noqa: BLE001
+                            log.warning("container build failed %s %s %s %s: "
+                                        "%s", model, meta["id"], dom_slug,
+                                        product, e)
+        log.info("containers: %d block(s) across %d storm(s) in %.0fs",
+                 n_blk, len(storms_out), time.time() - t_c)
 
     manifest = _manifest_skeleton(models, domains, products, fxx_step,
                                   cycle if storms_out else None, storms_out,

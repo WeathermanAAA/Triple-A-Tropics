@@ -53,6 +53,35 @@ function manifest() {
   };
 }
 
+// Synthetic USTAR block for the container read path (#27). The reader never
+// parses tar - offsets come from the manifest - but the bytes are a real
+// archive anyway. Members are 1x1 PNGs: a successful <img> decode of a
+// range-sliced member is proof the offsets are exact.
+function tarBlock(members) {
+  const chunks = []; const index = {}; let off = 0;
+  for (const m of members) {
+    const hdr = Buffer.alloc(512);
+    hdr.write(m.name, 0);
+    hdr.write('0000644\0', 100);
+    hdr.write('0000000\0', 108); hdr.write('0000000\0', 116);
+    hdr.write(m.data.length.toString(8).padStart(11, '0') + '\0', 124);
+    hdr.write('00000000000\0', 136);
+    hdr.write('        ', 148);
+    hdr.write('0', 156);
+    hdr.write('ustar\0', 257); hdr.write('00', 263);
+    let sum = 0; for (const b of hdr) sum += b;
+    hdr.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+    chunks.push(hdr, m.data);
+    index[m.name] = [off + 512, m.data.length];
+    const padN = (512 - (m.data.length % 512)) % 512;
+    if (padN) chunks.push(Buffer.alloc(padN));
+    off += 512 + m.data.length + padN;
+  }
+  chunks.push(Buffer.alloc(1024));
+  return { buf: Buffer.concat(chunks), index };
+}
+const tarStore = {};   // url path -> Buffer, filled by withBlocks()
+
 // Give ONE storm (07e, newest cycle) the shear diagnostic + per-frame
 // geometry, hafsa only - so eligibility (storm+model+domain gated) and the
 // honest no-fix-hour degradation are both exercised.
@@ -67,6 +96,32 @@ function withShear(m) {
               center: 'model_vortex_trak', heading: 'toward' },
     hours: { hafsa: { 0: { kt: 12.3, hdg: 53.2, naive_kt: 14.1, naive_hdg: 51.9 } } },
   };
+  return m;
+}
+
+// Container blocks on 07e/hafsa/storm: mslp_wind gets REAL blocks (f000 alone,
+// then f003+f006), refl gets a block entry whose tar the server 404s - the
+// loader must fall back to the per-frame PNG.
+function withBlocks(m, png1) {
+  m.containers = { format: 'ustar-v1', read: 'range',
+    path_template: '{cycle}/{model}/{storm}/{domain}/{product}/{key}' };
+  const s07 = m.cycles[0].storms[1];
+  const b0 = tarBlock([{ name: 'f000.png', data: png1 }]);
+  const b1 = tarBlock([{ name: 'f003.png', data: png1 },
+                       { name: 'f006.png', data: png1 }]);
+  const base = '/models/hafs/2026073100/hafsa/07e/storm/mslp_wind/';
+  tarStore[base + 'b000-000.tar'] = b0.buf;
+  tarStore[base + 'b003-006.tar'] = b1.buf;
+  s07.blocks = { hafsa: { storm: {
+    mslp_wind: [
+      { key: 'b000-000.tar', fxx: [0], members: b0.index, size: b0.buf.length },
+      { key: 'b003-006.tar', fxx: [3, 6], members: b1.index, size: b1.buf.length },
+    ],
+    refl: [
+      { key: 'b000-000.tar', fxx: [0],
+        members: { 'f000.png': [512, png1.length] }, size: 2048 },
+    ],
+  } } };
   return m;
 }
 
@@ -90,7 +145,7 @@ function withShear(m) {
   const errs = [];
   page.on('pageerror', e => errs.push(String(e.message)));
   await page.route('**/manifest.json*', r => r.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify(withShear(manifest())) }));
+    status: 200, contentType: 'application/json', body: JSON.stringify(withBlocks(withShear(manifest()), PNG1)) }));
   // Frames get a real 1x1 PNG (naturalWidth must be non-zero for the shear
   // overlay); everything else off-origin 404s.
   const PNG1 = Buffer.from(
@@ -99,6 +154,20 @@ function withShear(m) {
   await page.route('**/cdn.triple-a-tropics.com/**', r => {
     const u = r.request().url();
     if (/manifest\.json/.test(u)) return r.fallback();
+    if (/\.tar$/.test(u)) {
+      const key = new URL(u).pathname;
+      const buf = tarStore[key];
+      if (!buf) return r.fulfill({ status: 404, body: '' });
+      const range = r.request().headers()['range'];
+      if (range) {
+        const mm = /bytes=(\d+)-(\d+)/.exec(range);
+        const a = +mm[1], b = +mm[2];
+        return r.fulfill({ status: 206, contentType: 'application/x-tar',
+          headers: { 'Content-Range': 'bytes ' + a + '-' + b + '/' + buf.length },
+          body: buf.subarray(a, b + 1) });
+      }
+      return r.fulfill({ status: 200, contentType: 'application/x-tar', body: buf });
+    }
     if (/\.png/.test(u)) {
       return r.fulfill({ status: 200, contentType: 'image/png', body: PNG1 });
     }
@@ -330,6 +399,46 @@ function withShear(m) {
   ok(await page.evaluate(() => window.__hafsViewer.shearView === true),
      'shear=1 in a shared link boots the view on');
   ok(errs.length === 0, 'no page errors through the shear section: ' + (errs[errs.length - 1] || 'none'));
+
+  // ---- 7. container ranged reads (spec #27) -------------------------------
+  console.log('# container ranged reads');
+  await page.goto(base + '?run=2026073100&storm=07e&model=hafsa&domain=storm&product=mslp_wind&fxx=0',
+                  { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer; return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 }).catch(() => {});
+  await page.waitForFunction(() =>
+    (document.getElementById('hafs-img').src || '').startsWith('blob:'),
+    { timeout: 10000 }).catch(() => {});
+  const blk = await page.evaluate(() => {
+    const v = window.__hafsViewer;
+    const img = document.getElementById('hafs-img');
+    return { src: img.src.slice(0, 5), w: img.naturalWidth,
+             url0: v._frameUrl(0), readyRanged: Object.keys(v.ready).some(k => k.includes('#r=')) };
+  });
+  ok(blk.url0.includes('.tar#r='), 'frame URL resolves to a block range key: ' + blk.url0.split('/').pop());
+  ok(blk.src === 'blob:', 'frame displays from a ranged blob (not a per-frame GET)');
+  ok(blk.w === 1, 'range-sliced bytes decode as the exact 1x1 member PNG');
+  ok(blk.readyRanged, 'ready-gate keys on the ranged cache key');
+  // Step into the second block (f003): another ranged member must decode.
+  await page.evaluate(() => window.__hafsViewer._show(1));
+  await page.waitForFunction(() =>
+    (document.getElementById('hafs-img').src || '').startsWith('blob:') &&
+    window.__hafsViewer.fxxList[window.__hafsViewer.idx] === 3,
+    { timeout: 10000 }).catch(() => {});
+  ok(await page.evaluate(() => document.getElementById('hafs-img').naturalWidth === 1),
+     'second block member decodes via its own range');
+  // refl: block entry exists but the tar 404s -> loader falls back per-frame.
+  await page.evaluate(() => window.__hafsViewer._setProduct
+    ? window.__hafsViewer._setProduct('refl') : null);
+  await page.waitForTimeout(600);
+  const fb = await page.evaluate(() => {
+    const img = document.getElementById('hafs-img');
+    return { src: img.src, w: img.naturalWidth };
+  });
+  ok(/f000\.png$|blob:/.test(fb.src) && fb.w === 1,
+     'missing tar degrades to the per-frame PNG (dual-publish fallback): ' + fb.src.split('/').pop());
+  ok(errs.length === 0, 'no page errors through the container section: ' + (errs[errs.length - 1] || 'none'));
 
   await browser.close();
   server.close();

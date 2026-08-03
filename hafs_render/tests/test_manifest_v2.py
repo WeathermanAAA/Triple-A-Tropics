@@ -29,7 +29,10 @@ V2_KEYS = {"generated_at", "product", "products", "models", "domains",
            # Together these are what a lat/lon readout, a value readout, and a
            # ruler are built from. Additive: every pre-existing key is unchanged,
            # so the box render worker's manifest stays compatible.
-           "projection", "image", "quantities"}
+           "projection", "image", "quantities",
+           # #27: the container read path (geometric tar blocks; per-row
+           # block lists ride under storms[].blocks).
+           "containers"}
 ENTRY_KEYS = {"cycle", "in_progress", "frames_done", "frames_expected",
               "started_utc", "storms"}
 

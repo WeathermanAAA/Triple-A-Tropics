@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T10:15:00Z
+updated: 2026-08-03T11:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1399,6 +1399,27 @@ items:
     links:
       - label: models
         url: /models/
+  - id: tar-container-publishing
+    title: Tar-container frame publishing with geometric blocks — 14.0% of per-frame writes
+    area: models
+    status: active
+    note: >-
+      Spec #27. Measured on the real 2026072818 catalog (not projected): 165
+      rows x 43 hours = 7,095 frames; geometric blocks (1,2,4,8,16,+12) = 6
+      objects per row -> 990 writes/cycle = 14.0% of baseline (spec said
+      ~17%). The salvage constraint overrides the savings BY CONSTRUCTION:
+      blocks are planned over the frames that EXIST, f000 is a complete tar
+      of one and publishes instantly, a deadline salvage packs complete
+      leading blocks + one short trailing block. Reads stay per-frame: the
+      manifest carries exact member byte offsets and the client issues one
+      HTTP Range request per frame (probed live from the real site origin:
+      206, exact bytes, no CORS preflight failure). #28 value planes are
+      reserved as (fxx, kind) members in the same blocks. NOW LIVE:
+      dual-publish - tars + per-frame PNGs both upload, frontend prefers
+      ranged blocks with automatic per-frame fallback. The write REDUCTION
+      lands when the PNG include is dropped from the sync after a live
+      container cycle verifies end-to-end; then this flips to shipped with
+      the actual measured write count from that run.
   - id: hafs-stall-root-cause
     title: HAFS staleness root cause found and killed — it was never the network
     area: models
