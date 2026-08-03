@@ -675,6 +675,10 @@
 </div>
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+<script>/* collector live 2026-08-03; flush() in telemetry.js is a
+   no-op without this. workers.dev URL because the zone-route grant is
+   pending (see workers/telemetry-collector.toml). */
+window.TAT_TELEMETRY_ENDPOINT = 'https://telemetry-collector.coloradoskier2018.workers.dev/t';</script>
 <script src="/models/telemetry.js?v=edbe6ac804"></script>
 <script src="/models/hafs.js?v=627a65d10d"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>

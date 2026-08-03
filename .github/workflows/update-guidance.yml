@@ -174,3 +174,15 @@ jobs:
           else
             echo "No verification documents built."
           fi
+
+      - name: Compact telemetry inbox into summary
+        # Folds telemetry/inbox/* batches (written per repository_dispatch by
+        # telemetry-ingest.yml) into telemetry/summary.json - the demand
+        # signal the hero-set scheduler (spec #30) reads - then deletes what
+        # it folded. Guarded end to end: telemetry must never sink guidance.
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: python3 scripts/compact_telemetry.py
