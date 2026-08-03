@@ -1,0 +1,17 @@
+# wrangler config for the anonymous product-view telemetry collector
+# (deploy: npx wrangler deploy -c telemetry-collector.toml). Same
+# one-toml-per-worker pattern as bugs-api.toml next door.
+name = "telemetry-collector"
+main = "telemetry-collector.js"
+compatibility_date = "2026-06-01"
+
+routes = [
+  { pattern = "triple-a-tropics.com/telemetry/*", zone_name = "triple-a-tropics.com" }
+]
+
+[vars]
+REPO = "WeathermanAAA/Triple-A-Tropics"
+
+# secret (wired at deploy, never here): GITHUB_TOKEN — the durable classic
+# PAT already in the codespace env as GH_PUSH_TOKEN (repo scope covers
+# repository_dispatch).

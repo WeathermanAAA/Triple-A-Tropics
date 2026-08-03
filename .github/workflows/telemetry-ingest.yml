@@ -1,0 +1,39 @@
+name: Telemetry ingest
+
+# One tiny run per collector batch: the telemetry-collector worker relays
+# browser batches as repository_dispatch events because the codespace's CF
+# token cannot bind R2/KV/D1 to a worker (2026-08-03); this workflow holds
+# the R2 credentials and drops each payload under telemetry/inbox/{day}/.
+# Public repo -> Actions minutes are free; the client flush-throttle
+# (>=10 min/tab) keeps run count low. update-guidance compacts the inbox.
+on:
+  repository_dispatch:
+    types: [telemetry-batch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemetry-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write batch to R2 inbox
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          DAY=$(date -u +%F)
+          KEY="telemetry/inbox/${DAY}/$(date -u +%s)-${GITHUB_RUN_ID}.json"
+          printf '%s' "$PAYLOAD" > batch.json
+          aws s3 cp batch.json "s3://triple-a-tropics-media/${KEY}" \
+            --endpoint-url "$R2_ENDPOINT" --content-type application/json \
+            --only-show-errors
+          echo "wrote ${KEY}"
