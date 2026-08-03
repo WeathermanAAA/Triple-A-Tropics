@@ -29,10 +29,28 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T11:05:00Z
+updated: 2026-08-03T16:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: r2-cost-stopgap-retirement
+    title: R2 cost incident — the three GH stopgap emitters retired (first cut)
+    area: infra
+    status: shipped
+    date_shipped: 2026-08-03
+    note: >-
+      Billing showed ~10.7M R2 Class A ops/day (~$48/day, 99% of the bill).
+      Measured attribution: ~2.1M/day are tile PUTs from the 11 box emit
+      lanes (all verified on the fixed 07-25 delimiter-listing code, exactly
+      one instance each), ~0.4M/day were the three GitHub stopgap workflows
+      (emit-conus-stopgap, emit-geo-global, emit-diag-riders) still running
+      the PRE-fix flat-walk listing off the frozen s2-sat-ingest branch —
+      conus runs dying at their 65-min timeout mid-LIST with zero output
+      since 08-02, geo runs spending ~45 min to discover the box already
+      published every slot. Schedules removed (workflow_dispatch kept);
+      every product they carried has had a faster box lane since 07-25.
+      The remaining ~7M/day is the box lanes' own per-pass stamp-probe
+      listing — next cut. Max resolution and max cadence unchanged.
   - id: global-ace-ptc-decay-fix
     title: Global header ACE reconciled — a decaying former TC can no longer wear the PTC flag
     area: obs

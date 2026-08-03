@@ -16,11 +16,17 @@
 # there; remove both patch steps once tsr-s2 c5da203 is pushed.
 name: emit-diag-riders
 
+# SCHEDULE RETIRED 2026-08-03 (R2 cost incident): both riders are covered by
+# faster box lanes since 2026-07-25 — himawari9-wpac-ir (+ its bt.png, the
+# objfix wp_bt input) by tat-s2-hwwpac on box2 (~124 slots/day; this rider's
+# hourly wins showed up there as ~92 duplicate-skips/day), goes19-fd-ir by
+# tat-s2-g19fd-leads on box1 (143-144 frames/day at 10 min). The rider runs
+# check out s2-sat-ingest (pre the 07-25 delimiter-listing fix), routinely
+# die on their 22-min kill timers mid flat-walk, and cost ~105k Class A
+# LISTs/day for frames the boxes already wrote. workflow_dispatch stays for
+# on-demand re-emits; repoint the ref to main before dispatching.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "13 * * * *"
-    - cron: "43 * * * *"
 
 permissions:
   contents: read

@@ -32,11 +32,19 @@ name: emit-conus-stopgap
 # split conus into its own emit-cron service in docker-compose.s2.yml).
 # Two staggered crons/hour + no-cancel concurrency ≈ 2 runs/hour after
 # GitHub load-shedding (each run ~22-31 min, newest-slot only).
+# SCHEDULE RETIRED 2026-08-03 (R2 cost incident): the box conus lanes
+# (tat-s2-conus-fast on box2 + conus-fast2/conus on box1) have carried the
+# full 28-product suite at native 5-10 min since 2026-07-25 — this lane's
+# stated retirement condition. Worse, this workflow checks out s2-sat-ingest
+# (frozen 2026-07-21, PRE the 07-25 delimiter-listing fix): each run flat-walks
+# every tile key of every retained frame (~1,460 LIST pages for c02 alone),
+# ~121k Class A LISTs/day, and since 08-02 every run died at the 65-min
+# timeout mid-LIST with ZERO frames published. Its forced --max-zoom 5 emit
+# also rebuilds manifests around z5 against the boxes' native z6/z7 conus
+# products (the geometry war). workflow_dispatch stays for on-demand re-emits;
+# repoint the ref to main before dispatching.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "14 * * * *"
-    - cron: "44 * * * *"
 
 permissions:
   contents: read

@@ -35,11 +35,17 @@
 # on-demand re-emits).
 name: emit-geo-global
 
+# SCHEDULE RETIRED 2026-08-03 (R2 cost incident): the box geo lane
+# (tat-s2-geo on box2, 300 s interval) has owned geo-global at 144 frames/day
+# per product since 2026-07-25 — the disable condition the header above
+# always stated. Recent runs here spent 42-45 min to emit NOTHING
+# ("0/3 slot(s) missing") because this workflow checks out s2-sat-ingest
+# (frozen pre the 07-25 delimiter-listing fix) and burns ~4,800 flat-walk
+# LIST pages per run (~150k Class A/day) purely re-discovering that the box
+# already published every slot. workflow_dispatch stays for on-demand
+# re-emits; repoint the ref to main before dispatching.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "23 * * * *"
-    - cron: "53 * * * *"
 
 permissions:
   contents: read
