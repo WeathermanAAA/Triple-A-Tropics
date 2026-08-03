@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-01T05:05:00Z
+updated: 2026-08-03T05:25:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1369,6 +1369,31 @@ items:
     links:
       - label: models
         url: /models/
+  - id: hafs-stall-root-cause
+    title: HAFS staleness root cause found and killed — it was never the network
+    area: models
+    status: shipped
+    date_shipped: 2026-08-03
+    note: >-
+      The stall forensics fired on incident #5 and the evidence overturned the
+      whole theory: at the live wedge the WORKERS DID NOT EXIST — no python
+      children, no curl, nothing blocked in any fetch — while the parent
+      waited on futures that could never resolve. Reproduced locally 3/3 on
+      stock CPython 3.11.9 AND 3.12.1 with memory-churning no-op tasks:
+      ProcessPoolExecutor with max_tasks_per_child zombifies the pool at the
+      FIRST worker recycle (width 2 x recycle 12 = completions stop at
+      exactly 24 — the wedge-at-~23-frames signature of every incident, and
+      the parameter landed 2026-07-29 in the ingest memory rework, the exact
+      day the incidents began). Fix: recycling moved to the POOL level — a
+      fresh executor per chunk of width x 12 tasks, the identical per-worker
+      RSS bound with none of the machinery; the real _run_pool now completes
+      80/80 past the boundary on the same 3.11.9 that wedged raw. Plus a
+      C-level self-rescue (faulthandler.dump_traceback_later, exit=True)
+      after the manifest commit point, because incident #5 also showed the
+      finished salvage's process sitting alive 2.5 h AFTER writing the
+      manifest — next time the log gets every thread's stack and the publish
+      steps still run. Forensics now also dump the parent's threads and the
+      executor's internal state.
   - id: hafs-teardown-commit-point
     title: HAFS builder — a finished build can never again be lost to teardown
     area: models

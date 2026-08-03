@@ -94,3 +94,43 @@ class TestStallForensics(unittest.TestCase):
 
     def test_capture_of_dead_pid_never_raises(self):
         g._stall_forensics([99999999])
+
+
+def _quick(job):
+    return {"ok": True, "job": job}
+
+
+class TestChunkedRecycling(unittest.TestCase):
+    """Regression proof for incidents #3-#5: recycling via the executor's
+    max_tasks_per_child zombifies the pool at the first worker recycle
+    (reproduced 3/3 on stock 3.11.9 AND 3.12.1 - completions stop at exactly
+    width x N and never resume). _run_pool now recycles at the POOL level -
+    a fresh executor per chunk - so the same request must complete ALL tasks.
+    The stage deadline doubles as the test's backstop: under a regression this
+    fails by assertion instead of hanging the suite."""
+
+    def test_recycle_request_completes_past_the_boundary(self):
+        recorded = []
+        g._run_pool([f"j{i}" for i in range(40)], _quick, 2,
+                    lambda r: recorded.append(r),
+                    lambda j: {"ok": False, "job": j},
+                    max_tasks_per_child=3,       # boundary at 6 - far exceeded
+                    stage_deadline_s=90)
+        self.assertEqual(len(recorded), 40)
+        self.assertTrue(all(r["ok"] for r in recorded),
+                        [r for r in recorded if not r["ok"]][:3])
+
+    def test_deadline_drains_unattempted_chunks(self):
+        """A mid-stage deadline must record EVERY not-yet-attempted chunk's
+        jobs as stragglers - the ledger stays complete for the manifest."""
+        recorded = []
+        jobs = ["a", "b"] + [f"wedge{i}" for i in range(6)]
+        g._run_pool(jobs, _job, 2,
+                    lambda r: recorded.append(r),
+                    lambda j: {"ok": False, "job": j},
+                    max_tasks_per_child=2,       # chunks of 4
+                    stage_deadline_s=6)
+        self.assertEqual(len(recorded), len(jobs))
+        by_job = {r["job"]: r["ok"] for r in recorded}
+        self.assertTrue(by_job["a"] and by_job["b"])
+        self.assertTrue(all(not by_job[f"wedge{i}"] for i in range(6)))

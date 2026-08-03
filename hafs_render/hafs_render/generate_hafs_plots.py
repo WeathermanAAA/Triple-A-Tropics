@@ -427,12 +427,35 @@ def _capture_cmd(cmd: list, timeout: float = 20.0) -> str:
         return f"<capture failed: {e}>"
 
 
-def _stall_forensics(pids: list) -> None:
+def _stall_forensics(pids: list, pool=None) -> None:
     """ONE-SHOT evidence dump for wedged workers. Every capture is individually
     guarded and time-bounded so the forensics themselves can never hang the
     build - the parent stays in charge throughout."""
     log.error("STALL FORENSICS - no task completion for %ds; capturing "
               "worker state (pids %s)", _FORENSICS_AFTER_S, pids)
+    # The PARENT's own threads first - incident #5's capture showed the
+    # workers GONE and the parent in a futex wait, which made the executor's
+    # internal state (manager thread alive? pool flagged broken? work items
+    # pending?) the decisive evidence. faulthandler dumps every thread's
+    # Python stack without touching any lock.
+    try:
+        import faulthandler
+        sys.stderr.write("STALL FORENSICS parent thread stacks:\n")
+        faulthandler.dump_traceback(file=sys.stderr)
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    if pool is not None:
+        try:
+            log.error("STALL FORENSICS executor: broken=%r shutdown=%r "
+                      "processes=%r pending_items=%d threads=%s",
+                      getattr(pool, "_broken", "?"),
+                      getattr(pool, "_shutdown_thread", "?"),
+                      dict.keys(getattr(pool, "_processes", {}) or {}),
+                      len(getattr(pool, "_pending_work_items", {}) or {}),
+                      [t.name for t in threading.enumerate()])
+        except Exception:  # noqa: BLE001
+            pass
     # The whole process tree first: worker CHILDREN (a curl/external helper)
     # are exactly what py-spy can't see and what decides subprocess-vs-inproc.
     tree = _capture_cmd(["ps", "-eo", "pid,ppid,stat,wchan:30,etimes,cmd"])
@@ -532,23 +555,26 @@ _INGEST_RETRIES = 3   # AWS S3 throws sporadic 500s on the .idx range reads;
 # frames an unrecycled worker would reach ~7.3 GB and OOM every host we run on.
 # Recycling bounds it:  high-water ~= 1915 + 21 * (N - 1) MB.
 #
-# 12 costs one interpreter start per 12 frames - measured 1.0-2.2 s to import
-# this package fresh, against ~588 s of work, so ~0.3% - and lands the
-# high-water at ~2.15 GB, which is what _INGEST_FRAME_BUDGET_MB below is sized
-# from. Lowering N lowers the budget and vice versa; the two constants are
-# coupled and must move together.
+# HOW recycling happens changed on 2026-08-03, and the old way is BANNED:
+# ProcessPoolExecutor's max_tasks_per_child ZOMBIFIES THE POOL AT THE FIRST
+# WORKER RECYCLE - reproduced 3/3 on stock CPython 3.11.9 AND 3.12.1 with
+# nothing but memory-churning no-op tasks (width 2, max_tasks_per_child 12:
+# completions stop at exactly 24, as_completed never returns, ex._processes
+# ends up EMPTY so there is nothing to kill or detect). That parameter -
+# introduced 2026-07-29 in the ingest memory rework - was the ENTIRE cause of
+# staleness incidents #3-#5: the wedge-at-~23-frames signature is the recycle
+# boundary, not an egress stall, which is why two Python-level timeouts and
+# SIGTERM all changed nothing. Recycling is now done at the POOL level:
+# _run_pool slices the job list into chunks of width x N and runs each chunk
+# in a FRESH executor, so no worker ever ingests more than N frames (the
+# identical RSS bound) and a finished chunk pool is shut down and reaped like
+# any other. Chunk pools use the default fork start method - the pre-rework
+# regime that ran stable for weeks; one pool spawn per 12xwidth frames is the
+# same ~0.3% overhead the per-worker respawn cost.
 #
-# SIDE EFFECT, and it is a sharp one: passing max_tasks_per_child makes
-# ProcessPoolExecutor use the SPAWN start method instead of fork. Two
-# consequences worth knowing before editing anything here.
-#   1. The entry point MUST stay under `if __name__ == "__main__"` (it is, at
-#      the bottom of this file). A spawned worker re-imports the main module, so
-#      module-level work re-executes in every child and the pool dies with
-#      "An attempt has been made to start a new process before the current
-#      process has finished its bootstrapping phase". Verified end to end.
-#   2. Spawned workers share nothing with the parent - no copy-on-write of the
-#      imported modules - so width x per-worker budget really is the right model
-#      for _fit_ingest_width, rather than an over-estimate.
+# The budget model below is unchanged: worker high-water ~2.15 GB at N=12,
+# _INGEST_FRAME_BUDGET_MB is sized from it, and the two constants move
+# together.
 _INGEST_TASKS_PER_CHILD = 12
 
 # Memory one ingest WORKER needs over its whole life - not what one frame costs.
@@ -805,36 +831,50 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                          n, len(jobs_list), el, rate, eta)
                 last_beat = now
         return
-    remaining = list(jobs_list)
     width = max(1, jobs)
     # Stage deadline (the ingest stage sets one): a hard wall-clock bound on
-    # the WHOLE stage. If the upstream network is blackholed - every fetch
-    # stalling to its per-task alarm - the per-task deadlines alone still sum
-    # to hours; this stops the stage outright so the run continues with what
-    # completed and PUBLISHES. A partial current cycle beats a perfect stale
-    # one.
+    # the WHOLE stage, shared across every chunk below. This stops the stage
+    # outright so the run continues with what completed and PUBLISHES. A
+    # partial current cycle beats a perfect stale one.
     stage_end = (time.time() + stage_deadline_s) if stage_deadline_s else None
     deadline_hit = False
-    # 4 attempts; on each pool death HALVE the width (jobs -> jobs/2 -> ... -> 1).
-    # A dead pool is almost always OOM: a heavy GRIB decode that doesn't fit at
-    # this width. Retrying the unfinished frames at the SAME width just OOMs again
-    # and abandons them (the cause of the parent.atm/hafsb coverage gap on the
-    # memory-tighter render worker). Halving lets the heavy frames fit; the final
-    # attempt is fully serial, so every frame gets a minimal-memory try before
-    # being recorded as failed.
-    for pool_attempt in range(1, 5):
+    # POOL-LEVEL RECYCLING (see _INGEST_TASKS_PER_CHILD): worker recycling via
+    # the executor's max_tasks_per_child is BANNED - it zombifies the pool at
+    # the first recycle on stock 3.11 and 3.12 (reproduced; incidents #3-#5).
+    # A fresh pool per chunk of width x N tasks gives the identical per-worker
+    # RSS bound with none of the machinery.
+    queue = list(jobs_list)
+    # Outer loop: one FRESH executor per chunk (all jobs in one chunk when no
+    # recycling is asked for). Inner loop: 4 attempts; on each pool death HALVE
+    # the width (jobs -> jobs/2 -> ... -> 1). A dead pool is almost always OOM:
+    # a heavy GRIB decode that doesn't fit at this width. Retrying the
+    # unfinished frames at the SAME width just OOMs again and abandons them
+    # (the cause of the parent.atm/hafsb coverage gap on the memory-tighter
+    # render worker). Halving lets the heavy frames fit; the final attempt is
+    # fully serial, so every frame gets a minimal-memory try before being
+    # recorded as failed. The halved width persists across chunks on purpose -
+    # the memory pressure that killed one chunk's pool applies to the next.
+    while queue and not deadline_hit:
+      # Chunk size tracks the CURRENT width (halving may have shrunk it), so
+      # no worker ever exceeds max_tasks_per_child tasks even in the
+      # OOM-degraded regime - the RSS bound is the whole point.
+      chunk_cap = (width * max_tasks_per_child) if max_tasks_per_child else None
+      if chunk_cap:
+          remaining, queue = queue[:chunk_cap], queue[chunk_cap:]
+      else:
+          remaining, queue = queue, []
+      for pool_attempt in range(1, 5):
         if not remaining:
             break
         batch, remaining = remaining, []
         not_done = set(range(len(batch)))
         watch_stop = None
         try:
-            pool_kw = {}
-            if max_tasks_per_child:
-                pool_kw["max_tasks_per_child"] = max_tasks_per_child
+            # NEVER pass max_tasks_per_child here - recycling is the chunk
+            # loop above (the executor parameter zombifies the pool at the
+            # first recycle; see the ban at _INGEST_TASKS_PER_CHILD).
             with cf.ProcessPoolExecutor(max_workers=width,
-                                        initializer=initializer,
-                                        **pool_kw) as ex:
+                                        initializer=initializer) as ex:
                 fut_to_i = {ex.submit(fn, job): i for i, job in enumerate(batch)}
                 t_pool = last_beat = time.time()
                 done = 0
@@ -856,7 +896,7 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
                                 try:
                                     _stall_forensics(
                                         list(getattr(pool, "_processes", {})
-                                             or {}))
+                                             or {}), pool=pool)
                                 except Exception:  # noqa: BLE001
                                     log.exception("stall forensics failed")
                                 return
@@ -943,7 +983,11 @@ def _run_pool(jobs_list: list, fn, jobs: int, record, straggler,
         finally:
             if watch_stop is not None:
                 watch_stop.set()
-    for job in remaining:
+      for job in remaining:            # this chunk's attempt-exhausted leftovers
+          record(straggler(job))
+    # Deadline: every not-yet-attempted chunk is recorded too, so the stage's
+    # ledger is complete and the run proceeds to render + publish what it has.
+    for job in queue:
         record(straggler(job))
 
 
@@ -1558,6 +1602,19 @@ if __name__ == "__main__":
     # build must never be held hostage by cleanup: flush what the workflow log
     # needs, then leave without running any join, atexit hook, or finaliser.
     _rc = main()
+    # SELF-RESCUE: run 30764256854 wrote its manifest and then the PROCESS
+    # ITSELF sat alive for 2.5 h somewhere in this epilogue's vicinity, so the
+    # workflow's publish steps never ran and the salvage was lost anyway.
+    # faulthandler's watchdog is C-level - immune to any Python lock, GC pause
+    # or logging deadlock - and exit=True calls C _exit after dumping EVERY
+    # thread's stack to stderr: if this epilogue ever blocks again, the log
+    # gets the exact stacks and the process still dies, so the publish steps
+    # still run.
+    try:
+        import faulthandler
+        faulthandler.dump_traceback_later(120, exit=True)
+    except Exception:  # noqa: BLE001
+        pass
     logging.shutdown()
     try:
         sys.stdout.flush()
