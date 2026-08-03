@@ -1769,7 +1769,8 @@ def render_frame(frame: HafsFrame, out_path: str,
                  cen_lon: Optional[float] = None,
                  anchor_lat: Optional[float] = None,
                  anchor_lon: Optional[float] = None,
-                 enhancement: Optional[str] = None) -> dict:
+                 enhancement: Optional[str] = None,
+                 values_path: Optional[str] = None) -> dict:
     """Render one TAT-styled HAFS frame; return its GEOMETRY.
 
     Returns ``{"axes_px": [x, y, w, h], "bbox": [W, S, E, N]}`` - the drawn map
@@ -2399,8 +2400,79 @@ def render_frame(frame: HafsFrame, out_path: str,
     }
 
     plt.close(fig)
+
+    # VALUE PLANE (spec #28, via #27): the fill field itself, cropped to the
+    # drawn bbox and quantized to the quantity's declared step, as an 8-bit
+    # grey PNG whose extent IS geometry["bbox"] - so the client reuses the
+    # existing pixel<->lon/lat affine and needs no new metadata. raw 0 =
+    # no-data; value = vmin + (raw-1)*step. Written beside the frame and
+    # packed into the same container block as member f{fxx}.values.png -
+    # zero additional object-store writes (S5.3: "the two must be adopted
+    # together"). Every failure is swallowed: a readout is an enhancement,
+    # never worth a frame.
+    if values_path is not None:
+        try:
+            _write_value_plane(field, frame, spec.quantity,
+                               (lon_min, lat_min, lon_max, lat_max),
+                               values_path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("value plane failed for %s: %s", out_path, e)
+
     log.info("wrote %s", out_path)
     return geometry
+
+
+#: Value-plane target size (max dimension, data pixels). ~2x finer than any
+#: cursor can point at a ~750 px displayed map; keeps the PNG ~20-60 KiB.
+_VALUES_MAX_PX = 400
+
+
+def _write_value_plane(field, frame, quantity: str, bbox, out_path) -> None:
+    """8-bit grey value plane for one frame (see render_frame).
+
+    DECODE CONTRACT (client-side, from constants the manifest already
+    publishes under ``quantities``): effective_step = step * 2**k with k the
+    smallest integer making (vmax - vmin) / (step * 2**k) <= 254 - both sides
+    compute the same k deterministically, so no per-plane metadata is needed.
+    raw 0 = no-data; value = vmin + (raw - 1) * effective_step. The plane's
+    geographic extent is the frame's published geometry bbox.
+    """
+    from PIL import Image
+
+    from tat_palettes import quantities as tq
+    q = tq.value_planes()[quantity]
+    vmin, vmax = q["vmin"], q["vmax"]
+    if vmin is None or vmax is None:
+        vr = q.get("value_range")
+        if not vr:
+            return                      # no decodable bounds: no plane
+        vmin, vmax = vr
+    step = q.get("step") or 1.0
+    while (vmax - vmin) / step > 254:
+        step *= 2.0
+
+    w, s, e, n = bbox
+    lat = np.asarray(frame.lat, dtype=float)
+    lon = np.asarray(frame.lon, dtype=float)
+    arr = np.asarray(field, dtype=float)
+    yi = np.where((lat >= s) & (lat <= n))[0]
+    xi = np.where((lon >= w) & (lon <= e))[0]
+    if yi.size < 4 or xi.size < 4:
+        return
+    sub = arr[yi[0]:yi[-1] + 1, xi[0]:xi[-1] + 1]
+    ys = max(1, int(np.ceil(sub.shape[0] / _VALUES_MAX_PX)))
+    xs = max(1, int(np.ceil(sub.shape[1] / _VALUES_MAX_PX)))
+    sub = sub[::ys, ::xs]
+    raw = np.zeros(sub.shape, dtype=np.uint8)
+    ok = np.isfinite(sub)
+    idx = np.clip(np.round((sub[ok] - vmin) / step), 0, 253).astype(np.uint8)
+    raw[ok] = idx + 1
+    # Row 0 of the PNG must be the NORTH edge (image convention); the field
+    # grid is ascending lat, so flip.
+    img = Image.fromarray(raw[::-1, :], mode="L")
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_path, optimize=True)
 
 
 # ---------------------------------------------------------------------------

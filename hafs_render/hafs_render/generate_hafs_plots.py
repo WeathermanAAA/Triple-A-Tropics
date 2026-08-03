@@ -779,6 +779,7 @@ def _render_one(job: RenderJob) -> dict:
                               sat_parm=sat_parm, sat_pct=sat_pct)
         os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
         geom = hp.render_frame(frame, job.out_path, _COUNTRIES, _COAST,
+                               values_path=job.out_path[:-4] + ".values.png",
                                states=_STATES, product=job.product,
                                cen_lat=job.cen_lat, cen_lon=job.cen_lon,
                                anchor_lat=job.anchor_lat,
@@ -1597,7 +1598,16 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                                 product, f, cycle_scoped=cycle_scoped)
                                 for f in fxxs}
                             row_dir = Path(fmap[fxxs[0]]).parent
-                            blocks = hc.row_container_plan(fmap, row_dir)
+                            # Value planes (#28) ride the SAME blocks as
+                            # members f{fxx}.values.png - present only where
+                            # the render emitted one; zero extra writes.
+                            vals = {f: p[:-4] + ".values.png"
+                                    for f, p in fmap.items()
+                                    if Path(p[:-4] + ".values.png").exists()}
+                            blocks = hc.row_container_plan(
+                                fmap, row_dir,
+                                extra_kinds={"values.png": vals} if vals
+                                else None)
                             ((meta.setdefault("blocks", {})
                                   .setdefault(model, {})
                                   .setdefault(dom_slug, {}))[product]) = blocks

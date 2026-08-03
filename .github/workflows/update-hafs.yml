@@ -205,7 +205,10 @@ jobs:
           if [ -n "$CYCLE" ] && [ -d "$SRC/$CYCLE" ]; then
             aws s3 sync "$SRC/$CYCLE/" "${DST}${CYCLE}/" --endpoint-url "$R2_ENDPOINT" \
               --cache-control "$CC" --content-type "image/png" \
-              --exclude "*" --include "*.png" --delete --only-show-errors
+              --exclude "*" --include "*.png" --exclude "*.values.png" \
+              --delete --only-show-errors
+            # (value planes are container-ONLY members - uploading them
+            # per-frame would double the write bill #27 exists to cut)
             # Container blocks (#27): same prefix, own content type. Filters
             # scope --delete to orphan tars only. Dual-publish transition:
             # PNGs keep uploading until a live container cycle verifies, then

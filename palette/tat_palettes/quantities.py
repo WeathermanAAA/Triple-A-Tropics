@@ -120,6 +120,10 @@ class QuantitySpec:
     mask_below: Optional[float] = None
     #: Nominal spacing between levels, for a value readout or a ruler.
     step: Optional[float] = None
+    # PHYSICAL decode range for the value plane where the DISPLAY range is
+    # per-enhancement (vmin/vmax None): the fixed bounds the 8-bit value
+    # plane quantizes against, wide enough for every enhancement's span.
+    value_range: tuple = None
     #: Line-contour spacing, for quantities drawn as labeled contours.
     contour_interval: Optional[float] = None
 
@@ -179,6 +183,8 @@ class QuantitySpec:
             "extend": self.extend,
             "mask_below": self.mask_below,
             "step": self.step,
+            "value_range": (list(self.value_range)
+                            if self.value_range else None),
             "enhancements": list(self.enhancements),
         }
 
@@ -214,6 +220,8 @@ _QUANTITIES = (
         # -95..40, wv_tat -90..0, ice89h -168..15 degC == 105..288 K).
         enhancements=("rainbow_ir", "dvorak_bd", "tat_neon", "wv_tat",
                       "ir_gray", "ice89h"),
+        # ice89h spans -168..15; -170..40 covers every enhancement at 1 degC.
+        value_range=(-170.0, 40.0), step=1.0,
         note="One-to-MANY: the fixed-levels guarantee holds PER ENHANCEMENT, "
              "since an enhancement is precisely a choice of levels. Two models' "
              "simulated IR are comparable when both use the same enhancement.",

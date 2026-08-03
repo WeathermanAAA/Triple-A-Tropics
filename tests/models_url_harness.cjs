@@ -42,8 +42,11 @@ function manifest() {
   });
   return {
     generated_at: 't', fxx_step: 3, fxx_pad: 3, fxx_end: 24,
-    products: [{ slug: 'mslp_wind', label: 'MSLP + Wind', short: 'Wind' },
-               { slug: 'refl', label: 'Reflectivity', short: 'Refl' }],
+    products: [{ slug: 'mslp_wind', label: 'MSLP + Wind', short: 'Wind',
+                 quantity: 'wind_speed_kt' },
+               { slug: 'refl', label: 'Reflectivity', short: 'Refl',
+                 quantity: 'reflectivity_dbz' }],
+    quantities: { wind_speed_kt: { vmin: 0, vmax: 165, step: 1, units: 'kt' } },
     models: [{ slug: 'hafsa', label: 'HAFS-A' }, { slug: 'hafsb', label: 'HAFS-B' }],
     domains: [{ slug: 'storm', label: 'Storm nest', raw: 'storm.atm' }],
     path_template_cycles: '{cycle}/{model}/{storm}/{domain}/{product}/f{fxx}.png',
@@ -82,6 +85,44 @@ function tarBlock(members) {
 }
 const tarStore = {};   // url path -> Buffer, filled by withBlocks()
 
+// Minimal 8-bit greyscale PNG encoder (node zlib) - the #28 value plane the
+// fixture serves. raw 0 = no-data; value = vmin + (raw-1)*step.
+function greyPng(w, h, fill) {
+  const zlib = require('zlib');
+  const raw = Buffer.alloc(h * (w + 1));
+  for (let y = 0; y < h; y++) {
+    raw[y * (w + 1)] = 0;                       // filter: none
+    for (let x = 0; x < w; x++) raw[y * (w + 1) + 1 + x] = fill(x, y);
+  }
+  function chunk(type, data) {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32 ? zlib.crc32(td) : crc32(td));
+    return Buffer.concat([len, td, crc]);
+  }
+  function crc32(b) {                            // fallback for node < 20.15
+    let c, t = [];
+    for (let n = 0; n < 256; n++) {
+      c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    let r = 0xffffffff;
+    for (const x of b) r = t[(r ^ x) & 0xff] ^ (r >>> 8);
+    return (r ^ 0xffffffff) >>> 0;
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; ihdr[9] = 0;                      // 8-bit greyscale
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 // Give ONE storm (07e, newest cycle) the shear diagnostic + per-frame
 // geometry, hafsa only - so eligibility (storm+model+domain gated) and the
 // honest no-fix-hour degradation are both exercised.
@@ -106,7 +147,11 @@ function withBlocks(m, png1) {
   m.containers = { format: 'ustar-v1', read: 'range',
     path_template: '{cycle}/{model}/{storm}/{domain}/{product}/{key}' };
   const s07 = m.cycles[0].storms[1];
-  const b0 = tarBlock([{ name: 'f000.png', data: png1 }]);
+  // f000's value plane: raw = 1 + x, so value = vmin + x*step = x kt for
+  // wind (vmin 0, step 1). 100x100 plane over the fixture bbox.
+  const vplane = greyPng(100, 100, (x, y) => 1 + (x % 250));
+  const b0 = tarBlock([{ name: 'f000.png', data: png1 },
+                       { name: 'f000.values.png', data: vplane }]);
   const b1 = tarBlock([{ name: 'f003.png', data: png1 },
                        { name: 'f006.png', data: png1 }]);
   const base = '/models/hafs/2026073100/hafsa/07e/storm/mslp_wind/';
@@ -439,6 +484,64 @@ function withBlocks(m, png1) {
   ok(/f000\.png$|blob:/.test(fb.src) && fb.w === 1,
      'missing tar degrades to the per-frame PNG (dual-publish fallback): ' + fb.src.split('/').pop());
   ok(errs.length === 0, 'no page errors through the container section: ' + (errs[errs.length - 1] || 'none'));
+
+  // ---- 8. interactive readouts (spec #28) ---------------------------------
+  console.log('# interactive readouts');
+  await page.goto(base + '?run=2026073100&storm=07e&model=hafsa&domain=storm&product=mslp_wind&fxx=0',
+                  { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer; return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 }).catch(() => {});
+  await page.waitForFunction(() =>
+    (document.getElementById('hafs-img').src || '').startsWith('blob:'),
+    { timeout: 10000 }).catch(() => {});
+  // Hover the axes centre: geometry fixture axes_px [96.1,114.7,1504.7,1627.5],
+  // bbox [-154.45,19.65,-148.95,25.15] -> centre = (-151.7, 22.4).
+  const hov = await page.evaluate(async () => {
+    const v = window.__hafsViewer;
+    const img = document.getElementById('hafs-img');
+    const r = img.getBoundingClientRect();
+    const sc = r.width / img.naturalWidth;
+    const geo = v._geoFor(0);
+    const cx = r.left + (geo.axes_px[0] + geo.axes_px[2] / 2) * sc;
+    const cy = r.top + (geo.axes_px[1] + geo.axes_px[3] / 2) * sc;
+    img.dispatchEvent(new PointerEvent('pointermove',
+      { clientX: cx, clientY: cy, bubbles: true }));
+    await new Promise(res => setTimeout(res, 600));   // plane fetch+decode
+    const chip = document.querySelector('.hafs-readout-chip');
+    return { text: chip ? chip.textContent : '', shown: chip && chip.style.display !== 'none' };
+  });
+  ok(hov.shown, 'readout chip appears on hover');
+  ok(/22\.4\d?\u00b0N 151\.7\d?\u00b0W/.test(hov.text),
+     'lat/lon affine correct at axes centre: ' + hov.text);
+  // Value: centre column of a 100-wide plane -> raw 1+50 -> ~50 kt (x maps
+  // to bbox longitude; centre = x 50).
+  ok(/\b(49|50|51)\u2009kt/.test(hov.text),
+     'value decodes from the container plane: ' + hov.text);
+  // Ruler: two points 1 degree of latitude apart on the same meridian ->
+  // ~111 km, bearing ~0 or ~180.
+  const rul = await page.evaluate(async () => {
+    const v = window.__hafsViewer;
+    document.querySelector('.hafs-ruler-btn').click();
+    const img = document.getElementById('hafs-img');
+    const r = img.getBoundingClientRect();
+    const sc = r.width / img.naturalWidth;
+    const geo = v._geoFor(0);
+    const bb = geo.bbox, ax = geo.axes_px;
+    function pxOf(lon, lat) {
+      return {
+        x: r.left + (ax[0] + (lon - bb[0]) / (bb[2] - bb[0]) * ax[2]) * sc,
+        y: r.top + (ax[1] + (bb[3] - lat) / (bb[3] - bb[1]) * ax[3]) * sc,
+      };
+    }
+    const a = pxOf(-151.7, 21.0), b = pxOf(-151.7, 22.0);
+    img.dispatchEvent(new PointerEvent('click', { clientX: a.x, clientY: a.y, bubbles: true }));
+    img.dispatchEvent(new PointerEvent('pointermove', { clientX: b.x, clientY: b.y, bubbles: true }));
+    await new Promise(res => setTimeout(res, 100));
+    return document.querySelector('.hafs-readout-chip').textContent;
+  });
+  ok(/\b(110|111|112)\b km/.test(rul), 'ruler great-circle distance ~111 km/deg: ' + rul);
+  ok(errs.length === 0, 'no page errors through the readout section: ' + (errs[errs.length - 1] || 'none'));
 
   await browser.close();
   server.close();

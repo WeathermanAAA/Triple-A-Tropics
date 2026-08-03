@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T18:40:00Z
+updated: 2026-08-03T21:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -556,15 +556,22 @@ items:
       transmission. Counters aggregate in localStorage; there is no collector
       deployed, so nothing is transmitted unless an endpoint is configured.
   - id: telemetry-collector
-    title: Telemetry collector endpoint
+    title: Telemetry collector live — anonymous product-view demand signal
     area: models
-    status: needs-andrew
+    status: shipped
+    date_shipped: 2026-08-03
     note: >-
-      The view counters are instrumented and aggregate locally, but turning
-      them into a site-wide popularity signal needs a Worker with a KV or
-      Analytics Engine binding on Andrew's Cloudflare account. None of the
-      three existing Workers has one. Until then the numbers are per-browser
-      and inspectable only via TatTelemetry.snapshot().
+      Spec item 3's server half (was needs-andrew; the build order directive
+      resolved it). Bindingless Cloudflare Worker (the codespace CF token
+      cannot bind KV/D1/R2 — verified) relays batches via repository_dispatch
+      to an ingest workflow that writes R2, compacted 4x daily into
+      telemetry/summary.json by update-guidance. Headroom: worker 100k
+      req/day free; dispatch ~5k/hr; Actions minutes free (public repo); R2
+      one write/batch vs 1M/mo free tier. Ceiling is Actions-run noise —
+      revisit at ~500 batches/day. Client flush (shipped in Phase 0, dormant)
+      now armed via TAT_TELEMETRY_ENDPOINT. Unblocks the hero-set scheduler
+      (spec 30). Proven end-to-end: 403 wrong-origin, 204 valid, ingest run
+      success, batch on R2.
   - id: model-record-phase0
     title: Model record — convection treatment, AI paradigm, structural product gating
     area: models
@@ -1423,6 +1430,23 @@ items:
     links:
       - label: models
         url: /models/
+  - id: interactive-readouts
+    title: Interactive readouts — lat/lon, great-circle ruler, value plane (spec 28)
+    area: models
+    status: shipped
+    date_shipped: 2026-08-03
+    note: >-
+      Hover lat/lon from the manifest's per-frame affine (works on every
+      existing cycle), a two-click great-circle ruler (km/nm + bearing,
+      antimeridian-normalised, Esc cancels), and a VALUE readout sampled from
+      an 8-bit grey value plane the render now emits per frame — cropped to
+      the published bbox, quantized to the quantity registry's constants
+      (deterministic step-doubling decode contract, no per-plane metadata),
+      packed as f{fxx}.values.png INTO the same container block (zero extra
+      object writes — spec S5.3's "the two must be adopted together") and
+      excluded from the per-frame sync. Value readout activates per cycle as
+      planes publish. Proven in-browser: affine at axes centre, container
+      plane decode (50 kt at the synthetic centre), 111 km/degree ruler.
   - id: tar-container-publishing
     title: Tar-container frame publishing with geometric blocks — live in dual-publish
     area: models

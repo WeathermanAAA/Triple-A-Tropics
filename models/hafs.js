@@ -1211,6 +1211,7 @@
       }
     }
     this._blobUrls = {};
+    this._vpCache = {};
     this._preloadUrls(this.fxxList.map(function (f) { return self._frameUrl(f); }), gen, true);
   };
 
@@ -1489,6 +1490,195 @@
   // Params: run, storm, model, domain, product, fxx, mode - each independent,
   // so any view is shareable and restorable. HISTORY POLICY: pushState only on
   // run/storm/model/domain/product/mode (real navigation); the fxx scrub uses
+  // ---- interactive readouts (spec #28) ---------------------------------
+  // Lat/lon under the cursor, a two-click ruler, and a VALUE readout sampled
+  // from the frame's value plane - an 8-bit grey PNG member riding the same
+  // container block as the frame (zero extra object writes). The plane's
+  // extent IS the frame's published geometry bbox, so one affine serves the
+  // raster, the plane, and the ruler. Decode contract: effective_step =
+  // step * 2^k, k = smallest int with (vmax-vmin)/(step*2^k) <= 254;
+  // raw 0 = no data; value = vmin + (raw-1) * effective_step.
+
+  HafsViewer.prototype._geoFor = function (fxx) {
+    var g = this.storm && this.storm.geometry;
+    var d = g && g[this.model] && g[this.model][this.domain];
+    return (d && d[String(fxx)]) || null;
+  };
+
+  // Cursor event -> {lon, lat} in the frame's CONTINUOUS lon frame, or null
+  // outside the axes. All display normalisation happens at format time.
+  HafsViewer.prototype._cursorGeo = function (ev) {
+    if (!this.fxxList.length) return null;
+    var geo = this._geoFor(this.fxxList[this.idx]);
+    var img = this.dom.img;
+    if (!geo || !geo.axes_px || !img.naturalWidth || !img.clientWidth) return null;
+    var r = img.getBoundingClientRect();
+    var sc = img.naturalWidth / r.width;
+    var px = (ev.clientX - r.left) * sc, py = (ev.clientY - r.top) * sc;
+    var ax = geo.axes_px, bb = geo.bbox;
+    if (px < ax[0] || px > ax[0] + ax[2] || py < ax[1] || py > ax[1] + ax[3]) return null;
+    return {
+      lon: bb[0] + (px - ax[0]) / ax[2] * (bb[2] - bb[0]),
+      lat: bb[3] - (py - ax[1]) / ax[3] * (bb[3] - bb[1]),
+      geo: geo
+    };
+  };
+
+  function fmtLon(v) {
+    while (v > 180) v -= 360;
+    while (v < -180) v += 360;
+    return Math.abs(v).toFixed(2) + '\u00b0' + (v >= 0 ? 'E' : 'W');
+  }
+  function fmtLat(v) { return Math.abs(v).toFixed(2) + '\u00b0' + (v >= 0 ? 'N' : 'S'); }
+
+  // Great-circle distance (km) + initial bearing (deg) - lon deltas
+  // normalised first (the antimeridian rule).
+  function greatCircle(a, b) {
+    var R = 6371.0, D = Math.PI / 180;
+    var dLon = ((b.lon - a.lon + 540) % 360 - 180) * D;
+    var la1 = a.lat * D, la2 = b.lat * D, dLat = (b.lat - a.lat) * D;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    var d = 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    var brg = Math.atan2(Math.sin(dLon) * Math.cos(la2),
+                         Math.cos(la1) * Math.sin(la2) -
+                         Math.sin(la1) * Math.cos(la2) * Math.cos(dLon)) / D;
+    return { km: d, brg: (brg + 360) % 360 };
+  }
+
+  // Value plane: lazy ranged fetch of the f{fxx}.values.png member from the
+  // SAME block the frame lives in; decoded once per frame into ImageData.
+  HafsViewer.prototype._valuePlane = function (fxx, cb) {
+    var self = this;
+    this._vpCache = this._vpCache || {};
+    var ck = [this.cycle && this.cycle.cycle, this.model, this.domain,
+              this.product, fxx].join('|');
+    if (ck in this._vpCache) { cb(this._vpCache[ck]); return; }
+    var st = this.storm, name = 'f' + pad(fxx, 3) + '.values.png';
+    var arr = st && st.blocks && st.blocks[this.model] &&
+              st.blocks[this.model][this.domain] &&
+              st.blocks[this.model][this.domain][this.product];
+    var blk = null, i;
+    if (arr) for (i = 0; i < arr.length; i++) {
+      if (arr[i].members && arr[i].members[name]) { blk = arr[i]; break; }
+    }
+    if (!blk) { this._vpCache[ck] = null; cb(null); return; }
+    var mem = blk.members[name];
+    var tmpl = this.manifest.containers.path_template;
+    var url = this.assetBase + tmpl
+      .replace('{cycle}', this.cycle.cycle).replace('{model}', this.model)
+      .replace('{storm}', st.id).replace('{domain}', this.domain)
+      .replace('{product}', this.product || '').replace('{key}', blk.key)
+      .replace(/\/{2,}/g, '/');
+    fetch(url, { headers: { Range: 'bytes=' + mem[0] + '-' + (mem[0] + mem[1] - 1) } })
+      .then(function (r) {
+        if (r.status !== 206 && !r.ok) throw new Error('http ' + r.status);
+        return r.blob();
+      })
+      .then(function (b) { return createImageBitmap(b); })
+      .then(function (bm) {
+        var cv = document.createElement('canvas');
+        cv.width = bm.width; cv.height = bm.height;
+        var cx = cv.getContext('2d');
+        cx.drawImage(bm, 0, 0);
+        var id = cx.getImageData(0, 0, bm.width, bm.height);
+        bm.close && bm.close();
+        self._vpCache[ck] = { d: id.data, w: id.width, h: id.height };
+        cb(self._vpCache[ck]);
+      })
+      .catch(function () { self._vpCache[ck] = null; cb(null); });
+  };
+
+  HafsViewer.prototype._sampleValue = function (pos, plane) {
+    if (!plane) return null;
+    var bb = pos.geo.bbox;
+    var col = Math.floor((pos.lon - bb[0]) / (bb[2] - bb[0]) * plane.w);
+    var row = Math.floor((bb[3] - pos.lat) / (bb[3] - bb[1]) * plane.h);
+    if (col < 0 || col >= plane.w || row < 0 || row >= plane.h) return null;
+    var raw = plane.d[(row * plane.w + col) * 4];
+    if (!raw) return null;
+    var pm = (this.manifest.products || []).filter(
+      function (x) { return x.slug === this; }, this.product)[0];
+    var q = pm && this.manifest.quantities &&
+            this.manifest.quantities[pm.quantity];
+    if (!q) return null;
+    var vmin = q.vmin, vmax = q.vmax;
+    if (vmin == null || vmax == null) {
+      if (!q.value_range) return null;
+      vmin = q.value_range[0]; vmax = q.value_range[1];
+    }
+    var step = q.step || 1.0;
+    while ((vmax - vmin) / step > 254) step *= 2;
+    var v = vmin + (raw - 1) * step;
+    return (step < 1 ? v.toFixed(1) : Math.round(v)) + '\u2009' + (q.units || '');
+  };
+
+  HafsViewer.prototype._readoutEl = function () {
+    if (this._roEl || typeof document === 'undefined') return this._roEl;
+    var el = document.createElement('div');
+    el.className = 'hafs-readout-chip';
+    el.style.display = 'none';
+    this.dom.stage.appendChild(el);
+    this._roEl = el;
+    return el;
+  };
+
+  HafsViewer.prototype._wireReadout = function () {
+    var self = this;
+    var img = this.dom.img;
+    if (!img || !img.addEventListener) return;
+    img.addEventListener('pointermove', function (ev) {
+      var el = self._readoutEl();
+      var pos = self._cursorGeo(ev);
+      if (!pos) { if (!self._rulerA) el.style.display = 'none'; return; }
+      var fxx = self.fxxList[self.idx];
+      var base = fmtLat(pos.lat) + ' ' + fmtLon(pos.lon);
+      if (self._rulerA) {
+        var gc = greatCircle(self._rulerA, pos);
+        el.textContent = base + '  \u00b7  ' + Math.round(gc.km) + ' km / ' +
+          Math.round(gc.km * 0.5399568) + ' nm @ ' + Math.round(gc.brg) + '\u00b0';
+        el.style.display = '';
+        return;
+      }
+      self._valuePlane(fxx, function (plane) {
+        if (self.fxxList[self.idx] !== fxx) return;   // frame moved on
+        var v = self._sampleValue(pos, plane);
+        el.textContent = base + (v ? '  \u00b7  ' + v : '');
+        el.style.display = '';
+      });
+    });
+    img.addEventListener('pointerleave', function () {
+      if (self._roEl && !self._rulerA) self._roEl.style.display = 'none';
+    });
+    img.addEventListener('click', function (ev) {
+      if (!self._rulerMode) return;
+      var pos = self._cursorGeo(ev);
+      if (!pos) return;
+      if (!self._rulerA) { self._rulerA = { lon: pos.lon, lat: pos.lat }; }
+      else { self._rulerMode = false; self._rulerA = null;
+             if (self._rulerBtn) self._rulerBtn.classList.remove('on'); }
+    });
+  };
+
+  HafsViewer.prototype._wireRulerBtn = function () {
+    if (this._rulerBtn || !this.dom.player ||
+        typeof document === 'undefined' ||
+        typeof document.createElement !== 'function') return;
+    var self = this;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'hafs-btn hafs-ruler-btn';
+    b.textContent = 'Ruler';
+    b.title = 'Two clicks: great-circle distance + bearing (Esc cancels)';
+    b.addEventListener('click', function () {
+      self._rulerMode = !self._rulerMode;
+      self._rulerA = null;
+      b.classList.toggle('on', self._rulerMode);
+    });
+    this.dom.player.appendChild(b);
+    this._rulerBtn = b;
+  };
+
   // ---- shear-relative view (spec #4) -----------------------------------
   // A display TOGGLE on the existing storm-centred frames, not a new render:
   // the raster stays north-up and an SVG overlay draws the shear vector and
@@ -1795,6 +1985,8 @@
     });
 
     this._wireKeyboard();
+    this._wireReadout();
+    this._wireRulerBtn();
   };
 
   // ---- expert keyboard layer (item 9) -------------------------------------
@@ -1909,7 +2101,11 @@
           }
           break;
         case 'Escape':
-          if (self._sheetEl && self._sheetEl.style.display !== 'none') {
+          if (self._rulerMode || self._rulerA) {
+            self._rulerMode = false; self._rulerA = null;
+            if (self._rulerBtn) self._rulerBtn.classList.remove('on');
+            if (self._roEl) self._roEl.style.display = 'none';
+          } else if (self._sheetEl && self._sheetEl.style.display !== 'none') {
             self._toggleSheet(false);
           } else { self._pause(); }
           break;
