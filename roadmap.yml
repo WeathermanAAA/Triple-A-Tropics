@@ -29,10 +29,40 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T05:25:00Z
+updated: 2026-08-03T06:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: global-ace-ptc-decay-fix
+    title: Global header ACE reconciled — a decaying former TC can no longer wear the PTC flag
+    area: obs
+    status: shipped
+    date_shipped: 2026-08-03
+    note: >-
+      The home map header baked 200.59 ACE while the live-status strip summed
+      226.70 — the difference was exactly Genevieve (EP07, former category 5,
+      26.117 ACE). Her b-deck decayed to a remnant-low LO fix while NHC was
+      still advising the post-tropical low, which matched the Potential
+      Tropical Cyclone promotion gate (designated + NHC-listed + DB/DS
+      nature), and the header stats exclude PTC-flagged storms on the
+      assumption their ACE is zero by construction. Three-layer fix in
+      ace_core 0.8.13. One, a pre-genesis guard: a system with any
+      TS/SS/MX-natured fix in its ACE-nature history, or accrued ACE without
+      an explicit NHC "PC" classification, has already undergone genesis and
+      is never promoted — post-tropical is not potential. Two, the header
+      season ACE now sums every storm's ledger ACE regardless of flags
+      (genuine invests and PTCs carry zero by construction), so a wrong flag
+      can never again subtract real ACE from the header and the baked total
+      equals the ACE strip by construction. Three, "PTC" removed from the
+      potential-TC classification synonyms — in NHC's CurrentStorms
+      vocabulary PTC means POST-tropical; "PC" is the observed pre-genesis
+      code. Adversarially reviewed (three lenses) with the review's own edge
+      findings folded back in and pinned by tests: presentational-TS
+      provisional fills, frontal-origin pre-genesis ET fixes, and the
+      provisional blank-nature ACE loophole all resolve in the genuine PTC's
+      favor. The wrong window self-healed live when NHC's final advisory
+      dropped Genevieve from CurrentStorms; the fix removes the recurrence —
+      this fires for every AL/EP storm that decays under advisories.
   - id: hafs-hang-incident-3
     title: HAFS staleness incident 3 — ingest hang-proofed, alerting re-armed
     area: infra

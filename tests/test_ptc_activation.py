@@ -116,10 +116,20 @@ class PTCActivationTests(unittest.TestCase):
     def test_classification_only_signal(self):
         # b-deck nature is the tropical-ish edge "" but NHC classification says
         # disturbance: classification alone (a dict value) can name the PTC.
+        # "PC" is the code NHC uses in the wild for a Potential Tropical
+        # Cyclone (AL012026 "One", 2026-06-16).
         rows = _rows("NHC_AL", 3, nature="", name="THREE")
-        s = _by_sid(_one(rows, AL_CFG, {"AL032026": "PTC"}), "NHC_AL032026")
+        s = _by_sid(_one(rows, AL_CFG, {"AL032026": "PC"}), "NHC_AL032026")
         self.assertTrue(s["is_ptc"])
-        self.assertIn("PTC", PTC_CLASSIFICATIONS)
+        self.assertIn("PC", PTC_CLASSIFICATIONS)
+
+    def test_nhc_ptc_code_means_post_tropical_not_potential(self):
+        # NHC's CurrentStorms "PTC" classification means POST-Tropical Cyclone
+        # (Genevieve EP072026 advisory 39, systemType "POST-TROPICAL CYCLONE").
+        # It must NOT live in the potential-TC synonym set: that collision
+        # helped mislabel a decayed former C5 as pre-genesis (2026-08-03
+        # global-header bug, 200.59 vs 226.70).
+        self.assertNotIn("PTC", PTC_CLASSIFICATIONS)
 
     def test_legacy_set_membership_still_activates(self):
         # A bare set (the pre-0.8 contract) carries no classification, so the
@@ -170,6 +180,121 @@ class PTCNoAceNoCategoryTests(unittest.TestCase):
         h = compute_header_stats(storms)
         self.assertEqual(h["named"], 0)
         self.assertEqual(h["total_ace"], 0.0)
+
+
+class PTCPostTropicalGuardTests(unittest.TestCase):
+    """The GENEVIEVE bug (2026-08-03). A former TC decaying through an
+    NHC-advised remnant low matches the PTC signature — designated, listed in
+    CurrentStorms, latest fix DB/LO -> "DS" — for the day or two of
+    post-tropical advisories at the end of its life. The pre-genesis guard
+    (TC history: any TS/SS/ET/MX-natured fix, or accrued ACE) must block the
+    promotion, and the header must keep the storm's season ACE either way."""
+
+    @staticmethod
+    def _decayed_former_hurricane():
+        # TS-natured hurricane-strength history, final fix decayed to a 35 kt
+        # remnant low (LO -> "DS") — Genevieve's b-deck shape in miniature.
+        rows = _rows("NHC_EP", 7, nature="TS", name="GENEVIEVE", n=4,
+                     wind=120.0)
+        rows[-1]["nature"] = "DS"
+        rows[-1]["ace_nature"] = "DS"
+        rows[-1]["wind_kt"] = 35.0
+        return rows
+
+    def test_post_tropical_former_tc_never_ptc(self):
+        # Even listed in CurrentStorms (NHC's "PTC" = POST-tropical) with a
+        # DS-natured last fix, a storm with TC history is never promoted; the
+        # plain nature gate governs its decay (DS last fix -> inactive).
+        rows = self._decayed_former_hurricane()
+        s = _by_sid(_one(rows, EP_CFG, {"EP072026": "PTC"}), "NHC_EP072026")
+        self.assertFalse(s["is_ptc"])
+        self.assertFalse(s["is_active"])
+        self.assertGreater(s["ace"], 0)
+        self.assertEqual(s["max_category"], "C4")   # 120 kt peak preserved
+
+    def test_post_tropical_former_tc_counts_in_header(self):
+        rows = self._decayed_former_hurricane()
+        storms = _one(rows, EP_CFG, {"EP072026": "PTC"})
+        s = _by_sid(storms, "NHC_EP072026")
+        h = compute_header_stats(storms)
+        self.assertEqual(h["named"], 1)
+        self.assertEqual(h["cat1plus"], 1)
+        self.assertEqual(h["total_ace"], s["ace"])
+
+    def test_ace_history_alone_blocks_promotion(self):
+        # Provisional NR-natured history (blank/NR passes the provisional ACE
+        # gate, so ACE accrues) with a DS-natured last fix: no TS/SS/ET/MX
+        # nature anywhere, but the accrued ACE proves genesis happened.
+        rows = _rows("NHC_EP", 8, nature="NR", name="EIGHT", n=4, wind=50.0)
+        rows[-1]["nature"] = "DS"
+        rows[-1]["ace_nature"] = "DS"
+        rows[-1]["wind_kt"] = 30.0
+        s = _by_sid(_one(rows, EP_CFG, {"EP082026": "PTC"}), "NHC_EP082026")
+        self.assertGreater(s["ace"], 0)
+        self.assertFalse(s["is_ptc"])
+
+    def test_genuine_ptc_still_promoted(self):
+        # The guard must NOT break real pre-genesis PTCs: an all-DS history
+        # has no TC-history nature and no ACE, so promotion still fires.
+        rows = _rows("NHC_AL", 1, nature="DS", name="ONE")
+        s = _by_sid(_one(rows, AL_CFG, {"AL012026": "DB"}), "NHC_AL012026")
+        self.assertTrue(s["is_ptc"])
+        self.assertTrue(s["is_active"])
+
+    def test_presentational_ts_fallback_does_not_block_promotion(self):
+        # Adversarial-review pin (2026-08-03): the tracks generator's
+        # _best_nature wind fallback deliberately types pre-genesis
+        # provisional fixes as presentational "TS" while ace_nature stays the
+        # raw "NR". TC history must be judged on the ACE nature, so a genuine
+        # pre-genesis PTC with such a fill row is still promoted.
+        rows = _rows("NHC_AL", 1, nature="DS", name="ONE")
+        rows[1]["nature"] = "TS"        # presentational fallback
+        rows[1]["ace_nature"] = "NR"    # raw agency truth
+        s = _by_sid(_one(rows, AL_CFG, {"AL012026": "PC"}), "NHC_AL012026")
+        self.assertTrue(s["is_ptc"])
+        self.assertTrue(s["is_active"])
+
+    def test_frontal_origin_et_fix_does_not_block_promotion(self):
+        # Adversarial-review pin (2026-08-03): a frontal-origin pre-genesis
+        # low carries EX-coded fixes (-> "ET") BEFORE designation. ET is not
+        # TC history — the PTC must still be promoted. (A real former TC has
+        # TS/SS fixes, so dropping ET loses no Genevieve-class coverage.)
+        rows = _rows("NHC_AL", 1, nature="DS", name="ONE")
+        rows[0]["nature"] = "ET"
+        rows[0]["ace_nature"] = "ET"
+        s = _by_sid(_one(rows, AL_CFG, {"AL012026": "PC"}), "NHC_AL012026")
+        self.assertTrue(s["is_ptc"])
+        self.assertTrue(s["is_active"])
+
+    def test_explicit_pc_classification_beats_provisional_ace(self):
+        # Adversarial-review pin (2026-08-03): blank/NR provisional natures
+        # at >=34 kt accrue ACE via the provisional loophole, but NHC's
+        # explicit "PC" classification is the authoritative pre-genesis
+        # statement — the ACE arm yields to it, the system keeps its PTC
+        # identity, and the count/ACE split stays consistent with the strip
+        # (excluded from named, its ledger ACE still in the total).
+        rows = _rows("NHC_AL", 1, nature="", name="ONE", n=4, wind=40.0)
+        storms = _one(rows, AL_CFG, {"AL012026": "PC"})
+        s = _by_sid(storms, "NHC_AL012026")
+        self.assertGreater(s["ace"], 0)     # provisional loophole accrued
+        self.assertTrue(s["is_ptc"])
+        h = compute_header_stats(storms)
+        self.assertEqual(h["named"], 0)
+        self.assertEqual(h["total_ace"], s["ace"])
+
+    def test_header_ace_immune_to_wrong_ptc_flag(self):
+        # Defense in depth at the header layer: even if a storm ARRIVES
+        # wearing is_ptc=True with nonzero ace (a mis-flagging producer, a
+        # legacy feed), season ACE must include it — only the named/category
+        # COUNTS trust the flag. This is what keeps the baked header equal to
+        # the ACE feed's season total under any flag bug.
+        storms = [{"sid": "NHC_EP072026", "name": "GENEVIEVE", "ace": 26.117,
+                   "max_category": "C5", "is_invest": False, "is_ptc": True,
+                   "is_active": True, "start": "2026-07-24T18:00:00"}]
+        h = compute_header_stats(storms)
+        self.assertEqual(h["total_ace"], 26.117)
+        self.assertEqual(h["named"], 0)
+        self.assertEqual(h["cat5"], 0)
 
 
 class PTCInvestHandoffTests(unittest.TestCase):

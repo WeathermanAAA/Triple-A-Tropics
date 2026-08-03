@@ -980,14 +980,31 @@ CURRENT_STORMS_URL = "https://www.nhc.noaa.gov/CurrentStorms.json"
 PTC_NATURES = {"DB", "DS"}
 # CurrentStorms `classification` codes for a pre-genesis disturbance NHC is
 # advising on. Disturbance-only ON PURPOSE: a genuine TC carries TD/TS/HU/STD/
-# STS/EX, NONE of which appear here, so this can never reclassify a real
-# tropical/subtropical/post-tropical system as a PTC. The b-deck NATURE ("DS")
-# is the primary PTC signal observed in the wild (dev-level DB/LO -> DS); this
-# set is the secondary disambiguator (e.g. a provisional blank-NATURE fix that
-# NHC nonetheless calls a disturbance). Observed in the wild: NHC CurrentStorms
+# STS/EX, NONE of which appear here. The b-deck NATURE ("DS") is the primary
+# PTC signal observed in the wild (dev-level DB/LO -> DS); this set is the
+# secondary disambiguator (e.g. a provisional blank-NATURE fix that NHC
+# nonetheless calls a disturbance). Observed in the wild: NHC CurrentStorms
 # tags a Potential Tropical Cyclone with classification "PC" (AL012026 "One",
-# 2026-06-16); "DB"/"PTC" are kept as defensive synonyms.
-PTC_CLASSIFICATIONS = {"PC", "PTC", "DB", "LO", "WV", "MD", "DISTURBANCE"}
+# 2026-06-16). "PTC" is deliberately ABSENT: in NHC vocabulary PTC means
+# POST-Tropical Cyclone (EP072026 GENEVIEVE's final advisory 39, 2026-08-02,
+# systemType "POST-TROPICAL CYCLONE") — keeping it as a "potential" synonym
+# helped mislabel a decayed former category 5 as pre-genesis and dropped her
+# 26.117 ACE from the global header (200.59 vs the strip's 226.70,
+# 2026-08-03). The TC_HISTORY_NATURES guard below is the structural defense;
+# excluding the known-post-tropical code here removes the standing collision.
+PTC_CLASSIFICATIONS = {"PC", "DB", "LO", "WV", "MD", "DISTURBANCE"}
+
+# Natures proving a system has ALREADY BEEN a tropical/subtropical cyclone
+# (MX is the mixed-agency IBTrACS code) at some point in its track. A
+# Potential Tropical Cyclone is pre-genesis BY DEFINITION, so any of these
+# anywhere in the history — or any accrued ACE (catches a former TC whose
+# provisional natures are all NR/blank) — disqualifies the PTC promotion: a
+# former TC decaying through an NHC-advised remnant low is "post-", never
+# "potential". ET is deliberately NOT here: a frontal-origin pre-genesis low
+# legitimately carries EX-coded fixes BEFORE designation (adversarial review
+# 2026-08-03), and every real former TC also has TS/SS fixes, so ET adds no
+# coverage the TS/SS + ACE arms don't already provide.
+TC_HISTORY_NATURES = {"TS", "SS", "MX"}
 
 
 def fetch_nhc_active_sids(timeout: float = 20.0,
@@ -1735,6 +1752,18 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
         # disturbance-classified, so is_ptc stays False and is_active is whatever
         # the normal gate already decided. Track + ACE untouched: a PTC accrues
         # no ACE (its DS fixes fail nature-eligibility) and counts as no category.
+        #
+        # PRE-GENESIS GUARD (the GENEVIEVE bug, 2026-08-03): a DECAYED former TC
+        # matches the same signature — designated, still NHC-advised, latest fix
+        # a DB/LO remnant low ("DS") — for the day or two of post-tropical
+        # advisories at the END of its life. Genevieve (EP072026, peak C5,
+        # 26.117 ACE) hit exactly that window: the LO fix landed 2026-08-02
+        # 20:32Z while she was still in CurrentStorms (classification "PTC" =
+        # POST-tropical), was_ptc'd, and compute_header_stats dropped her whole
+        # season ACE from the global header (200.59 baked vs 226.70 real). A
+        # system with ANY TC history — a TS/SS/ET/MX-natured fix, or accrued
+        # ACE — is past genesis, not before it, so it can never be a PTC; the
+        # plain nature gate above already handles its decay (DS/ET -> inactive).
         if (recent_obs and len(points) > 0 and nhc_active_sids is not None):
             last = points[-1]
             has_wind = pd.notna(last["wind_kt"]) and last["wind_kt"] > 0
@@ -1744,8 +1773,23 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
                 last_nat = (last["nature"] or "").upper()
                 nhc_cls = (nhc_active_sids.get(m.group(1))
                            if isinstance(nhc_active_sids, dict) else "") or ""
-                if (last_nat in PTC_NATURES
-                        or nhc_cls.upper() in PTC_CLASSIFICATIONS):
+                # TC history is judged on the ACE nature (ace_nature first,
+                # raw nature fallback — the _unpack convention): the tracks
+                # generator's presentational `nature` is deliberately typed
+                # "TS" by its wind fallback on pre-genesis provisional fixes,
+                # which would read as false TC history here. The ACE arm
+                # yields to an EXPLICIT "PC" classification — NHC asserting
+                # pre-genesis is authoritative over ACE inferred from
+                # blank/NR provisional natures (the provisional loophole
+                # accrues ACE on such fixes); it never overrides the nature
+                # arm, because a real former TC has TS/SS-natured fixes and
+                # stays blocked regardless of classification.
+                was_tc = (any(
+                    str(p.get("ace_nature", p.get("nature")) or "")
+                    .strip().upper() in TC_HISTORY_NATURES for p in points)
+                    or (storm_ace_val > 0 and nhc_cls.upper() != "PC"))
+                if not was_tc and (last_nat in PTC_NATURES
+                                   or nhc_cls.upper() in PTC_CLASSIFICATIONS):
                     is_ptc = True
                     is_active = True
         # Invest = ATCF storm-number 90-99 (JTWC/NHC convention). Pulled
@@ -1901,22 +1945,27 @@ def merge_and_extract_storms(ibtracs: pd.DataFrame, live: pd.DataFrame,
 
 
 def compute_header_stats(storms: list[dict]) -> dict:
-    # Designated TCs only - invests (ATCF 90-99, is_invest) AND Potential
-    # Tropical Cyclones (is_ptc — designated but still a DB/DS disturbance NHC
-    # is advising on) never count toward the named/category tallies or the
-    # season ACE, even if a fix reached TS strength while still pre-genesis.
-    # Their per-storm ace is already 0.0 by construction (storm_ace's invest
-    # guard / DS nature-ineligibility); filtering here makes the COUNT rule just
-    # as explicit, so a windy PTC can never inflate the named/category counts.
+    # COUNTS: designated TCs only - invests (ATCF 90-99, is_invest) AND
+    # Potential Tropical Cyclones (is_ptc — designated but still a pre-genesis
+    # DB/DS disturbance NHC is advising on) never count toward the
+    # named/category tallies, even if a fix reached TS strength while still
+    # pre-genesis — a windy PTC can never inflate the named/category counts.
     tcs = [s for s in storms
            if not s.get("is_invest") and not s.get("is_ptc")]
     named = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 1)  # TS+
     cat1plus = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 2)  # C1+
     cat3plus = sum(1 for s in tcs if _sshs_rank(s["max_category"]) >= 4)  # C3+
     cat5 = sum(1 for s in tcs if s["max_category"] == "C5")
-    # Season ACE via the single authority: sum of the (already rounded) per-storm
-    # ACE values, so it equals the ACE feed's season ACE exactly.
-    total_ace = season_ace([s["ace"] for s in tcs])
+    # ACE: sum over ALL storms, flags ignored. A genuine invest/PTC carries
+    # ace 0.0 by construction (storm_ace's invest guard / DS nature-
+    # ineligibility), so including them changes nothing — but a storm wearing
+    # a WRONG flag can no longer subtract real ACE from the header (GENEVIEVE
+    # 2026-08-03: a post-tropical former C5 briefly promoted to is_ptc took
+    # her 26.117 season ACE out of the global header — 200.59 baked while the
+    # per-basin strip summed 226.70). This is what keeps total_ace equal to
+    # the ACE feed's season ACE (which has no is_ptc concept) for every storm
+    # both feeds carry — the single-authority rule.
+    total_ace = season_ace([(s.get("ace") or 0.0) for s in storms])
     return {
         "named": named,
         "cat1plus": cat1plus,
