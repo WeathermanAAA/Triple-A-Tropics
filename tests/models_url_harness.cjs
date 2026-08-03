@@ -53,6 +53,23 @@ function manifest() {
   };
 }
 
+// Give ONE storm (07e, newest cycle) the shear diagnostic + per-frame
+// geometry, hafsa only - so eligibility (storm+model+domain gated) and the
+// honest no-fix-hour degradation are both exercised.
+function withShear(m) {
+  const s07 = m.cycles[0].storms[1];
+  const geo = { axes_px: [96.1, 114.7, 1504.7, 1627.5],
+                bbox: [-154.45, 19.65, -148.95, 25.15],
+                crosses_antimeridian: false };
+  s07.geometry = { hafsa: { storm: { 0: geo, 3: geo } } };
+  s07.shear = {
+    params: { method: 'azimuthal_mean', layer_hpa: [200, 850], radius_km: 500,
+              center: 'model_vortex_trak', heading: 'toward' },
+    hours: { hafsa: { 0: { kt: 12.3, hdg: 53.2, naive_kt: 14.1, naive_hdg: 51.9 } } },
+  };
+  return m;
+}
+
 (async () => {
   const server = http.createServer((req, res) => {
     const p = path.join(REPO, req.url.split('?')[0].replace(/\/$/, '/index.html'));
@@ -73,10 +90,18 @@ function manifest() {
   const errs = [];
   page.on('pageerror', e => errs.push(String(e.message)));
   await page.route('**/manifest.json*', r => r.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify(manifest()) }));
-  // Frames + everything else off-origin: tiny 1px png / 404s are fine.
+    status: 200, contentType: 'application/json', body: JSON.stringify(withShear(manifest())) }));
+  // Frames get a real 1x1 PNG (naturalWidth must be non-zero for the shear
+  // overlay); everything else off-origin 404s.
+  const PNG1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64');
   await page.route('**/cdn.triple-a-tropics.com/**', r => {
-    if (/manifest\.json/.test(r.request().url())) return r.fallback();
+    const u = r.request().url();
+    if (/manifest\.json/.test(u)) return r.fallback();
+    if (/\.png/.test(u)) {
+      return r.fulfill({ status: 200, contentType: 'image/png', body: PNG1 });
+    }
     r.fulfill({ status: 404, body: '' });
   });
   await page.route('**/global_storms.geojson*', r => r.fulfill({
@@ -242,6 +267,69 @@ function manifest() {
   ok(await page.evaluate(() =>
        !!document.querySelector('.hafs-kbd-btn')),
      'a visible Shortcuts button exists, so the sheet is reachable without ?');
+
+  // ---- 6. shear-relative view (spec #4) -----------------------------------
+  console.log('# shear-relative view');
+  // 12w has no shear block in the fixture: the toggle must not exist there.
+  await page.goto(base + '?run=2026073100&storm=12w&model=hafsa&domain=storm&product=mslp_wind&fxx=0',
+                  { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer; return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 }).catch(() => {});
+  ok(await page.evaluate(() => {
+    const b = document.querySelector('.hafs-shear-btn');
+    return !b || b.style.display === 'none';
+  }), 'no shear button for a storm without shear data');
+  // 07e + hafsa has it.
+  await page.goto(base + '?run=2026073100&storm=07e&model=hafsa&domain=storm&product=mslp_wind&fxx=0',
+                  { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer; return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 }).catch(() => {});
+  ok(await page.evaluate(() => {
+    const b = document.querySelector('.hafs-shear-btn');
+    return !!b && b.style.display !== 'none';
+  }), 'shear button appears for 07e/hafsa (manifest carries shear.hours)');
+  const hs = await page.evaluate(() => history.length);
+  await page.evaluate(() => document.querySelector('.hafs-shear-btn').click());
+  await page.waitForTimeout(400);      // replaceState debounce
+  const shOn = await page.evaluate(() => ({
+    view: window.__hafsViewer.shearView,
+    hist: history.length,
+    url: location.search,
+    pressed: document.querySelector('.hafs-shear-btn').getAttribute('aria-pressed'),
+    svg: !!document.querySelector('.hafs-shear-ov svg'),
+    labs: Array.from(document.querySelectorAll('.hafs-shear-ov .sh-lab'))
+      .map(t => t.textContent).sort().join(','),
+    chip: (document.querySelector('.hafs-shear-chip') || {}).textContent || '',
+  }));
+  ok(shOn.view === true && shOn.pressed === 'true', 'toggle turns the view on');
+  ok(shOn.hist === hs, 'toggling shear adds NO history entry (display state)');
+  ok(/shear=1/.test(shOn.url), 'URL carries shear=1 via replaceState');
+  ok(shOn.svg, 'overlay SVG drawn (frame has a shear value + geometry)');
+  ok(shOn.labs === 'DL,DR,UL,UR', 'quadrant labels are the four rotation-defined tags: ' + shOn.labs);
+  ok(/downshear-left in the NH/.test(shOn.chip) && /downshear-right in the SH/.test(shOn.chip),
+     'chip states BOTH hemispheres’ convective preference');
+  ok(/12\.3 kt/.test(shOn.chip) && /naive 14\.1 kt/.test(shOn.chip),
+     'chip shows the removed AND naive numbers');
+  // F003 has geometry but NO shear entry (no vortex fix): honest degradation.
+  await page.evaluate(() => window.__hafsViewer._show(1));
+  await page.waitForTimeout(300);   // img src swap -> overlay redraws on load
+  const noFix = await page.evaluate(() => ({
+    svg: !!document.querySelector('.hafs-shear-ov svg'),
+    chip: (document.querySelector('.hafs-shear-chip') || {}).textContent || '',
+  }));
+  ok(!noFix.svg && /No shear diagnostic at F003/.test(noFix.chip),
+     'hour without a vortex fix: no geometry drawn, chip says why');
+  // Boot from a shared link with shear=1.
+  await page.goto(base + '?run=2026073100&storm=07e&model=hafsa&domain=storm&product=mslp_wind&fxx=0&shear=1',
+                  { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => {
+    const v = window.__hafsViewer; return v && v.storm && v.fxxList.length;
+  }, { timeout: 15000 }).catch(() => {});
+  ok(await page.evaluate(() => window.__hafsViewer.shearView === true),
+     'shear=1 in a shared link boots the view on');
+  ok(errs.length === 0, 'no page errors through the shear section: ' + (errs[errs.length - 1] || 'none'));
 
   await browser.close();
   server.close();

@@ -141,6 +141,15 @@
                    typeof location !== 'undefined';
     this._urlBoot = this.urlSync ? this._readUrl() : null;   // consumed once
     this._urlTimer = null;
+    // Shear-relative view (spec #4): an OVERLAY mode, not a render mode - the
+    // raster stays north-up, the quadrant frame + shear vector rotate. Boot
+    // from the URL here (display state, replaceState-only, never a history
+    // entry), consumed like every other boot param.
+    this.shearView = false;
+    if (this._urlBoot && this._urlBoot.shear === '1') {
+      this.shearView = true;
+      delete this._urlBoot.shear;
+    }
     this._expiredRun = null;
     // Playback pacing: a single requestAnimationFrame loop with a timestamp
     // threshold (the satellite sat-simple canon), NOT setInterval — vsync-
@@ -1003,6 +1012,7 @@
       '  ·  Init ' + fmtUTC(init);
     this._highlightHour();
     this._updatePill();
+    this._renderShearOverlay();
     // Scrubbing (clicks, arrows, playback ticks) rewrites the address bar via
     // debounced replaceState only - 43 forecast hours must never become 43
     // back-button presses.
@@ -1083,6 +1093,7 @@
     this._updateBadge();
     this._updatePill();
     this._updateStale();
+    this._updateShearBtn();
   };
 
   // HAFS runs every 6 h. If the newest cycle we can show is much older than
@@ -1392,6 +1403,184 @@
   // Params: run, storm, model, domain, product, fxx, mode - each independent,
   // so any view is shareable and restorable. HISTORY POLICY: pushState only on
   // run/storm/model/domain/product/mode (real navigation); the fxx scrub uses
+  // ---- shear-relative view (spec #4) -----------------------------------
+  // A display TOGGLE on the existing storm-centred frames, not a new render:
+  // the raster stays north-up and an SVG overlay draws the shear vector and
+  // the shear-relative quadrant frame on top, rotated to the published
+  // vortex-removed heading (spec #26's number, storms[].shear in the
+  // manifest). Quadrants are defined PURELY by rotation from the shear
+  // vector - DR/DL forward of the perpendicular, UR/UL rearward, left/right
+  // as seen looking downshear - so the geometry is identical in both
+  // hemispheres. The hemisphere-dependent PHYSICS (convective max downshear-
+  // LEFT in the NH, downshear-RIGHT in the SH) lives ONLY in the chip text,
+  // stating both. TAT serves SHEM: no NH assumption in any label or order.
+
+  HafsViewer.prototype._shearHours = function () {
+    var sh = this.storm && this.storm.shear;
+    if (!sh || !sh.hours) return null;
+    var h = sh.hours[this.model];
+    for (var k in h) { if (h.hasOwnProperty(k)) return h; }
+    return null;
+  };
+
+  HafsViewer.prototype._shearFor = function (fxx) {
+    var h = this._shearHours();
+    return (h && h[String(fxx)]) || null;
+  };
+
+  // Storm-centred (nest) products only: the overlay centres on the axes
+  // centre, which is where the storm-following nest holds the vortex. On the
+  // parent domain the storm is wherever it is - no overlay there.
+  HafsViewer.prototype._shearEligible = function () {
+    return this.domain === 'storm' && !!this._shearHours();
+  };
+
+  HafsViewer.prototype._toggleShear = function () {
+    if (!this._shearEligible()) return;
+    this.shearView = !this.shearView;
+    this._updateShearBtn();
+    this._renderShearOverlay();
+    this._syncUrl(false);       // display state: replaceState, never a history entry
+  };
+
+  HafsViewer.prototype._updateShearBtn = function () {
+    var el = this._shearBtn;
+    if (!this._shearEligible()) {
+      if (el) el.style.display = 'none';
+      if (this.shearView) this._renderShearOverlay();   // hides the overlay
+      return;
+    }
+    if (!el) {
+      if (!this.dom.player || typeof document === 'undefined' ||
+          typeof document.createElement !== 'function') return;
+      var self = this;
+      el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'hafs-btn hafs-shear-btn';
+      el.textContent = 'Shear view';
+      el.title = 'Shear-relative overlay: quadrant frame + shear vector (S)';
+      el.setAttribute('aria-pressed', 'false');
+      el.addEventListener('click', function () { self._toggleShear(); });
+      this.dom.player.appendChild(el);
+      this._shearBtn = el;
+    }
+    el.style.display = '';
+    el.classList.toggle('on', !!this.shearView);
+    el.setAttribute('aria-pressed', this.shearView ? 'true' : 'false');
+  };
+
+  HafsViewer.prototype._renderShearOverlay = function () {
+    var ov = this._shearOv;
+    var on = this.shearView && this._shearEligible();
+    if (!on) { if (ov) ov.style.display = 'none'; return; }
+    if (typeof document === 'undefined' ||
+        typeof document.createElement !== 'function') return;
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'hafs-shear-ov';
+      this.dom.stage.appendChild(ov);
+      this._shearOv = ov;
+      // The overlay is positioned in DISPLAYED pixels: track the img size.
+      var self = this;
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('resize', function () {
+          if (self._shearRz) clearTimeout(self._shearRz);
+          self._shearRz = setTimeout(function () {
+            self._renderShearOverlay();
+          }, 150);
+        });
+      }
+    }
+    var img = this.dom.img;
+    var natW = img.naturalWidth, natH = img.naturalHeight;
+    var dw = img.clientWidth, dh = img.clientHeight;
+    if (!natW || !dw) {
+      // Frame not decoded yet (first paint of a fresh selection): draw once
+      // it lands rather than leaving the overlay stale-hidden.
+      ov.style.display = 'none';
+      if (!this._shearOnLoad && img.addEventListener) {
+        var v = this;
+        this._shearOnLoad = function () { v._renderShearOverlay(); };
+        img.addEventListener('load', this._shearOnLoad);
+      }
+      return;
+    }
+    ov.style.display = '';
+    ov.style.left = img.offsetLeft + 'px';
+    ov.style.top = img.offsetTop + 'px';
+    ov.style.width = dw + 'px';
+    ov.style.height = dh + 'px';
+
+    var fxx = this.fxxList[this.idx];
+    var val = this._shearFor(fxx);
+    var g = this.storm.geometry;
+    var geo = g && g[this.model] && g[this.model][this.domain] &&
+              g[this.model][this.domain][String(fxx)];
+    var scale = dw / natW;
+
+    if (!val || !geo || !geo.axes_px || !geo.bbox) {
+      // Honest degradation: no number for this hour (no model vortex fix, or
+      // a pre-geometry frame) -> say so, draw no geometry.
+      ov.innerHTML = '<div class="hafs-shear-chip" style="left:12px;bottom:12px">' +
+        'No shear diagnostic at F' + pad(fxx, 3) +
+        (val ? '' : ' — no model vortex fix this hour') + '</div>';
+      return;
+    }
+
+    var ax = geo.axes_px, bb = geo.bbox;
+    var cx = ax[0] + ax[2] / 2, cy = ax[1] + ax[3] / 2;
+    // px per degree on the equirectangular axes: X and Y differ (~cos lat),
+    // so a geographic bearing must be mapped through both scales or every
+    // angle would be visibly wrong off the equator.
+    var kx = ax[2] / (bb[2] - bb[0]), ky = ax[3] / (bb[3] - bb[1]);
+    function dir(hdg) {
+      var r = hdg * Math.PI / 180;
+      var dx = Math.sin(r) * kx, dy = -Math.cos(r) * ky;
+      var L = Math.sqrt(dx * dx + dy * dy) || 1;
+      return [dx / L, dy / L];
+    }
+    var R = 0.42 * Math.min(ax[2], ax[3]);
+    var hdg = val.hdg;
+    function pt(a, rr) { var d = dir(a); return [cx + d[0] * rr, cy + d[1] * rr]; }
+    function lineEl(a, dash) {
+      var p1 = pt(a + 180, R), p2 = pt(a, R);
+      return '<line x1="' + p1[0] + '" y1="' + p1[1] + '" x2="' + p2[0] +
+        '" y2="' + p2[1] + '" class="sh-ln' + (dash ? ' sh-dash' : '') + '"/>';
+    }
+    // Arrowhead: screen-perpendicular of the shear line's screen direction.
+    var d0 = dir(hdg);
+    var tip = [cx + d0[0] * R, cy + d0[1] * R];
+    var pd = [-d0[1], d0[0]];
+    var ah = 0.055 * R, aw = 0.038 * R;
+    var head = '<polygon class="sh-head" points="' +
+      tip[0] + ',' + tip[1] + ' ' +
+      (tip[0] - d0[0] * ah + pd[0] * aw) + ',' + (tip[1] - d0[1] * ah + pd[1] * aw) + ' ' +
+      (tip[0] - d0[0] * ah - pd[0] * aw) + ',' + (tip[1] - d0[1] * ah - pd[1] * aw) + '"/>';
+    // Quadrant labels: pure rotation from the shear vector. Looking
+    // downshear, LEFT = heading - 90; the four quadrant midlines follow.
+    var labels = [['DL', -45], ['DR', 45], ['UL', -135], ['UR', 135]]
+      .map(function (q) {
+        var p = pt(hdg + q[1], 0.8 * R);
+        return '<text x="' + p[0] + '" y="' + p[1] + '" class="sh-lab">' +
+          q[0] + '</text>';
+      }).join('');
+    var svg =
+      '<svg viewBox="0 0 ' + natW + ' ' + natH + '" width="' + dw +
+      '" height="' + dh + '" aria-hidden="true">' +
+      lineEl(hdg, false) + lineEl(hdg + 90, true) + head + labels + '</svg>';
+    var chip =
+      '<div class="hafs-shear-chip" style="left:' +
+      Math.round(ax[0] * scale + 10) + 'px;top:' +
+      Math.round((ax[1] + ax[3]) * scale - 10) + 'px;transform:translateY(-100%)">' +
+      '<b>Shear ' + val.kt + ' kt @ ' + Math.round(val.hdg) + '°</b>' +
+      ' · naive ' + val.naive_kt + ' kt' +
+      '<br>vortex-removed · 850–200 hPa · 0–500 km · model’s own centre' +
+      '<br>Quadrants are shear-relative geometry. Convection favours ' +
+      'downshear-<b>left</b> in the NH, downshear-<b>right</b> in the SH.' +
+      '</div>';
+    ov.innerHTML = svg + chip;
+  };
+
   // replaceState debounced 250 ms, because 43 forecast hours must never become
   // 43 back-button presses.
 
@@ -1399,7 +1588,7 @@
     try {
       var q = new URLSearchParams(location.search);
       var out = {};
-      ['run', 'storm', 'model', 'domain', 'product', 'fxx', 'mode']
+      ['run', 'storm', 'model', 'domain', 'product', 'fxx', 'mode', 'shear']
         .forEach(function (k) { if (q.get(k)) out[k] = q.get(k); });
       return out;
     } catch (e) { return {}; }
@@ -1425,6 +1614,7 @@
     add('product', this.product);
     if (this.fxxList.length) add('fxx', this.fxxList[this.idx]);
     if (this.playing) add('mode', 'play');
+    if (this.shearView) add('shear', '1');
     return p.join('&');
   };
 
@@ -1643,6 +1833,11 @@
         case '?':
           if (chars) { self._toggleSheet(); e.preventDefault(); }
           break;
+        case 's': case 'S':
+          if (chars && self._shearEligible()) {
+            self._toggleShear(); e.preventDefault();
+          }
+          break;
       }
     });
   };
@@ -1663,6 +1858,7 @@
         '<tr><td><kbd>Space</kbd></td><td>play / pause</td></tr>' +
         '<tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>first / last rendered hour</td></tr>' +
         '<tr><td><kbd>Esc</kbd></td><td>pause · close this sheet</td></tr>' +
+        '<tr><td><kbd>S</kbd></td><td>shear-relative view (storm view, when available)</td></tr>' +
         '<tr><td><kbd>?</kbd></td><td>this sheet</td></tr>' +
         '</tbody></table>' +
         '<label class="hafs-kbd-toggle"><input type="checkbox"> ' +

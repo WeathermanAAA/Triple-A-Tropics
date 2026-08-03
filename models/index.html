@@ -144,6 +144,27 @@
   /* Keyboard shortcut sheet + its opener. Sober: a small dark dialog pinned
      inside the viewer, no dimmed backdrop, dismissed by Esc / ? / Close. */
   .hafs-kbd-btn { font-size: 11.5px; }
+  /* Shear-relative view (overlay mode). The overlay sits exactly over the
+     displayed frame; everything inside is non-interactive. */
+  .hafs-shear-btn { font-size: 11.5px; }
+  .hafs-shear-btn.on { background: var(--accent-2); color: #06222e;
+    border-color: var(--accent-2); }
+  .hafs-shear-ov { position: absolute; pointer-events: none; z-index: 3; }
+  .hafs-shear-ov svg { position: absolute; left: 0; top: 0; }
+  .hafs-shear-ov .sh-ln { stroke: rgba(255,255,255,0.85); stroke-width: 1.4px;
+    vector-effect: non-scaling-stroke;
+    filter: drop-shadow(0 0 1.5px rgba(0,0,0,0.9)); }
+  .hafs-shear-ov .sh-dash { stroke-dasharray: 6 7;
+    stroke: rgba(255,255,255,0.55); }
+  .hafs-shear-ov .sh-head { fill: rgba(255,255,255,0.9); }
+  .hafs-shear-ov .sh-lab { fill: #fff; stroke: rgba(0,0,0,0.85);
+    stroke-width: 3px; paint-order: stroke; font: 700 34px system-ui,
+    -apple-system, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+  .hafs-shear-chip { position: absolute; max-width: 72%;
+    background: rgba(10,13,18,0.85); border: 1px solid #26303c;
+    border-radius: 4px; padding: 6px 9px; font-size: 11px; line-height: 1.5;
+    color: #cfd8e3; }
+  .hafs-shear-chip b { color: #fff; font-weight: 600; }
   /* The sheet anchors to the viewer, not the page. */
   #hafs-viewer { position: relative; }
   .hafs-kbd-sheet {
@@ -655,7 +676,7 @@
 
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 <script src="/models/telemetry.js?v=edbe6ac804"></script>
-<script src="/models/hafs.js?v=ab870d1fdb"></script>
+<script src="/models/hafs.js?v=70b933bfea"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>
 <script src="/models/enscenters.js?v=bffaca1377"></script>
 </body>

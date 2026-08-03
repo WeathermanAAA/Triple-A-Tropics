@@ -92,6 +92,8 @@ from hafs_render import model_registry as mr
 from tat_palettes import quantities as tq
 # Persistent per-cycle field cache (the ingest/render split lives here).
 from hafs_render import hafs_cache as fc
+# Vortex-removed deep-layer shear: the published NUMBERS (spec #26).
+from hafs_render import shear_diag as sd
 
 log = logging.getLogger("hafs-build")
 
@@ -1018,6 +1020,69 @@ def _count_frames(storms: list) -> int:
               for prods in m.values() for p in prods)
 
 
+#: Manifest-documented parameters of the shear diagnostic. Method, layer and
+#: radius are NAMED here (not implied) so the number can be reproduced and so
+#: alternatives (500-850 layer, Helmholtz removal) are a parameter change, not
+#: an archaeology project. heading "toward" = direction the shear points at;
+#: SHIPS SHTD is the FROM convention (add 180 to compare - verified empirically,
+#: see shear_diag docstring).
+SHEAR_PARAMS = {
+    "method": "azimuthal_mean",
+    "layer_hpa": [200, 850],
+    "radius_km": 500,
+    "center": "model_vortex_trak",
+    "heading": "toward",
+}
+
+
+def _shear_diag_pass(env_frames: list, pair_tracks: dict, ingested_ok: set,
+                     storm_meta: dict) -> None:
+    """Post-ingest: compute the vortex-removed (and naive) 850-200 shear per
+    (model, storm, fxx) from the parent-domain field cache and attach the
+    numbers to ``storm_meta[storm]["shear"]``.
+
+    Reads ONLY the two layer-difference vars + coords from each cache entry
+    (never the 39-field union). The centre is the model's OWN vortex fix at
+    the hour (pick_track_fix over the run's trak.atcfunix) - no fix, no
+    number: publishing a "vortex-removed" value centred on nothing would be
+    the dishonesty this product exists to avoid. Per-frame failures log and
+    skip; this pass can degrade to nothing but never sink the build.
+    """
+    import xarray as xr
+
+    n_done = 0
+    for model, storm, fxx, cpath in env_frames:
+        if _frame_key(model, storm, "parent.atm", fxx) not in ingested_ok:
+            continue
+        track, prev_track = pair_tracks.get((model, storm), ({}, {}))
+        cen, _anchor = hp.pick_track_fix(track, prev_track, fxx)
+        if not cen:
+            continue
+        try:
+            with xr.open_dataset(cpath) as ds:
+                du = ds["shru_200_850"].values
+                dv = ds["shrv_200_850"].values
+                lat = ds["lat"].values
+                lon = ds["lon"].values
+            res = sd.vortex_removed_shear(du, dv, lat, lon, cen[0], cen[1])
+        except Exception as e:  # noqa: BLE001 - diagnostics never sink the build
+            log.warning("shear diag failed: %s %s f%03d - %s",
+                        model, storm, fxx, e)
+            continue
+        if res is None:        # clipped disc / degenerate frame: publish nothing
+            continue
+        shear = storm_meta[storm].setdefault(
+            "shear", {"params": dict(SHEAR_PARAMS), "hours": {}})
+        shear["hours"].setdefault(model, {})[str(fxx)] = {
+            "kt": res["mag_kt"], "hdg": res["hdg_deg"],
+            "naive_kt": res["naive_mag_kt"], "naive_hdg": res["naive_hdg_deg"],
+        }
+        n_done += 1
+    if env_frames:
+        log.info("shear diagnostics: %d/%d frame(s) computed",
+                 n_done, len(env_frames))
+
+
 def _cycle_entry(cycle: str, storms: list, *, started_utc: str,
                  in_progress: bool = False) -> dict:
     """ONE cycle's v2 entry, byte-shape-identical to the render worker's. The
@@ -1205,6 +1270,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
     ingest_jobs: list[IngestJob] = []
     render_jobs: list[RenderJob] = []
     storm_meta: dict[str, dict] = {}
+    # For the post-ingest shear diagnostic: parent env frames to compute on,
+    # and each (model, storm)'s track decks (fetched once below, reused there).
+    env_frames: list[tuple] = []
+    pair_tracks: dict[tuple, tuple] = {}
     for storm in storms:
         basin_slug, basin_label = storm_basin(storm)
         storm_meta[storm] = {
@@ -1265,6 +1334,7 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                 if prev_track:
                     log.info("provisional track (previous cycle) %s %s: "
                              "%d fixes available", model, storm, len(prev_track))
+            pair_tracks[(model, storm)] = (track, prev_track)
             for domain in domains:
                 avail = list_fxx(model, date, hh, storm, domain, session=session)
                 avail = [f for f in avail if f <= max_fxx and f % fxx_step == 0]
@@ -1315,6 +1385,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         want_refl=cycle_want_refl, want_pwat=cycle_want_pwat,
                         want_upper=cycle_want_upper, want_env=want_env_frame,
                         sat_parms=cycle_sat_parms))
+                    if want_env_frame:
+                        # This frame's cache will hold the 200-850 shear
+                        # vector: queue it for the post-ingest shear diagnostic.
+                        env_frames.append((model, storm, fxx, cpath))
                     # The namesake's fix at THIS hour: own deck first, then the
                     # previous cycle's fix at the same valid time (provisional;
                     # progressive rendering), then last-known framing anchor,
@@ -1387,6 +1461,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
               stage_deadline_s=_INGEST_DEADLINE_S)
     log.info("ingested %d/%d frame(s) ok (%d failed) in %.0fs",
              len(ingested_ok), len(ingest_jobs), n_ingest_fail, time.time() - t0)
+
+    # Vortex-removed shear numbers (spec #26): computed once per parent env
+    # frame from the cache the ingest just wrote, published via storm_meta.
+    _shear_diag_pass(env_frames, pair_tracks, ingested_ok, storm_meta)
 
     # ----- Stage 2: RENDER. Read the cache, render each product. No fetch. -----
     # A frame whose ingest failed is skipped for ALL its products (logged once,
@@ -1467,6 +1545,16 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                         del meta[aux][model][dom_slug]
                 if not meta[aux][model]:
                     del meta[aux][model]
+        # Shear numbers prune with frames too (model-level: the diagnostic is
+        # parent-computed but serves every domain's display, so it stays as
+        # long as the model kept ANY frames).
+        if "shear" in meta:
+            hours = meta["shear"]["hours"]
+            for model in list(hours):
+                if model not in meta["frames"]:
+                    del hours[model]
+            if not hours:
+                del meta["shear"]
         if meta["frames"]:
             storms_out.append(meta)
 
