@@ -29,10 +29,31 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-03T23:25:00Z
+updated: 2026-08-04T04:36:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: freshness-nhc-ingest-discriminator
+    title: Freshness monitor learns to see a dead NHC ingest (btk-vs-feed discriminator)
+    area: infra
+    status: shipped
+    date_shipped: 2026-08-04
+    note: >-
+      The stamp-based ACE feed rows judge freshness by generated_utc, which
+      the box poller re-stamps every ~2 min even when zero new fixes arrive,
+      so a dead NHC fetch path is indistinguishable from a genuinely quiet
+      basin (WP has a second tcvitals leg; AL/EP would freeze silently).
+      Two new rollup rows discriminate by comparing the NHC btk listing's
+      per-file Last-Modified against the feed's latest_fix_valid_utc,
+      alarming when upstream is more than 12 h newer regardless of
+      generated_utc — the tolerance absorbs NHC's write-after-valid skew
+      (~2.5 h measured on AL02's final fix). An unreachable btk listing is
+      itself a loud stale row (the monitor going blind must alarm), the
+      rows carry no suppression, and the inline comment holds the re-arm
+      rule for anyone who adds one later. Locked by tests/test_ingest_lag.py.
+    links:
+      - label: probe
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/blob/main/scripts/freshness_probe.py
   - id: r2-cost-list-kill
     title: R2 cost incident — listing discipline live fleet-wide; container canary UP
     area: infra

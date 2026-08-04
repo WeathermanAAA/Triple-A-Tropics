@@ -31,6 +31,12 @@ Registry notes live next to each entry. Timestamps come from each
 product's own manifest fields (generated_utc / as_of / latest / cycle),
 never from HTTP Date headers, except where Last-Modified IS the write
 time (R2 object PUT time) and the manifest carries no stamp.
+
+Besides the registry, two NHC-ingest DISCRIMINATOR rows (see the block
+comment above ingest_lag_rows) compare what NHC last wrote (btk listing
+Last-Modified) against what the AL/EP feeds last ingested
+(latest_fix_valid_utc) — the one staleness the stamp-based rows are blind
+to, since the poller re-stamps generated_utc even when ingesting nothing.
 """
 from __future__ import annotations
 
@@ -263,6 +269,126 @@ REGISTRY = [
 ]
 
 
+# ---- NHC-ingest discriminator ---------------------------------------------
+# (2026-08-04, after the "ACE stopped updating" scare.) The feed rows above
+# judge freshness by generated_utc, which the box poller re-stamps every
+# ~2 min even when zero new fixes arrive — so a dead NHC fetch path is
+# indistinguishable, in-feed, from a genuinely quiet basin. WP has a second
+# tcvitals leg; AL and EP ride the proxy→ftp.nhc btk chain alone and would
+# freeze silently. These two rows discriminate: compare the btk listing's
+# per-file Last-Modified (what NHC last WROTE) against the feed's
+# latest_fix_valid_utc (what we last INGESTED), and alarm when upstream is
+# more than INGEST_LAG_TOLERANCE_MIN newer — regardless of generated_utc.
+# Only numbered decks 01–40 count: generate_ace_plot.fetch_live_season
+# sweeps exactly that range, so invest-deck (b??9x) churn must not alarm.
+#
+# NO suppression / known-down on these rows, deliberately: they exist to
+# catch the one failure the stamp rows cannot see, and a muted
+# discriminator is the HAFS blindfold again (see the RE-ARMED note in the
+# registry). If a real, understood NHC outage ever forces a mute here, it
+# must carry (a) the date, (b) the incident, and (c) the re-arm condition —
+# "unmute on the first fresh comparison" — an undated mute on this row
+# means the next ingest break reaches users before it reaches a human.
+
+BTK_LISTING_URL = "https://ftp.nhc.noaa.gov/atcf/btk/"
+# 12 h absorbs NHC's write-after-valid skew (b-deck lines land hours after
+# their valid time — measured ~2.5 h on AL02 2026's final fix: valid 00Z,
+# written 02:32Z) plus a few missed cycles, without sitting on a real
+# outage for a full synoptic day.
+INGEST_LAG_TOLERANCE_MIN = 720
+
+_BTK_ROW_RE = re.compile(
+    r'href="b(?P<basin>al|ep)(?P<nn>\d{2})(?P<year>\d{4})\.dat"[^>]*>'
+    r'[^<]*</a>\s*(?P<lm>\d{4}-\d{2}-\d{2} \d{2}:\d{2})')
+
+_DISCRIMINATOR = "nhc ingest discriminator (btk lm vs feed fix)"
+
+
+def btk_newest_lm(html: str, basin: str, year: int):
+    """Newest listing Last-Modified across the basin's NUMBERED (01–40)
+    decks for the season, as an aware UTC datetime; None when the season
+    has no numbered decks yet."""
+    best = None
+    for m in _BTK_ROW_RE.finditer(html):
+        if m.group("basin") != basin or int(m.group("year")) != year:
+            continue
+        if not 1 <= int(m.group("nn")) <= 40:  # invests are never ingested
+            continue
+        lm = dt.datetime.strptime(m.group("lm"), "%Y-%m-%d %H:%M").replace(
+            tzinfo=dt.timezone.utc)
+        if best is None or lm > best:
+            best = lm
+    return best
+
+
+def _lag_row(name: str, *, last_utc=None, age_min=None, stale=False, note=""):
+    return {"name": name, "writer": _DISCRIMINATOR, "cadence_min": 0,
+            "last_utc": last_utc, "age_min": age_min,
+            "stale_after_min": INGEST_LAG_TOLERANCE_MIN, "stale": stale,
+            "known_down": False, "note": note}
+
+
+def evaluate_ingest_lag(name: str, upstream_lm, feed_fix):
+    """Pure comparison → one rollup row (unit-tested in test_ingest_lag)."""
+    if upstream_lm is None:
+        return _lag_row(name, note="no numbered b-decks upstream this "
+                                   "season — nothing to ingest")
+    lm_z = upstream_lm.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if feed_fix is None:
+        return _lag_row(name, last_utc=lm_z, stale=True,
+                        note="upstream has numbered b-decks but the feed "
+                             "carries no latest_fix_valid_utc — ingested "
+                             "nothing")
+    lag_min = (upstream_lm - feed_fix).total_seconds() / 60.0
+    return _lag_row(
+        name, last_utc=lm_z, age_min=round(lag_min, 1),
+        stale=lag_min > INGEST_LAG_TOLERANCE_MIN,
+        note=f"btk lm {lm_z} vs feed fix "
+             f"{feed_fix.strftime('%Y-%m-%dT%H:%M:%SZ')} — upstream "
+             f"{lag_min / 60.0:+.1f} h ahead (tolerance "
+             f"{INGEST_LAG_TOLERANCE_MIN // 60} h)")
+
+
+def ingest_lag_rows(now, fetch_listing=None, fetch_feed=None):
+    """The two AL/EP discriminator rows. An unreachable btk listing (or an
+    unreadable feed) is a LOUD stale row, never a silent skip — the monitor
+    going blind on the exact check built to catch silent freezes must
+    itself alarm."""
+    if fetch_listing is None:
+        def fetch_listing():
+            with _get(BTK_LISTING_URL + f"?t={int(time.time())}") as r:
+                return r.read().decode("utf-8", errors="replace")
+    if fetch_feed is None:
+        def fetch_feed(basin):
+            return _cdn_json(f"feeds/{basin}_ace_data.json")
+    html = listing_err = None
+    try:
+        html = fetch_listing()
+    except Exception as e:  # noqa: BLE001 — a blind discriminator alarms
+        listing_err = (f"probe error: btk listing unreachable "
+                       f"({type(e).__name__}: {e}) — discriminator blind, "
+                       f"alarming loudly")
+    rows = []
+    for basin in ("al", "ep"):
+        name = f"nhc ingest lag ({basin} btk vs feed)"
+        if listing_err is not None:
+            rows.append(_lag_row(name, stale=True, note=listing_err))
+            continue
+        try:
+            feed_fix = _parse_any(
+                (fetch_feed(basin) or {}).get("latest_fix_valid_utc"))
+        except Exception as e:  # noqa: BLE001 — same loud-blind rule
+            rows.append(_lag_row(
+                name, stale=True,
+                note=f"probe error: {basin} feed unreadable "
+                     f"({type(e).__name__}: {e}) — discriminator blind, "
+                     f"alarming loudly"))
+            continue
+        rows.append(evaluate_ingest_lag(
+            name, btk_newest_lm(html, basin, now.year), feed_fix))
+    return rows
+
+
 def doc_ts(t: "dt.datetime") -> str:
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -305,6 +431,17 @@ def main() -> None:
         print(f"{'STALE ' if stale else 'fresh '} {name}: "
               f"age={rows[-1]['age_min']} min (limit {stale_at})"
               + (f" · {note}" if note else ""))
+
+    # NHC-ingest discriminator rows (btk lm vs feed fix — see the block
+    # comment above ingest_lag_rows). Appended before the alerting pass so
+    # they alarm and 6-hourly re-alarm exactly like any product.
+    for r in ingest_lag_rows(now):
+        rows.append(r)
+        if r["stale"]:
+            stale_names.append(r["name"])
+        print(f"{'STALE ' if r['stale'] else 'fresh '} {r['name']}: "
+              f"lag={r['age_min']} min (limit {r['stale_after_min']})"
+              + (f" · {r['note']}" if r["note"] else ""))
 
     # Prior rollup FIRST: the alerting state (stale_since / last_alarm) is
     # carried through the published document, so it must be read before this
