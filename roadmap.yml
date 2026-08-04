@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-04T13:53:00Z
+updated: 2026-08-04T16:25:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -72,22 +72,22 @@ items:
       manifest (first write in 18.4 days), the 13:07Z run refreshed it on
       cadence, and the freshness rollup cleared to 0/34 stale.
   - id: r2-cost-list-kill
-    title: R2 cost incident — listing discipline live fleet-wide; container canary UP
+    title: R2 cost incident — fleet on container publishing; measured −80% and falling
     area: infra
-    status: active
+    status: shipped
+    date_shipped: 2026-08-04
     note: >-
-      Listing discipline deployed to all 11 lanes and MEASURED: warm passes
-      run 3-129 LIST pages (was 300-1,800); fleet projection ~2.25M
-      ops/day from 10.7M. Prune running again (per-product walk after the
-      whole-tree listing OOM-died). The tar-container canary is LIVE on
-      conus-fast since 23:00Z: truecolor publishes 485 z7 tiles as 7
-      objects (was ~488), ranged reads byte-match on the deployed
-      explorer, and an automatic-rollback watchdog (no human required:
-      unreadable-frame, byte-mismatch, staleness, lane-failure trips)
-      watches for 12 h. Its false-trip during arming proved the full
-      rollback path end-to-end before any container frame existed.
-      Next: watchdog PASS -> flip remaining lanes; next-day [ops] sweep vs
-      the 10.7M baseline + Andrew eyeballs the billing page.
+      Next-day verification from the fleet's own request counters: 2.1M
+      Class A ops/day vs the 10.7M baseline, with the remaining share
+      dominated by lanes that flipped to tar-container publishing only
+      hours earlier. The 12h conus-fast canary PASSed with zero trips
+      (its per-tile twin cost ~500k ops/day; converged container rate
+      26.8k), after which geo, gk2a, the himawari trio and box1's four
+      lanes all flipped — each behind its own automatic-rollback watchdog.
+      First prune since 07-25 deleted 2.77M objects / 98 GB and capped
+      retention at 14d. Projected steady state ~0.4-0.6M ops/day
+      (~$2-3/day from $48). Billing-page confirmation is Andrew's eyeball;
+      the ops sweep script reproduces the number on demand.
   - id: r2-cost-stopgap-retirement
     title: R2 cost incident — the three GH stopgap emitters retired (first cut)
     area: infra
