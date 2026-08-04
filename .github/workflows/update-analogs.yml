@@ -51,9 +51,17 @@ jobs:
         # ModuleNotFoundError and, before the fail-loudly guard in
         # generate_analogs.py, the run still showed green (found 2026-07-16:
         # 'wrote 0 storm(s)' for days).
+        # cartopy is the SECOND lazy-import episode in this same step
+        # (found 2026-08-04, after an 18-day outage): tropycal imports it
+        # lazily on the WP/IBTrACS path but not on AL/EP, so the break
+        # armed itself the day a WP storm went active (JTWC_WP122026,
+        # ~2026-07-16) and every scheduled run since died at import.
+        # ESCALATION RULE: a third lazy-import episode here means we stop
+        # patching modules one at a time and pin tropycal's full dependency
+        # set instead.
         run: |
           python -m pip install --upgrade pip
-          pip install "setuptools<81" tropycal shapely
+          pip install "setuptools<81" tropycal shapely cartopy
       - name: Build analogs
         env:
           ANALOGS_ENABLED: ${{ vars.ANALOGS_ENABLED || '1' }}

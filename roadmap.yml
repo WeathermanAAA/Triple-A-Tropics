@@ -54,6 +54,20 @@ items:
     links:
       - label: probe
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/blob/main/scripts/freshness_probe.py
+  - id: cyclolab-analogs-cartopy-outage
+    title: CycloLab analogs 18-day outage — tropycal's lazy cartopy import (fix landed)
+    area: apps
+    status: active
+    note: >-
+      Root cause of the outage the re-armed monitor surfaced: tropycal
+      imports cartopy lazily on the WP/IBTrACS path but not on AL/EP, so
+      the break armed itself when JTWC_WP122026 went active (~Jul 16) and
+      every update-analogs run since died at import while last-known-good
+      stayed live. Second lazy-import episode in that install step after
+      shapely (2026-07-16); the escalation rule is now documented in the
+      workflow — a third one means pinning tropycal's full dependency set
+      instead of patching another module. cartopy added to the install
+      line; flips to shipped when a green run writes the manifest again.
   - id: r2-cost-list-kill
     title: R2 cost incident — listing discipline live fleet-wide; container canary UP
     area: infra
