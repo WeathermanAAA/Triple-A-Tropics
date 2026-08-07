@@ -1499,6 +1499,17 @@
   // step * 2^k, k = smallest int with (vmax-vmin)/(step*2^k) <= 254;
   // raw 0 = no data; value = vmin + (raw-1) * effective_step.
 
+  // Product meta for the CURRENT product ("figure": "map" | "panel").
+  // Map semantics - the geometry affine, value readout, ruler, shear
+  // overlay - apply ONLY to map figures: a diagnostic plate shares the
+  // (model, domain, fxx) geometry key with map products, so without this
+  // gate the overlays would draw nonsense over a line chart.
+  HafsViewer.prototype._isMapFigure = function () {
+    var pm = (this.manifest && this.manifest.products || []).filter(
+      function (x) { return x.slug === this; }, this.product)[0];
+    return !pm || (pm.figure || 'map') === 'map';
+  };
+
   HafsViewer.prototype._geoFor = function (fxx) {
     var g = this.storm && this.storm.geometry;
     var d = g && g[this.model] && g[this.model][this.domain];
@@ -1508,7 +1519,7 @@
   // Cursor event -> {lon, lat} in the frame's CONTINUOUS lon frame, or null
   // outside the axes. All display normalisation happens at format time.
   HafsViewer.prototype._cursorGeo = function (ev) {
-    if (!this.fxxList.length) return null;
+    if (!this.fxxList.length || !this._isMapFigure()) return null;
     var geo = this._geoFor(this.fxxList[this.idx]);
     var img = this.dom.img;
     if (!geo || !geo.axes_px || !img.naturalWidth || !img.clientWidth) return null;
@@ -1708,7 +1719,8 @@
   // centre, which is where the storm-following nest holds the vortex. On the
   // parent domain the storm is wherever it is - no overlay there.
   HafsViewer.prototype._shearEligible = function () {
-    return this.domain === 'storm' && !!this._shearHours();
+    return this.domain === 'storm' && this._isMapFigure() &&
+           !!this._shearHours();
   };
 
   HafsViewer.prototype._toggleShear = function () {

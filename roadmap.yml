@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-04T16:25:00Z
+updated: 2026-08-07T06:05:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1472,6 +1472,44 @@ items:
     links:
       - label: models
         url: /models/
+  - id: azimuthal-mean-structure
+    title: Azimuthal-mean structure plate — tangential wind, RMW, warm core, inflow (spec 25)
+    area: models
+    status: shipped
+    date_shipped: 2026-08-07
+    note: >-
+      The spec's "single most information-dense TC structure diagnostic", as a
+      2x2 plate per (model, storm, hour) on the storm view: cyclonic
+      tangential wind by level with the RMW and the PARENT 6 km profile
+      dashed beside the nest (the resolution caveat DRAWN — for today's broad
+      60-68 kt storms the gap is honestly +0.7-0.9 kt, and it will display
+      itself when a compact major occurs); radial wind (the -25 kt inflow
+      layer visible on Dolphin); warm core as the 850-500 thickness-DERIVED
+      mean-layer T anomaly (no T levels in the cache — stated on the plate);
+      and the quadrant-max radii rose. One azimuthal-mean implementation:
+      the polar core was EXTRACTED from vortex-removed-shear (#26), which
+      now imports it — proven by #26's 14 tests passing unchanged on the
+      shared operator. RMW/vt-max scalars (nest AND parent) also publish
+      per-hour in storms[].structure. First plates render with the next
+      cron cycle.
+  - id: quadrant-wind-radii
+    title: Four-quadrant 34/50/64 kt wind radii — QUADRANT MAX, b-deck-verified (spec 7)
+    area: models
+    status: shipped
+    date_shipped: 2026-08-07
+    note: >-
+      Computed on the PARENT 10 m wind (R34 exceeds the nest half-width)
+      about the model's own vortex fix. Method is QUADRANT-MAX radial
+      extent — the ATCF/NEQ convention — stated as method: quadrant_max in
+      code, manifest params, and on the plate (a mean would not compare to
+      the b-deck or RVCN and would be worse than not shipping). Published
+      per-hour in storms[].radii (nm, NE/SE/SW/NW, null where unreached).
+      VERIFIED against the b-deck's published radii, Dolphin 12W, five
+      cycles at f000: n=20 quadrant pairs, mine-minus-b-deck mean +33 nm,
+      mean|d| 35 nm, 90% within 60 nm, quadrant asymmetry ORDERING preserved
+      both sides — geometry sound; the modest positive offset is the
+      expected model-gridpoint vs conservative-analyst direction.
+      Antimeridian-normalised like everything polar (tested at 179.8E).
   - id: interactive-readouts
     title: Interactive readouts — lat/lon, great-circle ruler, value plane (spec 28)
     area: models

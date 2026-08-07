@@ -217,10 +217,17 @@ class TestBuilderPass(unittest.TestCase):
         du, dv = _vortex_diff_field(lat, lon, cen_lat, cen_lon,
                                     90.0, "N", 12.0, 9.0)
         with tempfile.TemporaryDirectory() as td:
-            cpath = str(Path(td) / "f012.nc")
+            # A "parent" entry carrying shear vectors AND 10 m wind, so the
+            # extended pass (#7 radii, #25 parent profile) is exercised too.
+            cpath = str(Path(td) / "parent" / "f012.nc")
+            Path(cpath).parent.mkdir(parents=True)
+            spd = np.hypot(du, dv) + 40.0        # >34 kt everywhere near centre
             xr.Dataset(
                 {"shru_200_850": (("lat", "lon"), du),
-                 "shrv_200_850": (("lat", "lon"), dv)},
+                 "shrv_200_850": (("lat", "lon"), dv),
+                 "wind_kt": (("lat", "lon"), spd),
+                 "u_kt": (("lat", "lon"), du + 5.0),
+                 "v_kt": (("lat", "lon"), dv + 5.0)},
                 coords={"lat": lat, "lon": lon}).to_netcdf(cpath)
             meta = {"07x": {"frames": {}}}
             env_frames = [("hafsa", "07x", 12, cpath),
@@ -237,3 +244,12 @@ class TestBuilderPass(unittest.TestCase):
             got = shear["hours"]["hafsa"]["12"]
             self.assertAlmostEqual(got["kt"], 15.0, delta=0.5)
             self.assertIn("naive_kt", got)
+            # #7 rode the same pass: quadrant-max radii with the method STATED.
+            radii = meta["07x"]["radii"]
+            self.assertEqual(radii["params"]["method"], "quadrant_max")
+            self.assertEqual(radii["params"]["units"], "nm")
+            r34 = radii["hours"]["hafsa"]["12"]["r34"]
+            self.assertTrue(all(isinstance(v, int) for v in r34))
+            # #25 parent-profile scalars land under structure (no nest sibling
+            # in this fixture, so hours may be absent - parent-only prof is
+            # not published without the nest); assert no crash + shear intact.

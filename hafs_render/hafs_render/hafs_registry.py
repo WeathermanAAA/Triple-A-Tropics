@@ -301,6 +301,10 @@ class ProductSpec:
             "mean_substitute": self.mean_substitute.value,
             "requires_explicit_convection": self.requires_explicit_convection,
             "selectable_enhancements": list(self.selectable_enhancements),
+            # "map" = a georeferenced raster (geometry affine, shear overlay
+            # and value readout apply); "panel" = a diagnostic plate (they
+            # must NOT - the frontend gates on this).
+            "figure": "map",
         }
 
 
@@ -1072,13 +1076,41 @@ def ordered_specs() -> list:
     """Specs in default toggle order."""
     return sorted(REGISTRY.values(), key=lambda s: s.order)
 
+#: FIGURE products (spec #25): diagnostic PLATES, not field rasters - they
+#: bypass the ProductSpec color/fill machinery entirely (the builder routes
+#: them to their own renderer) and carry figure="panel" so the frontend never
+#: applies map semantics (geometry affine, shear overlay, value readout) to
+#: them. Registry-level so the manifest, the toggle order, and the model gate
+#: all see one product list.
+FIGURE_PRODUCTS = {
+    "structure": {
+        "slug": "structure",
+        "label": "Azimuthal-Mean Structure",
+        "short": "Structure",
+        "quantity": None,
+        "ensemble_mean_allowed": False,
+        "mean_substitute": "spaghetti",
+        "requires_explicit_convection": False,
+        "selectable_enhancements": [],
+        "figure": "panel",
+        # storm domain only: the profiles are nest-computed (the parent rides
+        # inside the plate as the resolution comparison, not as its own frames).
+        "domains": ("storm.atm",),
+    },
+}
+
+
 def default_order() -> list:
-    """Product keys in default toggle/render order (mslp_wind first)."""
-    return [s.key for s in ordered_specs()]
+    """Product keys in default toggle/render order (mslp_wind first; figure
+    plates after the field products)."""
+    return [s.key for s in ordered_specs()] + list(FIGURE_PRODUCTS)
 
 def products_dict() -> dict:
     """``{key: {slug,label,short}}`` in order - the generator's PRODUCTS table."""
-    return {s.key: s.product_meta() for s in ordered_specs()}
+    out = {s.key: s.product_meta() for s in ordered_specs()}
+    for k, m in FIGURE_PRODUCTS.items():
+        out[k] = {kk: vv for kk, vv in m.items() if kk != "domains"}
+    return out
 
 def sat_parm(key: str) -> Optional[int]:
     """GRIB2 parameterNumber for a product's .sat channel, or None for .atm
@@ -1136,6 +1168,11 @@ def incompatibility_reason(model_slug: str, product_key: str) -> Optional[str]:
     Unknown ids are refused rather than waved through - a typo'd model or
     product must not silently render.
     """
+    if product_key in FIGURE_PRODUCTS:
+        # Figure plates read cached winds/heights any carried model has;
+        # no convection gate applies (nothing here IS resolved convection).
+        return (None if mr.has_model(model_slug)
+                else f"unknown model {model_slug!r}")
     spec = REGISTRY.get(product_key)
     if spec is None:
         return f"unknown product {product_key!r}"

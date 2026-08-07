@@ -55,6 +55,8 @@ from typing import Optional
 
 import numpy as np
 
+from hafs_render import polar
+
 #: Default layer/radius: 850-200 hPa over 0-500 km, because that is SHIPS SHRD.
 DEFAULT_RADIUS_KM = 500.0
 DEFAULT_LAYER = (200, 850)
@@ -74,9 +76,8 @@ _MIN_COVERAGE = 0.6
 
 
 def _norm_dlon(lon, cen_lon):
-    """Longitude difference normalised into (-180, 180]. THE antimeridian
-    guard: applied before anything becomes a distance or an angle."""
-    return (np.asarray(lon, dtype=float) - float(cen_lon) + 180.0) % 360.0 - 180.0
+    """Delegates to polar.norm_dlon - ONE implementation (see polar.py)."""
+    return polar.norm_dlon(lon, cen_lon)
 
 
 def heading_deg(u: float, v: float) -> float:
@@ -85,39 +86,26 @@ def heading_deg(u: float, v: float) -> float:
     return float(np.degrees(np.arctan2(u, v)) % 360.0)
 
 
-def _azimuthal_mean_removal(du, dv, x_km, y_km, r_km, weights, inside,
-                            radius_km, n_bins=_N_RADIAL_BINS):
+def _azimuthal_mean_removal(du, dv, pg, inside, radius_km,
+                            n_bins=_N_RADIAL_BINS):
     """Subtract the reconstructed axisymmetric component of (du, dv).
 
-    Decompose the field into radial/tangential components about the centre,
-    take the area-weighted azimuthal mean per radial ring, reconstruct the
-    axisymmetric vector field from the ring means, and subtract it.
+    Decomposition and ring means come from polar (the ONE shared operator -
+    see polar.py); only the reconstruct-and-subtract, which is specific to
+    vortex removal, lives here.
     """
-    r_safe = np.where(r_km > 1e-6, r_km, 1e-6)
-    rhx, rhy = x_km / r_safe, y_km / r_safe          # r-hat
-    thx, thy = -y_km / r_safe, x_km / r_safe         # theta-hat (CCW; pure geometry)
-    vr = du * rhx + dv * rhy
-    vt = du * thx + dv * thy
-
+    vt, vr = polar.tangential_radial(du, dv, pg)
     edges = np.linspace(0.0, radius_km, n_bins + 1)
+    vt_mean, _ = polar.ring_mean(vt, pg, edges, inside=inside)
+    vr_mean, _ = polar.ring_mean(vr, pg, edges, inside=inside)
+    vt_mean = np.nan_to_num(vt_mean)
+    vr_mean = np.nan_to_num(vr_mean)
+
+    r_km = pg["r_km"]
+    r_safe = np.where(r_km > 1e-6, r_km, 1e-6)
+    rhx, rhy = pg["x_km"] / r_safe, pg["y_km"] / r_safe
+    thx, thy = -pg["y_km"] / r_safe, pg["x_km"] / r_safe
     idx = np.clip(np.digitize(r_km, edges) - 1, 0, n_bins - 1)
-    w = np.where(inside, weights, 0.0)
-
-    vr_mean = np.zeros(n_bins)
-    vt_mean = np.zeros(n_bins)
-    wsum = np.bincount(idx[inside].ravel(), weights=w[inside].ravel(),
-                       minlength=n_bins)
-    vr_sum = np.bincount(idx[inside].ravel(),
-                         weights=(w * np.where(inside, vr, 0.0))[inside].ravel(),
-                         minlength=n_bins)
-    vt_sum = np.bincount(idx[inside].ravel(),
-                         weights=(w * np.where(inside, vt, 0.0))[inside].ravel(),
-                         minlength=n_bins)
-    ok = wsum > 0
-    vr_mean[ok] = vr_sum[ok] / wsum[ok]
-    vt_mean[ok] = vt_sum[ok] / wsum[ok]
-
-    # Reconstruct the axisymmetric field at every point and subtract.
     axi_u = vr_mean[idx] * rhx + vt_mean[idx] * thx
     axi_v = vr_mean[idx] * rhy + vt_mean[idx] * thy
     return du - axi_u, dv - axi_v
@@ -157,26 +145,16 @@ def vortex_removed_shear(du_kt, dv_kt, lat, lon, cen_lat, cen_lon, *,
     dv = np.asarray(dv_kt, dtype=float)
     lat = np.asarray(lat, dtype=float)
     lon = np.asarray(lon, dtype=float)
-    if lat.ndim == 1:
-        lon2, lat2 = np.meshgrid(lon, lat)
-    else:
-        lon2, lat2 = lon, lat
 
-    # Local plane about the centre. dlon is normalised FIRST (antimeridian),
-    # then scaled by cos(lat) of each point for the zonal metric.
-    dlon = _norm_dlon(lon2, cen_lon)
-    x_km = dlon * _KM_PER_DEG * np.cos(np.radians(lat2))
-    y_km = (lat2 - float(cen_lat)) * _KM_PER_DEG
-    r_km = np.hypot(x_km, y_km)
+    # Local plane + weights: the shared storm-centred machinery (polar.py).
+    pg = polar.polar_grid(lat, lon, cen_lat, cen_lon)
+    r_km, weights = pg["r_km"], pg["weights"]
 
     finite = np.isfinite(du) & np.isfinite(dv)
     inside = (r_km <= radius_km) & finite
     n = int(inside.sum())
     if n < 16:
         return None
-
-    # Area weights on a lat/lon grid: cell area goes as cos(lat).
-    weights = np.cos(np.radians(lat2))
 
     # Coverage: how much of the ideal disc actually carries data. Estimated
     # from grid spacing; a disc half off the parent (or over all-NaN data)
@@ -196,8 +174,7 @@ def vortex_removed_shear(du_kt, dv_kt, lat, lon, cen_lat, cen_lon, *,
     naive_u = _weighted_mean(du, weights, inside)
     naive_v = _weighted_mean(dv, weights, inside)
 
-    rem_du, rem_dv = _azimuthal_mean_removal(
-        du, dv, x_km, y_km, r_km, weights, inside, radius_km)
+    rem_du, rem_dv = _azimuthal_mean_removal(du, dv, pg, inside, radius_km)
     rem_u = _weighted_mean(rem_du, weights, inside)
     rem_v = _weighted_mean(rem_dv, weights, inside)
 

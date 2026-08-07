@@ -78,6 +78,7 @@ from typing import Optional, Sequence
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
+import numpy as np
 import requests
 
 # Reuse the validated fetch + render from the single-frame slice. Importing it
@@ -94,6 +95,9 @@ from tat_palettes import quantities as tq
 from hafs_render import hafs_cache as fc
 # Vortex-removed deep-layer shear: the published NUMBERS (spec #26).
 from hafs_render import shear_diag as sd
+# Azimuthal-mean structure + quadrant-max wind radii (specs #25/#7); both
+# consume the ONE polar core (polar.py) shear_diag also uses.
+from hafs_render import structure_diag as st
 # Tar-container frame publishing with geometric blocks (spec #27).
 from hafs_render import hafs_container as hc
 
@@ -746,6 +750,61 @@ def _ingest_one(job: IngestJob) -> dict:
             "error": f"{type(last_err).__name__}: {last_err}"}
 
 
+def _render_structure_one(job: RenderJob) -> dict:
+    """Render the #25 structure plate for one (model, storm, fxx) from the
+    NEST cache entry, with the PARENT sibling entry (when present) supplying
+    the resolution-comparison profile and the #7 radii. Never raises."""
+    import xarray as xr
+    from hafs_render import structure_diag as _st
+    from hafs_render import structure_plot as _sp
+    try:
+        frame = fc.load_frame(Path(job.cache_path), want_upper=True)
+        fields = {"u_kt": frame.u_kt, "v_kt": frame.v_kt}
+        for k in ("u_850", "v_850", "u_700", "v_700", "u_500", "v_500",
+                  "gh_850", "gh_500"):
+            if frame.upper and k in frame.upper:
+                fields[k] = frame.upper[k]
+        nest = _st.azimuthal_structure(fields, frame.lat, frame.lon,
+                                       job.cen_lat, job.cen_lon)
+        if nest is None:
+            return {"ok": False, "model": job.model, "storm": job.storm,
+                    "domain": job.domain, "product": job.product,
+                    "fxx": job.fxx,
+                    "error": "no vortex fix / no wind coverage for structure"}
+        parent = radii = None
+        ppath = Path(str(job.cache_path).replace("/storm/", "/parent/"))
+        if ppath != Path(job.cache_path) and ppath.exists():
+            with xr.open_dataset(ppath) as ds:
+                if "u_kt" in ds and "v_kt" in ds:
+                    pu, pv = ds["u_kt"].values, ds["v_kt"].values
+                    plat, plon = ds["lat"].values, ds["lon"].values
+                    pw = ds["wind_kt"].values if "wind_kt" in ds else None
+            parent = _st.azimuthal_structure(
+                {"u_kt": pu, "v_kt": pv}, plat, plon,
+                job.cen_lat, job.cen_lon)
+            if pw is not None:
+                radii = _st.quadrant_radii(pw, plat, plon,
+                                           job.cen_lat, job.cen_lon)
+        os.makedirs(os.path.dirname(job.out_path), exist_ok=True)
+        meta = {
+            "model_label": MODEL_LABEL.get(job.model, job.model.upper()),
+            "storm_label": job.storm.upper(),
+            "init": frame.init_time.strftime("%Y-%m-%d %HZ"),
+            "valid": frame.valid_time.strftime("%Y-%m-%d %H:%M UTC"),
+            "fxx": job.fxx,
+            "hemi_sign": (1.0 if (job.cen_lat or 0) >= 0 else -1.0),
+        }
+        _sp.render_structure(nest, parent, radii, meta, job.out_path)
+        return {"ok": True, "model": job.model, "storm": job.storm,
+                "domain": job.domain, "product": job.product, "fxx": job.fxx,
+                "valid": frame.valid_time.replace(microsecond=0).isoformat() + "Z",
+                "geometry": None}
+    except Exception as e:  # noqa: BLE001 - one plate never sinks a cycle
+        return {"ok": False, "model": job.model, "storm": job.storm,
+                "domain": job.domain, "product": job.product, "fxx": job.fxx,
+                "error": f"{type(e).__name__}: {e}"}
+
+
 def _render_one(job: RenderJob) -> dict:
     """RENDER one product from the field cache - NO GRIB fetch. Never raises.
 
@@ -756,6 +815,8 @@ def _render_one(job: RenderJob) -> dict:
     that used to cover transient S3 reads now lives in the ingest stage. A failed
     product is logged and skipped; the rest of the cycle still publishes.
     """
+    if job.product in reg.FIGURE_PRODUCTS:
+        return _render_structure_one(job)
     want_refl = job.product == "refl"
     want_pwat = job.product == "mslp_pwat"
     # Upper-air / env products declare their need via requires_attr (the registry
@@ -1023,6 +1084,27 @@ def _count_frames(storms: list) -> int:
               for prods in m.values() for p in prods)
 
 
+#: Manifest-documented parameters of the structure/radii diagnostics (#25/#7).
+#: METHOD statements ride the feed on purpose: radii are QUADRANT-MAX (the
+#: ATCF/b-deck convention - a mean would not compare to published radii), and
+#: the warm core is THICKNESS-DERIVED (the cache carries no temperature
+#: levels). Centre = the model's own trak.atcfunix fix, like the shear.
+STRUCTURE_PARAMS = {
+    "method": "azimuthal_mean",
+    "center": "model_vortex_trak",
+    "rings_km": [st.PROFILE_RING_KM, st.PROFILE_MAX_KM],
+    "warm_core": "thickness_850_500_derived",
+}
+RADII_PARAMS = {
+    "method": "quadrant_max",
+    "units": "nm",
+    "quadrants": ["NE", "SE", "SW", "NW"],
+    "thresholds_kt": list(st.RADII_THRESHOLDS_KT),
+    "center": "model_vortex_trak",
+    "surface": "parent_10m_wind",
+}
+
+
 #: Manifest-documented parameters of the shear diagnostic. Method, layer and
 #: radius are NAMED here (not implied) so the number can be reproduced and so
 #: alternatives (500-850 layer, Helmholtz removal) are a parameter change, not
@@ -1065,6 +1147,11 @@ def _shear_diag_pass(env_frames: list, pair_tracks: dict, ingested_ok: set,
             with xr.open_dataset(cpath) as ds:
                 du = ds["shru_200_850"].values
                 dv = ds["shrv_200_850"].values
+                # 10 m wind vars power #7/#25; absent (degenerate entry) just
+                # skips those diagnostics, never the shear.
+                p_wind = ds["wind_kt"].values if "wind_kt" in ds else None
+                p_ukt = ds["u_kt"].values if "u_kt" in ds else None
+                p_vkt = ds["v_kt"].values if "v_kt" in ds else None
                 lat = ds["lat"].values
                 lon = ds["lon"].values
             res = sd.vortex_removed_shear(du, dv, lat, lon, cen[0], cen[1])
@@ -1072,15 +1159,63 @@ def _shear_diag_pass(env_frames: list, pair_tracks: dict, ingested_ok: set,
             log.warning("shear diag failed: %s %s f%03d - %s",
                         model, storm, fxx, e)
             continue
-        if res is None:        # clipped disc / degenerate frame: publish nothing
-            continue
-        shear = storm_meta[storm].setdefault(
-            "shear", {"params": dict(SHEAR_PARAMS), "hours": {}})
-        shear["hours"].setdefault(model, {})[str(fxx)] = {
-            "kt": res["mag_kt"], "hdg": res["hdg_deg"],
-            "naive_kt": res["naive_mag_kt"], "naive_hdg": res["naive_hdg_deg"],
-        }
-        n_done += 1
+        if res is not None:    # clipped disc / degenerate frame: publish nothing
+            shear = storm_meta[storm].setdefault(
+                "shear", {"params": dict(SHEAR_PARAMS), "hours": {}})
+            shear["hours"].setdefault(model, {})[str(fxx)] = {
+                "kt": res["mag_kt"], "hdg": res["hdg_deg"],
+                "naive_kt": res["naive_mag_kt"], "naive_hdg": res["naive_hdg_deg"],
+            }
+            n_done += 1
+
+        # #7 QUADRANT-MAX wind radii from the parent 10 m wind (R34 can
+        # exceed the nest half-width). Method stated in RADII_PARAMS.
+        try:
+            rr = (st.quadrant_radii(p_wind, lat, lon, cen[0], cen[1])
+                  if p_wind is not None else None)
+        except Exception as e:  # noqa: BLE001
+            log.warning("radii diag failed: %s %s f%03d - %s",
+                        model, storm, fxx, e)
+            rr = None
+        if rr is not None:
+            radii = storm_meta[storm].setdefault(
+                "radii", {"params": dict(RADII_PARAMS), "hours": {}})
+            radii["hours"].setdefault(model, {})[str(fxx)] = {
+                "r34": rr["r34"], "r50": rr["r50"], "r64": rr["r64"]}
+
+        # #25 structure SCALARS: nest RMW + peak azimuthal-mean v_t, with the
+        # PARENT peak beside it - the resolution caveat as data, not prose.
+        try:
+            npath = cpath.replace("/parent/", "/storm/")
+            nest = {}
+            if npath != cpath and Path(npath).exists():
+                with xr.open_dataset(npath) as ds:
+                    nest = {k: ds[k].values for k in
+                            ("u_kt", "v_kt", "u_850", "v_850", "u_700",
+                             "v_700", "u_500", "v_500", "gh_850", "gh_500")
+                            if k in ds}
+                    nlat, nlon = ds["lat"].values, ds["lon"].values
+            prof = (st.azimuthal_structure(nest, nlat, nlon, cen[0], cen[1])
+                    if nest else None)
+            pprof = (st.azimuthal_structure(
+                {"u_kt": p_ukt, "v_kt": p_vkt}, lat, lon, cen[0], cen[1])
+                if p_ukt is not None else None)
+        except Exception as e:  # noqa: BLE001
+            log.warning("structure diag failed: %s %s f%03d - %s",
+                        model, storm, fxx, e)
+            prof = pprof = None
+        if prof is not None:
+            entry = {"rmw_km": round(prof["rmw_km"], 1),
+                     "vt_max_kt": prof["vt_max_kt"]}
+            if pprof is not None:
+                entry["vt_max_parent_kt"] = pprof["vt_max_kt"]
+            if prof.get("t_anom_c") is not None:
+                tmax = float(np.nanmax(prof["t_anom_c"]))
+                if np.isfinite(tmax):
+                    entry["t_anom_max_c"] = round(tmax, 1)
+            struct = storm_meta[storm].setdefault(
+                "structure", {"params": dict(STRUCTURE_PARAMS), "hours": {}})
+            struct["hours"].setdefault(model, {})[str(fxx)] = entry
     if env_frames:
         log.info("shear diagnostics: %d/%d frame(s) computed",
                  n_done, len(env_frames))
@@ -1414,7 +1549,10 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
                     # A product restricted to specific domains (spec.domains, e.g.
                     # the parent-only env products) is skipped on other domains.
                     for product in products:
-                        pdomains = reg.get_spec(product).domains
+                        if product in reg.FIGURE_PRODUCTS:
+                            pdomains = reg.FIGURE_PRODUCTS[product]["domains"]
+                        else:
+                            pdomains = reg.get_spec(product).domains
                         if pdomains and domain not in pdomains:
                             continue
                         # STRUCTURAL model gate: a product whose signal IS
@@ -1563,13 +1701,14 @@ def build_cycle(date: str, hh: str, out_dir: Path, *,
         # Shear numbers prune with frames too (model-level: the diagnostic is
         # parent-computed but serves every domain's display, so it stays as
         # long as the model kept ANY frames).
-        if "shear" in meta:
-            hours = meta["shear"]["hours"]
-            for model in list(hours):
-                if model not in meta["frames"]:
-                    del hours[model]
-            if not hours:
-                del meta["shear"]
+        for diag in ("shear", "radii", "structure"):
+            if diag in meta:
+                hours = meta[diag]["hours"]
+                for model in list(hours):
+                    if model not in meta["frames"]:
+                        del hours[model]
+                if not hours:
+                    del meta[diag]
         if meta["frames"]:
             storms_out.append(meta)
 

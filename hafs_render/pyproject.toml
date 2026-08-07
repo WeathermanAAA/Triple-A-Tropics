@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hafs-render"
-version = "0.15.0"
+version = "0.16.0"
 description = "Triple-A-Tropics HAFS model-plot render pipeline (ingest + render + manifest), packaged as one source of truth for the Actions cron and the box render worker."
 requires-python = ">=3.10"
 # matplotlib + numpy are PINNED so the cron and the worker rasterize identically
