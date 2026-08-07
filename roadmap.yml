@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-07T16:45:00Z
+updated: 2026-08-07T18:40:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1268,19 +1268,26 @@ items:
   - id: aws-sqs-ingest-hardening
     title: AWS SQS satellite-ingest hardening — cred guards, honest lane health, dead subscriptions
     area: infra
-    status: active
+    status: shipped
+    date_shipped: 2026-08-07
     note: >-
-      The Free Tier alert (893k SQS req in Aug) unmasked the previously
-      undocumented tat-sat-ingest AWS account: three NOAA NODD SNS-to-SQS
-      queues feed the S1 shadow ingest on box1, but the GOES-18 and
-      Himawari-9 subscriptions died upstream 2026-07-05 (same 5-min window;
-      34 days of 100%-backfill masked by poll-success health), and the
-      GOES-19 filter delivers all 16 bands x 2 sectors to keep 1 (95.5%
-      discarded, ~94 SQS requests per published frame). In flight: R2-only
-      credential guards both repos (shipped in this item's first commits),
-      change-gated lane health, re-created subscriptions, SNS wildcard
-      band filtering, DLQ probe cadence, and folding the box-only
-      s1-multisat branch back onto main + fleet.yml.
+      The Free Tier alert (893k SQS req in Aug) unmasked the undocumented
+      tat-sat-ingest AWS account: three NOAA NODD SNS-to-SQS queues feed the
+      S1 shadow ingest on box1. Found and fixed same-day: the GOES-18 +
+      Himawari-9 SNS subscriptions had died upstream 2026-07-05 (same 5-min
+      window; 34 days of 100%-backfill masked by poll-success health) —
+      re-created and verified src=sqs on all three lanes; band-tight SNS
+      wildcard filters cut deliveries ~97% (goes19 160/5min -> 5/5min,
+      exactly the C13 cadence; checker taught wildcard FIRST so acceptance
+      could not go blind); delivery-silence health gate (a lane starved 6h
+      reports starved/503 while the watchdog stays poll-gated — reporting
+      change, not restart change); R2-strict credential guards both repos
+      (the codespace's real AWS key could be misrouted to real S3 or shipped
+      to Cloudflare from 3 unguarded + 13 fallback sites); DLQ probe 30s ->
+      300s; the box-only s1-multisat branch merged to main, box1 repointed,
+      fleet.yml + runbook now carry the stack and the incident. Next-day
+      confirmation: CloudWatch daily SQS requests should read ~15-20k/day
+      (from ~143k).
   - id: fci-activation
     title: MTG FCI activation
     area: satellite
