@@ -188,8 +188,13 @@ jobs:
         # here: the generator exits non-zero when storms were found but nothing
         # rendered, so this step never runs and the prior cycle stays live.
         env:
+          # AWS_* names feed the aws CLI (s3 sync); R2_* names feed
+          # hafs_render.publish_manifest, which is R2-strict on purpose
+          # (no AWS_* fallback — see _r2_client). Same secrets either way.
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: |
           set -euo pipefail

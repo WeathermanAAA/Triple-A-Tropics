@@ -91,13 +91,14 @@ def merge_cycles(existing: Optional[dict], fresh: dict,
 def _r2_client():
     import boto3
     from botocore.config import Config as BotoConfig
+    # R2-only on purpose — no AWS_* fallback. With ambient real-AWS creds (the
+    # codespace carries the tat-sat-ingest key), a fallback signs R2 calls with
+    # the real key and ships it to Cloudflare. The workflow env sets R2_*.
     return boto3.client(
         "s3",
         endpoint_url=os.environ["R2_ENDPOINT"],
-        aws_access_key_id=(os.environ.get("R2_ACCESS_KEY_ID")
-                           or os.environ["AWS_ACCESS_KEY_ID"]),
-        aws_secret_access_key=(os.environ.get("R2_SECRET_ACCESS_KEY")
-                               or os.environ["AWS_SECRET_ACCESS_KEY"]),
+        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
         config=BotoConfig(retries={"max_attempts": 3, "mode": "standard"}))
 
 

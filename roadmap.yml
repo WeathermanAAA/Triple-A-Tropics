@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-07T16:20:00Z
+updated: 2026-08-07T16:45:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1265,6 +1265,22 @@ items:
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/2237f14f
 
   # ---- active ----
+  - id: aws-sqs-ingest-hardening
+    title: AWS SQS satellite-ingest hardening — cred guards, honest lane health, dead subscriptions
+    area: infra
+    status: active
+    note: >-
+      The Free Tier alert (893k SQS req in Aug) unmasked the previously
+      undocumented tat-sat-ingest AWS account: three NOAA NODD SNS-to-SQS
+      queues feed the S1 shadow ingest on box1, but the GOES-18 and
+      Himawari-9 subscriptions died upstream 2026-07-05 (same 5-min window;
+      34 days of 100%-backfill masked by poll-success health), and the
+      GOES-19 filter delivers all 16 bands x 2 sectors to keep 1 (95.5%
+      discarded, ~94 SQS requests per published frame). In flight: R2-only
+      credential guards both repos (shipped in this item's first commits),
+      change-gated lane health, re-created subscriptions, SNS wildcard
+      band filtering, DLQ probe cadence, and folding the box-only
+      s1-multisat branch back onto main + fleet.yml.
   - id: fci-activation
     title: MTG FCI activation
     area: satellite

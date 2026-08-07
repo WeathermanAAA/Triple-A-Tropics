@@ -111,6 +111,11 @@ subseasonal/out/
 workers/.dev.vars
 workers/.wrangler/
 
+# Credential env files (never commit; .example placeholders stay tracked)
+.env
+.env.*
+!.env.*.example
+
 # TC records engine — computed output (published to R2, never committed) +
 # the HURDAT2 download cache
 records_out/

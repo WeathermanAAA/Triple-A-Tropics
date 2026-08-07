@@ -18,7 +18,11 @@ MAX_BATCH_BYTES = 65536
 
 
 def main() -> int:
-    c = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT"])
+    # Explicit R2 creds — bare boto3 would fall to the default chain and sign
+    # with whatever AWS_* is ambient (the codespace carries a real AWS key).
+    c = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT"],
+                     aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                     aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"])
     try:
         summary = json.loads(
             c.get_object(Bucket=BUCKET, Key=SUMMARY)["Body"].read())
