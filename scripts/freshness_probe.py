@@ -222,6 +222,13 @@ REGISTRY = [
     ("cyclolab analogs (manifest)", "GH update-analogs.yml", 360,
      j("cyclolab/manifest.json", "generated_utc"), None),
 
+    # TC records (daily cron + backup; limit 30 h). ADDED 2026-08-07: this
+    # product had NO probe entry while its workflow failed every run for 16
+    # days - the blind-spot class, found because the outage audit counted
+    # zero successes in both windows. If it publishes, it gets probed.
+    ("tc records (meta)", "GH update-tc-records.yml", 1800,
+     j("records/v1/meta.json", "generated"), None),
+
     # subseasonal (GH update-subseasonal.yml, daily)
     ("subseasonal vp_meta.json", "GH update-subseasonal.yml", 1440,
      j("subseasonal/vp_meta.json", "generated_utc"), None),

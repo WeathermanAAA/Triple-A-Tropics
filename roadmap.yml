@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-07T06:05:00Z
+updated: 2026-08-07T16:20:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1472,6 +1472,28 @@ items:
     links:
       - label: models
         url: /models/
+  - id: tc-records-pipeline-repair
+    title: TC records publishing repaired — never succeeded on cron since creation
+    area: records
+    status: shipped
+    date_shipped: 2026-08-07
+    note: >-
+      The update-tc-records workflow was 0-for-30 since its 07-23 creation
+      and NOBODY knew: /records/ serves a 07-29 stamp only because one run's
+      partial R2 sync died on a broken pipe mid-publish. Three failure modes
+      untangled: (1) dominant — matplotlib/Pillow lazy-imported inside the
+      explorer density emit but never installed (the repo's THIRD lazy-import
+      episode after analogs' shapely and cartopy → the escalation rule
+      applied: FULL pinned dependency sets in both install steps, versions
+      from the 2026-08-07 green runner env); (2) since 08-05 — NCEI answering
+      instant 403 to every IBTrACS fetch in the cron's GH-lagged 17:15-18:20Z
+      band while update-ace's byte-identical fetch succeeds at its :07 slots
+      → crons moved to 04:23/04:53Z; (3) one transient broken-pipe publish.
+      Full pipeline proven end-to-end locally (rc=0, gate passed, density
+      overlays render). The freshness monitor had NO records entry — the
+      blind-spot class — one added (records/v1/meta.json, 30 h limit), so
+      the currently-9-day-stale product alarms every 6 h until the moved
+      cron publishes: the monitor itself now tracks this repair's close.
   - id: azimuthal-mean-structure
     title: Azimuthal-mean structure plate — tangential wind, RMW, warm core, inflow (spec 25)
     area: models

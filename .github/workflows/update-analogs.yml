@@ -61,7 +61,17 @@ jobs:
         # set instead.
         run: |
           python -m pip install --upgrade pip
-          pip install "setuptools<81" tropycal shapely cartopy
+          # PINNED FULL SET (escalation rule, 2026-08-07): this install step
+          # produced THREE lazy-import/dep episodes - shapely (07-16, silent
+          # 0-of-N greens), cartopy (08-04, the 18-day WP outage), and the
+          # rule says a third episode means pinning the whole set, not
+          # patching another module. Versions = the 2026-08-07 green runs
+          # (matches the runner env that actually works). Bump deliberately,
+          # never implicitly.
+          pip install "setuptools<81" \
+            tropycal==1.5 shapely==2.1.2 cartopy==0.25.0 \
+            matplotlib==3.11.1 numpy==2.4.6 pandas==3.0.5 \
+            scipy==1.17.1 pillow==12.3.0 requests==2.34.2
       - name: Build analogs
         env:
           ANALOGS_ENABLED: ${{ vars.ANALOGS_ENABLED || '1' }}

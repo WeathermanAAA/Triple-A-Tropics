@@ -18,8 +18,14 @@ name: update-tc-records
 on:
   workflow_dispatch:
   schedule:
-    - cron: "23 16 * * *"
-    - cron: "53 16 * * *"   # backup — GitHub drops scheduled runs under load
+    # MOVED OFF 16:2x (2026-08-07): GitHub's cron lag lands 16:2x runs in a
+    # ~17:15-18:20Z band where NCEI answered 403 to EVERY IBTrACS fetch from
+    # hosted runners since 08-05 (instant 403, 199-byte body, both attempts,
+    # every day) - while the byte-identical fetch in update-ace succeeds at
+    # its 0/6/12/18:07 slots daily. 04:2x mirrors the proven-good morning
+    # window.
+    - cron: "23 4 * * *"
+    - cron: "53 4 * * *"    # backup — GitHub drops scheduled runs under load
 
 permissions:
   contents: read
@@ -42,7 +48,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy
+          # PINNED FULL SET (escalation rule, 2026-08-07): the explorer
+          # density overlays lazy-import matplotlib+Pillow inside
+          # tc_records/explorer.py, and the unpinned pandas+numpy-only
+          # install made this workflow fail EVERY cron run since creation
+          # (07-23) - the repo's third lazy-import episode after analogs'
+          # shapely and cartopy, which is the threshold the escalation rule
+          # sets for pinning everything. Versions match the 2026-08-07 green
+          # runner env.
+          pip install pandas==3.0.5 numpy==2.4.6 \
+            matplotlib==3.11.1 pillow==12.3.0
           # ace_core is the single source of truth for wind preference,
           # NATURE eligibility, SSHS classes and the b-deck parser — the
           # records engine imports it (and generate_ace_plot's BASINS) so a
