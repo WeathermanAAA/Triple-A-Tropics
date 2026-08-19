@@ -281,15 +281,32 @@ a:hover { text-decoration: underline; }
   margin: 0 auto;
 }
 .hero .handle {
-  display: inline-block;
+  /* Wrapping inline-flex, not inline-block: the "Curated by …" lead
+     and the development-status note are separate flex items, so the
+     chip reads as one line where it fits and the note drops to its
+     own stacked line below the name where it doesn't (phones), instead
+     of the sentence wrapping mid-name or the type shrinking. */
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  column-gap: 0.45em;
+  row-gap: 0;
+  max-width: 100%;
   margin-top: 18px;
   padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
 }
 .hero .handle b { color: var(--fg); }
+.hero .handle .handle-by { white-space: nowrap; }
+/* Once the note is on its own line and still too long for a narrow
+   phone, balance its wrap so it doesn't orphan the last word. */
+.hero .handle .handle-status { text-wrap: balance; }
 
 /* ---- Sub-page header ---- */
 .page-head {
