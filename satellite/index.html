@@ -5,7 +5,7 @@
 <title>Satellite Plots · Triple-A-Tropics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="Custom-zoom GOES-19 ABI satellite imagery. Pick any bbox, time, channel, and enhancement, get back a clean cropped tile.">
-<meta name="tat-sat-player" content="v3-held-gaps 2026-08-22">
+<meta name="tat-sat-player" content="v4-presented-clock-dbuf 2026-08-22">
 <meta property="og:title" content="Satellite Plots · Triple-A-Tropics">
 <meta property="og:description" content="Custom satellite renders for any bbox, channel, and enhancement.">
 <meta property="og:type" content="website">
@@ -450,10 +450,11 @@
     border-radius: 8px; overflow: hidden; }
   .hafs-stage img, .hafs-stage canvas { display: block; max-width: 100%;
     max-height: var(--panel-max-h); width: auto; height: auto; }
-  /* ONE visible <img> per viewer (.sat-frame). Playback swaps its src between
-     frames whose Images were preloaded + decoded up front, so the swap is
-     instant — no layer stacks, no canvas. A <canvas> is built on-demand ONLY
-     for GIF export. */
+  /* TWO <img> per viewer (.sat-frame), a double buffer: the next frame loads
+     into the back one at opacity 0 (so it decodes at display scale while the
+     current slot runs) and the swap is an opacity flip — compositor-cheap, and
+     the new frame is on screen the instant its slot clock starts. No layer
+     stacks, no canvas. A <canvas> is built on-demand ONLY for GIF export. */
   .sat-frame { position: absolute; inset: 0; width: 100%; height: 100%;
     max-height: none; object-fit: contain; }
   .sat-frame[hidden] { display: none; }
@@ -772,6 +773,7 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
       <div class="hafs-stage" id="sat-stage">
         <img class="sat-frame" id="sat-frame"
              alt="Storm floater satellite frame" hidden>
+        <img class="sat-frame" id="sat-frame2" alt="" aria-hidden="true" hidden>
         <div id="sat-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
         <div id="sat-gapnote" class="sat-gapnote" role="status" hidden></div>
@@ -812,6 +814,7 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
       <div class="hafs-stage" id="meso-stage">
         <img class="sat-frame" id="meso-frame"
              alt="GOES mesoscale sector frame" hidden>
+        <img class="sat-frame" id="meso-frame2" alt="" aria-hidden="true" hidden>
         <div id="meso-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
         <div id="meso-gapnote" class="sat-gapnote" role="status" hidden></div>
@@ -1615,7 +1618,12 @@ function makeSatViewer(idPrefix, opts) {
               buffering: false, veilTimer: null,
               // pixels on the stage: the key of the frame whose image is up
               // (differs from frames[idx] while a gap slot is HELD)
-              shownKey: null, gapTimer: null };
+              shownKey: null, gapTimer: null,
+              front: "frame",    // id suffix of the <img> currently visible
+              // slot clock: armed while the just-shown slot waits to be
+              // PRESENTABLE (the visible <img> has decoded its new src);
+              // armSeq invalidates a stale arm after pause/seek/band switch
+              armed: false, armSeq: 0 };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
   var SAT_STALE_MIN = 40;
@@ -1762,12 +1770,12 @@ function makeSatViewer(idPrefix, opts) {
         idx: sat.idx, now: performance.now() }); } catch (e) {}
     }
   }
-  function satExitBuffering(ts) {
+  function satExitBuffering() {
     if (!sat.buffering) return;
     sat.buffering = false;
     if (sat.veilTimer) { clearTimeout(sat.veilTimer); sat.veilTimer = null; }
     satStatus(false);
-    sat.lastTick = ts || 0;          // full interval before the next advance
+    sat.lastTick = performance.now();   // full interval before the next advance
     if (window.__satTimingHook) {
       try { window.__satTimingHook({ type: "buffer-end", viewer: idPrefix,
         idx: sat.idx, now: performance.now() }); } catch (e) {}
@@ -1837,17 +1845,20 @@ function makeSatViewer(idPrefix, opts) {
   // follows the actual frame dims, so square sectors stay square and any future
   // sector renders undistorted. Re-applied on resize; re-locked per band/sector.
   function satApplyFrameBox() {
-    var stage = satEl("stage"), img = satEl("frame");
-    if (!stage || !img || !sat.boxRefW || !sat.boxRefH) return;
+    var stage = satEl("stage");
+    if (!stage || !sat.boxRefW || !sat.boxRefH) return;
     var sw = stage.clientWidth, sh = stage.clientHeight;
     if (!sw || !sh) return;
     var s = Math.min(sw / sat.boxRefW, sh / sat.boxRefH);
-    img.style.width = Math.round(sat.boxRefW * s) + "px";
-    img.style.height = Math.round(sat.boxRefH * s) + "px";
-    img.style.left = "50%"; img.style.top = "50%";
-    img.style.right = "auto"; img.style.bottom = "auto";
-    img.style.transform = "translate(-50%, -50%)";
-    img.style.objectFit = "contain";
+    [satEl("frame"), satEl("frame2")].forEach(function (el) {   // both buffers share the box
+      if (!el) return;
+      el.style.width = Math.round(sat.boxRefW * s) + "px";
+      el.style.height = Math.round(sat.boxRefH * s) + "px";
+      el.style.left = "50%"; el.style.top = "50%";
+      el.style.right = "auto"; el.style.bottom = "auto";
+      el.style.transform = "translate(-50%, -50%)";
+      el.style.objectFit = "contain";
+    });
   }
   function satLockFrameBox(im) {
     if (!im || !im.naturalWidth) return;
@@ -1877,13 +1888,9 @@ function makeSatViewer(idPrefix, opts) {
       if (pix < 0) return;                      // nothing decoded at all yet
     }
     sat.idx = i;
-    var img = satEl("frame"), pf = sat.frames[pix];
+    var pf = sat.frames[pix];
     if (!sat.boxRefW) satLockFrameBox(pf.img);  // lock before first paint
-    if (!sat.shown || sat.shownKey !== pf.key) {
-      img.src = pf.src;
-      img.hidden = false;
-    }
-    sat.shownKey = pf.key;
+    var swapped = sat.shownKey !== pf.key || !sat.shown;
     sat.shown = true;
     satStatus(false);
     satReadout(i, held ? (f.done ? "gap" : "loading") : null);
@@ -1894,11 +1901,65 @@ function makeSatViewer(idPrefix, opts) {
         t: f.t, key: f.key, shownKey: pf.key, held: held,
         now: performance.now(), playing: sat.playing }); } catch (e) {}
     }
+    satArmSlot(i, f, pf, held, swapped);
+  }
+  // THE SLOT CLOCK starts when the slot is actually on screen, not when its
+  // rAF callback was scheduled. Anchoring lastTick to the rAF timestamp let a
+  // late callback (the previous frame's decode/paint blocking the main
+  // thread) shorten the NEXT slot -- measured on production as slots of 5-23
+  // ms that were "painted" but never visible, which compounds into the
+  // speed-up an index gate cannot see. A swapped frame starts its clock when
+  // the visible <img> reports decoded (img.decode()), so the slot's wall time
+  // is counted from presentability; a held slot (image already up) starts at
+  // once. Either way every slot then holds for the SAME satStepMs.
+  // The swap itself is DOUBLE-BUFFERED: the new frame loads into the back
+  // <img> at opacity 0 (painted, so it decodes at display scale during the
+  // current slot), and once it reports decoded the buffers flip opacity --
+  // a compositor operation, so the frame is on screen the instant its clock
+  // starts; the decode latency is paid inside the previous slot, never added
+  // to this one. A held slot (same pixels) has nothing to flip.
+  function satArmSlot(i, f, pf, held, swapped) {
+    var token = ++sat.armSeq;
+    sat.armed = true;
+    var present = function () {
+      if (token !== sat.armSeq) return;         // superseded (pause/seek/switch)
+      if (swapped) {
+        var back = satEl(sat.front === "frame" ? "frame2" : "frame");
+        var front = satEl(sat.front);
+        back.style.opacity = "1";
+        if (front) front.style.opacity = "0";
+        sat.front = (sat.front === "frame" ? "frame2" : "frame");
+        sat.shownKey = pf.key;
+      }
+      sat.armed = false;
+      sat.lastTick = performance.now();
+      if (window.__satTimingHook) {
+        try { window.__satTimingHook({ type: "present", viewer: idPrefix, idx: i,
+          t: f.t, key: f.key, shownKey: pf.key, held: held, now: sat.lastTick,
+          playing: sat.playing }); } catch (e) {}
+      }
+    };
+    if (!swapped) { present(); return; }
+    var back = satEl(sat.front === "frame" ? "frame2" : "frame");
+    back.style.opacity = "0";
+    back.hidden = false;
+    back.src = pf.src;
+    if (typeof back.decode === "function") {
+      // resolves once THIS element can paint its new src (rejects if the src
+      // changes first -- then a newer arm owns the flip anyway)
+      back.decode().then(present, present);
+    } else {
+      // no decode(): the load commits by the frame after next
+      requestAnimationFrame(function () { requestAnimationFrame(present); });
+    }
   }
   function satFrameClear() {
-    var img = satEl("frame");
-    if (img) { img.removeAttribute("src"); img.hidden = true; }
+    [satEl("frame"), satEl("frame2")].forEach(function (img) {
+      if (img) { img.removeAttribute("src"); img.hidden = true; img.style.opacity = ""; }
+    });
+    sat.front = "frame";
     sat.shown = false; sat.shownKey = null;
+    sat.armed = false; sat.armSeq++;
     satGapNote(false);
   }
 
@@ -2085,13 +2146,15 @@ function makeSatViewer(idPrefix, opts) {
   }
   // The whole pacing engine (the dumb-player pattern). The clock only
   // advances THROUGH decoded frames; while Buffering it holds (visibly) and
-  // re-tests the warm window every tick.
-  function satTick(ts) {
+  // re-tests the warm window every tick; while ARMED it waits for the slot
+  // just shown to become presentable (satArmSlot starts its clock). Time is
+  // performance.now(), never the rAF timestamp (see satArmSlot).
+  function satTick() {
     if (!sat.playing) return;
     if (sat.buffering) {
-      if (satBufferReady()) satExitBuffering(ts);
-    } else if (ts - sat.lastTick >= satStepMs()) {
-      if (satAdvance()) sat.lastTick = ts;
+      if (satBufferReady()) satExitBuffering();
+    } else if (!sat.armed && performance.now() - sat.lastTick >= satStepMs()) {
+      satAdvance();                    // satShow arms the new slot's clock
     }
     sat.raf = requestAnimationFrame(satTick);
   }
@@ -2111,7 +2174,7 @@ function makeSatViewer(idPrefix, opts) {
     sat.playing = true;
     sat.followNew = false;
     satEl("play").innerHTML = "&#10074;&#10074; Pause";
-    sat.lastTick = 0;
+    sat.lastTick = 0; sat.armed = false;   // first advance on the first tick
     sat.raf = requestAnimationFrame(satTick);
   }
   function satPause() {
@@ -2123,6 +2186,7 @@ function makeSatViewer(idPrefix, opts) {
       if (sat.veilTimer) { clearTimeout(sat.veilTimer); sat.veilTimer = null; }
       satStatus(false);
     }
+    sat.armed = false; sat.armSeq++;   // a pending slot arm must not restart the clock
     if (sat.raf) { cancelAnimationFrame(sat.raf); sat.raf = null; }
     satEl("play").innerHTML = "&#9654; Play";
   }
@@ -2627,8 +2691,9 @@ function makeSatViewer(idPrefix, opts) {
   function wireTransport() {
     if (wired) return;
     wired = true;
-    var fr = satEl("frame");
-    if (fr) fr.crossOrigin = "anonymous";   // share the preloads' CORS cache entries
+    [satEl("frame"), satEl("frame2")].forEach(function (fr) {
+      if (fr) fr.crossOrigin = "anonymous";   // share the preloads' CORS cache entries
+    });
     window.addEventListener("resize", satApplyFrameBox);   // keep the locked box fitted
     satBuildSpeed();
     satBuildLoop();
@@ -2772,7 +2837,7 @@ function makeSatViewer(idPrefix, opts) {
                pendingPlay: sat.pendingPlay, windowReady: satWindowReady(),
                nearestOkInPlay: sat.nearestOkInPlay,
                // decode-ahead instrumentation
-               build: "v3-held-gaps", shownKey: sat.shownKey,
+               build: "v4-presented-clock-dbuf", shownKey: sat.shownKey, armed: sat.armed,
                buffering: sat.buffering,
                buffered: sat.frames.filter(function (f) { return f.warm; }).length };
     },
@@ -2781,7 +2846,7 @@ function makeSatViewer(idPrefix, opts) {
         return { t: f.t, key: f.key, ok: f.ok, done: f.done };
       });
     },
-    build: "v3-held-gaps",
+    build: "v4-presented-clock-dbuf",
     pollNow: function () {
       var token = sat.buildToken;
       return satFetchBands().then(function (bands) {

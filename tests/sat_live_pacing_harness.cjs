@@ -21,7 +21,8 @@
 //   3. every held slot is a genuine gap (frame failed) and showed the
 //      previous slot's image; a decoded frame shown as held = FAIL
 //   4. the wrap goes from the last slot of the window to its first
-//   5. slot durations are flat (reported; p99 under 3x the median)
+//   5. PRESENTED slot durations (hook "present" = slot on screen): every slot
+//      >= the step, held == painted, dwell ~6x, p99 under 2x the median
 // Usage: MODE=local FLOATER=wp17 GAP=20,41 node tests/sat_live_pacing_harness.cjs
 "use strict";
 const fs = require("fs");
@@ -150,18 +151,42 @@ function check(cond, msg) { console.log((cond ? "ok" : "NOT OK") + " - " + msg);
     check(wrongImg === 0, "lap " + (li + 1) + ": every painted slot shows its own image (" + wrongImg + " wrong)");
     check(heldOk === 0, "lap " + (li + 1) + ": no decoded frame was shown as held (" + heldOk + ")");
     if (heldN) check(heldGood === heldN, "lap " + (li + 1) + ": " + heldN + " held slot(s) kept the previous image (" + heldGood + " did)");
-    // 5. durations
-    for (let k = 1; k < lap.length; k++) durations.push(lap[k].now - lap[k - 1].now);
   });
+  // 5. PRESENTED durations: the slot clock starts when the slot is on screen
+  // (hook "present"); a slot's wall time = next present - this present. Every
+  // slot, held or painted, must get >= the step; the dwell slot (last of the
+  // window) ~6x; held and painted medians must agree.
+  const pres = data.events.filter((e) => e.type === "present" && e.playing);
+  const step = 200 / (data.state.speed || 2);
+  const held = [], painted = [], dwell = [];
+  for (let i = 1; i < pres.length; i++) {
+    const a = pres[i - 1], b = pres[i];
+    if (b.idx !== a.idx + 1 && !(b.idx < a.idx)) continue;   // re-cap or seek: not a slot
+    const dur = b.now - a.now;
+    if (b.idx < a.idx) { dwell.push(dur); continue; }        // wrap: a's slot was the dwell
+    (a.held ? held : painted).push(dur);
+    durations.push(dur);
+  }
+  const sortedP = painted.slice().sort((x, y) => x - y), sortedH = held.slice().sort((x, y) => x - y);
+  const medP = pct(sortedP, 0.5), medH = pct(sortedH, 0.5);
+  const short = durations.filter((x) => x < 0.9 * step).length;
+  check(pres.length > 0, "present events recorded (" + pres.length + ")");
+  check(short === 0, "every presented slot held >= 0.9x step (" + short + " short of " + durations.length + ", step " + step + " ms)");
+  // a held slot must never be SHORTER than a painted one (shorter = the skip
+  // in disguise); longer is fine (a held slot followed by a slow-decode slot)
+  if (held.length) check(medH >= 0.9 * medP,
+    "held slots are not shorter than painted (held median " + Math.round(medH) + " >= 0.9x painted " + Math.round(medP) + " ms, n=" + held.length + ")");
+  if (dwell.length) check(dwell.every((x) => x >= 0.9 * 6 * step), "dwell slot(s) >= 0.9x 6 steps (" + dwell.map(Math.round).join(",") + " ms)");
   if (gapKeys.length) {
     const heldKeys = new Set(ev.filter((e) => e.held).map((e) => e.key));
     gapKeys.forEach((k, j) => check(heldKeys.has(k), "injected gap slot " + GAPS[j] + " (" + k.split("/").pop() + ") was HELD for its time"));
   }
   const d = durations.slice().sort((a, b) => a - b);
   const med = pct(d, 0.5), p99 = pct(d, 0.99);
-  console.log("slot durations ms (excl. dwell/wrap): n=" + d.length, "median=" + Math.round(med), "p90=" + Math.round(pct(d, 0.9)),
-    "p99=" + Math.round(p99), "max=" + Math.round(d[d.length - 1] || 0));
-  check(p99 <= 3 * med, "slot durations flat (p99 " + Math.round(p99) + " <= 3x median " + Math.round(med) + ")");
+  console.log("PRESENTED slot durations ms: n=" + d.length, "min=" + Math.round(d[0] || 0), "median=" + Math.round(med), "p90=" + Math.round(pct(d, 0.9)),
+    "p99=" + Math.round(p99), "max=" + Math.round(d[d.length - 1] || 0), "| held n=" + held.length + " median=" + Math.round(medH || 0),
+    "| dwell:", dwell.map(Math.round).join(","));
+  check(p99 <= 3 * med, "no long stalls in steady play (p99 " + Math.round(p99) + " <= 3x median " + Math.round(med) + ")");
   console.log("archive gaps (frames that failed to load):", frames.filter((f) => f.done && !f.ok).length,
     "| measured for", ((Date.now() - t0) / 1000).toFixed(1), "s");
   await ctx.close(); await browser.close();

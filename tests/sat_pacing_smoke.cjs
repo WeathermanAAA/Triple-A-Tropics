@@ -73,6 +73,15 @@ function buildDom(state) {
       window.requestAnimationFrame = function (cb) { rafCbs.push(cb); return rafCbs.length; };
       window.cancelAnimationFrame = function () {};
       window.__flushRaf = function (ts) { const cbs = rafCbs; rafCbs = []; cbs.forEach((cb) => { try { cb(ts); } catch (e) {} }); };
+      // the player clocks slots in performance.now(); make it ours. __tick(ms)
+      // advances the clock, runs the rAF (advance), then two more rAFs so the
+      // no-decode() fallback arm presents the slot and starts its clock.
+      window.__now = 1e7;
+      window.performance.now = function () { return window.__now; };
+      window.__tick = function (ms) {
+        window.__now += ms;
+        window.__flushRaf(window.__now); window.__flushRaf(window.__now); window.__flushRaf(window.__now);
+      };
       window.__satLog = [];
       window.__satTimingHook = function (ev) { window.__satLog.push(ev); };
     },
@@ -83,7 +92,7 @@ async function settle(dom) {
   for (let i = 0; i < 80; i++) { await delay(50); if (v) { const s = v.state(); if (s.frames > 0 && s.decoded >= 2) return v; } }
   return v;
 }
-async function tick(win, ts) { await delay(0); win.__flushRaf(ts); }
+async function tick(win, ms) { await delay(0); win.__tick(ms); }
 
 (async () => {
   // ===== Scenario A: a 30-slot window with frame 12 FAILING (an archive gap)
@@ -96,18 +105,30 @@ async function tick(win, ts) { await delay(0); win.__flushRaf(ts); }
   for (let i = 0; i < 40 && v.state().decoded < N - 1; i++) await delay(50);
   const fr = v.frames();
   ok(fr.length === N && fr.filter((f) => f.done && !f.ok).length === 1 && !fr[12].ok, "30 slots loaded, slot 12 is a permanent gap");
-  ok(v.build === "v3-held-gaps", "player build is v3-held-gaps");
+  ok(/^v4/.test(v.build), "player build is v4 (" + v.build + ")");
 
   const scrub = doc.getElementById("sat-scrub"), frameEl = doc.getElementById("sat-frame");
   scrub.value = "0"; scrub.dispatchEvent(new win.Event("input"));
   doc.getElementById("sat-play").click();
   ok(v.state().playing, "playback started from slot 0");
-  let ts = 1e7;
+  // the slot clock starts only when the slot is PRESENTABLE: advance once,
+  // then age the clock without letting the arm present -> no further advance
+  await delay(0); win.__now += 1000; win.__flushRaf(win.__now);        // advance (arms the new slot)
+  const armedIdx = v.state().idx;
+  win.__now += 5000; win.__flushRaf(win.__now);                        // time passes, arm not presented yet
+  ok(v.state().armed && v.state().idx === armedIdx, "a slot not yet presentable is not cut short (armed, idx " + v.state().idx + ")");
+  win.__flushRaf(win.__now); win.__flushRaf(win.__now);                // present -> clock starts now
+  ok(!v.state().armed, "slot presented: clock armed -> running");
+  win.__now += 50; win.__flushRaf(win.__now);
+  ok(v.state().idx === armedIdx, "50 ms after presentation the slot is still up (full duration counted from presentation)");
+  win.__now += 60; win.__flushRaf(win.__now);
+  ok(v.state().idx === armedIdx + 1, "advances once the slot has had its full step since presentation");
+  win.__flushRaf(win.__now); win.__flushRaf(win.__now);
   const painted = [];                                       // one full lap, slot by slot
   for (let k = 0; k < N + 2 && !(painted.length && v.state().idx === 0 && k > 0); k++) {
-    ts += 1000; await tick(win, ts);
-    painted.push({ idx: v.state().idx, src: frameEl.getAttribute("src"), readout: doc.getElementById("sat-time").textContent });
-    if (v.state().idx === N - 1) { ts += 10000; await tick(win, ts); painted.push({ idx: v.state().idx, src: frameEl.getAttribute("src"), readout: doc.getElementById("sat-time").textContent }); break; }
+    await tick(win, 1000);
+    painted.push({ idx: v.state().idx, src: v.state().shownKey, readout: doc.getElementById("sat-time").textContent });
+    if (v.state().idx === N - 1) { await tick(win, 10000); painted.push({ idx: v.state().idx, src: v.state().shownKey, readout: doc.getElementById("sat-time").textContent }); break; }
   }
   const idxSeq = painted.map((p) => p.idx);
   const steps = idxSeq.slice(1).map((x, i) => x - idxSeq[i]).filter((d) => d !== 0);
@@ -115,6 +136,7 @@ async function tick(win, ts) { await delay(0); win.__flushRaf(ts); }
   ok(fwd.every((d) => d === 1) && wraps.length === 1,
      "steady play advances exactly +1 slot per tick, one wrap at the end (steps: " + steps.join(",") + ")");
   const covered = new Set(idxSeq);
+  for (let i = 1; i <= armedIdx + 1; i++) covered.add(i);   // walked during the armed-gate checks above
   const absent = []; for (let i = 1; i < N; i++) if (!covered.has(i)) absent.push(i);
   ok(absent.length === 0, "one lap painted EVERY slot 1.." + (N - 1) + " (absent: " + (absent.join(",") || "none") + ")");
   const gap = painted.find((p) => p.idx === 12), before = painted.find((p) => p.idx === 11), after = painted.find((p) => p.idx === 13);
@@ -133,8 +155,10 @@ async function tick(win, ts) { await delay(0); win.__flushRaf(ts); }
   ok(note.hidden, "data-gap note hides when a real frame paints");
   // manual step walks the gap slot too (held), never over it
   scrub.value = "11"; scrub.dispatchEvent(new win.Event("input"));
+  win.__flushRaf(win.__now); win.__flushRaf(win.__now);   // present slot 11
   doc.getElementById("sat-step-fwd").click();
-  ok(v.state().idx === 12 && frameEl.getAttribute("src").indexOf("/f11.") >= 0, "step-forward lands ON the gap slot, holding slot 11's image");
+  win.__flushRaf(win.__now); win.__flushRaf(win.__now);   // let the step's swap present
+  ok(v.state().idx === 12 && /f11\./.test(v.state().shownKey), "step-forward lands ON the gap slot, holding slot 11's image (" + v.state().shownKey + ")");
 
   // hook stream: key/shownKey/held present and consistent
   const log = win.__satLog.filter((e) => e.type === "frame" && e.playing);
@@ -157,19 +181,19 @@ async function tick(win, ts) { await delay(0); win.__flushRaf(ts); }
   for (let a = 1; a <= 3; a++) stateB.frames = stateB.frames.concat([{ t: new Date(newest + a * 600000).toISOString().slice(0, 19), key: "floaters/test/ir/fh" + a + ".webp" }]);
   await vB.pollNow();
   ok(vB.state().frames === 23, "poll appended 3 still-loading frames");
-  let tsB = 1e7; tsB += 10000; await tick(winB, tsB);     // dwell-sized step past the old newest
+  await tick(winB, 10000);     // dwell-sized step past the old newest
   ok(vB.state().idx === 19 && vB.state().buffering, "still-loading tail: playhead WAITS at slot 19 in Buffering (no early wrap, idx " + vB.state().idx + ")");
-  for (let k = 0; k < 3; k++) { tsB += 1000; await tick(winB, tsB); }
+  for (let k = 0; k < 3; k++) { await tick(winB, 1000); }
   ok(vB.state().idx === 19, "playhead still held while the tail loads");
   await delay(320);
   const veil = docB.getElementById("sat-status");
   ok(veil.style.display === "flex" && /Buffering/.test(veil.textContent), "Buffering veil VISIBLE and says so");
   stateB.release("fh1"); stateB.release("fh2"); stateB.release("fh3");
   for (let i = 0; i < 20 && vB.state().decoded < 23; i++) await delay(25);
-  tsB += 1000; await tick(winB, tsB);                      // buffering tick -> resume
+  await tick(winB, 1000);                      // buffering tick -> resume
   ok(!vB.state().buffering, "Buffering exits once the tail decodes");
   const seq = [];
-  for (let k = 0; k < 4; k++) { tsB += 10000; await tick(winB, tsB); seq.push(vB.state().idx); }
+  for (let k = 0; k < 4; k++) { await tick(winB, 10000); seq.push(vB.state().idx); }
   ok(seq.join(",") === "20,21,22,0", "loop continues INTO the appended tail and wraps only at the true end (" + seq.join(",") + ")");
   domB.window.close();
 

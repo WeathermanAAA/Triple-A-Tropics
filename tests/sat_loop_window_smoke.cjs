@@ -97,6 +97,15 @@ function buildDom(frames) {
         const cbs = rafCbs; rafCbs = [];
         cbs.forEach((cb) => { try { cb(ts); } catch (e) {} });
       };
+      // the player clocks slots in performance.now(); make it ours. __tick(ms)
+      // advances the clock, runs the rAF (advance), then two more rAFs so the
+      // no-decode() fallback arm presents the slot and starts its clock.
+      window.__now = 1e7;
+      window.performance.now = function () { return window.__now; };
+      window.__tick = function (ms) {
+        window.__now += ms;
+        window.__flushRaf(window.__now); window.__flushRaf(window.__now); window.__flushRaf(window.__now);
+      };
     },
   });
   return dom;
@@ -162,11 +171,11 @@ async function settle(dom) {
   doc.getElementById("sat-play").click();        // resume the loop
   ok(v.state().playing, "A: playback resumed");
   await delay(0);                                 // let the decode-ahead warm promises settle
-  win.__flushRaf(1e7);                            // one tick: newest -> wrap
+  win.__tick(1e7);                                // one tick: newest -> wrap
   ok(v.state().idx === expWin,
      "A: loop wrapped from newest to winStart=" + expWin + " (got " + v.state().idx + ")");
   await delay(0);
-  win.__flushRaf(2e7);                            // next tick advances within window
+  win.__tick(1e7);                                // next tick advances within window
   ok(v.state().idx === expWin + 1,
      "A: loop advances within window to " + (expWin + 1) + " (got " + v.state().idx + ")");
 
