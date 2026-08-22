@@ -1,0 +1,25 @@
+# Reachability probe from a GitHub runner (an independent vantage when the
+# Codespace cannot reach the boxes): curls the render service and TCP-probes
+# the fleet's SSH/HTTPS ports. Read-only; commits nothing. Dispatch only.
+name: probe-fleet-reach
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe render service + box ports
+        run: |
+          set +e
+          echo "UTC $(date -u +%FT%TZ)"
+          echo "--- render.triple-a-tropics.com /health"
+          curl -sS -m 15 -o /tmp/h -w "http %{http_code} in %{time_total}s\n" https://render.triple-a-tropics.com/health; head -c 300 /tmp/h; echo
+          for hp in 2.25.183.231:22 2.25.183.231:443 2.25.183.231:80 72.62.97.220:22 72.62.97.220:443; do
+            h=${hp%:*}; p=${hp#*:}
+            (timeout 8 bash -c "</dev/tcp/$h/$p" 2>/dev/null && echo "$hp open") || echo "$hp closed/filtered"
+          done
+          echo "--- CDN floaters top manifest stamp"
+          curl -sS -m 15 https://cdn.triple-a-tropics.com/floaters/manifest.json | head -c 120; echo
