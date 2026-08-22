@@ -259,12 +259,22 @@ REGISTRY = [
      "queued box step: S2_CRON_SUITES + emit-cron restart"),
 
     # floater fleet + backdrops (box floater poller)
+    # NOTE the known_down was CLEARED 2026-08-22: the "stalled 2026-07-15"
+    # suppression was factually wrong (the poller recovered long ago and
+    # publishes frames daily) and it muted the alarm on a live degradation.
+    # BUT these rows gate on the manifest generated_utc, which the poller
+    # RE-STAMPS every sweep even when it renders no new frame — so a
+    # producing-but-lagging floater (frames stuck at 15:00Z while the
+    # manifest re-ticks) is invisible here by construction. The frame-recency
+    # discriminator below (floater_frame_lag_rows) is what actually catches
+    # that, the same way the NHC discriminator catches a re-stamped-but-dead
+    # ACE feed. Keep both.
     ("floaters fleet manifest", "box floater poller", 15,
      j("floaters/manifest.json", "generated_utc", "generated", "as_of"),
-     "box floater poller stalled 2026-07-15 ~01Z; restart queued"),
+     None),
     ("floater backdrops", "box floater poller", 60,
      j("floaters/backdrops.json", "generated_utc", "generated", "as_of"),
-     "box floater poller stalled 2026-07-15 ~01Z; restart queued"),
+     None),
 
     # MW / ASCAT / recon swaths (GH Actions)
     ("microwave manifest", "GH update-tcprimed tiers", 180,
@@ -303,6 +313,108 @@ BTK_LISTING_URL = "https://ftp.nhc.noaa.gov/atcf/btk/"
 # written 02:32Z) plus a few missed cycles, without sitting on a real
 # outage for a full synoptic day.
 INGEST_LAG_TOLERANCE_MIN = 720
+# ---- floater frame-recency discriminator ----------------------------------
+# (2026-08-22, after "floater loop frozen at 15:00Z while meso was current".)
+# The floater manifest rows above judge freshness by generated_utc, which the
+# box floater poller re-stamps every sweep even when it renders NO new frame —
+# so a floater that is producing-but-lagging (single shared `render` worker,
+# rate-limited across many storms x bands, while meso rides a dedicated render
+# container) is indistinguishable there from a healthy one. This discriminator
+# reads the ACTUAL newest FRAME time across the active storms and alarms when
+# the freshest floater frame anywhere is older than the tolerance — the lag a
+# viewer actually sees. No suppression, per the NHC-discriminator rule: a mute
+# here reaches users before it reaches a human. If a real outage ever forces
+# one, it carries the date, the incident, and the re-arm condition.
+# 90 min (~5 missed full-disk cycles) = an unambiguous FREEZE, not the normal
+# single-worker sweep oscillation (~30-50 min under a high storm count, which
+# is architecture, not a fault — reducing it is a box-side render-worker change,
+# not a monitor threshold). This row catches "frozen at 15:00Z forever".
+FLOATER_FRAME_TOLERANCE_MIN = 90
+_FLOATER_DISCRIMINATOR = "floater frame discriminator (newest frame vs now)"
+
+
+def evaluate_floater_lag(name, freshest_utc, active_count, now):
+    """Pure comparison -> one rollup row (unit-tested in test_floater_lag).
+
+    freshest_utc: newest FRAME time across all active storms (aware dt) or None
+    active_count: how many storms the top manifest listed (0 => off-season).
+    """
+    tag = dict(writer=_FLOATER_DISCRIMINATOR,
+               stale_after=FLOATER_FRAME_TOLERANCE_MIN)
+    if active_count == 0:
+        return _lag_row(name, note="no active floaters — nothing to render",
+                        **tag)
+    if freshest_utc is None:
+        # storms are listed but not one has a readable frame: the producer is
+        # blind/dead — alarm loudly (never a silent skip).
+        return _lag_row(name, stale=True,
+                        note="active storms listed but no floater frame "
+                             "readable — producer blind, alarming loudly", **tag)
+    age = (now - freshest_utc).total_seconds() / 60.0
+    stale = age > FLOATER_FRAME_TOLERANCE_MIN
+    note = ("freshest floater frame %.0f min old across %d active storm(s)"
+            % (age, active_count))
+    if stale:
+        note += (" (> %d min: box floater poller FROZEN — single shared "
+                 "`render` worker vs meso's own; check `docker logs "
+                 "floater-poller` / `render` on box1)"
+                 % FLOATER_FRAME_TOLERANCE_MIN)
+    return _lag_row(name, last_utc=freshest_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    age_min=round(age, 1), stale=stale, note=note, **tag)
+
+
+def _floater_newest_frame(man):
+    """Newest FRAME time (aware dt) across all bands of one storm manifest."""
+    newest = None
+    for band in (man.get("bands") or {}).values():
+        for fr in (band.get("frames") or []):
+            t = _parse_any(fr.get("t"))
+            if t is not None and (newest is None or t > newest):
+                newest = t
+    return newest
+
+
+def floater_frame_lag_rows(now, fetch_top=None, fetch_storm=None):
+    """One discriminator row: the freshest floater frame vs now. Blind reads
+    (top manifest or every storm manifest unreadable) alarm loudly."""
+    if fetch_top is None:
+        def fetch_top():
+            return _cdn_json("floaters/manifest.json")
+    if fetch_storm is None:
+        def fetch_storm(rel):
+            return _cdn_json(rel)
+    name = _FLOATER_DISCRIMINATOR
+    try:
+        top = fetch_top() or {}
+    except Exception as e:  # noqa: BLE001 — a blind discriminator alarms
+        return [_lag_row(name, stale=True,
+                         note=f"probe error: floaters/manifest.json "
+                              f"unreachable ({type(e).__name__}: {e}) — "
+                              f"discriminator blind, alarming loudly",
+                         writer=_FLOATER_DISCRIMINATOR,
+                         stale_after=FLOATER_FRAME_TOLERANCE_MIN)]
+    storms = top.get("storms") or []
+    freshest = None
+    read_any = False
+    for st in storms:
+        rel = st.get("manifest")
+        if not rel:
+            continue
+        try:
+            man = fetch_storm(rel)
+        except Exception:  # noqa: BLE001 — one unreadable storm is not blind
+            continue
+        if not man:
+            continue
+        read_any = True
+        n = _floater_newest_frame(man)
+        if n is not None and (freshest is None or n > freshest):
+            freshest = n
+    # storms listed but NONE readable => blind; freshest stays None and the
+    # evaluator alarms. off-season (no storms) => active_count 0 => fresh.
+    return [evaluate_floater_lag(name, freshest, len(storms), now)]
+
+
 
 _BTK_ROW_RE = re.compile(
     r'href="b(?P<basin>al|ep)(?P<nn>\d{2})(?P<year>\d{4})\.dat"[^>]*>'
@@ -328,10 +440,11 @@ def btk_newest_lm(html: str, basin: str, year: int):
     return best
 
 
-def _lag_row(name: str, *, last_utc=None, age_min=None, stale=False, note=""):
-    return {"name": name, "writer": _DISCRIMINATOR, "cadence_min": 0,
+def _lag_row(name: str, *, last_utc=None, age_min=None, stale=False, note="",
+             writer=_DISCRIMINATOR, stale_after=INGEST_LAG_TOLERANCE_MIN):
+    return {"name": name, "writer": writer, "cadence_min": 0,
             "last_utc": last_utc, "age_min": age_min,
-            "stale_after_min": INGEST_LAG_TOLERANCE_MIN, "stale": stale,
+            "stale_after_min": stale_after, "stale": stale,
             "known_down": False, "note": note}
 
 
@@ -448,6 +561,16 @@ def main() -> None:
             stale_names.append(r["name"])
         print(f"{'STALE ' if r['stale'] else 'fresh '} {r['name']}: "
               f"lag={r['age_min']} min (limit {r['stale_after_min']})"
+              + (f" · {r['note']}" if r["note"] else ""))
+
+    # Floater frame-recency discriminator (newest frame vs now — see the block
+    # comment above floater_frame_lag_rows). Same append-before-alerting rule.
+    for r in floater_frame_lag_rows(now):
+        rows.append(r)
+        if r["stale"]:
+            stale_names.append(r["name"])
+        print(f"{'STALE ' if r['stale'] else 'fresh '} {r['name']}: "
+              f"age={r['age_min']} min (limit {r['stale_after_min']})"
               + (f" · {r['note']}" if r["note"] else ""))
 
     # Prior rollup FIRST: the alerting state (stale_since / last_alarm) is
