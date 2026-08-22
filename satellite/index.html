@@ -449,11 +449,10 @@
     border-radius: 8px; overflow: hidden; }
   .hafs-stage img, .hafs-stage canvas { display: block; max-width: 100%;
     max-height: var(--panel-max-h); width: auto; height: auto; }
-  /* ONE visible display element per viewer (.sat-frame): the playback <canvas>
-     painted from a bounded ring of pre-decoded ImageBitmaps (pinned pixels the
-     browser cannot evict mid-loop), with the sibling <img> as the src-swap
-     fallback where createImageBitmap is unavailable. Both carry .sat-frame so
-     the locked frame box and contain-fit apply identically to either. */
+  /* ONE visible <img> per viewer (.sat-frame). Playback swaps its src between
+     frames whose Images were preloaded + decoded up front, so the swap is
+     instant — no layer stacks, no canvas. A <canvas> is built on-demand ONLY
+     for GIF export. */
   .sat-frame { position: absolute; inset: 0; width: 100%; height: 100%;
     max-height: none; object-fit: contain; }
   .sat-frame[hidden] { display: none; }
@@ -744,14 +743,12 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
        instance 1 (idPrefix "sat")  = the live storm FLOATER (auto-tracks active
                                        systems; shows a storm <select> when >1).
        instance 2 (idPrefix "meso") = a GOES MESO sector (sector <select>).
-     Each is its own makeSatViewer() — a simple loop player: one visible
-     display element, frames preloaded as decoded Images, playback painted
-     from a bounded decode-ahead ring of ImageBitmaps on a bare rAF tick, and
-     the advance GATED on the next frame being decoded (a drained buffer
-     pauses visibly, never skips) — with band rail / play / scrub / speed /
-     GIF and a 60 s manifest re-poll (append new frames, preserve scrub/pause,
-     follow-live when parked on newest). The night handling lives in the PNG.
-     Manifests come from cdn.triple-a-tropics.com. -->
+     Each is its own makeSatViewer() — a deliberately DUMB loop player: one
+     visible <img>, frames preloaded as decoded Images, src-swap on a bare rAF
+     tick — with band rail / play / scrub / speed / GIF and a 60 s manifest
+     re-poll (append new frames, preserve scrub/pause, follow-live when parked
+     on newest). The night handling lives in the PNG. Manifests come from
+     cdn.triple-a-tropics.com. -->
 <section class="chart-section" id="sat-viewers-section">
   <div class="sat-split">
 
@@ -767,8 +764,6 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
       <div class="hafs-stage" id="sat-stage">
         <img class="sat-frame" id="sat-frame"
              alt="Storm floater satellite frame" hidden>
-        <canvas class="sat-frame" id="sat-canvas" role="img"
-                aria-label="Storm floater satellite frame" hidden></canvas>
         <div id="sat-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
@@ -808,8 +803,6 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
       <div class="hafs-stage" id="meso-stage">
         <img class="sat-frame" id="meso-frame"
              alt="GOES mesoscale sector frame" hidden>
-        <canvas class="sat-frame" id="meso-canvas" role="img"
-                aria-label="GOES mesoscale sector frame" hidden></canvas>
         <div id="meso-status" class="hafs-statusbox">
           <div class="hafs-spinner"></div><span>Loading…</span></div>
       </div>
@@ -1495,35 +1488,18 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
 
 <script>
 // ---- Componentized satellite viewer (factory) -----------------------------
-// THE PLAYER. One visible display element per viewer; every frame is
-// preloaded as its own decoded Image held in a JS array; pacing is the bare
-// rAF tick in satTick. Playback paints from a BOUNDED DECODE-AHEAD RING of
-// ImageBitmaps (satPumpBuffer): pinned decoded pixels the browser cannot
-// evict mid-loop, drawn to the playback <canvas>; where createImageBitmap is
-// unavailable the sibling <img> src-swap path takes over.
+// THE DUMB PLAYER (the single-visible-frame approach). One visible <img> per
+// viewer. Every frame is preloaded as its own decoded Image held in a JS
+// array; advancing a frame = setting the visible <img>'s src to the next
+// frame's already-cached URL — no network, no decode work on the tick. Pacing
+// is the bare rAF tick in satTick. That is the entire player.
 //
-// PLAYBACK CONTRACT (the anti-acceleration rules — keep all three):
-//   1. THE CLOCK NEVER MOVES PAST A FRAME THAT ISN'T THERE. satAdvance is
-//      gated on the next frame being decoded and held; a frame that is still
-//      loading mid-loop pauses playback. Silently skipping to "whatever is
-//      ready" is exactly what read as sped-up playback (the 13Z bug: the
-//      preloaded head played clean, then the fixed-step clock jumped 2-3
-//      frames between paints across the still-decoding tail).
-//   2. WHEN THE BUFFER DRAINS, PAUSE VISIBLY AND SAY SO. The stage shows the
-//      Buffering veil (satEnterBuffering); playback resumes only when the
-//      ring refills SAT_RESUME_AHEAD deep (hysteresis, so it can't flap
-//      frame-by-frame). A loading problem must look like a loading problem.
-//   3. THE ONLY SANCTIONED SKIPS are permanently-failed frames (done && !ok:
-//      404s / decode failures — real archive gaps) and the wrap at the loop's
-//      growing FRONTIER (nothing decoded ahead until the wrap), which replays
-//      the loaded prefix while the tail streams in — the progressive-load
-//      model, still honest because no once-shown frame is ever dropped.
-//
-// Still deliberately absent (each shipped here once and hitched):
-// IntersectionObserver / visibility gating, fixed-timestep accumulators,
-// release/reacquire of the preloaded Images (the frames[] Images stay held —
-// GIF export and the fallback path read them). Background tabs need nothing
-// special: browsers throttle rAF there.
+// Deliberately ABSENT — each of these shipped here once and each introduced
+// its own hitches (the cleverness was the bug): canvas playback,
+// createImageBitmap, IntersectionObserver / visibility gating,
+// release/reacquire of decoded frames, fixed-timestep accumulators, decode
+// buffers / ready gates beyond "the first frame decoded". Do not reintroduce
+// them. Background tabs need nothing special: browsers throttle rAF there.
 //
 // makeSatViewer(idPrefix, opts) mounts one instance:
 //   makeSatViewer('sat',  {sources:[floater src]})      -> storm floater
@@ -1567,17 +1543,6 @@ function satClaimLoop(id) {
   if (prev && SAT_LOOP_TOKEN.yields[prev]) SAT_LOOP_TOKEN.yields[prev]();
 }
 
-// Bitmap playback path available? Needs createImageBitmap AND a working 2d
-// context (jsdom smoke tests have neither -> they exercise the <img> src-swap
-// fallback, where the advance gate keys off the decoded-Image .ok flag alone).
-var SAT_BMP_OK = (function () {
-  if (typeof window.createImageBitmap !== "function") return false;
-  try {
-    var c = document.createElement("canvas");
-    return !!(c.getContext && c.getContext("2d"));
-  } catch (e) { return false; }
-})();
-
 function makeSatViewer(idPrefix, opts) {
   opts = opts || {};
   const SAT_SOURCES = opts.sources || [];
@@ -1602,15 +1567,7 @@ function makeSatViewer(idPrefix, opts) {
               // decode-gate: don't start MOTION until the active window is fully
               // decoded (gateForced flips after the safety timeout). nearestOkInPlay
               // is an instrumentation counter -- it must stay 0 during steady play.
-              gateForced: false, gateTimer: null, nearestOkInPlay: 0,
-              // decode-ahead ring: src -> ImageBitmap (pinned decoded pixels the
-              // playback canvas paints from; keyed by src, NOT index, because a
-              // repoll re-cap shifts indices under a live loop). bmpPending
-              // de-dupes in-flight createImageBitmap calls; bmpFail marks frames
-              // whose bitmap can't be made (they paint from their Image instead
-              // of buffering forever). buffering = the visible drained state.
-              bmp: {}, bmpPending: {}, bmpFail: {}, ctx: null,
-              buffering: false, veilTimer: null };
+              gateForced: false, gateTimer: null, nearestOkInPlay: 0 };
   var SAT_POLL_MS = 60000;
   var SAT_POLL_BACKOFF_MS = 300000;
   var SAT_STALE_MIN = 40;
@@ -1618,13 +1575,7 @@ function makeSatViewer(idPrefix, opts) {
   var SAT_FRAME_CAP = 90;           // max frames preloaded per loop (memory bound)
   var SAT_LAST_FRAME_DWELL = 6;     // hold the newest frame Nx longer before wrap
   var SAT_READY_TIMEOUT_MS = 10000; // play anyway if the window isn't decoded by now
-                                    // (the advance gate then buffers VISIBLY at any
-                                    // still-decoding frame instead of skipping it)
   var SAT_FETCH_TIMEOUT_MS = 15000; // a stalled manifest fetch must not brick the panel
-  var SAT_BMP_AHEAD = 8;            // decode-ahead ring depth past the playhead
-  var SAT_BMP_BEHIND = 2;           // recently-shown frames kept for instant back-step
-  var SAT_RESUME_AHEAD = 4;         // buffer must refill this deep before resuming
-                                    // (< SAT_BMP_AHEAD, so the pump can always satisfy it)
   var SAT_SPEEDS = [0.5, 1, 2, 4];
   // Loop-window presets: "All" (the whole loaded set) vs a fixed trailing
   // span. `hours` 0 means no clamp; >0 loops only frames within that many
@@ -1683,151 +1634,6 @@ function makeSatViewer(idPrefix, opts) {
     }
     return -1;
   }
-  // ---- decode-ahead ring (the anti-acceleration buffer) ----------------------
-  // A bounded set of ImageBitmaps around the playhead: current frame,
-  // SAT_BMP_AHEAD next playable frames in window order, SAT_BMP_BEHIND behind.
-  // ImageBitmaps are pinned decoded pixels -- unlike an Image's decoded raster,
-  // the browser can't quietly evict them under memory pressure, which produced
-  // the same skip-ahead symptom as slow decode. close() on eviction from the
-  // ring frees the pixels, so memory stays bounded (~11 frames max).
-  function satNextInWindow(j, lo, n) { return j >= n - 1 ? lo : j + 1; }
-  function satFrameDisplayable(i) {
-    var f = sat.frames[i];
-    if (!f || !f.ok) return false;
-    if (!SAT_BMP_OK) return true;               // fallback paints decoded Images directly
-    return !!(sat.bmp[f.src] || sat.bmpFail[f.src]);
-  }
-  function satBufEnsure(f) {
-    if (!SAT_BMP_OK || !f.ok || !f.img) return;
-    if (sat.bmp[f.src] || sat.bmpPending[f.src] || sat.bmpFail[f.src]) return;
-    var token = sat.buildToken;
-    sat.bmpPending[f.src] = true;
-    createImageBitmap(f.img).then(function (bm) {
-      delete sat.bmpPending[f.src];
-      if (token !== sat.buildToken) { if (bm.close) bm.close(); return; }
-      sat.bmp[f.src] = bm;
-    }, function () {
-      delete sat.bmpPending[f.src];
-      // this frame can't be bitmapped (rare): let it paint from its decoded
-      // Image rather than hold the loop in Buffering forever
-      sat.bmpFail[f.src] = true;
-    });
-  }
-  function satPumpBuffer() {
-    if (!SAT_BMP_OK || !sat.frames.length) return;
-    var n = sat.frames.length, lo = satWinStart();
-    var cur = Math.max(lo, Math.min(sat.idx, n - 1));
-    var want = {};
-    want[sat.frames[cur].src] = true;
-    // decode-ahead along the PLAY SEQUENCE (satNextPlayable), so the ring
-    // holds exactly what playback shows next -- including across the wrap.
-    // A mid-loop hole (-1) stops the fill: frames past a hole aren't needed
-    // because the clock will not skip it.
-    var j = cur;
-    for (var a = 0; a < SAT_BMP_AHEAD; a++) {
-      j = satNextPlayable(j);
-      if (j < 0 || want[sat.frames[j].src]) break;
-      want[sat.frames[j].src] = true;
-    }
-    for (var b = 1; b <= SAT_BMP_BEHIND && cur - b >= 0; b++)
-      want[sat.frames[cur - b].src] = true;
-    for (var src in sat.bmp) {                  // evict what left the ring
-      if (want[src]) continue;
-      if (sat.bmp[src].close) sat.bmp[src].close();
-      delete sat.bmp[src];
-    }
-    for (var i2 = 0; i2 < n; i2++) {
-      if (want[sat.frames[i2].src]) satBufEnsure(sat.frames[i2]);
-    }
-  }
-  function satBufClear() {
-    for (var src in sat.bmp) { if (sat.bmp[src].close) sat.bmp[src].close(); }
-    sat.bmp = {}; sat.bmpPending = {}; sat.bmpFail = {};
-  }
-  // The VISIBLE drained state (playback-contract rule 2): the loop holds the
-  // current frame under the Buffering veil instead of skipping ahead. The
-  // CLOCK stops immediately; the veil itself is debounced 250 ms so a
-  // sub-tick pump hiccup can't strobe it -- any pause a person can perceive
-  // shows it. Resume is hysteretic (satBufferReady in satTick), so playback
-  // can't flap frame-by-frame at the edge of the ring.
-  var SAT_BUFFER_VEIL_MS = 250;
-  function satEnterBuffering() {
-    satPumpBuffer();                 // make sure the wait is being worked
-    if (sat.buffering) return;
-    sat.buffering = true;
-    if (sat.veilTimer) clearTimeout(sat.veilTimer);
-    sat.veilTimer = setTimeout(function () {
-      sat.veilTimer = null;
-      if (sat.buffering && sat.playing)
-        satStatus(true, "Buffering — waiting for frames to decode…");
-    }, SAT_BUFFER_VEIL_MS);
-    if (window.__satTimingHook) {
-      try { window.__satTimingHook({ type: "buffer-start", viewer: idPrefix,
-        idx: sat.idx, now: performance.now() }); } catch (e) {}
-    }
-  }
-  function satExitBuffering(ts) {
-    if (!sat.buffering) return;
-    sat.buffering = false;
-    if (sat.veilTimer) { clearTimeout(sat.veilTimer); sat.veilTimer = null; }
-    satStatus(false);
-    sat.lastTick = ts || 0;          // full interval before the next advance
-    if (window.__satTimingHook) {
-      try { window.__satTimingHook({ type: "buffer-end", viewer: idPrefix,
-        idx: sat.idx, now: performance.now() }); } catch (e) {}
-    }
-  }
-  // True when nothing DECODED exists from j to the end of the frames array:
-  // the undecoded run is the loop's growing FRONTIER (tail still streaming
-  // in), not a mid-loop hole -- the wrap handles it (contract rule 3).
-  // Deliberately keyed on .ok, not ring residency: the ring is positional
-  // and must not turn a decoded-but-distant frame into a fake hole.
-  function satFrontierAt(j) {
-    for (var k = j; k < sat.frames.length; k++) {
-      if (sat.frames[k].ok) return false;
-    }
-    return true;
-  }
-  // THE PLAY SEQUENCE: the frame playback shows next from position `from`,
-  // in window order. Steps over permanent gaps (done && !ok); an undecoded
-  // run reaching the window end is the frontier and wraps to the window
-  // start; an undecoded frame with a DECODED frame after it in the window is
-  // a mid-loop hole and returns -1 -- the clock waits, it never skips.
-  // satAdvance, satBufferReady and satPumpBuffer all walk this same
-  // sequence, so the ring holds exactly the frames playback will show next.
-  function satNextPlayable(from) {
-    var n = sat.frames.length, lo = satWinStart();
-    var j = from < lo ? lo - 1 : from;
-    var wrappedOnFrontier = false;
-    for (var s = 0; s <= n; s++) {
-      j = satNextInWindow(j, lo, n);
-      var f = sat.frames[j];
-      if (f.done && !f.ok) continue;            // permanent gap: never arrives
-      if (f.ok) return j;                       // decoded: the next frame
-      if (!satFrontierAt(j)) return -1;         // mid-loop hole: wait on it
-      if (wrappedOnFrontier) return -1;         // whole window still loading
-      wrappedOnFrontier = true;
-      j = n - 1;                                // frontier: scan resumes at lo
-    }
-    return -1;
-  }
-  // Resume test while buffering: the next SAT_RESUME_AHEAD frames of the
-  // play sequence are decoded AND held (hysteresis -- playback can't flap
-  // frame-by-frame at the ring edge). Runs every rAF tick while buffering;
-  // bitmaps land asynchronously from the pump.
-  function satBufferReady() {
-    var n = sat.frames.length;
-    if (!n) return true;
-    var j = sat.idx;
-    for (var s = 0; s < SAT_RESUME_AHEAD; s++) {
-      j = satNextPlayable(j);
-      if (j < 0) return false;                  // still holed
-      if (!satFrameDisplayable(j)) return false; // decoded but not held yet
-      if (j === sat.idx) return true;           // verified the whole window
-    }
-    return true;
-  }
-
   function satReadout(i) {
     var f = sat.frames[i];
     satEl("scrub").value = String(i);
@@ -1854,22 +1660,17 @@ function makeSatViewer(idPrefix, opts) {
   // follows the actual frame dims, so square sectors stay square and any future
   // sector renders undistorted. Re-applied on resize; re-locked per band/sector.
   function satApplyFrameBox() {
-    var stage = satEl("stage");
-    if (!stage || !sat.boxRefW || !sat.boxRefH) return;
+    var stage = satEl("stage"), img = satEl("frame");
+    if (!stage || !img || !sat.boxRefW || !sat.boxRefH) return;
     var sw = stage.clientWidth, sh = stage.clientHeight;
     if (!sw || !sh) return;
     var s = Math.min(sw / sat.boxRefW, sh / sat.boxRefH);
-    // both display elements (playback canvas + fallback <img>) share the box,
-    // so a runtime path switch can never re-letterbox the imagery
-    [satEl("frame"), satEl("canvas")].forEach(function (el) {
-      if (!el) return;
-      el.style.width = Math.round(sat.boxRefW * s) + "px";
-      el.style.height = Math.round(sat.boxRefH * s) + "px";
-      el.style.left = "50%"; el.style.top = "50%";
-      el.style.right = "auto"; el.style.bottom = "auto";
-      el.style.transform = "translate(-50%, -50%)";
-      el.style.objectFit = "contain";
-    });
+    img.style.width = Math.round(sat.boxRefW * s) + "px";
+    img.style.height = Math.round(sat.boxRefH * s) + "px";
+    img.style.left = "50%"; img.style.top = "50%";
+    img.style.right = "auto"; img.style.bottom = "auto";
+    img.style.transform = "translate(-50%, -50%)";
+    img.style.objectFit = "contain";
   }
   function satLockFrameBox(im) {
     if (!im || !im.naturalWidth) return;
@@ -1877,34 +1678,8 @@ function makeSatViewer(idPrefix, opts) {
     sat.boxRefH = im.naturalHeight;
     satApplyFrameBox();
   }
-  // Paint one frame onto the playback canvas from its held ImageBitmap (the
-  // ring), falling back to its decoded Image for out-of-ring paints (a scrub
-  // past the ring, a bmpFail frame); where bitmaps are unavailable at all,
-  // the legacy <img> src swap. Exactly one display element is visible.
-  function satPaint(f) {
-    var img = satEl("frame"), cv = satEl("canvas");
-    if (SAT_BMP_OK && cv) {
-      var bm = sat.bmp[f.src] || f.img;
-      var w = bm.naturalWidth || bm.width, h = bm.naturalHeight || bm.height;
-      if (!w || !h) return false;
-      if (cv.width !== w) cv.width = w;      // realloc only on a size change
-      if (cv.height !== h) cv.height = h;
-      var ctx = sat.ctx || (sat.ctx = cv.getContext("2d"));
-      if (!ctx) return false;
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(bm, 0, 0, w, h);
-      cv.hidden = false;
-      if (img) img.hidden = true;
-    } else if (img) {
-      img.src = f.src;
-      img.hidden = false;
-      if (cv) cv.hidden = true;
-    }
-    return true;
-  }
   // Show frame i, snapping to the nearest loaded frame when i hasn't decoded
-  // (or failed). THE playback primitive. During play, satAdvance only ever
-  // hands this a decoded+held frame (the gate); the snap serves scrubs.
+  // (or failed). THE playback primitive: one src swap on the one visible <img>.
   function satShow(i) {
     var n = sat.frames.length;
     if (!n) return;
@@ -1912,23 +1687,17 @@ function makeSatViewer(idPrefix, opts) {
     if (i >= n) i = n - 1;
     if (!sat.frames[i].ok) { i = satNearestOk(i); if (i < 0) return; }
     sat.idx = i;
-    var f = sat.frames[i];
-    if (!sat.boxRefW) satLockFrameBox(f.img);   // lock before first paint
-    if (!satPaint(f)) return;
+    var img = satEl("frame");
+    if (!sat.boxRefW) satLockFrameBox(sat.frames[i].img);   // lock before first paint
+    img.src = sat.frames[i].src;
+    img.hidden = false;
     sat.shown = true;
     satStatus(false);
     satReadout(i);
-    satPumpBuffer();                            // keep the ring centered on the playhead
-    if (window.__satTimingHook) {
-      try { window.__satTimingHook({ type: "frame", viewer: idPrefix, idx: i,
-        t: f.t, now: performance.now(), playing: sat.playing }); } catch (e) {}
-    }
   }
   function satFrameClear() {
     var img = satEl("frame");
     if (img) { img.removeAttribute("src"); img.hidden = true; }
-    var cv = satEl("canvas");
-    if (cv) cv.hidden = true;
     sat.shown = false;
   }
 
@@ -1944,10 +1713,9 @@ function makeSatViewer(idPrefix, opts) {
   function satLoadFrames() {
     var token = sat.buildToken;
     // (Re)arm the decode-gate safety timeout: if the window isn't decoded within
-    // SAT_READY_TIMEOUT_MS, start playing what has decoded so a slow/broken frame
-    // can't hang the loop -- the gated advance then pauses VISIBLY (Buffering
-    // veil) at any mid-loop hole instead of skipping it. A running loop is
-    // unaffected (the retry no-ops while playing); a re-prime re-arms it.
+    // SAT_READY_TIMEOUT_MS, play with whatever decoded (the old behavior) so a
+    // slow/broken frame can't hang the loop. A running loop is unaffected (the
+    // retry no-ops while playing); a re-prime re-arms it for the new tail.
     sat.gateForced = false;
     if (sat.gateTimer) clearTimeout(sat.gateTimer);
     sat.gateTimer = setTimeout(function () {
@@ -2023,7 +1791,6 @@ function makeSatViewer(idPrefix, opts) {
   }
   function satFrameSettled(f) {
     satEl("play").disabled = satDecoded() < 2;
-    satPumpBuffer();   // a newly-decoded frame may sit inside the ring's window
     // Gate MOTION on a fully-decoded window (autoplay + deferred user play both
     // flow through satPlay, which holds until satCanStartMotion()).
     satTryStartMotion();
@@ -2098,42 +1865,21 @@ function makeSatViewer(idPrefix, opts) {
     sc.max = String(Math.max(lo, sat.frames.length - 1));
     if (Number(sc.value) < lo) sc.value = String(lo);
   }
-  // The GATED advance (playback-contract rule 1): move to the next frame in
-  // window order ONLY if it is decoded and held. Permanent gaps (done && !ok)
-  // are stepped over -- they will never arrive. A frame that is still loading
-  // is a mid-loop hole when anything LATER is already decoded (jumping to
-  // that later frame is the acceleration bug -> pause visibly instead); when
-  // nothing ahead is decoded until the wrap, the run is the loop's growing
-  // frontier and the wrap replays the loaded prefix (contract rule 3).
-  // Returns true when the playhead moved.
   function satAdvance() {
     var n = sat.frames.length;
-    if (!n) return false;
-    var t = satNextPlayable(sat.idx);
-    if (t < 0) {                         // mid-loop hole (or nothing decoded
-      satEnterBuffering();               // yet): pause visibly, never skip
-      return false;
+    if (!n) return;
+    var lo = satWinStart();
+    // Re-enter the window if a shrink (mode switch / poll) left us below it.
+    var j = sat.idx < lo ? lo - 1 : sat.idx;
+    for (var s = 0; s < n; s++) {
+      j = (j >= n - 1) ? lo : j + 1;     // wrap within [lo, n-1], not [0, n-1]
+      if (sat.frames[j].ok) { satShow(j); return; }
     }
-    if (t === sat.idx) {                 // the on-screen frame is the only
-      if (!satAllSettled()) satEnterBuffering();   // playable one: hold it
-      return false;
-    }
-    if (!satFrameDisplayable(t)) {       // decoded but its bitmap isn't held
-      satEnterBuffering();               // yet: the pump is on it
-      return false;
-    }
-    satShow(t);
-    return true;
   }
-  // The whole pacing engine. The clock only advances THROUGH decoded frames;
-  // while Buffering it holds (visibly) and re-tests the ring every tick.
+  // The whole pacing engine (the dumb-player pattern). Don't "improve" it.
   function satTick(ts) {
     if (!sat.playing) return;
-    if (sat.buffering) {
-      if (satBufferReady()) satExitBuffering(ts);
-    } else if (ts - sat.lastTick >= satStepMs()) {
-      if (satAdvance()) sat.lastTick = ts;
-    }
+    if (ts - sat.lastTick >= satStepMs()) { sat.lastTick = ts; satAdvance(); }
     sat.raf = requestAnimationFrame(satTick);
   }
   function satPlay() {
@@ -2159,11 +1905,6 @@ function makeSatViewer(idPrefix, opts) {
     sat.playing = false;
     sat.followNew = false;
     sat.pendingPlay = false;   // any pause cancels a deferred hover-play intent
-    if (sat.buffering) {             // drop the buffering state + veil
-      sat.buffering = false;
-      if (sat.veilTimer) { clearTimeout(sat.veilTimer); sat.veilTimer = null; }
-      satStatus(false);
-    }
     if (sat.raf) { cancelAnimationFrame(sat.raf); sat.raf = null; }
     satEl("play").innerHTML = "&#9654; Play";
   }
@@ -2242,7 +1983,6 @@ function makeSatViewer(idPrefix, opts) {
     satApplyScrubRange();
     var lo = satWinStart();
     if (sat.frames.length && sat.idx < lo) satShow(lo);  // pull playhead in-window
-    satPumpBuffer();                   // the ring's window boundary moved
     if (sat.playing) sat.lastTick = 0;                   // re-pace next tick
   }
   function satBuildLoop() {
@@ -2592,10 +2332,9 @@ function makeSatViewer(idPrefix, opts) {
     var toAdd = fresh.filter(function (f) { return f.t > lastT; });
     if (!toAdd.length) { satUpdateInactive(); return; }
     // Append the genuinely-new frames and let them load in the background; a
-    // running loop picks each one up as soon as it decodes (an undecoded tail
-    // is the loop's frontier -- the wrap replays the loaded set, no skips).
-    // Keep the playhead on the same timestamp across the re-cap; when parked
-    // on newest, follow-live as the new frames decode.
+    // running loop picks each one up as soon as it decodes (an unloaded frame
+    // is simply skipped). Keep the playhead on the same timestamp across the
+    // re-cap; when parked on newest, follow-live as the new frames decode.
     var wasNewest = !sat.playing && sat.idx >= satLastOk();
     var curT = sat.frames[sat.idx] ? sat.frames[sat.idx].t : null;
     sat.frames = satSubsample(sat.frames.concat(toAdd.map(mkFrame)),
@@ -2639,7 +2378,6 @@ function makeSatViewer(idPrefix, opts) {
     var prevT = (keepTime && sat.frames.length) ? sat.frames[sat.idx].t : null;
     sat.band = slug;
     sat.buildToken++;                  // supersede in-flight loads from the old band
-    satBufClear();                     // the ring holds the OLD band's pixels
     sat.shown = false;
     sat.followNew = false;
     sat.boxRefW = 0; sat.boxRefH = 0;  // re-lock the frame box on the new band
@@ -2746,7 +2484,6 @@ function makeSatViewer(idPrefix, opts) {
     satPause();
     sat.man = null; sat.band = null; sat.frames = []; sat.idx = 0;
     sat.buildToken++; sat.encoding = false;
-    satBufClear();
     sat.userPaused = false;   // a fresh storm/sector starts clean (autoplay eligible)
     sat.shown = false; sat.followNew = false; sat.inactive = false;
     sat.boxRefW = 0; sat.boxRefH = 0; sat.bandLabelBase = "";
@@ -2815,11 +2552,7 @@ function makeSatViewer(idPrefix, opts) {
                // armed-but-held (pendingPlay), and the steady-play invariant
                // counter (must remain 0 while playing).
                pendingPlay: sat.pendingPlay, windowReady: satWindowReady(),
-               nearestOkInPlay: sat.nearestOkInPlay,
-               // decode-ahead ring instrumentation
-               buffering: sat.buffering,
-               buffered: Object.keys(sat.bmp).length,
-               bitmapPath: SAT_BMP_OK };
+               nearestOkInPlay: sat.nearestOkInPlay };
     },
     pollNow: function () {
       var token = sat.buildToken;
