@@ -29,12 +29,12 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-22T13:28:00Z
+updated: 2026-08-22T14:04:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
   - id: sat-loop-decode-gated-playback
-    title: /satellite/ loop — decode-gated playback ends the silent frame-skip speedup (v2)
+    title: /satellite/ loop — decode-gated playback, every archive slot shown or held (v3)
     area: satellite
     status: shipped
     date_shipped: 2026-08-22
@@ -42,24 +42,29 @@ items:
       The floater/meso loop clock advanced on a fixed timestep and silently
       skipped any frame that had not decoded, which read as the loop
       progressively speeding up and jumping 2-3+ frames once the preloaded
-      head ran out (both GOES and Himawari). Measured on the deployed page
-      under a 4 Mbit/s throttle: 20 (cp01) and 89 (wp17) multi-frame skips
-      in 60 s, jumps up to 73 frames per ~100 ms tick. v1 (same day) gated
-      the advance but painted from a ring of ImageBitmaps on a canvas and
-      crashed accelerated Chrome at the loop seam ("Aw, Snap" error 11) —
-      rolled back in minutes, then measured: every frame drawn pinned a
-      ~4.3 MB GPU texture that close() never released, GPU-process memory
-      climbed monotonically 265 to 539 MB across one lap and the renderer
-      died at frame 83/86; the banned-by-manifesto canvas+ImageBitmap path
-      was the whole cause (no-close variant crashed identically; the plain
-      <img> player and even canvas-drawing-Images plateau and evict). v2
-      keeps the gate, the play sequence and the visible Buffering veil on
-      the <img> src-swap path, with HTMLImageElement.decode() warming the
-      next 8 frames as the decode-ahead buffer (no pinned bitmaps).
-      Acceptance on the GPU-accelerated path, full loops end to end: wp17
-      and cp01 4 laps each, no crash, GPU plateaus at 509/495 MB and
-      evicts, renderer flat ~675 MB; same throttle as the bug report: zero
-      multi-frame skips on both, honest buffering holds instead.
+      head ran out (both GOES and Himawari). Deployed-page measurement under
+      a 4 Mbit/s throttle: 20 (cp01) and 89 (wp17) multi-frame skips in 60 s.
+      v1 gated the advance but painted from a ring of ImageBitmaps on a
+      canvas and crashed accelerated Chrome at the loop seam ("Aw, Snap"
+      error 11): every frame drawn pinned a ~4.3 MB GPU texture that close()
+      never released, GPU-process memory climbed monotonically 265 to 539 MB
+      across one lap and the renderer died at frame 83/86 — rolled back in
+      minutes. v2 moved the gate back onto the <img> src-swap path with
+      HTMLImageElement.decode() warming the next 8 frames; its acceptance
+      counted index steps and so could not see two residual skip classes
+      (404/decode-fail slots stepped over, an early "frontier" wrap).
+      v3: the play sequence is the archive window itself, slot by slot —
+      a failed slot is HELD for its full duration with the nearest earlier
+      image, a "no frame" readout and an on-stage data-gap note; a
+      still-loading slot is waited on under the Buffering veil, including
+      at the tail (no early wrap). The acceptance harness now verifies
+      PAINTED slots against the archive's frame list lap by lap (fails if
+      any slot was never painted or held, if a decoded frame was shown as
+      held, or if the wrap is not at the window end), with injected gaps.
+      Results on the real archives: 2 laps each on wp17 (87 slots) and
+      cp01 (88), every slot painted in order, both injected gaps held;
+      under the 4 Mbit/s throttle slot durations median 100 ms, p99
+      117-118. GPU-accelerated path, 4 full laps each: no crash, GPU-process peak 518 (wp17) / 523 MB (cp01) and plateaued, renderer under 690 MB.
     links:
       - label: Satellite page
         url: /satellite/
