@@ -161,9 +161,11 @@ async function settle(dom) {
   ok(v.state().idx === nA - 1, "A: scrubbed to newest frame (idx " + (nA - 1) + ")");
   doc.getElementById("sat-play").click();        // resume the loop
   ok(v.state().playing, "A: playback resumed");
+  await delay(0);                                 // let the decode-ahead warm promises settle
   win.__flushRaf(1e7);                            // one tick: newest -> wrap
   ok(v.state().idx === expWin,
      "A: loop wrapped from newest to winStart=" + expWin + " (got " + v.state().idx + ")");
+  await delay(0);
   win.__flushRaf(2e7);                            // next tick advances within window
   ok(v.state().idx === expWin + 1,
      "A: loop advances within window to " + (expWin + 1) + " (got " + v.state().idx + ")");

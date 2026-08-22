@@ -29,10 +29,40 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-07T18:40:00Z
+updated: 2026-08-22T13:28:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: sat-loop-decode-gated-playback
+    title: /satellite/ loop — decode-gated playback ends the silent frame-skip speedup (v2)
+    area: satellite
+    status: shipped
+    date_shipped: 2026-08-22
+    note: >-
+      The floater/meso loop clock advanced on a fixed timestep and silently
+      skipped any frame that had not decoded, which read as the loop
+      progressively speeding up and jumping 2-3+ frames once the preloaded
+      head ran out (both GOES and Himawari). Measured on the deployed page
+      under a 4 Mbit/s throttle: 20 (cp01) and 89 (wp17) multi-frame skips
+      in 60 s, jumps up to 73 frames per ~100 ms tick. v1 (same day) gated
+      the advance but painted from a ring of ImageBitmaps on a canvas and
+      crashed accelerated Chrome at the loop seam ("Aw, Snap" error 11) —
+      rolled back in minutes, then measured: every frame drawn pinned a
+      ~4.3 MB GPU texture that close() never released, GPU-process memory
+      climbed monotonically 265 to 539 MB across one lap and the renderer
+      died at frame 83/86; the banned-by-manifesto canvas+ImageBitmap path
+      was the whole cause (no-close variant crashed identically; the plain
+      <img> player and even canvas-drawing-Images plateau and evict). v2
+      keeps the gate, the play sequence and the visible Buffering veil on
+      the <img> src-swap path, with HTMLImageElement.decode() warming the
+      next 8 frames as the decode-ahead buffer (no pinned bitmaps).
+      Acceptance on the GPU-accelerated path, full loops end to end: wp17
+      and cp01 4 laps each, no crash, GPU plateaus at 509/495 MB and
+      evicts, renderer flat ~675 MB; same throttle as the bug report: zero
+      multi-frame skips on both, honest buffering holds instead.
+    links:
+      - label: Satellite page
+        url: /satellite/
   - id: freshness-nhc-ingest-discriminator
     title: Freshness monitor learns to see a dead NHC ingest (btk-vs-feed discriminator)
     area: infra
