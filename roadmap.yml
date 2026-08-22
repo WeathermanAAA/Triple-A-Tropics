@@ -29,10 +29,35 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-07T18:40:00Z
+updated: 2026-08-22T04:41:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: sat-loop-decode-gated-playback
+    title: /satellite/ loop players — decode-gated advance ends the silent frame-skip speedup
+    area: satellite
+    status: shipped
+    date_shipped: 2026-08-22
+    note: >-
+      The floater/meso loop clock advanced on a fixed timestep and silently
+      skipped any frame that had not decoded, which read as the loop
+      progressively speeding up and jumping 2-3+ frames once the preloaded
+      head ran out (both GOES and Himawari — it was the player). Measured on
+      the deployed page under a 4 Mbit/s throttle: 20 (GOES cp01) and 89
+      (Himawari wp17) multi-frame skips in 60 s, jumps up to 73 frames per
+      ~100 ms tick. Now the advance is gated on the next frame being decoded
+      AND held in a bounded decode-ahead ring of ImageBitmaps (~11 pinned
+      frames, evicted+closed as the playhead moves) painted to a canvas; a
+      drained buffer pauses playback under a visible Buffering veil and
+      resumes when the ring refills 4 deep. Permanent 404 gaps and the
+      progressive-load frontier wrap remain the only sanctioned skips. Same
+      throttle after the fix: zero multi-frame skips on both satellites,
+      +1-step intervals median 101-103 ms with p99 under 220 ms, honest
+      buffering episodes instead. Locked by tests/sat_pacing_smoke.cjs;
+      measured with tests/sat_live_pacing_harness.cjs.
+    links:
+      - label: Satellite page
+        url: /satellite/
   - id: freshness-nhc-ingest-discriminator
     title: Freshness monitor learns to see a dead NHC ingest (btk-vs-feed discriminator)
     area: infra
