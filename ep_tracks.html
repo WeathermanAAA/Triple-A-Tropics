@@ -261,7 +261,7 @@
         <!-- id="as-of" mirrors the global MapLibre page: the live overlay
              (LIVE_BASIN_JS) overwrites it from the feed's `updated` stamp;
              the baked build-time text stands when JS/fetch fails. -->
-        <div class="sub" id="as-of">As of 2026-08-22 08:05 UTC</div>
+        <div class="sub" id="as-of">As of 2026-08-22 12:59 UTC</div>
       </div>
       <div class="stats" id="season-stats"><b>10</b> named storms · <b>3</b> hurricanes · <b>1</b> category 5s · <span class="ace">74.91 ACE</span></div>
     </div>
@@ -2619,13 +2619,13 @@
 <circle class="track-dot" cx="1143.8" cy="544.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP022026" data-name="BORIS" data-t="2026-06-09T00:00:00" data-wind="40.0" data-pres="1001.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="1143.8" cy="535.5" r="4" fill="#46c56a" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP022026" data-name="BORIS" data-t="2026-06-09T06:00:00" data-wind="35.0" data-pres="1003.0" data-cls="TS" data-phase="tc"/>
 <circle class="track-dot" cx="1139.6" cy="524.2" r="3" fill="#3fa4ff" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.85" data-sid="NHC_EP022026" data-name="BORIS" data-t="2026-06-09T12:00:00" data-wind="30.0" data-pres="1003.0" data-cls="TD" data-phase="tc"/>
-<a href="/cyclolab/NHC_EP912026/" target="_blank" rel="noopener">
-<g class="invest-current" transform="translate(882.0,688.5)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_EP912026" data-name="91E" data-t="2026-08-22T06:00:00" data-wind="20.0" data-pres="1009.0" data-cls="TD" data-phase="invest"/></g>
-<text class="invest-label" x="893.0" y="692.5" text-anchor="start">91E</text>
-</a>
 <a href="/cyclolab/NHC_EP922026/" target="_blank" rel="noopener">
 <g class="invest-current" transform="translate(999.6,630.0)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_EP922026" data-name="92E" data-t="2026-08-22T06:00:00" data-wind="20.0" data-pres="1009.0" data-cls="TD" data-phase="invest"/></g>
 <text class="invest-label" x="1010.6" y="634.0" text-anchor="start">92E</text>
+</a>
+<a href="/cyclolab/NHC_EP912026/" target="_blank" rel="noopener">
+<g class="invest-current" transform="translate(875.0,679.5)" filter="url(#invest-red-glow)"><path class="track-dot" d="M -7 -7 L 7 7 M -7 7 L 7 -7" stroke="#ff2a2a" stroke-width="2.4" stroke-linecap="round" fill="none" data-sid="NHC_EP912026" data-name="91E" data-t="2026-08-22T12:00:00" data-wind="20.0" data-pres="1009.0" data-cls="TD" data-phase="invest"/></g>
+<text class="invest-label" x="886.0" y="683.5" text-anchor="start">91E</text>
 </a>
 </g>
         <g class="active-storms">
@@ -2841,23 +2841,6 @@
 </div>
 
 
-<div class="storm-card clickable invest" id="card-NHC_EP912026" data-sid="NHC_EP912026">
-  <div class="storm-top">
-    <div class="storm-name">91E<span class="storm-invest">Invest</span></div>
-    <div class="storm-cat" style="background:#3fa4ff">TD</div>
-  </div>
-  <div class="storm-meta">
-    <div class="row"><span class="lbl">Active</span><span class="val">Aug 22</span></div>
-    <div class="row"><span class="lbl">Peak wind</span><span class="val">20.0 kt</span></div>
-    <div class="row"><span class="lbl">Peak pressure</span><span class="val">1009.0 mb</span></div>
-    <div class="row"><span class="lbl">ACE</span><span class="val">0.00</span></div>
-  </div>
-  <div class="click-hint">▸ Click for peak intensity</div>
-  
-  <div class="storm-placard" id="placard-NHC_EP912026" hidden></div>
-</div>
-
-
 <div class="storm-card clickable invest" id="card-NHC_EP922026" data-sid="NHC_EP922026">
   <div class="storm-top">
     <div class="storm-name">92E<span class="storm-invest">Invest</span></div>
@@ -2872,6 +2855,23 @@
   <div class="click-hint">▸ Click for peak intensity</div>
   
   <div class="storm-placard" id="placard-NHC_EP922026" hidden></div>
+</div>
+
+
+<div class="storm-card clickable invest" id="card-NHC_EP912026" data-sid="NHC_EP912026">
+  <div class="storm-top">
+    <div class="storm-name">91E<span class="storm-invest">Invest</span></div>
+    <div class="storm-cat" style="background:#3fa4ff">TD</div>
+  </div>
+  <div class="storm-meta">
+    <div class="row"><span class="lbl">Active</span><span class="val">Aug 22</span></div>
+    <div class="row"><span class="lbl">Peak wind</span><span class="val">20.0 kt</span></div>
+    <div class="row"><span class="lbl">Peak pressure</span><span class="val">1009.0 mb</span></div>
+    <div class="row"><span class="lbl">ACE</span><span class="val">0.00</span></div>
+  </div>
+  <div class="click-hint">▸ Click for peak intensity</div>
+  
+  <div class="storm-placard" id="placard-NHC_EP912026" hidden></div>
 </div>
 </div></div>
 </div>
