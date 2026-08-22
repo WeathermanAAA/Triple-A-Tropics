@@ -29,12 +29,35 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-22T14:04:00Z
+updated: 2026-08-22T16:32:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: floater-frame-recency-discriminator
+    title: Freshness monitor sees a producing-but-lagging floater (frame-recency discriminator)
+    area: infra
+    status: shipped
+    date_shipped: 2026-08-22
+    note: >-
+      The floater loop sat at 15:00Z while meso was current at 15:44Z and the
+      freshness monitor read "fresh": its floater rows gate on
+      floaters/manifest.json generated_utc, which the box poller re-stamps
+      every sweep even when it renders no new frame (the ACE re-stamped-but-
+      dead blindspot, one product over), and the rows were additionally muted
+      by a known_down note ("stalled 2026-07-15") that was factually wrong.
+      Cleared the false known_down and added floater_frame_lag_rows: reads the
+      newest FRAME time across active storms and alarms when the freshest
+      floater frame is older than 90 min (~5 missed full-disk cycles = a real
+      freeze; the normal single-shared-render-worker sweep oscillates ~22-50
+      min under a high storm count, which is architecture, not a fault). No
+      suppression, loud on a blind read. Locked by tests/test_floater_lag.py.
+      The chronic lag itself (floater on one shared `render` worker vs meso's
+      dedicated container) is a box-side capacity change — QUEUED for Andrew.
+    links:
+      - label: probe
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/blob/main/scripts/freshness_probe.py
   - id: sat-loop-decode-gated-playback
-    title: /satellite/ loop — decode-gated playback, every archive slot shown or held (v3)
+    title: /satellite/ loop — presented-clock playback, every archive slot shown or held (v4)
     area: satellite
     status: shipped
     date_shipped: 2026-08-22
