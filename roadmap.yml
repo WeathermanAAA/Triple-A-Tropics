@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-25T16:10:00Z
+updated: 2026-08-25T17:30:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -79,19 +79,34 @@ items:
       trip stops nothing. Arm only after this lands and the alert-only week
       shows no false positives.
   - id: hafs-r2-retention
-    title: models/hafs retention prune (14 d) — the only compounding cost line
+    title: models/hafs retention prune (14 d) — the only compounding cost line, applied
     area: models
-    status: needs-andrew
+    status: shipped
+    date_shipped: 2026-08-25
     note: >-
-      919 GB and growing 30–55 GB/day with no retention: each cycle lands
-      under models/hafs/{cycle}/ and update-hafs.yml only deletes within the
-      cycle it rendered. A daily walk that deletes cycles older than 14 days
-      caps the prefix at ~450–750 GB (DeleteObjects is free). Dry-run report
-      first, then apply. Phase 2 item A.
+      Andrew authorized 2026-08-25. scripts/hafs_r2_prune.py (dry-run by
+      default) + prune-hafs.yml (daily 05:31Z). Dry-run list recorded in
+      COST-AUDIT-2026-08.md before applying; the apply deleted 168 cycles,
+      220,745 objects, 435.2 GB (0 errors) and R2 storage went 2,384 to
+      1,953 GB within the hour. The prefix is now capped at 14 days by cycle
+      time (never the newest 2, never a manifest-referenced cycle).
+  - id: hwfd-sweep-cadence
+    title: hwfd browse lane sweeps at the product cadence (sleep 900 s, was 30 s)
+    area: satellite
+    status: shipped
+    date_shipped: 2026-08-25
+    note: >-
+      Change B of the cost audit (tsr c3f739b, lane recreated on box2
+      16:12Z). The 22-band Himawari FD lane swept 21x/hour and spent ~11
+      LIST pages per idle probe: 11,415 passes and 148.7K list pages a day,
+      39% of the fleet's listing. Measured steady state: ~1,350 passes and
+      ~14K list pages a day, hwfd Class A 161.6K to ~21.5K/day (about
+      $19/month). No 20-min slot is skipped; the browse bands trade ~12 min
+      of mean latency, the animated leads stay on their own 10-min lane.
   - id: s2-manifest-coverage
     title: s2 coverage check from the manifest instead of per-stamp LIST probes (−90% of listing)
     area: satellite
-    status: needs-andrew
+    status: active
     note: >-
       _covered_times → complete_stamps probes one LIST per stamp in the
       backfill window every pass; the lane is the sole writer and already
@@ -99,7 +114,8 @@ items:
       HEAD of the newest marker gives the same answer. Listing stays for the
       heal tick and cold start. Emit hot path: adversarial review plus a
       frame-identical check on one lane before the fleet. Phase 2 item C;
-      item B (hwfd pass cadence, 11,415 passes/day for 22 bands) first.
+      Authorized 2026-08-25; building on tsr branch coverage-manifest under
+      adversarial review, then a one-lane canary (box2 hwfd-leads) before the fleet.
   - id: accounts-backend-to-box
     title: Accounts backend (D1 tat-sandbox + tat-sandbox-api) to box1 behind the existing tunnel
     area: apps
