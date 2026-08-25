@@ -483,6 +483,7 @@ lane if more is wanted. Measured fleet numbers: "Measured after" table.
 | 08-25 16:50 | A applied 16:13–16:46Z (−435.2 GB reported) | 24,189 (prune walk + hwfd cold rebuild in window) | 14,324 (16:00h) | **1,953.0 GB (−431 GB, −18%)** | **1,570,490 (−218K)** |
 | 08-25 17:17 | B steady state since 16:54Z | **19,129** | (17:00h pending) | 1,953.0 GB | 1,570,490 |
 | 08-25 18:07 | B only (first clean hour 17:00–18:00Z) | **13,401** | **6,575 (17:00h)** vs 15,627 (15:00h) | 1,954.5 GB | 1,571,829 |
+| 08-25 21:58 | C fleet: box2 steady (1 h after its roll), box1 in its cold rebuild (rolled 21:35Z) | 15,605 (28.5K peak during box1's cold sweep) | 8,661 (19:00h, canary+B) · 23,034 (20:00h, box2 cold rebuild) | 1,898.8 GB (the recreated prune lane ran once more) | 1,523,715 |
 
 Fleet-level reading two hours after B: Class A per hour fell from 21,845 (15:00Z hour) to 13,586 (17:00Z hour) and
 LIST per hour from 15,627 to 6,575; the breaker's trailing hour read 13,401 at 18:07Z. The hwfd lane's own counter
@@ -510,6 +511,23 @@ Watch the residual single-digit kills over the next day; if they persist at 50�
 `[limits] cpu_ms = 30000` explicitly in the sandbox worker's config. Independently, hashing the 1 MB
 checkpoint uploads with `crypto.subtle.digest` instead of JS would cut those endpoints' CPU by an order of
 magnitude (an app-side improvement for the sandbox, out of this audit's scope).
+
+Change C, box2 steady state one hour after its roll (lane `[ops]` counters, 20:59–21:59Z window, all lanes
+0 tracebacks / 0 `[FAIL]` / 0 fallbacks / 0 strays except the licence-gated `mtg`):
+
+| box2 lane | list pages/day before B (13:06Z sweep) | after B | after C (this hour × 24) |
+| --- | ---: | ---: | ---: |
+| hwwpac (suite, 28 products) | 57,173 | 57,173 | **~9,900** |
+| hwfd (22 products) | 148,741 | ~14,000 | **~10,700** |
+| conus-fast | 19,073 | 19,073 | **~5,300** |
+| hwfd-leads | 29,810 | 29,810 | **~5,000** |
+| geo (suite) | 10,272 | 10,272 | **~2,200** |
+| gk2a (suite) | 34,167 | 34,167 | **~1,900** |
+| mtg (idle, licence 403) | 381 | 381 | ~430 |
+| **box2 total** | **299,617** | **~165,000** | **~35,000 (−79% vs after B)** |
+
+Box1 rolled at 21:35Z, so its lanes were still in the one-off cold heal rebuild in this window (conus-fast2
+1,743 pages and conus 1,346 pages in 0.4 h); its steady state is in the +3 h row.
 
 Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
 is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
