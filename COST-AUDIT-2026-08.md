@@ -444,6 +444,16 @@ the cost is ~+12 min mean latency on the 22 non-animated browse bands (the five 
 | 08-25 15:20 | baseline (24 h to 15:00Z: A 567,191/day, LIST 383,264/day) | 21,294 (15:57 tick) | 15,627 (15:00h) | 2,382.3 GB | 1,786,928 |
 | 08-25 16:50 | A applied 16:13–16:46Z (−435.2 GB reported) | 24,189 (prune walk + hwfd cold rebuild in window) | 14,324 (16:00h) | **1,953.0 GB (−431 GB, −18%)** | **1,570,490 (−218K)** |
 | 08-25 17:17 | B steady state since 16:54Z | **19,129** | (17:00h pending) | 1,953.0 GB | 1,570,490 |
+| 08-25 18:07 | B only (first clean hour 17:00–18:00Z) | **13,401** | **6,575 (17:00h)** vs 15,627 (15:00h) | 1,954.5 GB | 1,571,829 |
+
+Fleet-level reading two hours after B: Class A per hour fell from 21,845 (15:00Z hour) to 13,586 (17:00Z hour) and
+LIST per hour from 15,627 to 6,575; the breaker's trailing hour read 13,401 at 18:07Z. The hwfd lane's own counter
+is the precise instrument for B (148.7K to ~15–18K list pages/day); the fleet hourly figure also carries diurnal and
+low-pass-count lane noise (box1's g19fd sweeps every ~110 min), so the 2026-08-26 daily GraphQL total is the
+definitive before/after for B (expected ~250K LIST/day before C lands).
+
+Workers Paid (Andrew's upgrade): not visible in the analytics yet at 18:12Z (17:00Z hour: 1,932 requests, 1,072
+`exceededResources` = 55%, CPU p50 still 10,000 µs). Re-check once the plan change shows.
 
 Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
 is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
