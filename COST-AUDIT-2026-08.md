@@ -455,7 +455,25 @@ orphans, strays or ghosts).
 Gate 2, one-lane canary: box2 `tat-s2-hwfd-leads` recreated on image `tat-s2:cov` at **18:43:45Z** with an
 auto-rollback watchdog (`s2_cov_canary_watchdog.sh`: stale manifest > 4,200 s, traceback or 6 `[FAIL]`s in a
 round, newest advertised frame without `_ready.json`, or no `[done]` for 4,200 s → recreate on `tat-s2:latest`
-and exit 42; 7,200 s clean → PASS). Fleet roll only after PASS. Outcome and measurements below.
+and exit 42; 7,200 s clean → PASS). Fleet roll only after PASS.
+
+**Canary PASS 20:45:36Z** (25 clean watchdog rounds): 268 passes, 249 on the manifest path, 20 verify listings,
+0 fallbacks, 0 `[FAIL]`, 0 tracebacks, 0 strays; all five products advanced on cadence; last canary hour
+**202 list pages vs ~1,240/h before on this lane (−84%)**. Fleet roll: tsr `main` fast-forwarded to a6e4500
+(C + the re-review hardenings + the canary watchdog); `fleet.sh deploy box2` 20:48–20:50Z (8 lanes),
+box1 21:35Z (4 lanes, run as a detached unit after the foreground attempt hit its 15-min timeout mid-build;
+box1's checkout had already been reset to a6e4500, old lanes kept running — a consistent state). Every
+recreate costs a one-off cold heal rebuild (~200 LIST pages per product) before steady state. The `mtg` lane
+logs `[FAIL] ... HTTP 403` per slot after its recreate: that is the pre-existing EUMETSAT licence gate (the
+lane has never published; ops unchanged at `get=3 list_pages=3`), and the new code handles its manifest-less
+products correctly (`manifest unusable ... (missing) -- listing fallback`). Rollback lever if ever needed:
+`S2_COVER_FROM_MANIFEST=0` in the box `.env` + recreate (no code redeploy).
+
+Projection for C at the fleet with the 30-min verify cadence (from the measured pass rates): about
+−151K list pages/day (−62% of what was left after B), ≈ −$21/month — below the original −$45 estimate because
+B already took the largest single slice and the verify listing (the price of the delete-to-re-render fix)
+barely helps lanes whose sweep is already ~30 min apart (hwfd, g19fd). `S2_COVER_VERIFY_S` can be raised per
+lane if more is wanted. Measured fleet numbers: "Measured after" table.
 
 ### Measured after each change (Class A rate and storage, not projections)
 

@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-25T17:30:00Z
+updated: 2026-08-25T21:45:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -104,9 +104,10 @@ items:
       $19/month). No 20-min slot is skipped; the browse bands trade ~12 min
       of mean latency, the animated leads stay on their own 10-min lane.
   - id: s2-manifest-coverage
-    title: s2 coverage check from the manifest instead of per-stamp LIST probes (−90% of listing)
+    title: s2 coverage check from the manifest instead of per-stamp LIST probes, fleet-wide
     area: satellite
-    status: active
+    status: shipped
+    date_shipped: 2026-08-25
     note: >-
       _covered_times → complete_stamps probes one LIST per stamp in the
       backfill window every pass; the lane is the sole writer and already
@@ -114,8 +115,14 @@ items:
       HEAD of the newest marker gives the same answer. Listing stays for the
       heal tick and cold start. Emit hot path: adversarial review plus a
       frame-identical check on one lane before the fleet. Phase 2 item C;
-      Authorized 2026-08-25; building on tsr branch coverage-manifest under
-      adversarial review, then a one-lane canary (box2 hwfd-leads) before the fleet.
+      Change C of the cost audit (tsr c7992bf..a6e4500). Two adversarial
+      reviews (two HIGH findings fixed: geometry-migration flip-flop, deleted
+      frames never re-rendered -> 30-min verify listing + stray guard), the
+      read-only equivalence gate EQUIVALENT, a 2 h one-lane canary with an
+      auto-rollback watchdog PASSED (0 fallbacks/FAILs/strays, -84% list
+      pages on hwfd-leads), then fleet.sh deploy box2 20:50Z and box1 21:35Z.
+      Rollback lever S2_COVER_FROM_MANIFEST=0 + recreate. Projected about
+      -151K list pages/day fleet-wide; measured numbers in COST-AUDIT-2026-08.md.
   - id: accounts-backend-to-box
     title: Accounts backend (D1 tat-sandbox + tat-sandbox-api) to box1 behind the existing tunnel
     area: apps
