@@ -416,6 +416,39 @@ Storage as accounted by R2 (GraphQL `r2StorageAdaptiveGroups`, lags ~1 h) is rec
 
 </details>
 
+### Change B — hwfd sweep cadence (tsr c3f739b, lane recreated on box2 2026-08-25 16:12:03Z)
+
+`docker-compose.s2.hw-fd-lane.yml`: the 22-band Himawari FD browse lane slept 30 s between sweeps; now
+`sleep "${S2_HWFD_SWEEP_SLEEP_S:-900}"`. Compose-only, recreated with `--no-build`. The first sweep after a
+recreate is a cold manifest rebuild (~213 LIST pages per product, one-off by design: the heal state lives in
+the container); steady state from the 16:54Z sweep on.
+
+| hwfd lane | before (24 h to 13:06Z) | after (steady state, 16:54–17:20Z, 30 passes) |
+| --- | ---: | ---: |
+| sweep period | ~2.8 min (`sleep 30` + 22 idle probes) | ~23.5 min (`sleep 900` + ~8.5 min rendering 22 frames) |
+| passes/day | 11,415 | ~1,350 |
+| LIST pages per pass | ~13 (idle) | ~10 (each pass now lands a frame) |
+| LIST pages/day | 148,741 | **~14,000** |
+| PUT/day | 12,791 | ~7,400 |
+| Class A/day | 161,569 | **~21,500 (−140K/day ≈ −$0.63/day ≈ −$19/month)** |
+
+Estimate was $10–15/month; measured −$19/month. Slots are not skipped (every sweep renders every uncovered slot
+in the 120-min backfill window: sweeps at 16:30, 16:54, 17:17Z each rendered exactly the one new 20-min slot);
+the cost is ~+12 min mean latency on the 22 non-animated browse bands (the five animated leads stay on their own
+10-min lane). Fleet-level confirmation from GraphQL hourly LIST counts is in the "Measured after" table.
+
+### Measured after each change (Class A rate and storage, not projections)
+
+| when (UTC) | change state | Class A trailing hour (breaker `rate_1h`) | GraphQL LIST/h (last complete hour) | storage (GraphQL, lags ~1 h) | objects |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 08-25 15:20 | baseline (24 h to 15:00Z: A 567,191/day, LIST 383,264/day) | 21,294 (15:57 tick) | 15,627 (15:00h) | 2,382.3 GB | 1,786,928 |
+| 08-25 16:50 | A applied 16:13–16:46Z (−435.2 GB reported) | 24,189 (prune walk + hwfd cold rebuild in window) | 14,324 (16:00h) | **1,953.0 GB (−431 GB, −18%)** | **1,570,490 (−218K)** |
+| 08-25 17:17 | B steady state since 16:54Z | **19,129** | (17:00h pending) | 1,953.0 GB | 1,570,490 |
+
+Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
+is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
+"+$19/month per month" was the growth rate; the first-day effect is the −431 GB step.
+
 ## Phase 0 — circuit breaker + kill switch (status as of 2026-08-25 16:05Z)
 
 **Deployed, ALERT-ONLY.** Worker `r2-breaker` (`workers/r2-breaker.js`, TAT main a4a2b5c8) on
