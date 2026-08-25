@@ -482,12 +482,16 @@ same endpoints completed 25 times with CPU up to 341 ms. The kill point moved fr
 ~19:33Z (the plan change propagating), but not to the Paid default of 30 s; the deployed version (6250f19f,
 2026-08-19) carries no per-script `cpu_ms` limit. Cloudflare's limits page says each isolate has "built-in
 flexibility" for infrequent overruns and terminates when the Worker "starts hitting the limit consistently",
-which matches the pattern (some isolates still enforcing a small limit, bursts allowed, then kills). So the
-10 ms cap was not the whole story: the Paid limit has not taken effect for this Worker. Separate defect, for
-Andrew (sandbox code/deploy, out of this audit's scope): redeploy the Worker unchanged to get fresh isolates
-under the Paid plan and re-measure; if 50 ms kills persist, set `[limits] cpu_ms = 30000` explicitly and
-redeploy; if they still persist, Cloudflare support (plan not applied). Independently, hashing 1 MB uploads
-with `crypto.subtle.digest` instead of JS would likely bring those endpoints under 50 ms regardless.
+which matches the pattern (some isolates still enforcing a small limit, bursts allowed, then kills).
+**Resolution, measured 21:04Z:** the kills stopped on their own once the isolates recycled under the Paid
+plan — 5-minute `exceededResources`: 19:55 46%, 20:00 45%, 20:05 43%, then **0% in every bucket from 20:10 to
+20:50Z** (successes running up to 590 ms CPU), with a residual 3 kills at 20:55 (4%, at 95–108 ms CPU) and
+1 at 21:00 (1%). Hourly: 55% (17Z), 47% (18Z), 35% (19Z), 8% (20Z), 1% (21Z partial). So the 10 ms CPU cap
+WAS the story; the plan change simply took ~40 min to reach every isolate (a redeploy would have forced it).
+Watch the residual single-digit kills over the next day; if they persist at 50–100 ms, set
+`[limits] cpu_ms = 30000` explicitly in the sandbox worker's config. Independently, hashing the 1 MB
+checkpoint uploads with `crypto.subtle.digest` instead of JS would cut those endpoints' CPU by an order of
+magnitude (an app-side improvement for the sandbox, out of this audit's scope).
 
 Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
 is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
