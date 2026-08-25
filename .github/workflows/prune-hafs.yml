@@ -1,0 +1,72 @@
+name: prune-hafs
+
+# models/hafs/ cycle retention on R2 (cost audit 2026-08-25, change A).
+#
+# Every HAFS cycle lands under its own models/hafs/{YYYYMMDDHH}/ prefix and
+# update-hafs.yml only --delete's inside the cycle it just rendered, so
+# cycles never aged out: 919 GB after ~35 days, 30-55 GB/day, the only
+# compounding line on the R2 bill. The viewer reads manifest.json, whose
+# cycles[] holds at most the two newest cycles, so anything older than a
+# couple of days is already unreachable from the site.
+#
+# scripts/hafs_r2_prune.py deletes cycles older than 14 days by CYCLE time
+# (never the newest 2, never a cycle the live manifest references), walking
+# each condemned cycle (~10 LIST pages) and DeleteObjects-ing it (free).
+# Daily is enough: ~4 cycles age out per day. Dry-run by default from the
+# Actions tab (apply=false); the schedule applies.
+#
+# Offset minutes are load-bearing (GitHub load-sheds :00/:30); the backup
+# tick 30 min later covers a dropped primary, the concurrency group
+# serializes them.
+
+on:
+  schedule:
+    - cron: "31 5 * * *"
+    - cron: "1 6 * * *"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "actually delete (false = dry run report only)"
+        type: boolean
+        default: false
+      days:
+        description: "TTL in days by cycle time"
+        default: "14"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prune-hafs
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/hafs_r2_prune.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet boto3
+      - name: Prune (dry run unless scheduled or apply=true)
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: triple-a-tropics-media
+        run: |
+          set -euo pipefail
+          APPLY=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then APPLY="--apply"; fi
+          python scripts/hafs_r2_prune.py $APPLY --days "${{ inputs.days || '14' }}" --report prune_report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hafs-prune-report
+          path: prune_report.json
+          retention-days: 30
