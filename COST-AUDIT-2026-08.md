@@ -437,6 +437,26 @@ in the 120-min backfill window: sweeps at 16:30, 16:54, 17:17Z each rendered exa
 the cost is ~+12 min mean latency on the 22 non-animated browse bands (the five animated leads stay on their own
 10-min lane). Fleet-level confirmation from GraphQL hourly LIST counts is in the "Measured after" table.
 
+### Change C — s2 backfill coverage from the manifest (tsr branch `coverage-manifest`, 7a19787)
+
+Built under a three-lens adversarial review (hot path, cost/ops, tests+fallback). Two HIGH findings were real and
+fixed before any deploy: a geometry migration inside the backfill window would have made the live manifest
+flip-flop every pass, and a frame deleted under a live manifest would never have been re-rendered (the container
+canary watchdog's rollback relies on delete-to-re-render). The fix added a periodic verify listing
+(`S2_COVER_VERIFY_S`, 30 min per product, so deletions and off-grid orphans heal within 30 min instead of 6 h)
+and a stray-geometry guard in `emit_one`. A second, independent re-review of the final code found no blocking
+defects and two one-line hardenings, landed as 7a19787. `S2_COVER_FROM_MANIFEST=0` restores the old listing
+path byte-for-byte without a code redeploy. 38 new tests; full suite 1,124 with the same 10 pre-existing
+failures as the untouched tree.
+
+Gate 1, equivalence (read-only, on box2, inside the image, 18:12Z): `scripts/s2_coverage_equivalence.py` on the
+five hwfd-leads products: **EQUIVALENT** (manifest path `get=1` vs listing path 7 LIST pages per product; zero
+orphans, strays or ghosts).
+Gate 2, one-lane canary: box2 `tat-s2-hwfd-leads` recreated on image `tat-s2:cov` at **18:43:45Z** with an
+auto-rollback watchdog (`s2_cov_canary_watchdog.sh`: stale manifest > 4,200 s, traceback or 6 `[FAIL]`s in a
+round, newest advertised frame without `_ready.json`, or no `[done]` for 4,200 s → recreate on `tat-s2:latest`
+and exit 42; 7,200 s clean → PASS). Fleet roll only after PASS. Outcome and measurements below.
+
 ### Measured after each change (Class A rate and storage, not projections)
 
 | when (UTC) | change state | Class A trailing hour (breaker `rate_1h`) | GraphQL LIST/h (last complete hour) | storage (GraphQL, lags ~1 h) | objects |
