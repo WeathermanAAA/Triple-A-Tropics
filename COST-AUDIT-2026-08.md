@@ -220,6 +220,42 @@ Recommended order after your authorization (each is its own small commit with it
 Do NOT: reintroduce `actions/cache` for SST frames, widen the box R2 token, or move the
 media to a box.
 
-## Phase 0 — circuit breaker + kill switch (status)
+## Phase 0 — circuit breaker + kill switch (status as of 2026-08-25 16:05Z)
 
-See the section appended after deployment (below) and `workers/README.md` § r2-breaker.
+**Deployed, ALERT-ONLY.** Worker `r2-breaker` (`workers/r2-breaker.js`, TAT main a4a2b5c8) on
+`https://triple-a-tropics.com/r2-breaker/status` (+ `r2-breaker.coloradoskier2018.workers.dev`),
+cron every 5 min at 2 min past the boundary (`2,7,…,57`; a bucket read on its own boundary is
+only ~70% ingested), state in D1 `tat-breaker`. First tick 15:57:55Z: rate_1h 21,294/h,
+pace_15m 20,796/h, verdict ok, GraphQL 436 ms. Thresholds: warn 80,000/h, trip 150,000/h or a
+15-min pace ≥ 300,000/h, sustained for 2 ticks (normal mean 29K, max 46K; incident 445K).
+Alert mode opens one GitHub issue per episode ("[r2-breaker] WOULD HAVE TRIPPED …", label
+`breaker`) and touches nothing; `writes_enabled` can only go false on a trip while ARMED or a
+manual `POST /trip`, and only `POST /reset` (manual) turns it back on. Fail-open on every
+monitoring failure: analytics errors, empty results, a missing token, or an exception never
+change `writes_enabled`.
+
+**It proves it is alive, three ways:** every tick stamps `last_tick`/`last_ok_tick` and a gap
+> 20 min opens a "heartbeat gap" issue; `.github/workflows/breaker-liveness.yml` (half-hourly at
+:11/:41, first manual run 32869163239 green) turns unreachable / silent > 20 min / 3 analytics
+failures into a RED run (GitHub failure email); the `/fleet/` page carries a breaker card that
+renders "unreachable" as a fault. Tests: 25 python + a 16-scenario node harness, adversarially
+reviewed (three lenses; 8 confirmed findings fixed before deploy, including a deploy-script
+SyntaxError that would have lost the admin key, a re-trip-after-reset window, and the
+boundary under-count).
+
+**Built, tested, NOT deployed (needs your authorization; it recreates lanes):** the box kill
+switch. tsr branch `cost-breaker` (3b9b02c): `tat_killswitch.py` gates every R2 PUT in
+`s1_ingest.R2` (all s2 lanes, s1, heartbeat), meso/floater/hafs `R2`, intensity `R2Sink`,
+guidance `_R2`; `fleet/*` keys always pass (liveness); `scripts/heartbeat.sh` mirrors `/status`
+to `fleet/breaker.json` on R2 (the only box→Worker traffic: 2 GET/min fleet-wide, because
+Workers are on the free plan); `fleet.sh writes off|on [box|all]` is the 30-second manual path
+(sets `TAT_R2_WRITES=0`, recreates only the write lanes from the same image, verifies the env
+AND that the guard is present in each container); `fleet.sh breaker status|arm|disarm|trip|reset`.
+TAT branch `cost-killswitch` (cc02f38b): the byte-identical module wired into the six
+overlay `R2Store`s, `sarobs/store.py`, recon and ascat publishers. 73 + 65 tests. Until the
+images are rebuilt, `writes off` reports `guard: ABSENT` on every lane and an armed trip
+cannot stop anything, so: **deploy the switch before arming**.
+
+Admin key: `TAT_BREAKER_ADMIN_KEY` in box1 `/root/tsr-s2/.env` (rotated once at deploy).
+The Worker's GraphQL read currently uses a copy of the Codespace deploy token; a scoped
+Account Analytics:Read token should replace it (queued, needs you).

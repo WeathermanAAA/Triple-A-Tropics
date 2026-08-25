@@ -29,10 +29,87 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-22T16:32:00Z
+updated: 2026-08-25T16:10:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: cost-audit-2026-08
+    title: Cost audit + lockdown — Phase 1 measured, Phase 2 recommendation (report only)
+    area: infra
+    status: shipped
+    date_shipped: 2026-08-25
+    note: >-
+      Every number measured, none inferred from the bill. R2 is 2.375 TB /
+      1.78 M objects (full bucket walk): shadow/sat 1.42 TB is flat under the
+      14-day prune, models/hafs 0.92 TB has NO retention and is 100% of the
+      +41 GB/day growth. The s2 emit lanes are 98% of all LISTs (hwfd 39%).
+      D1 tat-sandbox is 375.6 MB / 154 users. Workers are on the FREE plan
+      (sandbox-api pinned at the 10 ms CPU cap, 41% errors). Hostinger caps
+      both boxes at 32 TB/month and ingest alone uses ~74%, so media stays on
+      R2. Recommended order: hafs retention, hwfd cadence, manifest-based
+      coverage, accounts backend to box1 behind the existing tunnel, scoped
+      analytics token. Report in COST-AUDIT-2026-08.md.
+  - id: r2-breaker
+    title: R2 circuit breaker Worker live (alert-only week) with three-leg liveness alarm
+    area: infra
+    status: shipped
+    date_shipped: 2026-08-25
+    note: >-
+      workers/r2-breaker.js: cron every 5 min (2 min past the boundary) reads
+      Class-A ops from GraphQL, trips at 150K/h or a 300K/h 15-min pace for
+      two ticks (normal 29K, max 46K, incident 445K). Alert mode opens one
+      GitHub issue per episode (label breaker) and touches nothing; armed
+      mode stops writes until a manual reset. State in D1 tat-breaker;
+      /r2-breaker/status is the contract. Absence of heartbeat is alarmed by
+      the Worker's own gap detector, the breaker-liveness workflow (red run)
+      and the /fleet/ card. Fail-open on every monitoring failure. 25 tests +
+      16-scenario harness, three-lens adversarial review.
+  - id: r2-kill-switch-deploy
+    title: Box-side R2 write kill switch — built + tested, deploy needs Andrew (recreates lanes)
+    area: infra
+    status: needs-andrew
+    note: >-
+      tat_killswitch.py (byte-identical in tsr cost-breaker 3b9b02c and TAT
+      cost-killswitch cc02f38b) gates every R2 PUT on both boxes; fleet/* keys
+      always pass; deletes never gated; fails open on its own failures. The
+      30-second manual path is fleet.sh writes off|on (env + recreate of the
+      write lanes only, guard presence verified per container). Heartbeat
+      mirrors /status to fleet/breaker.json so boxes never poll the Worker.
+      Deploy = merge both branches + fleet.sh deploy all; until then an armed
+      trip stops nothing. Arm only after this lands and the alert-only week
+      shows no false positives.
+  - id: hafs-r2-retention
+    title: models/hafs retention prune (14 d) — the only compounding cost line
+    area: models
+    status: needs-andrew
+    note: >-
+      919 GB and growing 30–55 GB/day with no retention: each cycle lands
+      under models/hafs/{cycle}/ and update-hafs.yml only deletes within the
+      cycle it rendered. A daily walk that deletes cycles older than 14 days
+      caps the prefix at ~450–750 GB (DeleteObjects is free). Dry-run report
+      first, then apply. Phase 2 item A.
+  - id: s2-manifest-coverage
+    title: s2 coverage check from the manifest instead of per-stamp LIST probes (−90% of listing)
+    area: satellite
+    status: needs-andrew
+    note: >-
+      _covered_times → complete_stamps probes one LIST per stamp in the
+      backfill window every pass; the lane is the sole writer and already
+      maintains latest_times.json, so the manifest (one Class B GET) plus one
+      HEAD of the newest marker gives the same answer. Listing stays for the
+      heal tick and cold start. Emit hot path: adversarial review plus a
+      frame-identical check on one lane before the fleet. Phase 2 item C;
+      item B (hwfd pass cadence, 11,415 passes/day for 22 bands) first.
+  - id: accounts-backend-to-box
+    title: Accounts backend (D1 tat-sandbox + tat-sandbox-api) to box1 behind the existing tunnel
+    area: apps
+    status: needs-andrew
+    note: >-
+      375.6 MB / 154 users / 62,562 storms fits a box trivially; the real
+      exposure today is the Workers free-plan cap (41% exceededResources).
+      SQLite or Postgres plus a service behind Caddy via the cloudflared
+      tunnel already on box1; dry run, row counts both sides, Clerk JWT
+      verification unchanged, D1 kept live read-only for a day. Phase 2 item D.
   - id: floater-frame-recency-discriminator
     title: Freshness monitor sees a producing-but-lagging floater (frame-recency discriminator)
     area: infra
