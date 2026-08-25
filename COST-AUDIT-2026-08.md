@@ -235,6 +235,12 @@ Non-cycle children of `models/hafs/` are never touched (found: none).
 Recurring: `.github/workflows/prune-hafs.yml`, daily 05:31 UTC (+06:01 backup), dispatchable as a dry run.
 Outcome of the apply and the measured storage: see the "Measured after" table appended below once available.
 
+**Applied** from box2 as a detached unit, 2026-08-25 16:13:03Z to 16:45:55Z: `TOTAL deleted: 168 cycles,
+220,745 objects, 435.2 GB (listing cost: 374 pages); kept 41 cycles`, 0 DeleteObjects errors, exit 0.
+Post-apply dry run at 16:47Z: `41 cycle prefixes (2026081118 .. 2026082406) ... would delete: 0 cycles`.
+Storage as accounted by R2 (GraphQL `r2StorageAdaptiveGroups`, lags ~1 h) is recorded in the
+"Measured after" table below as it lands.
+
 <details><summary>Full list of the 168 cycles (cycle, age in days, objects, GB)</summary>
 
 | cycle | age d | objects | GB |
