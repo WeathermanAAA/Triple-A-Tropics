@@ -12,6 +12,15 @@ import json
 import os
 import pathlib
 
+# The R2 write kill switch (tat_killswitch.py at the repo root, mirrored in
+# tsr). Optional on purpose: a missing or broken module means "allowed" --
+# the switch can only ever STOP writes, never break a lane. Deletes are
+# never guarded (free on R2; prune must keep reducing storage).
+try:
+    import tat_killswitch
+except Exception:  # noqa: BLE001
+    tat_killswitch = None
+
 
 class LocalStore:
     def __init__(self, root: str):
@@ -46,6 +55,8 @@ class R2Store:
 
     def put(self, key: str, body: bytes, content_type: str,
             cache_control: str) -> None:
+        if tat_killswitch is not None and not tat_killswitch.writes_allowed(key):
+            return                       # dropped (the switch logs it)
         self.c.put_object(Bucket=self.bucket, Key=key, Body=body,
                           ContentType=content_type, CacheControl=cache_control)
 

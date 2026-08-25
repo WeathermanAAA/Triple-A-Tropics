@@ -27,6 +27,13 @@ publish gate:
     LAST so the index never points at storm files that did not land
   * then a TARGETED recursive delete per slug in _pruned_slugs.json (never a
     blanket prune); individual delete failures are non-fatal.
+  * the reap is tied to the INDEX, not to the kill switch (deletes are never
+    guarded): it runs only on a tick whose manifest.json landed. The pruned
+    slugs are what the LIVE manifest still lists and the built one drops, so
+    reaping their trees under a manifest that did not land (switch off) would
+    leave the live index pointing at 404s — the mirror image of "index LAST".
+    Deferred, not lost: the builder re-derives the list from the live union
+    every tick, so the first landed manifest reaps them.
 
 Usage: recon_r2_publish.py <build_dir> [--prefix recon] [--heartbeat 600]
 Env:   R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
@@ -40,6 +47,19 @@ import json
 import os
 import sys
 from pathlib import Path
+
+# The R2 write kill switch (tat_killswitch.py at the repo root, mirrored in
+# tsr). `python scripts/x.py` puts scripts/ (not the repo root) on sys.path,
+# so the root is appended here. Optional on purpose: a missing or broken
+# module means "allowed" -- the switch can only ever STOP writes. Deletes
+# (the targeted reaps below) are never guarded.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+try:
+    if _REPO_ROOT not in sys.path:
+        sys.path.append(_REPO_ROOT)
+    import tat_killswitch
+except Exception:  # noqa: BLE001
+    tat_killswitch = None
 
 CACHE = "public, max-age=30"
 CTYPE = "application/json"
@@ -141,10 +161,19 @@ def main() -> int:
     live_current = _get_json(c, bucket, f"{args.prefix}/current.json")
     live_tcpod = _get_json(c, bucket, f"{args.prefix}/tcpod.json")
 
-    def _put(p: Path) -> None:
+    skipped = 0
+
+    def _put(p: Path) -> bool:
+        """True if the object was uploaded; False when the kill switch
+        dropped it (the switch logs the drop)."""
+        nonlocal skipped
         key = f"{args.prefix}/{p.relative_to(root).as_posix()}"
+        if tat_killswitch is not None and not tat_killswitch.writes_allowed(key):
+            skipped += 1
+            return False
         c.put_object(Bucket=bucket, Key=key, Body=p.read_bytes(),
                      ContentType=CTYPE, CacheControl=CACHE)
+        return True
 
     # ---- shrink guard (growing-union invariant; last-resort net) ----
     if live_manifest is not None:
@@ -184,33 +213,46 @@ def main() -> int:
     _rank = {"current.json": 1, "manifest.json": 2}
     files.sort(key=lambda p: _rank.get(p.relative_to(root).as_posix(), 0))
     n = 0
+    index_landed = False
     for p in files:
-        _put(p)
-        n += 1
+        if _put(p):
+            n += 1
+            if p.relative_to(root).as_posix() == "manifest.json":
+                index_landed = True
 
     # ---- targeted reap of superseded slug trees (never a blanket delete) ----
+    # Only under a manifest that landed (see the docstring): the slugs below
+    # are still listed by the LIVE manifest until the built one replaces it.
+    # Not a switch check -- deletes are never guarded.
     reaped = 0
-    for slug in pruned:
-        if not slug:
-            continue
-        try:
-            token = None
-            while True:
-                kw = {"Bucket": bucket, "Prefix": f"{args.prefix}/{slug}/"}
-                if token:
-                    kw["ContinuationToken"] = token
-                page = c.list_objects_v2(**kw)
-                keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
-                if keys:
-                    c.delete_objects(Bucket=bucket, Delete={"Objects": keys})
-                    reaped += len(keys)
-                if not page.get("IsTruncated"):
-                    break
-                token = page.get("NextContinuationToken")
-        except Exception as e:                          # noqa: BLE001
-            print(f"[recon-publish] reap {slug} failed (orphans left): {e}")
-    print(f"[recon-publish] uploaded {n} file(s), reaped {reaped} object(s) "
-          f"across {len(pruned)} pruned slug(s) -> {bucket}/{args.prefix}/")
+    if index_landed:
+        for slug in pruned:
+            if not slug:
+                continue
+            try:
+                token = None
+                while True:
+                    kw = {"Bucket": bucket, "Prefix": f"{args.prefix}/{slug}/"}
+                    if token:
+                        kw["ContinuationToken"] = token
+                    page = c.list_objects_v2(**kw)
+                    keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+                    if keys:
+                        c.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+                        reaped += len(keys)
+                    if not page.get("IsTruncated"):
+                        break
+                    token = page.get("NextContinuationToken")
+            except Exception as e:                      # noqa: BLE001
+                print(f"[recon-publish] reap {slug} failed (orphans left): {e}")
+        reap_note = (f"reaped {reaped} object(s) across {len(pruned)} "
+                     "pruned slug(s)")
+    else:
+        reap_note = (f"reap of {len(pruned)} pruned slug(s) deferred "
+                     "(manifest.json did not land)")
+    print(f"[recon-publish] uploaded {n} file(s), {reap_note} "
+          f"-> {bucket}/{args.prefix}/"
+          + (f" (kill switch dropped {skipped} put(s))" if skipped else ""))
     return 0
 
 

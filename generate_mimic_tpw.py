@@ -44,6 +44,15 @@ from pathlib import Path
 
 import numpy as np
 
+# The R2 write kill switch (tat_killswitch.py at the repo root, mirrored in
+# tsr). Optional on purpose: a missing or broken module means "allowed" --
+# the switch can only ever STOP writes, never break a lane. Deletes are
+# never guarded (free on R2; prune must keep reducing storage).
+try:
+    import tat_killswitch
+except Exception:  # noqa: BLE001
+    tat_killswitch = None
+
 BASE = "https://bin.ssec.wisc.edu/pub/mtpw2/data"
 UTC = dt.timezone.utc
 KEEP = 36                     # rolling frames (~36 h at the hourly cadence)
@@ -205,6 +214,8 @@ class R2Store:
             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"])
 
     def put(self, key, data, cache, ctype):
+        if tat_killswitch is not None and not tat_killswitch.writes_allowed(key):
+            return                       # dropped (the switch logs it)
         self.c.put_object(Bucket=self.bucket, Key=key, Body=data,
                           CacheControl=cache, ContentType=ctype)
 
