@@ -472,8 +472,22 @@ is the precise instrument for B (148.7K to ~15–18K list pages/day); the fleet 
 low-pass-count lane noise (box1's g19fd sweeps every ~110 min), so the 2026-08-26 daily GraphQL total is the
 definitive before/after for B (expected ~250K LIST/day before C lands).
 
-Workers Paid (Andrew's upgrade): not visible in the analytics yet at 18:12Z (17:00Z hour: 1,932 requests, 1,072
-`exceededResources` = 55%, CPU p50 still 10,000 µs). Re-check once the plan change shows.
+Workers Paid (Andrew's upgrade, confirmed active by him ~19:30Z). Measured on the RATE, not the period total:
+previous hour 924 of 1,662 requests `exceededResources` (55.6%); last hour (to 19:35Z) 442 of 1,389 (31.8%);
+5-minute buckets 19:20–19:40Z: 34%, 26%, 40%, 37%, 44% — **the errors have not stopped**. Two live tails
+(`wrangler tail`, 19:38Z and 19:42–19:44Z): every failure is `exceededCpu` ("Worker exceeded CPU time limit")
+on exactly two endpoints, `PUT /api/checkpoint/<key>` and `POST /api/season` (0.5–1.2 MB bodies: gunzip +
+SHA-256 in JS), killed at **exactly 50 ms CPU** (min = median = max = 50) — while in the same two minutes the
+same endpoints completed 25 times with CPU up to 341 ms. The kill point moved from 10,000 µs to 50,000 µs at
+~19:33Z (the plan change propagating), but not to the Paid default of 30 s; the deployed version (6250f19f,
+2026-08-19) carries no per-script `cpu_ms` limit. Cloudflare's limits page says each isolate has "built-in
+flexibility" for infrequent overruns and terminates when the Worker "starts hitting the limit consistently",
+which matches the pattern (some isolates still enforcing a small limit, bursts allowed, then kills). So the
+10 ms cap was not the whole story: the Paid limit has not taken effect for this Worker. Separate defect, for
+Andrew (sandbox code/deploy, out of this audit's scope): redeploy the Worker unchanged to get fresh isolates
+under the Paid plan and re-measure; if 50 ms kills persist, set `[limits] cpu_ms = 30000` explicitly and
+redeploy; if they still persist, Cloudflare support (plan not applied). Independently, hashing 1 MB uploads
+with `crypto.subtle.digest` instead of JS would likely bring those endpoints under 50 ms regardless.
 
 Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
 is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
