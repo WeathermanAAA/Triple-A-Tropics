@@ -65,6 +65,14 @@
   code { background: #0d1830; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   .fl-err { background: #24100f; border: 1px solid #4a2320; color: #f0b3ae;
     padding: 12px 14px; border-radius: 8px; margin-bottom: 18px; font-size: 13px; }
+  /* R2 circuit-breaker card (workers/r2-breaker.js /status), above the grid */
+  .fl-brk { margin: 0 0 18px; }
+  .fl-brk .fl-metrics { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .fl-brk .fl-m small { color: var(--muted, #8ea2bd); font-size: 10.5px;
+    font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .fl-brk .fl-lanes p { margin: 0 0 3px; font-size: 12px; line-height: 1.5; color: #cbd8e8; }
+  .fl-brk .fl-lanes p.bad { color: #f0b3ae; }
+  .fl-brk a { color: #8fb4e3; }
 </style>
 </head>
 <body>
@@ -80,6 +88,7 @@
     look.
   </p>
   <div id="fl-error"></div>
+  <div id="fl-breaker" class="fl-brk"></div>
   <div class="fl-grid" id="fl-grid"></div>
   <p class="fl-foot">
     The roster on this page is published from <code>fleet.yml</code> in
@@ -204,6 +213,133 @@
   }
   loadRoster().then(load);
   setInterval(function () { loadRoster().then(load); }, 60000);
+})();
+</script>
+<script>
+(function () {
+  // R2 circuit breaker card (workers/r2-breaker.js). Read straight from the
+  // Worker with no-store: this card is one leg of the breaker's own liveness
+  // alarm (with the box heartbeat mirror and the breaker-liveness workflow),
+  // so an unreachable Worker must read as a fault, never as nothing to show.
+  var STATUS = 'https://triple-a-tropics.com/r2-breaker/status';
+  var WARN_S = 600, DEAD_S = 1200;   // 10 min without a tick = stale, 20 min = silent
+  var mount = document.getElementById('fl-breaker');
+
+  function fmtAge(s) {
+    if (s < 90) return Math.round(s) + 's';
+    if (s < 5400) return (s / 60).toFixed(0) + ' min';
+    if (s < 172800) return (s / 3600).toFixed(1) + ' h';
+    return (s / 86400).toFixed(1) + ' days';
+  }
+  function num(n) { return n == null ? 'n/a' : Number(n).toLocaleString('en-US'); }
+  function esc(v) {
+    return String(v).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function metric(label, value, cls, sub) {
+    return '<div class="fl-m"><span>' + label + '</span><b class="' + (cls || '') + '">' +
+      value + '</b>' + (sub || '') + '</div>';
+  }
+
+  function unreachable(why) {
+    mount.innerHTML = '<div class="fl-box dead"><div class="fl-name"><b>R2 breaker</b>' +
+      '<span class="fl-state">unreachable</span></div>' +
+      '<p class="fl-role">breaker unreachable (' + esc(why) + '). The Worker at ' +
+      '<code>/r2-breaker/status</code> did not answer, so R2 writes are unmonitored from ' +
+      'this leg. Check the Cloudflare Workers dashboard and the breaker-liveness workflow; ' +
+      'the box heartbeats carry the last mirrored copy as <code>breaker_age_s</code>.</p></div>';
+  }
+
+  function render(d) {
+    var age = d.heartbeat_age_s;   // server-side age: immune to the viewer's clock
+    var state, label;
+    if (age == null) { state = 'warn'; label = 'no tick yet'; }
+    else if (age > DEAD_S) { state = 'dead'; label = 'breaker silent ' + fmtAge(age); }
+    else if (age > WARN_S) { state = 'warn'; label = 'stale ' + fmtAge(age); }
+    else if (d.writes_enabled === false) { state = 'dead'; label = 'writes stopped'; }
+    else if (d.verdict === 'over') { state = 'dead'; label = 'over threshold'; }
+    else if (d.verdict === 'error') { state = 'warn'; label = 'analytics error'; }
+    else if (d.verdict === 'warn') { state = 'warn'; label = 'elevated'; }
+    else { state = 'ok'; label = 'live'; }
+
+    var warn = d.warn_hourly, trip = d.trip_hourly, rate = d.rate_1h, pace = d.pace_15m;
+    var rc = rate == null ? '' : rate >= trip ? 'bad' : rate >= warn ? 'hot' : '';
+    var pc = pace == null ? '' : pace >= 2 * trip ? 'bad' : pace >= trip ? 'hot' : '';
+    var hc = age == null ? 'hot' : age > DEAD_S ? 'bad' : age > WARN_S ? 'hot' : '';
+    var armed = d.mode === 'armed';
+    var stopped = d.writes_enabled === false;
+    var barW = rate == null ? 0 : Math.min(100, 100 * rate / trip);
+
+    var h = '<div class="fl-box ' + state + '"><div class="fl-name"><b>R2 breaker</b>' +
+      '<span class="fl-state">' + label + '</span></div>' +
+      '<p class="fl-role">Class-A R2 operations per hour, read from Cloudflare analytics every ' +
+      (d.tick_interval_s / 60) + ' min. ' +
+      (armed ? 'Armed: a sustained trip stops R2 writes on every box until a manual reset.'
+             : 'Alert-only: a trip opens an issue and touches nothing.') +
+      (stopped ? ' Writes are STOPPED' + (d.trip_reason ? ' (' + esc(d.trip_reason) + ')' : '') +
+                 (d.tripped_at ? ' since ' + esc(d.tripped_at) : '') + '; only POST /reset re-enables them.' : '') +
+      '</p>' +
+      '<div class="fl-metrics">' +
+      metric('mode', armed ? 'ARMED' : 'ALERT-ONLY', armed ? 'hot' : '') +
+      metric('writes', stopped ? 'STOPPED' : 'ENABLED', stopped ? 'bad' : '') +
+      metric('rate, last hour', num(rate), rc,
+        '<i class="fl-bar"><i class="' + rc + '" style="width:' + barW.toFixed(0) + '%"></i></i>' +
+        '<small>warn ' + num(warn) + ' / trip ' + num(trip) + '</small>') +
+      metric('pace, last 15 min', num(pace), pc, '<small>fast trip at ' + num(2 * trip) + '</small>') +
+      metric('last tick', age == null ? 'never' : fmtAge(age) + ' ago', hc,
+        '<small>' + (d.last_tick ? esc(d.last_tick.replace('T', ' ').slice(0, 16)) + ' UTC' : 'no tick recorded') + '</small>') +
+      metric('would have tripped', num(d.would_have_tripped_count), d.would_have_tripped_count > 0 ? 'hot' : '',
+        '<small>' + (d.last_would_trip_at ? 'last ' + esc(d.last_would_trip_at.replace('T', ' ').slice(0, 16)) + ' UTC' : 'none yet') + '</small>') +
+      '</div><div class="fl-lanes">';
+    var ep = d.episode || {};
+    if (ep.active) {
+      h += '<p class="bad">Episode active since ' + esc(ep.started_at || '?') + ', peak ' + num(ep.peak_rate_1h) + '/h' +
+        (ep.issue_url ? ' (<a href="' + esc(ep.issue_url) + '">issue</a>)' : '') + '.</p>';
+    } else if (ep.started_at) {
+      h += '<p>Last episode ' + esc(ep.started_at) + ', peak ' + num(ep.peak_rate_1h) + '/h' +
+        (ep.issue_url ? ' (<a href="' + esc(ep.issue_url) + '">issue</a>)' : '') + '.</p>';
+    }
+    if (d.consecutive_errors > 0 || d.last_error) {
+      h += '<p class="' + (d.consecutive_errors >= 3 ? 'bad' : '') + '">' + num(d.consecutive_errors) +
+        ' consecutive analytics read error' + (d.consecutive_errors === 1 ? '' : 's') +
+        (d.last_error ? ': ' + esc(d.last_error) : '') + '</p>';
+    }
+    h += '<p>verdict ' + esc(d.verdict) + ' (' + num(d.consecutive_over) + ' over in a row), ' +
+      num(d.gaps_detected) + ' heartbeat gap' + (d.gaps_detected === 1 ? '' : 's') +
+      ' detected. <a href="' + STATUS + '">status JSON</a></p></div></div>';
+    mount.innerHTML = h;
+  }
+
+  // Budget: the Worker shares the free plan's 100K requests/day with every
+  // other Worker on the account (the ATCF proxy that feeds ACE included),
+  // and the breaker's own cron plus the heartbeat mirror already use ~3.2K.
+  // So this card polls at the breaker's own tick cadence (5 min), never
+  // from a hidden tab, and at most once per 5 min on tab return: one
+  // pinned tab costs ~290 requests/day, not 1,440.
+  var POLL_MS = 300000;
+  var lastLoad = 0;
+  function load() {
+    lastLoad = Date.now();
+    fetch(STATUS + '?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (!d || d.v !== 1) throw new Error('unexpected status document');
+        render(d);
+      })
+      .catch(function (e) { unreachable(e && e.message ? e.message : 'fetch failed'); });
+  }
+  function poll() {
+    if (document.hidden) return;
+    if (Date.now() - lastLoad < POLL_MS) return;
+    load();
+  }
+  load();
+  setInterval(poll, POLL_MS);
+  document.addEventListener('visibilitychange', poll);
 })();
 </script>
 </body>

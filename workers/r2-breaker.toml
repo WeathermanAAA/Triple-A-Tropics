@@ -1,0 +1,50 @@
+# wrangler config for the R2 Class-A circuit breaker (deploy:
+# workers/deploy-breaker.sh). Same one-toml-per-worker pattern as
+# bugs-api.toml / telemetry-collector.toml next door.
+name = "r2-breaker"
+main = "r2-breaker.js"
+compatibility_date = "2026-06-01"
+# workers.dev stays on as a deploy-smoke surface (the Worker strips the
+# /r2-breaker prefix only when present, so both hosts serve /status).
+workers_dev = true
+
+routes = [
+  { pattern = "triple-a-tropics.com/r2-breaker/*", zone_name = "triple-a-tropics.com" }
+]
+
+# Every 5 minutes, 2 min AFTER each 5-min boundary (288 invocations/day
+# against the free plan's 100K/day). Not */5: measured 2026-08-25, a bucket
+# read ~2 s after its boundary is only ~70% ingested (784 vs 1132 a minute
+# later), so a tick on the boundary judges the freshest bucket ~30% low and
+# the partial-bucket rule never sees a partial. Two minutes of grace keeps
+# the freshest bucket in the read at full weight. Written as an explicit
+# minute list rather than "2-59/5" so no cron dialect can misread it.
+# Boxes never poll this Worker (they read the CDN mirror fleet/breaker.json).
+[triggers]
+crons = ["2,7,12,17,22,27,32,37,42,47,52,57 * * * *"]
+
+# Breaker state (state/ticks/events). Schema: r2-breaker.sql (idempotent),
+# applied by deploy-breaker.sh; the Worker also self-heals a missing table.
+[[d1_databases]]
+binding = "DB"
+database_name = "tat-breaker"
+database_id = "b071cd4b-ac24-4692-ab14-977ba051b99d"
+
+[vars]
+ACCOUNT_TAG = "33bb26c164250e1893f2ca61d293d44d"
+BUCKET = "triple-a-tropics-media"
+REPO = "WeathermanAAA/Triple-A-Tropics"
+# Thresholds (PHASE0_SPEC 2026-08-25): normal Class-A rate is ~29K/h mean,
+# ~46K/h observed max; the 08-03 incident ran ~445K/h. TRIP = 5.1x mean,
+# ~$16/day pace. Change these only with the reason recorded here.
+TRIP_HOURLY = "150000"
+WARN_HOURLY = "80000"
+# alert = prove-alive week (issues only, never stops writes); armed = stops
+# writes on a trip. Runtime mode lives in D1 (POST /arm|/disarm); this is
+# the value a fresh, empty database starts from.
+DEFAULT_MODE = "alert"
+
+# secrets (NOT here, NOT in the repo — deploy-breaker.sh wires them):
+#   CF_GRAPHQL_TOKEN  Account Analytics:Read (reads r2OperationsAdaptiveGroups)
+#   GITHUB_TOKEN      durable classic PAT, repo scope (issues RW)
+#   ADMIN_KEY         X-Admin-Key for /arm /disarm /trip /reset

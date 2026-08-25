@@ -1,0 +1,85 @@
+name: breaker-liveness
+
+# EXTERNAL leg of the R2 circuit breaker's heartbeat-absence alarm.
+#
+# The breaker (workers/r2-breaker.js, cron */5 on Cloudflare) must PROVE it
+# is alive: a monitor that dies quietly is worse than none. This workflow
+# reads /status from outside Cloudflare's cron and turns "no tick in 20 min"
+# (or "cannot read R2 analytics for 15 min", or an unreachable/wrong-version
+# Worker) into a RED run = GitHub failure email. It never changes anything.
+#
+# GitHub cron itself can be load-shed (offset minutes below are load-bearing,
+# and even then runs get dropped), so this is ONE of THREE legs: the box
+# heartbeat mirrors /status into fleet/breaker.json (breaker_age_s), and the
+# /fleet/ page shows the breaker card with the same 10/20-min colouring.
+# Any single leg dying leaves the other two.
+
+on:
+  schedule:
+    - cron: "11,41 * * * *"   # half-hourly, offset minutes (load-bearing)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: breaker-liveness
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch /status (3 retries)
+        id: fetch
+        run: |
+          set +e
+          URL="https://triple-a-tropics.com/r2-breaker/status"
+          BODY=""
+          for i in 1 2 3; do
+            BODY=$(curl -sS -m 20 -H 'cache-control: no-cache' "$URL") && [ -n "$BODY" ] && break
+            echo "attempt $i failed; retrying in 10 s"
+            sleep 10
+          done
+          if [ -z "$BODY" ]; then
+            echo "::error::breaker UNREACHABLE at $URL after 3 attempts"
+            exit 1
+          fi
+          echo "$BODY" > status.json
+          echo "--- /status ---"
+          python3 -m json.tool status.json || cat status.json
+
+      - name: Judge liveness
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          try:
+              d = json.load(open("status.json"))
+          except Exception as e:
+              sys.exit(f"::error::/status is not JSON ({e}) -> treat as unreachable")
+          bad = []
+          if d.get("v") != 1:
+              bad.append(f"contract version {d.get('v')!r} != 1")
+          age = d.get("heartbeat_age_s")
+          if age is None:
+              bad.append("no tick recorded yet (heartbeat_age_s null)")
+          elif age > 1200:
+              bad.append(f"heartbeat_age_s {age} > 1200 (breaker silent {age // 60} min)")
+          if (d.get("consecutive_errors") or 0) >= 3:
+              bad.append(f"consecutive_errors {d.get('consecutive_errors')} >= 3 "
+                         f"(last_error: {d.get('last_error')})")
+          print(f"mode={d.get('mode')} writes_enabled={d.get('writes_enabled')} "
+                f"verdict={d.get('verdict')} rate_1h={d.get('rate_1h')} "
+                f"pace_15m={d.get('pace_15m')} heartbeat_age_s={age} "
+                f"would_have_tripped={d.get('would_have_tripped_count')} "
+                f"gaps={d.get('gaps_detected')}")
+          if d.get("writes_enabled") is False:
+              print(f"::warning::R2 writes are STOPPED (tripped_at={d.get('tripped_at')}, "
+                    f"reason={d.get('trip_reason')}); POST /reset re-enables")
+          if bad:
+              for b in bad:
+                  print(f"::error::{b}")
+              sys.exit(1)
+          print("breaker alive")
+          PY
