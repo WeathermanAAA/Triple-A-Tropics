@@ -536,7 +536,16 @@ plan whose ceiling is 30 s; no `[limits]` block existed anywhere in `workers/`).
 including the Clerk secret, custom domain attached, `/api/health` 200, version runtime `limits: {cpu_ms: 30000}`.
 **After, live tail (180 s from 20:19Z): 29 of 29 requests `ok`, 0 `exceededCpu`** — 14 `PUT /api/checkpoint` at
 median **24.5 ms CPU (was 129–131 ms)**, the largest **153 ms completing** where 50 ms was the kill point, and a
-`POST /api/season` at 95 ms completing. Hourly `exceededResources` after the deploy: see the rows appended below.
+`POST /api/season` at 95 ms completing. Hourly `exceededResources` after the deploy:
+
+| hour (UTC) | requests | `exceededResources` | success CPU p50 / p90 / p99 |
+| --- | ---: | ---: | --- |
+| 08-26 17:00 (before) | 646 | 63 (10%) | 6.8 / 116 / 144 ms |
+| 08-26 18:00 (before) | 504 | 94 (19%) | 2.9 / 112 / 486 ms |
+| 08-26 19:00 (before) | 1,521 | 269 (18%) | 3.7 / 132 / 370 ms |
+| 08-26 20:00 (deploy at :18) | 727 | 1 (0%, pre-deploy minutes) | 6.9 / 113 / 296 ms |
+| 08-26 21:00 (first 13 min) | 207 | **0** | 6.9 / 283 / 364 ms |
+| **since deploy, 12 five-minute buckets to 21:13Z** | **757** | **0 (0.0%)** | p99 up to 440 ms, completing |
 p50 11,942 µs) — the rate tracks the checkpoint-write traffic, so quiet hours read low without anything
 having changed.
 
