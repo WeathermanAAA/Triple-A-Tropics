@@ -1,0 +1,19 @@
+# tat-sandbox-api — hotfix deploy config (2026-08-26): the built module with the
+# native-base64 patch (native-base64.patch). Bindings mirror the deployed
+# script's settings; secrets (CLERK_SECRET_KEY) are retained by wrangler across
+# deploys. The custom domain api.triple-a-tropics.com is attached to the script
+# and is not managed here. deploy.sh writes worker.patched.js next to this file.
+name = "tat-sandbox-api"
+main = "worker.patched.js"
+compatibility_date = "2026-08-01"
+keep_vars = true
+
+[vars]
+CLERK_AUTHORIZED_PARTY = "https://triple-a-tropics.com"
+CLERK_ISSUER = "https://clerk.triple-a-tropics.com"
+DEV_AUTH = "0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tat-sandbox"
+database_id = "383ab13a-22fe-45c9-9a6c-d0bda5a9a1d8"
