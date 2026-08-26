@@ -545,7 +545,15 @@ median **24.5 ms CPU (was 129–131 ms)**, the largest **153 ms completing** whe
 | 08-26 19:00 (before) | 1,521 | 269 (18%) | 3.7 / 132 / 370 ms |
 | 08-26 20:00 (deploy at :18) | 727 | 1 (0%, pre-deploy minutes) | 6.9 / 113 / 296 ms |
 | 08-26 21:00 (first 13 min) | 207 | **0** | 6.9 / 283 / 364 ms |
-| **since deploy, 12 five-minute buckets to 21:13Z** | **757** | **0 (0.0%)** | p99 up to 440 ms, completing |
+| 08-26 21:00 (full hour) | 1,066 | **0 (0%)** | 6.6 / 193 / 311 ms |
+| 08-26 22:00 (first 18 min) | 251 | **0** | 16.0 / 75 / 107 ms |
+| **since deploy, to 22:18Z (2 h)** | **1,867** | **0 (0.0%)** | every 5-min bucket 0; p99 up to 440 ms, completing |
+
+**Verdict (22:18Z): the kill rate went to zero.** 1,867 requests in the two hours after the deploy, none
+terminated, against 63–269 per hour (10–19%) in the three hours before; requests that now run 300–440 ms of
+CPU complete. The cap was the whole problem — with no `[limits]` block the Worker was enforced at 50 ms even on
+Paid — and the native-base64 patch is insurance that also cut the checkpoint write's median CPU from ~129 ms
+to ~25 ms.
 p50 11,942 µs) — the rate tracks the checkpoint-write traffic, so quiet hours read low without anything
 having changed.
 
