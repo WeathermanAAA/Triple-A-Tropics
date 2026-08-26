@@ -1,0 +1,43 @@
+--- /tmp/claude-1000/-workspaces-Triple-A-Tropics/bca25fca-26ea-4310-bf36-4b55db3d5ba4/scratchpad/sandbox/worker.orig.js	2026-08-26 17:47:39.033015415 +0000
++++ /tmp/claude-1000/-workspaces-Triple-A-Tropics/bca25fca-26ea-4310-bf36-4b55db3d5ba4/scratchpad/sandbox/worker.patched.js	2026-08-26 17:47:39.062015415 +0000
+@@ -135,7 +135,15 @@
+ function decodeBase64(value) {
+   if (typeof value !== "string" || !value || value.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value))
+     throw new Error("bad checkpoint encoding");
+-  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
++  // 2026-08-26 (cost audit): the per-character callback form
++  // Uint8Array.from(atob(v), c => c.charCodeAt(0)) burned ~1M JS calls per
++  // checkpoint write and was the largest CPU stage on PUT /api/checkpoint and
++  // POST /api/season. Native decode when the runtime has it; else a tight
++  // loop over the same atob output (identical bytes either way).
++  if (typeof Uint8Array.fromBase64 === "function") return Uint8Array.fromBase64(value);
++  const bin = atob(value), out = new Uint8Array(bin.length);
++  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
++  return out;
+ }
+ __name(decodeBase64, "decodeBase64");
+ function blobBytes(value) {
+@@ -148,6 +156,7 @@
+ __name(blobBytes, "blobBytes");
+ function encodeBase64(value) {
+   const bytes = blobBytes(value);
++  if (typeof bytes.toBase64 === "function") return bytes.toBase64();
+   let out = "";
+   for (let i = 0; i < bytes.length; i += 32768)
+     out += String.fromCharCode(...bytes.subarray(i, i + 32768));
+@@ -228,9 +237,13 @@
+     if (!Number.isFinite(bytes) || bytes < 0) throw new HttpError(400, "invalid content length");
+     if (bytes > MAX_REQUEST_BYTES) throw new HttpError(413, "request too large");
+   }
+-  const text = await req.text();
+-  if (new TextEncoder().encode(text).byteLength > MAX_REQUEST_BYTES)
++  // 2026-08-26 (cost audit): the byte-length check re-encoded the whole
++  // (up to 2.25 MB) body through TextEncoder just to measure it; the raw
++  // body length is the same number for free. Same UTF-8 decode as req.text().
++  const raw = await req.arrayBuffer();
++  if (raw.byteLength > MAX_REQUEST_BYTES)
+     throw new HttpError(413, "request too large");
++  const text = new TextDecoder().decode(raw);
+   try {
+     return JSON.parse(text);
+   } catch (e) {

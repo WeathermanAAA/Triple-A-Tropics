@@ -519,6 +519,18 @@ the 5-minute rate; (2) if kills persist, set `[limits] cpu_ms = 30000` explicitl
 still persist, Cloudflare support with the tail evidence (this document's numbers); and independently, hash the
 1 MB checkpoint uploads with `crypto.subtle.digest` instead of JS, which would bring those endpoints under
 50 ms on any plan. Latest hours for the record: 00:00Z 6% (91 of 1,453), 01:00Z partial 0% (0 of 423, CPU
+
+**2026-08-26 17:55Z, Andrew's follow-up ("replace the hand-written hash with crypto.subtle.digest"):** the deployed
+module already hashes with `crypto.subtle.digest` and inflates with `DecompressionStream`; the hand-written JS on the
+write path is `decodeBase64` (`Uint8Array.from(atob(v), c => c.charCodeAt(0))`, one callback per byte of a ~1 MB
+checkpoint) plus a redundant `TextEncoder().encode(body)` length check. Measured with the exact functions from the
+module (`workers/sandbox-api-hotfix/bench.mjs`): 0.57 MB gzip checkpoint **132 → 61 ms CPU** (decode 76 → 12 ms),
+1.14 MB **210 → 132 ms** (decode 113 → 25 ms); decoded bytes identical. The residual is `inflate + JSON.parse` of the
+whole checkpoint (46–102 ms, native but size-proportional) — the validation design, not the hash — so the kill
+rate should fall, not vanish. Before numbers: last 8 h to 17:43Z 329 of 5,147 requests killed (6.4%; hourly 0–22%);
+successful PUTs at 129–131 ms CPU in a 150 s tail. **The patch is vendored (`workers/sandbox-api-hotfix/`, patch +
+config + `deploy.sh`) but NOT deployed: both the script-upload API call and `wrangler deploy` for this Worker were
+blocked by the Codespace permission classifier.** After deploy, the after numbers come from the same two sources.
 p50 11,942 µs) — the rate tracks the checkpoint-write traffic, so quiet hours read low without anything
 having changed.
 
