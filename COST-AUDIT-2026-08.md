@@ -485,6 +485,7 @@ lane if more is wanted. Measured fleet numbers: "Measured after" table.
 | 08-25 18:07 | B only (first clean hour 17:00–18:00Z) | **13,401** | **6,575 (17:00h)** vs 15,627 (15:00h) | 1,954.5 GB | 1,571,829 |
 | 08-25 21:58 | C fleet: box2 steady (1 h after its roll), box1 in its cold rebuild (rolled 21:35Z) | 15,605 (28.5K peak during box1's cold sweep) | 8,661 (19:00h, canary+B) · 23,034 (20:00h, box2 cold rebuild) | 1,898.8 GB (the recreated prune lane ran once more) | 1,523,715 |
 | 08-25 23:58 | C fleet +3 h: box2 steady, box1 past most of its cold rebuild (g19fd's ~110-min sweep still finishing it) | **10,525** | **6,058 (22:00h)** · 7,798 (21:00h, box1 cold rebuild) | 1,906.6 GB | 1,529,669 |
+| 08-26 01:20 | C fleet +4.5 h (box1 +3.7 h): both boxes steady except g19fd's last cold rebuilds | **9,381** | **3,391 (00:00h)** · 4,228 (23:00h) | 1,910.1 GB | 1,531,846 |
 
 Fleet-level reading two hours after B: Class A per hour fell from 21,845 (15:00Z hour) to 13,586 (17:00Z hour) and
 LIST per hour from 15,627 to 6,575; the breaker's trailing hour read 13,401 at 18:07Z. The hwfd lane's own counter
@@ -517,7 +518,9 @@ complete at 300+ ms.** Separate defect, sandbox-side, for Andrew: (1) redeploy t
 the 5-minute rate; (2) if kills persist, set `[limits] cpu_ms = 30000` explicitly and redeploy; (3) if they
 still persist, Cloudflare support with the tail evidence (this document's numbers); and independently, hash the
 1 MB checkpoint uploads with `crypto.subtle.digest` instead of JS, which would bring those endpoints under
-50 ms on any plan.
+50 ms on any plan. Latest hours for the record: 00:00Z 6% (91 of 1,453), 01:00Z partial 0% (0 of 423, CPU
+p50 11,942 µs) — the rate tracks the checkpoint-write traffic, so quiet hours read low without anything
+having changed.
 
 Change C, box2 steady state one hour after its roll (lane `[ops]` counters, 20:59–21:59Z window, all lanes
 0 tracebacks / 0 `[FAIL]` / 0 fallbacks / 0 strays except the licence-gated `mtg`):
@@ -539,8 +542,14 @@ g19fd's 3,513 were still its cold rebuild (a ~110-min sweep, 22 products); conus
 before), conus-fast2 1,081 (≈13K vs 18K), g19fd-leads 771 (≈9K vs 14K). Box2 at +3 h: 2,922 pages in 2 h
 (≈35K/day, matching the +1 h reading). Fleet trailing hour at 23:58Z: **10,525 Class A/h** (breaker) against
 22–24K/h in the same hours the day before and the 24 h-to-15:00Z baseline of 23.6K/h; the 22:00Z hour read
-A 13,953 / LIST 6,058. The 2026-08-26 daily GraphQL total is the definitive number for B + C together
-(baseline 567K Class A/day, 383K LIST/day).
+A 13,953 / LIST 6,058. At 01:20Z (2 h windows): box1 3,226 list pages (≈39K/day, of which g19fd 1,845 still finishing its 22
+cold rebuilds; conus ≈6.2K/day vs 28.8K, conus-fast2 ≈5.5K vs 18K, g19fd-leads ≈4.9K vs 14.2K), box2 3,090
+(≈37K/day). Fleet list pages ≈ 76K/day and falling as g19fd settles, against the 383K/day baseline (−80%);
+the 00:00Z hour read **A 9,681 / LIST 3,391 / PUT 5,885** against 22–24K Class A in the same hours the day
+before, i.e. ≈ 240K Class A/day (−58%) ≈ $1.08/day ≈ $33/month against $90/month at the baseline. Every lane
+0 tracebacks / 0 `[FAIL]` / 0 fallbacks / 0 strays over the window except the licence-gated `mtg`. The
+2026-08-26 daily GraphQL total is the definitive number for B + C together (baseline 567K Class A/day,
+383K LIST/day).
 
 
 Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
