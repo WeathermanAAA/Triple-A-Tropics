@@ -484,6 +484,7 @@ lane if more is wanted. Measured fleet numbers: "Measured after" table.
 | 08-25 17:17 | B steady state since 16:54Z | **19,129** | (17:00h pending) | 1,953.0 GB | 1,570,490 |
 | 08-25 18:07 | B only (first clean hour 17:00–18:00Z) | **13,401** | **6,575 (17:00h)** vs 15,627 (15:00h) | 1,954.5 GB | 1,571,829 |
 | 08-25 21:58 | C fleet: box2 steady (1 h after its roll), box1 in its cold rebuild (rolled 21:35Z) | 15,605 (28.5K peak during box1's cold sweep) | 8,661 (19:00h, canary+B) · 23,034 (20:00h, box2 cold rebuild) | 1,898.8 GB (the recreated prune lane ran once more) | 1,523,715 |
+| 08-25 23:58 | C fleet +3 h: box2 steady, box1 past most of its cold rebuild (g19fd's ~110-min sweep still finishing it) | **10,525** | **6,058 (22:00h)** · 7,798 (21:00h, box1 cold rebuild) | 1,906.6 GB | 1,529,669 |
 
 Fleet-level reading two hours after B: Class A per hour fell from 21,845 (15:00Z hour) to 13,586 (17:00Z hour) and
 LIST per hour from 15,627 to 6,575; the breaker's trailing hour read 13,401 at 18:07Z. The hwfd lane's own counter
@@ -527,7 +528,14 @@ Change C, box2 steady state one hour after its roll (lane `[ops]` counters, 20:5
 | **box2 total** | **299,617** | **~165,000** | **~35,000 (−79% vs after B)** |
 
 Box1 rolled at 21:35Z, so its lanes were still in the one-off cold heal rebuild in this window (conus-fast2
-1,743 pages and conus 1,346 pages in 0.4 h); its steady state is in the +3 h row.
+1,743 pages and conus 1,346 pages in 0.4 h). At +3 h (2 h window to 23:59Z) box1 read 7,158 pages, of which
+g19fd's 3,513 were still its cold rebuild (a ~110-min sweep, 22 products); conus 1,793 (≈21.5K/day vs 28.8K
+before), conus-fast2 1,081 (≈13K vs 18K), g19fd-leads 771 (≈9K vs 14K). Box2 at +3 h: 2,922 pages in 2 h
+(≈35K/day, matching the +1 h reading). Fleet trailing hour at 23:58Z: **10,525 Class A/h** (breaker) against
+22–24K/h in the same hours the day before and the 24 h-to-15:00Z baseline of 23.6K/h; the 22:00Z hour read
+A 13,953 / LIST 6,058. The 2026-08-26 daily GraphQL total is the definitive number for B + C together
+(baseline 567K Class A/day, 383K LIST/day).
+
 
 Change A: storage −431 GB immediately (−$6.5/month of current bill) and the compounding stops: `models/hafs`
 is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
