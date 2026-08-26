@@ -8,6 +8,12 @@ main = "worker.patched.js"
 compatibility_date = "2026-08-01"
 keep_vars = true
 
+# Andrew 2026-08-26: the Worker was terminated at exactly 50 ms CPU on a Paid
+# plan whose ceiling is 30,000 ms; no [limits] block existed anywhere. Make the
+# configured limit explicit so enforcement has nothing smaller to fall back on.
+[limits]
+cpu_ms = 30000
+
 [vars]
 CLERK_AUTHORIZED_PARTY = "https://triple-a-tropics.com"
 CLERK_ISSUER = "https://clerk.triple-a-tropics.com"
