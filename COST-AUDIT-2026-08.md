@@ -503,15 +503,21 @@ same endpoints completed 25 times with CPU up to 341 ms. The kill point moved fr
 2026-08-19) carries no per-script `cpu_ms` limit. Cloudflare's limits page says each isolate has "built-in
 flexibility" for infrequent overruns and terminates when the Worker "starts hitting the limit consistently",
 which matches the pattern (some isolates still enforcing a small limit, bursts allowed, then kills).
-**Resolution, measured 21:04Z:** the kills stopped on their own once the isolates recycled under the Paid
-plan — 5-minute `exceededResources`: 19:55 46%, 20:00 45%, 20:05 43%, then **0% in every bucket from 20:10 to
-20:50Z** (successes running up to 590 ms CPU), with a residual 3 kills at 20:55 (4%, at 95–108 ms CPU) and
-1 at 21:00 (1%). Hourly: 55% (17Z), 47% (18Z), 35% (19Z), 8% (20Z), 1% (21Z partial). So the 10 ms CPU cap
-WAS the story; the plan change simply took ~40 min to reach every isolate (a redeploy would have forced it).
-Watch the residual single-digit kills over the next day; if they persist at 50–100 ms, set
-`[limits] cpu_ms = 30000` explicitly in the sandbox worker's config. Independently, hashing the 1 MB
-checkpoint uploads with `crypto.subtle.digest` instead of JS would cut those endpoints' CPU by an order of
-magnitude (an app-side improvement for the sandbox, out of this audit's scope).
+**Follow-up, measured to 23:59Z (corrects an interim reading):** the kills did NOT stop. Hourly
+`exceededResources`: 55% (17Z), 47% (18Z), 35% (19Z), 8% (20Z), 16% (21Z, 525 of 3,309), 9% (22Z), 24% (23Z,
+460 of 1,923), every kill still at exactly 50 ms CPU. The 20:10–20:50Z stretch of 0% that looked like the cap
+lifting coincided with almost no checkpoint writes (the only endpoints that ever fail), so it was traffic mix,
+not the plan. The script's usage model is `standard` on every endpoint that reports it (scripts list, version
+runtime), no per-script `cpu_ms`, account default `standard` — so this is not the legacy 50 ms "bundled"
+model either. A direct probe of the account's CPU limit with a throwaway worker was attempted and abandoned
+(workers.dev resolves IPv6-only from the Codespace and the boxes; the temporary zone route and the worker were
+removed, route table verified back to the original six). Net: **the 10 ms cap was not the whole story — 3.5 h
+after the upgrade this Worker is still terminated at 50 ms CPU while other invocations of the same endpoints
+complete at 300+ ms.** Separate defect, sandbox-side, for Andrew: (1) redeploy the Worker unchanged and watch
+the 5-minute rate; (2) if kills persist, set `[limits] cpu_ms = 30000` explicitly and redeploy; (3) if they
+still persist, Cloudflare support with the tail evidence (this document's numbers); and independently, hash the
+1 MB checkpoint uploads with `crypto.subtle.digest` instead of JS, which would bring those endpoints under
+50 ms on any plan.
 
 Change C, box2 steady state one hour after its roll (lane `[ops]` counters, 20:59–21:59Z window, all lanes
 0 tracebacks / 0 `[FAIL]` / 0 fallbacks / 0 strays except the licence-gated `mtg`):
