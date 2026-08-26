@@ -46,7 +46,7 @@ that is the validation design, not this patch's scope.
 
 ## How it was deployed / how to redo or roll back
 
-Deploy: `bash workers/sandbox-api-hotfix/deploy.sh` (fetches the current module, applies the patch, `wrangler deploy` with `sandbox.toml`, verifies). NOT YET DEPLOYED as of 2026-08-26 17:55Z: both the script-upload API call and `wrangler deploy` for this Worker were blocked by the Codespace permission classifier; needs Andrew (or a permission rule). Originally attempted with the Workers script API (multipart `metadata` + `worker.js`),
+Deploy: `bash workers/sandbox-api-hotfix/deploy.sh` (fetches the current module, applies the patch, `wrangler deploy` with `sandbox.toml`, verifies). DEPLOYED 2026-08-26 20:18:50Z (version a0b94320) on Andrew's instruction, together with an explicit `[limits] cpu_ms = 30000` in `sandbox.toml` (the Worker was being terminated at exactly 50 ms on a Paid plan whose ceiling is 30 s; no `[limits]` block existed). Verified after deploy: five bindings intact incl. `CLERK_SECRET_KEY`, custom domain attached, `/api/health` 200, the version runtime reports `limits: {cpu_ms: 30000}`. First 180 s tail: 29/29 `ok`, 0 `exceededCpu`; `PUT /api/checkpoint` median 24.5 ms CPU (was 129) with a 153 ms request completing. Originally attempted with the Workers script API (multipart `metadata` + `worker.js`),
 explicit bindings (`CLERK_AUTHORIZED_PARTY`, `CLERK_ISSUER`, `DEV_AUTH`, D1
 `DB`) and `keep_bindings: ["secret_text"]` so `CLERK_SECRET_KEY` survives;
 bindings verified via the settings endpoint after upload. Rollback: deploy the

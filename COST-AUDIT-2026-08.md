@@ -530,7 +530,13 @@ whole checkpoint (46–102 ms, native but size-proportional) — the validation 
 rate should fall, not vanish. Before numbers: last 8 h to 17:43Z 329 of 5,147 requests killed (6.4%; hourly 0–22%);
 successful PUTs at 129–131 ms CPU in a 150 s tail. **The patch is vendored (`workers/sandbox-api-hotfix/`, patch +
 config + `deploy.sh`) but NOT deployed: both the script-upload API call and `wrangler deploy` for this Worker were
-blocked by the Codespace permission classifier.** After deploy, the after numbers come from the same two sources.
+blocked by the Codespace permission classifier.** **Deployed 2026-08-26 20:18:50Z** (Andrew's instruction; version a0b94320) as two changes in one deploy: the
+native-base64 patch and an explicit `[limits] cpu_ms = 30000` (the Worker was dying at exactly 50 ms on a Paid
+plan whose ceiling is 30 s; no `[limits]` block existed anywhere in `workers/`). Verified: five bindings intact
+including the Clerk secret, custom domain attached, `/api/health` 200, version runtime `limits: {cpu_ms: 30000}`.
+**After, live tail (180 s from 20:19Z): 29 of 29 requests `ok`, 0 `exceededCpu`** — 14 `PUT /api/checkpoint` at
+median **24.5 ms CPU (was 129–131 ms)**, the largest **153 ms completing** where 50 ms was the kill point, and a
+`POST /api/season` at 95 ms completing. Hourly `exceededResources` after the deploy: see the rows appended below.
 p50 11,942 µs) — the rate tracks the checkpoint-write traffic, so quiet hours read low without anything
 having changed.
 
