@@ -591,6 +591,71 @@ Change A: storage −431 GB immediately (−$6.5/month of current bill) and the 
 is now capped at 14 days (~450–750 GB depending on storm count) instead of growing 30–55 GB/day. The estimate
 "+$19/month per month" was the growth rate; the first-day effect is the −431 GB step.
 
+
+## R2 write attribution per script (measured 2026-08-27, 24 h window 08-26 13:00Z to 08-27 13:00Z)
+
+Read-only. Sources: each container's own 24 h log (the s2 lanes' `[ops] put=` counters are exact per pass; the
+pollers log every upload), the code for writes-per-iteration and gating, compose/env for cadence, the box2 census
+for the GitHub-cron writers. Cloudflare GraphQL for the same 24 h: **Class A 309,071 = PUT 154,572 + LIST 151,958 +
+multipart 2,541**.
+
+| script | box | writes per poll | polls per day | est. daily writes | gating |
+| --- | --- | ---: | ---: | ---: | --- |
+| tat-s2-hwwpac (28-product suite) | box2 | 148 | 150 | **22,250** | only uncovered slots; dup skipped |
+| tat-s2-conus-fast2 (11 products) | box1 | 29.2 | 530 | **15,494** | only uncovered slots |
+| tat-s2-conus (12 products) | box1 | 12.4 | 840 | **10,426** | only uncovered slots |
+| tat-s2-conus-fast (4) | box2 | 4.7 | 1,616 | 7,541 | only uncovered slots |
+| tat-s2-hwfd (22) | box2 | 5.6 | 1,342 | 7,482 | only uncovered slots |
+| tat-s2-g19fd (22) | box1 | 33.6 | 152 | 5,101 | only uncovered slots |
+| tat-s2-hwfd-leads (5) | box2 | 1.3 | 3,189 | 4,301 | only uncovered slots (3,792 dup skips/day) |
+| tat-s2-g19fd-leads (5) | box1 | 7.4 | 576 | 4,245 | only uncovered slots |
+| tat-s2-geo (suite) | box2 | 11.5 | 230 | 2,647 | only uncovered slots |
+| tat-s2-gk2a (suite) | box2 | 2.1 | 1,176 | 2,452 | only uncovered slots |
+| tat-s2-mtg | box2 | 0 | 128 | 0 | licence 403; never publishes |
+| meso_poller (4 sectors × 6 bands) | box1 | 2 per frame (frame + sector manifest) | hot 60 s, cold 300 s | **24,750** (12,372 frames + 12,372 manifest PUTs + reconcile/top) | frame only on new hash; **manifest re-PUT per frame** |
+| s1_ingest goes19 meso | box1 | 2 per frame (frame + latest_times) | SQS-driven ~1/min + 60 s backfill | 2,927 | new object only; latest_times per frame + 47 prune rewrites |
+| s1_ingest goes18 meso | box1 | 2 per frame | ~1/min | 2,930 | same |
+| s1_ingest himawari9 fldk | box1 | 2 per frame | every 10 min | 330 | same |
+| floater_poller | box1 | ~50 per sweep | ~43 sweeps (continuous) | 2,136 (1,127 frames + 493 backdrops + 516 manifests) | frames on sha change; **backdrops every ~50 min and top/per-storm manifests every sweep regardless** |
+| cyclolab_guidance_poller | box1 | 24 (8 entities × formation/guidance/ships) | 96 (900 s) | **2,304** | **unconditional every run** |
+| intensity_poller | box1 | 1 health + feeds/pages on change + SST hero PNGs | 720 (120 s) | ~1,850 (720 health, 1,083 SST hero, ~50 feeds) | health **unconditional**; feeds by signature; hero on fix |
+| centerfix_plot | box1 | ~13.6 (2 PNG × ~7 storms) | 48 (1,800 s) | 652 | **unconditional per run** |
+| objfix_headless + wpace_headless | box1 | ~11.5 | 48 (1,800 s) | 553 (384 keys + 169 charts) | index every run; rest when fixes exist |
+| overlays: mrms | box1 | 2 (frame + manifest) | 1,152 (75 s) | 1,320 | new 2-min scan only (660 of 1,152 ticks) |
+| overlays: recon_r2_publish | box1 | ~10 files | 960 (90 s) | 1,380 | sha diff vs live, plus a 600 s freshness re-stamp (~288 of these) |
+| overlays: uhr ascat | box1 | up to 8 passes + manifest | 288 (300 s) | 950 | new passes only |
+| overlays: metar | box1 | 3 (frame + latest_times + latest.json) | 272 (300 s) | 816 | **unconditional: a new frame every run** |
+| overlays: nhc | box1 | 1 (latest.json) | 279 (300 s) | 279 | **unconditional per tick** |
+| overlays: tpw | box1 | ≤4 + manifest | 288 (300 s) | 37 | new files only |
+| overlays: sfc | box1 | 2 | 144 (600 s) | ~10 | new analysis only (134 no-ops) |
+| overlays: sar / hy2 / salinity / ascat | box1 | few | 144 / 24 / 24 / 48 | ~8 / ~8 / ~1 / 0 | new passes only; ascat idle (no credential) |
+| tat-heartbeat.sh (systemd, 60 s) | box1 | 2 (fleet/box1.json + fleet/index.json) | 1,440 | **2,880** | **unconditional** (roster re-stamped every minute) |
+| tat-heartbeat.sh | box2 | 2 | 1,440 | **2,880** | **unconditional** |
+| s2_prune lane | box2 | manifest rewrites only when a pruned stamp is still advertised | 1 (86,400 s) | ~0 (none in 24 h; deletes are free) | conditional |
+| render / s1-render / meso-render / radar-render / caddy / ens-watchdog | both | 0 | | 0 | serve only |
+| **box1 total** | | | | **≈ 81,400** | |
+| **box2 total** | | | | **≈ 49,600** | |
+| **boxes total** | | | | **≈ 131,000** | |
+| GitHub-cron writers (not on a box): update-hafs (~17K PNG/tar per day at the current storm count; was ~40K on 08-18..20), update-sst 1.35K, subseasonal 1.2K, tcprimed-live/microwave ~0.4K, armor3d 0.1K, gibs/records/analogs/guidance/ascat/telemetry/freshness ~1–2K | GH | | | **≈ 21–24K** | |
+| **GraphQL PutObject, same 24 h** | | | | **154,572** | boxes + GH ≈ 152–155K: reconciled |
+
+Class A in the same 24 h is 309K/day, against the ~566K/day dashboard average (5.09M over nine days) — that window
+is dominated by the pre-B/C days: LIST was 430–588K/day then and is 152K/day now (the s2 lanes' counters account for
+145.7K of it: hwwpac 36.6K, hwfd 25.5K, conus 18.3K, g19fd 16.0K, conus-fast2 14.8K, hwfd-leads 9.0K, conus-fast 8.4K,
+geo 4.6K, gk2a 4.3K, g19fd-leads 7.9K, mtg 0.4K; the rest is the prune walk, meso reconcile and GH syncs). Note the
++4.5 h reading of ≈ 76K LIST/day in the C section under-counted: that 2 h window missed the 6-hourly heal rebuilds
+(~90 pages per product) and the suite lanes' verify listings, which the full 24 h includes. PUT fell 202K → 155K over
+the same span, mostly because HAFS is rendering fewer storms (40K → 17K objects/day), with B's hwfd cadence (−5K) and
+C (−3K) the rest.
+
+Top write contributors: the eleven s2 tile emitters (82K, the product itself, all conditional on new slots), the meso
+poller (24.8K, half of it a manifest re-PUT per frame), the HAFS cron (~17K), the three s1 lanes (6.2K, half of it a
+`latest_times.json` re-PUT per frame), and the two heartbeats (5.8K). Writers that PUT regardless of new data:
+heartbeat roster+beat 5,760, guidance 2,304, metar 816, intensity health 720, centerfix 652, floater backdrops +
+per-sweep manifests ~1,000, nhc 279, recon re-stamps ~288, objfix index 48 — together ≈ 12K/day, about 8% of PUTs
+(≈ $1.6/month); the per-frame manifest re-PUTs in meso (12.4K) and s1 (3.0K) are conditional on a frame but redundant
+(one PUT per sector per minute would do) — another 15K/day (≈ $2/month). Nothing was changed.
+
 ## Phase 0 — circuit breaker + kill switch (status as of 2026-08-25 16:05Z)
 
 **Deployed, ALERT-ONLY.** Worker `r2-breaker` (`workers/r2-breaker.js`, TAT main a4a2b5c8) on
