@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-08-25T21:45:00Z
+updated: 2026-09-02T17:45:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1516,6 +1516,39 @@ items:
         url: /roadmap/
 
   # ---- needs-andrew ----
+  - id: box1-hostinger-cpu-limiter
+    title: box1 under Hostinger's CPU limiter (95 % steal) — lift path + bandwidth tier questions
+    area: infra
+    status: needs-andrew
+    note: >-
+      Read-only triage 2026-09-02: not a runaway process, not timer overlap, not
+      a grown lane. Steal is 94-96 % on all 8 vCPUs, flat for 33+ h, no in-guest
+      quota; it engaged in Hostinger's documented 25 %/hour steps (04:10-07:20
+      Sep 1) after a catch-up burst (6-7 cores, 00:20-04:00 Sep 1) that followed
+      a 35 h host-side ingress throttle at exactly 10 Mbit/s (Aug 30 13:10 ->
+      Sep 1 00:15, box1 only). Hostinger docs say the limiter auto-lifts when
+      usage drops and can be removed once per week from hPanel, so shedding
+      demand on the box is the unblocker and the ticket is the fallback. Andrew
+      owns: read hPanel usage/bandwidth meters for both boxes, do NOT click the
+      weekly removal before the meso zombie queues are dropped, send the ticket
+      (the shapers engaged at ~20 TB and ~22-25 TB against a published 32 TB
+      while box2 ingested ~24-25 TB unshaped). Full report and step list in
+      INCIDENT-2026-09-02-box1-cpu-cap.md.
+    links:
+      - label: incident report
+        url: https://github.com/WeathermanAAA/Triple-A-Tropics/blob/main/INCIDENT-2026-09-02-box1-cpu-cap.md
+  - id: s1-backlog-retain-window
+    title: s1 SQS backlog is a deferred burst — lower S1_RETAIN_H or purge before restart
+    area: satellite
+    status: needs-andrew
+    note: >-
+      tat-sat-goes19-cmip 1,990, goes18-cmip 1,762, himawari9-fldk 814 slots
+      22-29 h old. The goes19 and himawari9 lanes are stranded exited (dockerd
+      could not recreate their tasks under the cap; restart manager gave up), so
+      nothing will DLQ those slots, and s1_ingest renders every slot inside
+      S1_RETAIN_H (default 72 h) the moment a lane starts. Data-loss decision on
+      a shadow product: purge the queues or approve a smaller retain window,
+      then recreate the s1 containers from /root/tat-sat-s1.
   - id: atcf-proxy-404
     title: ATCF proxy Worker should answer an absent deck with 404, not 502
     area: infra
@@ -1571,6 +1604,45 @@ items:
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/87f10fbf
 
   # ---- next (specced, queued) ----
+  - id: box1-catch-up-governor
+    title: Box-wide catch-up governor for the s2 emit lanes (flock slots, per-pass cap)
+    area: infra
+    status: next
+    note: >-
+      Overlap guards, not priority tweaks: a host lock dir bind-mounted into
+      every lane with flock -w over N slot files (N=2 on box1) and ONE slot
+      reserved for the leads lanes so an unordered semaphore cannot demote them;
+      --max-rebuild-per-pass in s2_pyramid_emit.py (backfill is newest-first;
+      the --step help text wrongly says oldest-first); a pass gate that reads
+      steal and idle from /proc/stat, never /proc/loadavg (not namespaced, blind
+      to steal, would halt the leads lanes under any cap); optional systemd
+      slice CPUQuota via cgroup_parent as a post-cap guard. Needs lane
+      recreation, so it deploys only when steal is below ~50 %.
+  - id: render-queue-deadline
+    title: Render apps — bound the semaphore wait (503 past a deadline) and cap memory
+    area: infra
+    status: next
+    note: >-
+      app.py acquires render_semaphore with no deadline, so a poller that gave
+      up after 45-60 s still gets rendered; under the Sep 1-2 cap meso-render
+      accumulated a 27.7 h zombie queue (~2,500-2,800 requests) and render-1
+      drained a 13.9-21 h queue at the shaper lift, which was the largest single
+      contributor to the catch-up burst. Wrap the acquire in asyncio.wait_for
+      and answer 503; add mem_limit to meso-render/meso-render-cold (unlimited,
+      5.5 + 3.6 GB; the box has had eight global OOMs, victim usually render-1).
+      render-1's copy is reachable via /root/tsr-s2; the meso copies live in the
+      tat-satellite-render tree and need its owner.
+  - id: fleet-heartbeat-steal
+    title: Fleet heartbeat publishes steal % and eth0 rx so /fleet/ shows provider throttling
+    area: infra
+    status: next
+    note: >-
+      Both Hostinger throttles (35 h at 10 Mbit/s, then 33+ h at ~5 % CPU) were
+      invisible on /fleet/ because the heartbeat reads load only, and load under
+      a cap reads as "busy". Add steal % from /proc/stat and eth0 rx KiB/s; an
+      rx value pinned at a shaper constant for >3 samples is the month-end
+      ingest brake signal (shrink backfill windows, stop render-1 accepting new
+      work).
   - id: microwave-subpage
     title: Microwave obs subpage
     area: obs
