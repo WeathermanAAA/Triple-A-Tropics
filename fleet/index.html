@@ -141,13 +141,26 @@
             '<p class="fl-role">' + exp.role + '</p>';
     if (hb) {
       var lpc = +hb.load_per_core, memPct = 100 * (1 - hb.mem_avail_mb / hb.mem_total_mb);
+      // Provider-side signals (heartbeat >= 2026-09-02): steal is the hypervisor
+      // withholding CPU from the guest -- load under a cap is the run queue
+      // backing up, not demand -- and a NIC pinned at a constant is a shaper.
+      // Older heartbeats lack the fields; render them as n/a, never as 0.
+      var steal = (hb.steal_pct == null) ? null : +hb.steal_pct;
+      var rx = (hb.rx_kib_s == null) ? null : +hb.rx_kib_s;
+      var sc = steal == null ? '' : steal >= 50 ? 'bad' : steal >= 10 ? 'hot' : '';
       var lc = lpc >= 1.0 ? 'bad' : lpc >= 0.8 ? 'hot' : '';
       var mc = memPct >= 92 ? 'bad' : memPct >= 80 ? 'hot' : '';
+      var loadLabel = (steal != null && steal >= 50) ? 'load / core (capped)' : 'load / core';
       h += '<div class="fl-metrics">' +
-        '<div class="fl-m"><span>load / core</span><b class="' + lc + '">' + lpc.toFixed(2) +
+        '<div class="fl-m"><span>' + loadLabel + '</span><b class="' + lc + '">' + lpc.toFixed(2) +
           '</b><i class="fl-bar"><i class="' + lc + '" style="width:' + Math.min(100, lpc * 100) + '%"></i></i></div>' +
+        '<div class="fl-m"><span>cpu steal</span><b class="' + sc + '">' +
+          (steal == null ? 'n/a' : steal.toFixed(1) + '%') +
+          '</b><i class="fl-bar"><i class="' + sc + '" style="width:' + (steal == null ? 0 : Math.min(100, steal).toFixed(0)) + '%"></i></i></div>' +
         '<div class="fl-m"><span>memory used</span><b class="' + mc + '">' + memPct.toFixed(0) + '%' +
           '</b><i class="fl-bar"><i class="' + mc + '" style="width:' + memPct.toFixed(0) + '%"></i></i></div>' +
+        '<div class="fl-m"><span>ingress ' + (hb.net_if || '') + '</span><b>' +
+          (rx == null ? 'n/a' : rx.toFixed(0) + ' KiB/s') + '</b></div>' +
         '<div class="fl-m"><span>disk</span><b>' + hb.disk_pct + '%</b></div>' +
         '<div class="fl-m"><span>oom kills</span><b class="' + (hb.oom_kills > 0 ? 'hot' : '') + '">' +
           hb.oom_kills + '</b></div>' +
