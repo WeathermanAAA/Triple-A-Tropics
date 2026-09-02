@@ -106,7 +106,7 @@ Ordered by what actually produced the burst:
 
 ### Step 3 — when the cap lifts (or before the weekly removal button is used)
 
-Concrete sequence now that the code is on tsr main @72cb9d9 (run from /root/tsr-s2 on box1; wait for steal below ~50 % in `sar -u 1 3` first):
+Concrete sequence now that the code is on tsr main @72cb9d9 (run from /root/tsr-s2 on box1; wait for steal below ~50 % in `sar -u 1 3` first). Steps 1–2 are staged as `/root/tat-step3-deploy.sh` on box1 (not run): it builds tat-s2, recreates ONLY the two leads lanes governed, leaves the browse lanes stopped, rebuilds tat-render and recreates only `render`, and asserts exactly one container per service. Run it as `systemd-run --unit tat-step3 /root/tat-step3-deploy.sh` and read `journalctl -u tat-step3 -o cat`. At 22:26–22:29 UTC steal briefly stepped to 70–82 % and returned to 91–93 %: the limiter is moving but not settled.
 
 1. `scripts/fleet.sh deploy box1` (from a tsr checkout) rebuilds tat-s2 and recreates ALL FOUR lanes governed (the bind mount changed the compose hash; the stopped browse lanes come back too). Immediately `docker stop tat-s2-g19fd-emit-cron-1 tat-s2-conus-emit-cron-1` if you want them back one at a time; with the governor they are bounded to one browse emit at a time and 2–3 rebuilt slots per product per pass either way.
 2. `docker compose -p tat-render -f docker-compose.render.yml -f docker-compose.render.override.yml build render && docker compose -p tat-render -f docker-compose.render.yml -f docker-compose.render.override.yml up -d --no-deps --no-build render` for the queue deadline on cyclolab's render (Python 3.11 image; MAX_CONCURRENT_RENDERS stays 4). Verify exactly one render container afterwards.
