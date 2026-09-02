@@ -148,8 +148,11 @@ Andrew's go (2026-09-02 ~19:10 UTC): Step 1 exactly as written, one action at a 
 | 19:25 | `docker stop` tat-s1-s1-ingest-goes18-1 | Exited (137) at 19:25 |
 | 19:26 | First reading | steal 90.8 %, idle 4.3 %, load 21.7, mem used 12.8 GB (available 19.3 GB) |
 | 19:28 | Watch tick | steal 94.9 %, load 15.5, mem used 13.8 GB |
+| 19:27 onward | meso loops recover | meso-poller uploads frames again (11 in the first 10 min, renders 24–62 s) after ~34 h of nothing; meso-render render times fall from 141 s to 22–45 s, no queue re-forming |
+| 19:39 | Watch tick | steal 94.6 %, load 12.1 |
+| 19:41–19:44 | Step 2 item 4 shipped | heartbeat publishes steal % / busy % / eth0 KiB/s (tsr 4b4eb83, reviewed, unit-tested); installed on both boxes; box1 reports steal 95.8 %, run 13 s (was 65 s); box2 steal 0.0 %; /fleet/ renders the new tiles (TAT 415524b4) |
 
-Untouched throughout: tat-render-render-1 (cyclolab) and caddy, tat-radar-render, tat-s1-s1-render-1, meso-poller, every tat-overlays and tat-render poller, the two already-exited s1 lanes. A 10-minute steal/load watch runs until ~21:25 UTC; the 2 h decision point for conus-fast2 is 21:25 UTC.
+Untouched throughout: tat-render-render-1 (cyclolab) and caddy, tat-radar-render, tat-s1-s1-render-1, meso-poller, every tat-overlays and tat-render poller, the two already-exited s1 lanes. A 10-minute steal/load watch runs until ~21:25 UTC; the 2 h decision point for conus-fast2 is 21:25 UTC. goes19/fd/ir on the CDN was still 14:30:20Z at 19:38 UTC (the leads lane cannot catch up on ~0.4 vCPU); box2's goes19/conus/ir is current.
 
 Lesson from the restarts: on a box this starved, `docker restart` reliably fails its kill step with "PID is zombie" while the kill itself succeeds; the container reaches exited ~20 s later and needs an explicit `docker start`. Sequence: restart → wait for exited → start → verify.
 

@@ -29,10 +29,28 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-02T17:45:00Z
+updated: 2026-09-02T19:50:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: fleet-heartbeat-steal
+    title: Fleet heartbeat publishes steal % and eth0 rx so /fleet/ shows provider throttling
+    area: infra
+    status: shipped
+    date_shipped: 2026-09-02
+    note: >-
+      Both Hostinger throttles (35 h at 10 Mbit/s, then 33+ h at ~5 % CPU) were
+      invisible on /fleet/ because the heartbeat read load only. tsr
+      scripts/heartbeat.sh (4b4eb83) now takes a 3 s /proc/stat + /proc/net/dev
+      sample after its docker/git reads and publishes steal_pct, cpu_busy_pct,
+      cpu_idle_pct, net_if, rx_kib_s, tx_kib_s, sample_s (measured window) and
+      run_s; nulls, never garbage, on any unreadable input. The card shows
+      "cpu steal" (hot 10 %, bad 50 %), "ingress KiB/s" (the shaper constant
+      reads literally) and relabels load "(capped)" above 50 % steal.
+      Installed on both boxes 19:43-19:44Z: box1 steal 95.8 %, box2 0.0 %.
+      Adversarially reviewed; tests/test_heartbeat_sample.py pins the awk. The
+      month-end ingest brake (rx pinned for >3 samples) stays under
+      box1-catch-up-governor.
   - id: cost-audit-2026-08
     title: Cost audit + lockdown — Phase 1 measured, Phase 2 recommendation (report only)
     area: infra
@@ -1632,17 +1650,6 @@ items:
       5.5 + 3.6 GB; the box has had eight global OOMs, victim usually render-1).
       render-1's copy is reachable via /root/tsr-s2; the meso copies live in the
       tat-satellite-render tree and need its owner.
-  - id: fleet-heartbeat-steal
-    title: Fleet heartbeat publishes steal % and eth0 rx so /fleet/ shows provider throttling
-    area: infra
-    status: next
-    note: >-
-      Both Hostinger throttles (35 h at 10 Mbit/s, then 33+ h at ~5 % CPU) were
-      invisible on /fleet/ because the heartbeat reads load only, and load under
-      a cap reads as "busy". Add steal % from /proc/stat and eth0 rx KiB/s; an
-      rx value pinned at a shaper constant for >3 samples is the month-end
-      ingest brake signal (shrink backfill windows, stop render-1 accepting new
-      work).
   - id: microwave-subpage
     title: Microwave obs subpage
     area: obs
