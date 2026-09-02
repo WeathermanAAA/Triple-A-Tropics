@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-02T19:50:00Z
+updated: 2026-09-02T20:25:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1625,7 +1625,7 @@ items:
   - id: box1-catch-up-governor
     title: Box-wide catch-up governor for the s2 emit lanes (flock slots, per-pass cap)
     area: infra
-    status: next
+    status: active
     note: >-
       Overlap guards, not priority tweaks: a host lock dir bind-mounted into
       every lane with flock -w over N slot files (N=2 on box1) and ONE slot
@@ -1636,10 +1636,18 @@ items:
       to steal, would halt the leads lanes under any cap); optional systemd
       slice CPUQuota via cgroup_parent as a post-cap guard. Needs lane
       recreation, so it deploys only when steal is below ~50 %.
+      LANDED on tsr main @72cb9d9 (2026-09-02 20:1xZ, reviewed twice, 23
+      tests): fcntl slots under /run/tat-emit with S2_SLOTS_RESERVED leads
+      slots, a 3 s steal gate for browse passes, S2_MAX_REBUILD_PER_PASS;
+      box1 .env carries S2_SLOTS=3 S2_SLOTS_RESERVED=2 S2_GATE_STEAL_MAX=50,
+      lane files classify g19fd-leads + conus-fast2 as leads, g19fd (cap 2) +
+      conus (cap 3) as browse. NOT DEPLOYED: fleet.sh deploy box1 recreates all
+      four lanes (bind mount changed the compose hash) and waits for steal to
+      fall below ~50 %; box2 stays ungoverned until its lanes are classified.
   - id: render-queue-deadline
     title: Render apps — bound the semaphore wait (503 past a deadline) and cap memory
     area: infra
-    status: next
+    status: active
     note: >-
       app.py acquires render_semaphore with no deadline, so a poller that gave
       up after 45-60 s still gets rendered; under the Sep 1-2 cap meso-render
@@ -1650,6 +1658,13 @@ items:
       5.5 + 3.6 GB; the box has had eight global OOMs, victim usually render-1).
       render-1's copy is reachable via /root/tsr-s2; the meso copies live in the
       tat-satellite-render tree and need its owner.
+      LANDED on tsr main @72cb9d9 (2026-09-02 20:1xZ, adversarially reviewed,
+      10 tests): render_slot() refuses with 503 + Retry-After past
+      RENDER_QUEUE_WAIT_S (40 s default; meso 15 s, s1 25 s in compose),
+      probes request.is_disconnected() before spending a slot, honours
+      X-Render-Wait-S only from compose-internal callers. NOT DEPLOYED: the
+      render-1 rebuild + recreate waits for steal < 50 %; the meso copies need
+      the tat-satellite-render tree's owner.
   - id: microwave-subpage
     title: Microwave obs subpage
     area: obs

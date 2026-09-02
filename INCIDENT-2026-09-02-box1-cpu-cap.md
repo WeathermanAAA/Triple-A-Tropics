@@ -106,6 +106,14 @@ Ordered by what actually produced the burst:
 
 ### Step 3 — when the cap lifts (or before the weekly removal button is used)
 
+Concrete sequence now that the code is on tsr main @72cb9d9 (run from /root/tsr-s2 on box1; wait for steal below ~50 % in `sar -u 1 3` first):
+
+1. `scripts/fleet.sh deploy box1` (from a tsr checkout) rebuilds tat-s2 and recreates ALL FOUR lanes governed (the bind mount changed the compose hash; the stopped browse lanes come back too). Immediately `docker stop tat-s2-g19fd-emit-cron-1 tat-s2-conus-emit-cron-1` if you want them back one at a time; with the governor they are bounded to one browse emit at a time and 2–3 rebuilt slots per product per pass either way.
+2. `docker compose -p tat-render -f docker-compose.render.yml -f docker-compose.render.override.yml build render && docker compose -p tat-render -f docker-compose.render.yml -f docker-compose.render.override.yml up -d --no-deps --no-build render` for the queue deadline on cyclolab's render (Python 3.11 image; MAX_CONCURRENT_RENDERS stays 4). Verify exactly one render container afterwards.
+3. The meso-render / meso-render-cold copies of the same app and their `mem_limit` need the tat-satellite-render tree's owner (docker-compose.meso.yml on main now sets RENDER_QUEUE_WAIT_S=15 for both).
+4. s1: after Andrew's backlog decision, set `S1_RETAIN_H` in /root/tat-sat-s1 and recreate the three ingest lanes plus s1-render (docker-compose.s1.yml on main sets RENDER_QUEUE_WAIT_S=25).
+5. Watch `/fleet/` steal % and goes19/fd/ir latest_times for the first two hours.
+
 With the browse lanes still stopped: deploy Step 2 items 1–3, set `S1_RETAIN_H`, then bring tat-s2-g19fd and tat-s2-conus back one at a time, start the two exited s1 lanes, and watch steal for the first two hours. Without Step 1 the at-lift demand is ~6–8 cores for the first hour (meso zombies 1–2 cores for 3–6 h, s1 goes18 backlog ~1 core for 2–3 h, four lanes at 1.2–2× for an hour, render-1, pollers, uhr) plus coincident memory peaks of ~40 GB: the same profile as Sep 1 00:20–04:00. With Step 1 done it is ~3–4 cores for about an hour, inside the Aug 25–29 envelope that drew no flag.
 
 ### Sequencing
@@ -151,6 +159,8 @@ Andrew's go (2026-09-02 ~19:10 UTC): Step 1 exactly as written, one action at a 
 | 19:27 onward | meso loops recover | meso-poller uploads frames again (11 in the first 10 min, renders 24–62 s) after ~34 h of nothing; meso-render render times fall from 141 s to 22–45 s, no queue re-forming |
 | 19:39 | Watch tick | steal 94.6 %, load 12.1 |
 | 19:50–20:02 | 1 h reading | 10-min steal 94.7 (19:20), 93.2, 91.3, 90.5 (19:50), 92.9 (20:00): a drift, not a step; load 13–19; mem used 16.1 GB; meso 43 uploads / 13 timeouts in 30 min; goes19/fd/ir on the CDN still 14:30:20Z (the leads lane cannot catch up on ~0.4 vCPU; box2's goes19/conus products are current). Decision on conus-fast2 stays at the 2 h mark, 21:25 UTC |
+| 20:11 | Watch tick | steal 88.7 %, idle 7.0 %, load 5.7, mem used 13.9 GB: steal drifting down for the first time |
+| 20:0x–20:2x | Step 2 items 1–3 landed on tsr main @72cb9d9 (not deployed) | render queue deadline (503 past RENDER_QUEUE_WAIT_S, admission-time disconnect probe, per-service budgets: meso 15 s, s1 25 s, render 40 s) and the s2 governor (slots with S2_SLOTS_RESERVED leads reservation, steal gate for browse, per-pass rebuild cap), both adversarially reviewed with fixes applied; box1 .env now carries S2_SLOTS=3 S2_SLOTS_RESERVED=2 S2_GATE_STEAL_MAX=50 (inert until lanes are recreated); both boxes' checkouts at 72cb9d9; no container touched |
 | 19:41–19:44 | Step 2 item 4 shipped | heartbeat publishes steal % / busy % / eth0 KiB/s (tsr 4b4eb83, reviewed, unit-tested); installed on both boxes; box1 reports steal 95.8 %, run 13 s (was 65 s); box2 steal 0.0 %; /fleet/ renders the new tiles (TAT 415524b4) |
 
 Untouched throughout: tat-render-render-1 (cyclolab) and caddy, tat-radar-render, tat-s1-s1-render-1, meso-poller, every tat-overlays and tat-render poller, the two already-exited s1 lanes. A 10-minute steal/load watch runs until ~21:25 UTC; the 2 h decision point for conus-fast2 is 21:25 UTC. goes19/fd/ir on the CDN was still 14:30:20Z at 19:38 UTC (the leads lane cannot catch up on ~0.4 vCPU); box2's goes19/conus/ir is current.
