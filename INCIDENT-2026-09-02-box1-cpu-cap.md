@@ -134,6 +134,25 @@ Free-running demand is ~0.86 TB/day on box1 and ~0.85 TB/day on box2 (both ~26 T
 - Cause statement as our leading hypothesis with timestamps: the shaper queued ~35 h of scheduled work; at the month boundary the server caught up at ~6–7 cores for ~3.5 h (00:20–04:00 UTC Sep 1); the limiter engaged four hours later. We are reducing demand and deploying a rate governor; ask them for the usage envelope (cores, duration) that stays under their detector so it can be sized.
 - Does the weekly self-service removal apply to this restriction, and does using it while usage is still high result in a stricter or longer penalty? What criteria does their hourly guest-agent telemetry apply?
 
+## Execution log
+
+Andrew's go (2026-09-02 ~19:10 UTC): Step 1 exactly as written, one action at a time with docker ps checks; hold the weekly hPanel removal until steal is falling on its own; pausing conus-fast2 approved if steal has not moved in 2 h; Step 2 through normal review; the heartbeat must gain steal % and eth0 rx.
+
+| UTC | Action | Result |
+| --- | --- | --- |
+| 19:14 | Baseline | steal 95.8 %, load 24.2, mem used 23.0 GB; goes19/fd/ir latest 14:30:20Z |
+| 19:14–19:18 | `docker restart` meso-render | Docker's kill call timed out on the starving box ("PID is zombie and can not be killed") but the SIGKILL landed: exited 137 at 19:15:39. `docker start` at 19:18:15 → Up, new PID 1528768, healthy by 19:25 |
+| 19:19–19:21 | `docker restart` meso-render-cold | Same failure shape; exited, `docker start` at 19:21:08 → Up, healthy by 19:25 |
+| 19:22 | `docker stop` tat-s2-g19fd-emit-cron-1 | Exited (137) at 19:23; leads lane untouched |
+| 19:23 | `docker stop` tat-s2-conus-emit-cron-1 | Exited (137) at 19:24; conus-fast2 untouched |
+| 19:25 | `docker stop` tat-s1-s1-ingest-goes18-1 | Exited (137) at 19:25 |
+| 19:26 | First reading | steal 90.8 %, idle 4.3 %, load 21.7, mem used 12.8 GB (available 19.3 GB) |
+| 19:28 | Watch tick | steal 94.9 %, load 15.5, mem used 13.8 GB |
+
+Untouched throughout: tat-render-render-1 (cyclolab) and caddy, tat-radar-render, tat-s1-s1-render-1, meso-poller, every tat-overlays and tat-render poller, the two already-exited s1 lanes. A 10-minute steal/load watch runs until ~21:25 UTC; the 2 h decision point for conus-fast2 is 21:25 UTC.
+
+Lesson from the restarts: on a box this starved, `docker restart` reliably fails its kill step with "PID is zombie" while the kill itself succeeds; the container reaches exited ~20 s later and needs an explicit `docker start`. Sequence: restart → wait for exited → start → verify.
+
 ## What the verification changed
 
 Three independent read-only reviewers (virtualization, network/timeline, operations safety) and a completeness critic were given the raw evidence and the draft, told to refute it, and allowed to re-check the box. Verdicts: the cap mechanism stands (per-vCPU steal uniform to 1 %, all cgroups unlimited, a fixed ~5 % guest share to ±0.8 % for 33 h, box2 at 0.00 %); the bandwidth-throttle trigger stands; the draft was corrected on: (1) the cap can auto-lift and has a self-service weekly removal, so demand reduction is the unblocker; (2) the burst was mostly render-1's unbounded queue and the s1 backlog, not the s2 lanes, which reorders Step 2; (3) the memory ceiling is a second pre-existing constraint (eight global OOMs, two before the incident; render-1's "SIGSEGV exits" were mostly OOM kills); (4) per-cgroup CPU numbers include stolen time on this kernel; (5) a load-average gate would halt the leads lanes and livelock, so the gate must read steal/idle; (6) an unordered flock semaphore is a priority change in disguise unless leads get a reserved slot; (7) the 32 TB premise does not fit our counters or box2; (8) the s1 stale-slot drop already exists as a knob; (9) uhr-poller is missing from every ingest budget; (10) the "planned ~3.7-core" baseline was itself a network-shaped period.
