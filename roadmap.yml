@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-02T20:25:00Z
+updated: 2026-09-15T00:33:41Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1965,9 +1965,27 @@ items:
     area: records
     status: planned
   - id: cyclone-sim-game
-    title: Cyclone sim game
+    title: "Cyclone Sandbox B1.1.7: Forecast products and inland decay"
     area: apps
-    status: planned
+    status: shipped
+    date_shipped: 2026-09-14
+    note: >-
+      Forecast products brings NHC and JTWC cone graphics, county-based US
+      watches and warnings, foreign coastal warning lines, advisory history
+      and animated exports. Storms lose tropical structure faster after
+      landfall in every basin. Cold-core systems require frontal asymmetry
+      to become extratropical; otherwise they become remnant lows.
+    links:
+      - label: Cyclone Sandbox
+        url: /sandbox/
+  - id: sandbox-extratropical-transition-threshold
+    title: Restore realistic extratropical transition frequency
+    area: apps
+    status: next
+    note: >-
+      B1.1.7 requires an actual front for extratropical transition, but the
+      current asymmetry threshold makes transition too rare. A follow-up
+      adjustment is queued; report recurving storms that seem to die too easily.
   - id: mobile-pwa
     title: Mobile app / PWA
     area: apps
