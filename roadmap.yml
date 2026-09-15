@@ -29,10 +29,21 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-15T00:33:41Z
+updated: 2026-09-15T15:32:10Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: sandbox-official-cone-styles
+    title: "Cyclone Sandbox B1.1.71: official cone styles"
+    area: apps
+    status: shipped
+    date_shipped: 2026-09-15
+    note: >-
+      PAGASA joins NHC and JTWC with updated cone graphics.
+      Broadcast styles remain in review.
+    links:
+      - label: Cyclone Sandbox
+        url: /sandbox/
   - id: fleet-heartbeat-steal
     title: Fleet heartbeat publishes steal % and eth0 rx so /fleet/ shows provider throttling
     area: infra
