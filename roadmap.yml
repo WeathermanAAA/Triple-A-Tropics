@@ -29,10 +29,22 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-16T04:15:59Z
+updated: 2026-09-16T05:06:34Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: sandbox-cone-watermarks
+    title: "Cyclone Sandbox B1.1.74: forecast cone watermarks"
+    area: apps
+    status: shipped
+    date_shipped: 2026-09-16
+    note: >-
+      All five cone styles display a simulated-storm watermark, including in
+      animated exports. The full message stays visible beside the storm
+      information card.
+    links:
+      - label: Cyclone Sandbox
+        url: /sandbox/
   - id: sandbox-broadcast-low-wind-icons
     title: "Cyclone Sandbox B1.1.73: depression and tropical-storm icons"
     area: apps
