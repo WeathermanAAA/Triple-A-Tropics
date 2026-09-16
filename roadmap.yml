@@ -29,10 +29,24 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-16T05:06:34Z
+updated: 2026-09-16T19:46:32Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
+  - id: sandbox-bounded-exposure
+    title: "Cyclone Sandbox B1.1.75: bounded population and impact totals"
+    area: apps
+    status: shipped
+    date_shipped: 2026-09-16
+    note: >-
+      Population and building stock no longer grow without limit. Population
+      rises to about 10.3 billion by 2085, then settles near 10.2 billion.
+      Repeated landfalls draw from the people remaining. Large death totals no
+      longer wrap, and extreme damage totals display correctly. Storm counts,
+      tracks and ACE are unchanged.
+    links:
+      - label: Cyclone Sandbox
+        url: /sandbox/
   - id: sandbox-cone-watermarks
     title: "Cyclone Sandbox B1.1.74: forecast cone watermarks"
     area: apps
