@@ -22,18 +22,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Write batch to R2 inbox
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/ingest_sandbox_capability.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install boto3==1.40.76
+      - name: Validate and split received telemetry
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
-        run: |
-          set -euo pipefail
-          DAY=$(date -u +%F)
-          KEY="telemetry/inbox/${DAY}/$(date -u +%s)-${GITHUB_RUN_ID}.json"
-          printf '%s' "$PAYLOAD" > batch.json
-          aws s3 cp batch.json "s3://triple-a-tropics-media/${KEY}" \
-            --endpoint-url "$R2_ENDPOINT" --content-type application/json \
-            --only-show-errors
-          echo "wrote ${KEY}"
+        run: python scripts/ingest_sandbox_capability.py

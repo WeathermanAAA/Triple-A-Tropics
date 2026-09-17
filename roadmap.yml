@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-17T21:14:29Z
+updated: 2026-09-17T22:36:01Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -828,6 +828,17 @@ items:
       Control disable collection outright rather than merely withholding
       transmission. Counters aggregate in localStorage; there is no collector
       deployed, so nothing is transmitted unless an endpoint is configured.
+  - id: sandbox-capability-measurement
+    title: Prospective Sandbox device capability measurement
+    area: infra
+    status: active
+    note: >-
+      Separate anonymous tab-session capability counts per game build and
+      runtime Radar/export event counts. The existing collector transports a
+      reserved schema into its own R2 dataset, never model popularity totals.
+      DNT/GPC are respected; no raw user agent, account or storm identifiers.
+      Backend support is deployed before the B1.2.1 game client. Collection
+      starts prospectively; historical support percentages remain unknown.
   - id: telemetry-collector
     title: Telemetry collector live — anonymous product-view demand signal
     area: models
