@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-16T19:46:32Z
+updated: 2026-09-17T21:14:29Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -2026,19 +2026,23 @@ items:
     area: records
     status: planned
   - id: cyclone-sim-game
-    title: "Cyclone Sandbox B1.1.7: Forecast products and inland decay"
+    title: "Cyclone Sandbox B1.2.0: Radar"
     area: apps
     status: shipped
-    date_shipped: 2026-09-14
+    date_shipped: 2026-09-17
     note: >-
-      Forecast products brings NHC and JTWC cone graphics, county-based US
-      watches and warnings, foreign coastal warning lines, advisory history
-      and animated exports. Storms lose tropical structure faster after
-      landfall in every basin. Cold-core systems require frontal asymmetry
-      to become extratropical; otherwise they become remnant lows.
+      Live reflectivity and velocity with land-based radar sites, 460 km
+      coverage, range rings and hoverable gates. Continuous sub-hourly motion,
+      persistent storm identities, eyewall replacement cycles, weak-system
+      and extratropical appearances, and storm-glyph switching. Export compact
+      whole-life loops on the game's own basemap with your selected colors.
+      Radar requires WebGPU in a compatible up-to-date browser and device;
+      the rest of the game plays normally without it.
     links:
       - label: Cyclone Sandbox
         url: /sandbox/
+      - label: B1.2.0 release notes
+        url: https://github.com/WeathermanAAA/TAT-sandbox/releases/tag/B1.2.0
   - id: sandbox-extratropical-transition-threshold
     title: Restore realistic extratropical transition frequency
     area: apps
