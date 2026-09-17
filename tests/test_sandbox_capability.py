@@ -1,5 +1,7 @@
 import copy
+import io
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -7,6 +9,30 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('capability', ROOT / 'scripts/ingest_sandbox_capability.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+
+
+class Store:
+    class exceptions:
+        class NoSuchKey(Exception):
+            pass
+    def __init__(self):
+        self.data = {}; self.fail_put = None
+    def put_object(self, Bucket, Key, Body, **kwargs):
+        if Key == self.fail_put:
+            self.fail_put = None
+            raise RuntimeError('injected durable-write failure')
+        self.data[Key] = bytes(Body)
+    def get_object(self, Bucket, Key):
+        if Key not in self.data:
+            raise self.exceptions.NoSuchKey()
+        return {'Body': io.BytesIO(self.data[Key])}
+    def get_paginator(self, name):
+        return self
+    def paginate(self, Bucket, Prefix):
+        yield {'Contents': [{'Key': k, 'Size': len(v)} for k, v in list(self.data.items()) if k.startswith(Prefix)]}
+    def delete_objects(self, Bucket, Delete):
+        for entry in Delete['Objects']:
+            self.data.pop(entry['Key'], None)
 
 
 class CapabilityTest(unittest.TestCase):
@@ -69,6 +95,44 @@ class CapabilityTest(unittest.TestCase):
 
     def test_decoded_fields_are_coarse_allowlist_only(self):
         self.assertEqual(set(module.decode(self.row())), {'kind','build','browser','browserMajor','os','device','outcome','count'})
+
+    def inbox(self, store, batch='1', root=module.PREFIX):
+        row = module.decode(self.row())
+        key = root + 'inbox/2026-09-17/' + batch + '.json'
+        store.data[key] = json.dumps({'receivedDay': '2026-09-17', 'rows': [row]}).encode()
+        return key
+
+    def test_coalesced_summary_keeps_every_durable_batch(self):
+        store = Store(); self.inbox(store, '1'); self.inbox(store, '2')
+        store.data['telemetry/inbox/2026-09-17/model.json'] = b'untouched'
+        self.assertEqual(module.summarize(store, 'bucket'), 2)
+        result = json.loads(store.data[module.PREFIX + 'summary.json'])
+        self.assertEqual(result['days']['2026-09-17']['sessions'], 2)
+        self.assertNotIn('processed', result)
+        self.assertEqual(store.data['telemetry/inbox/2026-09-17/model.json'], b'untouched')
+
+    def test_partial_summary_write_retry_does_not_lose_or_double(self):
+        store = Store(); key = self.inbox(store)
+        store.fail_put = module.PREFIX + 'summary.json'
+        with self.assertRaisesRegex(RuntimeError, 'durable-write'):
+            module.summarize(store, 'bucket')
+        self.assertIn(key, store.data)
+        module.summarize(store, 'bucket')
+        self.assertEqual(json.loads(store.data[module.PREFIX + 'summary.json'])['days']['2026-09-17']['sessions'], 1)
+        self.assertNotIn(key, store.data)
+
+    def test_diagnostic_summary_never_creates_user_summary(self):
+        store = Store(); root = module.PREFIX + 'checks/'
+        self.inbox(store, root=root)
+        module.summarize(store, 'bucket', root, True)
+        self.assertNotIn(module.PREFIX + 'summary.json', store.data)
+        self.assertTrue(json.loads(store.data[root + 'summary.json'])['diagnostic'])
+
+    def test_only_summary_jobs_may_coalesce(self):
+        workflow = (ROOT / '.github/workflows/telemetry-ingest.yml').read_text()
+        self.assertNotIn('\nconcurrency:', workflow)
+        self.assertIn('needs: ingest', workflow)
+        self.assertIn('group: sandbox-capability-summary', workflow)
 
 
 if __name__ == '__main__':

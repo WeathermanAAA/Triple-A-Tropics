@@ -13,12 +13,10 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: telemetry-ingest
-  cancel-in-progress: false
-
 jobs:
   ingest:
+    outputs:
+      needs_summary: ${{ steps.ingest.outputs.needs_summary }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -31,9 +29,37 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install boto3==1.40.76
       - name: Validate and split received telemetry
+        id: ingest
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: python scripts/ingest_sandbox_capability.py
+
+  summarize:
+    needs: ingest
+    if: needs.ingest.outputs.needs_summary == 'true'
+    # Only summaries coalesce. Every event above persists its inbox before a
+    # pending summary can be replaced by a newer request.
+    concurrency:
+      group: sandbox-capability-summary
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/ingest_sandbox_capability.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install boto3==1.40.76
+      - name: Fold durable capability inboxes
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          CAPABILITY_MODE: summarize
         run: python scripts/ingest_sandbox_capability.py

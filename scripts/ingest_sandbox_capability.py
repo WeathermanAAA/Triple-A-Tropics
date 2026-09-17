@@ -73,8 +73,50 @@ def fold(summary, rows, day, batch_id):
     return True
 
 
+def summarize(client, bucket, root=PREFIX, diagnostic=False):
+    def put(key, value):
+        client.put_object(Bucket=bucket, Key=key, Body=json.dumps(value).encode(), ContentType="application/json", CacheControl="no-cache")
+    try:
+        summary = json.loads(client.get_object(Bucket=bucket, Key=root + "state.json")["Body"].read())
+    except client.exceptions.NoSuchKey:
+        summary = {}
+    folded = []
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=root + "inbox/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if obj.get("Size", 0) > 65536:
+                raise ValueError("Oversized capability inbox object")
+            batch = json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+            rows = batch["rows"]
+            if diagnostic:
+                rows = [{**row, "kind": "s"} for row in rows]
+            fold(summary, rows, batch["receivedDay"], key.rsplit("/", 1)[-1].removesuffix(".json"))
+            folded.append(key)
+    if not summary:
+        return 0
+    if diagnostic:
+        summary["diagnostic"] = True
+    put(root + "state.json", summary)
+    put(root + "summary.json", {k: v for k, v in summary.items() if k != "processed"})
+    # Delete only after both durable writes. A crash/retry before this point is
+    # idempotent through processed run IDs; it cannot silently count a batch twice.
+    for offset in range(0, len(folded), 1000):
+        client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": key} for key in folded[offset:offset+1000]]})
+    return len(folded)
+
+
 def main():
     import boto3
+    client = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT"],
+                          aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                          aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
+    bucket = "triple-a-tropics-media"
+    def put(key, value):
+        client.put_object(Bucket=bucket, Key=key, Body=json.dumps(value).encode(), ContentType="application/json", CacheControl="no-cache")
+    if os.environ.get("CAPABILITY_MODE") == "summarize":
+        print(json.dumps({"capabilityBatches": summarize(client, bucket),
+                          "diagnosticBatches": summarize(client, bucket, PREFIX + "checks/", True)}))
+        return
     payload = json.loads(os.environ["PAYLOAD"])
     if not isinstance(payload, dict):
         raise ValueError("Expected telemetry object")
@@ -83,27 +125,17 @@ def main():
     batch = os.environ["GITHUB_RUN_ID"]
     if not re.fullmatch(r"\d+", batch):
         raise ValueError("Invalid workflow run ID")
-    client = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT"],
-                          aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-                          aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
-    bucket = "triple-a-tropics-media"
-    def put(key, value):
-        client.put_object(Bucket=bucket, Key=key, Body=json.dumps(value).encode(), ContentType="application/json", CacheControl="no-cache")
     if models:
         put(f"telemetry/inbox/{day}/{batch}.json", {**payload, "rows": models})
     if rows:
         put(f"{PREFIX}inbox/{day}/{batch}.json", {"v": 1, "receivedDay": day, "rows": rows})
-        try:
-            summary = json.loads(client.get_object(Bucket=bucket, Key=PREFIX + "state.json")["Body"].read())
-        except client.exceptions.NoSuchKey:
-            summary = {}
-        if fold(summary, rows, day, batch):
-            put(PREFIX + "state.json", summary)
-        # Publish even after an idempotent retry: a previous state write may
-        # have succeeded immediately before its public summary write failed.
-        put(PREFIX + "summary.json", {k: v for k, v in summary.items() if k != "processed"})
     if diagnostics:
-        put(f"{PREFIX}checks/{batch}.json", {"v": 1, "receivedDay": day, "diagnostic": True, "rows": diagnostics})
+        value = {"v": 1, "receivedDay": day, "diagnostic": True, "rows": diagnostics}
+        put(f"{PREFIX}checks/{batch}.json", value)
+        put(f"{PREFIX}checks/inbox/{day}/{batch}.json", value)
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write("needs_summary=" + ("true" if rows or diagnostics else "false") + "\n")
     print(json.dumps({"modelsRows": len(models), "capabilityRows": len(rows), "diagnosticRows": len(diagnostics), "run": batch}))
 
 
