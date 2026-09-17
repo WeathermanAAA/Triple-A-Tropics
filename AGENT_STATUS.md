@@ -1,11 +1,5 @@
 # Agent status — Triple-A-Tropics autonomous work log
 
-## Capability measurement backend — 2026-09-17
-
-Reserved sc1_ rows are validated and split into a separate Sandbox R2 dataset before model telemetry ingestion. Existing collector bytes/route and model rows are unchanged. Sessions are per tab and game build; runtime events use a separate denominator. Ten focused schema/idempotence tests pass. The game client rollout remains part of B1.2.1; no historical coverage claim. Live relay/inbox verification follows deployment.
-
----
-
 Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
