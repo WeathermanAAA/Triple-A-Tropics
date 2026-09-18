@@ -40,13 +40,21 @@ class CapabilityTest(unittest.TestCase):
         return {'p': 'sc1_' + suffix, 'v': count, 'd': 0}
 
     def test_all_outcomes_and_platforms(self):
-        for browser in 'cefso':
-            for system in 'wmlaio':
+        for browser in module.BROWSERS:
+            for system in module.SYSTEMS:
                 for device in 'ptd':
                     for outcome in 'nzau':
                         r = self.row(f's_1_2_1_{browser}152_{system}_{device}_{outcome}')
                         self.assertLessEqual(len(r['p']), 40)
                         self.assertIsNotNone(module.decode(r))
+
+    def test_secondary_browsers_and_chromeos_remain_distinct(self):
+        for suffix, browser, system in [
+            ('p115_w', 'Opera', 'Windows'), ('g28_a', 'Samsung Internet', 'Android'),
+            ('v152_a', 'WebView', 'Android'), ('v0_i', 'WebView', 'iOS'),
+            ('c152_c', 'Chrome', 'ChromeOS')]:
+            row = module.decode(self.row('s_1_2_1_' + suffix + '_d_a'))
+            self.assertEqual((row['browser'], row['os']), (browser, system))
 
     def test_distinct_session_and_event_denominators(self):
         rows = [module.decode(self.row()), module.decode(self.row('e_1_2_1_c152_m_d_r', 4))]

@@ -10,9 +10,9 @@ import os
 import re
 
 PREFIX = "telemetry/sandbox-capability/"
-PATTERN = re.compile(r"^sc1_([set])_(u|\d{1,3}_\d{1,3}_\d{1,3})_([cefso])([0-9]{1,3})_([wmlaio])_([ptd])_([nzaurle])$")
-BROWSERS = {"c": "Chrome", "e": "Edge", "f": "Firefox", "s": "Safari", "o": "Other"}
-SYSTEMS = {"w": "Windows", "m": "macOS", "l": "Linux", "a": "Android", "i": "iOS", "o": "Other"}
+PATTERN = re.compile(r"^sc1_([set])_(u|\d{1,3}_\d{1,3}_\d{1,3})_([cefspgvo])([0-9]{1,3})_([wmlaico])_([ptd])_([nzaurle])$")
+BROWSERS = {"c": "Chrome", "e": "Edge", "f": "Firefox", "s": "Safari", "p": "Opera", "g": "Samsung Internet", "v": "WebView", "o": "Other"}
+SYSTEMS = {"w": "Windows", "m": "macOS", "l": "Linux", "a": "Android", "i": "iOS", "c": "ChromeOS", "o": "Other"}
 DEVICES = {"p": "phone", "t": "tablet", "d": "desktop"}
 OUTCOMES = {"n": "api_absent", "z": "adapter_absent", "a": "adapter_available", "u": "unknown"}
 EVENTS = {"r": "radar_ready", "l": "device_lost", "e": "export_error"}
