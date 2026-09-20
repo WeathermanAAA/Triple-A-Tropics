@@ -12,6 +12,14 @@ routes = [
 [vars]
 REPO = "WeathermanAAA/Triple-A-Tropics"
 
-# secrets (NOT here, NOT in the repo — deploy-bugs.sh wires them):
+[[d1_databases]]
+binding = "BUG_RATE_DB"
+database_name = "tat-bugs-private-limits"
+database_id = "a9be5a8b-4386-4a0a-a59c-f18b070b8ccd"
+
+[triggers]
+crons = ["0 * * * *"]
+
+# Existing secrets are preserved by deploy-bugs.sh:
 #   GITHUB_TOKEN      durable classic PAT, repo scope (issues RW)
-#   ADMIN_KEY         PATCH auth + ratekey HMAC salt
+#   ADMIN_KEY         PATCH auth + private counter HMAC key

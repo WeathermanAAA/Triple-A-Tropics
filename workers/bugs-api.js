@@ -1,7 +1,7 @@
 /* bugs-api.js — GitHub-issues-backed tester bug board API.
  *
  * Serves triple-a-tropics.com/bugs-api/* for the nav-hidden /bugs/ page.
- * Testers submit ANONYMOUSLY (no GitHub account): the Worker holds a
+ * Testers submit without a GitHub account: the Worker holds a
  * server-side GitHub PAT (secret GITHUB_TOKEN, Issues RW on the repo) and
  * files their reports as issues labeled "tester-report" — so closing an
  * issue ("fixes #N" in a commit) crosses the report off the board.
@@ -15,14 +15,14 @@
  *   PATCH /bugs-api/issues/{number}   {state: open|closed}, requires
  *                                      x-admin-key header
  *
- * Anti-spam (low-stakes by design): honeypot field plus a per-IP/day +
- * global/day rate limit that uses GitHub itself as the counter — each
- * issue body carries an invisible HMAC(ip) tag, and POST counts the last
- * 24 h of tester-report issues. No passcode, no KV/DO needed.
+ * Anti-spam: honeypot plus rolling 24-hour limits in private D1 storage.
+ * Keyed client identifiers never leave the rate-limit database. GitHub
+ * receives only report content and ordinary board metadata, never IPs or
+ * identifiers derived from them. Reservations make concurrent limits atomic.
  *
  * Secrets (wrangler secret put …, see deploy-bugs.sh — NEVER in the repo):
  *   GITHUB_TOKEN     durable classic PAT with repo scope (issues RW)
- *   ADMIN_KEY        admin key for PATCH (and the ratekey HMAC salt)
+ *   ADMIN_KEY        admin key for PATCH and the private counter HMAC key
  */
 
 // GH_BASE env override exists ONLY so local tests can point the worker at a
@@ -37,6 +37,7 @@ const SEVERITIES = ["blocker", "major", "minor", "nit"];
 
 const PER_IP_PER_DAY = 5;
 const GLOBAL_PER_DAY = 30;
+const DAY_MS = 24 * 3600 * 1000;
 
 const LABEL_COLORS = {
   [LABEL]: "5b6f8f",
@@ -74,9 +75,10 @@ function ghHeaders(env) {
 }
 
 async function hmacTag(ip, env) {
-  // privacy-preserving per-IP tag: HMAC keyed on ADMIN_KEY, 12 hex chars
+  // Private counter key only. Keep the existing keyed representation so
+  // active limits can be migrated without resetting anyone's quota.
   const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(env.ADMIN_KEY || "no-key"),
+    "raw", new TextEncoder().encode(env.ADMIN_KEY),
     { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign(
     "HMAC", key, new TextEncoder().encode(ip || "unknown"));
@@ -97,17 +99,34 @@ async function ensureLabel(env, repo, name, color, description) {
   if (r.ok || r.status === 422) ensuredLabels.add(name);
 }
 
-async function recentReports(env, repo) {
-  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const r = await fetch(
-    `${ghBase(env)}/repos/${repo}/issues?labels=${LABEL}&state=all&per_page=100` +
-    `&since=${since}&sort=created&direction=desc`,
-    { headers: ghHeaders(env) });
-  if (!r.ok) return null;
-  const items = await r.json();
-  const cutoff = Date.now() - 24 * 3600 * 1000;
-  return items.filter((i) => !i.pull_request &&
-    new Date(i.created_at).getTime() >= cutoff);
+async function reserveReport(env, clientKey) {
+  const now = Date.now(), id = crypto.randomUUID();
+  // D1 batch is one transaction. The conditional write owns the decision;
+  // there is no separate read-then-write race between simultaneous requests.
+  const results = await env.BUG_RATE_DB.batch([
+    env.BUG_RATE_DB.prepare("DELETE FROM report_limits WHERE created_at < ?")
+      .bind(now - DAY_MS),
+    env.BUG_RATE_DB.prepare(`INSERT INTO report_limits (id, client_key, created_at)
+      SELECT ?, ?, ? WHERE
+      (SELECT COUNT(*) FROM report_limits) < ? AND
+      (SELECT COUNT(*) FROM report_limits WHERE client_key = ?) < ?
+      RETURNING id`).bind(id, clientKey, now, GLOBAL_PER_DAY,
+        clientKey, PER_IP_PER_DAY),
+    env.BUG_RATE_DB.prepare(`SELECT COUNT(*) AS total,
+      COALESCE(SUM(client_key = ?), 0) AS mine FROM report_limits`).bind(clientKey),
+  ]);
+  if (results.some((r) => r.success === false)) throw new Error("Counter unavailable");
+  if (results[1].results.length === 1) return { id };
+  return { limited: results[2].results[0].total >= GLOBAL_PER_DAY ? "global" : "client" };
+}
+
+async function releaseReport(env, id) {
+  try {
+    await env.BUG_RATE_DB.prepare("DELETE FROM report_limits WHERE id = ?").bind(id).run();
+  } catch {
+    // Retaining a reservation is safer than allowing a storage failure to
+    // bypass the limit. No client key or database error is logged or returned.
+  }
 }
 
 function fieldFromLabels(labels, prefix) {
@@ -141,24 +160,33 @@ async function handlePost(request, env, repo) {
   if (!severity) return json({ error: "pick a severity" }, 400);
   const tester = (p.tester || "").trim().slice(0, 60) || "anonymous";
 
-  // rate limit: GitHub itself is the counter (24 h window)
-  const ip = request.headers.get("cf-connecting-ip") || "";
-  const tag = await hmacTag(ip, env);
-  const recent = await recentReports(env, repo);
-  if (recent === null) return json({ error: "GitHub unreachable, try again" }, 502);
-  if (recent.length >= GLOBAL_PER_DAY) {
+  if (!env.ADMIN_KEY || !env.BUG_RATE_DB) {
+    return json({ error: "report submission temporarily unavailable" }, 503);
+  }
+  let reservation;
+  try {
+    const clientKey = await hmacTag(request.headers.get("cf-connecting-ip") || "", env);
+    reservation = await reserveReport(env, clientKey);
+  } catch {
+    return json({ error: "report submission temporarily unavailable" }, 503);
+  }
+  if (reservation.limited === "global") {
     return json({ error: "the board hit its daily report cap, try tomorrow" }, 429);
   }
-  const mine = recent.filter((i) => (i.body || "").includes(`ratekey:${tag}`));
-  if (mine.length >= PER_IP_PER_DAY) {
+  if (reservation.limited === "client") {
     return json({ error: "daily per-tester limit reached, try tomorrow" }, 429);
   }
 
   const labels = [LABEL, `sev:${severity}`, `area:${area}`];
-  await ensureLabel(env, repo, LABEL, LABEL_COLORS[LABEL], "filed from /bugs/");
-  await ensureLabel(env, repo, `sev:${severity}`,
-    LABEL_COLORS[`sev:${severity}`] || "cccccc", "tester-reported severity");
-  await ensureLabel(env, repo, `area:${area}`, AREA_COLOR, "tester-reported area");
+  try {
+    await ensureLabel(env, repo, LABEL, LABEL_COLORS[LABEL], "filed from /bugs/");
+    await ensureLabel(env, repo, `sev:${severity}`,
+      LABEL_COLORS[`sev:${severity}`] || "cccccc", "tester-reported severity");
+    await ensureLabel(env, repo, `area:${area}`, AREA_COLOR, "tester-reported area");
+  } catch {
+    await releaseReport(env, reservation.id);
+    return json({ error: "GitHub unreachable, try again" }, 502);
+  }
 
   const now = new Date().toISOString().replace("T", " ").slice(0, 16);
   const body = [
@@ -170,18 +198,32 @@ async function handlePost(request, env, repo) {
     "",
     "---",
     `_Filed via the tester bug board (/bugs/) at ${now} UTC._`,
-    `<!-- ratekey:${tag} -->`,
   ].join("\n");
 
-  const r = await fetch(`${ghBase(env)}/repos/${repo}/issues`, {
-    method: "POST",
-    headers: ghHeaders(env),
-    body: JSON.stringify({ title, body, labels }),
-  });
+  let r;
+  try {
+    r = await fetch(`${ghBase(env)}/repos/${repo}/issues`, {
+      method: "POST",
+      headers: ghHeaders(env),
+      body: JSON.stringify({ title, body, labels }),
+    });
+  } catch {
+    // The issue may already exist. Keep the slot and avoid claiming success.
+    return json({ error: "GitHub did not confirm the report; check the board before retrying" }, 502);
+  }
   if (!r.ok) {
+    // A server failure can be ambiguous; only a definite rejection refunds.
+    if (r.status >= 400 && r.status < 500) await releaseReport(env, reservation.id);
     return json({ error: `GitHub refused the issue (${r.status})` }, 502);
   }
-  const issue = await r.json();
+  let issue;
+  try { issue = await r.json(); } catch {
+    return json({ error: "GitHub did not confirm the report; check the board before retrying" }, 502);
+  }
+  if (!issue || !Number.isInteger(issue.number) || issue.number < 1 ||
+      typeof issue.html_url !== "string" || !issue.html_url) {
+    return json({ error: "GitHub did not confirm the report; check the board before retrying" }, 502);
+  }
   return json({ ok: true, number: issue.number, html_url: issue.html_url });
 }
 
@@ -237,6 +279,10 @@ async function handlePatch(request, env, repo, number) {
 }
 
 export default {
+  async scheduled(_event, env) {
+    await env.BUG_RATE_DB.prepare("DELETE FROM report_limits WHERE created_at < ?")
+      .bind(Date.now() - DAY_MS).run();
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     const repo = env.REPO || "WeathermanAAA/Triple-A-Tropics";

@@ -99,24 +99,38 @@ curl -sI "https://triple-a-tropics.com/satellite/explorer/?k=<TOKEN>" | head -5
 ## bugs-api.js
 
 `triple-a-tropics.com/bugs-api/*` — GitHub-issues-backed tester bug board
-API for the nav-hidden `/bugs/` page. Testers submit anonymously; the
-Worker holds a durable GitHub PAT server-side and files reports as
+API for the nav-hidden `/bugs/` page. Testers submit without a GitHub account;
+their chosen name, title and report text are public on the board and GitHub.
+The Worker holds a durable GitHub PAT server-side and files reports as
 `tester-report`-labeled issues, so `fixes #N` in a commit crosses them off
-the board. Anti-spam: honeypot + per-IP/day rate limit (no passcode)
-(GitHub itself is the counter via an invisible HMAC ratekey tag — no KV).
+the board.
 
-Deploy (one-time; rotates the admin key on rerun):
+Anti-spam: honeypot and rolling 24-hour limits of five reports per IP and
+30 overall. Atomic reservations live in the separate private D1 database
+`tat-bugs-private-limits`, bound as `BUG_RATE_DB`. Only a random reservation
+ID, keyed client identifier and timestamp are stored; no raw IP or report
+content. No IP-derived identifier is sent to GitHub. Expired counters are
+removed on submission and hourly. D1 backups may retain deleted counters
+for the platform's recovery window.
+
+A counter outage blocks submission. Definite GitHub rejection refunds the
+slot; an uncertain create result retains it until expiry, since an issue
+may already exist. Keep `ADMIN_KEY` stable: it authenticates administration
+and keys the private counters. Routine deployment preserves both secrets
+and never files a public smoke report.
 
 ```bash
 npx wrangler login          # browser OAuth, once per machine
-bash workers/deploy-bugs.sh # deploys, wires secrets, smoke-tests the loop
+bash workers/deploy-bugs.sh # applies private schema, deploys, checks read access
 ```
 
-Local E2E without Cloudflare auth: `wrangler dev -c bugs-api.toml --local`
-with a `.dev.vars` (gitignored) pointing `GH_BASE` at a mock GitHub —
-the full suite (validation, honeypot, rate limit, PATCH guard)
-was run that way at build time; real-PAT issue create/label/close was
-verified separately via `gh`.
+For a fresh installation, create the D1 database and set its ID in
+`bugs-api.toml`, then configure `GITHUB_TOKEN` and `ADMIN_KEY` with
+`wrangler secret put`. Do not commit secrets. For local E2E, apply
+`bugs-rate-limit.sql` with `wrangler d1 execute BUG_RATE_DB --local`, then
+use `wrangler dev -c bugs-api.toml --local` and a gitignored `.dev.vars`
+with `GH_BASE` pointing at a mock GitHub. Never use real GitHub credentials
+for local submission tests.
 
 ## r2-breaker.js
 

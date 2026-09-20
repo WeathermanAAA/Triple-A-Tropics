@@ -93,7 +93,7 @@
 <div class="bb-wrap">
   <div class="bb-cols">
 
-    <form class="bb-card bb-form" id="bb-form" autocomplete="off">
+    <form class="bb-card bb-form" id="bb-form" autocomplete="off" aria-describedby="bb-disclosure">
       <h2>Report a bug</h2>
       <label for="bb-tester">Name / handle (optional)</label>
       <input id="bb-tester" maxlength="60" placeholder="anonymous">
@@ -124,7 +124,10 @@
         <label for="bb-website">Website</label>
         <input id="bb-website" tabindex="-1">
       </div>
-      <button id="bb-submit" type="submit">File report</button>
+      <p id="bb-disclosure">Your report, including its title, text and any name or
+        handle you enter, will be public on this board and GitHub. Leave the name
+        blank to appear as anonymous. Do not include private information.</p>
+      <button id="bb-submit" type="submit" aria-describedby="bb-disclosure">File report</button>
       <div class="bb-msg" id="bb-msg"></div>
     </form>
 
