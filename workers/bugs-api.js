@@ -16,9 +16,9 @@
  *                                      x-admin-key header
  *
  * Anti-spam: honeypot plus rolling 24-hour limits in private D1 storage.
- * Keyed client identifiers never leave the rate-limit database. GitHub
- * receives only report content and ordinary board metadata, never IPs or
- * identifiers derived from them. Reservations make concurrent limits atomic.
+ * Keyed client identifiers stay in private rate-limit storage. Public issue
+ * payloads contain only report content and ordinary board metadata, never
+ * generated IP identifiers. Reservations make concurrent limits atomic.
  *
  * Secrets (wrangler secret put …, see deploy-bugs.sh — NEVER in the repo):
  *   GITHUB_TOKEN     durable classic PAT with repo scope (issues RW)
