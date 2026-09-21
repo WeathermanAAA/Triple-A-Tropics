@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-17T22:36:01Z
+updated: 2026-09-21T23:35:00Z
 
 items:
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
@@ -1624,6 +1624,8 @@ items:
       (the shapers engaged at ~20 TB and ~22-25 TB against a published 32 TB
       while box2 ingested ~24-25 TB unshaped). Full report and step list in
       INCIDENT-2026-09-02-box1-cpu-cap.md.
+      STILL CAPPED 2026-09-21 (steal 86-95 %): the floater stall of 09-21 is
+      this incident three weeks on; see INCIDENT-2026-09-21-floater-stall.md.
     links:
       - label: incident report
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/blob/main/INCIDENT-2026-09-02-box1-cpu-cap.md
@@ -1694,6 +1696,19 @@ items:
         url: https://github.com/WeathermanAAA/Triple-A-Tropics/commit/87f10fbf
 
   # ---- next (specced, queued) ----
+  - id: floater-render-isolation
+    title: Floater poller needs its own render container (or box2) — dies first under any box1 cap
+    area: satellite
+    status: next
+    note: >-
+      2026-09-21: the floater had produced almost nothing since the Sep 1 CPU
+      limiter (freshness monitor: frame row stale 475 h) while meso kept a few
+      frames/day, because meso has two dedicated render containers and the
+      floater shares tat-render's single `render` with cyclolab guidance and
+      public traffic, at a 300 s timeout on full-disk crops. Give the floater
+      its own render service (like meso) or move the floater stack to box2;
+      deploy the render queue deadline (tsr 72cb9d9) either way. Report in
+      INCIDENT-2026-09-21-floater-stall.md.
   - id: box1-catch-up-governor
     title: Box-wide catch-up governor for the s2 emit lanes (flock slots, per-pass cap)
     area: infra
