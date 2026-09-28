@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-28T03:30:00Z
+updated: 2026-09-28T03:40:00Z
 
 items:
   - id: hafs-workflow-failing-since-0918
@@ -59,7 +59,7 @@ items:
       wasted. Fix candidates: --copy-props none on the copy, or upload
       straight to the live key, plus a real exit check.
   - id: enscenters-prior-manifest-403
-    title: "Ensemble cyclone-centre workflows never no-op: CDN 403s Python-urllib, watermark always 0"
+    title: "Ensemble centre workflows never no-op: CDN 403s Python-urllib, watermark stays 0"
     area: models
     status: planned
     note: >-
@@ -80,7 +80,7 @@ items:
       permanently red workflow cannot alert on a real failure; drop the head
       or add the pipe guard.
   - id: backup-cron-duplicate-writers
-    title: "Backup crons re-upload everything: subseasonal, guidance, ace, tc-records, tcprimed listings"
+    title: "Backup crons re-upload full outputs: subseasonal, guidance, ace, tc-records"
     area: infra
     status: planned
     note: >-
