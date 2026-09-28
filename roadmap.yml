@@ -29,9 +29,69 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-28T00:05:00Z
+updated: 2026-09-28T03:30:00Z
 
 items:
+  - id: hafs-workflow-failing-since-0918
+    title: "HAFS model plots: no successful run since 2026-09-18, /models/ HAFS stale"
+    area: models
+    status: active
+    note: >-
+      Found by the 2026-09-27 R2 writer census. update-hafs.yml last
+      succeeded 2026-09-18 20:02Z (run 35343828166). Every run since fails
+      in the render step (exit 134 after render, ingest failure rates 50 to
+      70 percent, some lost-runner deaths) or is cancelled while queued; the
+      upload step never runs, so the public HAFS page has been frozen for
+      nine days and the workflow writes nothing to R2. When it recovers it
+      becomes the largest GitHub-side writer again (about 1,600 Class A per
+      hour at 5.3 runs per day). Diagnose the render aborts first.
+  - id: sst-frame-cache-save-broken
+    title: "SST animator R2 frame cache has never been saved (multipart copy NotImplemented)"
+    area: obs
+    status: planned
+    note: >-
+      scripts/sst_frame_cache_r2.sh save streams the tar to a temp key, then
+      aws s3 cp copies it to the live key; on R2 that copy fails with
+      NotImplemented GetObjectTagging for objects over 5 GB, the script has
+      no set -e, deletes the temp and prints a false success. Result in
+      every retained run since 2026-07-01: both jobs cold-render (Job 2 about
+      5.2 h, brushing the 6 h limit) and about 1,000 UploadParts per run are
+      wasted. Fix candidates: --copy-props none on the copy, or upload
+      straight to the live key, plus a real exit check.
+  - id: enscenters-prior-manifest-403
+    title: "Ensemble cyclone-centre workflows never no-op: CDN 403s Python-urllib, watermark always 0"
+    area: models
+    status: planned
+    note: >-
+      enscenters.pipeline.fetch_prior_manifest reads the CDN manifest with
+      urllib and no User-Agent; Cloudflare answers 403, the code treats it as
+      manifest absent, and all five ensemble workflows re-ingest and re-PUT
+      the three newest cycles on every run (about 21 minutes of Actions time
+      and 7 redundant PUTs per run each). Set a User-Agent and treat a
+      persistent 403 as an error, not as absence.
+  - id: tc-records-always-red
+    title: "update-tc-records has never had a green run: BrokenPipe on the final aws s3 ls | head"
+    area: records
+    status: planned
+    note: >-
+      132 of 132 runs since 2026-07-23 are red, yet the workflow publishes
+      twice a day since 2026-08-08. The failure is a pipefail artifact on the
+      last step (aws s3 ls explorer/v1/ piped into head -20, exit 120). A
+      permanently red workflow cannot alert on a real failure; drop the head
+      or add the pipe guard.
+  - id: backup-cron-duplicate-writers
+    title: "Backup crons re-upload everything: subseasonal, guidance, ace, tc-records, tcprimed listings"
+    area: infra
+    status: planned
+    note: >-
+      With cancel-in-progress false and no published-already guard, the
+      backup ticks re-render and re-PUT full output sets: subseasonal 1,206
+      objects twice a day (about 51 Class A per hour recoverable), guidance
+      all documents 8 times a day (about 19 per hour recoverable), ace base
+      files 12 times a day. update-tcprimed lists the whole microwave prefix
+      (about 42 K objects, 84 pages) twice per run to upload 24 files; a cp
+      --recursive would remove most of its Class A. All small next to the box
+      lanes, but each is a one-line fix.
   - id: explorer-r2-pause
     title: "Satellite Explorer R2 writers paused: workflows disabled, box lane stop queued"
     area: satellite
