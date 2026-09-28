@@ -164,6 +164,9 @@ def git_branch(branch: str):
 
 # ---- the registry ----------------------------------------------------------
 # (name, writer, cadence_min, extractor, known_down_note-or-None)
+# Explorer pause (2026-09-27): known_down note shared by every explorer row.
+_EXPLORER_PAUSED = ("explorer paused 2026-09-27 (unlinked, unused): writers "
+                    "stopped on purpose -- see AGENT_STATUS QUEUED steps")
 # cadence = how often NEW DATA should land at origin under normal operation.
 
 REGISTRY = [
@@ -237,26 +240,34 @@ REGISTRY = [
     ("subseasonal mjo_meta.json", "GH update-subseasonal.yml", 1440,
      j("subseasonal/mjo_meta.json", "generated_utc"), None),
 
-    # explorer sat suites (box s2 emit-cron / GH riders). Scan time is the
-    # honest signal (as_of refreshes only on new data).
-    ("explorer goes19/conus/ir", "box s2 emit-cron (conus)", 60,
-     j("shadow/sat/goes19/conus/ir/latest_times.json", "latest"), None),
-    ("explorer goes19/fd/ir", "GH emit-geo-global rider (box fd cron queued)",
-     60, j("shadow/sat/goes19/fd/ir/latest_times.json", "latest"), None),
-    ("explorer himawari9/wpac/ir", "GH emit-geo-global rider (box cron queued)",
-     60, j("shadow/sat/himawari9/wpac/ir/latest_times.json", "latest"), None),
-    ("explorer geo/global/ir", "GH emit-geo-global.yml", 60,
-     j("shadow/sat/geo/global/ir/latest_times.json", "latest"), None),
-    ("explorer goes19/conus/truecolor", "box s2 emit-cron (conus)", 60,
+    # explorer sat suites (box s2 emit-cron lanes). Scan time is the honest
+    # signal (as_of refreshes only on new data). PAUSED 2026-09-27 on
+    # Andrew's order (the explorer is unlinked, unused, not being worked
+    # on): every explorer writer is being stopped -- pause, not delete --
+    # so these rows are known_down: they still report and count, but a
+    # stale explorer suite must not page anyone. Drop the notes when the
+    # lanes are started again (fleet.yml / AGENT_STATUS QUEUED steps).
+    ("explorer goes19/conus/ir", "box2 tat-s2-conus-fast (paused)", 60,
+     j("shadow/sat/goes19/conus/ir/latest_times.json", "latest"),
+     _EXPLORER_PAUSED),
+    ("explorer goes19/fd/ir", "box1 tat-s2-g19fd-leads (paused)", 60,
+     j("shadow/sat/goes19/fd/ir/latest_times.json", "latest"),
+     _EXPLORER_PAUSED),
+    ("explorer himawari9/wpac/ir", "box2 tat-s2-hwwpac (paused)", 60,
+     j("shadow/sat/himawari9/wpac/ir/latest_times.json", "latest"),
+     _EXPLORER_PAUSED),
+    ("explorer geo/global/ir", "box2 tat-s2-geo (paused)", 60,
+     j("shadow/sat/geo/global/ir/latest_times.json", "latest"),
+     _EXPLORER_PAUSED),
+    ("explorer goes19/conus/truecolor", "box2 tat-s2-conus-fast (paused)", 60,
      j("shadow/sat/goes19/conus/truecolor/latest_times.json", "latest"),
-     "box post-restore band failure under investigation (2026-07-16)"),
-    ("explorer goes19/fd suite (sandwich)", "box s2 emit-cron fd — CRON NOT STARTED",
-     60, j("shadow/sat/goes19/fd/sandwich/latest_times.json", "latest"),
-     "queued box step: S2_CRON_SUITES + emit-cron restart"),
-    ("explorer himawari9/wpac suite (sandwich)",
-     "box s2 emit-cron wpac — CRON NOT STARTED", 60,
-     j("shadow/sat/himawari9/wpac/sandwich/latest_times.json", "latest"),
-     "queued box step: S2_CRON_SUITES + emit-cron restart"),
+     _EXPLORER_PAUSED),
+    ("explorer goes19/fd suite (sandwich)", "box1 tat-s2-g19fd (paused)", 60,
+     j("shadow/sat/goes19/fd/sandwich/latest_times.json", "latest"),
+     _EXPLORER_PAUSED),
+    ("explorer himawari9/wpac suite (sandwich)", "box2 tat-s2-hwwpac (paused)",
+     60, j("shadow/sat/himawari9/wpac/sandwich/latest_times.json", "latest"),
+     _EXPLORER_PAUSED),
 
     # floater fleet + backdrops (box floater poller)
     # NOTE the known_down was CLEARED 2026-08-22: the "stalled 2026-07-15"

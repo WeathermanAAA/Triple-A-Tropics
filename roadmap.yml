@@ -29,9 +29,29 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-21T23:35:00Z
+updated: 2026-09-28T00:05:00Z
 
 items:
+  - id: explorer-r2-pause
+    title: "Satellite Explorer R2 writers paused: workflows disabled, box lane stop queued"
+    area: satellite
+    status: needs-andrew
+    note: >-
+      Andrew's call on 2026-09-27: the explorer is unlinked, unused and not
+      being worked on, so every R2 write it causes is paused, nothing deleted.
+      The seven dispatch-only GitHub workflows (emit-geo-global,
+      emit-conus-stopgap, emit-diag-riders, update-mrms, update-metar,
+      update-sfc-analysis, update-nhc-overlay) are disabled; they had not run
+      since July or August and nothing dispatched them. The live writers are
+      box lanes: the eight tat-s2 lanes on box2, and g19fd-leads plus the
+      mrms, metar, sfc, nhc, uhr and tpw pollers and the objfix collector on
+      box1. The agent's docker stop was refused by its permission layer, so
+      the exact commands wait in AGENT_STATUS under QUEUED manual steps.
+      floater-worker and every public poller stay on. Breaker before the
+      change: about 8.9K Class A operations per hour.
+    links:
+      - label: Breaker status
+        url: /r2-breaker/status
   # ---- shipped (newest first; the board re-sorts by date anyway) ----
   - id: sandbox-bounded-exposure
     title: "Cyclone Sandbox B1.1.75: bounded population and impact totals"
