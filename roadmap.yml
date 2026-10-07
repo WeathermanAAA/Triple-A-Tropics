@@ -29,9 +29,28 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T02:17:00Z
+updated: 2026-10-07T03:00:00Z
 
 items:
+  - id: enscenters-google-suites-super-ensembles
+    title: "Ensemble centers: WeatherNext 3 (64), suite switcher, Google and all-model super ensembles"
+    area: models
+    status: shadow
+    note: >-
+      Google DeepMind WeatherNext 3 joins /models/ as a sixth model on the shared
+      Weather Lab native-track ingest (own update-wnv3.yml at :39, same R2 prefix and
+      manifest reconcile; CSV columns mapped by header name, member count read from
+      the data). The flat model buttons become a suite row (ECMWF, NOAA, Google, All
+      models) over a model row, grouped by a suite field the registry now writes into
+      the manifest. Two derived super ensembles pool published members client-side:
+      Google (FNV3 + WN3 + GenCast) and all models. Same init cycle, else a run at most
+      6 h older aligned by valid time, else dropped, and the figure says which went in.
+      Mean track, Vmax plume and envelope give each model an equal share (method
+      pool-v1), labelled on the burned-in header. On a branch awaiting review; after
+      merge, dispatch update-wnv3.yml once to seed the first cycle.
+    links:
+      - label: Ensemble centers
+        url: /models/
   - id: meso-poller-renders-failing
     title: "Meso poller: every render fails while health reports healthy (no frames since Sep 22)"
     area: satellite
@@ -102,7 +121,7 @@ items:
     note: >-
       enscenters.pipeline.fetch_prior_manifest reads the CDN manifest with
       urllib and no User-Agent; Cloudflare answers 403, the code treats it as
-      manifest absent, and all five ensemble workflows re-ingest and re-PUT
+      manifest absent, and all six ensemble workflows re-ingest and re-PUT
       the three newest cycles on every run (about 21 minutes of Actions time
       and 7 redundant PUTs per run each). Set a User-Agent and treat a
       persistent 403 as an error, not as absence.
