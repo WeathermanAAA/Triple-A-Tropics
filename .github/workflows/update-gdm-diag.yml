@@ -1,0 +1,70 @@
+name: update-gdm-diag
+
+# Google ensemble diagnostics (/models/ "Google Ensemble Diagnostics"): gdmdiag/build.py reads Google DeepMind Weather
+# Lab's per-storm "paired" CSVs (FNV3 50, WeatherNext 3 64, GenCast 50, FNV3 1000-member) for the last 8 cycles, pools
+# the derived Google super ensemble, and writes one JSON per storm per cycle plus a rolling index under R2
+# models/gdmdiag/. R2-only: contents:read, commits nothing, touches no track/ACE/climo product.
+#
+# Cadence: Weather Lab posts each 00/06/12/18Z cycle a few hours late and the suites land at different times, so this
+# runs hourly at an unused odd minute; the builder skips cycles it already has complete and re-tries young cycles that
+# are missing a suite.
+on:
+  schedule:
+    - cron: "51 * * * *"
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Force one cycle YYYYMMDDHH (blank = rolling 8-cycle window)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-gdm-diag
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install --no-cache-dir numpy pillow
+      - name: Fetch the prior index from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          mkdir -p prior
+          aws s3 cp "s3://triple-a-tropics-media/models/gdmdiag/index.json" prior/index.json --endpoint-url "$R2_ENDPOINT" --only-show-errors \
+            || echo "No prior index (first run)."
+      - name: Build diagnostics
+        env:
+          GD_CYCLE: ${{ github.event.inputs.cycle }}
+        run: |
+          python gdmdiag/build.py --out-dir gdm_out --prior prior/index.json ${GD_CYCLE:+--cycle "$GD_CYCLE" --force}
+      - name: Sync to R2 and prune cycles that left the window
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          D=gdm_out/models/gdmdiag
+          test -s "$D/index.json"
+          # storm files first, the index last, so the index never points at a file that is not there yet
+          aws s3 sync "$D/" "s3://triple-a-tropics-media/models/gdmdiag/" --exclude "index.json" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=3600" --only-show-errors
+          aws s3 cp "$D/index.json" "s3://triple-a-tropics-media/models/gdmdiag/index.json" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=120" --only-show-errors
+          keep=$(python -c "import json;print(' '.join(json.load(open('$D/index.json'))['cycles']))")
+          for p in $(aws s3 ls "s3://triple-a-tropics-media/models/gdmdiag/" --endpoint-url "$R2_ENDPOINT" | awk '/PRE/{print $2}' | tr -d /); do
+            case " $keep " in *" $p "*) ;; *) echo "pruning $p"; aws s3 rm "s3://triple-a-tropics-media/models/gdmdiag/$p/" --recursive --endpoint-url "$R2_ENDPOINT" --only-show-errors ;; esac
+          done
+          echo "Synced $(find gdm_out -type f | wc -l) files; window: $keep"

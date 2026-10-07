@@ -29,9 +29,30 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T03:00:00Z
+updated: 2026-10-07T03:14:00Z
 
 items:
+  - id: gdm-ensemble-diagnostics
+    title: "Google ensemble diagnostics on /models/ (FNV3, WN3, GenCast, FNV3 1000, Google super ensemble)"
+    area: models
+    status: shadow
+    date_shipped: 2026-10-07
+    note: >-
+      Per storm and per cycle, every basin, from Weather Lab's paired CSVs (which carry
+      RMW and 34/50/64-kt quadrant radii). gdmdiag/build.py precomputes everything
+      (update-gdm-diag.yml hourly at :51, rolling 8 cycles on R2 models/gdmdiag/):
+      track spread and 50/90 % position ellipses, intensity and ACE fans, lifetime
+      peak and peak timing, RI odds (per lead and cumulative), 12/24-h change
+      histograms, category shares, RMW / R34 / nesting / 34-kt area / radii rose,
+      34/50/64-kt and 120-km strike probability grids from each member's own radii
+      with median 34-kt arrival, landfall odds, timing, intensity and areas (Natural
+      Earth 10 m), a suite comparison and run-to-run trends. The Google super ensemble
+      pools FNV3, WN3 and GenCast with equal weight per model (radii products from the
+      models that carry radii) and says so. Invest ids are not yet mapped to their
+      designated names.
+    links:
+      - label: Google ensemble diagnostics
+        url: /models/#google-ensembles
   - id: enscenters-google-suites-super-ensembles
     title: "Ensemble centers: WeatherNext 3 (64), suite switcher, Google and all-model super ensembles"
     area: models
@@ -46,8 +67,8 @@ items:
       Google (FNV3 + WN3 + GenCast) and all models. Same init cycle, else a run at most
       6 h older aligned by valid time, else dropped, and the figure says which went in.
       Mean track, Vmax plume and envelope give each model an equal share (method
-      pool-v1), labelled on the burned-in header. On a branch awaiting review; after
-      merge, dispatch update-wnv3.yml once to seed the first cycle.
+      pool-v1), labelled on the burned-in header. Merged 2026-10-07; update-wnv3.yml
+      dispatched to seed the first cycle.
     links:
       - label: Ensemble centers
         url: /models/
