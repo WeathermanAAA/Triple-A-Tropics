@@ -495,3 +495,8 @@ details.hzs .hz{margin:0 6px 6px}
 .srt .quadbtn,.srt .lyrbtn{padding:0 10px}
 @media (max-width:1700px){.srt button span{font-size:11px}.srt button svg{width:15px;height:15px}}
 @media (max-width:1400px){.srt button[data-i] span{display:none}.srt button[data-i]{flex:1}}
+
+.ensm{display:inline-flex;gap:3px;margin-right:8px}
+.ensm button{appearance:none;font:inherit;font-size:9.5px;font-weight:800;letter-spacing:.6px;color:var(--ice);background:rgba(5,9,20,.45);border:1px solid var(--line);border-radius:2px;padding:2px 6px;cursor:pointer}
+.ensm button.on{background:var(--cat);color:var(--catInk);border-color:var(--cat)}
+#intLeg{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}

@@ -921,6 +921,52 @@ function crawl() {
 
 document.querySelectorAll(".ctab button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".ctab button").forEach(x => x.classList.toggle("on", x === b));
-  $("intChart").hidden = b.dataset.v !== "int"; $("guid").hidden = b.dataset.v !== "guid"; $("intLeg").hidden = b.dataset.v !== "int";
-  if (b.dataset.v === "int") intensityChart(); else guidanceBoard();
+  const v = b.dataset.v; $("intChart").hidden = v !== "int"; $("guid").hidden = v !== "guid"; $("ensChart").hidden = v !== "ens"; $("intLeg").hidden = v === "guid";
+  if (v === "int") intensityChart(); else if (v === "ens") ensChart(); else guidanceBoard();
 });
+
+/* ---------------- ensemble intensity (the site's cyclolab/<sid>/ensemble_v2.json: ECMWF ENS + GEFS members) ---------------- */
+const ENS = { doc: null, t: 0, metric: "vmax" };
+async function ensLoad() {
+  if (ENS.doc && Date.now() - ENS.t < 6e5) return ENS.doc;
+  try { const r = await fetch(`${CDN}/cyclolab/NHC_${SID.toUpperCase()}/ensemble_v2.json?t=${Math.floor(Date.now() / 6e5)}`); ENS.doc = r.ok ? await r.json() : null; } catch (e) { ENS.doc = null; }
+  ENS.t = Date.now(); return ENS.doc;
+}
+const cycMs = c => Date.UTC(+c.slice(0, 4), +c.slice(4, 6) - 1, +c.slice(6, 8), +c.slice(8, 10));
+async function ensChart() {
+  const el = $("ensChart"), doc = await ensLoad(), M = ENS.metric;
+  const leg = $("intLeg");
+  if (!doc || !(doc.sources || []).length) { el.innerHTML = `<div class="rnote" style="padding:30px 10px">No ensemble members for this storm yet. They appear after the next guidance run that tracks it (every 6 hours).</div>`; leg.innerHTML = ""; return; }
+  const gefsCyc = D.models?.gefs && Object.values(D.models.gefs)[0]?.cycle;
+  const srcs = doc.sources.map(s => { const c = s.cycle ? cycMs(s.cycle) : gefsCyc ? isoMs(gefsCyc) : null; if (c == null) return null;
+    return { label: s.label, col: s.model === "gefs" ? "#5dd3ff" : "#ff7a5c", mem: s.members.map(m => s.taus.map((t, i) => [c + t * 36e5, m[M]?.[i]]).filter(p => p[1] != null)) }; }).filter(Boolean);
+  const W = el.clientWidth || 900, H = el.clientHeight || 290, P = { l: 44, r: 64, t: 12, b: 30 }, t0a = advTime();
+  const best = (D.best || []).filter(p => Date.parse(p.t) >= t0a - 2 * 864e5).map(p => [Date.parse(p.t), M === "vmax" ? p.kt : p.mb]).filter(p => p[1]);
+  const fc = M === "vmax" ? D.fc.map(p => [p.t, p.kt]) : [];
+  const x0 = Math.min(t0a - 2 * 864e5, ...srcs.map(s => s.mem[0]?.[0]?.[0] ?? t0a)), x1 = t0a + 7 * 864e5;
+  const all = srcs.flatMap(s => s.mem.flat().filter(p => p[0] <= x1).map(p => p[1])).concat(best.map(p => p[1]), fc.map(p => p[1]));
+  const lo = M === "vmax" ? 0 : Math.floor(Math.min(...all) / 10) * 10 - 5, hi = M === "vmax" ? Math.max(80, ...all) + 10 : 1015;
+  const X = t => P.l + (t - x0) / (x1 - x0) * (W - P.l - P.r), Y = v => H - P.b - (v - lo) / (hi - lo) * (H - P.t - P.b);
+  const path = pts => pts.filter(p => p[0] >= x0 && p[0] <= x1).map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join("");
+  let s = `<svg viewBox="0 0 ${W} ${H}">`;
+  if (M === "vmax") CAT.forEach((c, i) => { const a = c.lo, b = Math.min(hi, CAT[i + 1]?.lo ?? hi); if (a >= hi) return;
+    s += `<g class="band"><rect x="${P.l}" y="${Y(b)}" width="${W - P.l - P.r}" height="${Y(a) - Y(b)}" fill="${c.c}" opacity=".07"/><text x="${W - P.r + 6}" y="${(Y(a) + Y(b)) / 2 + 3}" fill="${c.c}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</text></g>`; });
+  for (let v = Math.ceil(lo / 10) * 10; v <= hi; v += M === "vmax" ? 20 : 10) s += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ax" x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${v}</text>`;
+  for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) s += `<line class="grid" x1="${X(t)}" x2="${X(t)}" y1="${P.t}" y2="${H - P.b}"/><text class="ax" x="${X(t) + 4}" y="${H - P.b + 16}">${DOW[local(t + 12 * 36e5).getUTCDay()]} ${local(t + 12 * 36e5).getUTCDate()}</text>`;
+  s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${M === "vmax" ? "KT" : "MB"}</text>`;
+  for (const src of srcs) {
+    for (const m of src.mem) s += `<path class="ln dash" d="${path(m)}" stroke="${src.col}" stroke-width="1" stroke-opacity=".28" fill="none"/>`;
+    // mean and the 10-90 % band, step by step across members
+    const steps = [...new Set(src.mem.flat().map(p => p[0]))].sort((a, b) => a - b), mean = [], p10 = [], p90 = [];
+    for (const t of steps) { const v = src.mem.map(m => m.find(p => p[0] === t)?.[1]).filter(x => x != null).sort((a, b) => a - b); if (v.length < 5) continue;
+      mean.push([t, v.reduce((a, b) => a + b, 0) / v.length]); p10.push([t, v[Math.floor(v.length * .1)]]); p90.push([t, v[Math.ceil(v.length * .9) - 1]]); }
+    if (p10.length > 1) s += `<path d="${path(p90)}L${path(p10.slice().reverse()).slice(1)}Z" fill="${src.col}" opacity=".14"/>`;
+    s += `<path class="ln dash" d="${path(mean)}" stroke="#06101f" stroke-width="5" stroke-opacity=".5" fill="none"/><path class="ln dash" d="${path(mean)}" stroke="${src.col}" stroke-width="2.6" fill="none"/>`;
+  }
+  if (fc.length) s += `<path class="ln dash" d="${path(fc)}" stroke="#06101f" stroke-width="6" stroke-opacity=".6" fill="none"/><path class="ln dash" d="${path(fc)}" stroke="#fff" stroke-width="3" fill="none"/>`;
+  s += `<path class="ln dash" d="${path(best)}" stroke="#fff" stroke-width="2" stroke-dasharray="2 4" fill="none"/>`;
+  s += `<g class="now"><line x1="${X(t0a)}" x2="${X(t0a)}" y1="${P.t}" y2="${H - P.b}"/><text x="${X(t0a) + 5}" y="${P.t + 10}">NOW</text></g></svg>`;
+  el.innerHTML = s;
+  leg.innerHTML = `<span class="ensm">${["vmax", "mslp"].map(k => `<button data-m="${k}" class="${k === M ? "on" : ""}">${k === "vmax" ? "WIND" : "PRESSURE"}</button>`).join("")}</span> ${srcs.map(x => `<span style="color:${x.col}">━ ${esc(x.label)} (${x.mem.length})</span>`).join(" ")}${fc.length ? ` <span style="color:#fff">━ NHC</span>` : ""}`;
+  leg.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { ENS.metric = b.dataset.m; ensChart(); });
+}
