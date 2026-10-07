@@ -287,7 +287,8 @@ def _norm_name(s: str) -> str:
     return re.sub(r"[^A-Z]", "", (s or "").upper())
 
 
-def match_ecmwf(storms: list, sid: str, name: str) -> Optional[dict]:
+def match_ecmwf(storms: list, sid: str, name: str, pos: Optional[dict] = None,
+                cycle: Optional[str] = None) -> Optional[dict]:
     """Find the ECMWF record for one of OUR storms.
 
     NAME FIRST. ECMWF's storm number is its own sequence and disagrees with the
@@ -302,7 +303,7 @@ def match_ecmwf(storms: list, sid: str, name: str) -> Optional[dict]:
     if len(want_name) >= 3 and want_name != "INVEST":
         hits = [s for s in storms if _norm_name(s["name"]) == want_name]
         if len(hits) == 1:
-            return hits[0]
+            return dict(hits[0], _how="name")
         if len(hits) > 1:
             log.warning("    %s: name %r matched %d ECMWF storms - dropped "
                         "rather than guessed", sid, name, len(hits))
@@ -315,7 +316,66 @@ def match_ecmwf(storms: list, sid: str, name: str) -> Optional[dict]:
     hits = [s for s in storms
             if s["basin"] == basin and s["storm_id"][:2].isdigit()
             and int(s["storm_id"][:2]) == num]
-    return hits[0] if len(hits) == 1 else None
+    if len(hits) == 1:
+        return dict(hits[0], _how="id")
+    return match_by_position(storms, pos, cycle)
+
+
+#: ECMWF gives a system it has only just started tracking a provisional id from
+#: its own 70-99 sequence ("72E") and no name, and it files a Gulf of Mexico
+#: system near Mexico under the East Pacific. Neither the name nor the
+#: basin+number path can find those, which left every newly formed storm with a
+#: GEFS-only ensemble. Position is the last resort: the ECMWF ensemble-mean
+#: centre at the storm's latest fix time must sit within POS_KM of that fix, the
+#: record must be a provisional (unnamed) one, and the nearest candidate must be
+#: clearly nearer than the next - an ambiguous pair is dropped, never guessed.
+POS_KM = 300.0
+
+
+def _km(la1, lo1, la2, lo2):
+    import math
+    p1, p2 = math.radians(la1), math.radians(la2)
+    dl = math.radians(((lo2 - lo1 + 540) % 360) - 180)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371.0 * math.asin(min(1.0, math.sqrt(a)))
+
+
+def match_by_position(storms: list, pos: Optional[dict], cycle: Optional[str]) -> Optional[dict]:
+    if not pos or not cycle or pos.get("lat") is None or not pos.get("fix"):
+        return None
+    try:
+        c0 = dt.datetime.strptime(cycle, "%Y%m%d%H")
+        fx = dt.datetime.fromisoformat(pos["fix"].replace("Z", "")).replace(tzinfo=None)
+    except ValueError:
+        return None
+    lead = (fx - c0).total_seconds() / 3600
+    if lead < -6 or lead > 48:
+        return None
+    cands = []
+    for s in storms:
+        if len(_norm_name(s.get("name"))) >= 3 or not s.get("taus"):
+            continue                                   # a named ECMWF storm is matched by name only
+        k = min(range(len(s["taus"])), key=lambda i: abs(s["taus"][i] - lead))
+        if abs(s["taus"][k] - lead) > 6:
+            continue
+        pts = [(m["lat"][k], m["lon"][k]) for m in s["members"]
+               if k < len(m["lat"]) and m["lat"][k] is not None and m["lon"][k] is not None]
+        if len(pts) < 5:
+            continue
+        la = sum(p[0] for p in pts) / len(pts)
+        lo0 = pts[0][1]
+        lo = sum(lo0 + ((p[1] - lo0 + 540) % 360) - 180 for p in pts) / len(pts)
+        d = _km(la, lo, pos["lat"], pos["lon"])
+        if d <= POS_KM:
+            cands.append((d, s))
+    cands.sort(key=lambda x: x[0])
+    if not cands:
+        return None
+    if len(cands) > 1 and cands[0][0] > 0.6 * cands[1][0]:
+        log.warning("    position match ambiguous (%s at %.0f km, %s at %.0f km) - dropped",
+                    cands[0][1]["storm_id"], cands[0][0], cands[1][1]["storm_id"], cands[1][0])
+        return None
+    return dict(cands[0][1], _how="position")
 
 
 # ---------------------------------------------------------------------------
@@ -371,18 +431,18 @@ def gefs_from_adeck(basin: str, cy: int, year: int,
 def build_document(sid: str, name: str, basin: str, cy: int, year: int, *,
                    ecmwf_storms: list, ecmwf_cycle: Optional[str] = None,
                    opener: Optional[Callable] = None,
-                   now_iso: Optional[str] = None) -> Optional[dict]:
+                   now_iso: Optional[str] = None,
+                   pos: Optional[dict] = None) -> Optional[dict]:
     sources = []
 
-    ec_rec = match_ecmwf(ecmwf_storms, sid, name)
+    ec_rec = match_ecmwf(ecmwf_storms, sid, name, pos, ecmwf_cycle)
     if ec_rec:
         sources.append({
             "model": "ecmwf_ens", "label": "ECMWF ENS",
             "cycle": ecmwf_cycle,
             "n_members": len(ec_rec["members"]),
             "taus": ec_rec["taus"], "members": ec_rec["members"],
-            "matched_by": ("name" if len(_norm_name(name)) >= 3
-                           and _norm_name(name) != "INVEST" else "id"),
+            "matched_by": ec_rec.get("_how", "id"),
             "upstream_id": ec_rec["storm_id"],
         })
 
@@ -427,6 +487,13 @@ def active_storms_from_feed(opener: Optional[Callable] = None) -> list:
     opener = opener or _http_get
     gj = json.loads(opener(FEED_URL))
     out: dict = {}
+    pos: dict = {}
+    for f in gj.get("features", []):
+        p = f.get("properties") or {}
+        if p.get("kind") == "active_marker" and p.get("storm_id"):
+            c = (f.get("geometry") or {}).get("coordinates") or []
+            if len(c) >= 2:
+                pos[p["storm_id"]] = {"lat": float(c[1]), "lon": float(c[0]), "fix": p.get("last_fix")}
     for f in gj.get("features", []):
         p = f.get("properties") or {}
         sid = p.get("storm_id")
@@ -442,6 +509,8 @@ def active_storms_from_feed(opener: Optional[Callable] = None) -> list:
             "cy": int(m.group(2)),
             "year": int(m.group(3)),
         })
+    for sid, st in out.items():
+        st["pos"] = pos.get(sid)
     return list(out.values())
 
 
@@ -476,7 +545,7 @@ def main(argv=None) -> int:
         try:
             doc = build_document(st["sid"], st["name"], st["basin"], st["cy"],
                                  st["year"], ecmwf_storms=ecmwf,
-                                 ecmwf_cycle=ec_cycle)
+                                 ecmwf_cycle=ec_cycle, pos=st.get("pos"))
         except Exception as e:  # noqa: BLE001 - one storm must not sink the run
             log.warning("  %s: FAILED %s: %s", st["sid"], type(e).__name__, e)
             continue

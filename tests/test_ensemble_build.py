@@ -132,3 +132,28 @@ class TestBasinMap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPositionFallback(unittest.TestCase):
+    """A just-formed storm: ECMWF has only a provisional, unnamed id in the wrong basin ("72E" for a Gulf system)."""
+    def _rec(self, sid, name, lat, lon):
+        return {"storm_id": sid, "name": name, "basin": "ep", "taus": [0, 6, 12],
+                "members": [{"id": i, "lat": [lat, lat + .3, lat + .6], "lon": [lon, lon - .4, lon - .8],
+                             "vmax": [30, 30, 30], "mslp": [1005, 1005, 1005]} for i in range(10)]}
+
+    def test_matches_provisional_record_near_the_fix(self):
+        from guidance import build_ensemble as be
+        recs = [self._rec("72E", "72E", 21.3, -95.6), self._rec("71E", "71E", 13.8, -99.0)]
+        pos = {"lat": 22.0, "lon": -96.3, "fix": "2026-10-07T00:00:00"}
+        hit = be.match_ecmwf(recs, "NHC_AL092026", "09L", pos, "2026100612")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["storm_id"], "72E")
+        self.assertEqual(hit["_how"], "position")
+
+    def test_never_steals_a_named_record_or_guesses_far_away(self):
+        from guidance import build_ensemble as be
+        recs = [self._rec("15E", "NOLO", 21.3, -95.6)]
+        pos = {"lat": 22.0, "lon": -96.3, "fix": "2026-10-07T00:00:00"}
+        self.assertIsNone(be.match_ecmwf(recs, "NHC_AL092026", "09L", pos, "2026100612"))
+        far = [self._rec("72E", "72E", 30.0, -80.0)]
+        self.assertIsNone(be.match_ecmwf(far, "NHC_AL092026", "09L", pos, "2026100612"))

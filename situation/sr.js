@@ -908,9 +908,12 @@ function intensityChart() {
   s += `<path class="ln" pathLength="1" d="${path(best.map(p => [Date.parse(p.t), p.kt]).concat([[t0a, D.kt]]))}" stroke="#ffffff" stroke-width="2.4" stroke-dasharray="1 1" style="--d:.1s;stroke-dasharray:1 1"/>`;
   best.forEach((p, i) => s += `<circle class="pt" style="--d:${(.1 + i / best.length * 1.6).toFixed(2)}s" cx="${X(Date.parse(p.t))}" cy="${Y(p.kt)}" r="3" fill="${catOf(p.kt).c}" stroke="#06101f"/>`);
   s += `<g class="now"><line x1="${X(t0a)}" x2="${X(t0a)}" y1="${P.t}" y2="${H - P.b}"/><text x="${X(t0a) + 5}" y="${P.t + 10}">NOW</text></g>`;
-  const pk = D.peak; s += `<g class="lab" style="--d:1.9s"><rect x="${X(pk.t) - 34}" y="${Y(pk.kt) - 30}" width="68" height="18" rx="2" fill="#e8b53a"/><text x="${X(pk.t)}" y="${Y(pk.kt) - 17}" text-anchor="middle" fill="#141007">PEAK ${wnd(pk.kt)} ${wl().toUpperCase()}</text></g>`;
+  const pk = D.peak, pkT = `PEAK ${wnd(pk.kt)} ${wl().toUpperCase()}`, pkW = Math.round(pkT.length * 7.8 + 16);   // the box grows with the unit (KT, MPH, KM/H)
+  s += `<g class="lab" style="--d:1.9s"><rect x="${Math.min(W - P.r - pkW, X(pk.t) - pkW / 2)}" y="${Y(pk.kt) - 30}" width="${pkW}" height="18" rx="2" fill="#e8b53a"/><text x="${Math.min(W - P.r - pkW / 2, X(pk.t))}" y="${Y(pk.kt) - 17}" text-anchor="middle" fill="#141007">${pkT}</text></g>`;
   s += `</svg>`;
   el.innerHTML = s;
+  { const t = el.querySelector(".lab text"), r = el.querySelector(".lab rect");   // fit the peak box to the rendered text
+    if (t && r) try { const w = t.getComputedTextLength() + 16, cx = +t.getAttribute("x"); r.setAttribute("width", w); r.setAttribute("x", cx - w / 2); } catch (e) {} }
   const legendH = `<span style="color:#fff">━ NHC</span> ${ser.map(q => `<span style="color:${AIDC[q.t]}">━ ${q.t}</span>`).join(" ")}`;
   $("intLeg").innerHTML = legendH;
   el.classList.remove("in"); void el.offsetWidth; el.classList.add("in");
