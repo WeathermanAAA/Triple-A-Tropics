@@ -205,7 +205,7 @@ function dials() {
   L.push({ t: "Max Sustained Wind", face: sshs({ kt, ghost: D.peak.kt }), big: kt, lab: "knots", sub: `${mph(kt)} mph · ${catWord(kt)}` });
   if (D.mb) L.push({ t: "Minimum Pressure", face: arc({ color: "#7cc3ea", frac: Math.max(.04, Math.min(1, (1012 - D.mb) / 122)) }), big: D.mb, lab: "mb", sub: `${(D.mb * .02953).toFixed(2)} inHg` });
   const ch = change24();
-  L.push({ t: "Past 24 Hours", face: arc({ color: ch > 0 ? "#ff6b5e" : ch < 0 ? "#5dd3ff" : "#9fb3d6", frac: Math.min(1, Math.abs(ch) / 50) || .02 }), big: (ch > 0 ? "+" : "") + ch, lab: "kt", sub: ch >= 30 ? "Rapid intensification" : ch > 0 ? "Strengthening" : ch < 0 ? "Weakening" : "Steady" });
+  L.push({ t: "24-Hour Wind Change", face: arc({ color: ch > 0 ? "#ff6b5e" : ch < 0 ? "#5dd3ff" : "#9fb3d6", frac: Math.min(1, Math.abs(ch) / 50) || .02 }), big: (ch > 0 ? "+" : "") + ch, lab: "kt", sub: ch >= 30 ? "Rapid intensification" : ch > 0 ? "Strengthening" : ch < 0 ? "Weakening" : "Steady" });
   const f24 = D.fc.find(p => p.hr >= 24);
   if (f24) { const d = f24.kt - kt; L.push({ t: "NHC Next 24 Hours", face: arc({ color: d >= 30 ? "#ff3b6b" : d > 0 ? "#ff9a2f" : "#5dd3ff", frac: Math.min(1, Math.abs(d) / 50) || .02 }), big: (d > 0 ? "+" : "") + d, lab: "kt", sub: d >= 30 ? "Rapid intensification" : d >= 15 ? "Strengthening" : d > 0 ? "Slow strengthening" : d < 0 ? "Weakening" : "Steady", hot: d >= 30 ? "#ff3b6b" : null }); }
   if (n.movementDir != null) L.push({ t: "Motion", face: compassFace({ dir: +n.movementDir }), big: compass(+n.movementDir), lab: "", sub: `${n.movementSpeed} mph · ${n.movementDir}°`, small: true });
@@ -221,11 +221,7 @@ function dials() {
   const hu = kt < 64 && D.fc.find(p => p.kt >= 64);
   if (hu) { const ms = hu.t - Date.now();
     L.push({ t: "Forecast Hurricane", face: countFace({ color: "#ffe14d", frac: Math.max(.02, Math.min(1, ms / (5 * 864e5))) }), big: `${Math.max(0, Math.round(ms / 36e5))}`, lab: "hours", sub: `by ${dayhm(hu.t)} ${TZ}` }); }
-  const pk = guidancePeaks();
-  if (pk.length > 2) { const lo = Math.min(...pk), hi = Math.max(...pk);
-    L.push({ t: "Model Peak Spread", face: sshs({ kt: hi, ghost: null }), big: `${lo}–${hi}`, lab: "kt", sub: `${pk.length} aids · spread ${hi - lo} kt`, small: true }); }
   const mb24 = pressure24(); if (mb24 != null) L.push({ t: "Pressure, 24 Hours", face: arc({ color: mb24 < 0 ? "#ff6b5e" : "#5dd3ff", frac: Math.min(1, Math.abs(mb24) / 40) || .02 }), big: (mb24 > 0 ? "+" : "") + mb24, lab: "mb", sub: mb24 <= -24 ? "Bombing out" : mb24 < 0 ? "Deepening" : mb24 > 0 ? "Filling" : "Steady" });
-  const b0 = (D.best || []).find(p => ["TD", "TS", "HU", "SD", "SS"].includes(p.ty));
   if (b0) { const h = Math.round((Date.now() - Date.parse(b0.t)) / 36e5); L.push({ t: "Storm Age", face: countFace({ color: "#7cc3ea", frac: Math.min(1, h / 240) || .02 }), big: h < 48 ? `${h}` : `${(h / 24).toFixed(1)}`, lab: h < 48 ? "hours" : "days", sub: `since ${dayhm(Date.parse(b0.t))} ${TZ}`, small: true }); }
   const na = nextAdvisory(); if (na) L.push({ t: "Next Advisory", face: countFace({ color: "#e8b53a", frac: Math.max(.02, Math.min(1, (na - Date.now()) / (6 * 36e5))) }), big: `<span data-count="${na}">${until(na).slice(0, -3)}</span>`, lab: "hrs:min", sub: `${hm(na)} ${TZ}`, small: true });
   const nf = nextFlight();
