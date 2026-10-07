@@ -149,26 +149,48 @@ def tcpod(tokens):
                     "alt": b.get("F", ""), "task": b.get("G", "")})
     return {"number": d.get("tcpod_number"), "valid": [d.get("valid_from_utc"), d.get("valid_to_utc")], "flights": out, "outlook": outlook}
 
+def _flight(m, ours):
+    t0, t1 = m.get("valid_start", ""), m.get("valid_end", "")
+    f = {k: m.get(k) for k in ("mission_id", "aircraft", "flight", "storm_name", "valid_start", "valid_end", "n_obs",
+                               "peak_sfmr_kt", "peak_fl_wind_kt", "min_p_sfc_hpa", "vdm_centers")}
+    f["ours"] = ours
+    f["track"] = [[p["lon"], p["lat"], p.get("wspd"), p.get("p_sfc"), p["t"], round((p.get("plane_z") or 0))] for p in m.get("track", [])]
+    f["sondes"] = [{"t": s["t"], "lon": s["lon"], "lat": s["lat"], "kt": s.get("sfc_wind_kt"), "p": (s.get("levels") or [[None]])[0][0]}
+                   for s in m.get("sondes", []) if t0 <= s["t"] <= t1]
+    return f
+
+def _age_h(iso):
+    return (datetime.now(timezone.utc) - datetime.fromisoformat((iso or "2000-01-01T00:00:00Z").replace("Z", "+00:00"))).total_seconds() / 3600
+
 def recon(sid, name, basin, tokens):
-    out = {"current": None, "missions": [], "plan": tcpod(tokens)}
+    """every mission flown in this storm in the last 12 h (two aircraft are often in at once), newest last;
+    "current" stays the newest one so older readers keep working"""
+    out = {"current": None, "missions": [], "flights": [], "plan": tcpod(tokens)}
+    fl = {}
     try:
         man = jget(f"{CDN}/recon/manifest.json", 60)
         for s in man.get("storms", []):
             if (s.get("atcf") or "").lower() == sid or s.get("slug") == sid: out["missions"].append(s)
+        for s in out["missions"]:
+            try:
+                rj = jget(f"{CDN}/recon/{s['slug']}/recon.json", 60)
+                for mm in rj.get("missions", []):
+                    if mm.get("mission_id") in fl or not mm.get("file") or _age_h(mm.get("valid_end")) >= 12: continue
+                    m = jget(f"{CDN}/recon/{s['slug']}/{mm['file']}", 20 if _age_h(mm.get("valid_end")) < 1 else 600)
+                    fl[mm["mission_id"]] = _flight(m, True)
+            except Exception: pass
     except Exception: pass
     try:
         c = jget(f"{CDN}/recon/current.json", 20)
         m = c.get("mission") or {}
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(m.get("valid_end", "2000-01-01T00:00:00Z").replace("Z", "+00:00"))).total_seconds() / 3600
-        if c.get("has_active") and (m.get("basin") or "").lower() == basin and age < 12:
-            t0, t1 = m.get("valid_start", ""), m.get("valid_end", "")
-            out["current"] = {k: m.get(k) for k in ("mission_id", "aircraft", "flight", "storm_name", "valid_start", "valid_end", "n_obs",
-                                                    "peak_sfmr_kt", "peak_fl_wind_kt", "min_p_sfc_hpa", "vdm_centers")}
-            out["current"]["ours"] = (m.get("slug") or "") == sid
-            out["current"]["track"] = [[p["lon"], p["lat"], p.get("wspd"), p.get("p_sfc"), p["t"], round((p.get("plane_z") or 0))] for p in m.get("track", [])]
-            out["current"]["sondes"] = [{"t": s["t"], "lon": s["lon"], "lat": s["lat"], "kt": s.get("sfc_wind_kt"), "p": (s.get("levels") or [[None]])[0][0]}
-                                        for s in m.get("sondes", []) if t0 <= s["t"] <= t1]
+        if c.get("has_active") and (m.get("basin") or "").lower() == basin and _age_h(m.get("valid_end")) < 12:
+            f = _flight(m, (m.get("slug") or "") == sid or fl.get(m.get("mission_id"), {}).get("ours", False))
+            fl[m.get("mission_id")] = f            # current.json is the freshest copy of the live mission
     except Exception: pass
+    out["flights"] = sorted(fl.values(), key=lambda f: (f["valid_start"] or "", f["mission_id"] or ""))
+    if out["flights"]:
+        ours = [f for f in out["flights"] if f["ours"]] or out["flights"]
+        out["current"] = max(ours, key=lambda f: f["valid_end"] or "")
     return out
 
 def advisory_text(url):

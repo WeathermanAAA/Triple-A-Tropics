@@ -34,13 +34,20 @@ const prs = mb => mb == null || !isFinite(mb) ? "–" : U.pres === "inhg" ? (mb 
 const pl = () => U.pres === "inhg" ? "inHg" : "mb";
 const palt = mb => U.pres === "inhg" ? `${mb} mb` : `${(mb * .02953).toFixed(2)} inHg`;
 const catWord = kt => kt >= 64 ? `Cat ${catOf(kt).n}` : kt >= 34 ? "Trop Storm" : "Trop Dep";
+/* forecast-point phase from NHC's KMZ style id: x* = post-tropical, l_ = remnant low, sd_/ss_ = subtropical, else tropical */
+const phase = p => { const y = (p && p.style) || ""; return /^x/.test(y) ? "pt" : /^l_/.test(y) ? "low" : /^s[ds]_/.test(y) ? "st" : "tc"; };
+const ptWord = p => { const f = phase(p); return f === "pt" ? "Post-Trop" : f === "low" ? "Remnant Low" : f === "st" ? (p.kt >= 34 ? "Subtrop Storm" : "Subtrop Dep") : catWord(p.kt); };
+/* non-tropical marker, same shapes as the season tracks maps: triangle = post-tropical / low, square = subtropical */
+const phaseMark = (f, x, y, r, fill, stroke, sw) => f === "st" ? `<rect x="${(x - r * .85).toFixed(1)}" y="${(y - r * .85).toFixed(1)}" width="${(r * 1.7).toFixed(1)}" height="${(r * 1.7).toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`
+  : `<path d="M${x.toFixed(1)} ${(y - r * 1.15).toFixed(1)}L${(x + r * 1.05).toFixed(1)} ${(y + r * .7).toFixed(1)}L${(x - r * 1.05).toFixed(1)} ${(y + r * .7).toFixed(1)}Z" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`;
 const KIND = { TD: "Tropical Depression", TS: "Tropical Storm", HU: "Hurricane", MH: "Major Hurricane", STD: "Subtropical Depression", STS: "Subtropical Storm",
   PTC: "Potential Tropical Cyclone", PT: "Post-Tropical Cyclone", PC: "Post-Tropical Cyclone" };
 const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 const compass = d => COMPASS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
 const TAT_GLYPH = "M 16.37,-28.27 C 13.58,-28.13 11.51,-27.90 9.23,-27.49 C 1.27,-26.06 -5.88,-22.70 -10.92,-18.02 C -14.83,-14.40 -17.41,-10.06 -18.49,-5.32 C -18.95,-3.30 -19.15,-1.42 -19.15,0.91 C -19.15,2.53 -19.09,3.28 -18.89,4.45 C -18.38,7.38 -17.47,9.46 -15.41,12.37 C -13.88,14.54 -13.43,15.31 -13.20,16.13 C -13.11,16.44 -13.09,16.62 -13.09,17.14 C -13.10,17.93 -13.20,18.32 -13.67,19.28 C -15.30,22.59 -18.65,24.93 -23.49,26.14 C -25.26,26.58 -27.29,26.87 -29.18,26.95 L -30.00,26.98 L -29.65,27.06 C -27.33,27.62 -24.41,28.05 -21.57,28.27 C -20.04,28.38 -16.31,28.38 -14.80,28.27 C -12.93,28.13 -11.43,27.95 -9.77,27.67 C -0.59,26.14 7.56,22.03 12.68,16.37 C 16.22,12.45 18.28,8.10 18.93,3.13 C 19.64,-2.25 18.99,-6.47 16.84,-10.16 C 16.48,-10.80 15.79,-11.82 14.99,-12.95 C 13.61,-14.89 13.18,-15.77 13.12,-16.83 C 13.07,-17.61 13.23,-18.26 13.71,-19.23 C 14.97,-21.79 17.38,-23.84 20.67,-25.16 C 23.13,-26.14 26.24,-26.77 29.15,-26.87 L 30.00,-26.90 L 29.67,-26.98 C 29.13,-27.12 27.57,-27.44 26.66,-27.58 C 24.96,-27.87 23.39,-28.05 21.66,-28.18 C 20.72,-28.25 17.16,-28.30 16.37,-28.27 Z";
-function glyph(kt, { spin = true, plate = false, south = false } = {}) {
+function glyph(kt, { spin = true, plate = false, south = false, ph = "tc" } = {}) {
   const c = catOf(kt), L = c.k;
+  if (ph !== "tc") return `<svg viewBox="-34 -34 68 68">${plate ? `<circle r="31" fill="#0c1634" stroke="#fff" stroke-width="3"/>` : ""}${phaseMark(ph, 0, 2, 17, c.c, "none", 0)}</svg>`;
   const body = kt >= 34 ? `<g transform="scale(${south ? "-0.62,0.62" : "0.62"})"><g class="${spin ? "spin" : ""}"><path d="${TAT_GLYPH}" fill="${c.c}"/></g></g>`
     : `<circle r="15" fill="${c.c}"/>`;
   return `<svg viewBox="-34 -34 68 68">${plate ? `<circle r="31" fill="#0c1634" stroke="#fff" stroke-width="3"/>` : ""}${body}
@@ -94,7 +101,7 @@ async function liveTick() {
   LIVE.h = h;
 }
 const sig = d => ({ adv: [d.nhc.advisory, d.nhc.intensity, d.nhc.pressure, (d.nhc.points || []).length, d.nhc.lastUpdate].join("|"), best: (d.best || []).length,
-  models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: `${d.recon?.current?.n_obs || 0}|${d.recon?.current?.valid_end || ""}`,
+  models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: (d.recon?.flights || [d.recon?.current || {}]).map(f => `${f.mission_id}|${f.n_obs || 0}|${f.valid_end || ""}`).join(","),
   plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
 const NEEDS = { fields: [], radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
 async function refresh(first) {
@@ -244,14 +251,14 @@ function dials() {
   if (n.movementDir != null) L.push({ t: "Motion", face: compassFace({ dir: +n.movementDir }), big: compass(+n.movementDir), lab: "", sub: `${spd(+n.movementSpeed)} ${wl()} · ${n.movementDir}°`, small: true });
   const mw = (D.mw?.overpasses || []).filter(o => o.kt).slice(-1)[0];
   L.push({ t: "Microwave Estimate", face: arc({ color: "#b48cff", frac: mw ? Math.min(1, mw.kt / 160) : .02 }), big: mw ? wnd(mw.kt) : "–", lab: mw ? WF().w : "", sub: mw ? `${mw.sensor} · ${ago(mw.t)}` : "no usable pass" });
-  L.push({ t: "NHC Forecast Peak", face: sshs({ kt: D.peak.kt }), big: wnd(D.peak.kt), lab: WF().w, sub: `${catWord(D.peak.kt)} · ${DOW[local(D.peak.t).getUTCDay()]} ${hm(D.peak.t, false)}`, hot: D.peak.kt >= 64 ? catOf(D.peak.kt).c : null });
+  L.push({ t: "NHC Forecast Peak", face: sshs({ kt: D.peak.kt }), big: wnd(D.peak.kt), lab: WF().w, sub: `${ptWord(D.peak)} · ${DOW[local(D.peak.t).getUTCDay()]} ${hm(D.peak.t, false)}`, hot: D.peak.kt >= 64 ? catOf(D.peak.kt).c : null });
   /* storm energy, timing, spread */
   const syn = (D.best || []).filter(p => /T(00|06|12|18):00/.test(p.t) && ["TS", "HU", "SS"].includes(p.ty) && p.kt >= 34);
   const ace = syn.reduce((s, p) => s + p.kt * p.kt / 1e4, 0);
   let fAce = 0; for (let h = 6; h <= 120; h += 6) { const k = fcKt(h); if (k != null && k >= 34) fAce += k * k / 1e4; }
   L.push({ t: "Storm ACE so far", face: arc({ color: "#ffb83a", frac: Math.min(1, ace / 30) || .02 }), big: ace.toFixed(1), lab: "ACE", sub: syn.length ? `${syn.length} six-hourly fixes` : "not a storm yet", small: true });
   L.push({ t: "NHC Forecast ACE", face: arc({ color: "#ff9a2f", frac: Math.min(1, fAce / 30) || .02 }), big: fAce.toFixed(1), lab: "ACE", sub: "next 5 days, NHC track", small: true });
-  const hu = kt < 64 && D.fc.find(p => p.kt >= 64);
+  const hu = kt < 64 && D.fc.find(p => p.kt >= 64 && phase(p) === "tc");
   if (hu) { const ms = hu.t - Date.now();
     L.push({ t: "Forecast Hurricane", face: countFace({ color: "#ffe14d", frac: Math.max(.02, Math.min(1, ms / (5 * 864e5))) }), big: `${Math.max(0, Math.round(ms / 36e5))}`, lab: "hours", sub: `by ${dayhm(hu.t)} ${TZ}` }); }
   const mb24 = pressure24(); if (mb24 != null) L.push({ t: "Pressure, 24 Hours", face: arc({ color: mb24 < 0 ? "#ff6b5e" : "#5dd3ff", frac: Math.min(1, Math.abs(mb24) / 40) || .02 }), big: (mb24 > 0 ? "+" : "") + (U.pres === "inhg" ? (mb24 * .02953).toFixed(2) : mb24), lab: pl(), sub: mb24 <= -24 ? "Bombing out" : mb24 < 0 ? "Deepening" : mb24 > 0 ? "Filling" : "Steady" });
@@ -290,6 +297,14 @@ function change24() {
   const last = b[b.length - 1], t = Date.parse(last.t) - 864e5, prev = b.find(p => Math.abs(Date.parse(p.t) - t) < 3 * 36e5);
   return prev ? D.kt - prev.kt : 0;
 }
+/* recon flights in the storm in the last 12 h; RSEL picks which one the map draws (rail rows and legend chips switch it) */
+let RSEL = null;
+const rFlights = () => D.recon?.flights || (D.recon?.current ? [D.recon.current] : []);
+const rCur = () => rFlights().find(f => f.mission_id === RSEL) || D.recon?.current || null;
+function pickFlight(mid) { RSEL = mid; const r = TABS.findIndex(t => t.id === "recon");
+  if (TABS[TAB]?.id !== "recon" && r >= 0) { tab(r); railRecon(); return; }
+  if (ON.has("recon")) { lclear("recon"); LY.recon.off(); LY.recon.on(true); TABS[TAB]?.cam(); legendNow(); } railRecon(); }
+document.addEventListener("click", e => { const b = e.target.closest("#legend [data-mid], #cRecon [data-mid]"); if (b) pickFlight(b.dataset.mid); });
 function nextFlight() { return (D.recon?.plan?.flights || []).filter(f => f.fix?.length && isoMs(f.fix[f.fix.length - 1]) > Date.now() && /FIX/.test(f.task)).sort((a, b) => isoMs(a.fix[0]) - isoMs(b.fix[0]))[0]; }
 
 /* ---------------- the map: Tulsa-Live's basemap ---------------- */
@@ -456,14 +471,14 @@ const LY = {
   points: { name: "Forecast points", grp: "Forecast",
     on(a) { const pts = D.fc, side = labelSides(pts);
       const els = pts.slice(1).map((p, k) => { const i = k + 1, c = catOf(p.kt), el = document.createElement("div"); el.className = "fp"; const lab = p.hr % 24 === 0 || i === pts.length - 1;
-        el.innerHTML = glyph(p.kt, { plate: true, spin: p.kt >= 34 }) + (lab ? `<div class="lbl${side[i] ? " l" : ""}" style="--c:${c.c};--ci:${inkOn(c.c)}"><b>${dayhm(p.t)}</b><i>${wnd(p.kt)} ${wl().toUpperCase()} · ${catWord(p.kt).toUpperCase()}</i></div>` : "");
+        el.innerHTML = glyph(p.kt, { plate: true, spin: p.kt >= 34, ph: phase(p) }) + (lab ? `<div class="lbl${side[i] ? " l" : ""}" style="--c:${c.c};--ci:${inkOn(c.c)}"><b>${dayhm(p.t)}</b><i>${wnd(p.kt)} ${wl().toUpperCase()} · ${ptWord(p).toUpperCase()}</i></div>` : "");
         if (!lab) el.style.transform = "scale(.7)";
         lkeep("points", new maplibregl.Marker({ element: wrap(el) }).setLngLat([p.lon, p.lat])); return { el, hr: p.hr }; });
       const drawing = a && ON.has("track") && grp("track").an.size;
       this.reveal = tau => els.forEach(e => { if (e.hr <= tau + .1) e.el.classList.add("in"); });
       if (!drawing) els.forEach((e, i) => setTimeout(() => e.el.classList.add("in"), a ? 80 + i * 90 : 30)); },
     off() { this.reveal = null; },
-    leg: () => `<div class="r"><i class="dot" style="background:#ffe14d;border:1.5px solid #fff"></i>Forecast position</div>` },
+    leg: () => `<div class="r"><i class="dot" style="background:#ffe14d;border:1.5px solid #fff"></i>Forecast position</div>` + [["pt", "Post-tropical"], ["low", "Remnant low"], ["st", "Subtropical"]].filter(([f]) => D.fc.some(p => phase(p) === f)).map(([f, l]) => `<div class="r"><svg viewBox="-8 -8 16 16" style="width:calc(12px*var(--k));height:calc(12px*var(--k));flex:none">${phaseMark(f === "low" ? "pt" : f, 0, 1, 5.5, "#ffe14d", "#fff", 1.2)}</svg>${l}</div>`).join("") },
   best: { name: "Past track", grp: "Forecast", on() { vis(["best-line", "best-pts"], true); }, off() { vis(["best-line", "best-pts"], false); },
     leg: () => `<div class="r"><i class="dot" style="background:#3fa4ff;border:1.5px solid #06101f"></i>Past track</div>` },
   now: { name: "Storm position", grp: "Forecast", on() { nowMarker(); }, off() { NOWM?.remove(); NOWM = null; } },
@@ -480,7 +495,7 @@ const LY = {
     leg: () => `<h4>89 GHz colour composite</h4><div class="r"><i style="background:#ff2d55"></i>Deep convection / ice</div><div class="r"><i style="background:#26e0d0"></i>Low cloud, warm rain</div>`,
     cred: "Microwave: NASA GPM/PPS, processed by Triple-A-Tropics" },
   recon: { name: "Recon flight", grp: "Observations",
-    on(a) { const cur = D.recon?.current; if (!cur || cur.track.length < 2) return;
+    on(a) { const cur = rCur(); if (!cur || cur.track.length < 2) return;
       const tr = cur.track.filter((p, i) => i % 2 === 0).map(p => [p[0], p[1]]), fw = cur.track.filter((p, i) => i % 2 === 0).map(p => p[2]);
       /* one feature per run of same-coloured segments, coloured by the flight-level wind the aircraft measured there */
       const segs = n => { const out = []; let run = null;
@@ -502,7 +517,7 @@ const LY = {
         clock("recon", ACFT(cur.aircraft), hm(tnow), `${done.length} sonde${done.length === 1 ? "" : "s"}`); };
       if (a) { set("recon", FC([])); set("sondes", FC([])); llater("recon", 600, () => lanim("recon", 5200, step)); } else step(1); },
     off() { vis(["recon", "recon-case", "sondes"], false); },
-    leg: () => D.recon?.current ? `<h4>${esc(ACFT(D.recon.current.aircraft))} flight-level wind, kt</h4><div class="flw">${FLW.map(([k, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}</div><div class="r"><i class="dot" style="background:#7cc3ea;border:1.5px solid #fff"></i>Dropsonde (sfc wind kt)</div>` : "",
+    leg: () => rCur() ? `${rFlights().length > 1 ? `<div class="rsw">${rFlights().map(f => `<button data-mid="${esc(f.mission_id)}"${f === rCur() ? ' class="on"' : ""}>${esc(ACFT(f.aircraft))} ${esc(f.flight || "")}</button>`).join("")}</div>` : ""}<h4>${esc(ACFT(rCur().aircraft))} flight-level wind, kt</h4><div class="flw">${FLW.map(([k, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}</div><div class="r"><i class="dot" style="background:#7cc3ea;border:1.5px solid #fff"></i>Dropsonde (sfc wind kt)</div>` : "",
     cred: "Recon: NOAA/NHC HDOB + dropsondes" },
   fixes: { name: "Tasked recon fixes", grp: "Observations",
     on(a) { const tgs = (D.recon?.plan?.flights || []).filter(f => f.pos).sort((x, y) => isoMs(x.fix[0]) - isoMs(y.fix[0]));
@@ -836,9 +851,9 @@ const TABS = [
     cam() { const o = mwPick(), b = o.bounds; fit([[b[0], b[1]], [b[2], b[3]]], 120, { bottom: 10, left: 10, right: 10, maxZoom: 6 }); },
     hdr: () => { const o = mwPick(); return ["Microwave Imagery", `${o.sensor} · ${hm(o.t)} ${TZ}`, MWPROD === "color37" ? "37 GHZ" : "89 GHZ"]; } },
   { id: "recon", label: "Recon", layers: ["recon", "track"], anim: ["recon"],
-    cam() { const cur = D.recon?.current, c = [pos(), ...(D.recon?.plan?.flights || []).filter(f => f.pos).map(f => f.pos)];
+    cam() { const cur = rCur(), c = [pos(), ...(D.recon?.plan?.flights || []).filter(f => f.pos).map(f => f.pos)];
       if (cur) c.push(...cur.track.filter((p, i) => i % 4 === 0).map(p => [p[0], p[1]])); fit(c, 140, { right: 290, bottom: 70, left: 60, maxZoom: 6.2 }); },
-    hdr: () => { const nf = nextFlight(), cur = D.recon?.current; return ["Hurricane Hunters", nf ? `Next fix ${dayhm(isoMs(nf.fix[0]))} ${TZ}` : cur ? `${ACFT(cur.aircraft)} today` : "No flights tasked", "RECON"]; } },
+    hdr: () => { const nf = nextFlight(), cur = rCur(); return ["Hurricane Hunters", nf ? `Next fix ${dayhm(isoMs(nf.fix[0]))} ${TZ}` : cur ? `${ACFT(cur.aircraft)} today` : "No flights tasked", "RECON"]; } },
   { id: "models", label: "Models", layers: ["models", "gefs", "best"], anim: ["models", "gefs"], ok: () => Object.keys(D.models?.aids || {}).length,
     cam() { const { aids } = modelSet(); fit(aids.flatMap(a => a.pts.filter(p => p[0] <= 84).map(p => [p[2], p[1]])).concat(D.fc.filter(p => p.hr <= 84).map(p => [p.lon, p.lat])), 135, { right: 300, bottom: 90, left: 60, maxZoom: 6.2 }); },
     hdr: () => { const cyc = D.models?.cycle ? `${D.models.cycle.slice(11, 13)}Z` : ""; return ["Track Guidance", `${cyc} early-cycle aids`, cyc ? `${cyc} MODELS` : "MODELS"]; } }
@@ -899,7 +914,7 @@ function zLocal(s) { const P = D.recon?.plan?.valid?.[0] || D.generated; return 
 function railRecon() {
   const R0 = D.recon || {}, fl = (R0.plan?.flights || []).slice().sort((a, b) => isoMs(a.fix[0] || a.depart) - isoMs(b.fix[0] || b.depart)), cur = R0.current, nf = nextFlight();
   $("cRecon").innerHTML = `<div class="ch"><b>Recon</b><span>${R0.plan?.number ? `plan of the day ${esc(R0.plan.number)}` : "hurricane hunters"}</span></div>
-    ${cur ? (() => { const live = Date.now() - Date.parse(cur.valid_end) < 30 * 6e4; return `<div class="fl${live ? " next" : " done"}"><span class="ic">${PLANE("#ffd24a")}</span><b>${esc(ACFT(cur.aircraft))} · ${esc(cur.flight)}</b><small>${cur.ours ? "in the storm" : "synoptic surveillance"} · ${(cur.sondes || []).length} sonde${(cur.sondes || []).length === 1 ? "" : "s"}</small><em>${hm(cur.valid_end)}<br><small>${live ? "airborne" : "landed"}</small></em></div>`; })() : ""}
+    ${rFlights().slice().reverse().map(cur => { const live = Date.now() - Date.parse(cur.valid_end) < 30 * 6e4, sel = rFlights().length > 1 && cur === rCur(); return `<div class="fl pick${live ? " next" : " done"}${sel ? " sel" : ""}" data-mid="${esc(cur.mission_id)}" title="Show this flight on the map"><span class="ic">${PLANE("#ffd24a")}</span><b>${esc(ACFT(cur.aircraft))} · ${esc(cur.flight)}</b><small>${cur.ours ? "in the storm" : "synoptic surveillance"} · ${(cur.sondes || []).length} sonde${(cur.sondes || []).length === 1 ? "" : "s"}</small><em>${hm(cur.valid_end)}<br><small>${live ? "airborne" : "landed"}</small></em></div>`; }).join("")}
     ${fl.length ? fl.filter(f => isoMs(f.fix[f.fix.length - 1] || f.depart) > Date.now() - 36e5).slice(0, 3).map(f => { const t = isoMs(f.fix[0] || f.depart); return `<div class="fl${f === nf ? " next" : ""}"><span class="ic">${PLANE("#ffd24a")}</span>
       <b>${esc(f.flight.replace(/^FLIGHT \w+ - /, ""))} · ${esc(ACFT(f.flight))}</b><small>${esc(f.task.toLowerCase())} · ${esc(f.fix.map(x => dayhm(isoMs(x))).join(", "))}</small>
       <em data-t="${t}" data-w="${esc(dayhm(t))}">${esc(dayhm(t))}</em></div>`; }).join("")
@@ -915,7 +930,7 @@ function intensityChart() {
   const t0a = advTime(), best = (D.best || []).filter(p => Date.parse(p.t) >= t0a - 3 * 864e5);
   const AIDS = ["DSHP", "LGEM", "HFAI", "HFBI", "HWFI", "HMNI", "AVNI", "IVCN"].filter(t => D.models.aids[t]);
   const ser = AIDS.map(t => ({ t, pts: aidPts(D.models.aids[t]).filter(p => p[3] > 0).map(p => [isoMs(D.models.aids[t].cycle) + p[0] * 36e5, p[3]]) })).filter(s => s.pts.length > 1);
-  const fc = D.fc.map(p => [p.t, p.kt]);
+  const fc = D.fc.map(p => [p.t, p.kt, phase(p)]);
   const xs = [...best.map(p => Date.parse(p.t)), ...fc.map(p => p[0])], x0 = Math.min(...xs), x1 = Math.max(...fc.map(p => p[0]), t0a + 5 * 864e5);
   const ymax = Math.max(80, ...fc.map(p => p[1]), ...ser.flatMap(s => s.pts.map(p => p[1])), ...best.map(p => p.kt)) + 10;
   const X = t => P.l + (t - x0) / (x1 - x0) * (W - P.l - P.r), Y = v => H - P.b - v / ymax * (H - P.t - P.b);
@@ -931,7 +946,7 @@ function intensityChart() {
   s += `<g clip-path="url(#rev)">`;
   ser.forEach((q, i) => { s += `<path class="ln dash" d="${path(q.pts)}" stroke="${AIDC[q.t]}" stroke-width="1.8" stroke-opacity=".9"/>`; });
   s += `<path class="ln dash" d="${path(fc)}" stroke="#06101f" stroke-width="7" stroke-opacity=".6"/><path class="ln dash" d="${path(fc)}" stroke="#fff" stroke-width="3.4"/>`;
-  fc.forEach((p, i) => s += `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="4.5" fill="${catOf(p[1]).c}" stroke="#06101f" stroke-width="1.5"/>`);
+  fc.forEach((p, i) => s += p[2] === "tc" ? `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="4.5" fill="${catOf(p[1]).c}" stroke="#06101f" stroke-width="1.5"/>` : phaseMark(p[2], X(p[0]), Y(p[1]), 4.8, catOf(p[1]).c, "#06101f", 1.5));
   ser.forEach(q => { const l = q.pts.filter(p => p[0] <= x1).slice(-1)[0]; });
   s += `</g>`;
   s += `<path class="ln" pathLength="1" d="${path(best.map(p => [Date.parse(p.t), p.kt]).concat([[t0a, D.kt]]))}" stroke="#ffffff" stroke-width="2.4" stroke-dasharray="1 1" style="--d:.1s;stroke-dasharray:1 1"/>`;
