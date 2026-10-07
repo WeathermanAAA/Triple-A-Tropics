@@ -357,7 +357,7 @@ function drawLabels() {
   const seen = new Set(), H = $("stage").clientHeight;
   for (const f of fs) {
     const name = (f.properties["name:en"] || f.properties.name || "").toUpperCase(); if (!name || seen.has(name)) continue;
-    const p = MAP.project(f.geometry.coordinates); if (p.y < 140 * K || p.y > H - 8) continue; seen.add(name);
+    const p = MAP.project(f.geometry.coordinates); if (p.y < 140 * K || p.y > H - 22 * K) continue;   // clear of the header frame and the credit line seen.add(name);
     let e = LABS.get(name);
     if (!e) { e = document.createElement("div"); e.className = "lab" + (f.properties.class === "city" ? " big" : ""); e.innerHTML = `<span class="n">${esc(name)}</span>`; ov.appendChild(e); LABS.set(name, e); }
     e.style.transform = `translate(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px) translate(-50%,-50%)`;
@@ -491,7 +491,7 @@ const LY = {
         const done = sd.filter(s => Date.parse(s.t) <= tnow);
         set("sondes", FC(done.map(s => ({ type: "Feature", properties: { c: s.kt != null && s.kt >= 34 ? "#46c56a" : "#7cc3ea" }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } }))));
         sEls.forEach(x => { if (x.t <= tnow) x.e.classList.add("in"); });
-        clock("recon", ACFT(cur.aircraft), hm(tnow), `${done.length} sondes`); };
+        clock("recon", ACFT(cur.aircraft), hm(tnow), `${done.length} sonde${done.length === 1 ? "" : "s"}`); };
       if (a) { set("recon", FC([])); set("sondes", FC([])); llater("recon", 600, () => lanim("recon", 5200, step)); } else step(1); },
     off() { vis(["recon", "recon-case", "sondes"], false); },
     leg: () => D.recon?.current ? `<div class="r"><i style="background:linear-gradient(90deg,#5dd3ff,#fff,#ffd24a)"></i>${esc(ACFT(D.recon.current.aircraft))} flight</div><div class="r"><i class="dot" style="background:#7cc3ea;border:1.5px solid #fff"></i>Dropsonde (sfc wind kt)</div>` : "",
@@ -885,7 +885,7 @@ function zLocal(s) { const P = D.recon?.plan?.valid?.[0] || D.generated; return 
 function railRecon() {
   const R0 = D.recon || {}, fl = (R0.plan?.flights || []).slice().sort((a, b) => isoMs(a.fix[0] || a.depart) - isoMs(b.fix[0] || b.depart)), cur = R0.current, nf = nextFlight();
   $("cRecon").innerHTML = `<div class="ch"><b>Recon</b><span>${R0.plan?.number ? `plan of the day ${esc(R0.plan.number)}` : "hurricane hunters"}</span></div>
-    ${cur ? (() => { const live = Date.now() - Date.parse(cur.valid_end) < 30 * 6e4; return `<div class="fl${live ? " next" : " done"}"><span class="ic">${PLANE("#ffd24a")}</span><b>${esc(ACFT(cur.aircraft))} · ${esc(cur.flight)}</b><small>${cur.ours ? "in the storm" : "synoptic surveillance"} · ${(cur.sondes || []).length} sondes</small><em>${hm(cur.valid_end)}<br><small>${live ? "airborne" : "landed"}</small></em></div>`; })() : ""}
+    ${cur ? (() => { const live = Date.now() - Date.parse(cur.valid_end) < 30 * 6e4; return `<div class="fl${live ? " next" : " done"}"><span class="ic">${PLANE("#ffd24a")}</span><b>${esc(ACFT(cur.aircraft))} · ${esc(cur.flight)}</b><small>${cur.ours ? "in the storm" : "synoptic surveillance"} · ${(cur.sondes || []).length} sonde${(cur.sondes || []).length === 1 ? "" : "s"}</small><em>${hm(cur.valid_end)}<br><small>${live ? "airborne" : "landed"}</small></em></div>`; })() : ""}
     ${fl.length ? fl.filter(f => isoMs(f.fix[f.fix.length - 1] || f.depart) > Date.now() - 36e5).slice(0, 3).map(f => { const t = isoMs(f.fix[0] || f.depart); return `<div class="fl${f === nf ? " next" : ""}"><span class="ic">${PLANE("#ffd24a")}</span>
       <b>${esc(f.flight.replace(/^FLIGHT \w+ - /, ""))} · ${esc(ACFT(f.flight))}</b><small>${esc(f.task.toLowerCase())} · ${esc(f.fix.map(x => dayhm(isoMs(x))).join(", "))}</small>
       <em data-t="${t}" data-w="${esc(dayhm(t))}">${esc(dayhm(t))}</em></div>`; }).join("")
@@ -897,7 +897,7 @@ function inCard(id, d) { const c = $(id); [...c.children].forEach((e, j) => e.st
 
 /* ---------------- intensity chart ---------------- */
 function intensityChart() {
-  const el = $("intChart"), W = el.clientWidth || 900, H = el.clientHeight || 290, P = { l: 40, r: 64, t: 12, b: 30 };
+  const el = $("intChart"), W = Math.max(320, el.clientWidth || 900), H = el.clientHeight || 290, P = { l: 40, r: 64, t: 12, b: 30 };
   const t0a = advTime(), best = (D.best || []).filter(p => Date.parse(p.t) >= t0a - 3 * 864e5);
   const AIDS = ["DSHP", "LGEM", "HFAI", "HFBI", "HWFI", "HMNI", "AVNI", "IVCN"].filter(t => D.models.aids[t]);
   const ser = AIDS.map(t => ({ t, pts: aidPts(D.models.aids[t]).filter(p => p[3] > 0).map(p => [isoMs(D.models.aids[t].cycle) + p[0] * 36e5, p[3]]) })).filter(s => s.pts.length > 1);
@@ -912,7 +912,7 @@ function intensityChart() {
       <text x="${W - P.r + 6}" y="${(Y(lo) + Y(hi)) / 2 + 3}" fill="${c.c}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</text></g>`; });
   for (let u = 0; u / WF().f <= ymax; u += WF().step) s += `<text class="ax" x="${P.l - 6}" y="${Y(u / WF().f) + 3}" text-anchor="end">${u}</text>`;
   for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) { const d = new Date(t + 12 * 36e5 - OFF * 0); const lx = X(t);
-    s += `<line class="grid" x1="${lx}" x2="${lx}" y1="${P.t}" y2="${H - P.b}"/><text class="ax" x="${lx + 4}" y="${H - P.b + 16}">${DOW[local(t + 12 * 36e5).getUTCDay()]} ${MON[local(t + 12 * 36e5).getUTCMonth()]} ${local(t + 12 * 36e5).getUTCDate()}</text>`; }
+    s += `<line class="grid" x1="${lx}" x2="${lx}" y1="${P.t}" y2="${H - P.b}"/>${dayLab(t, lx, H - P.b + 16, X(t + 864e5) - lx)}`; }
   s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${wl().toUpperCase()}</text>`;
   s += `<g clip-path="url(#rev)">`;
   ser.forEach((q, i) => { s += `<path class="ln dash" d="${path(q.pts)}" stroke="${AIDC[q.t]}" stroke-width="1.8" stroke-opacity=".9"/>`; });
@@ -934,6 +934,13 @@ function intensityChart() {
   el.classList.remove("in"); void el.offsetWidth; el.classList.add("in");
   const r = el.querySelector(".revr"), w0 = W - X(t0a); r.setAttribute("width", 0);
   const ts = performance.now() + 900; const f = now => { const p = Math.max(0, Math.min(1, (now - ts) / 2200)); r.setAttribute("width", w0 * ease(p)); if (p < 1) requestAnimationFrame(f); }; requestAnimationFrame(f);
+}
+
+/* day labels on a time axis, thinned to the space a day gets: full "TUE OCT 6", short "TUE 6", or every other day */
+function dayLab(t, x, y, px, short) {
+  const d = local(t + 12 * 36e5);
+  if (px < 44 && Math.round(t / 864e5) % 2) return "";
+  return `<text class="ax" x="${x + 4}" y="${y}">${px < 92 || short ? `${DOW[d.getUTCDay()]} ${d.getUTCDate()}` : `${DOW[d.getUTCDay()]} ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`}</text>`;
 }
 
 /* ---------------- guidance board ---------------- */
@@ -989,7 +996,7 @@ async function ensChart() {
   const gefsCyc = D.models?.gefs && Object.values(D.models.gefs)[0]?.cycle;
   const srcs = doc.sources.map(s => { const c = s.cycle ? cycMs(s.cycle) : gefsCyc ? isoMs(gefsCyc) : null; if (c == null) return null;
     return { label: s.label, col: s.model === "gefs" ? "#5dd3ff" : "#ff7a5c", mem: s.members.map(m => s.taus.map((t, i) => [c + t * 36e5, m[M]?.[i]]).filter(p => p[1] != null)) }; }).filter(Boolean);
-  const W = el.clientWidth || 900, H = el.clientHeight || 290, P = { l: 44, r: 64, t: 12, b: 30 }, t0a = advTime();
+  const W = Math.max(320, el.clientWidth || 900), H = el.clientHeight || 290, P = { l: 44, r: 64, t: 12, b: 30 }, t0a = advTime();
   const best = (D.best || []).filter(p => Date.parse(p.t) >= t0a - 2 * 864e5).map(p => [Date.parse(p.t), M === "vmax" ? p.kt : p.mb]).filter(p => p[1]);
   const fc = M === "vmax" ? D.fc.map(p => [p.t, p.kt]) : [];
   const x0 = Math.min(t0a - 2 * 864e5, ...srcs.map(s => s.mem[0]?.[0]?.[0] ?? t0a)), x1 = t0a + 7 * 864e5;
@@ -1002,7 +1009,7 @@ async function ensChart() {
     s += `<g class="band"><rect x="${P.l}" y="${Y(b)}" width="${W - P.l - P.r}" height="${Y(a) - Y(b)}" fill="${c.c}" opacity=".07"/><text x="${W - P.r + 6}" y="${(Y(a) + Y(b)) / 2 + 3}" fill="${c.c}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</text></g>`; });
   const tf = M === "vmax" ? WF().f : U.pres === "inhg" ? .02953 : 1, tst = M === "vmax" ? WF().step : U.pres === "inhg" ? .3 : 10;
   for (let u = Math.ceil(lo * tf / tst) * tst; u / tf <= hi; u += tst) s += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${Y(u / tf)}" y2="${Y(u / tf)}"/><text class="ax" x="${P.l - 6}" y="${Y(u / tf) + 3}" text-anchor="end">${M === "mslp" && U.pres === "inhg" ? u.toFixed(1) : Math.round(u)}</text>`;
-  for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) s += `<line class="grid" x1="${X(t)}" x2="${X(t)}" y1="${P.t}" y2="${H - P.b}"/><text class="ax" x="${X(t) + 4}" y="${H - P.b + 16}">${DOW[local(t + 12 * 36e5).getUTCDay()]} ${local(t + 12 * 36e5).getUTCDate()}</text>`;
+  for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) s += `<line class="grid" x1="${X(t)}" x2="${X(t)}" y1="${P.t}" y2="${H - P.b}"/>${dayLab(t, X(t), H - P.b + 16, X(t + 864e5) - X(t), true)}`;
   s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${M === "vmax" ? wl().toUpperCase() : pl().toUpperCase()}</text>`;
   for (const src of srcs) {
     for (const m of src.mem) s += `<path class="ln dash" d="${path(m)}" stroke="${src.col}" stroke-width="1" stroke-opacity=".28" fill="none"/>`;

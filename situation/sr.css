@@ -523,3 +523,23 @@ details.hzs .hz{margin:0 6px 6px}
 .lyr .pnote{font-size:10.5px;color:var(--ice);margin-top:8px;line-height:1.35}
 .lyr .pnote:empty{display:none}
 .lc .xp{margin-left:auto;font-weight:800;letter-spacing:.6px;color:var(--gold);min-width:44px}
+
+/* ---------- phone / narrow: one column (the 1500px two-column rule above would otherwise win) ---------- */
+@media (max-width:980px){
+  .room{grid-template-columns:minmax(0,1fr);padding:10px 10px 0;gap:12px}
+  .rail{grid-column:auto;grid-template-columns:minmax(0,1fr)}
+  .lcol{display:grid;grid-template-columns:minmax(0,1fr)}
+  .lc{gap:6px}
+  .lc .tl{flex-basis:100%}
+  .c-int .ch{flex-wrap:wrap}
+}
+@media (max-width:560px){
+  .srt button{padding-left:0;padding-right:0}
+  .srt .lyrbtn span{display:none}
+  .srt .quadbtn span{display:none}
+  .lc .lt{width:auto}
+}
+@media (max-width:980px){
+  .lcol{display:contents}
+  .vit{order:0}.stage-wrap{order:1}.dials{order:2}.rail{order:3}
+}
