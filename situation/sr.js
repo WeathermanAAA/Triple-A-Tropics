@@ -901,10 +901,10 @@ const WWC = { "Hurricane Warning": "#e3001b", "Hurricane Watch": "#ff6bd6", "Sto
 const WWO = ["Hurricane Warning", "Storm Surge Warning", "Tropical Storm Warning", "Hurricane Watch", "Storm Surge Watch", "Tropical Storm Watch"];
 const wwSort = L => (L || []).slice().sort((a, b) => (WWO.indexOf(a.t) + 1 || 99) - (WWO.indexOf(b.t) + 1 || 99));
 function wwBox(T, on) {
-  const L = wwSort(T.ww_list);
   if (!on) return `<div class="ww">No coastal watches or warnings.</div>`;
-  if (!L.length) return `<div class="ww on">${esc((T.watches || "").split(/SUMMARY OF WATCHES|A [A-Za-z ]+ means /)[0].replace(/^CHANGES WITH THIS ADVISORY:\s*/, "").trim())}</div>`;
-  return `<div class="ww on list">${L.map(w => `<div class="wwr" style="--c:${WWC[w.t] || "#fff"}"><b>${esc(w.t)}</b>${w.a.map(a => `<span>${esc(a)}</span>`).join("")}</div>`).join("")}</div>`;
+  const L = wwSort(T.ww_list), P = T.ww_paras?.length ? T.ww_paras : [T.watches || ""];
+  const sum = L.length ? [...new Set(L.map(w => w.t.replace("Tropical Storm", "TS").replace("Storm Surge", "Surge")))].join(" · ") : "In effect";
+  return `<details class="hzs wws"><summary>Watches & warnings <em>${esc(sum)}</em></summary><div class="wwt">${P.map(x => /:$/.test(x) ? `<h5>${esc(x.replace(/:$/, ""))}</h5>` : `<p>${esc(x).replace(/\s\*\s/g, "<br>• ")}</p>`).join("")}</div></details>`;
 }
 function railKey() {
   const T = D.text || {}, s = T.summary || {}, hz = T.hazards || [];
@@ -914,7 +914,7 @@ function railKey() {
   $("cKey").innerHTML = `<div class="ch"><b>The latest</b><span>NHC advisory ${esc(D.nhc.advisory)}</span></div>
     <div class="hl">${esc((T.headlines || [])[0] || "")}${T.headlines?.[1] ? `<span>${esc(T.headlines[1])}</span>` : ""}</div>
     ${s.location ? `<div class="kv"><span>Location</span><b>${esc(s.location)}</b></div>` : ""}
-    ${about ? `<div class="kv"><span>${esc(about.replace(/^ABOUT \d+ MI \d+ KM /, "").replace(/^(\w+) OF /, "$1 of ").toLowerCase().replace(/(^|\s)\w/g, c => c.toUpperCase()).replace(/^([NSEW][nsew]{0,2}) of /, (m, d) => d.toUpperCase() + " of "))}</span><b>${esc((about.match(/^ABOUT (\d+ MI)/) || [])[1] || "")}</b></div>` : ""}
+    ${about ? `<div class="kv"><span>${esc(about.replace(/^ABOUT \d+ MI \d+ KM /, "").replace(/^(\w+) OF /, "$1 of ").toLowerCase().replace(/(^|\s)\w/g, c => c.toUpperCase()).replace(/^([NSEW][nsew]{0,2}) of /i, (m, d) => d.toUpperCase() + " of "))}</span><b>${esc((about.match(/^ABOUT (\d+ MI)/) || [])[1] || "")}</b></div>` : ""}
     ${wwBox(T, on)}
     ${hz.length ? `<details class="hzs"><summary>Hazards <em>${hz.map(h => (h.match(/^([A-Z]+)/) || [""])[0]).filter(Boolean).join(" · ")}</em></summary>${hz.map(hzH).join("")}</details>` : ""}`;
   inCard("cKey", 0);

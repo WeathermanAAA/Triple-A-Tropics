@@ -453,6 +453,10 @@ details.hzs summary::after{content:"+";color:var(--gold);font-size:15px;line-hei
 details.hzs[open] summary::after{content:"–"}
 details.hzs summary em{font-style:normal;color:var(--gold);font-size:10.5px;margin-left:auto}
 details.hzs .hz{margin:0 6px 6px}
+details.wws{border-color:#ff7b8a;background:linear-gradient(180deg,rgba(179,18,42,.55),rgba(109,7,22,.55))}
+details.wws .wwt{margin:0 8px 8px;font-size:12px;font-weight:700;color:#fff;line-height:1.35}
+details.wws .wwt p{margin:0 0 6px}
+details.wws .wwt h5{margin:8px 0 4px;font-size:10.5px;letter-spacing:.8px;color:var(--gold)}
 .flash{position:absolute;z-index:15;left:50%;top:calc(132px*var(--k));transform:translateX(-50%);display:flex;align-items:stretch;border-radius:3px;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.6);
   animation:flashIn 7s var(--ease) both;white-space:nowrap}
 .flash b{background:var(--cat);color:var(--catInk);font-size:calc(15px*var(--k));font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:calc(7px*var(--k)) calc(14px*var(--k))}
