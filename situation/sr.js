@@ -270,7 +270,7 @@ async function initMap() {
         lines: { type: "raster", tiles: [`${CDN}/situation/tiles/lines/{z}/{x}/{y}.png`], tileSize: 256, maxzoom: 6 },
         roads: { type: "raster", tiles: [`${CDN}/situation/tiles/roads/{z}/{x}/{y}.png`], tileSize: 256, minzoom: 5, maxzoom: 6 } },
       layers: [{ id: "bg", type: "background", paint: { "background-color": "#2463a0" } }, { id: "base", type: "raster", source: "base", paint: { "raster-fade-duration": 0 } }] } });
-  MAP.scrollZoom.disable();
+  MAP.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
   const ro = new ResizeObserver(() => { K = st.clientWidth / 1027; st.style.setProperty("--k", K); MAP.resize(); }); ro.observe(st);
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
@@ -279,7 +279,7 @@ async function initMap() {
   MAP.addSource("mw", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
   MAP.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 700 }, "raster-fade-duration": 0 } });
   MAP.addLayer({ id: "lines", type: "raster", source: "lines", paint: { "raster-fade-duration": 0 } });
-  MAP.addLayer({ id: "roads", type: "raster", source: "roads", paint: { "raster-fade-duration": 0, "raster-opacity": .9 } });
+  MAP.addLayer({ id: "roads", type: "raster", source: "roads", layout: { visibility: "none" }, paint: { "raster-fade-duration": 0, "raster-opacity": .9 } });
   ["cone", "best", "bestpts", "fc", "gefs", "aids", "ofcl", "recon", "sondes"].forEach(gj);
   MAP.addLayer({ id: "cone-fill", type: "fill", source: "cone", paint: { "fill-color": "#ffffff", "fill-opacity": 0, "fill-opacity-transition": { duration: 900 } } });
   MAP.addLayer({ id: "cone-line", type: "line", source: "cone", paint: { "line-color": "#ffffff", "line-width": 2.2, "line-opacity": 0, "line-opacity-transition": { duration: 900 } } });
@@ -480,7 +480,7 @@ const LY = {
   lines: { name: "Borders & counties", grp: "Map", on() { vis("lines", true); }, off() { vis("lines", false); } }
 };
 const DATA = ["cone", "track", "points", "best", "sat", "mw", "recon", "fixes", "models", "gefs"];
-const ON = new Set(["now", "cities", "roads", "lines"]);
+const ON = new Set(["now", "cities", "lines"]);
 function setLayer(id, on, a = true) {
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
   if (!on && !ON.has(id)) return;
@@ -563,7 +563,7 @@ async function buildQuad() {
     QUAD.cells = [...q.querySelectorAll(".qc")].map((el, i) => {
       const m = new maplibregl.Map({ container: el.querySelector(".qm"), style: miniStyle(), center: MAP.getCenter(), zoom: MAP.getZoom() - .5,
         attributionControl: false, fadeDuration: 0, dragRotate: false, pitchWithRotate: false, renderWorldCopies: false });
-      m.scrollZoom.disable();
+      m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
       const c = { el, map: m, prod: QUAD.prods[i], loop: new SatX.Loop(m, "qsat", "qlines", { maxPx: 1400 }) };
       c.ready = new Promise(r => m.on("load", () => {
         m.addSource("mw", { type: "image", url: MAP.getSource("mw").url || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });

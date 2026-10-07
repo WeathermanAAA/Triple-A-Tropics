@@ -123,7 +123,7 @@ body.sr *{box-sizing:border-box}
 .stage{position:relative;aspect-ratio:16/9;width:100%;overflow:hidden;background:#2463a0;border:1px solid var(--line);border-top:0;--k:1}
 #map{position:absolute;inset:0}
 .ovl{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.maplibregl-ctrl-bottom-right,.maplibregl-ctrl-bottom-left{display:none}
+.maplibregl-ctrl-bottom-left{display:none}
 .maplibregl-canvas{outline:none}
 
 /* Tulsa-Live header frame (1027x578 crop px, scaled by --k) */
@@ -482,3 +482,11 @@ details.hzs .hz{margin:0 6px 6px}
 .qnow{--k:.7}
 .srt .quadbtn{flex:0 0 auto;padding:0 14px}
 .srt .quadbtn.on{background:color-mix(in srgb,var(--cat) 25%,transparent);color:#fff}
+
+/* zoom buttons */
+.maplibregl-ctrl-bottom-right{right:auto;left:calc(14px*var(--k));bottom:auto;top:calc(130px*var(--k))}
+.maplibregl-ctrl-group{background:rgba(10,20,50,.92);border:1px solid var(--line);box-shadow:0 4px 12px rgba(0,0,0,.5)}
+.maplibregl-ctrl-group button{width:30px;height:30px}
+.maplibregl-ctrl-group button+button{border-top:1px solid var(--line)}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon{filter:invert(1)}
+.qc .maplibregl-ctrl-bottom-right{top:44px;left:8px}
