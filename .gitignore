@@ -125,3 +125,4 @@ records_cache/
 models_page_build_spec*.md
 build_order*.csv
 tc_product_catalog*.csv
+situation/.cache/
