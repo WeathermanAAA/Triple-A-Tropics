@@ -450,3 +450,38 @@ details.hzs .hz{margin:0 6px 6px}
 .flash span{background:#0c1634;font-size:calc(15px*var(--k));font-weight:800;padding:calc(7px*var(--k)) calc(14px*var(--k));text-transform:uppercase;border:1px solid var(--line);border-left:0}
 @keyframes flashIn{0%{clip-path:inset(0 100% 0 0)}8%,90%{clip-path:inset(0 0 0 0);opacity:1}100%{clip-path:inset(0 0 0 0);opacity:0}}
 @media (max-width:1500px){.room{grid-template-columns:280px minmax(0,1fr)}.rail{grid-template-columns:1fr 1fr}}
+
+/* ---------- v5: satellite loop bar ---------- */
+.lc{position:absolute;z-index:8;left:50%;transform:translateX(-50%);bottom:calc(14px*var(--k));display:flex;align-items:center;gap:8px;padding:6px 10px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--cat) 24%,rgba(20,36,86,.96)),color-mix(in srgb,var(--cat) 10%,rgba(10,20,50,.96)));
+  border:1px solid var(--line);border-top:3px solid var(--cat);border-radius:3px;box-shadow:0 8px 20px rgba(0,0,0,.55);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+.lc[hidden]{display:none}
+.lc button{appearance:none;font:inherit;color:var(--ice);background:rgba(5,9,20,.45);border:1px solid var(--line);border-radius:2px;padding:4px 7px 3px;cursor:pointer;line-height:1}
+.lc button:hover{color:#fff;border-color:var(--cat)}
+.lc button.on{background:var(--cat);color:var(--catInk);border-color:var(--cat)}
+.lc .pp{width:30px;height:26px;padding:0;display:flex;align-items:center;justify-content:center;background:var(--cat);color:var(--catInk);border-color:var(--cat)}
+.lc .pp svg{width:14px;height:14px}
+.lc .seg{display:flex;gap:2px}
+.lc .tl{display:flex;align-items:center;gap:8px}
+.lc .tl input{width:150px;accent-color:var(--cat)}
+.lc .lt{min-width:96px;font-size:12px;color:#fff;font-variant-numeric:tabular-nums}
+.lc label{display:flex;align-items:center;gap:5px;color:var(--ice);cursor:pointer}
+.lc label input[type=checkbox]{accent-color:var(--cat)}
+.lc .op input{width:60px;accent-color:var(--cat)}
+.stage:has(.lc:not([hidden])) .clock{bottom:calc(64px*var(--k))}
+.stage:has(.lc:not([hidden])) .legend{bottom:calc(64px*var(--k))}
+
+/* ---------- v5: 4-panel ---------- */
+.qgrid{position:absolute;inset:0;z-index:4;display:none;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px;background:var(--cat)}
+.stage.quad .qgrid{display:grid}
+.stage.quad #map,.stage.quad .ovl,.stage.quad .frame,.stage.quad .legend,.stage.quad .clock,.stage.quad .strip,.stage.quad .plan{display:none}
+.qc{position:relative;overflow:hidden;background:#2463a0}
+.qm{position:absolute;inset:0}
+.qt{position:absolute;left:8px;top:8px;z-index:3;display:flex;align-items:stretch;border-radius:2px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,.55);border:1px solid var(--line)}
+.qt select{appearance:none;font:inherit;font-size:12px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;background:var(--cat);color:var(--catInk);border:0;padding:4px 22px 3px 9px;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 11px) 50%,calc(100% - 6px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+.qt .qs{background:rgba(10,20,50,.92);font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:5px 9px 3px;white-space:nowrap}
+.qt .qs:empty{display:none}
+.qnow{--k:.7}
+.srt .quadbtn{flex:0 0 auto;padding:0 14px}
+.srt .quadbtn.on{background:color-mix(in srgb,var(--cat) 25%,transparent);color:#fff}

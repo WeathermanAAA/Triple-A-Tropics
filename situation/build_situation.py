@@ -44,6 +44,42 @@ def nhc():
         out.append(st)
     return out
 
+# ---------------- geostationary imagery (NASA GIBS, 10-min, every basin): which frames exist in the last 12 h ----------------
+GIBS_LAYERS = [f"{sat}_{b}" for sat in ("GOES-East_ABI", "GOES-West_ABI") for b in
+               ("Band13_Clean_Infrared", "Band2_Red_Visible_1km", "GeoColor", "Air_Mass", "Dust")] + \
+              [f"Himawari_AHI_{b}" for b in ("Band13_Clean_Infrared", "Band3_Red_Visible_1km", "Air_Mass")]
+
+def _iso(t): return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+def _parse(s):
+    import calendar
+    return calendar.timegm(time.strptime(s.strip(), "%Y-%m-%dT%H:%M:%SZ"))
+
+def gibs_times(hours=12):
+    """{layer: [ISO times available in the last `hours`]} from the GIBS WMS capabilities time dimensions"""
+    try: x = _get("https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0").decode("utf8", "replace")
+    except Exception as e:
+        print("gibs capabilities failed:", e); return {}
+    lo, out = time.time() - hours * 3600, {}
+    for lay in GIBS_LAYERS:
+        m = re.search(r"<Name>" + re.escape(lay) + r"</Name>.*?<Dimension name=\"time\"[^>]*>([^<]*)</Dimension>", x, re.S)
+        if not m: continue
+        ts = []
+        for part in m.group(1).split(","):
+            p = part.strip().split("/")
+            try:
+                if len(p) == 3:
+                    a, b = _parse(p[0]), _parse(p[1]); step = 600
+                    t = max(a, b - ((b - lo) // step + 1) * step if b > lo else b + 1)
+                    while t <= b:
+                        if t >= lo: ts.append(t)
+                        t += step
+                elif p[0]:
+                    t = _parse(p[0])
+                    if t >= lo: ts.append(t)
+            except Exception: continue
+        if ts: out[lay] = [_iso(t) for t in sorted(set(ts))]
+    return out
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--out-dir", default="situation_out"); a = ap.parse_args()
     od = os.path.join(a.out_dir, "situation"); os.makedirs(od, exist_ok=True)
@@ -59,7 +95,7 @@ def main():
             print(f"situation: {sid} {s.get('name')} ok", flush=True)
         except Exception as e:
             print(f"situation: {sid} failed: {e}", flush=True)
-    idx = {"generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rooms": sorted(rooms),
+    idx = {"generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rooms": sorted(rooms), "gibs": gibs_times(),
            "active": [{"id": (s.get("id") or "").lower(), "name": s.get("name"), "cls": s.get("classification"), "kt": s.get("intensity"),
                        "has_bundle": (s.get("id") or "").lower() in made} for s in storms]}
     json.dump(idx, open(os.path.join(od, "index.json"), "w"), separators=(",", ":"))

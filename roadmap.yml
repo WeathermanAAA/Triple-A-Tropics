@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T00:49:00Z
+updated: 2026-10-07T01:26:00Z
 
 items:
   - id: situation-room-shadow
@@ -40,7 +40,9 @@ items:
       One storm, everything about it: vitals and Tulsa-style dials, a broadcast
       map stage (Tulsa basemap baked to R2, header frame) with tabs as layer
       presets (track and cone, GOES-19 IR loop, 89 GHz microwave, recon, model
-      tracks) plus a free layers panel, intensity chart, peak-by-model board,
+      tracks) plus a free layers panel, a 4-panel synced view, smooth GIBS satellite
+      loops (IR in TAT, Dvorak BD, grayscale or NASA ramps; VIS, GeoColor, Air Mass,
+      Dust; GOES-East/West and Himawari), intensity chart, peak-by-model board,
       advisory card, recon schedule, crawl. The whole page wears the storm's
       Saffir-Simpson colour and updates itself every 60 s. Data: situation/<sid>.json
       from update-situation.yml every 10 min (move to the box poller before it

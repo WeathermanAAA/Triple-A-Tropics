@@ -12,22 +12,8 @@ let SID = ((location.pathname.match(/\/cyclolab\/(\w{8})\//) || [])[1] || Q.get(
 const IN_CYCLOLAB = /\/cyclolab\//.test(location.pathname);
 const FAST = Q.has("fast");
 /* everything comes from the site's CDN: situation/<sid>.json (update-situation.yml), the baked basemap
-   (bake-situation-tiles.yml), microwave + recon products, and the GOES-19 shadow IR containers (byte-range reads) */
+   (bake-situation-tiles.yml), microwave + recon products; satellite loops come from NASA GIBS via sat.js */
 const CDN = "https://cdn.triple-a-tropics.com";
-const SAT_BASE = `${CDN}/shadow/sat/goes19/fd/ir`, SATIDX = new Map();
-const BLANK = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="), c => c.charCodeAt(0)).buffer;
-maplibregl.addProtocol("tatsat", async (params, ac) => {
-  const [t, z, x, y] = params.url.slice(9).split("/"), base = `${SAT_BASE}/${t}`;
-  if (!SATIDX.has(base)) SATIDX.set(base, fetch(`${base}/tiles.z5.json`).then(r => r.ok ? r.json() : null).catch(() => null));
-  const ix = await SATIDX.get(base);
-  if (ix && ix.tiles) {
-    const m = ix.tiles[`${z}/${x}/${y}.webp`]; if (!m) return { data: BLANK };
-    const r = await fetch(`${base}/${m[0]}`, { headers: { Range: `bytes=${m[1]}-${m[1] + m[2] - 1}` }, signal: ac.signal });
-    let b = await r.arrayBuffer(); if (r.status === 200 && b.byteLength > m[2]) b = b.slice(m[1], m[1] + m[2]);
-    return { data: b };
-  }
-  const r = await fetch(`${base}/${z}/${x}/${y}.webp`, { signal: ac.signal }); return { data: r.ok ? await r.arrayBuffer() : BLANK };
-});
 
 /* ---------------- storm vocabulary ---------------- */
 const CAT = [{ n: "TD", k: "D", c: "#3fa4ff", lo: 0 }, { n: "TS", k: "S", c: "#46c56a", lo: 34 }, { n: "1", k: "1", c: "#ffe14d", lo: 64 }, { n: "2", k: "2", c: "#ff9a2f", lo: 83 },
@@ -86,6 +72,8 @@ const NEEDS = { cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "
 async function refresh(first) {
   let d;
   try { d = await (await fetch(`${CDN}/situation/${SID}.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { stale(true); return; }
+  try { const ix = await (await fetch(`${CDN}/situation/index.json?t=${Date.now()}`, { cache: "no-store" })).json();
+    if (SatX.setTimes(ix.gibs) && !first) for (const L of SatX.P.loops) L.reload(false); } catch (e) {}
   if (d.err) { if (first) $("vit").innerHTML = `<div class="v-name"><span class="k">${esc(SID.toUpperCase())}</span><b>Not found</b></div><div class="rnote">${esc(d.err)}</div>`; stale(true); return; }
   if (IN_CYCLOLAB && d.room_open === false) { location.reload(); return; }   // room closed: hand the page back to CycloLab
   const was = D ? sig(D) : null, now = sig(d), ch = k => !was || was[k] !== now[k];
@@ -98,7 +86,7 @@ async function refresh(first) {
   document.documentElement.style.setProperty("--catInk", inkOn(catOf(D.kt).c));
   if (first) {
     await initMap(); buildTabs(); buildLayers(); vitals(); dials(); railKey(); railRecon(); intensityChart(); guidanceBoard(); crawl(); syncData();
-    await Promise.race([MAP.once("idle"), sleep(3000)]); tab(0, true); warmSat(); return;
+    await Promise.race([MAP.once("idle"), sleep(3000)]); tab(0, true); return;
   }
   if (ch("adv")) { vitals(); railKey(); crawl(); flash(`New advisory ${D.nhc.advisory}`, `${mph(D.kt)} mph · ${D.mb || "–"} mb`); }
   else vitalsQuiet();
@@ -106,20 +94,11 @@ async function refresh(first) {
   if (ch("adv") || ch("models") || ch("best")) { intensityChart(); guidanceBoard(); }
   if (ch("recon") || ch("plan")) railRecon();
   syncData();
-  if (ch("sat")) rebuildSat();
-  if (ch("adv")) nowMarker();
+  if (ch("adv")) { nowMarker(); if (QUAD.on) QUAD.cells.forEach(quadData); }
   let hdr = false;
   for (const id of DATA) if (ON.has(id) && NEEDS[id].some(ch)) { lclear(id); LY[id].off(); LY[id].on(ch("adv") && ["cone", "track", "points"].includes(id)); hdr = hdr || TABS[TAB]?.layers.includes(id); }
   if (hdr) frame(...TABS[TAB].hdr());
   legendNow(); creditNow();
-}
-/* the satellite loop's frames changed: swap the raster sources for the new set */
-function rebuildSat() {
-  const old = SATF || []; old.forEach((_, k) => { if (MAP.getLayer("sat" + k)) MAP.removeLayer("sat" + k); if (MAP.getSource("sat" + k)) MAP.removeSource("sat" + k); });
-  SATF = null;
-  satFrames().forEach((t, i) => { MAP.addSource("sat" + i, { type: "raster", tiles: [`tatsat://${t}/{z}/{x}/{y}`], tileSize: 512, maxzoom: 5 });
-    MAP.addLayer({ id: "sat" + i, type: "raster", source: "sat" + i, layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-fade-duration": 0 } }, "mw"); });
-  warmSat();
 }
 /* a new advisory lands: a bar sweeps across the top of the map */
 function flash(t, s) {
@@ -220,7 +199,7 @@ function countFace(x) {   // countdown: ticks for 24 h, lit arc = time remaining
     ${tk}<g class="dm-sweep"><line x1="100" y1="100" x2="100" y2="30" stroke="${x.color}" stroke-width="2" stroke-opacity=".55"/></g>`;
 }
 /* one dial at a time, like Tulsa-Live's sidebar: 7 s each, the next two queued below; click to advance, hover to hold */
-let DL = [], DK = 0, DT = null, DHOLD = false;
+let DL = [], DK = 0, DT = null;
 function dials() {
   const L = [], kt = D.kt, n = D.nhc;
   L.push({ t: "Max Sustained Wind", face: sshs({ kt, ghost: D.peak.kt }), big: kt, lab: "knots", sub: `${mph(kt)} mph · ${catWord(kt)}` });
@@ -233,15 +212,31 @@ function dials() {
   const mw = (D.mw?.overpasses || []).filter(o => o.kt).slice(-1)[0];
   L.push({ t: "Microwave Estimate", face: arc({ color: "#b48cff", frac: mw ? Math.min(1, mw.kt / 160) : .02 }), big: mw ? Math.round(mw.kt) : "–", lab: mw ? "knots" : "", sub: mw ? `${mw.sensor} · ${ago(mw.t)}` : "no usable pass" });
   L.push({ t: "NHC Forecast Peak", face: sshs({ kt: D.peak.kt }), big: D.peak.kt, lab: "knots", sub: `${catWord(D.peak.kt)} · ${DOW[local(D.peak.t).getUTCDay()]} ${hm(D.peak.t, false)}`, hot: D.peak.kt >= 64 ? catOf(D.peak.kt).c : null });
+  /* storm energy, timing, spread */
+  const syn = (D.best || []).filter(p => /T(00|06|12|18):00/.test(p.t) && ["TS", "HU", "SS"].includes(p.ty) && p.kt >= 34);
+  const ace = syn.reduce((s, p) => s + p.kt * p.kt / 1e4, 0);
+  let fAce = 0; for (let h = 6; h <= 120; h += 6) { const k = fcKt(h); if (k != null && k >= 34) fAce += k * k / 1e4; }
+  L.push({ t: "Storm ACE so far", face: arc({ color: "#ffb83a", frac: Math.min(1, ace / 30) || .02 }), big: ace.toFixed(1), lab: "ACE", sub: syn.length ? `${syn.length} six-hourly fixes` : "not a storm yet", small: true });
+  L.push({ t: "NHC Forecast ACE", face: arc({ color: "#ff9a2f", frac: Math.min(1, fAce / 30) || .02 }), big: fAce.toFixed(1), lab: "ACE", sub: "next 5 days, NHC track", small: true });
+  const hu = kt < 64 && D.fc.find(p => p.kt >= 64);
+  if (hu) { const ms = hu.t - Date.now();
+    L.push({ t: "Forecast Hurricane", face: countFace({ color: "#ffe14d", frac: Math.max(.02, Math.min(1, ms / (5 * 864e5))) }), big: `${Math.max(0, Math.round(ms / 36e5))}`, lab: "hours", sub: `by ${dayhm(hu.t)} ${TZ}` }); }
+  const pk = guidancePeaks();
+  if (pk.length > 2) { const lo = Math.min(...pk), hi = Math.max(...pk);
+    L.push({ t: "Model Peak Spread", face: sshs({ kt: hi, ghost: null }), big: `${lo}–${hi}`, lab: "kt", sub: `${pk.length} aids · spread ${hi - lo} kt`, small: true }); }
+  const mb24 = pressure24(); if (mb24 != null) L.push({ t: "Pressure, 24 Hours", face: arc({ color: mb24 < 0 ? "#ff6b5e" : "#5dd3ff", frac: Math.min(1, Math.abs(mb24) / 40) || .02 }), big: (mb24 > 0 ? "+" : "") + mb24, lab: "mb", sub: mb24 <= -24 ? "Bombing out" : mb24 < 0 ? "Deepening" : mb24 > 0 ? "Filling" : "Steady" });
+  const b0 = (D.best || []).find(p => ["TD", "TS", "HU", "SD", "SS"].includes(p.ty));
+  if (b0) { const h = Math.round((Date.now() - Date.parse(b0.t)) / 36e5); L.push({ t: "Storm Age", face: countFace({ color: "#7cc3ea", frac: Math.min(1, h / 240) || .02 }), big: h < 48 ? `${h}` : `${(h / 24).toFixed(1)}`, lab: h < 48 ? "hours" : "days", sub: `since ${dayhm(Date.parse(b0.t))} ${TZ}`, small: true }); }
+  const na = nextAdvisory(); if (na) L.push({ t: "Next Advisory", face: countFace({ color: "#e8b53a", frac: Math.max(.02, Math.min(1, (na - Date.now()) / (6 * 36e5))) }), big: `<span data-count="${na}">${until(na).slice(0, -3)}</span>`, lab: "hrs:min", sub: `${hm(na)} ${TZ}`, small: true });
   const nf = nextFlight();
   if (nf) { const ms = isoMs(nf.fix[0]) - Date.now();
     L.push({ t: "Next Recon Fix", face: countFace({ color: "#ffd24a", frac: Math.max(.02, Math.min(1, ms / 864e5)) }), big: `<span data-count="${isoMs(nf.fix[0])}">${until(isoMs(nf.fix[0])).slice(0, -3)}</span>`, lab: "hrs:min", sub: `${nf.flight.replace(/^FLIGHT \w+ - /, "")} · ${dayhm(isoMs(nf.fix[0]))}`, small: true }); }
   const keepT = DL[DK]?.t; DL = L; const ki = L.findIndex(x => x.t === keepT); DK = ki >= 0 ? ki : Math.min(DK, L.length - 1); showDial();
   const box = $("dials");
-  box.onmouseenter = () => DHOLD = true; box.onmouseleave = () => DHOLD = false;
-  box.onclick = e => { const d = e.target.closest("[data-k]"); DK = d ? +d.dataset.k : (DK + 1) % DL.length; showDial(); };
-  clearInterval(DT); DT = setInterval(() => { if (!DHOLD) { DK = (DK + 1) % DL.length; showDial(); } }, 7000);
+  box.onclick = e => { const d = e.target.closest("[data-k]"); DK = d ? +d.dataset.k : (DK + 1) % DL.length; showDial(); dialClock(); };
+  dialClock();
 }
+function dialClock() { clearInterval(DT); DT = setInterval(() => { DK = (DK + 1) % DL.length; showDial(); }, 7000); }
 function showDial() {
   const x = DL[DK], box = $("dials"); if (!x) return;
   const nx = [1, 2].map(i => DL[(DK + i) % DL.length]);
@@ -259,6 +254,9 @@ function showDial() {
     const f = now => { const p = Math.max(0, Math.min(1, (now - t0) / 1300)); e.textContent = Math.round(v * ease(p)); if (p < 1) requestAnimationFrame(f); }; requestAnimationFrame(f); }
 }
 
+function fcKt(h) { const F = D.fc; for (let i = 1; i < F.length; i++) if (F[i].hr >= h) { const a = F[i - 1], b = F[i]; if (a.kt == null || b.kt == null) return null; return a.kt + (b.kt - a.kt) * (h - a.hr) / ((b.hr - a.hr) || 1); } return null; }
+function guidancePeaks() { const A = D.models?.aids || {}; return ["IVCN", "HFAI", "HFBI", "HWFI", "HMNI", "DSHP", "LGEM", "AVNI", "CTCI"].filter(t => A[t]).map(t => Math.max(...aidPts(A[t]).filter(x => x[0] <= 120).map(x => x[3] || 0))).filter(v => v > 0); }
+function pressure24() { const b = D.best || [], last = b[b.length - 1]; if (!last || !D.mb) return null; const t = Date.parse(last.t) - 864e5, p = b.find(q => Math.abs(Date.parse(q.t) - t) < 3 * 36e5); return p && p.mb ? D.mb - p.mb : null; }
 function change24() {
   const b = D.best || []; if (!b.length) return 0;
   const last = b[b.length - 1], t = Date.parse(last.t) - 864e5, prev = b.find(p => Math.abs(Date.parse(p.t) - t) < 3 * 36e5);
@@ -267,18 +265,6 @@ function change24() {
 function nextFlight() { return (D.recon?.plan?.flights || []).filter(f => f.fix?.length && isoMs(f.fix[f.fix.length - 1]) > Date.now() && /FIX/.test(f.task)).sort((a, b) => isoMs(a.fix[0]) - isoMs(b.fix[0]))[0]; }
 
 /* ---------------- the map: Tulsa-Live's basemap ---------------- */
-/* loop frames: the last 4 h, one every ~20 min */
-const satMs = t => Date.UTC(+t.slice(0, 4), +t.slice(4, 6) - 1, +t.slice(6, 8), +t.slice(9, 11), +t.slice(11, 13));
-let SATF = null;
-function satFrames() {
-  if (SATF) return SATF;
-  const t = (D.sat?.times || []).slice().sort(); if (!t.length) return [];
-  const end = satMs(t[t.length - 1]), out = [];
-  if (t.length <= 12) return SATF = t;   // the TAT renderer works in short bursts: loop the whole latest burst
-  for (let k = 12; k >= 0; k--) { const want = end - k * 20 * 6e4, best = t.reduce((b, x) => Math.abs(satMs(x) - want) < Math.abs(satMs(b) - want) ? x : b);
-    if (Math.abs(satMs(best) - want) <= 10 * 6e4 && !out.includes(best)) out.push(best); }
-  return SATF = out;
-}
 async function initMap() {
   const st = $("stage");
   MAP = new maplibregl.Map({ container: "map", attributionControl: false, fadeDuration: 0, renderWorldCopies: false, dragRotate: false, pitchWithRotate: false,
@@ -293,12 +279,8 @@ async function initMap() {
   const ro = new ResizeObserver(() => { K = st.clientWidth / 1027; st.style.setProperty("--k", K); MAP.resize(); }); ro.observe(st);
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
+  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw");
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
-  // satellite: GOES-19 TAT clean IR, one source per loop frame
-  satFrames().forEach((t, i) => {
-    MAP.addSource("sat" + i, { type: "raster", tiles: [`tatsat://${t}/{z}/{x}/{y}`], tileSize: 512, maxzoom: 5 });
-    MAP.addLayer({ id: "sat" + i, type: "raster", source: "sat" + i, layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-opacity-transition": { duration: 0 } } });
-  });
   MAP.addSource("mw", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
   MAP.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 700 }, "raster-fade-duration": 0 } });
   MAP.addLayer({ id: "lines", type: "raster", source: "lines", paint: { "raster-fade-duration": 0 } });
@@ -402,7 +384,6 @@ function labelSides(pts) { return pts.map((p, i) => { const a = pts[Math.max(0, 
   return dy > Math.abs(dx) * 1.2 ? (i % 2 === 1) : dx < 0; }); }
 const PLANE = c => `<svg viewBox="0 0 24 24"><path d="M2 13l8-1 4-8h3l-2 8 6 0 2-3h1.5l-1 4.5 1 4.5H23l-2-3-6 0 2 8h-3l-4-8-8-1z" fill="${c}" stroke="#06101f" stroke-width="1"/></svg>`;
 const ACFT = s => /NOAA ?9|NOAA 49/.test(s) ? "NOAA G-IV" : /NOAA ?[23]|NOAA 4[23]/.test(s) ? "NOAA P-3" : /TEAL|AF/.test(s) ? "USAF WC-130J" : s;
-const ft = satMs;
 let MWSEL = null, MWPROD = "color91";
 function mwPasses() { return (D.mw?.overpasses || []).filter(o => o.geo?.color91 || o.geo?.color37); }
 function mwPick() { const list = mwPasses(), last = list[list.length - 1]; if (!last) return null;
@@ -437,20 +418,12 @@ const LY = {
     leg: () => `<div class="r"><i class="dot" style="background:#ffe14d;border:1.5px solid #fff"></i>Forecast position</div>` },
   best: { name: "Past track", grp: "Forecast", on() { vis(["best-line", "best-pts"], true); }, off() { vis(["best-line", "best-pts"], false); },
     leg: () => `<div class="r"><i class="dot" style="background:#3fa4ff;border:1.5px solid #06101f"></i>Past track</div>` },
-  sat: { name: "Infrared satellite", grp: "Observations",
-    on(a) { const fr = satFrames(), ids = fr.map((_, k) => "sat" + k); if (!ids.length) return;
-      vis(ids, true); ids.forEach((id, k) => MAP.setPaintProperty(id, "raster-opacity", k === ids.length - 1 ? 1 : 0));
-      let k = ids.length - 1, hold = 0;
-      const show = () => { ids.forEach((id, j) => MAP.setPaintProperty(id, "raster-opacity", j === k ? 1 : 0));
-        const t = ft(fr[k]), back = Math.round((ft(fr[fr.length - 1]) - t) / 6e4);
-        if (TABS[TAB]?.id === "sat") { const e = $("frame").querySelector(".tTime"); if (e) e.textContent = `${hm(t)} ${TZ}`; }
-        clock("sat", "IR LOOP", hm(t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest"); };
-      const s = {}; grp("sat").an.add(s);
-      const start = () => { if (s.go) return; s.go = 1; k = 0; s.iv = setInterval(() => { if (k === ids.length - 1 && hold++ < 6) return; hold = 0; k = (k + 1) % ids.length; show(); }, 220); show(); };
-      MAP.once("idle", () => llater("sat", 300, start)); llater("sat", 4000, start); },
-    off() { vis(satFrames().map((_, k) => "sat" + k), false); },
-    leg: () => `<h4>Clean infrared</h4><div class="r"><i style="background:linear-gradient(90deg,#333,#ddd)"></i>Warm · low cloud</div><div class="r"><i style="background:linear-gradient(90deg,#3fa4ff,#46c56a,#ffe14d,#f5333c,#b03bff)"></i>Cold · deep convection</div>`,
-    cred: "Satellite: NOAA GOES-19 band 13, processed by Triple-A-Tropics" },
+  now: { name: "Storm position", grp: "Forecast", on() { nowMarker(); }, off() { NOWM?.remove(); NOWM = null; } },
+  sat: { name: "Satellite loop", grp: "Observations",
+    on() { MAINLOOP.show(true); loopBar(true); },
+    off() { MAINLOOP.show(false); loopBar(false); if (CLK === "sat") clock(null); },
+    leg: () => { const b = SatX.BANDS[MAINLOOP.band]; return `<h4>${esc(SatX.SATS[MAINLOOP.sat].name)} ${esc(b.t)}</h4><div class="r"><i style="width:calc(90px*var(--k));background:${MAINLOOP.band === "ir" && SatX.P.ramp !== "native" ? SatX.rampCSS(SatX.P.ramp) : MAINLOOP.band === "ir" ? "linear-gradient(90deg,#444,#ddd,#3fa4ff,#46c56a,#ffe14d,#f5333c,#888)" : "linear-gradient(90deg,#123,#9ab,#fff)"}"></i>${esc(b.sub)}</div>${MAINLOOP.band === "ir" ? `<div class="rt"><span>+40°C</span><span>−95°C</span></div>` : ""}`; },
+    cred: "Satellite: NOAA GOES / JMA Himawari via NASA GIBS" },
   mw: { name: "Microwave (latest pass)", grp: "Observations",
     on() { const list = mwPasses(), o = mwPick(); if (!o) return; vis("mw", true); showMW(o);
       const st = $("strip"); st.innerHTML = list.slice(-7).map((x, i) => `<button data-id="${x.id}" class="${x.id === o.id ? "on" : ""}" style="--i:${i}"><img alt="" src="${CDN}/microwave/${x.img.color91 || x.img.color37}"><span>${hm(x.t)}</span></button>`).join("");
@@ -469,7 +442,7 @@ const LY = {
       const t0 = Date.parse(cur.track[0][4]), t1 = Date.parse(cur.track[cur.track.length - 1][4]);
       const step = p => { const n = Math.max(2, Math.round(tr.length * ease(p))), tnow = t0 + (t1 - t0) * ease(p);
         set("recon", FC([line(tr.slice(0, n))]));
-        const q = tr[n - 2], b = tr[n - 1]; pm.setLngLat(b).setRotation(Math.atan2(b[0] - q[0], b[1] - q[1]) * 180 / Math.PI - 90);
+        const q = tr[n - 2], b = tr[n - 1]; pm.setLngLat(b).setRotation(Math.atan2(b[0] - q[0], b[1] - q[1]) * 180 / Math.PI + 90);   // the icon's nose points west
         const done = sd.filter(s => Date.parse(s.t) <= tnow);
         set("sondes", FC(done.map(s => ({ type: "Feature", properties: { c: s.kt != null && s.kt >= 34 ? "#46c56a" : "#7cc3ea" }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } }))));
         sEls.forEach(x => { if (x.t <= tnow) x.e.classList.add("in"); });
@@ -512,7 +485,7 @@ const LY = {
   lines: { name: "Borders & counties", grp: "Map", on() { vis("lines", true); }, off() { vis("lines", false); } }
 };
 const DATA = ["cone", "track", "points", "best", "sat", "mw", "recon", "fixes", "models", "gefs"];
-const ON = new Set(["cities", "roads", "lines"]);
+const ON = new Set(["now", "cities", "roads", "lines"]);
 function setLayer(id, on, a = true) {
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
   if (!on && !ON.has(id)) return;
@@ -530,8 +503,111 @@ function showMW(o) {
   creditNow();
   clock("mw", "TAT MW ESTIMATE", o.kt ? `${Math.round(o.kt)} KT` : "N/A", o.kt ? `${mph(o.kt)} mph · ${o.sensor} ${hm(o.t)}` : `partial coverage · ${o.sensor} ${hm(o.t)}`);
 }
-/* warm the satellite loop's tiles (z5, the storm's neighbourhood) so the loop is smooth on first view */
-function warmSat() { satFrames().forEach(t => { const b = `${SAT_BASE}/${t}`; if (!SATIDX.has(b)) SATIDX.set(b, fetch(`${b}/tiles.z5.json`).then(r => r.ok ? r.json() : null).catch(() => null)); }); }
+
+/* ---------------- satellite loop bar + 4-panel view ---------------- */
+let MAINLOOP = null;
+const PLAYI = `<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>`, PAUSEI = `<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor"/></svg>`;
+function loopBar(on) { const lc = $("lc"); lc.hidden = !(on || QUAD.on); if (!lc.hidden) buildLoopBar(); }
+function buildLoopBar() {
+  const P = SatX.P, sat = SatX.satFor((QUAD.on ? QUAD.cells[0]?.map : MAP)?.getCenter().lng ?? pos()[0]);
+  const bands = Object.keys(SatX.BANDS).filter(b => SatX.has(sat, b));
+  $("lc").innerHTML = `<button class="pp" data-a="play" aria-label="Play or pause">${P.playing ? PAUSEI : PLAYI}</button>
+    <button data-a="prev" aria-label="Previous frame">‹</button><button data-a="next" aria-label="Next frame">›</button>
+    <div class="tl"><input type="range" min="0" max="1000" value="1000" aria-label="Loop position"><span class="lt" id="lcT">loading</span></div>
+    ${(QUAD.on ? QUAD.cells.some(c => c.loop.on && c.loop.band === "ir") : MAINLOOP.band === "ir") ? `<div class="seg" title="IR colour ramp">${Object.entries(SatX.RAMPS).map(([k, v]) => `<button data-r="${k}" class="${k === P.ramp ? "on" : ""}" title="${v}">${k === "tat" ? "TAT" : k === "bd" ? "BD" : k === "gray" ? "B/W" : "NASA"}</button>`).join("")}</div>` : ""}
+    ${QUAD.on ? "" : `<div class="seg" title="Band">${bands.map(b => `<button data-b="${b}" class="${b === MAINLOOP.band ? "on" : ""}" title="${esc(SatX.BANDS[b].t)}">${SatX.BANDS[b].short}</button>`).join("")}</div>`}
+    <div class="seg" title="Loop length">${[1, 3, 6, 12].map(h => `<button data-h="${h}" class="${h === P.hours ? "on" : ""}">${h}H</button>`).join("")}</div>
+    <div class="seg" title="Speed">${SatX.SPEEDS.map((s, i) => `<button data-s="${i}" class="${i === P.speed ? "on" : ""}" title="${s.k}">${s.k[0]}</button>`).join("")}</div>
+    <label class="chk" title="Blend between frames"><input type="checkbox" ${P.smooth ? "checked" : ""}>Smooth</label>
+    <label class="op" title="Satellite opacity">Opacity<input type="range" min="20" max="100" value="${Math.round(P.opacity * 100)}"></label>`;
+  const lc = $("lc");
+  lc.querySelector('[data-a="play"]').onclick = () => { P.playing = !P.playing; P.hold = 0; lc.querySelector(".pp").innerHTML = P.playing ? PAUSEI : PLAYI; };
+  lc.querySelector('[data-a="prev"]').onclick = () => { SatX.step(-1); lc.querySelector(".pp").innerHTML = PLAYI; };
+  lc.querySelector('[data-a="next"]').onclick = () => { SatX.step(1); lc.querySelector(".pp").innerHTML = PLAYI; };
+  const sl = lc.querySelector(".tl input"); sl.oninput = () => { P.playing = false; lc.querySelector(".pp").innerHTML = PLAYI; SatX.seek(sl.value / 1000); };
+  lc.querySelectorAll("[data-b]").forEach(b => b.onclick = () => { MAINLOOP.setBand(b.dataset.b); buildLoopBar(); legendNow(); if (TABS[TAB]?.id === "sat") frame(...TABS[TAB].hdr()); });
+  lc.querySelectorAll("[data-r]").forEach(b => b.onclick = () => { SatX.setRamp(b.dataset.r); buildLoopBar(); legendNow(); });
+  lc.querySelectorAll("[data-h]").forEach(b => b.onclick = () => { SatX.setHours(+b.dataset.h); buildLoopBar(); });
+  lc.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { P.speed = +b.dataset.s; buildLoopBar(); });
+  lc.querySelector(".chk input").onchange = e => { P.smooth = e.target.checked; };
+  lc.querySelector(".op input").oninput = e => SatX.setOpacity(e.target.value / 100);
+}
+let LCKEY = "";
+SatX.P.subs.add((t, s) => {
+  const lc = $("lc"); if (!lc || lc.hidden || !s) return;
+  const sl = lc.querySelector(".tl input"), L = [...SatX.P.loops][0], f = L?.current;
+  if (sl && document.activeElement !== sl) sl.value = Math.round((t - s[0]) / ((s[1] - s[0]) || 1) * 1000);
+  const key = `${f?.t}|${L?.loading}|${L?.frames.length}`; if (key === LCKEY) return; LCKEY = key;
+  const lt = $("lcT"); if (lt && f) lt.textContent = `${hm(f.t)} ${TZ}${L.loading ? " · loading" : ""}`;
+  if (!QUAD.on && ON.has("sat") && f) {
+    const back = Math.round((s[1] - f.t) / 6e4);
+    clock("sat", `${SatX.BANDS[MAINLOOP.band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");
+    if (TABS[TAB]?.id === "sat") { const e = $("frame").querySelector(".tTime"); if (e) e.textContent = `${hm(f.t)} ${TZ}`; }
+  }
+  for (const c of QUAD.cells) c.stamp?.();
+});
+
+/* 4-panel: four synced maps, each showing its own product (any band, the microwave pass, or track & cone) */
+const QPROD = { ir: "Infrared", vis: "Visible", geocolor: "GeoColor", airmass: "Air Mass", dust: "Dust", mw: "Microwave 89 GHz", track: "Track & cone" };
+const QUAD = { on: false, cells: [], prods: ["ir", "geocolor", "airmass", "mw"], wasSat: false };
+function miniStyle() {
+  return { version: 8, sources: {
+      base: { type: "raster", tiles: [`${CDN}/situation/tiles/base/{z}/{x}/{y}.jpg`], tileSize: 256, maxzoom: 6 },
+      lines: { type: "raster", tiles: [`${CDN}/situation/tiles/lines/{z}/{x}/{y}.png`], tileSize: 256, maxzoom: 6 } },
+    layers: [{ id: "bg", type: "background", paint: { "background-color": "#2463a0" } }, { id: "base", type: "raster", source: "base", paint: { "raster-fade-duration": 0 } }] };
+}
+function quadToggle() {
+  QUAD.on = !QUAD.on; $("stage").classList.toggle("quad", QUAD.on); $("quadBtn").classList.toggle("on", QUAD.on);
+  if (QUAD.on) { QUAD.wasSat = ON.has("sat"); if (QUAD.wasSat) MAINLOOP.show(false); buildQuad(); }
+  else { QUAD.cells.forEach(c => c.loop.show(false)); if (QUAD.wasSat && ON.has("sat")) MAINLOOP.show(true); }
+  loopBar(ON.has("sat"));
+}
+async function buildQuad() {
+  const q = $("quad");
+  if (!QUAD.cells.length) {
+    q.innerHTML = QUAD.prods.map((p, i) => `<div class="qc"><div class="qm"></div><div class="qt"><select aria-label="Panel ${i + 1} product">${Object.entries(QPROD).map(([k, v]) => `<option value="${k}"${k === p ? " selected" : ""}>${v}</option>`).join("")}</select><span class="qs"></span></div></div>`).join("");
+    const E = { type: "FeatureCollection", features: [] };
+    QUAD.cells = [...q.querySelectorAll(".qc")].map((el, i) => {
+      const m = new maplibregl.Map({ container: el.querySelector(".qm"), style: miniStyle(), center: MAP.getCenter(), zoom: MAP.getZoom() - .5,
+        attributionControl: false, fadeDuration: 0, dragRotate: false, pitchWithRotate: false, renderWorldCopies: false });
+      m.scrollZoom.disable();
+      const c = { el, map: m, prod: QUAD.prods[i], loop: new SatX.Loop(m, "qsat", "qlines", { maxPx: 1400 }) };
+      c.ready = new Promise(r => m.on("load", () => {
+        m.addSource("mw", { type: "image", url: MAP.getSource("mw").url || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
+        m.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": .95, "raster-fade-duration": 0 } });
+        m.addLayer({ id: "qlines", type: "raster", source: "lines", paint: { "raster-fade-duration": 0 } });
+        m.addSource("cone", { type: "geojson", data: E }); m.addSource("fc", { type: "geojson", data: E });
+        m.addLayer({ id: "cone", type: "fill", source: "cone", layout: { visibility: "none" }, paint: { "fill-color": "#fff", "fill-opacity": .26 } });
+        m.addLayer({ id: "cone-l", type: "line", source: "cone", layout: { visibility: "none" }, paint: { "line-color": "#fff", "line-width": 1.6 } });
+        m.addLayer({ id: "fc", type: "line", source: "fc", paint: { "line-color": "#fff", "line-width": 2, "line-opacity": .85 } });
+        r(); }));
+      m.on("move", e => { if (!e.originalEvent) return; for (const o of QUAD.cells) if (o.map !== m) o.map.jumpTo({ center: m.getCenter(), zoom: m.getZoom() }); });
+      el.querySelector("select").onchange = e => { c.prod = e.target.value; QUAD.prods[i] = c.prod; setProd(c); };
+      c.stamp = () => { const s = el.querySelector(".qs"), f = c.loop.current;
+        if (c.loop.on && f) s.textContent = `${SatX.SATS[c.loop.sat].name} · ${hm(f.t)} ${TZ}`;
+        else if (c.prod === "mw") { const o = mwPick(); s.textContent = o ? `${o.sensor} · ${hm(o.t)} ${TZ}` : "no pass"; }
+        else if (c.prod === "track") s.textContent = `NHC advisory ${D.nhc.advisory}`; };
+      return c;
+    });
+    new ResizeObserver(() => QUAD.cells.forEach(c => c.map.resize())).observe(q);
+  }
+  for (const c of QUAD.cells) { await c.ready; c.map.resize(); c.map.jumpTo({ center: pos(), zoom: Math.max(4.4, MAP.getZoom() - .4) }); quadData(c); setProd(c); }
+}
+function quadData(c) {
+  const m = c.map; m.getSource("cone").setData(FC((D.nhc.cone || []).map(r => ({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [r] } }))));
+  m.getSource("fc").setData(FC([line(D.fc.map(p => [p.lon, p.lat]))]));
+  c.now?.remove(); const el = document.createElement("div"); el.className = "fp now in qnow"; el.innerHTML = glyph(D.kt, { plate: true });
+  c.now = new maplibregl.Marker({ element: wrap(el) }).setLngLat(pos()).addTo(m);
+}
+function setProd(c) {
+  const m = c.map, p = c.prod, sat = p in SatX.BANDS;
+  if (sat) { c.loop.band = p; c.loop.show(true); } else c.loop.show(false);
+  m.setLayoutProperty("mw", "visibility", p === "mw" ? "visible" : "none");
+  if (p === "mw") { const o = mwPick(); if (o) { const b = o.bounds, g = o.geo[MWPROD] || o.geo.color91 || o.geo.color37;
+    m.getSource("mw").updateImage({ url: `${CDN}/microwave/${g}`, coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]] }); } }
+  ["cone", "cone-l"].forEach(id => m.setLayoutProperty(id, "visibility", p === "track" ? "visible" : "none"));
+  c.stamp();
+}
 
 /* ---------------- tabs: presets of layers + a camera + the header ---------------- */
 const ICON = {
@@ -540,6 +616,7 @@ const ICON = {
   mw: `<svg viewBox="0 0 24 24"><path d="M2 12c2-5 4-5 6 0s4 5 6 0 4-5 6 0" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>`,
   recon: `<svg viewBox="0 0 24 24"><path d="M2 13l8-1 4-8h3l-2 8 6 0 2-3h1.5l-1 4.5 1 4.5H23l-2-3-6 0 2 8h-3l-4-8-8-1z" fill="currentColor"/></svg>`,
   models: `<svg viewBox="0 0 24 24"><path d="M3 20C8 14 9 9 12 4M3 20c6-4 9-8 14-12M3 20c7-2 12-4 18-5" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>`,
+  quad: `<svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" fill="none" stroke="currentColor" stroke-width="2"/></svg>`,
   layers: `<svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>`
 };
 const TABS = [
@@ -550,9 +627,9 @@ const TABS = [
       MAP.easeTo({ ...MAP.cameraForBounds(b, { padding: { top: 150 * K, bottom: 60 * K, left: 120 * K, right: 260 * K }, maxZoom: 6.4 }), duration: 3200, easing: t => t * t * (3 - 2 * t) }); },
     hdr: () => [`${(D.nhc.name || "").toUpperCase()} Forecast Track`, `Advisory ${D.nhc.advisory} · ${hm(advTime())} ${TZ}`, "NHC",
       CAT.slice(0, 5).map(c => `<i style="background:${c.c};color:${inkOn(c.c)}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</i>`).join("")] },
-  { id: "sat", label: "Satellite", layers: ["sat", "track", "best"], anim: ["sat"], ok: () => satFrames().length,
-    cam() { const c = pos(); MAP.jumpTo({ center: [c[0] + .4, c[1] + 1.2], zoom: 5.3 }); },
-    hdr: () => { const f = satFrames(); return ["Infrared Satellite", f.length ? `${hm(ft(f[f.length - 1]))} ${TZ}` : "", "GOES-19"]; } },
+  { id: "sat", label: "Satellite", layers: ["sat", "track", "best"], anim: ["sat"], ok: () => Object.keys(SatX.times()).length,
+    cam() { const c = pos(); MAP.jumpTo({ center: [c[0] + .4, c[1] + 1.2], zoom: 5.4 }); },
+    hdr: () => { const f = MAINLOOP.current; return [`${SatX.BANDS[MAINLOOP.band].t} Satellite`, f ? `${hm(f.t)} ${TZ}` : "", SatX.SATS[SatX.satFor(pos()[0])].name]; } },
   { id: "mw", label: "Microwave", layers: ["mw", "track", "best"], anim: ["mw"], ok: () => mwPasses().length,
     cam() { const o = mwPick(), b = o.bounds; fit([[b[0], b[1]], [b[2], b[3]]], 120, { bottom: 10, left: 10, right: 10, maxZoom: 6 }); },
     hdr: () => { const o = mwPick(); return ["Microwave Imagery", `${o.sensor} · ${hm(o.t)} ${TZ}`, MWPROD === "color37" ? "37 GHZ" : "89 GHZ"]; } },
@@ -566,14 +643,15 @@ const TABS = [
 ];
 let NOWM = null;
 function nowMarker() {
-  NOWM?.remove(); const el = document.createElement("div"); el.className = "fp now"; el.innerHTML = glyph(D.kt, { plate: true });
+  NOWM?.remove(); NOWM = null; if (!ON.has("now")) return; const el = document.createElement("div"); el.className = "fp now"; el.innerHTML = glyph(D.kt, { plate: true });
   setTimeout(() => el.classList.add("in"), 80);
   NOWM = new maplibregl.Marker({ element: wrap(el) }).setLngLat(pos()).addTo(MAP);
 }
 function buildTabs() {
   $("tabs").innerHTML = TABS.map((s, i) => `<button role="tab" data-i="${i}"${s.ok && !s.ok() ? " disabled" : ""}>${ICON[s.id]}<span>${s.label}</span></button>`).join("") +
-    `<button class="lyrbtn" id="lyrBtn" aria-expanded="false">${ICON.layers}<span>Layers</span></button>`;
+    `<button class="quadbtn" id="quadBtn" title="4-panel view">${ICON.quad}<span>4-Panel</span></button><button class="lyrbtn" id="lyrBtn" aria-expanded="false">${ICON.layers}<span>Layers</span></button>`;
   $("tabs").querySelectorAll("button[data-i]").forEach(b => b.onclick = () => tab(+b.dataset.i));
+  $("quadBtn").onclick = quadToggle;
   $("lyrBtn").onclick = () => { const p = $("lyr"), o = !p.classList.contains("open"); p.classList.toggle("open", o); $("lyrBtn").classList.toggle("on", o); $("lyrBtn").setAttribute("aria-expanded", o); };
 }
 function buildLayers() {
@@ -588,6 +666,7 @@ function syncLayerUI() { $("lyr").querySelectorAll("input[data-l]").forEach(c =>
   const n = DATA.filter(id => ON.has(id)).length; const b = $("lyrBtn"); if (b) b.querySelector("span").textContent = `Layers · ${n}`; }
 async function tab(i, first) {
   const s = TABS[i]; if (!s || (s.ok && !s.ok())) return;
+  if (QUAD.on) quadToggle();
   $("tabs").querySelectorAll("button[data-i]").forEach(b => b.classList.toggle("on", +b.dataset.i === i));
   if (!first) { const w = $("wipe"); w.classList.remove("go"); void w.offsetWidth; w.classList.add("go"); await sleep(450); }
   TAB = i;
