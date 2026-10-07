@@ -4,3 +4,4 @@ Disallow: /stream/
 Disallow: /records/
 Disallow: /roadmap/
 Disallow: /fleet/
+Disallow: /situation/

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Situation Room (shadow) · Triple-A-Tropics</title>
+<!-- Nav-hidden shadow page: reachable only by direct link (like /bugs/, /records/, /roadmap/). Also disallowed in robots.txt. -->
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/metropolis-2">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="/situation/sr.css">
+</head>
+<body class="sr">
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" aria-hidden="true"><span>Triple-A-Tropics</span></a>
+    <div class="nav-links">
+      <a href="/">Home</a><a href="/climatology/">Climatology</a><a href="/sst/">SST</a><a href="/satellite/">Satellite</a><a href="/models/">Models</a><a href="/subseasonal/">Subseasonal</a><a href="/obs/">Obs</a>
+      <a href="https://twitter.com/WeathermanAAA_" target="_blank" rel="noopener">Twitter</a>
+    </div>
+  </div>
+</nav>
+
+<main class="room">
+  <!-- Tulsa-Live dial stack -->
+  <div class="lcol">
+    <section class="vit" id="vit" aria-label="Storm vitals"></section>
+    <aside class="dials one" id="dials" aria-label="Storm dials"></aside>
+  </div>
+
+  <!-- the broadcast stage: Tulsa-Live's map + header frame -->
+  <section class="stage-wrap">
+    <div class="srt" id="tabs" role="tablist"></div>
+    <div class="stage" id="stage">
+      <div id="map"></div>
+      <div class="ovl" id="ovl"></div>
+      <div class="frame" id="frame"></div>
+      <div class="legend" id="legend"></div>
+      <div class="clock" id="tau"></div>
+      <div class="strip" id="strip"></div>
+      <div class="lyr" id="lyr" role="dialog" aria-label="Map layers"></div>
+      <div class="swp" id="wipe"><i></i><b></b></div>
+    </div>
+    <section class="src c-int"><div class="ch"><span class="ctab"><button data-v="int" class="on">Intensity</button><button data-v="guid">Peak by model</button></span><span id="intLeg"></span></div><div id="intChart" class="chart"></div><div id="guid" hidden></div></section>
+  </section>
+
+  <!-- right rail -->
+  <aside class="rail" id="rail">
+    <section class="src c-key" id="cKey"></section>
+    <section class="src c-recon" id="cRecon"></section>
+  </aside>
+</main>
+
+
+<div class="crawl" id="crawl"><div class="lbl" id="crawlLbl">TROPICS</div><div class="tk"><span id="crawlTx"></span></div></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="/situation/sr.js"></script>
+</body>
+</html>

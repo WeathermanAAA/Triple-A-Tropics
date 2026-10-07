@@ -1,0 +1,4 @@
+{
+  "_readme": "Storms with an open Situation Room. true = the room replaces that storm's CycloLab page (/cyclolab/<sid>/). Delete the line or set false to close it.",
+  "al092026": true
+}

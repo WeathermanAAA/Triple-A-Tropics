@@ -29,9 +29,27 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-09-28T03:40:00Z
+updated: 2026-10-07T00:49:00Z
 
 items:
+  - id: situation-room-shadow
+    title: "Situation Room: storm-specific broadcast page (CycloLab revamp), shadow at /situation/"
+    area: apps
+    status: shadow
+    note: >-
+      One storm, everything about it: vitals and Tulsa-style dials, a broadcast
+      map stage (Tulsa basemap baked to R2, header frame) with tabs as layer
+      presets (track and cone, GOES-19 IR loop, 89 GHz microwave, recon, model
+      tracks) plus a free layers panel, intensity chart, peak-by-model board,
+      advisory card, recon schedule, crawl. The whole page wears the storm's
+      Saffir-Simpson colour and updates itself every 60 s. Data: situation/<sid>.json
+      from update-situation.yml every 10 min (move to the box poller before it
+      graduates); basemap from bake-situation-tiles.yml (one-off dispatch).
+      situation/rooms.json opens a storm's room; the CycloLab router takeover
+      (an open room replaces /cyclolab/<sid>/) is written but not yet deployed.
+    links:
+      - label: Situation Room
+        url: /situation/
   - id: hafs-workflow-failing-since-0918
     title: "HAFS model plots: no successful run since 2026-09-18, /models/ HAFS stale"
     area: models

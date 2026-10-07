@@ -1,0 +1,41 @@
+name: bake-situation-tiles
+
+# One-shot (dispatch): bakes the Situation Room basemap - the Tulsa-Live map look (situation/tiles.py) - over the NHC
+# basins at z2-6 and syncs it to R2 under situation/tiles/. The map is static; re-run only if the look changes.
+on:
+  workflow_dispatch:
+    inputs:
+      zmax:
+        description: "Deepest zoom to bake"
+        default: "6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bake-situation-tiles
+  cancel-in-progress: false
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install --no-cache-dir numpy pillow
+      - name: Bake tiles
+        run: python situation/bake_tiles.py --out-dir situation_tiles --zmax "${{ github.event.inputs.zmax || '6' }}" --workers 12
+      - name: Sync to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          aws s3 sync situation_tiles/situation/tiles/ "s3://triple-a-tropics-media/situation/tiles/" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=2592000" --only-show-errors
+          echo "Synced $(find situation_tiles -type f | wc -l) tiles."
