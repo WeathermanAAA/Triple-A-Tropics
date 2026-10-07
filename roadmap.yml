@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T02:10:00Z
+updated: 2026-10-07T02:17:00Z
 
 items:
   - id: meso-poller-renders-failing
@@ -57,7 +57,10 @@ items:
       browser from NOAA's bucket; a 5-min GOES-19 CONUS / GOES-18 PACUS loop, also
       straight from NOAA and ~10 min behind real time, is the default whenever it
       covers the storm because GIBS runs 1.5-2.5 h late), intensity chart, peak-by-model board,
-      advisory card, recon schedule, crawl. The whole page wears the storm's
+      advisory card, recon schedule, crawl. Settings (wind kt/mph/km/h/m/s, mb or
+      inHg, storm-local / viewer / UTC time); every view lives in the URL hash and
+      can be saved by name; the loop exports as MP4 (WebM fallback) and the stage
+      as a PNG, header and labels included. The whole page wears the storm's
       Saffir-Simpson colour and updates itself every 60 s. Data: situation/<sid>.json
       from update-situation.yml every 10 min (move to the box poller before it
       graduates); basemap from bake-situation-tiles.yml (one-off dispatch).

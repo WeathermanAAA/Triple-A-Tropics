@@ -501,3 +501,25 @@ details.hzs .hz{margin:0 6px 6px}
 .ensm button{appearance:none;font:inherit;font-size:9.5px;font-weight:800;letter-spacing:.6px;color:var(--ice);background:rgba(5,9,20,.45);border:1px solid var(--line);border-radius:2px;padding:2px 6px;cursor:pointer}
 .ensm button.on{background:var(--cat);color:var(--catInk);border-color:var(--cat)}
 #intLeg{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+
+/* ---------- v14: share / saved views / settings panels, export button ---------- */
+.srt .icobtn{flex:0 0 auto;padding:0 12px}
+.srt .icobtn.on{background:color-mix(in srgb,var(--cat) 25%,transparent);color:#fff}
+.lyr .pseg{display:flex;flex-wrap:wrap;gap:3px;margin:4px 0 2px}
+.lyr .pseg button,.lyr .pact button,.lyr .vnew button{appearance:none;font:inherit;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--ice);background:rgba(5,9,20,.45);border:1px solid var(--line);border-radius:2px;padding:5px 8px 4px;cursor:pointer;line-height:1}
+.lyr .pseg button:hover,.lyr .pact button:hover,.lyr .vnew button:hover{color:#fff;border-color:var(--cat)}
+.lyr .pseg button.on{background:var(--cat);color:var(--catInk);border-color:var(--cat)}
+.lyr .pact{display:flex;gap:6px;margin:8px 0 2px}
+.lyr .pact button{flex:1}
+.lyr .vnew{display:flex;gap:4px;margin:4px 0}
+.lyr .vnew input{flex:1;min-width:0;font:inherit;font-size:12px;color:#fff;background:rgba(5,9,20,.55);border:1px solid var(--line);border-radius:2px;padding:4px 6px}
+.lyr .vrow{display:flex;align-items:stretch;border-top:1px solid rgba(160,190,255,.12)}
+.lyr .vrow button{appearance:none;background:none;border:0;color:#fff;font:inherit;text-align:left;cursor:pointer;padding:6px 2px}
+.lyr .vrow button:first-child{flex:1;display:flex;flex-direction:column;gap:2px}
+.lyr .vrow button:first-child:hover b{color:var(--cat)}
+.lyr .vrow b{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
+.lyr .vrow small{font-size:10px;color:var(--ice)}
+.lyr .vrow button:last-child{color:var(--ice);font-size:18px;padding:0 4px}
+.lyr .pnote{font-size:10.5px;color:var(--ice);margin-top:8px;line-height:1.35}
+.lyr .pnote:empty{display:none}
+.lc .xp{margin-left:auto;font-weight:800;letter-spacing:.6px;color:var(--gold);min-width:44px}

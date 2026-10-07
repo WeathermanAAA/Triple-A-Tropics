@@ -22,6 +22,17 @@ const catOf = kt => { let c = CAT[0]; for (const x of CAT) if ((kt || 0) >= x.lo
 const catIdx = kt => CAT.indexOf(catOf(kt));
 const inkOn = c => { const n = parseInt(c.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return (r * .299 + g * .587 + b * .114) > 150 ? "#141414" : "#fff"; };
 const mph = kt => Math.round(kt * 1.15078 / 5) * 5;
+/* viewer settings (units, time zone), remembered in this browser; the gear in the tab bar sets them (srx.js) */
+const U = (() => { let u = {}; try { u = JSON.parse(localStorage.getItem("sr.units") || "{}") || {}; } catch (e) {} return { wind: u.wind || "kt", pres: u.pres || "mb", tz: u.tz || "storm" }; })();
+const WUN = { kt: { f: 1, l: "kt", w: "knots", step: 20 }, mph: { f: 1.15078, l: "mph", w: "mph", step: 25, r5: true }, kmh: { f: 1.852, l: "km/h", w: "km/h", step: 40, r5: true }, ms: { f: .514444, l: "m/s", w: "m/s", step: 10 } };
+const WF = () => WUN[U.wind] || WUN.kt;
+const wnd = kt => kt == null || !isFinite(kt) ? "–" : WF().r5 ? Math.round(kt * WF().f / 5) * 5 : Math.round(kt * WF().f);   // NHC rounds mph and km/h to 5
+const wdel = kt => Math.round(kt * WF().f), wl = () => WF().l;
+const walt = kt => U.wind === "kt" ? `${mph(kt)} mph` : `${Math.round(kt)} kt`;
+const spd = mi => U.wind === "mph" ? mi : U.wind === "kmh" ? Math.round(mi * 1.609344) : U.wind === "ms" ? Math.round(mi * .44704) : Math.round(mi / 1.15078);   // NHC motion is in mph
+const prs = mb => mb == null || !isFinite(mb) ? "–" : U.pres === "inhg" ? (mb * .02953).toFixed(2) : Math.round(mb);
+const pl = () => U.pres === "inhg" ? "inHg" : "mb";
+const palt = mb => U.pres === "inhg" ? `${mb} mb` : `${(mb * .02953).toFixed(2)} inHg`;
 const catWord = kt => kt >= 64 ? `Cat ${catOf(kt).n}` : kt >= 34 ? "Trop Storm" : "Trop Dep";
 const KIND = { TD: "Tropical Depression", TS: "Tropical Storm", HU: "Hurricane", MH: "Major Hurricane", STD: "Subtropical Depression", STS: "Subtropical Storm",
   PTC: "Potential Tropical Cyclone", PT: "Post-Tropical Cyclone", PC: "Post-Tropical Cyclone" };
@@ -39,17 +50,20 @@ function glyph(kt, { spin = true, plate = false, south = false } = {}) {
 /* ---------------- time, in the advisory's own zone ---------------- */
 const TZO = { EDT: -4, EST: -5, CDT: -5, CST: -6, MDT: -6, MST: -7, PDT: -7, PST: -8, HST: -10, AST: -4, ChST: 10 };
 let TZ = "UTC", OFF = 0;
-function setZone(issued) { const m = (issued || "").match(/\b([ECMPHA]S?[DT]T|[ECMPA]ST|HST)\b/); TZ = m && TZO[m[1]] != null ? m[1] : "UTC"; OFF = TZO[TZ] || 0; }
+function setZone(issued) { const m = (issued || "").match(/\b([ECMPHA]S?[DT]T|[ECMPA]ST|HST)\b/); TZ = m && TZO[m[1]] != null ? m[1] : "UTC"; OFF = TZO[TZ] || 0;
+  if (U.tz === "utc") { TZ = "UTC"; OFF = 0; }
+  else if (U.tz === "local") { OFF = -new Date().getTimezoneOffset() / 60; try { TZ = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(new Date()).find(p => p.type === "timeZoneName").value; } catch (e) { TZ = "LOCAL"; } } }
 const local = t => { const d = new Date(typeof t === "string" ? Date.parse(t) : t); return new Date(d.getTime() + OFF * 36e5); };
 const DOW = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"], MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-function hm(t, min = true) { const d = local(t), h = d.getUTCHours(), m = d.getUTCMinutes(); return `${h % 12 || 12}${min && m ? ":" + z2(m) : ""} ${h < 12 ? "AM" : "PM"}`; }
+function hm(t, min = true) { const d = local(t), h = d.getUTCHours(), m = d.getUTCMinutes(); if (U.tz === "utc") return `${z2(h)}:${z2(m)}`; return `${h % 12 || 12}${min && m ? ":" + z2(m) : ""} ${h < 12 ? "AM" : "PM"}`; }
 const dayhm = t => `${DOW[local(t).getUTCDay()]} ${hm(t)}`;
 const ago = t => { const m = Math.round((Date.now() - Date.parse(t)) / 6e4); return m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const until = t => { let s = Math.max(0, Math.round(((typeof t === "number" ? t : Date.parse(t)) - Date.now()) / 1e3)); const h = Math.floor(s / 3600); s -= h * 3600; return `${h}:${z2(Math.floor(s / 60))}:${z2(s % 60)}`; };
 const isoMs = s => Date.parse(s.length === 17 ? s.replace("Z", ":00Z") : s);
 
 /* ---------------- state ---------------- */
-let D = null, MAP = null, TAB = -1, K = 1;
+let D = null, MAP = null, TAB = -1, K = 1, CAMLOCK = false;   // CAMLOCK: a restored view owns the camera, so no tab fly-to
+const hashKick = () => { if (typeof hashNow === "function") hashNow(); };
 const ease = p => 1 - Math.pow(1 - p, 3);
 
 /* ---------------- boot ---------------- */
@@ -86,9 +100,13 @@ async function refresh(first) {
   document.documentElement.style.setProperty("--catInk", inkOn(catOf(D.kt).c));
   if (first) {
     await initMap(); buildTabs(); buildLayers(); vitals(); dials(); railKey(); railRecon(); intensityChart(); guidanceBoard(); crawl(); syncData();
-    await Promise.race([MAP.once("idle"), sleep(3000)]); tab(0, true); return;
+    await Promise.race([MAP.once("idle"), sleep(3000)]);
+    if (typeof srxInit === "function") srxInit();
+    const hv = typeof parseView === "function" ? parseView() : {}, ti = TABS.findIndex(t => t.id === hv.tab && (!t.ok || t.ok()));
+    if (hv.c) CAMLOCK = true;
+    await tab(ti >= 0 ? ti : 0, true); if (Object.keys(hv).length && typeof applyView === "function") await applyView(hv); return;
   }
-  if (ch("adv")) { vitals(); railKey(); crawl(); flash(`New advisory ${D.nhc.advisory}`, `${mph(D.kt)} mph · ${D.mb || "–"} mb`); }
+  if (ch("adv")) { vitals(); railKey(); crawl(); flash(`New advisory ${D.nhc.advisory}`, `${wnd(D.kt)} ${wl()} · ${prs(D.mb)} ${pl()}`); }
   else vitalsQuiet();
   if (ch("adv") || ch("mw") || ch("plan") || ch("best")) dials();
   if (ch("adv") || ch("models") || ch("best")) { intensityChart(); guidanceBoard(); }
@@ -132,11 +150,11 @@ function vitals() {
     <div class="v-name"><span class="k">${esc(kind)}</span><b>${esc((n.name || "").toUpperCase())}</b></div>
     <div class="v-main"><div class="v-g"><svg viewBox="-34 -34 68 68"><g transform="scale(.9)"><g class="spin"><path d="${TAT_GLYPH}" fill="${c.c}"/></g></g>
       <text x="0" y="1" text-anchor="middle" dominant-baseline="central">${c.k}</text></svg></div>
-      <div class="v-t"><b>${kt}<small>KT</small></b><span>${mph(kt)} MPH · ${kt >= 64 ? "CAT " + c.n : catWord(kt).toUpperCase()}</span></div></div>
+      <div class="v-t"><b>${wnd(kt)}<small>${wl().toUpperCase()}</small></b><span>${walt(kt).toUpperCase()} · ${kt >= 64 ? "CAT " + c.n : catWord(kt).toUpperCase()}</span></div></div>
     <div class="v-lad">${CAT.map((x, i) => `<i class="${i <= nowI ? "on" : i <= pkI ? "fc" : ""}" style="--c:${x.c};--i:${i}">${i === nowI ? "<em>NOW</em>" : i === pkI && pkI > nowI ? '<em class="pk">PEAK</em>' : ""}<b>${x.n}</b></i>`).join("")}</div>
     <div class="v-grid">
-      <div><small>Pressure</small><b>${D.mb || "–"} mb</b></div>
-      <div><small>Moving</small><b>${n.movementDir != null ? `${compass(+n.movementDir)} ${n.movementSpeed} mph` : "–"}</b></div>
+      <div><small>Pressure</small><b>${prs(D.mb)} ${pl()}</b></div>
+      <div><small>Moving</small><b>${n.movementDir != null ? `${compass(+n.movementDir)} ${spd(+n.movementSpeed)} ${wl()}` : "–"}</b></div>
 </div>
     <div class="v-adv"><svg viewBox="0 0 44 44" class="nring"><circle cx="22" cy="22" r="18"/><circle class="v" id="nRing" cx="22" cy="22" r="18" pathLength="1"/></svg>
       <div><small>Advisory ${esc(n.advisory || "–")} · ${hm(advTime())} ${TZ}</small><b>Next <span id="nTime">–</span></b><em id="nCount"></em></div></div>
@@ -202,16 +220,16 @@ function countFace(x) {   // countdown: ticks for 24 h, lit arc = time remaining
 let DL = [], DK = 0, DT = null;
 function dials() {
   const L = [], kt = D.kt, n = D.nhc;
-  L.push({ t: "Max Sustained Wind", face: sshs({ kt, ghost: D.peak.kt }), big: kt, lab: "knots", sub: `${mph(kt)} mph · ${catWord(kt)}` });
-  if (D.mb) L.push({ t: "Minimum Pressure", face: arc({ color: "#7cc3ea", frac: Math.max(.04, Math.min(1, (1012 - D.mb) / 122)) }), big: D.mb, lab: "mb", sub: `${(D.mb * .02953).toFixed(2)} inHg` });
+  L.push({ t: "Max Sustained Wind", face: sshs({ kt, ghost: D.peak.kt }), big: wnd(kt), lab: WF().w, sub: `${walt(kt)} · ${catWord(kt)}` });
+  if (D.mb) L.push({ t: "Minimum Pressure", face: arc({ color: "#7cc3ea", frac: Math.max(.04, Math.min(1, (1012 - D.mb) / 122)) }), big: prs(D.mb), lab: pl(), sub: palt(D.mb) });
   const ch = change24();
-  L.push({ t: "24-Hour Wind Change", face: arc({ color: ch > 0 ? "#ff6b5e" : ch < 0 ? "#5dd3ff" : "#9fb3d6", frac: Math.min(1, Math.abs(ch) / 50) || .02 }), big: (ch > 0 ? "+" : "") + ch, lab: "kt", sub: ch >= 30 ? "Rapid intensification" : ch > 0 ? "Strengthening" : ch < 0 ? "Weakening" : "Steady" });
+  L.push({ t: "24-Hour Wind Change", face: arc({ color: ch > 0 ? "#ff6b5e" : ch < 0 ? "#5dd3ff" : "#9fb3d6", frac: Math.min(1, Math.abs(ch) / 50) || .02 }), big: (ch > 0 ? "+" : "") + wdel(ch), lab: wl(), sub: ch >= 30 ? "Rapid intensification" : ch > 0 ? "Strengthening" : ch < 0 ? "Weakening" : "Steady" });
   const f24 = D.fc.find(p => p.hr >= 24);
-  if (f24) { const d = f24.kt - kt; L.push({ t: "NHC Next 24 Hours", face: arc({ color: d >= 30 ? "#ff3b6b" : d > 0 ? "#ff9a2f" : "#5dd3ff", frac: Math.min(1, Math.abs(d) / 50) || .02 }), big: (d > 0 ? "+" : "") + d, lab: "kt", sub: d >= 30 ? "Rapid intensification" : d >= 15 ? "Strengthening" : d > 0 ? "Slow strengthening" : d < 0 ? "Weakening" : "Steady", hot: d >= 30 ? "#ff3b6b" : null }); }
-  if (n.movementDir != null) L.push({ t: "Motion", face: compassFace({ dir: +n.movementDir }), big: compass(+n.movementDir), lab: "", sub: `${n.movementSpeed} mph · ${n.movementDir}°`, small: true });
+  if (f24) { const d = f24.kt - kt; L.push({ t: "NHC Next 24 Hours", face: arc({ color: d >= 30 ? "#ff3b6b" : d > 0 ? "#ff9a2f" : "#5dd3ff", frac: Math.min(1, Math.abs(d) / 50) || .02 }), big: (d > 0 ? "+" : "") + wdel(d), lab: wl(), sub: d >= 30 ? "Rapid intensification" : d >= 15 ? "Strengthening" : d > 0 ? "Slow strengthening" : d < 0 ? "Weakening" : "Steady", hot: d >= 30 ? "#ff3b6b" : null }); }
+  if (n.movementDir != null) L.push({ t: "Motion", face: compassFace({ dir: +n.movementDir }), big: compass(+n.movementDir), lab: "", sub: `${spd(+n.movementSpeed)} ${wl()} · ${n.movementDir}°`, small: true });
   const mw = (D.mw?.overpasses || []).filter(o => o.kt).slice(-1)[0];
-  L.push({ t: "Microwave Estimate", face: arc({ color: "#b48cff", frac: mw ? Math.min(1, mw.kt / 160) : .02 }), big: mw ? Math.round(mw.kt) : "–", lab: mw ? "knots" : "", sub: mw ? `${mw.sensor} · ${ago(mw.t)}` : "no usable pass" });
-  L.push({ t: "NHC Forecast Peak", face: sshs({ kt: D.peak.kt }), big: D.peak.kt, lab: "knots", sub: `${catWord(D.peak.kt)} · ${DOW[local(D.peak.t).getUTCDay()]} ${hm(D.peak.t, false)}`, hot: D.peak.kt >= 64 ? catOf(D.peak.kt).c : null });
+  L.push({ t: "Microwave Estimate", face: arc({ color: "#b48cff", frac: mw ? Math.min(1, mw.kt / 160) : .02 }), big: mw ? wnd(mw.kt) : "–", lab: mw ? WF().w : "", sub: mw ? `${mw.sensor} · ${ago(mw.t)}` : "no usable pass" });
+  L.push({ t: "NHC Forecast Peak", face: sshs({ kt: D.peak.kt }), big: wnd(D.peak.kt), lab: WF().w, sub: `${catWord(D.peak.kt)} · ${DOW[local(D.peak.t).getUTCDay()]} ${hm(D.peak.t, false)}`, hot: D.peak.kt >= 64 ? catOf(D.peak.kt).c : null });
   /* storm energy, timing, spread */
   const syn = (D.best || []).filter(p => /T(00|06|12|18):00/.test(p.t) && ["TS", "HU", "SS"].includes(p.ty) && p.kt >= 34);
   const ace = syn.reduce((s, p) => s + p.kt * p.kt / 1e4, 0);
@@ -221,7 +239,7 @@ function dials() {
   const hu = kt < 64 && D.fc.find(p => p.kt >= 64);
   if (hu) { const ms = hu.t - Date.now();
     L.push({ t: "Forecast Hurricane", face: countFace({ color: "#ffe14d", frac: Math.max(.02, Math.min(1, ms / (5 * 864e5))) }), big: `${Math.max(0, Math.round(ms / 36e5))}`, lab: "hours", sub: `by ${dayhm(hu.t)} ${TZ}` }); }
-  const mb24 = pressure24(); if (mb24 != null) L.push({ t: "Pressure, 24 Hours", face: arc({ color: mb24 < 0 ? "#ff6b5e" : "#5dd3ff", frac: Math.min(1, Math.abs(mb24) / 40) || .02 }), big: (mb24 > 0 ? "+" : "") + mb24, lab: "mb", sub: mb24 <= -24 ? "Bombing out" : mb24 < 0 ? "Deepening" : mb24 > 0 ? "Filling" : "Steady" });
+  const mb24 = pressure24(); if (mb24 != null) L.push({ t: "Pressure, 24 Hours", face: arc({ color: mb24 < 0 ? "#ff6b5e" : "#5dd3ff", frac: Math.min(1, Math.abs(mb24) / 40) || .02 }), big: (mb24 > 0 ? "+" : "") + (U.pres === "inhg" ? (mb24 * .02953).toFixed(2) : mb24), lab: pl(), sub: mb24 <= -24 ? "Bombing out" : mb24 < 0 ? "Deepening" : mb24 > 0 ? "Filling" : "Steady" });
   const na = nextAdvisory(); if (na) L.push({ t: "Next Advisory", face: countFace({ color: "#e8b53a", frac: Math.max(.02, Math.min(1, (na - Date.now()) / (6 * 36e5))) }), big: `<span data-count="${na}">${until(na).slice(0, -3)}</span>`, lab: "hrs:min", sub: `${hm(na)} ${TZ}`, small: true });
   const nf = nextFlight();
   if (nf) { const ms = isoMs(nf.fix[0]) - Date.now();
@@ -274,6 +292,7 @@ async function initMap() {
   const ro = new ResizeObserver(() => { K = st.clientWidth / 1027; st.style.setProperty("--k", K); MAP.resize(); }); ro.observe(st);
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
+  MAP.on("moveend", hashKick);
   MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw");
   LIVESEC = Meso.coverLive(...pos()); if (LIVESEC) { SRC = "live"; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); }
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
@@ -413,13 +432,13 @@ const LY = {
     on(a) { vis(["fc", "fc-case"], true); const pts = trackData(), hmax = D.fc[D.fc.length - 1]?.hr || 1;
       if (!a) return set("fc", FC([line(grow(pts, 999))]));
       set("fc", FC([])); llater("track", 700, () => lanim("track", 2600, p => { const tau = ease(p) * hmax; set("fc", FC([line(grow(pts, tau))])); LY.points.reveal?.(tau);
-        clock("track", "NHC +", `${Math.round(tau)} H`, dayhm(advTime() + tau * 36e5)); }, () => llater("track", 1400, () => { if (CLK === "track") clock(null); TABS[TAB]?.after?.(); }))); },
+        clock("track", "NHC +", `${Math.round(tau)} H`, dayhm(advTime() + tau * 36e5)); }, () => llater("track", 1400, () => { if (CLK === "track") clock(null); if (!CAMLOCK) TABS[TAB]?.after?.(); }))); },
     off() { set("fc", FC([])); vis(["fc", "fc-case"], false); },
     leg: () => `<div class="r"><i style="background:#fff"></i>NHC forecast track</div>`, cred: "Track: NOAA/NHC" },
   points: { name: "Forecast points", grp: "Forecast",
     on(a) { const pts = D.fc, side = labelSides(pts);
       const els = pts.slice(1).map((p, k) => { const i = k + 1, c = catOf(p.kt), el = document.createElement("div"); el.className = "fp"; const lab = p.hr % 24 === 0 || i === pts.length - 1;
-        el.innerHTML = glyph(p.kt, { plate: true, spin: p.kt >= 34 }) + (lab ? `<div class="lbl${side[i] ? " l" : ""}" style="--c:${c.c};--ci:${inkOn(c.c)}"><b>${dayhm(p.t)}</b><i>${mph(p.kt)} MPH · ${catWord(p.kt).toUpperCase()}</i></div>` : "");
+        el.innerHTML = glyph(p.kt, { plate: true, spin: p.kt >= 34 }) + (lab ? `<div class="lbl${side[i] ? " l" : ""}" style="--c:${c.c};--ci:${inkOn(c.c)}"><b>${dayhm(p.t)}</b><i>${wnd(p.kt)} ${wl().toUpperCase()} · ${catWord(p.kt).toUpperCase()}</i></div>` : "");
         if (!lab) el.style.transform = "scale(.7)";
         lkeep("points", new maplibregl.Marker({ element: wrap(el) }).setLngLat([p.lon, p.lat])); return { el, hr: p.hr }; });
       const drawing = a && ON.has("track") && grp("track").an.size;
@@ -488,7 +507,7 @@ const LY = {
     cred: "Watches/warnings: NOAA/NHC" },
   ascat: { name: "ASCAT winds", grp: "Observations",
     async on() { const r = await ascatLoad(); if (!ON.has("ascat")) return; if (!r) { clock("ascat", "ASCAT", "NO PASS", "none over this storm in 60 h"); return; }
-      vis("ascat", true); this.pass = r; clock("ascat", r.sensor, hm(Date.parse(r.mid_utc)), `${ago(r.mid_utc)} · peak ${Math.round(r.peak)} kt`); legendNow(); creditNow(); },
+      vis("ascat", true); this.pass = r; clock("ascat", r.sensor, hm(Date.parse(r.mid_utc)), `${ago(r.mid_utc)} · peak ${wnd(r.peak)} ${wl()}`); legendNow(); creditNow(); },
     off() { vis("ascat", false); if (CLK === "ascat") clock(null); },
     leg() { return this.pass ? `<h4>${esc(this.pass.sensor)} · ${hm(Date.parse(this.pass.mid_utc))} ${TZ}</h4><div class="r"><i style="width:calc(120px*var(--k));background:linear-gradient(90deg,${(window.AscatViewer?.KT_SCALE || []).map(s => s[1]).join(",")})"></i></div><div class="rt"><span>0</span><span>34</span><span>64</span><span>137 kt</span></div>` : ""; },
     cred: "ASCAT: EUMETSAT / OSI SAF via NASA PO.DAAC" },
@@ -534,7 +553,7 @@ function setLayer(id, on, a = true) {
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
   if (!on && !ON.has(id)) return;
   if (on) { ON.add(id); LY[id].on(a); } else { ON.delete(id); lclear(id); LY[id].off(); }
-  syncLayerUI(); legendNow(); creditNow();
+  syncLayerUI(); legendNow(); creditNow(); hashKick();
 }
 function legendNow() { $("legend").classList.toggle("dense", DATA.filter(id => ON.has(id)).length > 4); legend(DATA.filter(id => ON.has(id) && LY[id].leg).map(id => LY[id].leg()).filter(Boolean).join("")); }
 function creditNow() { credit([...new Set(DATA.filter(id => ON.has(id) && LY[id].cred).map(id => LY[id].cred))].concat("Map: Triple-A-Tropics").join(" · ")); }
@@ -545,7 +564,7 @@ function showMW(o) {
   MAP.setPaintProperty("mw", "raster-opacity", 0); setTimeout(() => MAP.setPaintProperty("mw", "raster-opacity", .95), 60);
   if (TABS[TAB]?.id === "mw") frame("Microwave Imagery", `${o.sensor} · ${hm(o.t)} ${TZ}`, MWPROD === "color37" ? "37 GHZ" : "89 GHZ");
   creditNow();
-  clock("mw", "TAT MW ESTIMATE", o.kt ? `${Math.round(o.kt)} KT` : "N/A", o.kt ? `${mph(o.kt)} mph · ${o.sensor} ${hm(o.t)}` : `partial coverage · ${o.sensor} ${hm(o.t)}`);
+  clock("mw", "TAT MW ESTIMATE", o.kt ? `${wnd(o.kt)} ${wl().toUpperCase()}` : "N/A", o.kt ? `${walt(o.kt)} · ${o.sensor} ${hm(o.t)}` : `partial coverage · ${o.sensor} ${hm(o.t)}`);
 }
 
 
@@ -613,7 +632,7 @@ async function fieldShow() {
   if (TABS[TAB]?.id === "env") frame(...TABS[TAB].hdr());
   const ft = $("fbT"); if (ft) ft.textContent = lbl;
   $("fb")?.querySelectorAll("[data-fh]").forEach(x => x.classList.toggle("on", +x.dataset.fh === FLD.fh));
-  legendNow(); creditNow();
+  legendNow(); creditNow(); hashKick();
 }
 function whiteBarb(kt) { const id = "wbarb" + kt; if (MAP.hasImage(id)) return id; const c = document.createElement("canvas"), s = 2, W = 40; c.width = c.height = W * s; const g = c.getContext("2d"); g.scale(s, s); g.lineCap = "round";
   AscatViewer.drawBarb(g, W / 2, W / 2, kt, 0, "rgba(5,10,20,.8)", 3); AscatViewer.drawBarb(g, W / 2, W / 2, kt, 0, "#ffffff", 1.3); MAP.addImage(id, g.getImageData(0, 0, W * s, W * s), { pixelRatio: s }); return id; }
@@ -646,7 +665,7 @@ async function setSrc(s) {
   const was = ON.has("sat"); if (was) SATL().show(false);
   SRC = s; if (s === "meso") SatX.P.hours = Math.min(SatX.P.hours, 1); else if (SatX.P.hours < 1) SatX.P.hours = 3; if (s === "live") SatX.P.hours = Math.min(SatX.P.hours, 6);
   if (was) SATL().show(true);
-  buildLoopBar(); legendNow(); if (TABS[TAB]?.id === "sat") frame(...TABS[TAB].hdr());
+  buildLoopBar(); legendNow(); creditNow(); if (TABS[TAB]?.id === "sat") frame(...TABS[TAB].hdr());
 }
 const PLAYI = `<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>`, PAUSEI = `<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor"/></svg>`;
 function loopBar(on) { const lc = $("lc"); lc.hidden = !(on || QUAD.on); if (!lc.hidden) buildLoopBar(); }
@@ -662,7 +681,8 @@ function buildLoopBar() {
     ${QUAD.on ? "" : `<div class="seg" title="Band">${bands.map(b => `<button data-b="${b}" class="${b === L.band ? "on" : ""}" title="${esc(BANDSET()[b].t)}">${BANDSET()[b].short}</button>`).join("")}</div>`}
     <div class="seg" title="Loop length">${(SRC === "meso" && !QUAD.on ? [.5, 1, 2] : SRC === "live" && !QUAD.on ? [1, 2, 3, 6] : [1, 3, 6, 12]).map(h => `<button data-h="${h}" class="${h === P.hours ? "on" : ""}">${h < 1 ? "30M" : h + "H"}</button>`).join("")}</div>
     <div class="seg" title="Speed">${SatX.SPEEDS.map((s, i) => `<button data-s="${i}" class="${i === P.speed ? "on" : ""}" title="${s.k}">${s.k[0]}</button>`).join("")}</div>
-    <label class="op" title="Satellite opacity">Opacity<input type="range" min="20" max="100" value="${Math.round(P.opacity * 100)}"></label>`;
+    <label class="op" title="Satellite opacity">Opacity<input type="range" min="20" max="100" value="${Math.round(P.opacity * 100)}"></label>
+    ${QUAD.on ? "" : `<button class="xp" data-a="mp4" title="Export this loop as a video, header and labels included">MP4</button>`}`;
   const lc = $("lc");
   lc.querySelector('[data-a="play"]').onclick = () => { P.playing = !P.playing; P.last = 0; lc.querySelector(".pp").innerHTML = P.playing ? PAUSEI : PLAYI; };
   lc.querySelector('[data-a="prev"]').onclick = () => { SatX.step(-1); lc.querySelector(".pp").innerHTML = PLAYI; };
@@ -674,6 +694,8 @@ function buildLoopBar() {
   lc.querySelectorAll("[data-h]").forEach(b => b.onclick = () => { SatX.setHours(+b.dataset.h); buildLoopBar(); });
   lc.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { P.speed = +b.dataset.s; buildLoopBar(); });
   lc.querySelector(".op input").oninput = e => SatX.setOpacity(e.target.value / 100);
+  lc.querySelector('[data-a="mp4"]')?.addEventListener("click", () => typeof exportLoop === "function" && exportLoop(lc.querySelector('[data-a="mp4"]')));
+  hashKick();
 }
 let LCKEY = "";
 SatX.P.subs.add((t, s) => {
@@ -761,6 +783,8 @@ const ICON = {
   env: `<svg viewBox="0 0 24 24"><path d="M3 8h12a3 3 0 1 0-3-3M3 13h16a3 3 0 1 1-3 3M3 18h7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>`,
   models: `<svg viewBox="0 0 24 24"><path d="M3 20C8 14 9 9 12 4M3 20c6-4 9-8 14-12M3 20c7-2 12-4 18-5" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>`,
   quad: `<svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" fill="none" stroke="currentColor" stroke-width="2"/></svg>`,
+  share: `<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.5L6 21z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>`,
+  gear: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`,
   layers: `<svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>`
 };
 const TABS = [
@@ -796,7 +820,8 @@ function nowMarker() {
 }
 function buildTabs() {
   $("tabs").innerHTML = TABS.map((s, i) => `<button role="tab" data-i="${i}"${s.ok && !s.ok() ? " disabled" : ""}>${ICON[s.id]}<span>${s.label}</span></button>`).join("") +
-    `<button class="quadbtn" id="quadBtn" title="4-panel view">${ICON.quad}<span>4-Panel</span></button><button class="lyrbtn" id="lyrBtn" aria-expanded="false">${ICON.layers}<span>Layers</span></button>`;
+    `<button class="quadbtn" id="quadBtn" title="4-panel view">${ICON.quad}<span>4-Panel</span></button><button class="lyrbtn" id="lyrBtn" aria-expanded="false">${ICON.layers}<span>Layers</span></button>` +
+    `<button class="icobtn" id="vwBtn" title="Share, snapshot and saved views" aria-label="Share and saved views" aria-expanded="false">${ICON.share}</button><button class="icobtn" id="setBtn" title="Units and time zone" aria-label="Settings" aria-expanded="false">${ICON.gear}</button>`;
   $("tabs").querySelectorAll("button[data-i]").forEach(b => b.onclick = () => tab(+b.dataset.i));
   $("quadBtn").onclick = quadToggle;
   $("lyrBtn").onclick = () => { const p = $("lyr"), o = !p.classList.contains("open"); p.classList.toggle("open", o); $("lyrBtn").classList.toggle("on", o); $("lyrBtn").setAttribute("aria-expanded", o); };
@@ -816,12 +841,12 @@ async function tab(i, first) {
   if (QUAD.on) quadToggle();
   $("tabs").querySelectorAll("button[data-i]").forEach(b => b.classList.toggle("on", +b.dataset.i === i));
   if (!first) { const w = $("wipe"); w.classList.remove("go"); void w.offsetWidth; w.classList.add("go"); await sleep(450); }
-  TAB = i;
+  TAB = i; if (!first) CAMLOCK = false;
   for (const id of DATA) if (ON.has(id)) { ON.delete(id); lclear(id); LY[id].off(); }
   clock(null);
   s.cam(); nowMarker(); frame(...s.hdr());
   for (const id of s.layers) { ON.add(id); LY[id].on(s.anim.includes(id)); }
-  syncLayerUI(); legendNow(); creditNow();
+  syncLayerUI(); legendNow(); creditNow(); hashKick();
 }
 
 /* ---------------- rail ---------------- */
@@ -868,10 +893,10 @@ function intensityChart() {
   CAT.forEach((c, i) => { const lo = c.lo, hi = Math.min(ymax, CAT[i + 1]?.lo ?? ymax); if (lo >= ymax) return;
     s += `<g class="band"><rect x="${P.l}" y="${Y(hi)}" width="${W - P.l - P.r}" height="${Y(lo) - Y(hi)}" fill="${c.c}" opacity=".07"/><line x1="${P.l}" x2="${W - P.r}" y1="${Y(lo)}" y2="${Y(lo)}" stroke="${c.c}" stroke-opacity=".35"/>
       <text x="${W - P.r + 6}" y="${(Y(lo) + Y(hi)) / 2 + 3}" fill="${c.c}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</text></g>`; });
-  for (let v = 0; v <= ymax; v += 20) s += `<text class="ax" x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${v}</text>`;
+  for (let u = 0; u / WF().f <= ymax; u += WF().step) s += `<text class="ax" x="${P.l - 6}" y="${Y(u / WF().f) + 3}" text-anchor="end">${u}</text>`;
   for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) { const d = new Date(t + 12 * 36e5 - OFF * 0); const lx = X(t);
     s += `<line class="grid" x1="${lx}" x2="${lx}" y1="${P.t}" y2="${H - P.b}"/><text class="ax" x="${lx + 4}" y="${H - P.b + 16}">${DOW[local(t + 12 * 36e5).getUTCDay()]} ${MON[local(t + 12 * 36e5).getUTCMonth()]} ${local(t + 12 * 36e5).getUTCDate()}</text>`; }
-  s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">KT</text>`;
+  s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${wl().toUpperCase()}</text>`;
   s += `<g clip-path="url(#rev)">`;
   ser.forEach((q, i) => { s += `<path class="ln dash" d="${path(q.pts)}" stroke="${AIDC[q.t]}" stroke-width="1.8" stroke-opacity=".9"/>`; });
   s += `<path class="ln dash" d="${path(fc)}" stroke="#06101f" stroke-width="7" stroke-opacity=".6"/><path class="ln dash" d="${path(fc)}" stroke="#fff" stroke-width="3.4"/>`;
@@ -881,7 +906,7 @@ function intensityChart() {
   s += `<path class="ln" pathLength="1" d="${path(best.map(p => [Date.parse(p.t), p.kt]).concat([[t0a, D.kt]]))}" stroke="#ffffff" stroke-width="2.4" stroke-dasharray="1 1" style="--d:.1s;stroke-dasharray:1 1"/>`;
   best.forEach((p, i) => s += `<circle class="pt" style="--d:${(.1 + i / best.length * 1.6).toFixed(2)}s" cx="${X(Date.parse(p.t))}" cy="${Y(p.kt)}" r="3" fill="${catOf(p.kt).c}" stroke="#06101f"/>`);
   s += `<g class="now"><line x1="${X(t0a)}" x2="${X(t0a)}" y1="${P.t}" y2="${H - P.b}"/><text x="${X(t0a) + 5}" y="${P.t + 10}">NOW</text></g>`;
-  const pk = D.peak; s += `<g class="lab" style="--d:1.9s"><rect x="${X(pk.t) - 34}" y="${Y(pk.kt) - 30}" width="68" height="18" rx="2" fill="#e8b53a"/><text x="${X(pk.t)}" y="${Y(pk.kt) - 17}" text-anchor="middle" fill="#141007">PEAK ${pk.kt} KT</text></g>`;
+  const pk = D.peak; s += `<g class="lab" style="--d:1.9s"><rect x="${X(pk.t) - 34}" y="${Y(pk.kt) - 30}" width="68" height="18" rx="2" fill="#e8b53a"/><text x="${X(pk.t)}" y="${Y(pk.kt) - 17}" text-anchor="middle" fill="#141007">PEAK ${wnd(pk.kt)} ${wl().toUpperCase()}</text></g>`;
   s += `</svg>`;
   el.innerHTML = s;
   const legendH = `<span style="color:#fff">━ NHC</span> ${ser.map(q => `<span style="color:${AIDC[q.t]}">━ ${q.t}</span>`).join(" ")}`;
@@ -902,9 +927,9 @@ function guidanceBoard() {
   rows.sort((a, b) => b.kt - a.kt);
   const mx = Math.max(100, ...rows.map(r => r.kt));
 
-  $("guid").innerHTML = `<div class="gb h"><span>Aid</span><span>Peak wind</span><span style="text-align:right">kt</span><span style="text-align:right">when</span></div>` +
+  $("guid").innerHTML = `<div class="gb h"><span>Aid</span><span>Peak wind</span><span style="text-align:right">${wl()}</span><span style="text-align:right">when</span></div>` +
     rows.map((r, j) => { const c = r.t === "OFCL" ? "#ffffff" : AIDC[r.t] || "#9fb3d6"; return `<div class="gb" style="--c:${c};--j:${j}" title="${esc(AIDNAME[r.t] || r.t)}"><span class="n"><i></i>${r.t === "OFCL" ? "NHC" : r.t}</span>
-      <span class="bar"><i style="--w:${(r.kt / mx * 100).toFixed(1)}%;--c:${catOf(r.kt).c}"></i></span><b>${r.kt}</b><em>${DOW[local(r.when).getUTCDay()]} ${hm(r.when, false)}</em></div>`; }).join("") +
+      <span class="bar"><i style="--w:${(r.kt / mx * 100).toFixed(1)}%;--c:${catOf(r.kt).c}"></i></span><b>${wnd(r.kt)}</b><em>${DOW[local(r.when).getUTCDay()]} ${hm(r.when, false)}</em></div>`; }).join("") +
     `<div class="gnote">Bars wear the Saffir-Simpson colour of each aid's peak. Early-cycle (interpolated) aids, ${esc(D.models.cycle?.slice(11, 13) || "")}Z.</div>`;
 }
 
@@ -955,9 +980,10 @@ async function ensChart() {
   let s = `<svg viewBox="0 0 ${W} ${H}">`;
   if (M === "vmax") CAT.forEach((c, i) => { const a = c.lo, b = Math.min(hi, CAT[i + 1]?.lo ?? hi); if (a >= hi) return;
     s += `<g class="band"><rect x="${P.l}" y="${Y(b)}" width="${W - P.l - P.r}" height="${Y(a) - Y(b)}" fill="${c.c}" opacity=".07"/><text x="${W - P.r + 6}" y="${(Y(a) + Y(b)) / 2 + 3}" fill="${c.c}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</text></g>`; });
-  for (let v = Math.ceil(lo / 10) * 10; v <= hi; v += M === "vmax" ? 20 : 10) s += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ax" x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${v}</text>`;
+  const tf = M === "vmax" ? WF().f : U.pres === "inhg" ? .02953 : 1, tst = M === "vmax" ? WF().step : U.pres === "inhg" ? .3 : 10;
+  for (let u = Math.ceil(lo * tf / tst) * tst; u / tf <= hi; u += tst) s += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${Y(u / tf)}" y2="${Y(u / tf)}"/><text class="ax" x="${P.l - 6}" y="${Y(u / tf) + 3}" text-anchor="end">${M === "mslp" && U.pres === "inhg" ? u.toFixed(1) : Math.round(u)}</text>`;
   for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) s += `<line class="grid" x1="${X(t)}" x2="${X(t)}" y1="${P.t}" y2="${H - P.b}"/><text class="ax" x="${X(t) + 4}" y="${H - P.b + 16}">${DOW[local(t + 12 * 36e5).getUTCDay()]} ${local(t + 12 * 36e5).getUTCDate()}</text>`;
-  s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${M === "vmax" ? "KT" : "MB"}</text>`;
+  s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${M === "vmax" ? wl().toUpperCase() : pl().toUpperCase()}</text>`;
   for (const src of srcs) {
     for (const m of src.mem) s += `<path class="ln dash" d="${path(m)}" stroke="${src.col}" stroke-width="1" stroke-opacity=".28" fill="none"/>`;
     // mean and the 10-90 % band, step by step across members
