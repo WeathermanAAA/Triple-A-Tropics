@@ -1,7 +1,9 @@
 /* Situation Room satellite engine.
    NASA GIBS geostationary imagery (GOES-East, GOES-West, Himawari; every 10 min), fetched as ONE image per frame for
    exactly the area on screen (WMS GetMap, Web Mercator, sized to the screen's pixels), then played through a MapLibre
-   canvas source with crossfades between frames, so loops run smooth at full resolution. Pan or zoom and the frames are
+   canvas source, so loops run at full resolution. Playback follows the site's satellite loop contract
+   (satellite/explorer/tiled_viewer.js): hard cuts at a fixed frame rate (6 fps default), 6x dwell on the newest
+   frame, the whole loop preloaded and decoded before it plays, and a frame is only ever shown once decoded. Pan or zoom and the frames are
    re-fetched for the new view. Any number of maps (the 4-panel view) share one playhead, so their loops stay in step.
    Frame times come from situation/index.json (build_situation.py reads the GIBS time dimensions). */
 "use strict";
@@ -19,7 +21,8 @@ const SatX = (() => {
     airmass: { t: "Air Mass", short: "AIR", sub: "RGB" },
     dust: { t: "Dust", short: "DUST", sub: "RGB" }
   };
-  const SPEEDS = [{ k: "Slow", m: 25 }, { k: "Medium", m: 50 }, { k: "Fast", m: 110 }];   // minutes of imagery per second
+  const SPEEDS = [{ k: "Slow", fps: 4 }, { k: "Medium", fps: 6 }, { k: "Fast", fps: 10 }];   // tiled_viewer.js default is 6 fps
+  const DWELL_NEWEST = 6;   // the newest frame holds 6 frame-intervals, as in tiled_viewer.js
   /* IR ramps: RGB for T = -100..+50 °C in 0.5 °C steps (the site's own colour bars: satellite/explorer/cbars) */
   const RAMPS = {"tat": "/////////////////////////////////////////////Ov++df+9b399b398an97ZD86nz85mP7407640763z732zzy1zns0zbozzPiyzDdyzDdxy3XwyvSvyfMvCXHuCLCtB+8tB+8sB23rBmxqBespBSmoBGhoBGhnQ+bmg+Wlg6PlA6JkA2Djg19jg19igx3iAxxhAtrggtlfwtgfwtgfApZeQpUdQlNcwlIbwhBbQg7bQg7bwc0dQcsfAYjggYciQUTiQUTkAYPmwcOowgNrgkLtgoKvgsJvgsJyQwIzw8I1BII2BUI3hkJ4hwJ4hwJ5yAJ7CMK8SYK9SoK9jAK9jAK9jUL9zsL+EAL+UYL+UoL+lEM+lEM+1UM/FoM/GAM/WUM/msM/msM/3AN/3cN/30O/4QP/4kP/5AQ/5AQ/5YR/50S/6IS/6kT/68U/7YW/7YW/7sY/8Aa/8cd/8wf/9Ii/9Ii/9ck/94n/+Mp/+ks/e0u9e0v9e0v7+0v5+ww4eww2ewx0+wx0+wxy+syxesyv+sztuozqug0m+Q0m+Q0juE1f941c9s2ZNg2WNU3SdI3SdI3Pc84Lsw4LMk+KcVFJ8JLJ8JLJL5TIbtYH7dgHLRlGrBrF6xzF6xzFal4FqqDGKuMGq2YHK6iHK6iHrCtILG3IrPDJLTMJrbYKLfhKLfhOLznSsLpYcnrdM7th9Tvh9TvntvxsOHzyOj22e332Ov01+nx1+nx1ubu1eTs1OLp1ODm093j0tzg0tzg0dnd0Nfbz9XXz9PVztHSztHSzc7PzMzNycnJx8fHxMTEwcHBwcHBvr6+vLy8ubm5tra2s7Ozs7OzsbGxrq6uq6urqKiopqamo6Ojo6OjoKCgnp6em5ubmJiYlZWVk5OTk5OTkZGRj4+PjIyMioqKiIiIiIiIhoaGhISEgoKCgICAfn5+fHx8fHx8enp6eHh4dnZ2dHR0cXFxcXFxb29vbW1ta2traWlpZ2dnZWVlZWVlY2NjYGBgXl5eXFxcWlpaWlpaV1dXVVVVU1NTUVFRT09PTExMTExMS0tLSEhIRkZGREREQkJCPz8/Pz8/PT09Ozs7OTk5NjY2NDQ0NDQ0MjIyMDAwLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4u", "bd": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eH////////////////////////////////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgbm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5uPDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8ycnJx8fHxsbGxMTEw8PDw8PDwsLCwMDAv7+/vb29vLy8vLy8urq6ubm5uLi4tra2tbW1s7Ozs7OzsrKysbGxr6+vrq6ura2tra2tq6urqqqqqKiop6enpaWlpKSkpKSkoqKioaGhoKCgnp6enZ2dnZ2dnJycmpqamZmZl5eXlpaWlZWVlZWVk5OTkpKSkJCQj4+PjY2NjIyMjIyMi4uLiYmJiIiIhoaGhYWFhYWFhISEgoKCgYGBgICAfn5+fX19fX19e3t7enp6eHh4d3d3dXV1dXV1dHR0c3NzcXFxcHBwb29v////////+fn58vLy6urq5OTk3Nzc1dXV1dXVzc3Nx8fHv7+/uLi4sLCwsLCwqqqqoqKinJyclJSUjY2NhYWFhYWFf39/eHh4cHBwampqYmJiYmJiW1tbU1NTTU1NRUVFPz8/Nzc3Nzc3MDAwKCgoIiIiGhoaExMTExMTCwsLBQUFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "gray": "/////////////////////////////////////////////////////////////////////////////////////v7+/f39/Pz8+/v7+vr6+fn59/f39vb29fX19PT09PT08/Pz8vLy8fHx8PDw7u7u7e3t7Ozs6+vr6urq6enp6Ojo5+fn5ubm5OTk4+Pj4uLi4eHh4ODg39/f3t7e3d3d3d3d29vb2tra2dnZ2NjY19fX1tbW1dXV1NTU09PT0dHR0NDQz8/Pzs7Ozc3NzMzMy8vLysrKyMjIx8fHxsbGxcXFxcXFxMTEw8PDwsLCwcHBwMDAvr6+vb29vLy8u7u7urq6ubm5uLi4t7e3tbW1tLS0s7OzsrKysbGxsLCwr6+vrq6urq6ura2tq6urqqqqqampqKiop6enpqampaWlpKSko6OjoqKioKCgn5+fnp6enZ2dnJycm5ubmpqamZmZmJiYlpaWlpaWlZWVlJSUk5OTkpKSkZGRkJCQj4+PjY2NjIyMi4uLioqKiYmJiIiIh4eHhoaGhYWFg4ODgoKCgYGBgICAf39/f39/fn5+fX19fHx8enp6eXl5eHh4d3d3dnZ2dXV1dHR0c3NzcnJycHBwb29vbm5ubW1tbGxsa2trampqaWlpaWlpZ2dnZmZmZWVlZGRkY2NjYmJiYWFhYGBgX19fXV1dXFxcW1tbWlpaWVlZWFhYV1dXVlZWVVVVVFRUUlJSUVFRUVFRUFBQT09PTk5OTU1NTExMS0tLSkpKSEhIR0dHRkZGRUVFREREQ0NDQkJCQUFBPz8/Pj4+PT09PDw8Ozs7Ojo6Ojo6OTk5ODg4Nzc3NTU1NDQ0MzMzMjIyMTExMDAwLy8vLi4uLCwsKysrKioqKSkpKCgoJycnJiYmJSUlJCQkIiIiIiIiISEhICAgHx8fHh4eHR0dHBwcGxsbGRkZGBgYFxcXFhYWFRUVFBQUExMTEhISERERDw8PDg4ODQ0NDAwMCwsLCwsLCgoKCQkJCAgIBgYGBQUFBAQEAwMDAgICAQEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"};
   /* GIBS Band 13 colour -> brightness temperature (°C), learned against our GOES-19 BT grids: [T, r, g, b] */
@@ -97,22 +100,26 @@ const SatX = (() => {
   const has = (sat, band) => !!SATS[sat].bands[band] && !!(TIMES[layerOf(sat, band)] || []).length;
 
   /* the shared playhead */
-  const P = { ramp: "tat", t: 0, playing: true, speed: 1, hours: 3, dwell: 1300, smooth: true, opacity: 1, hold: 0, last: 0, loops: new Set(), subs: new Set() };
+  const P = { ramp: "tat", t: 0, playing: true, speed: 1, hours: 3, opacity: 1, last: 0, loops: new Set(), subs: new Set() };
   function span() {
     let end = 0; for (const L of P.loops) if (L.frames.length) end = Math.max(end, L.frames[L.frames.length - 1].t);
     return end ? [end - P.hours * 36e5, end] : null;
   }
+  /* the master clock = the first loop's frame stamps; every loop shows its newest frame at or before P.t */
+  function master() { for (const L of P.loops) if (L.ready && L.frames.length) return L; return null; }
   function frame(now) {
-    const dt = Math.min(120, now - (P.last || now)); P.last = now; const s = span();
-    if (s) {
-      if (P.t < s[0] || P.t > s[1]) P.t = s[1];
+    const s = span(), M = master();
+    if (s && M) {
+      const F = M.frames;
+      if (P.t < s[0] || P.t > s[1] || F.findIndex(f => f.t >= P.t - 1) < 0) P.t = F[F.length - 1].t;
       if (P.playing) {
-        if (P.hold > 0) { P.hold -= dt; if (P.hold <= 0) P.t = s[0]; }
-        else { P.t += dt / 1000 * SPEEDS[P.speed].m * 6e4; if (P.t >= s[1]) { P.t = s[1]; P.hold = P.dwell; } }
+        const k = F.findIndex(f => f.t >= P.t - 1), interval = 1000 / SPEEDS[P.speed].fps * (k === F.length - 1 ? DWELL_NEWEST : 1);
+        if (!P.last) P.last = now;
+        if (now - P.last >= interval) { P.last = now; P.t = F[(k + 1) % F.length].t; }
       }
       for (const L of P.loops) L.draw(P.t);
       for (const f of P.subs) f(P.t, s);
-    }
+    } else if (s) { for (const L of P.loops) L.draw(P.t); for (const f of P.subs) f(P.t, s); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -155,18 +162,19 @@ const SatX = (() => {
       const end = Date.parse(ts[ts.length - 1]);
       const fr = ts.filter(t => Date.parse(t) >= end - P.hours * 36e5 - 1).map(t => ({ t: Date.parse(t), iso: t, img: null }));
       const load = f => new Promise(res => { const im = new Image(); im.crossOrigin = "anonymous"; im.decoding = "async";
-        im.onload = async () => { f.raw = im; f.img = this.paint(im, v); if (f.img !== im) await new Promise(r => setTimeout(r, 0)); res(); };
+        im.onload = async () => { try { await im.decode(); } catch (e) {} f.raw = im; f.img = this.paint(im, v); if (f.img !== im) await new Promise(r => setTimeout(r, 0)); res(); };
         im.onerror = () => res(); im.src = this.url(v, f.iso); });
       const order = [fr.length - 1, ...fr.map((_, i) => i).slice(0, -1).reverse()];
-      this.loading = true; this.emit();
-      if (progressive) { await load(fr[order[0]]); if (gen !== this.gen) return; this.install(v, fr.filter(f => f.img)); }
+      this.loading = { done: 0, total: fr.length }; this.emit();
+      // the newest frame goes up first (static) while the rest of the loop preloads; play starts only when all are decoded
+      if (progressive) { await load(fr[order[0]]); if (gen !== this.gen) return; this.ready = false; this.install(v, fr.filter(f => f.img)); this.loading.done = 1; this.emit(); }
       let i = progressive ? 1 : 0;
-      const worker = async () => { while (i < order.length && gen === this.gen) { const f = fr[order[i++]]; await load(f); if (progressive && gen === this.gen) this.frames = fr.filter(x => x.img); } };
+      const worker = async () => { while (i < order.length && gen === this.gen) { const f = fr[order[i++]]; await load(f); this.loading.done++; this.emit(); } };
       await Promise.all(Array.from({ length: 6 }, worker));
       if (gen !== this.gen) return;
-      this.loading = false;
-      if (progressive) this.frames = fr.filter(x => x.img); else this.install(v, fr.filter(f => f.img));
-      this.emit();
+      this.loading = null;
+      if (progressive) { this.frames = fr.filter(x => x.img); this.ready = true; this.key = null; } else this.install(v, fr.filter(f => f.img));
+      this.ready = true; this.emit();
     }
     paint(im, v) { return v.layer.includes("Band13") && P.ramp !== "native" ? recolor(im, v.w, v.h, P.ramp) : im; }
     repaint() { const v = this.bbox; if (!v) return; for (const f of this.frames) if (f.raw) f.img = this.paint(f.raw, v); this.key = null; this.draw(P.t, true); }
@@ -182,14 +190,12 @@ const SatX = (() => {
       this.draw(P.t, true); this.emit();
     }
     draw(t, force) {
-      const F = this.frames, c = this.canvas; if (!F.length || !this.on) return;
-      let a, b, w = 0; const i = F.findIndex(f => f.t > t);
-      if (i === 0) a = b = F[0]; else if (i < 0) a = b = F[F.length - 1];
-      else { a = F[i - 1]; b = F[i]; w = P.smooth ? Math.min(1, (t - a.t) / (b.t - a.t)) : 0; }
-      const key = `${a.t}|${b.t}|${Math.round(w * 40)}`; if (!force && key === this.key) return; this.key = key;
-      const x = this.ctx; x.clearRect(0, 0, c.width, c.height); x.globalAlpha = 1; x.drawImage(a.img, 0, 0, c.width, c.height);
-      if (b !== a && w > .02) { x.globalAlpha = w; x.drawImage(b.img, 0, 0, c.width, c.height); x.globalAlpha = 1; }
-      this.cur = w > .5 ? b : a;
+      const F = this.frames; if (!F.length || !this.on) return;
+      let f = F[0]; for (const x of F) { if (x.t <= t + 1) f = x; else break; }
+      if (!this.ready) f = F[F.length - 1];
+      if (!force && this.key === f.t) return; this.key = f.t;
+      const c = this.canvas, x = this.ctx; x.clearRect(0, 0, c.width, c.height); x.drawImage(f.img, 0, 0, c.width, c.height);
+      this.cur = f;
     }
     opacity(o) { if (this.map.getLayer(this.id)) this.map.setPaintProperty(this.id, "raster-opacity", o); }
     emit() { for (const f of P.subs) f(P.t, span()); }
@@ -201,9 +207,9 @@ const SatX = (() => {
     setRamp(r) { P.ramp = r; for (const L of P.loops) L.repaint(); },
     setTimes(t) { const was = JSON.stringify(TIMES); TIMES = t || {}; return was !== JSON.stringify(TIMES); },
     times: () => TIMES, span,
-    step(d) { const L = [...P.loops][0]; if (!L || !L.frames.length) return; P.playing = false; P.hold = 0;
+    step(d) { const L = [...P.loops][0]; if (!L || !L.frames.length) return; P.playing = false;
       const F = L.frames; let i = F.findIndex(f => f.t >= P.t - 1); if (i < 0) i = F.length - 1; i = Math.max(0, Math.min(F.length - 1, i + d)); P.t = F[i].t; },
-    seek(p) { const s = span(); if (!s) return; P.t = s[0] + (s[1] - s[0]) * p; P.hold = 0; },
+    seek(p) { const s = span(), M = [...P.loops][0]; if (!s || !M) return; const F = M.frames; P.t = F[Math.min(F.length - 1, Math.round(p * (F.length - 1)))].t; },
     setOpacity(o) { P.opacity = o; for (const L of P.loops) L.opacity(o); },
     setHours(h) { P.hours = h; for (const L of P.loops) L.reload(false); }
   };

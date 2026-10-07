@@ -515,7 +515,7 @@ function buildLoopBar() {
     <div class="seg" title="Speed">${SatX.SPEEDS.map((s, i) => `<button data-s="${i}" class="${i === P.speed ? "on" : ""}" title="${s.k}">${s.k[0]}</button>`).join("")}</div>
     <label class="op" title="Satellite opacity">Opacity<input type="range" min="20" max="100" value="${Math.round(P.opacity * 100)}"></label>`;
   const lc = $("lc");
-  lc.querySelector('[data-a="play"]').onclick = () => { P.playing = !P.playing; P.hold = 0; lc.querySelector(".pp").innerHTML = P.playing ? PAUSEI : PLAYI; };
+  lc.querySelector('[data-a="play"]').onclick = () => { P.playing = !P.playing; P.last = 0; lc.querySelector(".pp").innerHTML = P.playing ? PAUSEI : PLAYI; };
   lc.querySelector('[data-a="prev"]').onclick = () => { SatX.step(-1); lc.querySelector(".pp").innerHTML = PLAYI; };
   lc.querySelector('[data-a="next"]').onclick = () => { SatX.step(1); lc.querySelector(".pp").innerHTML = PLAYI; };
   const sl = lc.querySelector(".tl input"); sl.oninput = () => { P.playing = false; lc.querySelector(".pp").innerHTML = PLAYI; SatX.seek(sl.value / 1000); };
@@ -529,9 +529,9 @@ let LCKEY = "";
 SatX.P.subs.add((t, s) => {
   const lc = $("lc"); if (!lc || lc.hidden || !s) return;
   const sl = lc.querySelector(".tl input"), L = [...SatX.P.loops][0], f = L?.current;
-  if (sl && document.activeElement !== sl) sl.value = Math.round((t - s[0]) / ((s[1] - s[0]) || 1) * 1000);
-  const key = `${f?.t}|${L?.loading}|${L?.frames.length}`; if (key === LCKEY) return; LCKEY = key;
-  const lt = $("lcT"); if (lt && f) lt.innerHTML = `${hm(f.t)} ${TZ}${L.loading ? "<em>loading</em>" : ""}`;
+  if (sl && document.activeElement !== sl && L?.frames.length) { const F = L.frames, k = Math.max(0, F.findIndex(x => x.t >= t - 1)); sl.value = Math.round(k / Math.max(1, F.length - 1) * 1000); }
+  const ld = L?.loading, key = `${f?.t}|${ld ? ld.done + "/" + ld.total : ""}`; if (key === LCKEY) return; LCKEY = key;
+  const lt = $("lcT"); if (lt && f) lt.innerHTML = `${hm(f.t)} ${TZ}${ld ? `<em>loading ${ld.done}/${ld.total}</em>` : ""}`;
   if (!QUAD.on && ON.has("sat") && f) {
     const back = Math.round((s[1] - f.t) / 6e4);
     clock("sat", `${SatX.BANDS[MAINLOOP.band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");
