@@ -209,7 +209,12 @@ def advisory_text(url):
     ww = sec("WATCHES AND WARNINGS"); hz = sec("HAZARDS AFFECTING LAND")
     hazards = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\n\s*\n", hz) if re.match(r"\s*[A-Z ]+:", p)]
     nxt = re.search(r"Next (?:intermediate|complete) advisory at (.*?)\.", re.sub(r"\s+", " ", t))
-    return {"headlines": heads[:3], "summary": summ, "watches": re.sub(r"\s+", " ", ww), "hazards": hazards,
+    # "A Hurricane Watch is in effect for...\n* Bay St. Louis to Indian Pass" blocks -> [{"t": type, "a": [areas]}]
+    ww_list = []
+    for typ, body in re.findall(r"(?:^|\n)\s*An? ([A-Z][A-Za-z ]+?) (?:is|are) in effect for\.\.\.\s*\n((?:\s*\*.*(?:\n(?!\s*\*|\s*\n).*)*\n?)+)", ww):
+        areas = [re.sub(r"\s+", " ", x).strip() for x in re.split(r"\n\s*\*", "\n" + body) if x.strip()]
+        ww_list.append({"t": typ.strip(), "a": [re.sub(r"<[^>]+>", "", x) for x in areas]})
+    return {"headlines": heads[:3], "summary": summ, "watches": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", ww)), "ww_list": ww_list, "hazards": hazards,
             "next": nxt.group(0) if nxt else "", "issued": (re.search(r"^\d{3,4} [AP]M \w{3} \w{3} \w{3} \d\d \d{4}", t, re.M) or [None])[0]}
 
 def sat():

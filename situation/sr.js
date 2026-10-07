@@ -896,6 +896,16 @@ async function tab(i, first) {
 }
 
 /* ---------------- rail ---------------- */
+/* watches & warnings: the advisory's "in effect for" bullets, warnings first, in the map legend's colours */
+const WWC = { "Hurricane Warning": "#e3001b", "Hurricane Watch": "#ff6bd6", "Storm Surge Warning": "#b44cff", "Storm Surge Watch": "#d9a8ff", "Tropical Storm Warning": "#1f6bff", "Tropical Storm Watch": "#ffe14d" };
+const WWO = ["Hurricane Warning", "Storm Surge Warning", "Tropical Storm Warning", "Hurricane Watch", "Storm Surge Watch", "Tropical Storm Watch"];
+const wwSort = L => (L || []).slice().sort((a, b) => (WWO.indexOf(a.t) + 1 || 99) - (WWO.indexOf(b.t) + 1 || 99));
+function wwBox(T, on) {
+  const L = wwSort(T.ww_list);
+  if (!on) return `<div class="ww">No coastal watches or warnings.</div>`;
+  if (!L.length) return `<div class="ww on">${esc((T.watches || "").split(/SUMMARY OF WATCHES|A [A-Za-z ]+ means /)[0].replace(/^CHANGES WITH THIS ADVISORY:\s*/, "").trim())}</div>`;
+  return `<div class="ww on list">${L.map(w => `<div class="wwr" style="--c:${WWC[w.t] || "#fff"}"><b>${esc(w.t)}</b>${w.a.map(a => `<span>${esc(a)}</span>`).join("")}</div>`).join("")}</div>`;
+}
 function railKey() {
   const T = D.text || {}, s = T.summary || {}, hz = T.hazards || [];
   const ww = T.watches || "", on = /warning|watch/i.test(ww) && !/no coastal watches or warnings/i.test(ww);
@@ -904,8 +914,8 @@ function railKey() {
   $("cKey").innerHTML = `<div class="ch"><b>The latest</b><span>NHC advisory ${esc(D.nhc.advisory)}</span></div>
     <div class="hl">${esc((T.headlines || [])[0] || "")}${T.headlines?.[1] ? `<span>${esc(T.headlines[1])}</span>` : ""}</div>
     ${s.location ? `<div class="kv"><span>Location</span><b>${esc(s.location)}</b></div>` : ""}
-    ${about ? `<div class="kv"><span>${esc(about.replace(/^ABOUT \d+ MI \d+ KM /, "").replace(/^(\w+) OF /, "$1 of ").toLowerCase().replace(/(^|\s)\w/g, c => c.toUpperCase()))}</span><b>${esc((about.match(/^ABOUT (\d+ MI)/) || [])[1] || "")}</b></div>` : ""}
-    <div class="ww${on ? " on" : ""}">${esc(on ? ww : "No coastal watches or warnings.")}</div>
+    ${about ? `<div class="kv"><span>${esc(about.replace(/^ABOUT \d+ MI \d+ KM /, "").replace(/^(\w+) OF /, "$1 of ").toLowerCase().replace(/(^|\s)\w/g, c => c.toUpperCase()).replace(/^([NSEW][nsew]{0,2}) of /, (m, d) => d.toUpperCase() + " of "))}</span><b>${esc((about.match(/^ABOUT (\d+ MI)/) || [])[1] || "")}</b></div>` : ""}
+    ${wwBox(T, on)}
     ${hz.length ? `<details class="hzs"><summary>Hazards <em>${hz.map(h => (h.match(/^([A-Z]+)/) || [""])[0]).filter(Boolean).join(" · ")}</em></summary>${hz.map(hzH).join("")}</details>` : ""}`;
   inCard("cKey", 0);
 }
@@ -997,7 +1007,7 @@ function crawl() {
     s["maximum sustained winds"] && `Max winds ${s["maximum sustained winds"].replace(/\s+\d+ KM\/H/, "").toLowerCase()}`,
     s["present movement"] && `Moving ${s["present movement"].replace(/ OR \d+ DEGREES AT/, " at").replace(/\s+\d+ KM\/H/, "").toLowerCase()}`,
     ...(s.about || []).map(a => a.replace(/\s+\d+ KM/, "").toLowerCase().replace(/^about/, "About").replace(/\b(mexico|mississippi|progreso|river)\b/g, w => w[0].toUpperCase() + w.slice(1))),
-    T.watches, ...(T.hazards || []).map(h => h.replace(/^([A-Z ]+):/, (m, a) => a.trim() + " —")),
+    ...(T.ww_list?.length ? wwSort(T.ww_list).map(w => `${w.t}: ${w.a.join("; ")}`) : []), ...(T.hazards || []).map(h => h.replace(/^([A-Z ]+):/, (m, a) => a.trim() + " —")),
     nextFlight() && `Next Hurricane Hunter fix: ${nextFlight().flight.replace(/^FLIGHT \w+ - /, "")} ${dayhm(isoMs(nextFlight().fix[0]))} ${TZ}`,
     T.next].filter(Boolean);
   const sp = $("crawlTx"); sp.innerHTML = it.map(esc).join("<i>◆</i>");

@@ -253,6 +253,10 @@ body.sr *{box-sizing:border-box}
 .c-key .hz b{color:#fff;font-weight:800;letter-spacing:.4px}
 .c-key .ww{font-size:12px;font-weight:700;color:#fff;background:rgba(5,9,20,.4);border:1px solid var(--line);padding:6px 8px;margin-top:6px;line-height:1.3}
 .c-key .ww.on{background:linear-gradient(180deg,#b3122a,#6d0716);border-color:#ff7b8a}
+.c-key .ww.list{background:rgba(5,9,20,.4);padding:2px 8px}
+.c-key .wwr{border-left:3px solid var(--c);padding:5px 0 5px 8px;margin:4px 0;display:flex;flex-direction:column;gap:1px}
+.c-key .wwr b{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--c)}
+.c-key .wwr span{font-size:12px;font-weight:700;color:#fff;line-height:1.3}
 .mwimg{position:relative;aspect-ratio:1;border:1px solid var(--line);background:#050912;overflow:hidden;border-radius:2px}
 .mwimg img{width:100%;height:100%;object-fit:contain;display:block}
 .mwimg .scan{position:absolute;left:0;right:0;height:22%;background:linear-gradient(180deg,transparent,rgba(232,181,58,.22),transparent);animation:scan 3.2s ease-in-out infinite;pointer-events:none}
