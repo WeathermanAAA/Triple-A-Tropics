@@ -6,10 +6,9 @@ name: update-situation-fields
 # enscenters/gefs_ingest.py pattern). R2-only: contents:read, commits nothing, touches no track/ACE/climo product.
 #
 # Cadence: once per GFS cycle, ~4 h after it (f120 is up by then), plus a backup 30 min later.
+# PAUSED 2026-10-07: the Environment tab is off the page while it is reworked; dispatch-only until it returns.
+# Restore the schedule (cron "47 3,9,15,21 * * *" + backup "17 4,10,16,22 * * *") when it does.
 on:
-  schedule:
-    - cron: "47 3,9,15,21 * * *"
-    - cron: "17 4,10,16,22 * * *"
   workflow_dispatch:
 
 permissions:

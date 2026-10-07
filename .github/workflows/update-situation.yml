@@ -5,45 +5,39 @@ name: update-situation
 # GOES-19 shadow IR frame list). R2-only under situation/: contents:read, commits NOTHING, touches no track/ACE/climo
 # product. Opening/closing a storm's room = editing situation/rooms.json.
 #
-# Cadence: every 10 min. GitHub load-sheds crons, so this is the shadow-phase writer only; when the page graduates,
-# move it onto the box poller (the tat-overlays pattern) like the other live feeds.
+# Cadence: CONTINUOUS. One job runs situation/live.py for ~175 min, rebuilding every ~20 s and uploading only the
+# documents that changed (plus situation/live.json, the heartbeat the page polls). The hourly schedule keeps exactly one
+# run queued behind the running one, so when a job ends the next starts within seconds; a dropped cron just means the
+# queued run is a little older. A push to the feed code or rooms.json (or a manual dispatch) cancels the running job
+# and restarts on the new code at once.
 on:
   schedule:
-    - cron: "4-59/10 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["situation/rooms.json", "situation/build_situation.py", "situation/storm_bundle.py"]
+    paths: ["situation/rooms.json", "situation/build_situation.py", "situation/storm_bundle.py", "situation/live.py", ".github/workflows/update-situation.yml"]
 
 permissions:
   contents: read
 
 concurrency:
   group: update-situation
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
-  build:
+  live:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 185
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Build situation bundles
-        run: python situation/build_situation.py --out-dir situation_out
-      - name: Sync to R2
+      - name: Live writer (rebuild every ~20 s, publish changes)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        run: |
-          set -euo pipefail
-          aws s3 sync situation_out/situation/ "s3://triple-a-tropics-media/situation/" \
-            --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "public, max-age=60" \
-            --content-type "application/json" \
-            --exclude "*" --include "*.json" \
-            --only-show-errors
-          echo "Synced $(ls situation_out/situation/*.json | wc -l) situation document(s)."
+          AWS_DEFAULT_REGION: auto
+        run: python situation/live.py --minutes 175 --every 20

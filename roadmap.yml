@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T12:38:00Z
+updated: 2026-10-07T12:46:00Z
 
 items:
   - id: situation-room-google-ensembles
@@ -74,6 +74,10 @@ items:
       Saffir-Simpson colour and updates itself every 60 s. Data: situation/<sid>.json
       from update-situation.yml every 10 min (move to the box poller before it
       graduates); basemap from bake-situation-tiles.yml (one-off dispatch).
+      Feed is continuous since 2026-10-07: situation/live.py runs as one long Actions job,
+      rebuilds every ~20 s and uploads only changed documents plus a heartbeat
+      (situation/live.json) that the page polls every 8 s. The Environment tab and its
+      GFS fields workflow are parked while they are reworked.
       situation/rooms.json opens a storm's room; the CycloLab router takeover
       (an open room replaces /cyclolab/<sid>/) is written but not yet deployed.
     links:

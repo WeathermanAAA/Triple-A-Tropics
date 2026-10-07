@@ -13,16 +13,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import storm_bundle as SB
 
-def _get(url):
-    return urllib.request.urlopen(urllib.request.Request(url, headers=SB.UA), timeout=30).read()
+def _get(url, ttl=20):
+    """through storm_bundle's cache, so the live loop re-reads NHC every ~20 s without re-pulling unchanged KMZs too often"""
+    return SB.get(url, ttl)
 
 def _kml(url):
-    z = zipfile.ZipFile(io.BytesIO(_get(url))); return z.read([n for n in z.namelist() if n.endswith(".kml")][0]).decode("utf8", "replace")
+    z = zipfile.ZipFile(io.BytesIO(_get(url, 60))); return z.read([n for n in z.namelist() if n.endswith(".kml")][0]).decode("utf8", "replace")
 
 def nhc():
     """active NHC storms with forecast points + cone, from CurrentStorms.json and the advisory KMZs"""
     out = []
-    for s in json.loads(_get("https://www.nhc.noaa.gov/CurrentStorms.json"))["activeStorms"]:
+    for s in json.loads(_get("https://www.nhc.noaa.gov/CurrentStorms.json", 15))["activeStorms"]:
         st = {k: s.get(k) for k in ("id", "name", "classification", "intensity", "pressure", "latitudeNumeric", "longitudeNumeric",
                                     "movementDir", "movementSpeed", "lastUpdate", "binNumber")}
         try:
@@ -89,7 +90,7 @@ def _parse(s):
 
 def gibs_times(hours=12):
     """{layer: [ISO times available in the last `hours`]} from the GIBS WMS capabilities time dimensions"""
-    try: x = _get("https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0").decode("utf8", "replace")
+    try: x = _get("https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0", 240).decode("utf8", "replace")
     except Exception as e:
         print("gibs capabilities failed:", e); return {}
     lo, out = time.time() - hours * 3600, {}
@@ -113,12 +114,22 @@ def gibs_times(hours=12):
         if ts: out[lay] = [_iso(t) for t in sorted(set(ts))]
     return out
 
+def load_rooms(live=False):
+    """situation/rooms.json; the live loop re-reads the committed copy from GitHub so opening a room needs no restart"""
+    try:
+        r = json.loads(_get("https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/situation/rooms.json", 120)) if live \
+            else json.load(open(os.path.join(HERE, "rooms.json")))
+    except Exception:
+        try: r = json.load(open(os.path.join(HERE, "rooms.json")))
+        except Exception: r = {}
+    return {k.lower(): v for k, v in r.items() if not k.startswith("_") and v}
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--out-dir", default="situation_out"); a = ap.parse_args()
-    od = os.path.join(a.out_dir, "situation"); os.makedirs(od, exist_ok=True)
-    try: rooms = json.load(open(os.path.join(HERE, "rooms.json")))
-    except Exception: rooms = {}
-    rooms = {k.lower(): v for k, v in rooms.items() if not k.startswith("_") and v}
+    build(a.out_dir, load_rooms())
+
+def build(out_dir, rooms):
+    od = os.path.join(out_dir, "situation"); os.makedirs(od, exist_ok=True)
     storms = nhc(); made = []
     for s in storms:
         sid = (s.get("id") or "").lower()
@@ -133,7 +144,8 @@ def main():
                        "has_bundle": (s.get("id") or "").lower() in made} for s in storms]}
     json.dump(idx, open(os.path.join(od, "index.json"), "w"), separators=(",", ":"))
     json.dump({k: True for k in rooms}, open(os.path.join(od, "rooms.json"), "w"))
-    print(f"situation: {len(made)} bundle(s), {len(rooms)} open room(s)")
+    print(f"situation: {len(made)} bundle(s), {len(rooms)} open room(s)", flush=True)
+    return made
 
 if __name__ == "__main__":
     main()

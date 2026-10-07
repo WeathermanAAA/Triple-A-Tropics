@@ -10,8 +10,11 @@ name: Update Model Guidance
 # Cadence. ATCF decks land ~30-90 min after each synoptic hour (measured
 # publish latency for the sibling SHIPS feed: median 52 min, p90 145 min), and
 # the leading-edge cycle carries CARQ only for the first couple of hours - that
-# is NORMAL, not a fetch failure, so we run well clear of it. Four cycles/day
-# at H+1:41 with a backup 40 min later.
+# is NORMAL, not a fetch failure. Runs HOURLY at :41 (2026-10-07, was four
+# cycles/day): the Situation Room's ensemble chart reads ensemble_v2.json, and
+# late aids, GEFS members and ECMWF's 00/12Z ensemble tracks (posted ~7-8 h after
+# the cycle) should land within the hour, not wait up to six. Each run is pure
+# and idempotent, so the extra runs only republish what changed.
 #
 # Non-round minutes per the repo's stagger convention. :41/:21 are clear of
 # every other scheduled slot (ACE :07/:37/:53, HAFS :53/:27, SST 13:17/13:47,
@@ -20,8 +23,7 @@ name: Update Model Guidance
 # with it; sub-anim 16:33/17:03, season-gifs 03:23, GIBS 22:07/22:37).
 on:
   schedule:
-    - cron: "41 1,7,13,19 * * *"
-    - cron: "21 2,8,14,20 * * *"
+    - cron: "41 * * * *"
   # A push that changes the guidance code (or this workflow) republishes the
   # documents immediately: the builders are pure functions of upstream data +
   # code, so fresh code should mean fresh documents, not documents from the

@@ -38,7 +38,7 @@ def deck(kind, sid):
     b, n, y = sid[:2], sid[2:4], sid[4:]
     url = (f"https://ftp.nhc.noaa.gov/atcf/aid_public/a{b}{n}{y}.dat.gz" if kind == "a"
            else f"https://ftp.nhc.noaa.gov/atcf/btk/b{b}{n}{y}.dat")
-    raw = get(url, 600)
+    raw = get(url, 180)
     if kind == "a": raw = gzip.decompress(raw)
     out = []
     for line in raw.decode("utf8", "replace").splitlines():
@@ -104,7 +104,7 @@ def _when(s, y, mo):
 
 def tcpod(tokens):
     """the storm's tasked flights from today's Plan of the Day (two flights per row, side by side)"""
-    try: d = jget(f"{CDN}/recon/tcpod.json", 600)
+    try: d = jget(f"{CDN}/recon/tcpod.json", 300)
     except Exception: return None
     raw = d.get("raw", ""); vf = d.get("valid_from_utc") or datetime.utcnow().strftime("%Y-%m")
     y, mo = int(vf[:4]), int(vf[5:7])
@@ -152,12 +152,12 @@ def tcpod(tokens):
 def recon(sid, name, basin, tokens):
     out = {"current": None, "missions": [], "plan": tcpod(tokens)}
     try:
-        man = jget(f"{CDN}/recon/manifest.json", 120)
+        man = jget(f"{CDN}/recon/manifest.json", 60)
         for s in man.get("storms", []):
             if (s.get("atcf") or "").lower() == sid or s.get("slug") == sid: out["missions"].append(s)
     except Exception: pass
     try:
-        c = jget(f"{CDN}/recon/current.json", 60)
+        c = jget(f"{CDN}/recon/current.json", 20)
         m = c.get("mission") or {}
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(m.get("valid_end", "2000-01-01T00:00:00Z").replace("Z", "+00:00"))).total_seconds() / 3600
         if c.get("has_active") and (m.get("basin") or "").lower() == basin and age < 12:
@@ -172,7 +172,7 @@ def recon(sid, name, basin, tokens):
     return out
 
 def advisory_text(url):
-    try: t = get(url, 300).decode("utf8", "replace")
+    try: t = get(url, 60).decode("utf8", "replace")
     except Exception: return None
     m = re.search(r"<pre[^>]*>(.*?)</pre>", t, re.S)
     t = m.group(1) if m else t
@@ -228,7 +228,7 @@ def bundle(sid, nhc_list):
     if st.get("classification") in ("TD", "PTC") and name: tokens.append(f"DEPRESSION {name}")
     txt = None
     try:
-        cs = jget("https://www.nhc.noaa.gov/CurrentStorms.json", 120)
+        cs = jget("https://www.nhc.noaa.gov/CurrentStorms.json", 20)
         raw = next((s for s in cs["activeStorms"] if s["id"] == sid), {})
         if raw.get("publicAdvisory", {}).get("url"): txt = advisory_text(raw["publicAdvisory"]["url"])
     except Exception: pass

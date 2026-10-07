@@ -75,10 +75,24 @@ const ease = p => 1 - Math.pow(1 - p, 3);
   }
   if (!SID) { $("vit").innerHTML = `<div class="v-name"><span class="k">Situation Room</span><b>All quiet</b></div><div class="rnote">No active NHC storms.</div>`; return; }
   await refresh(true);
-  setInterval(() => refresh(false), 60e3);
+  /* near-instant updates: the live writer (situation/live.py) publishes a ~200-byte heartbeat with a content hash per
+     document; poll it every 8 s and re-download the bundle only when its hash moves. The 60 s full refresh is the
+     fallback for when the heartbeat is missing or stale. */
+  setInterval(liveTick, 8e3);
+  setInterval(() => { if (!LIVE.ok || Date.now() - LIVE.seen > 90e3) refresh(false); }, 60e3);
   setInterval(tick, 1000);
 })();
 
+const LIVE = { ok: false, seen: 0, h: null, t: null };
+async function liveTick() {
+  let j; try { j = await (await fetch(`${CDN}/situation/live.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { LIVE.ok = false; return; }
+  const age = Date.now() - Date.parse(j.t); LIVE.ok = age < 5 * 60e3; LIVE.t = j.t;
+  if (!LIVE.ok) { stale(true); return; }
+  LIVE.seen = Date.now();
+  const h = `${j.h?.[SID] || ""}|${j.h?.index || ""}`;
+  if (LIVE.h !== null && h !== LIVE.h) refresh(false);
+  LIVE.h = h;
+}
 const sig = d => ({ adv: [d.nhc.advisory, d.nhc.intensity, d.nhc.pressure, (d.nhc.points || []).length, d.nhc.lastUpdate].join("|"), best: (d.best || []).length,
   models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: `${d.recon?.current?.n_obs || 0}|${d.recon?.current?.valid_end || ""}`,
   plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
@@ -175,7 +189,8 @@ function nextAdvisory() {
 function vitalsQuiet() { const e = $("vAgo"); if (e) e.textContent = "just now"; }
 function tick() {
   if (!D) return;
-  const ag = $("vAgo"); if (ag && D.fetched) { const s = Math.round((Date.now() - D.fetched) / 1e3); ag.textContent = s < 50 ? "just now" : `${Math.round(s / 60)} min ago`; }
+  const ag = $("vAgo"), last = Math.max(D.fetched || 0, LIVE.ok ? LIVE.seen : 0);
+  if (ag && last) { const s = Math.round((Date.now() - last) / 1e3); ag.textContent = s < 50 ? "just now" : `${Math.round(s / 60)} min ago`; }
   const t = nextAdvisory();
   if (t && $("nTime")) { $("nTime").textContent = `${hm(t)} ${TZ}`; $("nCount").textContent = `in ${until(t)}`;
     $("nRing").style.strokeDashoffset = String(1 - Math.max(0, Math.min(1, (t - Date.now()) / (6 * 36e5)))); }
@@ -549,7 +564,10 @@ const LY = {
 };
 const DATA = ["fields", "cone", "radii", "ww", "track", "points", "best", "sat", "mw", "ascat", "glm", "recon", "fixes", "models", "gefs"];
 const ON = new Set(["now", "cities", "lines"]);
+/* layers parked while they are reworked: kept in code, kept off the page (the Environment tab and its GFS fields) */
+const LY_HIDDEN = new Set(["fields"]);
 function setLayer(id, on, a = true) {
+  if (on && LY_HIDDEN.has(id)) return;
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
   if (!on && !ON.has(id)) return;
   if (on) { ON.add(id); LY[id].on(a); } else { ON.delete(id); lclear(id); LY[id].off(); }
@@ -807,9 +825,6 @@ const TABS = [
     cam() { const cur = D.recon?.current, c = [pos(), ...(D.recon?.plan?.flights || []).filter(f => f.pos).map(f => f.pos)];
       if (cur) c.push(...cur.track.filter((p, i) => i % 4 === 0).map(p => [p[0], p[1]])); fit(c, 140, { right: 290, bottom: 70, left: 60, maxZoom: 6.2 }); },
     hdr: () => { const nf = nextFlight(), cur = D.recon?.current; return ["Hurricane Hunters", nf ? `Next fix ${dayhm(isoMs(nf.fix[0]))} ${TZ}` : cur ? `${ACFT(cur.aircraft)} today` : "No flights tasked", "RECON"]; } },
-  { id: "env", label: "Environment", layers: ["fields", "track", "best"], anim: [],
-    cam() { const c = pos(); MAP.jumpTo({ center: [c[0] + 2, c[1] + 3], zoom: 3.9 }); },
-    hdr: () => { const I = FLD.idx; return [FIELDN[FLD.field], I ? `${I.model} ${I.cycle.slice(11, 13)}Z · F${String(FLD.fh).padStart(3, "0")} · ${dayhm(fldValid())} ${TZ}` : "GFS", "GFS"]; } },
   { id: "models", label: "Models", layers: ["models", "gefs", "best"], anim: ["models", "gefs"], ok: () => Object.keys(D.models?.aids || {}).length,
     cam() { const { aids } = modelSet(); fit(aids.flatMap(a => a.pts.filter(p => p[0] <= 84).map(p => [p[2], p[1]])).concat(D.fc.filter(p => p.hr <= 84).map(p => [p.lon, p.lat])), 135, { right: 300, bottom: 90, left: 60, maxZoom: 6.2 }); },
     hdr: () => { const cyc = D.models?.cycle ? `${D.models.cycle.slice(11, 13)}Z` : ""; return ["Track Guidance", `${cyc} early-cycle aids`, cyc ? `${cyc} MODELS` : "MODELS"]; } }
@@ -829,8 +844,8 @@ function buildTabs() {
   $("lyrBtn").onclick = () => { const p = $("lyr"), o = !p.classList.contains("open"); p.classList.toggle("open", o); $("lyrBtn").classList.toggle("on", o); $("lyrBtn").setAttribute("aria-expanded", o); };
 }
 function buildLayers() {
-  const gs = [...new Set(Object.values(LY).map(l => l.grp))];
-  $("lyr").innerHTML = `<div class="lyr-h"><b>Map layers</b><button id="lyrX" aria-label="Close">×</button></div>` + gs.map(g => `<h5>${g}</h5>` + Object.entries(LY).filter(([, l]) => l.grp === g).map(([id, l]) =>
+  const gs = [...new Set(Object.entries(LY).filter(([id]) => !LY_HIDDEN.has(id)).map(([, l]) => l.grp))];
+  $("lyr").innerHTML = `<div class="lyr-h"><b>Map layers</b><button id="lyrX" aria-label="Close">×</button></div>` + gs.map(g => `<h5>${g}</h5>` + Object.entries(LY).filter(([id, l]) => l.grp === g && !LY_HIDDEN.has(id)).map(([id, l]) =>
     `<label class="tg"><span>${esc(l.name)}</span><input type="checkbox" data-l="${id}"><i></i></label>`).join("")).join("");
   $("lyr").querySelectorAll("input[data-l]").forEach(c => c.onchange = () => setLayer(c.dataset.l, c.checked, true));
   $("lyrX").onclick = () => $("lyrBtn").click();
