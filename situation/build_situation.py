@@ -41,7 +41,40 @@ def nhc():
             st.update(points=pts, cone=rings, advisory=adv.group(1).lstrip("0") if adv else "")
         except Exception as e:
             st.update(points=[], cone=[], err=str(e))
+        st.update(radii=radii(s), ww=watches(s))
         out.append(st)
+    return out
+
+def _rings(pm):
+    return [[[round(float(a.split(",")[0]), 3), round(float(a.split(",")[1]), 3)] for a in r.split()] for r in re.findall(r"<coordinates>(.*?)</coordinates>", pm, re.S)]
+
+def radii(s):
+    """wind field: the current 34/50/64-kt radii, and the forecast radii (NHC gives these without times: an envelope)"""
+    out = {"initial": [], "forecast": []}
+    for key, part in (("initialWindExtent", "initial"), ("forecastWindRadiiGIS", "forecast")):
+        try:
+            t = _kml((s.get(key) or {})["kmzFile"])
+            for pm in re.findall(r"<Placemark>(.*?)</Placemark>", t, re.S):
+                n = re.search(r"<name>\s*(\d+)\s*</name>", pm)
+                if n: out[part].append({"kt": int(n.group(1)), "rings": _rings(pm)})
+        except Exception: pass
+    return out
+
+def watches(s):
+    """coastal watches and warnings (NHC's watch/warning KMZ, present only while any are in effect)"""
+    out = []
+    for key in ("windWatchesWarnings", "watchesWarnings"):
+        k = (s.get(key) or {}).get("kmzFile") if isinstance(s.get(key), dict) else None
+        if not k: continue
+        try:
+            t = _kml(k)
+            for pm in re.findall(r"<Placemark>(.*?)</Placemark>", t, re.S):
+                txt = re.sub(r"<[^>]+>", " ", " ".join(re.findall(r"<(?:name|styleUrl|description)>(.*?)</(?:name|styleUrl|description)>", pm, re.S)))
+                kind = next((w for w in ("Hurricane Warning", "Hurricane Watch", "Tropical Storm Warning", "Tropical Storm Watch") if w.lower() in txt.lower()), None)
+                if not kind:
+                    u = txt.upper(); kind = "Hurricane Warning" if "HWR" in u else "Hurricane Watch" if "HWA" in u else "Tropical Storm Warning" if "TWR" in u else "Tropical Storm Watch" if "TWA" in u else None
+                if kind: out.append({"type": kind, "lines": _rings(pm)})
+        except Exception: pass
     return out
 
 # ---------------- geostationary imagery (NASA GIBS, 10-min, every basin): which frames exist in the last 12 h ----------------

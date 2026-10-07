@@ -68,7 +68,7 @@ const ease = p => 1 - Math.pow(1 - p, 3);
 const sig = d => ({ adv: [d.nhc.advisory, d.nhc.intensity, d.nhc.pressure, (d.nhc.points || []).length, d.nhc.lastUpdate].join("|"), best: (d.best || []).length,
   models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: `${d.recon?.current?.n_obs || 0}|${d.recon?.current?.valid_end || ""}`,
   plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
-const NEEDS = { cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
+const NEEDS = { radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
 async function refresh(first) {
   let d;
   try { d = await (await fetch(`${CDN}/situation/${SID}.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { stale(true); return; }
@@ -283,6 +283,12 @@ async function initMap() {
   ["cone", "best", "bestpts", "fc", "gefs", "aids", "ofcl", "recon", "sondes"].forEach(gj);
   MAP.addLayer({ id: "cone-fill", type: "fill", source: "cone", paint: { "fill-color": "#ffffff", "fill-opacity": 0, "fill-opacity-transition": { duration: 900 } } });
   MAP.addLayer({ id: "cone-line", type: "line", source: "cone", paint: { "line-color": "#ffffff", "line-width": 2.2, "line-opacity": 0, "line-opacity-transition": { duration: 900 } } });
+  ["radii", "radiifc", "ww", "ascat", "glm"].forEach(gj);
+  MAP.addLayer({ id: "radiifc", type: "line", source: "radiifc", layout: { visibility: "none" }, paint: { "line-color": ["get", "c"], "line-width": 1, "line-opacity": .55, "line-dasharray": [2, 2] } });
+  MAP.addLayer({ id: "radii-fill", type: "fill", source: "radii", layout: { visibility: "none" }, paint: { "fill-color": ["get", "c"], "fill-opacity": .22 } });
+  MAP.addLayer({ id: "radii", type: "line", source: "radii", layout: { visibility: "none" }, paint: { "line-color": ["get", "c"], "line-width": 1.8 } });
+  MAP.addLayer({ id: "ww-case", type: "line", source: "ww", layout: { visibility: "none", "line-cap": "round" }, paint: { "line-color": "#06101f", "line-width": 9 } });
+  MAP.addLayer({ id: "ww", type: "line", source: "ww", layout: { visibility: "none", "line-cap": "round" }, paint: { "line-color": ["get", "c"], "line-width": 6 } });
   MAP.addLayer({ id: "gefs", type: "line", source: "gefs", layout: { "line-cap": "round", visibility: "none" }, paint: { "line-color": "#cfd8e6", "line-width": 1, "line-opacity": .38 } });
   MAP.addLayer({ id: "aids-case", type: "line", source: "aids", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": "#06101f", "line-width": ["case", ["get", "con"], 5.5, 4], "line-opacity": .55 } });
   MAP.addLayer({ id: "aids", type: "line", source: "aids", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": ["get", "c"], "line-width": ["case", ["get", "con"], 3.4, 2.2] } });
@@ -293,6 +299,10 @@ async function initMap() {
   MAP.addLayer({ id: "recon-case", type: "line", source: "recon", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": "#06101f", "line-width": 5.5, "line-opacity": .6 } });
   MAP.addLayer({ id: "recon", type: "line", source: "recon", layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
     paint: { "line-width": 3, "line-gradient": ["interpolate", ["linear"], ["line-progress"], 0, "#5dd3ff", 0.5, "#ffffff", 1, "#ffd24a"] } });
+  MAP.addLayer({ id: "ascat", type: "symbol", source: "ascat", layout: { visibility: "none", "icon-image": ["get", "i"], "icon-rotate": ["get", "d"], "icon-rotation-alignment": "map",
+    "icon-allow-overlap": false, "icon-padding": 1, "symbol-sort-key": ["-", 0, ["get", "kt"]] } });
+  MAP.addLayer({ id: "glm", type: "circle", source: "glm", layout: { visibility: "none" }, paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 1.6, 8, 3], "circle-color": ["get", "c"],
+    "circle-stroke-color": "#000", "circle-stroke-width": .4, "circle-opacity": .95 } });
   MAP.addLayer({ id: "sondes", type: "circle", source: "sondes", layout: { visibility: "none" }, paint: { "circle-radius": 4.5, "circle-color": ["get", "c"], "circle-stroke-color": "#fff", "circle-stroke-width": 1.5 } });
   // place names: placed by MapLibre, drawn as Tulsa-Live's navy pills (HTML)
   MAP.addLayer({ id: "cities", type: "symbol", source: "omt", "source-layer": "place",
@@ -455,6 +465,32 @@ const LY = {
       pb.innerHTML = `<h4>Tasked center fixes</h4>` + tgs.map((f, i) => `<div style="--i:${i}"><i>${i + 1}</i><span>${esc(f.flight.replace(/^FLIGHT \w+ - /, ""))}<small>${esc(ACFT(f.flight))} · ${esc(f.task.toLowerCase().replace("tail doppler radar", "TDR"))}</small></span><em>${esc(dayhm(isoMs(f.fix[0])))}</em></div>`).join("");
       ladd("fixes", pb); },
     off() {}, leg: () => `<div class="r"><i class="dot" style="background:#ffd24a"></i>Tasked center fix</div>`, cred: "CARCAH Plan of the Day" },
+  radii: { name: "Wind radii (34/50/64 kt)", grp: "Forecast",
+    on() { const R0 = D.nhc.radii || {}, col = { 34: "#ffd24a", 50: "#ff8a1f", 64: "#f5333c" };
+      set("radii", FC((R0.initial || []).sort((a, b) => a.kt - b.kt).map(r => ({ type: "Feature", properties: { c: col[r.kt] || "#fff", kt: r.kt }, geometry: { type: "Polygon", coordinates: r.rings } }))));
+      set("radiifc", FC((R0.forecast || []).map(r => ({ type: "Feature", properties: { c: col[r.kt] || "#fff" }, geometry: { type: "Polygon", coordinates: r.rings } }))));
+      vis(["radii", "radii-fill", "radiifc"], true); },
+    off() { vis(["radii", "radii-fill", "radiifc"], false); },
+    leg: () => `<h4>Wind field (NHC)</h4><div class="r"><i style="background:#ffd24a"></i>34 kt</div><div class="r"><i style="background:#ff8a1f"></i>50 kt</div><div class="r"><i style="background:#f5333c"></i>64 kt</div><div class="r"><i class="dash" style="--c:#ffd24a"></i>Forecast radii</div>`,
+    cred: "Wind radii: NOAA/NHC" },
+  ww: { name: "Watches & warnings", grp: "Forecast",
+    on() { const C = { "Hurricane Warning": "#e3001b", "Hurricane Watch": "#ff6bd6", "Tropical Storm Warning": "#1f6bff", "Tropical Storm Watch": "#ffe14d" }, W = D.nhc.ww || [];
+      set("ww", FC(W.flatMap(w => w.lines.map(l => line(l, { c: C[w.type] || "#fff", t: w.type }))))); vis(["ww", "ww-case"], true);
+      if (!W.length) clock("ww", "WATCHES", "NONE", "no coastal watches or warnings"); },
+    off() { vis(["ww", "ww-case"], false); if (CLK === "ww") clock(null); },
+    leg: () => (D.nhc.ww || []).length ? `<h4>Coastal watches & warnings</h4>${[...new Set(D.nhc.ww.map(w => w.type))].map(t => `<div class="r"><i style="background:${{ "Hurricane Warning": "#e3001b", "Hurricane Watch": "#ff6bd6", "Tropical Storm Warning": "#1f6bff", "Tropical Storm Watch": "#ffe14d" }[t]};height:6px"></i>${esc(t)}</div>`).join("")}` : "",
+    cred: "Watches/warnings: NOAA/NHC" },
+  ascat: { name: "ASCAT winds", grp: "Observations",
+    async on() { const r = await ascatLoad(); if (!ON.has("ascat")) return; if (!r) { clock("ascat", "ASCAT", "NO PASS", "none over this storm in 60 h"); return; }
+      vis("ascat", true); this.pass = r; clock("ascat", r.sensor, hm(Date.parse(r.mid_utc)), `${ago(r.mid_utc)} · peak ${Math.round(r.peak)} kt`); legendNow(); creditNow(); },
+    off() { vis("ascat", false); if (CLK === "ascat") clock(null); },
+    leg() { return this.pass ? `<h4>${esc(this.pass.sensor)} · ${hm(Date.parse(this.pass.mid_utc))} ${TZ}</h4><div class="r"><i style="width:calc(120px*var(--k));background:linear-gradient(90deg,${(window.AscatViewer?.KT_SCALE || []).map(s => s[1]).join(",")})"></i></div><div class="rt"><span>0</span><span>34</span><span>64</span><span>137 kt</span></div>` : ""; },
+    cred: "ASCAT: EUMETSAT / OSI SAF via NASA PO.DAAC" },
+  glm: { name: "Lightning (GLM, 10 min)", grp: "Observations",
+    on() { glmTick(); this.iv = setInterval(glmTick, 60e3); vis("glm", true); },
+    off() { clearInterval(this.iv); vis("glm", false); if (CLK === "glm") clock(null); },
+    leg: () => `<h4>Lightning flashes</h4><div class="r"><i class="dot" style="background:#fff"></i>last 2 min</div><div class="r"><i class="dot" style="background:#ffd24a"></i>2 to 5 min</div><div class="r"><i class="dot" style="background:#ff6a1f"></i>5 to 10 min</div>`,
+    cred: "Lightning: NOAA GOES GLM" },
   models: { name: "Model tracks", grp: "Guidance",
     on(a) { const { M, aids, ofcl } = modelSet(); if (!aids.length) return; vis(["aids", "aids-case"], true);
       const tags = aids.map(x => { const el = document.createElement("div"); el.className = "aid"; el.style.setProperty("--c", AIDC[x.t] || "#fff"); el.textContent = x.t;
@@ -479,7 +515,7 @@ const LY = {
   roads: { name: "Highways", grp: "Map", on() { vis("roads", true); }, off() { vis("roads", false); } },
   lines: { name: "Borders & counties", grp: "Map", on() { vis("lines", true); }, off() { vis("lines", false); } }
 };
-const DATA = ["cone", "track", "points", "best", "sat", "mw", "recon", "fixes", "models", "gefs"];
+const DATA = ["cone", "radii", "ww", "track", "points", "best", "sat", "mw", "ascat", "glm", "recon", "fixes", "models", "gefs"];
 const ON = new Set(["now", "cities", "lines"]);
 function setLayer(id, on, a = true) {
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
@@ -497,6 +533,51 @@ function showMW(o) {
   if (TABS[TAB]?.id === "mw") frame("Microwave Imagery", `${o.sensor} · ${hm(o.t)} ${TZ}`, MWPROD === "color37" ? "37 GHZ" : "89 GHZ");
   creditNow();
   clock("mw", "TAT MW ESTIMATE", o.kt ? `${Math.round(o.kt)} KT` : "N/A", o.kt ? `${mph(o.kt)} mph · ${o.sensor} ${hm(o.t)}` : `partial coverage · ${o.sensor} ${hm(o.t)}`);
+}
+
+
+/* ---------------- ASCAT (the site's ascat feed + ascat.js's barb painter and kt scale) ---------------- */
+async function ascatLoad() {
+  try {
+    const man = await (await fetch(`${CDN}/ascat/manifest.json?t=${Math.floor(Date.now() / 6e5)}`)).json(), ids = [SID, D.precursor].filter(Boolean);
+    const p = (man.passes || []).filter(x => (x.storms || []).some(s => ids.includes(s.slug) && s.dist_km < 450)).sort((a, b) => Date.parse(b.mid_utc) - Date.parse(a.mid_utc))[0];
+    if (!p) return null;
+    const d = await (await fetch(`${CDN}/ascat/${p.file || p.id + ".json"}`)).json(), w = d.wvc, c = pos(), F = [];
+    let peak = 0; const scale = window.AscatViewer?.KT_SCALE || [[0, "#fff"]];
+    for (let i = 0; i < w.la.length; i++) { let lo = w.lo[i]; if (lo > 180) lo -= 360; if (Math.abs(w.la[i] - c[1]) > 12 || Math.abs(((lo - c[0] + 540) % 360) - 180) > 14) continue;
+      const kt = w.kt[i]; peak = Math.max(peak, kt); const b = Math.min(140, Math.round(kt / 5) * 5);
+      F.push({ type: "Feature", properties: { i: barbIcon(b, scale), d: w.dir[i], kt }, geometry: { type: "Point", coordinates: [lo, w.la[i]] } }); }
+    set("ascat", FC(F)); return { ...p, peak };
+  } catch (e) { return null; }
+}
+function barbIcon(kt, scale) {
+  const id = "barb" + kt; if (MAP.hasImage(id)) return id;
+  const c = document.createElement("canvas"), s = 2, W = 40; c.width = c.height = W * s; const g = c.getContext("2d"); g.scale(s, s); g.lineCap = "round";
+  const col = scale.reduce((a, x) => kt >= x[0] ? x[1] : a, scale[0][1]);
+  AscatViewer.drawBarb(g, W / 2, W / 2, kt, 0, "rgba(5,10,20,.85)", 3.2); AscatViewer.drawBarb(g, W / 2, W / 2, kt, 0, col, 1.4);
+  MAP.addImage(id, g.getImageData(0, 0, W * s, W * s), { pixelRatio: s }); return id;
+}
+/* ---------------- GLM lightning: the last 10 minutes of flashes, straight from NOAA's GOES bucket ---------------- */
+const GLM = { files: new Map(), busy: false };
+async function glmTick() {
+  if (GLM.busy) return; GLM.busy = true;
+  try {
+    const sat = SatX.satFor(pos()[0]) === "west" ? "goes18" : "goes19", B = Meso.BUCKET[sat], now = Date.now(), from = now - 10.5 * 6e4, keys = [];
+    for (const t of [now - 36e5, now]) { const d = new Date(t), pre = `GLM-L2-LCFA/${d.getUTCFullYear()}/${String(Meso.jday(d)).padStart(3, "0")}/${String(d.getUTCHours()).padStart(2, "0")}/`;
+      const x = await (await fetch(`${B}/?list-type=2&prefix=${encodeURIComponent(pre)}`)).text();
+      for (const m of x.matchAll(/<Key>([^<]+)<\/Key>/g)) { const tt = Meso.keyTime(m[1]); if (tt >= from) keys.push({ k: m[1], t: tt }); } }
+    for (const k of [...GLM.files.keys()]) if (!keys.some(x => x.k === k)) GLM.files.delete(k);
+    const h = await Meso.h5(), todo = keys.filter(k => !GLM.files.has(k.k));
+    let i = 0; await Promise.all(Array.from({ length: 4 }, async () => { while (i < todo.length) { const k = todo[i++];
+      try { const buf = await (await fetch(`${B}/${k.k}`)).arrayBuffer(), name = "/g" + Math.random().toString(36).slice(2); h.FS.writeFile(name, new Uint8Array(buf));
+        const f = new h.File(name, "r"); GLM.files.set(k.k, { t: k.t, la: f.get("flash_lat").value, lo: f.get("flash_lon").value }); f.close(); h.FS.unlink(name); } catch (e) {} } }));
+    const F = [], n = Date.now();
+    for (const v of GLM.files.values()) { const age = (n - v.t) / 6e4, c = age < 2 ? "#ffffff" : age < 5 ? "#ffd24a" : "#ff6a1f";
+      for (let j = 0; j < v.la.length; j++) F.push({ type: "Feature", properties: { c }, geometry: { type: "Point", coordinates: [v.lo[j], v.la[j]] } }); }
+    set("glm", FC(F));
+    if (ON.has("glm")) { const c = pos(); let near = 0; for (const f of F) { const [x, y] = f.geometry.coordinates; if (Math.hypot((x - c[0]) * Math.cos(c[1] * Math.PI / 180), y - c[1]) < 3) near++; }
+      clock("glm", "LIGHTNING", `${near}`, `flashes within 200 mi · 10 min`); }
+  } catch (e) {} finally { GLM.busy = false; }
 }
 
 /* ---------------- satellite loop bar + 4-panel view ---------------- */

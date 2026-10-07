@@ -174,5 +174,5 @@ const Meso = (() => {
     opacity(o) { if (this.map.getLayer(this.id)) this.map.setPaintProperty(this.id, "raster-opacity", o); }
     emit() { for (const f of SatX.P.subs) f(SatX.P.t, SatX.span()); }
   }
-  return { Loop, cover, BANDS };
+  return { Loop, cover, BANDS, h5, BUCKET, jday, keyTime };
 })();
