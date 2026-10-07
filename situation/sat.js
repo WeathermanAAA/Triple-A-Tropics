@@ -111,7 +111,9 @@ const SatX = (() => {
     const s = span(), M = master();
     if (s && M) {
       const F = M.frames;
-      if (P.t < s[0] || P.t > s[1] || F.findIndex(f => f.t >= P.t - 1) < 0) P.t = F[F.length - 1].t;
+      /* bounds come from the master's own frames, not from the hours span: a loop that reaches a few minutes past
+         `hours` (the meso/5-min lists pad the window) must not snap back to the newest frame on every wrap */
+      if (P.t < F[0].t - 1 || P.t > F[F.length - 1].t + 1) P.t = F[F.length - 1].t;
       if (P.playing) {
         const k = F.findIndex(f => f.t >= P.t - 1), interval = 1000 / SPEEDS[P.speed].fps * (k === F.length - 1 ? DWELL_NEWEST : 1);
         if (!P.last) P.last = now;
