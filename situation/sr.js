@@ -531,7 +531,7 @@ SatX.P.subs.add((t, s) => {
   const sl = lc.querySelector(".tl input"), L = [...SatX.P.loops][0], f = L?.current;
   if (sl && document.activeElement !== sl) sl.value = Math.round((t - s[0]) / ((s[1] - s[0]) || 1) * 1000);
   const key = `${f?.t}|${L?.loading}|${L?.frames.length}`; if (key === LCKEY) return; LCKEY = key;
-  const lt = $("lcT"); if (lt && f) lt.textContent = `${hm(f.t)} ${TZ}${L.loading ? " · loading" : ""}`;
+  const lt = $("lcT"); if (lt && f) lt.innerHTML = `${hm(f.t)} ${TZ}${L.loading ? "<em>loading</em>" : ""}`;
   if (!QUAD.on && ON.has("sat") && f) {
     const back = Math.round((s[1] - f.t) / 6e4);
     clock("sat", `${SatX.BANDS[MAINLOOP.band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");

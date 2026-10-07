@@ -452,9 +452,9 @@ details.hzs .hz{margin:0 6px 6px}
 @media (max-width:1500px){.room{grid-template-columns:280px minmax(0,1fr)}.rail{grid-template-columns:1fr 1fr}}
 
 /* ---------- v5: satellite loop bar ---------- */
-.lc{position:absolute;z-index:8;left:50%;transform:translateX(-50%);bottom:calc(14px*var(--k));display:flex;align-items:center;gap:8px;padding:6px 10px;
-  background:linear-gradient(180deg,color-mix(in srgb,var(--cat) 24%,rgba(20,36,86,.96)),color-mix(in srgb,var(--cat) 10%,rgba(10,20,50,.96)));
-  border:1px solid var(--line);border-top:3px solid var(--cat);border-radius:3px;box-shadow:0 8px 20px rgba(0,0,0,.55);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+.lc{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:7px 10px;margin-top:-14px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--cat) 24%,#14244f),color-mix(in srgb,var(--cat) 10%,#0a1432));
+  border:1px solid var(--line);border-top:0;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
 .lc[hidden]{display:none}
 .lc button{appearance:none;font:inherit;color:var(--ice);background:rgba(5,9,20,.45);border:1px solid var(--line);border-radius:2px;padding:4px 7px 3px;cursor:pointer;line-height:1}
 .lc button:hover{color:#fff;border-color:var(--cat)}
@@ -462,15 +462,12 @@ details.hzs .hz{margin:0 6px 6px}
 .lc .pp{width:30px;height:26px;padding:0;display:flex;align-items:center;justify-content:center;background:var(--cat);color:var(--catInk);border-color:var(--cat)}
 .lc .pp svg{width:14px;height:14px}
 .lc .seg{display:flex;gap:2px}
-.lc .tl{display:flex;align-items:center;gap:8px}
-.lc .tl input{width:150px;accent-color:var(--cat)}
-.lc .lt{min-width:96px;font-size:12px;color:#fff;font-variant-numeric:tabular-nums}
+.lc .tl{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:180px}
+.lc .tl input{flex:1;min-width:80px;accent-color:var(--cat)}
+.lc .lt{flex:none;width:170px;font-size:12px;color:#fff;font-variant-numeric:tabular-nums;overflow:hidden}
+.lc .lt em{font-style:normal;color:var(--ice);font-size:10px;margin-left:6px}
 .lc label{display:flex;align-items:center;gap:5px;color:var(--ice);cursor:pointer}
-.lc label input[type=checkbox]{accent-color:var(--cat)}
-.lc .op input{width:60px;accent-color:var(--cat)}
-.stage:has(.lc:not([hidden])) .clock{bottom:calc(64px*var(--k))}
-.stage:has(.lc:not([hidden])) .legend{bottom:calc(64px*var(--k))}
-
+.lc .op input{width:70px;accent-color:var(--cat)}
 /* ---------- v5: 4-panel ---------- */
 .qgrid{position:absolute;inset:0;z-index:4;display:none;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px;background:var(--cat)}
 .stage.quad .qgrid{display:grid}
