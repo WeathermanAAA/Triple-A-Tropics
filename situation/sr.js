@@ -317,12 +317,6 @@ async function initMap() {
   MAP.addLayer({ id: "fld", type: "raster", source: "fld", layout: { visibility: "none" }, paint: { "raster-opacity": .92, "raster-fade-duration": 0, "raster-resampling": "linear" } });
   MAP.addLayer({ id: "lines", type: "raster", source: "lines", paint: { "raster-fade-duration": 0 } });
   MAP.addLayer({ id: "roads", type: "raster", source: "roads", layout: { visibility: "none" }, paint: { "raster-fade-duration": 0, "raster-opacity": .9 } });
-  /* coastlines + country borders drawn ABOVE the imagery (the baked line tiles sit under it): satellite and microwave only */
-  ["geo-coast", "geo-border"].forEach(gj);
-  for (const id of ["geo-coast", "geo-border"]) {
-    MAP.addLayer({ id: id + "-case", type: "line", source: id, layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": "#05080f", "line-width": 2.6, "line-opacity": .55 } });
-    MAP.addLayer({ id, type: "line", source: id, layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": "#f2f6fb", "line-width": id === "geo-coast" ? 1.1 : 1, "line-opacity": .9, ...(id === "geo-border" ? { "line-dasharray": [3, 1.5] } : {}) } });
-  }
   ["cone", "best", "bestpts", "fc", "gefs", "aids", "ofcl", "recon", "sondes"].forEach(gj);
   MAP.addLayer({ id: "cone-fill", type: "fill", source: "cone", paint: { "fill-color": "#ffffff", "fill-opacity": 0, "fill-opacity-transition": { duration: 900 } } });
   MAP.addLayer({ id: "cone-line", type: "line", source: "cone", paint: { "line-color": "#ffffff", "line-width": 2.2, "line-opacity": 0, "line-opacity-transition": { duration: 900 } } });
@@ -436,13 +430,6 @@ function labelSides(pts) { return pts.map((p, i) => { const a = pts[Math.max(0, 
 /* flight-level wind colours (kt): the storm's own Saffir-Simpson colours above 34 kt, cool tones below */
 const FLW = [[0, "#7f8fa6", "<34"], [34, "#46c56a", "34"], [50, "#2fd3b0", "50"], [64, "#ffe14d", "64"], [83, "#ff9a2f", "83"], [96, "#f5333c", "96"], [113, "#e33ad4", "113"], [137, "#b03bff", "137"]];
 const flwCol = kt => { let c = FLW[0][1]; if (kt == null) return c; for (const x of FLW) if (kt >= x[0]) c = x[1]; return c; };
-/* coastlines and country borders over imagery: on while the satellite loop or a microwave pass is showing */
-let GEO_LOADED = false;
-function geoOutlines() {
-  const on = ON.has("sat") || ON.has("mw");
-  if (on && !GEO_LOADED) { GEO_LOADED = true; MAP.getSource("geo-coast").setData("/ne_50m_coastline.geojson"); MAP.getSource("geo-border").setData("/ne_50m_admin_0_boundary_lines_land.geojson"); }
-  vis(["geo-coast", "geo-coast-case", "geo-border", "geo-border-case"], on);
-}
 const PLANE = c => `<svg viewBox="0 0 24 24"><path d="M2 13l8-1 4-8h3l-2 8 6 0 2-3h1.5l-1 4.5 1 4.5H23l-2-3-6 0 2 8h-3l-4-8-8-1z" fill="${c}" stroke="#06101f" stroke-width="1"/></svg>`;
 const ACFT = s => /NOAA ?9|NOAA 49/.test(s) ? "NOAA G-IV" : /NOAA ?[23]|NOAA 4[23]/.test(s) ? "NOAA P-3" : /TEAL|AF/.test(s) ? "USAF WC-130J" : s;
 let MWSEL = null, MWPROD = "color91";
@@ -481,15 +468,15 @@ const LY = {
     leg: () => `<div class="r"><i class="dot" style="background:#3fa4ff;border:1.5px solid #06101f"></i>Past track</div>` },
   now: { name: "Storm position", grp: "Forecast", on() { nowMarker(); }, off() { NOWM?.remove(); NOWM = null; } },
   sat: { name: "Satellite loop", grp: "Observations",
-    on() { SATL().show(true); loopBar(true); geoOutlines(); },
-    off() { MAINLOOP.show(false); MESOLOOP.show(false); LIVELOOP.show(false); loopBar(false); if (CLK === "sat") clock(null); geoOutlines(); },
+    on() { SATL().show(true); loopBar(true); },
+    off() { MAINLOOP.show(false); MESOLOOP.show(false); LIVELOOP.show(false); loopBar(false); if (CLK === "sat") clock(null); },
     leg: () => { const L = SATL(), b = BANDSET()[L.band]; return `<h4>${esc(SRC !== "fd" ? L.label : SatX.SATS[L.sat].name)} ${esc(b.t)}</h4><div class="r"><i style="width:calc(90px*var(--k));background:${L.band === "ir" && SatX.P.ramp !== "native" ? SatX.rampCSS(SatX.P.ramp) : L.band === "wv" && SRC !== "fd" ? SatX.rampCSS("wv") : L.band === "ir" ? "linear-gradient(90deg,#444,#ddd,#3fa4ff,#46c56a,#ffe14d,#f5333c,#888)" : "linear-gradient(90deg,#123,#9ab,#fff)"}"></i>${esc(b.sub || "")}</div>${L.band === "ir" || (L.band === "wv" && SRC !== "fd") ? `<div class="rt"><span>+40°C</span><span>−95°C</span></div>` : ""}`; },
     get cred() { return SRC === "fd" ? "Satellite: NOAA GOES / JMA Himawari via NASA GIBS" : "Satellite: NOAA GOES-R ABI (NOAA Open Data)"; } },
   mw: { name: "Microwave (latest pass)", grp: "Observations",
-    on() { const list = mwPasses(), o = mwPick(); if (!o) return; vis("mw", true); showMW(o); geoOutlines();
+    on() { const list = mwPasses(), o = mwPick(); if (!o) return; vis("mw", true); showMW(o);
       const st = $("strip"); st.innerHTML = list.slice(-7).map((x, i) => `<button data-id="${x.id}" class="${x.id === o.id ? "on" : ""}" style="--i:${i}"><img alt="" src="${CDN}/microwave/${x.img.color91 || x.img.color37}"><span>${hm(x.t)}</span></button>`).join("");
       st.querySelectorAll("button").forEach(b => b.onclick = () => { MWSEL = b.dataset.id; showMW(list.find(x => x.id === b.dataset.id)); st.querySelectorAll("button").forEach(c => c.classList.toggle("on", c === b)); }); },
-    off() { vis("mw", false); MAP.setPaintProperty("mw", "raster-opacity", 0); $("strip").innerHTML = ""; geoOutlines(); },
+    off() { vis("mw", false); MAP.setPaintProperty("mw", "raster-opacity", 0); $("strip").innerHTML = ""; },
     leg: () => `<h4>89 GHz colour composite</h4><div class="r"><i style="background:#ff2d55"></i>Deep convection / ice</div><div class="r"><i style="background:#26e0d0"></i>Low cloud, warm rain</div>`,
     cred: "Microwave: NASA GPM/PPS, processed by Triple-A-Tropics" },
   recon: { name: "Recon flight", grp: "Observations",

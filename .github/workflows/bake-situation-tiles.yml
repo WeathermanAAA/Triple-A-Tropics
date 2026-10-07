@@ -8,6 +8,9 @@ on:
       zmax:
         description: "Deepest zoom to bake"
         default: "6"
+      kinds:
+        description: "Tile sets to bake (comma list of base,lines,roads)"
+        default: "base,lines,roads"
 
 permissions:
   contents: read
@@ -28,7 +31,7 @@ jobs:
       - name: Install deps
         run: pip install --no-cache-dir numpy pillow
       - name: Bake tiles
-        run: python situation/bake_tiles.py --out-dir situation_tiles --zmax "${{ github.event.inputs.zmax || '6' }}" --workers 12
+        run: python situation/bake_tiles.py --out-dir situation_tiles --zmax "${{ github.event.inputs.zmax || '6' }}" --kinds "${{ github.event.inputs.kinds || 'base,lines,roads' }}" --workers 12
       - name: Sync to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

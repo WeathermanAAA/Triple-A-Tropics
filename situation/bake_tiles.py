@@ -17,12 +17,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", default="situation_tiles"); ap.add_argument("--zmin", type=int, default=2); ap.add_argument("--zmax", type=int, default=6)
     ap.add_argument("--bbox", default="-180,-2,-5,55"); ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--kinds", default="base,lines,roads", help="which tile sets to bake (e.g. just lines after a lines-style change)")
     a = ap.parse_args(); w, s, e, n = map(float, a.bbox.split(","))
     jobs = []
     for z in range(a.zmin, a.zmax + 1):
         for x in range(tx(w, z), min(tx(e, z), 2 ** z - 1) + 1):
             for y in range(ty(n, z), min(ty(s, z), 2 ** z - 1) + 1):
-                for kind in ("base", "lines", "roads"):
+                for kind in a.kinds.split(","):
                     if kind == "roads" and z < 5: continue
                     jobs.append((kind, z, x, y))
     print(f"baking {len(jobs)} tiles", flush=True)

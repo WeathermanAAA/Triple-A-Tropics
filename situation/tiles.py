@@ -174,6 +174,23 @@ def counties():
         _COUNTIES = rings
     return _COUNTIES
 
+# ---------------- coastline (Natural Earth 10 m, the repo's own copy) ----------------
+_COAST = None
+def coastline():
+    """the coast as ink lines in the lines layer, so the map keeps its outline where imagery (which sits under the lines
+    layer) covers the base tiles' water edge"""
+    global _COAST
+    if _COAST is None:
+        g = json.load(open(os.path.join(os.path.dirname(HERE), "ne_10m_coastline.geojson")))
+        out = []
+        for f in g["features"]:
+            gm = f["geometry"]
+            for ln in ([gm["coordinates"]] if gm["type"] == "LineString" else gm["coordinates"]):
+                r = np.array(ln, np.float64)
+                if len(r) > 1: out.append((r[:, 0].min(), r[:, 0].max(), r[:, 1].min(), r[:, 1].max(), r))
+        _COAST = out
+    return _COAST
+
 def tile_bounds(z, x, y):
     n = 2 ** z; lon = lambda X: X / n * 360 - 180; lat = lambda Y: math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * Y / n))))
     return lon(x), lon(x + 1), lat(y + 1), lat(y)
@@ -209,7 +226,7 @@ def base_tile(z, x, y):
     b = io.BytesIO(); Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8)).save(b, "JPEG", quality=88); return b.getvalue()
 
 def lines_tile(z, x, y):
-    """overlay.png's county ink + state lines, transparent"""
+    """overlay.png's county ink + country/state lines + the coastline, transparent"""
     s = T / 256; im = Image.new("RGBA", (T, T), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
     ink = (14, 18, 28)
     if z >= 6:   # counties, like overlay.png (2 px at Tulsa's z9.5 scale)
@@ -218,6 +235,11 @@ def lines_tile(z, x, y):
         for x0, x1, y0, y1, r in counties():
             if x1 < w - pad or x0 > e + pad or y1 < so - pad or y0 > no + pad: continue
             X, Y = ll_px(z, x, y, r[:, 0], r[:, 1]); d.line(list(zip(X.tolist(), Y.tolist())), fill=ink + (150,), width=cw)
+    w, e, so, no = tile_bounds(z, x, y); pad = (e - w) * .02
+    cwd = max(1, round(s * (3 if z >= 6 else 1.4)))   # same weight and ink as the country borders below
+    for x0, x1, y0, y1, r in coastline():
+        if x1 < w - pad or x0 > e + pad or y1 < so - pad or y0 > no + pad: continue
+        X, Y = ll_px(z, x, y, r[:, 0], r[:, 1]); d.line(list(zip(X.tolist(), Y.tolist())), fill=ink + (235,), width=cwd, joint="curve")
     for props, gt, rings in mvt(z, x, y, {"boundary"}).get("boundary", []):
         if props.get("maritime") == 1: continue
         lvl = props.get("admin_level")
