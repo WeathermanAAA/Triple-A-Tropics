@@ -29,9 +29,20 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T01:26:00Z
+updated: 2026-10-07T01:49:00Z
 
 items:
+  - id: meso-poller-renders-failing
+    title: "Meso poller: every render fails while health reports healthy (no frames since Sep 22)"
+    area: satellite
+    status: active
+    note: >-
+      meso/health.json says all five sectors are fresh, but every band's frame list in
+      meso/{slug}/manifest.json is empty and the newest objects are Sep 22 (IR) to Oct 5
+      (WV). Discovery succeeds, /render calls fail, and health only tracks discovery: the
+      absence-looks-like-health bug class. Check the render containers behind
+      RENDER_BASE_URL / RENDER_BASE_URL_COLD and make render failures count in health.
+      The Situation Room no longer depends on it (reads NOAA's bucket directly).
   - id: situation-room-shadow
     title: "Situation Room: storm-specific broadcast page (CycloLab revamp), shadow at /situation/"
     area: apps
@@ -42,7 +53,8 @@ items:
       presets (track and cone, GOES-19 IR loop, 89 GHz microwave, recon, model
       tracks) plus a free layers panel, a 4-panel synced view, smooth GIBS satellite
       loops (IR in TAT, Dvorak BD, grayscale or NASA ramps; VIS, GeoColor, Air Mass,
-      Dust; GOES-East/West and Himawari), intensity chart, peak-by-model board,
+      Dust; GOES-East/West and Himawari; GOES 1-min mesoscale sectors decoded in the
+      browser from NOAA's bucket), intensity chart, peak-by-model board,
       advisory card, recon schedule, crawl. The whole page wears the storm's
       Saffir-Simpson colour and updates itself every 60 s. Data: situation/<sid>.json
       from update-situation.yml every 10 min (move to the box poller before it
