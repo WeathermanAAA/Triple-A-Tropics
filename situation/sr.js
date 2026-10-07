@@ -518,7 +518,6 @@ function buildLoopBar() {
     ${QUAD.on ? "" : `<div class="seg" title="Band">${bands.map(b => `<button data-b="${b}" class="${b === MAINLOOP.band ? "on" : ""}" title="${esc(SatX.BANDS[b].t)}">${SatX.BANDS[b].short}</button>`).join("")}</div>`}
     <div class="seg" title="Loop length">${[1, 3, 6, 12].map(h => `<button data-h="${h}" class="${h === P.hours ? "on" : ""}">${h}H</button>`).join("")}</div>
     <div class="seg" title="Speed">${SatX.SPEEDS.map((s, i) => `<button data-s="${i}" class="${i === P.speed ? "on" : ""}" title="${s.k}">${s.k[0]}</button>`).join("")}</div>
-    <label class="chk" title="Blend between frames"><input type="checkbox" ${P.smooth ? "checked" : ""}>Smooth</label>
     <label class="op" title="Satellite opacity">Opacity<input type="range" min="20" max="100" value="${Math.round(P.opacity * 100)}"></label>`;
   const lc = $("lc");
   lc.querySelector('[data-a="play"]').onclick = () => { P.playing = !P.playing; P.hold = 0; lc.querySelector(".pp").innerHTML = P.playing ? PAUSEI : PLAYI; };
@@ -529,7 +528,6 @@ function buildLoopBar() {
   lc.querySelectorAll("[data-r]").forEach(b => b.onclick = () => { SatX.setRamp(b.dataset.r); buildLoopBar(); legendNow(); });
   lc.querySelectorAll("[data-h]").forEach(b => b.onclick = () => { SatX.setHours(+b.dataset.h); buildLoopBar(); });
   lc.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { P.speed = +b.dataset.s; buildLoopBar(); });
-  lc.querySelector(".chk input").onchange = e => { P.smooth = e.target.checked; };
   lc.querySelector(".op input").oninput = e => SatX.setOpacity(e.target.value / 100);
 }
 let LCKEY = "";
