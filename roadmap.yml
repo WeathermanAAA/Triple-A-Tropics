@@ -29,24 +29,18 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T03:51:00Z
+updated: 2026-10-07T12:38:00Z
 
 items:
   - id: situation-room-google-ensembles
     title: "Situation Room: Google ensembles, suite switching, super ensemble, diagnostics"
     area: apps
-    status: shadow
+    status: planned
     note: >-
       Google DeepMind Weather Lab suites (FNV3, WeatherNext 3, GenCast, FNV3 1000) on the
       Situation Room's Models tab and Ensembles chart, each on its own or pooled into a
       Google super ensemble (equal weight per model, labelled as derived), plus a Google
       diagnostics card. Data from gdmdiag/build.py (update-gdm-diag.yml, R2 models/gdmdiag/).
-      Models tab: an ensemble bar picks GEFS, ECMWF ENS, FNV3, WN3, GenCast or the Google
-      super ensemble (members coloured by model, equal-weight mean, 50/90 % position
-      ellipses). Ensembles chart: toggle chips per suite. Google card under the stage:
-      overview, intensity, intensity change, structure, wind risk (34/50/64-kt and 120-km
-      odds drawn on the main map with a point readout), landfall, compare, trends.
-      Weather Lab keeps an invest's id after naming, so storms also match by position.
       A first cut went onto /models/ by mistake on 2026-10-07 and was reverted.
   - id: meso-poller-renders-failing
     title: "Meso poller: every render fails while health reports healthy (no frames since Sep 22)"

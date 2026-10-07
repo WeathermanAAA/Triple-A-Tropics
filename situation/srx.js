@@ -25,9 +25,7 @@ function rerender() {
   if (!D) return;
   setZone(D.text?.issued);
   vitals(); dials(); railKey(); railRecon(); crawl();
-  const v = document.querySelector(".c-int .ctab button.on")?.dataset.v;
-  if (typeof gdmCard === "function") gdmCard();
-  if (ON.has("ens")) { lclear("ens"); LY.ens.off(); LY.ens.on(false); }
+  const v = document.querySelector(".ctab button.on")?.dataset.v;
   if (v === "ens") ensChart(); else if (v === "guid") guidanceBoard(); else intensityChart();
   for (const id of ["points", "mw", "ascat", "fields", "fixes"]) if (ON.has(id)) { lclear(id); LY[id].off(); LY[id].on(false); }
   if (TABS[TAB]) frame(...TABS[TAB].hdr());

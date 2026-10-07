@@ -76,14 +76,13 @@ const ease = p => 1 - Math.pow(1 - p, 3);
   if (!SID) { $("vit").innerHTML = `<div class="v-name"><span class="k">Situation Room</span><b>All quiet</b></div><div class="rnote">No active NHC storms.</div>`; return; }
   await refresh(true);
   setInterval(() => refresh(false), 60e3);
-  setInterval(() => { if (typeof gdmCard === "function") gdmCard(true); }, 15 * 60e3);
   setInterval(tick, 1000);
 })();
 
 const sig = d => ({ adv: [d.nhc.advisory, d.nhc.intensity, d.nhc.pressure, (d.nhc.points || []).length, d.nhc.lastUpdate].join("|"), best: (d.best || []).length,
   models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: `${d.recon?.current?.n_obs || 0}|${d.recon?.current?.valid_end || ""}`,
   plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
-const NEEDS = { ens: ["models"], gwind: [], fields: [], radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
+const NEEDS = { fields: [], radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
 async function refresh(first) {
   let d;
   try { d = await (await fetch(`${CDN}/situation/${SID}.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { stale(true); return; }
@@ -101,7 +100,6 @@ async function refresh(first) {
   document.documentElement.style.setProperty("--catInk", inkOn(catOf(D.kt).c));
   if (first) {
     await initMap(); buildTabs(); buildLayers(); vitals(); dials(); railKey(); railRecon(); intensityChart(); guidanceBoard(); crawl(); syncData();
-    if (typeof gdmCard === "function") gdmCard();
     await Promise.race([MAP.once("idle"), sleep(3000)]);
     if (typeof srxInit === "function") srxInit();
     const hv = typeof parseView === "function" ? parseView() : {}, ti = TABS.findIndex(t => t.id === hv.tab && (!t.ok || t.ok()));
@@ -295,7 +293,6 @@ async function initMap() {
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
   MAP.on("moveend", hashKick);
-  MAP.on("mousemove", e => { if (typeof gwindReadout === "function") gwindReadout(e); });
   MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw");
   LIVESEC = Meso.coverLive(...pos()); if (LIVESEC) { SRC = "live"; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); }
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
@@ -303,8 +300,6 @@ async function initMap() {
   MAP.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 700 }, "raster-fade-duration": 0 } });
   MAP.addSource("fld", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
   MAP.addLayer({ id: "fld", type: "raster", source: "fld", layout: { visibility: "none" }, paint: { "raster-opacity": .92, "raster-fade-duration": 0, "raster-resampling": "linear" } });
-  MAP.addSource("gwind", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
-  MAP.addLayer({ id: "gwind", type: "raster", source: "gwind", layout: { visibility: "none" }, paint: { "raster-opacity": .85, "raster-fade-duration": 0, "raster-resampling": "nearest" } });
   MAP.addLayer({ id: "lines", type: "raster", source: "lines", paint: { "raster-fade-duration": 0 } });
   MAP.addLayer({ id: "roads", type: "raster", source: "roads", layout: { visibility: "none" }, paint: { "raster-fade-duration": 0, "raster-opacity": .9 } });
   ["cone", "best", "bestpts", "fc", "gefs", "aids", "ofcl", "recon", "sondes"].forEach(gj);
@@ -317,11 +312,6 @@ async function initMap() {
   MAP.addLayer({ id: "ww-case", type: "line", source: "ww", layout: { visibility: "none", "line-cap": "round" }, paint: { "line-color": "#06101f", "line-width": 9 } });
   MAP.addLayer({ id: "ww", type: "line", source: "ww", layout: { visibility: "none", "line-cap": "round" }, paint: { "line-color": ["get", "c"], "line-width": 6 } });
   MAP.addLayer({ id: "gefs", type: "line", source: "gefs", layout: { "line-cap": "round", visibility: "none" }, paint: { "line-color": "#cfd8e6", "line-width": 1, "line-opacity": .38 } });
-  ["ens", "ensmean", "ensell"].forEach(gj);
-  MAP.addLayer({ id: "ens", type: "line", source: "ens", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": ["get", "c"], "line-width": 1.1, "line-opacity": .5 } });
-  MAP.addLayer({ id: "ensell", type: "line", source: "ensell", layout: { visibility: "none" }, paint: { "line-color": "#ffffff", "line-width": ["case", ["==", ["get", "p"], 50], 1.6, 1], "line-opacity": ["case", ["==", ["get", "p"], 50], .85, .5], "line-dasharray": [3, 2] } });
-  MAP.addLayer({ id: "ensmean-case", type: "line", source: "ensmean", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": "#06101f", "line-width": 6, "line-opacity": .6 } });
-  MAP.addLayer({ id: "ensmean", type: "line", source: "ensmean", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": ["get", "c"], "line-width": 3 } });
   MAP.addLayer({ id: "aids-case", type: "line", source: "aids", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": "#06101f", "line-width": ["case", ["get", "con"], 5.5, 4], "line-opacity": .55 } });
   MAP.addLayer({ id: "aids", type: "line", source: "aids", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": ["get", "c"], "line-width": ["case", ["get", "con"], 3.4, 2.2] } });
   MAP.addLayer({ id: "best-line", type: "line", source: "best", layout: { "line-cap": "round" }, paint: { "line-color": "#ffffff", "line-width": 2, "line-dasharray": [0.1, 2.2], "line-opacity": .95 } });
@@ -553,32 +543,11 @@ const LY = {
       set("gefs", FC([])); llater("gefs", 500, () => lanim("gefs", 5200, p => set("gefs", FC(gefs.map(g => line(grow(g, ease(p) * 120))))))); },
     off() { set("gefs", FC([])); vis("gefs", false); },
     leg: () => `<div class="r"><i style="background:#cfd8e6;height:2px"></i>GEFS members (${Object.keys(D.models?.gefs || {}).length})</div>`, cred: "GEFS via ATCF" },
-  ens: { name: "Ensemble members", grp: "Guidance",
-    async on(a) {
-      const E = await ensTracks(ENSEL); if (!ON.has("ens")) return; ensBar();
-      if (!E || !E.tracks.length) { legendNow(); return; }
-      vis(["ens", "ensmean", "ensmean-case", "ensell"], true); ENSCUR = E;
-      const H = 168, mc = E.derived ? "#ffb83a" : "#ffffff";
-      const ell = () => set("ensell", FC(ENSELL && E.ell ? Object.entries(E.ell).filter(([h]) => +h <= 120).flatMap(([h, o]) => ["50", "90"].map(p => line(o[p].map(q => [q[1], q[0]]).concat([[o[p][0][1], o[p][0][0]]]), { p: +p }))) : []));
-      const draw = tau => { set("ens", FC(E.tracks.map(t => line(grow(t.pts, Math.min(tau, H)), { c: t.c })))); if (E.mean) set("ensmean", FC([line(grow(E.mean, Math.min(tau, H)), { c: mc })])); };
-      if (!a) { draw(H); ell(); legendNow(); return; }
-      draw(0); llater("ens", 500, () => lanim("ens", 5200, p => draw(ease(p) * H), ell)); legendNow(); },
-    off() { ["ens", "ensmean", "ensell"].forEach(id => set(id, FC([]))); vis(["ens", "ensmean", "ensmean-case", "ensell"], false); ENSCUR = null; const b = $("mb"); if (b) b.hidden = true; },
-    leg: () => { const E = ENSCUR; if (!E) return `<div class="r"><i style="background:#9fb3d6;height:2px"></i>${esc(ENSNAME[ENSEL])}: no members for this storm</div>`;
-      const models = E.derived ? E.pooled.map(k => `<div class="r"><i style="background:${GCOL[k]};height:2px"></i>${esc(GNAME[k])}</div>`).join("") : `<div class="r"><i style="background:${E.tracks[0].c};height:2px"></i>${esc(E.label)} members (${E.tracks.length})</div>`;
-      return `<h4>${esc(E.derived ? "Google super ensemble (derived)" : E.label)}${E.cyc ? ` · ${E.cyc.slice(8, 10)}Z` : ""}</h4>${models}${E.mean ? `<div class="r"><i style="background:${E.derived ? "#ffb83a" : "#fff"};height:4px"></i>${E.derived ? "Equal-weight mean" : "Ensemble mean"}</div>` : ""}`; },
-    get cred() { return ["fnv3", "wnv3", "genc", "gdm"].includes(ENSEL) ? "Ensemble: Google DeepMind Weather Lab (experimental)" : ENSEL === "ecmwf_ens" ? "Ensemble: ECMWF open data" : "Ensemble: NOAA GEFS via ATCF"; } },
-  gwind: { name: "Google wind probabilities", grp: "Guidance",
-    async on() { await gdmLoad(); if (!ON.has("gwind")) return; const im = gwindImage(); if (!im) return;
-      MAP.getSource("gwind").updateImage({ url: im.url, coordinates: im.coords }); vis("gwind", true); legendNow(); if (TABS[TAB]?.id) gdmCard(); },
-    off() { vis("gwind", false); },
-    leg: () => `<h4>P(${GDM.wk === "c120" ? "centre within 120 km" : GDM.wk + "-kt winds"}) within ${GDM.wh} h</h4><div class="r"><i style="width:calc(120px*var(--k));height:calc(7px*var(--k));background:linear-gradient(90deg,${PRAMP.map(x => x[1]).join(",")})"></i></div><div class="rt"><span>5%</span><span>50%</span><span>90%</span></div>`,
-    cred: "Wind odds: Google DeepMind Weather Lab (experimental)" },
   cities: { name: "City names", grp: "Map", on() { $("ovl").style.display = ""; }, off() { $("ovl").style.display = "none"; } },
   roads: { name: "Highways", grp: "Map", on() { vis("roads", true); }, off() { vis("roads", false); } },
   lines: { name: "Borders & counties", grp: "Map", on() { vis("lines", true); }, off() { vis("lines", false); } }
 };
-const DATA = ["fields", "gwind", "cone", "radii", "ww", "track", "points", "best", "sat", "mw", "ascat", "glm", "recon", "fixes", "models", "gefs", "ens"];
+const DATA = ["fields", "cone", "radii", "ww", "track", "points", "best", "sat", "mw", "ascat", "glm", "recon", "fixes", "models", "gefs"];
 const ON = new Set(["now", "cities", "lines"]);
 function setLayer(id, on, a = true) {
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
@@ -645,34 +614,6 @@ async function glmTick() {
 
 
 /* ---------------- GFS model fields (situation/build_fields.py): shear, steering, precipitable water ---------------- */
-/* ---------------- ensemble suites on the Models tab: GEFS, ECMWF ENS, each Google model, the Google super ensemble ---------------- */
-const ENSUITES = [["gefs", "GEFS"], ["ecmwf_ens", "ECMWF ENS"], ["fnv3", "FNV3"], ["wnv3", "WN3"], ["genc", "GenCast"], ["gdm", "Google super"]];
-const ENSNAME = Object.fromEntries(ENSUITES);
-let ENSEL = "gdm", ENSCUR = null, ENSELL = true;
-async function ensTracks(k) {
-  if (k === "gefs") { const { gefs } = modelSet(); if (!gefs.length) return null; const cyc = Object.values(D.models?.gefs || {})[0]?.cycle;
-    return { tracks: gefs.map(g => ({ c: "#cfd8e6", pts: g })), mean: ensMean(gefs), label: "GEFS", cyc: cyc ? `${cyc.slice(0, 4)}${cyc.slice(5, 7)}${cyc.slice(8, 10)}${cyc.slice(11, 13)}` : "" }; }
-  if (k === "ecmwf_ens") { const doc = await ensLoad(), s = doc?.sources?.find(x => x.model === "ecmwf_ens"); if (!s) return null;
-    const tr = s.members.map(m => s.taus.map((t, i) => [t, m.lat[i], m.lon[i]]).filter(p => p[1] != null && p[2] != null)).filter(p => p.length > 1);
-    return { tracks: tr.map(p => ({ c: "#ff7a5c", pts: p })), mean: ensMean(tr), label: "ECMWF ENS", cyc: s.cycle || "" }; }
-  await gdmLoad(); return gdmTracks(k);
-}
-/* plain ensemble mean for GEFS / ECMWF: average position at each hour while at least half the members still exist */
-function ensMean(tracks) {
-  const by = new Map(); for (const t of tracks) for (const p of t) { if (!by.has(p[0])) by.set(p[0], []); by.get(p[0]).push(p); }
-  return [...by.keys()].sort((a, b) => a - b).filter(h => by.get(h).length >= tracks.length / 2).map(h => { const P = by.get(h), lo0 = P[0][2];
-    return [h, P.reduce((s, p) => s + p[1], 0) / P.length, P.reduce((s, p) => s + lo0 + ((p[2] - lo0 + 540) % 360) - 180, 0) / P.length]; });
-}
-async function ensBar() {
-  const b = $("mb"); if (!b) return; b.hidden = !ON.has("ens"); if (b.hidden) return;
-  await gdmLoad(); const ec = (await ensLoad())?.sources?.some(s => s.model === "ecmwf_ens"), have = { gefs: modelSet().gefs.length > 0, ecmwf_ens: !!ec };
-  for (const k of ["fnv3", "wnv3", "genc", "gdm"]) have[k] = !!GDM.doc?.suites[k];
-  b.innerHTML = `<span class="lt" style="width:auto">ENSEMBLE</span><div class="seg">${ENSUITES.map(([k, l]) => `<button data-es="${k}" class="${k === ENSEL ? "on" : ""}"${have[k] ? "" : " disabled"}>${l.toUpperCase()}</button>`).join("")}</div>` +
-    `<label class="op"><input type="checkbox" id="ensEll"${ENSELL ? " checked" : ""}> Position ellipses</label>`;
-  b.querySelectorAll("[data-es]").forEach(x => x.onclick = () => { ENSEL = x.dataset.es; lclear("ens"); LY.ens.off(); LY.ens.on(true); legendNow(); creditNow(); if (TABS[TAB]?.id === "models") frame(...TABS[TAB].hdr()); });
-  b.querySelector("#ensEll").onchange = e => { ENSELL = e.target.checked; lclear("ens"); LY.ens.off(); LY.ens.on(false); };
-}
-
 const FLD = { idx: null, field: "shear", fh: 0, playing: false, iv: null };
 const FIELDN = { shear: "Deep-layer shear", steering: "Steering flow", pwat: "Precipitable water" };
 async function fieldsLoad() {
@@ -869,9 +810,9 @@ const TABS = [
   { id: "env", label: "Environment", layers: ["fields", "track", "best"], anim: [],
     cam() { const c = pos(); MAP.jumpTo({ center: [c[0] + 2, c[1] + 3], zoom: 3.9 }); },
     hdr: () => { const I = FLD.idx; return [FIELDN[FLD.field], I ? `${I.model} ${I.cycle.slice(11, 13)}Z · F${String(FLD.fh).padStart(3, "0")} · ${dayhm(fldValid())} ${TZ}` : "GFS", "GFS"]; } },
-  { id: "models", label: "Models", layers: ["models", "ens", "best"], anim: ["models", "ens"], ok: () => Object.keys(D.models?.aids || {}).length || !!GDM.doc,
+  { id: "models", label: "Models", layers: ["models", "gefs", "best"], anim: ["models", "gefs"], ok: () => Object.keys(D.models?.aids || {}).length,
     cam() { const { aids } = modelSet(); fit(aids.flatMap(a => a.pts.filter(p => p[0] <= 84).map(p => [p[2], p[1]])).concat(D.fc.filter(p => p.hr <= 84).map(p => [p.lon, p.lat])), 135, { right: 300, bottom: 90, left: 60, maxZoom: 6.2 }); },
-    hdr: () => { const cyc = D.models?.cycle ? `${D.models.cycle.slice(11, 13)}Z` : ""; return ["Track Guidance", `${cyc} early-cycle aids${ON.has("ens") ? ` · ${ENSNAME[ENSEL]} ensemble` : ""}`, cyc ? `${cyc} MODELS` : "MODELS"]; } }
+    hdr: () => { const cyc = D.models?.cycle ? `${D.models.cycle.slice(11, 13)}Z` : ""; return ["Track Guidance", `${cyc} early-cycle aids`, cyc ? `${cyc} MODELS` : "MODELS"]; } }
 ];
 let NOWM = null;
 function nowMarker() {
@@ -1012,14 +953,14 @@ function crawl() {
   sp.style.setProperty("--dur", Math.max(40, sp.textContent.length / 9) + "s");
 }
 
-document.querySelectorAll(".c-int .ctab button").forEach(b => b.onclick = () => {
-  document.querySelectorAll(".c-int .ctab button").forEach(x => x.classList.toggle("on", x === b));
+document.querySelectorAll(".ctab button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".ctab button").forEach(x => x.classList.toggle("on", x === b));
   const v = b.dataset.v; $("intChart").hidden = v !== "int"; $("guid").hidden = v !== "guid"; $("ensChart").hidden = v !== "ens"; $("intLeg").hidden = v === "guid";
   if (v === "int") intensityChart(); else if (v === "ens") ensChart(); else guidanceBoard();
 });
 
 /* ---------------- ensemble intensity (the site's cyclolab/<sid>/ensemble_v2.json: ECMWF ENS + GEFS members) ---------------- */
-const ENS = { doc: null, t: 0, metric: "vmax", show: new Set(["ecmwf_ens", "gefs", "gdm"]) };
+const ENS = { doc: null, t: 0, metric: "vmax" };
 async function ensLoad() {
   if (ENS.doc && Date.now() - ENS.t < 6e5) return ENS.doc;
   try { const r = await fetch(`${CDN}/cyclolab/NHC_${SID.toUpperCase()}/ensemble_v2.json?t=${Math.floor(Date.now() / 6e5)}`); ENS.doc = r.ok ? await r.json() : null; } catch (e) { ENS.doc = null; }
@@ -1027,17 +968,12 @@ async function ensLoad() {
 }
 const cycMs = c => Date.UTC(+c.slice(0, 4), +c.slice(4, 6) - 1, +c.slice(6, 8), +c.slice(8, 10));
 async function ensChart() {
-  const el = $("ensChart"), M = ENS.metric, [doc] = await Promise.all([ensLoad(), typeof gdmLoad === "function" ? gdmLoad() : null]);
+  const el = $("ensChart"), doc = await ensLoad(), M = ENS.metric;
   const leg = $("intLeg");
-  /* every suite we have for this storm; the chips switch each one on or off */
-  const avail = [...(doc?.sources || []).map(s => [s.model, s.label, s.model === "gefs" ? "#5dd3ff" : "#ff7a5c"]),
-    ...(typeof GDM === "object" && GDM.doc ? GSUITES.filter(([k]) => GDM.doc.suites[k]).map(([k, n]) => [k, n, GCOL[k]]) : [])];
-  if (!avail.length) { el.innerHTML = `<div class="rnote" style="padding:30px 10px">No ensemble members for this storm yet. They appear after the next guidance run that tracks it (every 6 hours).</div>`; leg.innerHTML = ""; return; }
-  if (!avail.some(a => ENS.show.has(a[0]))) ENS.show.add(avail[0][0]);
+  if (!doc || !(doc.sources || []).length) { el.innerHTML = `<div class="rnote" style="padding:30px 10px">No ensemble members for this storm yet. They appear after the next guidance run that tracks it (every 6 hours).</div>`; leg.innerHTML = ""; return; }
   const gefsCyc = D.models?.gefs && Object.values(D.models.gefs)[0]?.cycle;
-  const srcs = (doc?.sources || []).filter(s => ENS.show.has(s.model)).map(s => { const c = s.cycle ? cycMs(s.cycle) : gefsCyc ? isoMs(gefsCyc) : null; if (c == null) return null;
-    return { label: s.label, col: s.model === "gefs" ? "#5dd3ff" : "#ff7a5c", mem: s.members.map(m => s.taus.map((t, i) => [c + t * 36e5, m[M]?.[i]]).filter(p => p[1] != null)) }; }).filter(Boolean)
-    .concat(typeof gdmChartSrcs === "function" ? gdmChartSrcs(M, ENS.show) : []);
+  const srcs = doc.sources.map(s => { const c = s.cycle ? cycMs(s.cycle) : gefsCyc ? isoMs(gefsCyc) : null; if (c == null) return null;
+    return { label: s.label, col: s.model === "gefs" ? "#5dd3ff" : "#ff7a5c", mem: s.members.map(m => s.taus.map((t, i) => [c + t * 36e5, m[M]?.[i]]).filter(p => p[1] != null)) }; }).filter(Boolean);
   const W = el.clientWidth || 900, H = el.clientHeight || 290, P = { l: 44, r: 64, t: 12, b: 30 }, t0a = advTime();
   const best = (D.best || []).filter(p => Date.parse(p.t) >= t0a - 2 * 864e5).map(p => [Date.parse(p.t), M === "vmax" ? p.kt : p.mb]).filter(p => p[1]);
   const fc = M === "vmax" ? D.fc.map(p => [p.t, p.kt]) : [];
@@ -1054,13 +990,7 @@ async function ensChart() {
   for (let t = Math.ceil(x0 / 864e5) * 864e5; t <= x1; t += 864e5) s += `<line class="grid" x1="${X(t)}" x2="${X(t)}" y1="${P.t}" y2="${H - P.b}"/><text class="ax" x="${X(t) + 4}" y="${H - P.b + 16}">${DOW[local(t + 12 * 36e5).getUTCDay()]} ${local(t + 12 * 36e5).getUTCDate()}</text>`;
   s += `<text class="ax" x="${P.l - 6}" y="${P.t - 2}" text-anchor="end">${M === "vmax" ? wl().toUpperCase() : pl().toUpperCase()}</text>`;
   for (const src of srcs) {
-    src.mem.forEach((m, j) => { s += `<path class="ln dash" d="${path(m)}" stroke="${src.memCol ? src.memCol[j] : src.col}" stroke-width="1" stroke-opacity=".24" fill="none"/>`; });
-    if (src.stats) {   // the super ensemble and the 1000-member run: equal-weight stats from the builder
-      const { mean, p10, p90 } = src.stats;
-      if (p10.length > 1) s += `<path d="${path(p90)}L${path(p10.slice().reverse()).slice(1)}Z" fill="${src.col}" opacity=".14"/>`;
-      s += `<path class="ln dash" d="${path(mean)}" stroke="#06101f" stroke-width="5" stroke-opacity=".5" fill="none"/><path class="ln dash" d="${path(mean)}" stroke="${src.col}" stroke-width="2.6" fill="none"/>`;
-      continue;
-    }
+    for (const m of src.mem) s += `<path class="ln dash" d="${path(m)}" stroke="${src.col}" stroke-width="1" stroke-opacity=".28" fill="none"/>`;
     // mean and the 10-90 % band, step by step across members
     const steps = [...new Set(src.mem.flat().map(p => p[0]))].sort((a, b) => a - b), mean = [], p10 = [], p90 = [];
     for (const t of steps) { const v = src.mem.map(m => m.find(p => p[0] === t)?.[1]).filter(x => x != null).sort((a, b) => a - b); if (v.length < 5) continue;
@@ -1072,7 +1002,6 @@ async function ensChart() {
   s += `<path class="ln dash" d="${path(best)}" stroke="#fff" stroke-width="2" stroke-dasharray="2 4" fill="none"/>`;
   s += `<g class="now"><line x1="${X(t0a)}" x2="${X(t0a)}" y1="${P.t}" y2="${H - P.b}"/><text x="${X(t0a) + 5}" y="${P.t + 10}">NOW</text></g></svg>`;
   el.innerHTML = s;
-  leg.innerHTML = `<span class="ensm">${["vmax", "mslp"].map(k => `<button data-m="${k}" class="${k === M ? "on" : ""}">${k === "vmax" ? "WIND" : "PRESSURE"}</button>`).join("")}</span> <span class="ensc">${avail.map(([k, n, c]) => `<button data-es="${k}" class="${ENS.show.has(k) ? "on" : ""}" style="--sc:${c}" title="${ENS.show.has(k) ? "Hide" : "Show"} ${esc(n)}">${esc(k === "gdm" ? "Google super" : n)}</button>`).join("")}</span>${fc.length ? ` <span style="color:#fff">━ NHC</span>` : ""}`;
+  leg.innerHTML = `<span class="ensm">${["vmax", "mslp"].map(k => `<button data-m="${k}" class="${k === M ? "on" : ""}">${k === "vmax" ? "WIND" : "PRESSURE"}</button>`).join("")}</span> ${srcs.map(x => `<span style="color:${x.col}">━ ${esc(x.label)} (${x.mem.length})</span>`).join(" ")}${fc.length ? ` <span style="color:#fff">━ NHC</span>` : ""}`;
   leg.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { ENS.metric = b.dataset.m; ensChart(); });
-  leg.querySelectorAll("[data-es]").forEach(b => b.onclick = () => { const k = b.dataset.es; ENS.show.has(k) ? ENS.show.delete(k) : ENS.show.add(k); ensChart(); });
 }

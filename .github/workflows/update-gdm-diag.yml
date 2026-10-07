@@ -8,9 +8,9 @@ name: update-gdm-diag
 # Cadence: Weather Lab posts each 00/06/12/18Z cycle a few hours late and the suites land at different times, so this
 # runs hourly at an unused odd minute; the builder skips cycles it already has complete and re-tries young cycles that
 # are missing a suite.
+# PAUSED 2026-10-07: Google ensembles are off the site until they are polished; dispatch-only so nothing runs
+# hourly. Restore the schedule (cron "51 * * * *") when the feature comes back.
 on:
-  schedule:
-    - cron: "51 * * * *"
   workflow_dispatch:
     inputs:
       cycle:
