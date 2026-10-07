@@ -43,13 +43,15 @@ def sector_for(lon, lat):
     return best[1] if best else None
 
 
-def newest_key(sat):
+def recent_keys(sat):
+    """band-2 keys from the last KEEP_H hours, oldest first"""
     now = datetime.now(timezone.utc); keys = []
-    for t in (now - timedelta(hours=1), now):
+    for t in [now - timedelta(hours=h) for h in range(int(KEEP_H) + 1, -1, -1)]:
         pre = f"ABI-L2-CMIPC/{t:%Y}/{t.timetuple().tm_yday:03d}/{t:%H}/OR_ABI-L2-CMIPC-M6C02_"
         x = urllib.request.urlopen(urllib.request.Request(f"{BUCKET[sat]}/?list-type=2&prefix={pre}", headers=UA), timeout=30).read().decode()
         keys += re.findall(r"<Key>([^<]+)</Key>", x)
-    return sorted(keys)[-1] if keys else None
+    cut = now - timedelta(hours=KEEP_H)
+    return sorted(k for k in set(keys) if key_time(k) >= cut)
 
 
 def key_time(k):
@@ -99,32 +101,38 @@ class VisWriter:
             sat = sector_for(lon, lat)
             if not sat: continue
             try:
-                k = newest_key(sat)
-                if not k or self.last.get(sid) == k: continue
-                tmp = tempfile.NamedTemporaryFile(suffix=".nc", delete=False); tmp.close()
-                with urllib.request.urlopen(urllib.request.Request(f"{BUCKET[sat]}/{k}", headers=UA), timeout=120) as r, open(tmp.name, "wb") as o:
-                    while True:
-                        b = r.read(1 << 20)
-                        if not b: break
-                        o.write(b)
-                try: res = render(tmp.name, round(lon), round(lat))     # centre snapped to 1 degree: frames line up while the storm drifts
-                finally: os.unlink(tmp.name)
-                if not res: continue
-                png, coords = res; t = key_time(k); name = f"{t:%Y%m%dT%H%MZ}.jpg"
-                d = os.path.join(self.dir, sid); os.makedirs(d, exist_ok=True)
-                p = os.path.join(d, name); open(p, "wb").write(png)
-                if not self.put(p, f"vis/{sid}/{name}", "public, max-age=86400", "image/jpeg"): continue
-                idx = self.idx.get(sid) or self._prior(sid)
-                idx["frames"] = [f for f in idx["frames"] if f["img"] != name] + [{"t": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "img": name, "coords": coords}]
-                cut = (t - timedelta(hours=KEEP_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                idx["frames"] = sorted([f for f in idx["frames"] if f["t"] >= cut], key=lambda f: f["t"])
-                idx.update(sat=SECTORS[sat]["name"], band="C02", updated=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-                self.idx[sid] = idx; self.last[sid] = k
-                ip = os.path.join(d, "index.json"); json.dump(idx, open(ip, "w"), separators=(",", ":"))
-                self.put(ip, f"vis/{sid}/index.json", "no-store, max-age=0", "application/json")
-                print(f"vis: {sid} {name} ({len(png) // 1024} KB, {len(idx['frames'])} frames)", flush=True)
+                idx = self.idx.get(sid) or self._prior(sid); self.idx[sid] = idx
+                have = {f["img"] for f in idx["frames"]}
+                keys = recent_keys(sat)
+                # newest first, then fill the window back at 10-min spacing (a restart or a new room starts with a full loop)
+                todo = [k for k in reversed(keys) if f"{key_time(k):%Y%m%dT%H%MZ}.jpg" not in have and (k == keys[-1] or key_time(k).minute % 10 < 5)][:3]
+                for k in todo: self._one(sid, sat, k, lon, lat)
             except Exception as ex:
                 print(f"vis: {sid} failed: {ex}", flush=True)
+
+    def _one(self, sid, sat, k, lon, lat):
+        tmp = tempfile.NamedTemporaryFile(suffix=".nc", delete=False); tmp.close()
+        with urllib.request.urlopen(urllib.request.Request(f"{BUCKET[sat]}/{k}", headers=UA), timeout=120) as r, open(tmp.name, "wb") as o:
+            while True:
+                b = r.read(1 << 20)
+                if not b: break
+                o.write(b)
+        try: res = render(tmp.name, round(lon), round(lat))     # centre snapped to 1 degree: frames line up while the storm drifts
+        finally: os.unlink(tmp.name)
+        if not res: return
+        png, coords = res; t = key_time(k); name = f"{t:%Y%m%dT%H%MZ}.jpg"
+        d = os.path.join(self.dir, sid); os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, name); open(p, "wb").write(png)
+        if not self.put(p, f"vis/{sid}/{name}", "public, max-age=86400", "image/jpeg"): return
+        idx = self.idx[sid]
+        idx["frames"] = [f for f in idx["frames"] if f["img"] != name] + [{"t": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "img": name, "coords": coords}]
+        cut = (t - timedelta(hours=KEEP_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        idx["frames"] = sorted([f for f in idx["frames"] if f["t"] >= cut], key=lambda f: f["t"])
+        idx.update(sat=SECTORS[sat]["name"], band="C02", updated=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.idx[sid] = idx
+        ip = os.path.join(d, "index.json"); json.dump(idx, open(ip, "w"), separators=(",", ":"))
+        self.put(ip, f"vis/{sid}/index.json", "no-store, max-age=0", "application/json")
+        print(f"vis: {sid} {name} ({len(png) // 1024} KB, {len(idx['frames'])} frames)", flush=True)
 
     def _prior(self, sid):
         """resume the rolling window from the published index after a restart"""
