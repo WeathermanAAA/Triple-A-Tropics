@@ -543,3 +543,6 @@ details.hzs .hz{margin:0 6px 6px}
   .lcol{display:contents}
   .vit{order:0}.stage-wrap{order:1}.dials{order:2}.rail{order:3}
 }
+.legend .flw{display:flex;gap:calc(2px*var(--k))}
+.legend .flw span{display:flex;flex-direction:column;align-items:center;gap:calc(2px*var(--k));font-size:calc(9px*var(--k));color:var(--ice);font-weight:700}
+.legend .flw i{display:block;width:calc(24px*var(--k));height:calc(5px*var(--k));border-radius:1px}

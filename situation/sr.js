@@ -335,7 +335,7 @@ async function initMap() {
   MAP.addLayer({ id: "fc", type: "line", source: "fc", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": 3.2 } });
   MAP.addLayer({ id: "recon-case", type: "line", source: "recon", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": "#06101f", "line-width": 5.5, "line-opacity": .6 } });
   MAP.addLayer({ id: "recon", type: "line", source: "recon", layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
-    paint: { "line-width": 3, "line-gradient": ["interpolate", ["linear"], ["line-progress"], 0, "#5dd3ff", 0.5, "#ffffff", 1, "#ffd24a"] } });
+    paint: { "line-width": 3.2, "line-color": ["get", "c"] } });   // each segment wears its observed flight-level wind (FLW)
   gj("fldvec");
   MAP.addLayer({ id: "fldvec", type: "symbol", source: "fldvec", layout: { visibility: "none", "icon-image": ["get", "i"], "icon-rotate": ["get", "d"], "icon-rotation-alignment": "map",
     "icon-size": ["get", "s"], "icon-allow-overlap": false, "icon-padding": 2 } });
@@ -427,6 +427,9 @@ function fit(coords, padTop = 140, opt = {}) {
 }
 function labelSides(pts) { return pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; const dx = b.lon - a.lon, dy = b.lat - a.lat;
   return dy > Math.abs(dx) * 1.2 ? (i % 2 === 1) : dx < 0; }); }
+/* flight-level wind colours (kt): the storm's own Saffir-Simpson colours above 34 kt, cool tones below */
+const FLW = [[0, "#7f8fa6", "<34"], [34, "#46c56a", "34"], [50, "#2fd3b0", "50"], [64, "#ffe14d", "64"], [83, "#ff9a2f", "83"], [96, "#f5333c", "96"], [113, "#e33ad4", "113"], [137, "#b03bff", "137"]];
+const flwCol = kt => { let c = FLW[0][1]; if (kt == null) return c; for (const x of FLW) if (kt >= x[0]) c = x[1]; return c; };
 const PLANE = c => `<svg viewBox="0 0 24 24"><path d="M2 13l8-1 4-8h3l-2 8 6 0 2-3h1.5l-1 4.5 1 4.5H23l-2-3-6 0 2 8h-3l-4-8-8-1z" fill="${c}" stroke="#06101f" stroke-width="1"/></svg>`;
 const ACFT = s => /NOAA ?9|NOAA 49/.test(s) ? "NOAA G-IV" : /NOAA ?[23]|NOAA 4[23]/.test(s) ? "NOAA P-3" : /TEAL|AF/.test(s) ? "USAF WC-130J" : s;
 let MWSEL = null, MWPROD = "color91";
@@ -478,7 +481,12 @@ const LY = {
     cred: "Microwave: NASA GPM/PPS, processed by Triple-A-Tropics" },
   recon: { name: "Recon flight", grp: "Observations",
     on(a) { const cur = D.recon?.current; if (!cur || cur.track.length < 2) return;
-      const tr = cur.track.filter((p, i) => i % 2 === 0).map(p => [p[0], p[1]]);
+      const tr = cur.track.filter((p, i) => i % 2 === 0).map(p => [p[0], p[1]]), fw = cur.track.filter((p, i) => i % 2 === 0).map(p => p[2]);
+      /* one feature per run of same-coloured segments, coloured by the flight-level wind the aircraft measured there */
+      const segs = n => { const out = []; let run = null;
+        for (let i = 1; i < n; i++) { const c = flwCol(fw[i] ?? fw[i - 1]);
+          if (run && run.c === c) run.pts.push(tr[i]); else { run && out.push(line(run.pts, { c: run.c })); run = { c, pts: [tr[i - 1], tr[i]] }; } }
+        run && out.push(line(run.pts, { c: run.c })); return FC(out); };
       vis(["recon", "recon-case", "sondes"], true);
       const pl = document.createElement("div"); pl.className = "plane"; pl.innerHTML = PLANE("#fff");
       const pm = lkeep("recon", new maplibregl.Marker({ element: pl, rotationAlignment: "map" }).setLngLat(tr[0]));
@@ -486,7 +494,7 @@ const LY = {
         lkeep("recon", new maplibregl.Marker({ element: wrap(e), anchor: "bottom" }).setLngLat([s.lon, s.lat])); return { e, t: Date.parse(s.t) }; });
       const t0 = Date.parse(cur.track[0][4]), t1 = Date.parse(cur.track[cur.track.length - 1][4]);
       const step = p => { const n = Math.max(2, Math.round(tr.length * ease(p))), tnow = t0 + (t1 - t0) * ease(p);
-        set("recon", FC([line(tr.slice(0, n))]));
+        set("recon", segs(n));
         const q = tr[n - 2], b = tr[n - 1]; pm.setLngLat(b).setRotation(Math.atan2(b[0] - q[0], b[1] - q[1]) * 180 / Math.PI + 90);   // the icon's nose points west
         const done = sd.filter(s => Date.parse(s.t) <= tnow);
         set("sondes", FC(done.map(s => ({ type: "Feature", properties: { c: s.kt != null && s.kt >= 34 ? "#46c56a" : "#7cc3ea" }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } }))));
@@ -494,7 +502,7 @@ const LY = {
         clock("recon", ACFT(cur.aircraft), hm(tnow), `${done.length} sonde${done.length === 1 ? "" : "s"}`); };
       if (a) { set("recon", FC([])); set("sondes", FC([])); llater("recon", 600, () => lanim("recon", 5200, step)); } else step(1); },
     off() { vis(["recon", "recon-case", "sondes"], false); },
-    leg: () => D.recon?.current ? `<div class="r"><i style="background:linear-gradient(90deg,#5dd3ff,#fff,#ffd24a)"></i>${esc(ACFT(D.recon.current.aircraft))} flight</div><div class="r"><i class="dot" style="background:#7cc3ea;border:1.5px solid #fff"></i>Dropsonde (sfc wind kt)</div>` : "",
+    leg: () => D.recon?.current ? `<h4>${esc(ACFT(D.recon.current.aircraft))} flight-level wind, kt</h4><div class="flw">${FLW.map(([k, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}</div><div class="r"><i class="dot" style="background:#7cc3ea;border:1.5px solid #fff"></i>Dropsonde (sfc wind kt)</div>` : "",
     cred: "Recon: NOAA/NHC HDOB + dropsondes" },
   fixes: { name: "Tasked recon fixes", grp: "Observations",
     on(a) { const tgs = (D.recon?.plan?.flights || []).filter(f => f.pos).sort((x, y) => isoMs(x.fix[0]) - isoMs(y.fix[0]));
@@ -821,7 +829,7 @@ const TABS = [
   { id: "mw", label: "Microwave", layers: ["mw", "track", "best"], anim: ["mw"], ok: () => mwPasses().length,
     cam() { const o = mwPick(), b = o.bounds; fit([[b[0], b[1]], [b[2], b[3]]], 120, { bottom: 10, left: 10, right: 10, maxZoom: 6 }); },
     hdr: () => { const o = mwPick(); return ["Microwave Imagery", `${o.sensor} · ${hm(o.t)} ${TZ}`, MWPROD === "color37" ? "37 GHZ" : "89 GHZ"]; } },
-  { id: "recon", label: "Recon", layers: ["recon", "fixes", "track"], anim: ["recon", "fixes"],
+  { id: "recon", label: "Recon", layers: ["recon", "track"], anim: ["recon"],
     cam() { const cur = D.recon?.current, c = [pos(), ...(D.recon?.plan?.flights || []).filter(f => f.pos).map(f => f.pos)];
       if (cur) c.push(...cur.track.filter((p, i) => i % 4 === 0).map(p => [p[0], p[1]])); fit(c, 140, { right: 290, bottom: 70, left: 60, maxZoom: 6.2 }); },
     hdr: () => { const nf = nextFlight(), cur = D.recon?.current; return ["Hurricane Hunters", nf ? `Next fix ${dayhm(isoMs(nf.fix[0]))} ${TZ}` : cur ? `${ACFT(cur.aircraft)} today` : "No flights tasked", "RECON"]; } },
