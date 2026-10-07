@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["situation/rooms.json", "situation/build_situation.py", "situation/storm_bundle.py", "situation/live.py", "situation/vis.py", ".github/workflows/update-situation.yml"]
+    paths: ["situation/rooms.json", "situation/build_situation.py", "situation/storm_bundle.py", "situation/live.py", "situation/vis.py", "situation/ships.py", ".github/workflows/update-situation.yml"]
 
 permissions:
   contents: read

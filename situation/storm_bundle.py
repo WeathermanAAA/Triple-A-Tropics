@@ -9,6 +9,7 @@
   sat       GOES-19 TAT IR frame times (tiles served by /api/sat)
 """
 import gzip, json, re, time, urllib.request, urllib.error
+import ships as SHIPS
 from datetime import datetime, timezone, timedelta
 
 CDN = "https://cdn.triple-a-tropics.com"
@@ -259,7 +260,7 @@ def bundle(sid, nhc_list):
         raw = next((s for s in cs["activeStorms"] if s["id"] == sid), {})
         if raw.get("publicAdvisory", {}).get("url"): txt = advisory_text(raw["publicAdvisory"]["url"])
     except Exception: pass
-    return {"sid": sid, "nhc": st, "text": txt, "best": bt, "precursor": pre, "models": models(sid),
+    return {"sid": sid, "nhc": st, "text": txt, "best": bt, "precursor": pre, "models": models(sid), "ships": SHIPS.ships(get, sid),
             "mw": mw([sid, pre]), "recon": recon(sid, name, sid[:2], [t for t in tokens if t and t != "AL" and len(t) > 2]),
             "sat": sat(), "active": [{"id": s.get("id"), "name": s.get("name"), "cls": s.get("classification"), "kt": s.get("intensity")} for s in nhc_list],
             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}

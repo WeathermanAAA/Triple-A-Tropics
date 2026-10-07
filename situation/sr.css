@@ -559,3 +559,76 @@ details.wws .wwt h5{margin:8px 0 4px;font-size:10.5px;letter-spacing:.8px;color:
 .legend .flw{display:flex;gap:calc(2px*var(--k))}
 .legend .flw span{display:flex;flex-direction:column;align-items:center;gap:calc(2px*var(--k));font-size:calc(9px*var(--k));color:var(--ice);font-weight:700}
 .legend .flw i{display:block;width:calc(24px*var(--k));height:calc(5px*var(--k));border-radius:1px}
+
+/* SHIPS view (ships.js) */
+#shipsView{padding-top:6px}
+.shp{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:10px}
+.shp-p{background:rgba(5,9,20,.32);border:1px solid rgba(160,190,255,.16);border-radius:2px;padding:8px 10px;min-width:0}
+.shp-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
+.shp-h b{font-size:12px;font-weight:900;letter-spacing:.9px;text-transform:uppercase;color:var(--gold)}
+.shp-h span{font-size:10.5px;font-weight:700;color:var(--ice);letter-spacing:.3px}
+.shp-key{display:flex;align-items:center;gap:5px;flex-wrap:wrap;text-transform:uppercase}
+.shp-key i,.shp-read i{display:inline-block;width:16px;height:3px;background:var(--c);border-radius:1px;margin-left:6px}
+.shp-key i.d,.shp-read i.d{background:repeating-linear-gradient(90deg,var(--c) 0 5px,transparent 5px 8px)}
+.shp-key i.p{background:rgba(214,227,255,.4)}
+.shp-key i.z{height:9px;width:12px}
+.shp-run{font-size:11px;font-weight:800;color:var(--ice);letter-spacing:.5px;text-transform:uppercase}
+.shp-svg svg{display:block;width:100%;height:auto;overflow:visible;font-family:Metropolis,Arial,sans-serif;cursor:crosshair}
+.shp svg .ax{font-size:10.5px;font-weight:700;fill:#9fb3d6;letter-spacing:.3px}
+.shp svg .ax.sub{font-size:9px;fill:#7f93b8}
+.shp svg .grid{stroke:rgba(160,190,255,.12)}
+.shp svg .band text{font-size:10px;font-weight:900;letter-spacing:.8px}
+.shp svg .rib{font-size:7.5px;font-weight:900;fill:#fff;letter-spacing:1px}
+.shp svg .pk{font-size:10px;font-weight:900;fill:#141414;letter-spacing:.5px}
+.shp svg .cur{stroke:#fff;stroke-width:1.2;stroke-dasharray:3 3;stroke-opacity:.8}
+.shp-read{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:11px;font-weight:700;color:var(--ice);margin-top:4px;min-height:16px;font-variant-numeric:tabular-nums}
+.shp-read b{color:#fff;font-weight:900}
+.shp-read i{margin:0 4px 2px 0;vertical-align:middle}
+.shp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px}
+.shp-sm .shp-svg svg{height:64px}
+.shp-smh{display:flex;justify-content:space-between;gap:6px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--ice);text-transform:uppercase;margin-bottom:2px}
+.shp-smh span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shp-smh b{color:#fff;font-weight:900;white-space:nowrap;font-variant-numeric:tabular-nums}
+.shp-big{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.shp-big b{font-size:26px;font-weight:900;color:#fff;line-height:1;white-space:nowrap}
+.shp-big span{font-size:11px;font-weight:700;color:var(--ice)}
+.shp-tw{overflow-x:auto}
+.shp-mx{border-collapse:collapse;width:100%;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+.shp-mx th,.shp-mx td{padding:3px 2px;text-align:center;border:1px solid rgba(160,190,255,.12)}
+.shp-mx thead th{font-size:11px;color:#fff;line-height:1.05}
+.shp-mx thead th small{display:block;font-size:8.5px;color:var(--ice);font-weight:700;letter-spacing:.2px}
+.shp-mx tbody th{text-align:left;font-size:10px;color:var(--ice);letter-spacing:.3px;white-space:nowrap;padding-right:6px}
+.shp-mx td{color:#fff}
+.shp-mx tr.k th{color:var(--gold)}
+.shp-mx tr.k td{font-weight:900;outline:1px solid rgba(232,181,58,.45);outline-offset:-1px}
+.shp-mx tr.cl td{color:#9fb3d6;font-weight:700}
+.shp-mx td.hot{color:#ff8a5c;font-weight:900}
+.shp-mx td.na{color:#5c6c8c}
+.shp-rii{margin-top:8px}
+.shp-rp{display:grid;grid-template-columns:1fr 46px 60px 38px;gap:6px;align-items:center;font-size:11px;font-weight:700;margin:0 8px 4px;color:var(--ice)}
+.shp-rp em{font-style:normal;color:#fff;text-align:right;font-variant-numeric:tabular-nums}
+.shp-rp i{height:6px;background:rgba(255,255,255,.08);border-radius:1px;position:relative}
+.shp-rp u{position:absolute;left:0;top:0;bottom:0;background:var(--gold);border-radius:1px}
+.shp-rp b{text-align:right;color:#ff8a5c;font-variant-numeric:tabular-nums}.shp-rp b.dn{color:#5dd3ff}
+.shp-drv .shp-h{flex-wrap:wrap}
+.shp-taus{display:flex;gap:3px;flex-wrap:wrap}
+.shp-taus button{font:inherit;font-size:10px;font-weight:800;color:var(--ice);background:transparent;border:1px solid rgba(160,190,255,.3);border-radius:2px;padding:1px 5px;cursor:pointer}
+.shp-taus button.on{background:var(--gold);border-color:var(--gold);color:#06101f}
+.shp-net{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.shp-net b{font-size:22px;font-weight:900;line-height:1;white-space:nowrap}
+.shp-net span{font-size:11px;font-weight:700;color:var(--ice)}
+.shp .up{color:#ff8a5c}.shp .dn{color:#5dd3ff}
+.shp-bar{display:grid;grid-template-columns:118px 1fr 34px;gap:8px;align-items:center;font-size:11px;font-weight:700;color:var(--ice);padding:2px 0}
+.shp-bar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shp-bar i{height:10px;position:relative;background:linear-gradient(90deg,transparent calc(50% - .5px),rgba(214,227,255,.35) calc(50% - .5px),rgba(214,227,255,.35) calc(50% + .5px),transparent calc(50% + .5px))}
+.shp-bar u{position:absolute;top:0;bottom:0;border-radius:1px}
+.shp-bar u.up{background:#ff8a5c}.shp-bar u.dn{background:#5dd3ff}
+.shp-bar b{text-align:right;font-variant-numeric:tabular-nums}
+.shp-foot{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px}
+.shp-chip{background:rgba(5,9,20,.32);border:1px solid rgba(160,190,255,.16);border-left:3px solid var(--gold);padding:5px 8px;display:flex;flex-direction:column;gap:1px}
+.shp-chip span{font-size:9.5px;font-weight:800;letter-spacing:.6px;color:var(--ice);text-transform:uppercase}
+.shp-chip b{font-size:17px;font-weight:900;color:#fff;line-height:1.1}
+.shp-chip small{font-size:9.5px;font-weight:700;color:#8ea3c8}
+.shp .rnote{font-size:10.5px;color:#8ea3c8;margin-top:6px}
+#shipsView.in .shp>*{animation:dmIn .5s calc(var(--j,0)*.07s) var(--ease) both}
+@media (max-width:980px){.shp{grid-template-columns:1fr}.shp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

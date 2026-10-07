@@ -102,7 +102,7 @@ async function liveTick() {
 }
 const sig = d => ({ adv: [d.nhc.advisory, d.nhc.intensity, d.nhc.pressure, (d.nhc.points || []).length, d.nhc.lastUpdate].join("|"), best: (d.best || []).length,
   models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: (d.recon?.flights || [d.recon?.current || {}]).map(f => `${f.mission_id}|${f.n_obs || 0}|${f.valid_end || ""}`).join(","),
-  plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
+  ships: d.ships?.init || "", plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
 const NEEDS = { fields: [], radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
 async function refresh(first) {
   let d;
@@ -131,6 +131,7 @@ async function refresh(first) {
   else vitalsQuiet();
   if (ch("adv") || ch("mw") || ch("plan") || ch("best")) dials();
   if (ch("adv") || ch("models") || ch("best")) { intensityChart(); guidanceBoard(); }
+  if (!$("shipsView").hidden && ["ships", "adv", "models", "best"].some(ch)) shipsView();
   if (ch("recon") || ch("plan")) railRecon();
   syncData();
   if (ch("adv")) { nowMarker(); if (QUAD.on) QUAD.cells.forEach(quadData); }
@@ -1016,8 +1017,8 @@ function crawl() {
 
 document.querySelectorAll(".ctab button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".ctab button").forEach(x => x.classList.toggle("on", x === b));
-  const v = b.dataset.v; $("intChart").hidden = v !== "int"; $("guid").hidden = v !== "guid"; $("ensChart").hidden = v !== "ens"; $("intLeg").hidden = v === "guid";
-  if (v === "int") intensityChart(); else if (v === "ens") ensChart(); else guidanceBoard();
+  const v = b.dataset.v; $("intChart").hidden = v !== "int"; $("guid").hidden = v !== "guid"; $("ensChart").hidden = v !== "ens"; $("shipsView").hidden = v !== "ships"; $("intLeg").hidden = v === "guid";
+  if (v === "int") intensityChart(); else if (v === "ens") ensChart(); else if (v === "ships") shipsView(); else guidanceBoard();
 });
 
 /* ---------------- ensemble intensity (the site's cyclolab/<sid>/ensemble_v2.json: ECMWF ENS + GEFS members) ---------------- */

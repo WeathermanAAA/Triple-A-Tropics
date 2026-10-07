@@ -29,9 +29,20 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T15:00Z
+updated: 2026-10-07T15:31Z
 
 items:
+  - id: situation-room-ships
+    title: "Situation Room: SHIPS guidance view (intensity, RI matrix, environment, drivers)"
+    area: apps
+    status: shipped
+    date_shipped: 2026-10-07
+    note: >-
+      SHIPS tab in the Situation Room chart card, parsed from NHC's per-cycle SHIPS text
+      (situation/ships.py into the live bundle, situation/ships.js). Land / no-land / LGEM
+      with NHC and earlier runs, storm type and land, every RI scheme with climatology and
+      the RII predictors, environment small multiples with favorable/hostile zones, the
+      predictor contributions per forecast hour, and the single-number indices.
   - id: situation-room-google-ensembles
     title: "Situation Room: Google ensembles, suite switching, super ensemble, diagnostics"
     area: apps
