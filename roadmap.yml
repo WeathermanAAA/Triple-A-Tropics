@@ -33,10 +33,9 @@ updated: 2026-10-07T03:14:00Z
 
 items:
   - id: gdm-ensemble-diagnostics
-    title: "Google ensemble diagnostics on /models/ (FNV3, WN3, GenCast, FNV3 1000, Google super ensemble)"
+    title: "Google ensemble diagnostics on /models/ (all Google suites + super ensemble)"
     area: models
     status: shadow
-    date_shipped: 2026-10-07
     note: >-
       Per storm and per cycle, every basin, from Weather Lab's paired CSVs (which carry
       RMW and 34/50/64-kt quadrant radii). gdmdiag/build.py precomputes everything
