@@ -320,6 +320,189 @@ class TestEnsCentersViewer(unittest.TestCase):
         self.assertEqual(s["dup_invC_kind"], "invest")
 
 
+POOL_HARNESS = Path(__file__).resolve().parent / "enscenters_pool_smoke.cjs"
+SUITES_HARNESS = Path(__file__).resolve().parent / "enscenters_suites_smoke.cjs"
+
+
+@unittest.skipIf(NODE is None, "node not on PATH")
+class TestSuperEnsemblePooling(unittest.TestCase):
+    """Pure pooling helpers (EnsCentersViewer.Pool): cycle resolution with the
+    <= 6 h fallback, valid-time alignment, common cadence, equal weight PER MODEL
+    (mixture quantiles + mixture envelope), dateline-safe pooled mean, and
+    cross-model cluster matching. No DOM needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        proc = subprocess.run([NODE, str(POOL_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise AssertionError(f"pool harness failed:\n{proc.stderr}")
+        cls.s = json.loads(proc.stdout)
+
+    def test_cycle_resolution_and_pooled_runs(self):
+        s = self.s
+        # same cycle first; else the newest run <= 6 h older; else dropped
+        self.assertEqual(s["resolve12"]["used"], [["fnv3", "2026100612", 0], ["wnv3", "2026100606", 6]])
+        self.assertEqual(s["resolve12"]["dropped"], ["genc"])          # 12 h old -> out
+        # a pooled run needs >= 2 contributing models
+        self.assertEqual(s["poolCycles"], ["2026100612", "2026100606", "2026100600"])
+        # off-cadence 3-hourly steps drop where a covering 6-hourly model lacks them
+        self.assertEqual(s["commonSteps"], [0, 6, 12, 18])
+
+    def test_pooled_centers_document(self):
+        p = self.s["pooled"]
+        self.assertEqual(p["model"], "super-google")
+        self.assertEqual(p["label"], "Google super ensemble")
+        self.assertEqual(p["n_members"], 114)                           # 50 FNV3 + 64 WN3
+        self.assertEqual(p["init_cycle"], "2026100612")
+        self.assertEqual(p["method"], "pool-v1")
+        self.assertEqual(p["poolModels"], [["FNV3", 0, 50], ["WN3", 6, 64]])
+        # members keep a model tag
+        self.assertEqual(p["firstIds"], ["FNV3 M00", "WN3 M00"])
+        self.assertEqual(p["firstTags"], ["FNV3", "WN3"])
+        # the lagged WN3 06Z run is VALID-TIME aligned: its F006 center (MSLP 999,
+        # 31 kt) is the pooled F000, and its F000 (before the pooled init) is dropped
+        self.assertEqual(p["wnFirstCenter"], [0, 15, -50, 999, 31])
+        self.assertEqual(p["wnSteps"], [0, 6, 12, 18])
+        self.assertEqual(p["run_steps"], [0, 6, 12, 18])
+        # mandatory disclosure, house text rules
+        cap = p["caption"]
+        self.assertIn("Derived product, not a model run", cap)
+        self.assertIn("equal weight per model", cap)
+        self.assertIn("pool-v1", cap)
+        self.assertIn("WN3 (06Z run)", cap)
+        self.assertIn("not for real-world use", cap)
+        self.assertNotIn("—", cap)
+
+    def test_equal_weight_per_model_not_per_member(self):
+        m = self.s["mix"]
+        # 50-member model ~100 kt vs 5-member model ~50 kt: an equal-model mixture
+        # puts p25 at the small model's median and p75 at the large model's
+        self.assertAlmostEqual(m["p25"], 50.0, places=3)
+        self.assertAlmostEqual(m["p75"], 100.0, places=3)
+        self.assertAlmostEqual(m["sameP50"], 100.0, places=3)           # identical models -> unchanged
+
+    def test_pooled_cluster_geometry(self):
+        d = self.s["dateline"]
+        # 170E + 170W pool to the dateline (not Greenwich); counts add up
+        self.assertAlmostEqual(abs(d["lon"]), 180.0, places=1)
+        self.assertGreater(d["lat"], 10.0)                              # great-circle mean bows poleward
+        self.assertLess(d["lat"], 10.5)
+        self.assertEqual(d["member_count"], 50)
+        self.assertEqual(d["n_models"], 2)
+        # equal-weight Gaussian-mixture envelope: two point-mass models 1 deg of
+        # longitude apart at the equator -> east variance (111.19 km)^2, no north
+        e = self.s["envelope"]
+        self.assertAlmostEqual(e["cxx"], 111.195 ** 2, delta=15)
+        self.assertAlmostEqual(e["cyy"], 0.0, places=6)
+        self.assertAlmostEqual(e["mean_lat"], 0.0, places=6)
+        self.assertAlmostEqual(e["mean_lon"], 0.0, places=6)
+        self.assertEqual(e["n_models"], 2)
+
+    def test_cross_model_matching(self):
+        # nearby clusters from different models group; a far system and a second
+        # cluster from an already-represented model stay separate
+        self.assertEqual(self.s["groups"], [["fnv3@-50", "wnv3@-51"], ["wnv3@130"], ["fnv3@-50.5"]])
+
+    def test_pooled_tracks(self):
+        t = self.s["tracks"]
+        self.assertEqual(t["n_members"], 114)
+        self.assertEqual(t["n_clusters"], 1)
+        self.assertEqual(t["n_models"], 2)
+        self.assertEqual(t["member_count"], 114)
+        self.assertEqual(t["method"], "pool-v1")
+        self.assertEqual(t["wnFirstStep"], 0)
+        self.assertEqual(t["wnId"], "WN3 M0")
+        self.assertEqual(t["models"], ["fnv3", "wnv3"])
+
+
+@unittest.skipIf(NODE is None, "node not on PATH")
+@unittest.skipUnless(jsdom_available(), "jsdom not resolvable")
+class TestSuiteSwitcher(unittest.TestCase):
+    """Suite row + per-suite model row (data-driven, fallback for older
+    manifests), a registry model with no manifest entry, and the two derived
+    super ensembles end-to-end in the viewer."""
+
+    @classmethod
+    def setUpClass(cls):
+        proc = subprocess.run([NODE, str(SUITES_HARNESS), str(JS)],
+                              cwd=str(REPO), capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise AssertionError(f"suites harness failed:\n{proc.stderr}")
+        cls.s = json.loads(proc.stdout)
+
+    @staticmethod
+    def _labels(chips):
+        return [c["label"] for c in chips]
+
+    def test_suite_rows_and_fallback(self):
+        b = self.s["boot"]
+        self.assertEqual(self._labels(b["suites"]), ["ECMWF", "NOAA", "Google", "All models"])
+        # boots on the freshest model (AIFS 12Z beats the 06Z ECMWF ENS) in its suite
+        self.assertEqual(b["model"], "ecaie")
+        self.assertEqual(b["suite"], "ecmwf")
+        self.assertEqual(self._labels(b["models"]), ["ECMWF ENS", "AIFS-ENS"])
+        # Google suite (fnv3/genc entries carry NO suite field -> fallback map);
+        # WN3 has no manifest entry -> a disabled chip, not an error
+        g = self.s["google"]
+        self.assertEqual(g["suite"], "google")
+        self.assertEqual(g["model"], "fnv3")                           # freshest Google model
+        self.assertEqual(self._labels(g["models"]),
+                         ["Google FNV3 (50)", "Google WN3 (64)", "Google GenCast", "Google super ensemble"])
+        self.assertEqual([c["disabled"] for c in g["models"]], [False, True, False, False])
+
+    def test_google_super_ensemble(self):
+        sg = self.s["superGoogle"]
+        self.assertEqual(sg["model"], "super-google")
+        self.assertEqual(sg["label"], "Google super ensemble")
+        # GenCast has no 12Z: its 06Z run (6 h older) goes in, disclosed
+        self.assertEqual(sg["pool"], [["fnv3", "2026100612", 0], ["genc", "2026100606", 6]])
+        self.assertEqual(sg["n_members"], 4 + 5)
+        self.assertEqual(sg["method"], "pool-v1")
+        self.assertEqual(sg["runOptions"], ["2026100612", "2026100606"])
+        self.assertIn("Derived product", sg["caption"])
+        # burned-in header: init + F-hour + valid kept, plus the derived line
+        h = sg["header"]
+        for part in ("Google super ensemble", "init Oct 6 12Z", "F006", "valid Tue Oct 6, 18Z",
+                     "Derived: pooled", "FNV3", "GenCast", "(06Z run)", "equal weight per model", "pool-v1"):
+            self.assertIn(part, h)
+        self.assertNotIn("—", h)
+        # pooled tracks drive the mean / plume overlay (one system, two models)
+        self.assertTrue(sg["tracksReady"])
+        self.assertTrue(sg["meanVisible"])
+        self.assertEqual(len(sg["clusters"]), 1)
+        c = sg["clusters"][0]
+        self.assertEqual(c["n_models"], 2)
+        self.assertEqual(c["member_count"], 9)
+        self.assertEqual(sorted(c["models"]), ["fnv3", "genc"])
+        self.assertEqual(sg["tracksN"], 9)
+        # equal-weight median sits between the two models' medians (60 vs 90 kt)
+        self.assertGreaterEqual(c["p50_0"], 60)
+        self.assertLessEqual(c["p50_0"], 90)
+        self.assertEqual(sg["plumeSub"], ["9 of 9 members  ·  2 models"])
+
+    def test_all_model_super_ensemble(self):
+        a = self.s["all"]
+        self.assertEqual(a["model"], "super-all")
+        self.assertEqual(self._labels(a["models"]), ["All-model super ensemble"])
+        self.assertEqual(a["pool"], [["ecens", 6], ["ecaie", 0], ["gefs", 0], ["fnv3", 0], ["genc", 6]])
+        self.assertEqual(a["n_members"], 3 + 3 + 2 + 4 + 5)
+        self.assertEqual(a["steps"], [0, 6, 12, 18, 24])                # common cadence
+        self.assertEqual(a["dropped"], [])
+
+    def test_single_model_after_super_and_late_publish(self):
+        n = self.s["noaa"]
+        self.assertEqual(n["model"], "gefs")
+        self.assertFalse(n["pool"])
+        # WN3's first publish enables its chip on the next poll and joins the pool
+        ap = self.s["afterPoll"]
+        self.assertEqual([c["disabled"] for c in ap["models"]], [False, False, False, False])
+        self.assertEqual(ap["pool"], [["fnv3", 0], ["wnv3", 0], ["genc", 6]])
+        self.assertEqual(ap["n_members"], 4 + 6 + 5)
+        self.assertEqual(ap["wnModel"], "wnv3")
+        self.assertEqual(ap["wnMembers"], 6)
+
+
 DEFAULT_MODEL_HARNESS = (Path(__file__).resolve().parent
                          / "enscenters_default_model.cjs")
 

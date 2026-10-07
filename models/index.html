@@ -383,7 +383,11 @@
   .ens-row { display: flex; flex-wrap: wrap; justify-content: center;
     align-items: center; gap: 8px 12px; }
   .ens-row .tatreg-btn { width: auto; min-width: 150px; }
-  .ens-modelgroup { display: flex; }
+  .ens-modelgroup { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .ens-suiterow, .ens-modelrow { display: flex; flex-wrap: wrap; justify-content: center; }
+  .ens-modelrow .hafs-seg-group { flex-wrap: wrap; justify-content: center; }
+  .ens-seg-off { opacity: 0.4; cursor: not-allowed; }
+  .hafs-seg.ens-seg-off:hover { color: var(--muted); }
   .ens-transport { display: flex; gap: 6px; }
   .ens-play { min-width: 92px; }
   #enscenters-trail, #enscenters-style, #enscenters-mean, #enscenters-obs, #enscenters-ppts, #enscenters-minp { min-width: 84px; }
@@ -576,7 +580,12 @@
             <span id="enscenters-region-label">Atlantic</span>
             <span class="tatreg-caret">&#9662;</span>
           </button>
-          <div class="ens-modelgroup"><div id="enscenters-models" class="hafs-seg-group"></div></div>
+          <!-- Suite row (ECMWF / NOAA / Google / All models) over the selected
+               suite's model row; each model stays individually selectable. -->
+          <div class="ens-modelgroup">
+            <div class="ens-suiterow"><div id="enscenters-suites" class="hafs-seg-group" aria-label="Model suite"></div></div>
+            <div class="ens-modelrow"><div id="enscenters-models" class="hafs-seg-group" aria-label="Model"></div></div>
+          </div>
           <div class="ens-run"><span>Run</span><select id="enscenters-run" title="Forecast cycle (model run)"></select></div>
         </div>
 
@@ -689,6 +698,6 @@ window.TAT_TELEMETRY_ENDPOINT = 'https://triple-a-tropics.com/telemetry/t';</scr
 <script src="/models/telemetry.js?v=edbe6ac804"></script>
 <script src="/models/hafs.js?v=b25867386a"></script>
 <script src="/models/regions.js?v=a733ec5565"></script>
-<script src="/models/enscenters.js?v=bffaca1377"></script>
+<script src="/models/enscenters.js?v=ac7258017d"></script>
 </body>
 </html>
