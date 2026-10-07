@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T01:49:00Z
+updated: 2026-10-07T02:10:00Z
 
 items:
   - id: meso-poller-renders-failing
@@ -54,7 +54,9 @@ items:
       tracks) plus a free layers panel, a 4-panel synced view, smooth GIBS satellite
       loops (IR in TAT, Dvorak BD, grayscale or NASA ramps; VIS, GeoColor, Air Mass,
       Dust; GOES-East/West and Himawari; GOES 1-min mesoscale sectors decoded in the
-      browser from NOAA's bucket), intensity chart, peak-by-model board,
+      browser from NOAA's bucket; a 5-min GOES-19 CONUS / GOES-18 PACUS loop, also
+      straight from NOAA and ~10 min behind real time, is the default whenever it
+      covers the storm because GIBS runs 1.5-2.5 h late), intensity chart, peak-by-model board,
       advisory card, recon schedule, crawl. The whole page wears the storm's
       Saffir-Simpson colour and updates itself every 60 s. Data: situation/<sid>.json
       from update-situation.yml every 10 min (move to the box poller before it

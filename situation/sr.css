@@ -465,8 +465,9 @@ details.hzs .hz{margin:0 6px 6px}
 .lc .seg{display:flex;gap:2px}
 .lc .tl{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:180px}
 .lc .tl input{flex:1;min-width:80px;accent-color:var(--cat)}
-.lc .lt{flex:none;width:170px;font-size:12px;color:#fff;font-variant-numeric:tabular-nums;overflow:hidden}
+.lc .lt{flex:none;width:205px;white-space:nowrap;font-size:12px;color:#fff;font-variant-numeric:tabular-nums;overflow:hidden}
 .lc .lt em{font-style:normal;color:var(--ice);font-size:10px;margin-left:6px}
+.lc .lt em.old{color:#ff9a7a}
 .lc label{display:flex;align-items:center;gap:5px;color:var(--ice);cursor:pointer}
 .lc .op input{width:70px;accent-color:var(--cat)}
 /* ---------- v5: 4-panel ---------- */

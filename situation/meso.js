@@ -1,4 +1,5 @@
-/* Situation Room mesoscale loops: GOES-East/West 1-minute mesoscale sectors, read straight from NOAA's public GOES
+/* Situation Room GOES loops read straight from NOAA: the 1-minute mesoscale sectors and the 5-minute CONUS/PACUS sectors.
+   Original header -- mesoscale loops: GOES-East/West 1-minute mesoscale sectors, read straight from NOAA's public GOES
    buckets (ABI-L2-CMIPM netCDF, CORS-open) and decoded in the browser (h5wasm, loaded only when meso is first used).
    Pixels are true brightness temperature / reflectance, reprojected from the satellite's fixed grid to Web Mercator,
    so the IR ramps (TAT, Dvorak BD, grayscale) are exact rather than recoloured imagery.
@@ -31,12 +32,26 @@ const Meso = (() => {
     }
     return null;
   }
+  /* the 5-minute sectors (CONUS from GOES-East, PACUS from GOES-West): fixed-grid extents, radians (GOES-R PUG) */
+  const LIVE = { goes19: { lon0: -75, x: [-0.101332, 0.038612], y: [0.044268, 0.128212], label: "GOES-19 CONUS" },
+    goes18: { lon0: -137, x: [-0.069972, 0.069972], y: [0.044268, 0.128212], label: "GOES-18 PACUS" } };
+  function coverLive(lon, lat) {
+    let best = null;
+    for (const [sat, S] of Object.entries(LIVE)) {
+      const xy = toXY(lon, lat, S.lon0), m = .006; if (!xy) continue;
+      if (xy[0] < S.x[0] + m || xy[0] > S.x[1] - m || xy[1] < S.y[0] + m || xy[1] > S.y[1] - m) continue;
+      const d = Math.abs(((lon - S.lon0 + 540) % 360) - 180); if (!best || d < best.d) best = { sat, kind: "C", label: S.label, d };
+    }
+    return best;
+  }
+  const LIVEBANDS = { ir: BANDS.ir, wv: BANDS.wv };
   const jday = d => Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5);
   const keyTime = k => { const m = k.match(/_s(\d{4})(\d{3})(\d{2})(\d{2})(\d{2})/); return m ? Date.UTC(+m[1], 0, +m[2], +m[3], +m[4], +m[5]) : 0; };
   async function list(sec, ch, from, to) {
     const keys = [];
     for (let t = from - 36e5; t <= to + 36e5; t += 36e5) {
-      const d = new Date(t), pre = `ABI-L2-CMIPM/${d.getUTCFullYear()}/${String(jday(d)).padStart(3, "0")}/${String(d.getUTCHours()).padStart(2, "0")}/OR_ABI-L2-CMIPM${sec.m}-M6${ch}_`;
+      const d = new Date(t), P = sec.kind === "C" ? "ABI-L2-CMIPC" : "ABI-L2-CMIPM",
+        pre = `${P}/${d.getUTCFullYear()}/${String(jday(d)).padStart(3, "0")}/${String(d.getUTCHours()).padStart(2, "0")}/OR_${P}${sec.kind === "C" ? "" : sec.m}-M6${ch}_`;
       try {
         const x = await (await fetch(`${BUCKET[sec.sat]}/?list-type=2&prefix=${encodeURIComponent(pre)}`)).text();
         for (const m of x.matchAll(/<Key>([^<]+)<\/Key>/g)) { const tt = keyTime(m[1]); if (tt >= from && tt <= to + 6e4) keys.push({ k: m[1], t: tt }); }
@@ -60,7 +75,8 @@ const Meso = (() => {
   const R = 6378137, mx = lon => lon * Math.PI / 180 * R, my = lat => R * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
   const lonOf = x => x / R * 180 / Math.PI, latOf = y => (2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * 180 / Math.PI;
 
-  async function decode(buf) {
+  /* crop = {lon, lat, dlon, dlat}: read only the fixed-grid window around the storm (a hyperslab, not the whole sector) */
+  async function decode(buf, crop) {
     const h = await h5(), name = "/m" + Math.random().toString(36).slice(2) + ".nc";
     h.FS.writeFile(name, new Uint8Array(buf));
     const f = new h.File(name, "r");
@@ -68,9 +84,20 @@ const Meso = (() => {
       const c = f.get("CMI"), x = f.get("x"), y = f.get("y"), p = f.get("goes_imager_projection");
       const sh = c.shape, at = (d, k) => d.attrs[k] ? d.attrs[k].value[0] ?? d.attrs[k].value : null;
       const xv = x.value, yv = y.value;
-      return { w: sh[1], h: sh[0], v: c.value, sf: at(c, "scale_factor"), ao: at(c, "add_offset"), fill: at(c, "_FillValue"),
+      const g = { w: sh[1], h: sh[0], sf: at(c, "scale_factor"), ao: at(c, "add_offset"), fill: at(c, "_FillValue"),
         x0: xv[0] * at(x, "scale_factor") + at(x, "add_offset"), dx: at(x, "scale_factor") * (xv[1] - xv[0]),
         y0: yv[0] * at(y, "scale_factor") + at(y, "add_offset"), dy: at(y, "scale_factor") * (yv[1] - yv[0]), lon0: at(p, "longitude_of_projection_origin") };
+      if (!crop) { g.v = c.value; return g; }
+      let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+      for (let a = 0; a <= 20; a++) for (let b = 0; b <= 20; b++) {
+        if (a % 20 && b % 20) continue;
+        const xy = toXY(crop.lon - crop.dlon + crop.dlon * a / 10, crop.lat - crop.dlat + crop.dlat * b / 10, g.lon0); if (!xy) continue;
+        const i = (xy[0] - g.x0) / g.dx, j = (xy[1] - g.y0) / g.dy; i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+      }
+      i0 = Math.max(0, Math.floor(i0)); j0 = Math.max(0, Math.floor(j0)); i1 = Math.min(g.w, Math.ceil(i1) + 1); j1 = Math.min(g.h, Math.ceil(j1) + 1);
+      if (!(i1 - i0 > 8 && j1 - j0 > 8)) throw new Error("storm outside sector");
+      g.v = c.slice([[j0, j1], [i0, i1]]); g.x0 += i0 * g.dx; g.y0 += j0 * g.dy; g.w = i1 - i0; g.h = j1 - j0;
+      return g;
     } finally { f.close(); try { h.FS.unlink(name); } catch (e) {} }
   }
   /* the output grid (Web Mercator) for a geometry: bbox from the sector's perimeter */
@@ -118,13 +145,13 @@ const Meso = (() => {
 
   class Loop {
     constructor(map, id, before, opt = {}) {
-      Object.assign(this, { map, id, before, band: opt.band || "ir", frames: [], on: false, gen: 0, sector: null, ready: false, loading: null, maxPx: opt.maxPx || 1600 });
+      Object.assign(this, { map, id, before, band: opt.band || "ir", frames: [], on: false, gen: 0, sector: null, center: null, ready: false, loading: null, maxPx: opt.maxPx || 1600 });
       this.canvas = document.createElement("canvas"); this.ctx = this.canvas.getContext("2d");
     }
     get sat() { return this.sector?.sat === "goes18" ? "west" : "east"; }
-    get layer() { return `meso-${this.sector?.sat}-m${this.sector?.m}-${this.band}`; }
+    get layer() { return `${this.sector?.kind === "C" ? "live" : "meso"}-${this.sector?.sat}-m${this.sector?.m}-${this.band}`; }
     get current() { return this.cur || this.frames[this.frames.length - 1]; }
-    get label() { return this.sector ? `${this.sector.sat === "goes18" ? "GOES-18" : "GOES-19"} Meso ${this.sector.m}` : "Mesoscale"; }
+    get label() { return !this.sector ? "Mesoscale" : this.sector.kind === "C" ? this.sector.label : `${this.sector.sat === "goes18" ? "GOES-18" : "GOES-19"} Meso ${this.sector.m}`; }
     setBand(b) { this.band = b; if (this.on) this.reload(); }
     show(on) {
       this.on = on;
@@ -133,7 +160,8 @@ const Meso = (() => {
     }
     async reload() {
       const gen = ++this.gen; if (!this.sector) return;
-      const P = SatX.P, hours = Math.min(2, P.hours), step = this.band === "vis" || hours > 1 ? 2 : 1;
+      const P = SatX.P, live = this.sector.kind === "C", hours = Math.min(live ? 6 : 2, P.hours), step = live ? (hours > 1 ? 10 : 5) : this.band === "vis" || hours > 1 ? 2 : 1;
+      const crop = live && this.center ? { lon: this.center[0], lat: this.center[1], dlon: 13, dlat: 9.5 } : null;
       this.ready = false; this.loading = { done: 0, total: 0 }; this.emit();
       const now = Date.now(), keys = await list(this.sector, BANDS[this.band].ch, now - hours * 36e5 - 3 * 6e4, now);
       if (gen !== this.gen) return;
@@ -143,7 +171,7 @@ const Meso = (() => {
       const fr = pick.map(k => ({ t: k.t, k: k.k, g: null, canvas: null, img: null }));
       let o = null;
       const load = async f => {
-        try { const r = await fetch(`${BUCKET[this.sector.sat]}/${f.k}`); if (!r.ok) return; f.g = await decode(await r.arrayBuffer()); } catch (e) {}
+        try { const r = await fetch(`${BUCKET[this.sector.sat]}/${f.k}`); if (!r.ok) return; f.g = await decode(await r.arrayBuffer(), crop); } catch (e) {}
       };
       const newest = fr[fr.length - 1]; await load(newest); if (gen !== this.gen || !newest.g) { this.loading = null; this.emit(); return; }
       o = outGrid(newest.g, this.band === "vis" ? 1800 : this.maxPx); this.out = o;
@@ -174,5 +202,5 @@ const Meso = (() => {
     opacity(o) { if (this.map.getLayer(this.id)) this.map.setPaintProperty(this.id, "raster-opacity", o); }
     emit() { for (const f of SatX.P.subs) f(SatX.P.t, SatX.span()); }
   }
-  return { Loop, cover, BANDS, h5, BUCKET, jday, keyTime };
+  return { Loop, cover, coverLive, BANDS, LIVEBANDS, h5, BUCKET, jday, keyTime };
 })();

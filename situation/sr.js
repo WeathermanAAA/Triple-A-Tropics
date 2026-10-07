@@ -274,7 +274,8 @@ async function initMap() {
   const ro = new ResizeObserver(() => { K = st.clientWidth / 1027; st.style.setProperty("--k", K); MAP.resize(); }); ro.observe(st);
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
-  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw");
+  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw");
+  LIVESEC = Meso.coverLive(...pos()); if (LIVESEC) { SRC = "live"; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); }
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
   MAP.addSource("mw", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
   MAP.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 700 }, "raster-fade-duration": 0 } });
@@ -431,9 +432,9 @@ const LY = {
   now: { name: "Storm position", grp: "Forecast", on() { nowMarker(); }, off() { NOWM?.remove(); NOWM = null; } },
   sat: { name: "Satellite loop", grp: "Observations",
     on() { SATL().show(true); loopBar(true); },
-    off() { MAINLOOP.show(false); MESOLOOP.show(false); loopBar(false); if (CLK === "sat") clock(null); },
-    leg: () => { const L = SATL(), b = (SRC === "meso" ? Meso.BANDS : SatX.BANDS)[L.band]; return `<h4>${esc(SRC === "meso" ? L.label : SatX.SATS[L.sat].name)} ${esc(b.t)}</h4><div class="r"><i style="width:calc(90px*var(--k));background:${MAINLOOP.band === "ir" && SatX.P.ramp !== "native" ? SatX.rampCSS(SatX.P.ramp) : MAINLOOP.band === "ir" ? "linear-gradient(90deg,#444,#ddd,#3fa4ff,#46c56a,#ffe14d,#f5333c,#888)" : "linear-gradient(90deg,#123,#9ab,#fff)"}"></i>${esc(b.sub)}</div>${MAINLOOP.band === "ir" ? `<div class="rt"><span>+40°C</span><span>−95°C</span></div>` : ""}`; },
-    cred: "Satellite: NOAA GOES / JMA Himawari via NASA GIBS" },
+    off() { MAINLOOP.show(false); MESOLOOP.show(false); LIVELOOP.show(false); loopBar(false); if (CLK === "sat") clock(null); },
+    leg: () => { const L = SATL(), b = BANDSET()[L.band]; return `<h4>${esc(SRC !== "fd" ? L.label : SatX.SATS[L.sat].name)} ${esc(b.t)}</h4><div class="r"><i style="width:calc(90px*var(--k));background:${L.band === "ir" && SatX.P.ramp !== "native" ? SatX.rampCSS(SatX.P.ramp) : L.band === "wv" && SRC !== "fd" ? SatX.rampCSS("wv") : L.band === "ir" ? "linear-gradient(90deg,#444,#ddd,#3fa4ff,#46c56a,#ffe14d,#f5333c,#888)" : "linear-gradient(90deg,#123,#9ab,#fff)"}"></i>${esc(b.sub || "")}</div>${L.band === "ir" || (L.band === "wv" && SRC !== "fd") ? `<div class="rt"><span>+40°C</span><span>−95°C</span></div>` : ""}`; },
+    get cred() { return SRC === "fd" ? "Satellite: NOAA GOES / JMA Himawari via NASA GIBS" : "Satellite: NOAA GOES-R ABI (NOAA Open Data)"; } },
   mw: { name: "Microwave (latest pass)", grp: "Observations",
     on() { const list = mwPasses(), o = mwPick(); if (!o) return; vis("mw", true); showMW(o);
       const st = $("strip"); st.innerHTML = list.slice(-7).map((x, i) => `<button data-id="${x.id}" class="${x.id === o.id ? "on" : ""}" style="--i:${i}"><img alt="" src="${CDN}/microwave/${x.img.color91 || x.img.color37}"><span>${hm(x.t)}</span></button>`).join("");
@@ -633,14 +634,17 @@ function fieldBar(on) {
 }
 
 /* ---------------- satellite loop bar + 4-panel view ---------------- */
-let MAINLOOP = null, MESOLOOP = null, SRC = "fd", MESOSEC = null;
-const SATL = () => SRC === "meso" ? MESOLOOP : MAINLOOP;
-const BANDSET = () => SRC === "meso" ? Meso.BANDS : SatX.BANDS;
-/* full disk (GIBS, 10 min) or the 1-minute mesoscale sector that covers the storm */
+let MAINLOOP = null, MESOLOOP = null, LIVELOOP = null, SRC = "fd", MESOSEC = null, LIVESEC = null;
+const SATL = () => SRC === "meso" ? MESOLOOP : SRC === "live" ? LIVELOOP : MAINLOOP;
+const BANDSET = () => SRC === "meso" ? Meso.BANDS : SRC === "live" ? Meso.LIVEBANDS : SatX.BANDS;
+const SRCNAME = { fd: "Full disk", live: "5-min", meso: "Meso 1-min" };
+/* GIBS full disk (10 min, but 1.5-2.5 h behind), NOAA's 5-minute CONUS/PACUS sector (~10 min behind; the default when it
+   covers the storm), or the 1-minute mesoscale sector that covers the storm */
 async function setSrc(s) {
   if (s === "meso") { MESOSEC = await Meso.cover(...pos()); if (!MESOSEC) return; MESOLOOP.sector = MESOSEC; if (!(MESOLOOP.band in Meso.BANDS)) MESOLOOP.band = "ir"; }
+  if (s === "live") { LIVESEC = Meso.coverLive(...pos()); if (!LIVESEC) return; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); if (!(LIVELOOP.band in Meso.LIVEBANDS)) LIVELOOP.band = "ir"; }
   const was = ON.has("sat"); if (was) SATL().show(false);
-  SRC = s; if (s === "meso") SatX.P.hours = Math.min(SatX.P.hours, 1); else if (SatX.P.hours < 1) SatX.P.hours = 3;
+  SRC = s; if (s === "meso") SatX.P.hours = Math.min(SatX.P.hours, 1); else if (SatX.P.hours < 1) SatX.P.hours = 3; if (s === "live") SatX.P.hours = Math.min(SatX.P.hours, 6);
   if (was) SATL().show(true);
   buildLoopBar(); legendNow(); if (TABS[TAB]?.id === "sat") frame(...TABS[TAB].hdr());
 }
@@ -648,15 +652,15 @@ const PLAYI = `<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentC
 function loopBar(on) { const lc = $("lc"); lc.hidden = !(on || QUAD.on); if (!lc.hidden) buildLoopBar(); }
 function buildLoopBar() {
   const P = SatX.P, sat = SatX.satFor((QUAD.on ? QUAD.cells[0]?.map : MAP)?.getCenter().lng ?? pos()[0]);
-  const bands = SRC === "meso" ? Object.keys(Meso.BANDS) : Object.keys(SatX.BANDS).filter(b => SatX.has(sat, b)), L = SATL();
+  const bands = SRC !== "fd" ? Object.keys(BANDSET()) : Object.keys(SatX.BANDS).filter(b => SatX.has(sat, b)), L = SATL();
   if (MESOSEC === null && !QUAD.on) Meso.cover(...pos()).then(c => { MESOSEC = c || false; if (c) buildLoopBar(); });
   $("lc").innerHTML = `<button class="pp" data-a="play" aria-label="Play or pause">${P.playing ? PAUSEI : PLAYI}</button>
     <button data-a="prev" aria-label="Previous frame">‹</button><button data-a="next" aria-label="Next frame">›</button>
     <div class="tl"><input type="range" min="0" max="1000" value="1000" aria-label="Loop position"><span class="lt" id="lcT">loading</span></div>
-    ${(QUAD.on ? QUAD.cells.some(c => c.loop.on && c.loop.band === "ir") : L.band === "ir") ? `<div class="seg" title="IR colour ramp">${Object.entries(SatX.RAMPS).filter(([k]) => SRC !== "meso" || k !== "native").map(([k, v]) => `<button data-r="${k}" class="${k === P.ramp ? "on" : ""}" title="${v}">${k === "tat" ? "TAT" : k === "bd" ? "BD" : k === "gray" ? "B/W" : "NASA"}</button>`).join("")}</div>` : ""}
-    ${!QUAD.on && MESOSEC ? `<div class="seg" title="Imagery source"><button data-src="fd" class="${SRC === "fd" ? "on" : ""}" title="Full disk, every 10 minutes">FULL DISK</button><button data-src="meso" class="${SRC === "meso" ? "on" : ""}" title="${esc(MESOSEC.label)}, every minute">MESO 1-MIN</button></div>` : ""}
+    ${(QUAD.on ? QUAD.cells.some(c => c.loop.on && c.loop.band === "ir") : L.band === "ir") ? `<div class="seg" title="IR colour ramp">${Object.entries(SatX.RAMPS).filter(([k]) => SRC === "fd" || k !== "native").map(([k, v]) => `<button data-r="${k}" class="${k === P.ramp ? "on" : ""}" title="${v}">${k === "tat" ? "TAT" : k === "bd" ? "BD" : k === "gray" ? "B/W" : "NASA"}</button>`).join("")}</div>` : ""}
+    ${!QUAD.on && (MESOSEC || LIVESEC) ? `<div class="seg" title="Imagery source"><button data-src="fd" class="${SRC === "fd" ? "on" : ""}" title="Full disk via NASA GIBS, every 10 minutes (runs 1.5-2.5 h behind)">FULL DISK</button>${LIVESEC ? `<button data-src="live" class="${SRC === "live" ? "on" : ""}" title="${esc(LIVESEC.label)}, every 5 minutes, straight from NOAA">5-MIN</button>` : ""}${MESOSEC ? `<button data-src="meso" class="${SRC === "meso" ? "on" : ""}" title="${esc(MESOSEC.label)}, every minute">MESO 1-MIN</button>` : ""}</div>` : ""}
     ${QUAD.on ? "" : `<div class="seg" title="Band">${bands.map(b => `<button data-b="${b}" class="${b === L.band ? "on" : ""}" title="${esc(BANDSET()[b].t)}">${BANDSET()[b].short}</button>`).join("")}</div>`}
-    <div class="seg" title="Loop length">${(SRC === "meso" && !QUAD.on ? [.5, 1, 2] : [1, 3, 6, 12]).map(h => `<button data-h="${h}" class="${h === P.hours ? "on" : ""}">${h < 1 ? "30M" : h + "H"}</button>`).join("")}</div>
+    <div class="seg" title="Loop length">${(SRC === "meso" && !QUAD.on ? [.5, 1, 2] : SRC === "live" && !QUAD.on ? [1, 2, 3, 6] : [1, 3, 6, 12]).map(h => `<button data-h="${h}" class="${h === P.hours ? "on" : ""}">${h < 1 ? "30M" : h + "H"}</button>`).join("")}</div>
     <div class="seg" title="Speed">${SatX.SPEEDS.map((s, i) => `<button data-s="${i}" class="${i === P.speed ? "on" : ""}" title="${s.k}">${s.k[0]}</button>`).join("")}</div>
     <label class="op" title="Satellite opacity">Opacity<input type="range" min="20" max="100" value="${Math.round(P.opacity * 100)}"></label>`;
   const lc = $("lc");
@@ -677,11 +681,11 @@ SatX.P.subs.add((t, s) => {
   const sl = lc.querySelector(".tl input"), L = [...SatX.P.loops][0], f = L?.current;
   if (sl && document.activeElement !== sl && L?.frames.length) { const F = L.frames, k = Math.max(0, F.findIndex(x => x.t >= t - 1)); sl.value = Math.round(k / Math.max(1, F.length - 1) * 1000); }
   const ld = L?.loading, key = `${f?.t}|${ld ? ld.done + "/" + ld.total : ""}`; if (key === LCKEY) return; LCKEY = key;
-  const lt = $("lcT"); if (lt && f) lt.innerHTML = `${hm(f.t)} ${TZ}${ld ? `<em>loading ${ld.done}/${ld.total}</em>` : ""}`;
+  const lt = $("lcT"); if (lt && f) { const age = Math.round((Date.now() - s[1]) / 6e4); lt.innerHTML = `${hm(f.t)} ${TZ}${ld ? `<em>loading ${ld.done}/${ld.total}</em>` : `<em class="${age > 45 ? "old" : ""}">${age < 60 ? age + " min" : Math.floor(age / 60) + "h" + z2(age % 60)} old</em>`}`; }
   if (!QUAD.on && ON.has("sat") && f) {
     const back = Math.round((s[1] - f.t) / 6e4);
-    clock("sat", `${SRC === "meso" ? "MESO " : ""}${BANDSET()[SATL().band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");
-    if (TABS[TAB]?.id === "sat") { const e = $("frame").querySelector(".tTime"); if (e) e.textContent = `${hm(f.t)} ${TZ}`; }
+    clock("sat", `${SRC === "meso" ? "MESO " : SRC === "live" ? "5-MIN " : ""}${BANDSET()[SATL().band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");
+    if (TABS[TAB]?.id === "sat") { const e = $("frame").querySelector(".tTime"); if (e) e.textContent = `${hm(f.t)} ${TZ}`; else frame(...TABS[TAB].hdr()); }
   }
   for (const c of QUAD.cells) c.stamp?.();
 });
@@ -769,7 +773,7 @@ const TABS = [
       CAT.slice(0, 5).map(c => `<i style="background:${c.c};color:${inkOn(c.c)}">${c.k === "D" ? "TD" : c.k === "S" ? "TS" : "CAT " + c.k}</i>`).join("")] },
   { id: "sat", label: "Satellite", layers: ["sat", "track", "best"], anim: ["sat"], ok: () => Object.keys(SatX.times()).length,
     cam() { const c = pos(); MAP.jumpTo({ center: [c[0] + .4, c[1] + 1.2], zoom: 5.4 }); },
-    hdr: () => { const L = SATL(), f = L.current; return [`${BANDSET()[L.band].t} Satellite`, f ? `${hm(f.t)} ${TZ}` : "", SRC === "meso" ? `MESO ${L.sector?.m || ""}` : SatX.SATS[SatX.satFor(pos()[0])].name]; } },
+    hdr: () => { const L = SATL(), f = L.current; return [`${BANDSET()[L.band].t} Satellite`, f ? `${hm(f.t)} ${TZ}` : "", SRC === "meso" ? `MESO ${L.sector?.m || ""}` : SRC === "live" ? L.label.replace(/^GOES-\d+ /, "") : SatX.SATS[SatX.satFor(pos()[0])].name]; } },
   { id: "mw", label: "Microwave", layers: ["mw", "track", "best"], anim: ["mw"], ok: () => mwPasses().length,
     cam() { const o = mwPick(), b = o.bounds; fit([[b[0], b[1]], [b[2], b[3]]], 120, { bottom: 10, left: 10, right: 10, maxZoom: 6 }); },
     hdr: () => { const o = mwPick(); return ["Microwave Imagery", `${o.sensor} · ${hm(o.t)} ${TZ}`, MWPROD === "color37" ? "37 GHZ" : "89 GHZ"]; } },
