@@ -68,7 +68,7 @@ const ease = p => 1 - Math.pow(1 - p, 3);
 const sig = d => ({ adv: [d.nhc.advisory, d.nhc.intensity, d.nhc.pressure, (d.nhc.points || []).length, d.nhc.lastUpdate].join("|"), best: (d.best || []).length,
   models: d.models?.cycle || "", mw: (d.mw?.overpasses || []).slice(-1)[0]?.id || "", recon: `${d.recon?.current?.n_obs || 0}|${d.recon?.current?.valid_end || ""}`,
   plan: `${d.recon?.plan?.number || ""}|${(d.recon?.plan?.flights || []).length}`, sat: d.sat?.latest || "" });
-const NEEDS = { radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
+const NEEDS = { fields: [], radii: ["adv"], ww: ["adv"], ascat: ["adv"], glm: [], cone: ["adv"], track: ["adv"], points: ["adv"], best: ["best", "adv"], sat: ["sat"], mw: ["mw"], recon: ["recon"], fixes: ["plan"], models: ["models"], gefs: ["models"] };
 async function refresh(first) {
   let d;
   try { d = await (await fetch(`${CDN}/situation/${SID}.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { stale(true); return; }
@@ -278,6 +278,8 @@ async function initMap() {
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
   MAP.addSource("mw", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
   MAP.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 700 }, "raster-fade-duration": 0 } });
+  MAP.addSource("fld", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
+  MAP.addLayer({ id: "fld", type: "raster", source: "fld", layout: { visibility: "none" }, paint: { "raster-opacity": .92, "raster-fade-duration": 0, "raster-resampling": "linear" } });
   MAP.addLayer({ id: "lines", type: "raster", source: "lines", paint: { "raster-fade-duration": 0 } });
   MAP.addLayer({ id: "roads", type: "raster", source: "roads", layout: { visibility: "none" }, paint: { "raster-fade-duration": 0, "raster-opacity": .9 } });
   ["cone", "best", "bestpts", "fc", "gefs", "aids", "ofcl", "recon", "sondes"].forEach(gj);
@@ -299,6 +301,9 @@ async function initMap() {
   MAP.addLayer({ id: "recon-case", type: "line", source: "recon", layout: { "line-cap": "round", "line-join": "round", visibility: "none" }, paint: { "line-color": "#06101f", "line-width": 5.5, "line-opacity": .6 } });
   MAP.addLayer({ id: "recon", type: "line", source: "recon", layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
     paint: { "line-width": 3, "line-gradient": ["interpolate", ["linear"], ["line-progress"], 0, "#5dd3ff", 0.5, "#ffffff", 1, "#ffd24a"] } });
+  gj("fldvec");
+  MAP.addLayer({ id: "fldvec", type: "symbol", source: "fldvec", layout: { visibility: "none", "icon-image": ["get", "i"], "icon-rotate": ["get", "d"], "icon-rotation-alignment": "map",
+    "icon-size": ["get", "s"], "icon-allow-overlap": false, "icon-padding": 2 } });
   MAP.addLayer({ id: "ascat", type: "symbol", source: "ascat", layout: { visibility: "none", "icon-image": ["get", "i"], "icon-rotate": ["get", "d"], "icon-rotation-alignment": "map",
     "icon-allow-overlap": false, "icon-padding": 1, "symbol-sort-key": ["-", 0, ["get", "kt"]] } });
   MAP.addLayer({ id: "glm", type: "circle", source: "glm", layout: { visibility: "none" }, paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 1.6, 8, 3], "circle-color": ["get", "c"],
@@ -491,6 +496,13 @@ const LY = {
     off() { clearInterval(this.iv); vis("glm", false); if (CLK === "glm") clock(null); },
     leg: () => `<h4>Lightning flashes</h4><div class="r"><i class="dot" style="background:#fff"></i>last 2 min</div><div class="r"><i class="dot" style="background:#ffd24a"></i>2 to 5 min</div><div class="r"><i class="dot" style="background:#ff6a1f"></i>5 to 10 min</div>`,
     cred: "Lightning: NOAA GOES GLM" },
+  fields: { name: "Model fields (GFS)", grp: "Guidance",
+    async on() { await fieldsLoad(); if (!ON.has("fields")) return; if (!FLD.idx) { clock("fields", "MODEL FIELDS", "N/A", "not built for this storm yet"); return; }
+      vis(["fld", "fldvec"], true); fieldBar(true); fieldShow(); },
+    off() { vis(["fld", "fldvec"], false); fieldBar(false); if (CLK === "fields") clock(null); },
+    leg: () => { if (!FLD.idx) return ""; const sc = FLD.idx.scales[FLD.field], st = sc.stops;
+      return `<h4>${esc(FIELDN[FLD.field])} (${sc.unit})</h4><div class="r"><i style="width:calc(150px*var(--k));height:calc(8px*var(--k));background:linear-gradient(90deg,${st.map(s => s[1]).join(",")})"></i></div><div class="rt"><span>${st[0][0]}</span><span>${st[Math.floor(st.length / 2)][0]}</span><span>${st[st.length - 1][0]}+</span></div>`; },
+    cred: "Model fields: NOAA GFS 0.25°, processed by Triple-A-Tropics" },
   models: { name: "Model tracks", grp: "Guidance",
     on(a) { const { M, aids, ofcl } = modelSet(); if (!aids.length) return; vis(["aids", "aids-case"], true);
       const tags = aids.map(x => { const el = document.createElement("div"); el.className = "aid"; el.style.setProperty("--c", AIDC[x.t] || "#fff"); el.textContent = x.t;
@@ -515,7 +527,7 @@ const LY = {
   roads: { name: "Highways", grp: "Map", on() { vis("roads", true); }, off() { vis("roads", false); } },
   lines: { name: "Borders & counties", grp: "Map", on() { vis("lines", true); }, off() { vis("lines", false); } }
 };
-const DATA = ["cone", "radii", "ww", "track", "points", "best", "sat", "mw", "ascat", "glm", "recon", "fixes", "models", "gefs"];
+const DATA = ["fields", "cone", "radii", "ww", "track", "points", "best", "sat", "mw", "ascat", "glm", "recon", "fixes", "models", "gefs"];
 const ON = new Set(["now", "cities", "lines"]);
 function setLayer(id, on, a = true) {
   if (on && ON.has(id)) { lclear(id); LY[id].off(); }
@@ -578,6 +590,46 @@ async function glmTick() {
     if (ON.has("glm")) { const c = pos(); let near = 0; for (const f of F) { const [x, y] = f.geometry.coordinates; if (Math.hypot((x - c[0]) * Math.cos(c[1] * Math.PI / 180), y - c[1]) < 3) near++; }
       clock("glm", "LIGHTNING", `${near}`, `flashes within 200 mi · 10 min`); }
   } catch (e) {} finally { GLM.busy = false; }
+}
+
+
+/* ---------------- GFS model fields (situation/build_fields.py): shear, steering, precipitable water ---------------- */
+const FLD = { idx: null, field: "shear", fh: 0, playing: false, iv: null };
+const FIELDN = { shear: "Deep-layer shear", steering: "Steering flow", pwat: "Precipitable water" };
+async function fieldsLoad() {
+  try { FLD.idx = await (await fetch(`${CDN}/situation/fields/${SID}/index.json?t=${Math.floor(Date.now() / 6e5)}`)).json(); if (!FLD.idx.hours.includes(FLD.fh)) FLD.fh = FLD.idx.hours[0]; }
+  catch (e) { FLD.idx = null; }
+}
+const fldValid = () => isoMs(FLD.idx.cycle) + FLD.fh * 36e5;
+async function fieldShow() {
+  const I = FLD.idx; if (!I || !ON.has("fields")) return; const b = I.bounds, base = `${CDN}/situation/fields/${SID}/`, F = String(FLD.fh).padStart(3, "0");
+  MAP.getSource("fld").updateImage({ url: `${base}${FLD.field}_f${F}.png`, coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]] });
+  if (FLD.field === "pwat") set("fldvec", FC([]));
+  else try { const v = (await (await fetch(`${base}vec_f${F}.json`)).json())[FLD.field];
+    set("fldvec", FC(v.map(([lo, la, u, w]) => { const s = Math.hypot(u, w); return { type: "Feature", properties: FLD.field === "shear" ? { i: whiteBarb(Math.min(140, Math.round(s / 5) * 5)), d: (Math.atan2(-u, -w) * 180 / Math.PI + 360) % 360, s: 1 } : { i: arrowIcon(), d: (Math.atan2(u, w) * 180 / Math.PI + 360) % 360, s: Math.max(.35, Math.min(1.1, s / 25)) }, geometry: { type: "Point", coordinates: [lo, la] } }; }))); } catch (e) {}
+  const lbl = `${I.model} ${I.cycle.slice(11, 13)}Z · F${F} · ${dayhm(fldValid())} ${TZ}`;
+  clock("fields", `${FIELDN[FLD.field].toUpperCase()}`, `F${F}`, `valid ${dayhm(fldValid())} ${TZ}`);
+  if (TABS[TAB]?.id === "env") frame(...TABS[TAB].hdr());
+  const ft = $("fbT"); if (ft) ft.textContent = lbl;
+  $("fb")?.querySelectorAll("[data-fh]").forEach(x => x.classList.toggle("on", +x.dataset.fh === FLD.fh));
+  legendNow(); creditNow();
+}
+function whiteBarb(kt) { const id = "wbarb" + kt; if (MAP.hasImage(id)) return id; const c = document.createElement("canvas"), s = 2, W = 40; c.width = c.height = W * s; const g = c.getContext("2d"); g.scale(s, s); g.lineCap = "round";
+  AscatViewer.drawBarb(g, W / 2, W / 2, kt, 0, "rgba(5,10,20,.8)", 3); AscatViewer.drawBarb(g, W / 2, W / 2, kt, 0, "#ffffff", 1.3); MAP.addImage(id, g.getImageData(0, 0, W * s, W * s), { pixelRatio: s }); return id; }
+function arrowIcon() { const id = "farrow"; if (MAP.hasImage(id)) return id; const c = document.createElement("canvas"), s = 2, W = 40; c.width = c.height = W * s; const g = c.getContext("2d"); g.scale(s, s);
+  g.translate(20, 20); g.beginPath(); g.moveTo(0, -15); g.lineTo(7, -3); g.lineTo(2.2, -3); g.lineTo(2.2, 14); g.lineTo(-2.2, 14); g.lineTo(-2.2, -3); g.lineTo(-7, -3); g.closePath();
+  g.lineWidth = 2.5; g.strokeStyle = "rgba(5,10,20,.85)"; g.stroke(); g.fillStyle = "#fff"; g.fill(); MAP.addImage(id, g.getImageData(0, 0, W * s, W * s), { pixelRatio: s }); return id; }
+function fieldBar(on) {
+  const fb = $("fb"); fb.hidden = !on; if (!on) { clearInterval(FLD.iv); FLD.playing = false; return; }
+  const I = FLD.idx; if (!I) return;
+  fb.innerHTML = `<button class="pp" data-fa="play" aria-label="Play forecast">${PLAYI}</button>
+    <div class="seg">${Object.entries(FIELDN).map(([k, v]) => `<button data-fld="${k}" class="${k === FLD.field ? "on" : ""}">${k === "pwat" ? "PWAT" : k === "shear" ? "SHEAR" : "STEERING"}</button>`).join("")}</div>
+    <div class="seg">${I.hours.map(h => `<button data-fh="${h}" class="${h === FLD.fh ? "on" : ""}">${h}</button>`).join("")}</div>
+    <span class="lt" id="fbT" style="width:auto"></span>`;
+  fb.querySelectorAll("[data-fld]").forEach(b => b.onclick = () => { FLD.field = b.dataset.fld; fieldBar(true); fieldShow(); });
+  fb.querySelectorAll("[data-fh]").forEach(b => b.onclick = () => { FLD.fh = +b.dataset.fh; fieldShow(); });
+  fb.querySelector("[data-fa]").onclick = e => { FLD.playing = !FLD.playing; e.currentTarget.innerHTML = FLD.playing ? PAUSEI : PLAYI; clearInterval(FLD.iv);
+    if (FLD.playing) FLD.iv = setInterval(() => { const H = FLD.idx.hours; FLD.fh = H[(H.indexOf(FLD.fh) + 1) % H.length]; fieldShow(); }, 1200); };
 }
 
 /* ---------------- satellite loop bar + 4-panel view ---------------- */
@@ -702,6 +754,7 @@ const ICON = {
   sat: `<svg viewBox="0 0 24 24"><path d="M5 9l4-4 4 4-4 4zM13 17l4-4 4 4-4 4zM9 13l6-6M3 21l3-3" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>`,
   mw: `<svg viewBox="0 0 24 24"><path d="M2 12c2-5 4-5 6 0s4 5 6 0 4-5 6 0" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>`,
   recon: `<svg viewBox="0 0 24 24"><path d="M2 13l8-1 4-8h3l-2 8 6 0 2-3h1.5l-1 4.5 1 4.5H23l-2-3-6 0 2 8h-3l-4-8-8-1z" fill="currentColor"/></svg>`,
+  env: `<svg viewBox="0 0 24 24"><path d="M3 8h12a3 3 0 1 0-3-3M3 13h16a3 3 0 1 1-3 3M3 18h7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>`,
   models: `<svg viewBox="0 0 24 24"><path d="M3 20C8 14 9 9 12 4M3 20c6-4 9-8 14-12M3 20c7-2 12-4 18-5" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>`,
   quad: `<svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" fill="none" stroke="currentColor" stroke-width="2"/></svg>`,
   layers: `<svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>`
@@ -724,6 +777,9 @@ const TABS = [
     cam() { const cur = D.recon?.current, c = [pos(), ...(D.recon?.plan?.flights || []).filter(f => f.pos).map(f => f.pos)];
       if (cur) c.push(...cur.track.filter((p, i) => i % 4 === 0).map(p => [p[0], p[1]])); fit(c, 140, { right: 290, bottom: 70, left: 60, maxZoom: 6.2 }); },
     hdr: () => { const nf = nextFlight(), cur = D.recon?.current; return ["Hurricane Hunters", nf ? `Next fix ${dayhm(isoMs(nf.fix[0]))} ${TZ}` : cur ? `${ACFT(cur.aircraft)} today` : "No flights tasked", "RECON"]; } },
+  { id: "env", label: "Environment", layers: ["fields", "track", "best"], anim: [],
+    cam() { const c = pos(); MAP.jumpTo({ center: [c[0] + 2, c[1] + 3], zoom: 3.9 }); },
+    hdr: () => { const I = FLD.idx; return [FIELDN[FLD.field], I ? `${I.model} ${I.cycle.slice(11, 13)}Z · F${String(FLD.fh).padStart(3, "0")} · ${dayhm(fldValid())} ${TZ}` : "GFS", "GFS"]; } },
   { id: "models", label: "Models", layers: ["models", "gefs", "best"], anim: ["models", "gefs"], ok: () => Object.keys(D.models?.aids || {}).length,
     cam() { const { aids } = modelSet(); fit(aids.flatMap(a => a.pts.filter(p => p[0] <= 84).map(p => [p[2], p[1]])).concat(D.fc.filter(p => p.hr <= 84).map(p => [p.lon, p.lat])), 135, { right: 300, bottom: 90, left: 60, maxZoom: 6.2 }); },
     hdr: () => { const cyc = D.models?.cycle ? `${D.models.cycle.slice(11, 13)}Z` : ""; return ["Track Guidance", `${cyc} early-cycle aids`, cyc ? `${cyc} MODELS` : "MODELS"]; } }

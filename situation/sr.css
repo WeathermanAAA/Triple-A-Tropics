@@ -452,6 +452,7 @@ details.hzs .hz{margin:0 6px 6px}
 @media (max-width:1500px){.room{grid-template-columns:280px minmax(0,1fr)}.rail{grid-template-columns:1fr 1fr}}
 
 /* ---------- v5: satellite loop bar ---------- */
+.lc+.lc{margin-top:-14px;border-top:1px solid var(--line)}
 .lc{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:7px 10px;margin-top:-14px;
   background:linear-gradient(180deg,color-mix(in srgb,var(--cat) 24%,#14244f),color-mix(in srgb,var(--cat) 10%,#0a1432));
   border:1px solid var(--line);border-top:0;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
@@ -490,3 +491,7 @@ details.hzs .hz{margin:0 6px 6px}
 .maplibregl-ctrl-group button+button{border-top:1px solid var(--line)}
 .maplibregl-ctrl-group button .maplibregl-ctrl-icon{filter:invert(1)}
 .qc .maplibregl-ctrl-bottom-right{top:44px;left:8px}
+.srt button{white-space:nowrap;letter-spacing:.6px;padding:11px 6px 10px;gap:6px;font-size:12px}
+.srt .quadbtn,.srt .lyrbtn{padding:0 10px}
+@media (max-width:1700px){.srt button span{font-size:11px}.srt button svg{width:15px;height:15px}}
+@media (max-width:1400px){.srt button[data-i] span{display:none}.srt button[data-i]{flex:1}}

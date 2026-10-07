@@ -1,0 +1,45 @@
+name: update-situation-fields
+
+# Situation Room model fields (situation/build_fields.py): GFS 0.25 deg deep-layer shear, steering flow and
+# precipitable water around each active NHC storm, 0-120 h every 12 h, as shaded PNGs + thinned vectors under R2
+# situation/fields/<sid>/. GRIB records are Range-fetched from NOAA's public GFS bucket via the .idx sidecar (the
+# enscenters/gefs_ingest.py pattern). R2-only: contents:read, commits nothing, touches no track/ACE/climo product.
+#
+# Cadence: once per GFS cycle, ~4 h after it (f120 is up by then), plus a backup 30 min later.
+on:
+  schedule:
+    - cron: "47 3,9,15,21 * * *"
+    - cron: "17 4,10,16,22 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-situation-fields
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install --no-cache-dir numpy xarray cfgrib eccodes pillow
+      - name: Build fields
+        run: python situation/build_fields.py --out-dir fields_out
+      - name: Sync to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ ! -d fields_out/situation/fields ]; then echo "No active storms - nothing to sync."; exit 0; fi
+          aws s3 sync fields_out/situation/fields/ "s3://triple-a-tropics-media/situation/fields/" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=600" --only-show-errors
+          echo "Synced $(find fields_out -type f | wc -l) field files."
