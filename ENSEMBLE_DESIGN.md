@@ -1,6 +1,6 @@
 # Ensemble Cyclone Centers - multi-model TC ensemble platform (DESIGN)
 
-**Status: STAGES 1-4 LIVE - ECMWF ENS (2026-06-13) + AIFS-ENS + GEFS + Google FNV3 / GenCast on /models/, with the shared Model Regions picker (section 8) and a model selector that grows from the manifest. Final ring colors, navy basemap, Pacific-centered map; ECMWF/AIFS/GEFS fully global self-detection (region = client-side crop), Google models as native TC tracks. BUILT on a review branch (2026-10-06): WeatherNext 3 (64 members), the suite switcher, and the derived Google / all-model super ensembles (section 10).**
+**Status: STAGES 1-3 LIVE - ECMWF ENS (2026-06-13) + AIFS-ENS + GEFS on /models/, with the shared Model Regions picker (section 8) and a model selector that grows from the manifest. Final ring colors, navy basemap, Pacific-centered map; ECMWF/AIFS fully global detection (region = client-side crop), GEFS via NOAA genesis tracks (already TC-filtered). Pending Andrew's final look/region-framing sign-off on the live page (his Mac). Clusters and models 4 to 5 (GDM) are later stages and are NOT in scope here.**
 
 This is the design canon for the `/models/` "Ensemble Cyclone Centers" product.
 It follows the house convention of `SATELLITE.md` / `CYCLOLAB_DESIGN.md`:
@@ -383,76 +383,15 @@ Each stage is gated; do not start the next without sign-off.
   model's entry; `fetch_prior_manifest` retries a transient 403/404 (a present-
   manifest blip must never be read as "absent" and fresh-start the merge, which
   would clobber the sibling models' entries).
-- **Stage 4 (LIVE):** GDM-FNV3 and GDM-GenCast centers (Google DeepMind Weather
-  Lab, `source_kind="track_csv"`): NATIVE TC tracks from the per-cycle
-  cyclogenesis CSV, one shared ingest (`enscenters/fnv3_ingest.py`) selected by
-  `spec.api_model`, the model's own Vmax, no detect / warm-core. Own workflows
-  (`update-fnv3.yml` :47, `update-genc.yml` :53).
-- **Stage 4b (BUILT, on review branch):** Google DeepMind **WeatherNext 3**
-  (`slug: "wnv3"`, label "Google WN3 (64)", Weather Lab slug `WNV3`). Pure config
-  on the Stage 4 path: identical endpoint pattern and CSV columns (verified live
-  2026-10-06: samples 0..63, 6-hourly leads to ~282-360 h). The member count is
-  read from the CSV (every distinct `sample`), never hard-coded; CSV columns are
-  mapped **by normalized header name** and a missing required column fails loudly
-  (Weather Lab has inserted columns before). Own workflow `update-wnv3.yml` on the
-  unused odd minute **:39**, same R2 prefix + `enscenters_publish_manifest.sh`
-  reconcile. After merge, dispatch it once to seed the first cycle.
-- **Suite switcher (BUILT, on review branch):** the viewer's flat model row is now
-  a SUITE row (ECMWF / NOAA / Google / All models) over a MODEL row. Grouping is
-  data-driven: every `EnsModelSpec` has a `suite` (`ecmwf | noaa | google`,
-  `registry.SUITES`), `models_meta()` emits it, `merge_manifest_multi` and the
-  manifest guard write it onto every manifest entry (backfilling older sibling
-  entries). The viewer keeps a fallback map (`SUITE_OF` / `KNOWN_MODELS` in
-  `models/enscenters.js`) for manifests that predate the field, and shows a
-  registry model with no manifest entry yet (WN3 before its first run) as a
-  disabled chip that enables on the next manifest poll. A page without the
-  `#enscenters-suites` element falls back to the old flat row.
+- **Stage 4:** GDM-FNV3 and GDM-GenCast centers (Google DeepMind models). New
+  ingest adapters; same schema.
 - **View 2 (clusters):** the "Ensemble Cyclone Clusters" view (group members
   into scenario clusters). A second viewer over the SAME per-cycle JSON.
-- **Super ensembles (BUILT, on review branch):** DERIVED, client-side only - no
-  pipeline, no new R2 objects, no registry entry. Two viewer options:
-  "Google super ensemble" (in the Google suite; FNV3 + WN3 + GenCast) and
-  "All-model super ensemble" (the "All models" suite; every published model).
-  Method `method_version: "pool-v1"` (`POOL_*` constants and the pure helpers
-  exported as `EnsCentersViewer.Pool`):
-  - **Cycle matching.** A model contributes the selected init cycle; if it lacks
-    it, its newest run EARLIER than the cycle and at most **6 h** older contributes
-    instead, aligned by VALID TIME (`step' = step - lag`; steps before the pooled
-    init are dropped); otherwise it is dropped. A pooled run needs at least two
-    contributing models; the Run selector lists exactly those cycles.
-  - **Timeline.** Common cadence: a step is kept only if every contributor whose
-    horizon covers it has it (a 3-hourly model never makes the 6-hourly ones
-    flicker); past a model's horizon it simply drops out.
-  - **Members** are pooled unchanged and keep a model tag (`"WN3 M12"`,
-    `member.model`): every member is plotted, so a larger ensemble looks denser.
-    Peak-table ids are coloured by model; the pressure-bin ramp is unchanged.
-  - **Derived statistics give each MODEL an equal share** (not each member).
-    Systems are matched across models greedily: strongest clusters seed a group
-    (confident first, then coverage), and each other model adds at most one
-    cluster whose mean track is within 5 deg (mean great-circle separation over
-    >= 2 shared valid times). Per group, statistics exist only on the longest run
-    of steps where a STRICT MAJORITY of the group's models have the system (no
-    lurch when one model's track starts late or ends early). Mean track = unit-
-    vector mean of the per-model mean positions (1/M each); Vmax / MSLP plume =
-    equal-weight MIXTURE quantiles of the per-model plumes (each read as a
-    piecewise-linear CDF through min, p10, p25, p50, p75, p90, max); position
-    envelope = equal-weight Gaussian-mixture moments on a local tangent plane
-    (mean of means, covariance = mean of `cov_m + d_m d_m^T`), which feeds the obs
-    rank. Lines / connectors / mean / plume / obs all work on pooled data; with no
-    tracks file for any contributor the toggles hide as for a single model.
-  - **Disclosure (mandatory).** The burned-in header keeps init / F-hour / valid
-    and adds a third line "Derived: pooled <models> (run used when not this
-    cycle), equal weight per model · pool-v1", model names in their provenance
-    colours; the caption repeats it with the lagged runs, dropped models, the
-    member-density caveat, the mixed-Vmax note (native vs Atkinson-Holliday) and
-    the Weather Lab experimental notice. Pooling is not a real model.
+- **Super-ensemble:** a DERIVED model entry (`slug: "super"`) pooling all
+  models' centers. **Disclosure mandatory** - the viewer must label it derived
+  and name the pooling method (`method_version`). Pooling is not a real model.
 
 ## 11. Open questions for Andrew
-
-0. **Super-ensemble defaults (pool-v1).** 6 h lag tolerance, 2-model minimum,
-   5 deg cross-model match radius, strict-majority support for the pooled mean.
-   All are single constants in `models/enscenters.js`; a change bumps
-   `POOL_METHOD_VERSION`.
 
 1. ~~The five bin colors.~~ RESOLVED 2026-06-13: pale `#dfe8ff` / blue `#1f9bff`
    / yellow `#ffd21a` / red `#ff1f47` / hot pink `#ff3d9a`, bold hollow rings,

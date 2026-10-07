@@ -56,14 +56,9 @@ import sys
 
 # Canonical selector order (matches enscenters.registry order). Unknown slugs are
 # appended after, so a future model still publishes even before this list is bumped.
-ORDER = ["ecens", "ecaie", "gefs", "fnv3", "wnv3", "genc"]
+ORDER = ["ecens", "ecaie", "gefs", "fnv3", "genc"]
 LABELS = {"ecens": "ECMWF ENS", "ecaie": "AIFS-ENS", "gefs": "GEFS",
-          "fnv3": "Google FNV3 (50)", "wnv3": "Google WN3 (64)", "genc": "Google GenCast"}
-# Viewer suite per model (mirrors EnsModelSpec.suite). Carried onto every entry so
-# the /models/ suite switcher is data-driven; a new/unknown slug keeps whatever
-# suite its own manifest entry carried (the viewer also has a fallback map).
-SUITES = {"ecens": "ecmwf", "ecaie": "ecmwf", "gefs": "noaa",
-          "fnv3": "google", "wnv3": "google", "genc": "google"}
+          "fnv3": "Google FNV3 (50)", "genc": "Google GenCast"}
 DEFAULT_MODEL = "ecens"           # mirrors enscenters.registry.DEFAULT_MODEL
 SCHEMA_VERSION = 1
 DEFAULT_RETAIN = 8                # mirrors enscenters.pipeline.DEFAULT_RETAIN
@@ -164,9 +159,6 @@ def reconcile(new: dict, live: dict, live_status: str = "ok",
             "latest": kept[0],
             "cycle_versions": {c: versions[c] for c in kept if c in versions},
         }
-        suite = SUITES.get(slug) or nv.get("suite") or lv.get("suite")
-        if suite:
-            entry["suite"] = suite
         # tracks_versions: when the authoritative R2 TRACKS listing is given, DERIVE
         # presence from it (exactly like cycles) - a concurrent sibling publish can
         # race the live+new token merge and drop another model's tracks token, but

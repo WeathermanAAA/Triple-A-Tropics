@@ -1,6 +1,6 @@
 name: update-gdm-diag
 
-# Google ensemble diagnostics (/models/ "Google Ensemble Diagnostics"): gdmdiag/build.py reads Google DeepMind Weather
+# Google ensemble data for the Situation Room (Models tab, Ensembles chart, Google diagnostics card): gdmdiag/build.py reads Google DeepMind Weather
 # Lab's per-storm "paired" CSVs (FNV3 50, WeatherNext 3 64, GenCast 50, FNV3 1000-member) for the last 8 cycles, pools
 # the derived Google super ensemble, and writes one JSON per storm per cycle plus a rolling index under R2
 # models/gdmdiag/. R2-only: contents:read, commits nothing, touches no track/ACE/climo product.

@@ -232,441 +232,6 @@
     return (MO[mo] || '?') + ' ' + day + ' ' + hr + 'Z';
   }
 
-  // ===================== Suites + derived super ensembles =====================
-  // The model selector is two rows: a SUITE row (producer family) and a MODEL row
-  // (that suite's models, each individually selectable). Grouping is DATA-DRIVEN:
-  // each manifest model entry carries a `suite` (enscenters.registry); SUITE_OF is
-  // only the fallback for a manifest that predates the field. KNOWN_MODELS lists
-  // the registry models so one that has not published yet (e.g. a new model before
-  // its first run) shows as a disabled chip instead of vanishing.
-  var SUITES = [
-    { key: 'ecmwf', label: 'ECMWF' },
-    { key: 'noaa', label: 'NOAA' },
-    { key: 'google', label: 'Google' },
-    { key: 'all', label: 'All models' }
-  ];
-  var KNOWN_MODELS = [
-    { slug: 'ecens', label: 'ECMWF ENS', suite: 'ecmwf' },
-    { slug: 'ecaie', label: 'AIFS-ENS', suite: 'ecmwf' },
-    { slug: 'gefs', label: 'GEFS', suite: 'noaa' },
-    { slug: 'fnv3', label: 'Google FNV3 (50)', suite: 'google' },
-    { slug: 'wnv3', label: 'Google WN3 (64)', suite: 'google' },
-    { slug: 'genc', label: 'Google GenCast', suite: 'google' }
-  ];
-  var SUITE_OF = {};
-  for (var _km = 0; _km < KNOWN_MODELS.length; _km++) SUITE_OF[KNOWN_MODELS[_km].slug] = KNOWN_MODELS[_km].suite;
-  // Short provenance tags + colors for pooled members (peak-table ids, the burned-in
-  // "Derived: pooled ..." line). Colors only mark WHICH MODEL a row came from; the
-  // map keeps the pressure-bin ramp unchanged.
-  var MODEL_TAG = { ecens: 'ENS', ecaie: 'AIFS', gefs: 'GEFS', fnv3: 'FNV3', wnv3: 'WN3', genc: 'GenC' };
-  // full model names for the disclosure line + caption (the tags stay short so a
-  // pooled member id fits the peak-table column)
-  var MODEL_NAME = { ecens: 'ECMWF ENS', ecaie: 'AIFS-ENS', gefs: 'GEFS', fnv3: 'FNV3', wnv3: 'WN3', genc: 'GenCast' };
-  var MODEL_COLOR = { ecens: '#46c6b5', ecaie: '#8fd16a', gefs: '#f09a4e',
-                      fnv3: '#d8c08a', wnv3: '#7ab8ff', genc: '#c79ad6' };
-  function modelTag(slug) { return MODEL_TAG[slug] || String(slug).toUpperCase(); }
-  function modelName(slug) { return MODEL_NAME[slug] || MODEL_TAG[slug] || String(slug).toUpperCase(); }
-  function modelColor(slug) { return MODEL_COLOR[slug] || C.fg; }
-
-  // Derived super ensembles: client-side pooling of already-published per-model
-  // JSON (no pipeline, no new R2 objects). Pooling is NOT a model run; the figure
-  // and caption disclose it (ENSEMBLE_DESIGN.md section 10).
-  var POOL_METHOD_VERSION = 'pool-v1';
-  var POOL_MAX_LAG_H = 6;        // a model missing the cycle may contribute its run <= 6 h older
-  var POOL_MIN_MODELS = 2;       // a pooled cycle needs at least two contributing models
-  var POOL_MATCH_DEG = 5.0;      // cross-model cluster match: mean separation over shared valid times
-  var SUPERS = {
-    'super-google': { slug: 'super-google', label: 'Google super ensemble', suite: 'google',
-                      accepts: function (m) { return m.suite === 'google'; } },
-    'super-all': { slug: 'super-all', label: 'All-model super ensemble', suite: 'all',
-                   accepts: function () { return true; } }
-  };
-
-  function cycleMs(cyc) {
-    cyc = String(cyc);
-    return Date.UTC(+cyc.slice(0, 4), +cyc.slice(4, 6) - 1, +cyc.slice(6, 8), +cyc.slice(8, 10));
-  }
-
-  // Which models contribute to a pooled cycle. A model that has the exact cycle
-  // contributes it (lag 0); otherwise its newest run EARLIER than the cycle and at
-  // most maxLagH older contributes (valid-time aligned, see poolCenters); otherwise
-  // the model is dropped. entries: [{slug, label, cycles}].
-  function resolvePool(entries, cycle, maxLagH) {
-    var used = [], dropped = [], t0 = cycleMs(cycle);
-    for (var i = 0; i < entries.length; i++) {
-      var e = entries[i], cyc = e.cycles || [], best = null;
-      if (cyc.indexOf(cycle) !== -1) best = cycle;
-      else {
-        for (var k = 0; k < cyc.length; k++) {
-          var lag = (t0 - cycleMs(cyc[k])) / 3600000;
-          if (lag > 0 && lag <= maxLagH && (best === null || cyc[k] > best)) best = cyc[k];
-        }
-      }
-      if (best === null) dropped.push({ slug: e.slug, label: e.label, reason: 'no run within ' + maxLagH + ' h' });
-      else used.push({ slug: e.slug, label: e.label, cycle: best, lagH: (t0 - cycleMs(best)) / 3600000 });
-    }
-    return { cycle: cycle, used: used, dropped: dropped };
-  }
-
-  // Pooled run list: every constituent cycle (newest first) at which at least
-  // minModels models contribute under resolvePool.
-  function poolCycles(entries, minModels, maxLagH) {
-    var all = {};
-    for (var i = 0; i < entries.length; i++) {
-      var cyc = entries[i].cycles || [];
-      for (var k = 0; k < cyc.length; k++) all[cyc[k]] = 1;
-    }
-    var keys = Object.keys(all).sort().reverse(), out = [];
-    for (var j = 0; j < keys.length; j++) {
-      if (resolvePool(entries, keys[j], maxLagH).used.length >= minModels) out.push(keys[j]);
-    }
-    return out;
-  }
-
-  // Common-cadence timeline across contributors: a step is kept only if EVERY
-  // contributor whose span covers it has it. Stops a 3-hourly model from making the
-  // pooled field (or mean track) flicker on off-cadence steps where the 6-hourly
-  // models have no data; past a model's horizon that model simply drops out.
-  function commonSteps(stepLists) {
-    var union = {}, sets = [], i, k;
-    for (i = 0; i < stepLists.length; i++) {
-      var s = stepLists[i] || [], set = {}, lo = Infinity, hi = -Infinity;
-      for (k = 0; k < s.length; k++) { union[s[k]] = 1; set[s[k]] = 1; if (s[k] < lo) lo = s[k]; if (s[k] > hi) hi = s[k]; }
-      if (s.length) sets.push({ set: set, lo: lo, hi: hi });
-    }
-    var keys = Object.keys(union).map(Number).sort(function (a, b) { return a - b; }), out = [];
-    for (k = 0; k < keys.length; k++) {
-      var st = keys[k], ok = true;
-      for (i = 0; i < sets.length && ok; i++) if (st >= sets[i].lo && st <= sets[i].hi && !sets[i].set[st]) ok = false;
-      if (ok) out.push(st);
-    }
-    return out;
-  }
-
-  // Pool the per-cycle centers JSON of the contributing models into ONE document of
-  // the same schema. Members keep their model (tag + slug); a lagged run's steps are
-  // shifted by its lag so every center is VALID-TIME aligned to the pooled init
-  // (step' = step - lag; steps before the pooled init are dropped). docs: {slug: doc}.
-  function poolCenters(docs, res, superDef) {
-    var members = [], stepLists = [], models = [], bins = null, atts = [], google = false, mixedV = false;
-    var vNative = 0, vAH = 0;
-    for (var u = 0; u < res.used.length; u++) {
-      var use = res.used[u], d = docs[use.slug]; if (!d) continue;
-      var lag = use.lagH || 0, tag = modelTag(use.slug), ms = d.members || [];
-      bins = bins || d.pressure_bins;
-      if (d.attribution && atts.indexOf(d.attribution) === -1) atts.push(d.attribution);
-      if (SUITE_OF[use.slug] === 'google') google = true;
-      if (d.source === 'track_csv') vNative++; else vAH++;
-      var shifted = [];
-      for (var s = 0; s < (d.run_steps || []).length; s++) if (d.run_steps[s] - lag >= 0) shifted.push(d.run_steps[s] - lag);
-      stepLists.push(shifted);
-      for (var i = 0; i < ms.length; i++) {
-        var cs = ms[i].centers || [], out = [];
-        for (var k = 0; k < cs.length; k++) {
-          var st = cs[k][0] - lag; if (st < 0) continue;
-          out.push([st, cs[k][1], cs[k][2], cs[k][3], cs[k][4]]);
-        }
-        members.push({ id: tag + ' ' + ms[i].id, label: (use.label || tag) + ' ' + (ms[i].label || ms[i].id),
-                       model: use.slug, tag: tag, n_centers: out.length, centers: out });
-      }
-      models.push({ slug: use.slug, label: use.label, tag: tag, name: modelName(use.slug), cycle: use.cycle, lagH: lag,
-                    n_members: ms.length, init_time: d.init_time });
-    }
-    mixedV = (vNative > 0 && vAH > 0);
-    var steps = commonSteps(stepLists), keep = {};
-    for (var q = 0; q < steps.length; q++) keep[steps[q]] = 1;
-    var total = 0;
-    for (var m = 0; m < members.length; m++) {
-      members[m].centers = members[m].centers.filter(function (c) { return keep[c[0]]; });
-      members[m].n_centers = members[m].centers.length; total += members[m].n_centers;
-    }
-    var cyc = res.cycle;
-    var initIso = cyc.slice(0, 4) + '-' + cyc.slice(4, 6) + '-' + cyc.slice(6, 8) + 'T' + cyc.slice(8, 10) + ':00:00Z';
-    var pool = { method_version: POOL_METHOD_VERSION, weighting: 'equal weight per model',
-                 max_lag_h: POOL_MAX_LAG_H, models: models, dropped: res.dropped.slice() };
-    return {
-      schema_version: 1, model: superDef.slug, model_label: superDef.label,
-      init_time: initIso, init_cycle: cyc, cycle_hour: +cyc.slice(8, 10),
-      source: 'pooled', run_steps: steps.length ? steps : [0],
-      n_members: members.length, n_centers: total, pressure_bins: bins || [],
-      attribution: atts.join('; '), members: members, pool: pool,
-      caption: poolCaption(pool, google, mixedV)
-    };
-  }
-
-  function poolNames(pool) {
-    return pool.models.map(function (m) {
-      return m.name + (m.lagH ? ' (' + cycleLabel(String(m.cycle)).slice(-3) + ' run)' : '');
-    });
-  }
-
-  function poolCaption(pool, google, mixedV) {
-    var parts = [];
-    parts.push('Derived product, not a model run: pooled ' + poolNames(pool).join(', ') +
-      ', equal weight per model (method ' + pool.method_version + ').');
-    var lagged = pool.models.filter(function (m) { return m.lagH; });
-    if (lagged.length) {
-      parts.push('A model without this cycle contributes its run up to ' + pool.max_lag_h +
-        ' h older, aligned by valid time (' + lagged.map(function (m) { return m.name + ' ' + cycleLabel(String(m.cycle)); }).join(', ') + ').');
-    }
-    if (pool.dropped.length) {
-      parts.push('Not included: ' + pool.dropped.map(function (d) { return (MODEL_NAME[d.slug] || d.label || d.slug) + ' (' + d.reason + ')'; }).join(', ') + '.');
-    }
-    parts.push('Every member is plotted, so larger ensembles look denser; the mean track, Vmax plume and position envelope ' +
-      'give each model one equal share (a mixture of the per-model distributions). Systems are matched across models by ' +
-      'mean-track proximity over shared valid times.');
-    if (mixedV) parts.push('Peak winds mix model-native winds (Google models) with Atkinson-Holliday estimates from central pressure (ECMWF, GEFS).');
-    if (google) parts.push('Google DeepMind Weather Lab output is experimental, not for real-world use.');
-    parts.push('Right-click the figure to copy or save it as a PNG.');
-    return parts.join(' ');
-  }
-
-  // --- pooled tracks / clusters (equal weight per model) ---
-  function shiftPlume(p, lag) {
-    if (!p || !p.lead) return null;
-    var idx = [], lead = [];
-    for (var i = 0; i < p.lead.length; i++) if (p.lead[i] - lag >= 0) { idx.push(i); lead.push(p.lead[i] - lag); }
-    var o = { lead: lead }, keys = ['p10', 'p25', 'p50', 'p75', 'p90', 'min', 'max', 'n'];
-    for (var k = 0; k < keys.length; k++) {
-      var arr = p[keys[k]]; if (!arr) continue;
-      o[keys[k]] = idx.map(function (j) { return arr[j]; });
-    }
-    return o;
-  }
-  function shiftCluster(c, lag, slug) {
-    var tag = modelTag(slug), mt = [], env = [], i;
-    for (i = 0; i < (c.mean_track || []).length; i++) {
-      var r = c.mean_track[i]; if (r[0] - lag >= 0) mt.push([r[0] - lag, r[1], r[2], r[3]]);
-    }
-    for (i = 0; i < (c.envelope || []).length; i++) {
-      var e = c.envelope[i]; if (e.step - lag < 0) continue;
-      env.push({ step: e.step - lag, n: e.n, mean_lat: e.mean_lat, mean_lon: e.mean_lon, cov_km: e.cov_km });
-    }
-    return { model: slug, member_count: c.member_count || 0, coverage_fraction: c.coverage_fraction || 0,
-      low_confidence: !!c.low_confidence, population: c.population || 0,
-      members: (c.members || []).map(function (m) { return tag + ' ' + m; }), mean_track: mt, envelope: env,
-      plume: { vmax: shiftPlume(c.plume && c.plume.vmax, lag), mslp: shiftPlume(c.plume && c.plume.mslp, lag) } };
-  }
-
-  // mean great-circle separation of two mean tracks over their shared valid times
-  // (needs >= 2 shared steps), else Infinity
-  function trackSep(a, b) {
-    var bs = {}, i, sum = 0, n = 0;
-    for (i = 0; i < b.length; i++) bs[b[i][0]] = b[i];
-    for (i = 0; i < a.length; i++) {
-      var q = bs[a[i][0]]; if (!q) continue;
-      sum += gcDeg(a[i][1], wrap180(a[i][2]), q[1], wrap180(q[2])); n++;
-    }
-    return n >= 2 ? sum / n : Infinity;
-  }
-
-  // Greedy cross-model system matching: strongest clusters seed a group (confident
-  // before low-confidence, then highest member coverage); each other model adds AT
-  // MOST ONE unassigned cluster whose mean track is within POOL_MATCH_DEG of the
-  // seed's over shared valid times. Single-model systems stay single-model groups.
-  function matchClusters(list) {
-    var order = list.slice().sort(function (a, b) {
-      if (a.low_confidence !== b.low_confidence) return a.low_confidence ? 1 : -1;
-      return (b.coverage_fraction - a.coverage_fraction) || (b.member_count - a.member_count);
-    });
-    var taken = [], groups = [];
-    for (var i = 0; i < order.length; i++) {
-      if (taken.indexOf(order[i]) !== -1) continue;
-      var seed = order[i], grp = [seed], have = {}; have[seed.model] = 1; taken.push(seed);
-      for (var j = i + 1; j < order.length; j++) {
-        var c = order[j]; if (have[c.model] || taken.indexOf(c) !== -1) continue;
-        var best = null, bestD = POOL_MATCH_DEG;
-        for (var k = j; k < order.length; k++) {
-          var d = order[k]; if (d.model !== c.model || taken.indexOf(d) !== -1) continue;
-          var sep = trackSep(seed.mean_track, d.mean_track);
-          if (sep < bestD) { bestD = sep; best = d; }
-        }
-        have[c.model] = 1;
-        if (best) { grp.push(best); taken.push(best); }
-      }
-      groups.push(grp);
-    }
-    return groups;
-  }
-
-  // equal-weight spherical mean of [lat, lon] points (unit-vector average)
-  function sphMean(pts) {
-    var R = Math.PI / 180, x = 0, y = 0, z = 0;
-    for (var i = 0; i < pts.length; i++) {
-      var la = pts[i][0] * R, lo = pts[i][1] * R;
-      x += Math.cos(la) * Math.cos(lo); y += Math.cos(la) * Math.sin(lo); z += Math.sin(la);
-    }
-    return [Math.atan2(z, Math.sqrt(x * x + y * y)) / R, Math.atan2(y, x) / R];
-  }
-
-  // Equal-weight MIXTURE quantile of per-model distributions, each summarised by
-  // its plume knots (min, p10, p25, p50, p75, p90, max) read as a piecewise-linear
-  // CDF. Mixture CDF F(v) = mean over models of F_m(v); inverted by bisection.
-  var KNOT_Q = [0, 0.10, 0.25, 0.50, 0.75, 0.90, 1];
-  var KNOT_K = ['min', 'p10', 'p25', 'p50', 'p75', 'p90', 'max'];
-  function knotCdf(kn, v) {
-    if (v < kn[0]) return 0;
-    if (v >= kn[kn.length - 1]) return 1;
-    for (var i = 1; i < kn.length; i++) {
-      if (v < kn[i]) return KNOT_Q[i - 1] + (KNOT_Q[i] - KNOT_Q[i - 1]) * (v - kn[i - 1]) / (kn[i] - kn[i - 1]);
-    }
-    return 1;
-  }
-  function mixQuantile(dists, q) {
-    var lo = Infinity, hi = -Infinity, i;
-    for (i = 0; i < dists.length; i++) { lo = Math.min(lo, dists[i][0]); hi = Math.max(hi, dists[i][dists[i].length - 1]); }
-    if (!(hi > lo)) return lo;
-    for (var it = 0; it < 48; it++) {
-      var mid = (lo + hi) / 2, f = 0;
-      for (i = 0; i < dists.length; i++) f += knotCdf(dists[i], mid);
-      if (f / dists.length < q) lo = mid; else hi = mid;
-    }
-    return (lo + hi) / 2;
-  }
-  function knotsAt(p, i) {
-    var kn = [];
-    for (var k = 0; k < KNOT_K.length; k++) {
-      var arr = p[KNOT_K[k]], v = arr ? arr[i] : null;
-      if (v == null || isNaN(v)) return null;
-      kn.push(kn.length ? Math.max(kn[kn.length - 1], v) : v);   // enforce monotone knots
-    }
-    return kn;
-  }
-  function poolPlume(plumes, steps) {
-    var out = { lead: [], p10: [], p25: [], p50: [], p75: [], p90: [], min: [], max: [], n: [] };
-    for (var s = 0; s < steps.length; s++) {
-      var dists = [], n = 0;
-      for (var m = 0; m < plumes.length; m++) {
-        var p = plumes[m]; if (!p) continue;
-        var i = p.lead.indexOf(steps[s]); if (i === -1) continue;
-        var kn = knotsAt(p, i); if (!kn) continue;
-        dists.push(kn); n += (p.n && p.n[i]) || 0;
-      }
-      if (!dists.length) continue;
-      out.lead.push(steps[s]);
-      out.min.push(Math.min.apply(null, dists.map(function (d) { return d[0]; })));
-      out.max.push(Math.max.apply(null, dists.map(function (d) { return d[d.length - 1]; })));
-      out.p10.push(mixQuantile(dists, 0.10)); out.p25.push(mixQuantile(dists, 0.25));
-      out.p50.push(mixQuantile(dists, 0.50)); out.p75.push(mixQuantile(dists, 0.75));
-      out.p90.push(mixQuantile(dists, 0.90)); out.n.push(n);
-    }
-    return out;
-  }
-
-  // Steps where a STRICT MAJORITY of the group's models have the system, keeping
-  // the longest contiguous run. Without this the pooled mean would lurch whenever
-  // a model's track starts late or ends early (the tail would become one model's
-  // track, not a pooled one); with it the derived statistics only exist where most
-  // of the pooled models agree the system exists.
-  function majoritySteps(grp, steps) {
-    var need = Math.floor(grp.length / 2) + 1, best = [], cur = [];
-    for (var s = 0; s < steps.length; s++) {
-      var n = 0;
-      for (var g = 0; g < grp.length; g++) {
-        var t = grp[g].mean_track;
-        for (var k = 0; k < t.length; k++) if (t[k][0] === steps[s]) { n++; break; }
-      }
-      if (n >= need) cur.push(steps[s]);
-      else { if (cur.length > best.length) best = cur; cur = []; }
-    }
-    return cur.length > best.length ? cur : best;
-  }
-
-  // Pool one matched group into a cluster object of the SAME shape the viewer
-  // draws for a single model (mean_track / plume / envelope), every model one
-  // equal share:
-  //   mean track : unit-vector mean of the per-model mean positions (1/M each)
-  //   plume      : equal-weight mixture quantiles of the per-model plumes
-  //   envelope   : equal-weight Gaussian mixture moments on a local tangent plane
-  //                (mean of means; cov = mean of [cov_m + d_m d_m^T])
-  // Steps follow commonSteps over the group's models (no off-cadence zig-zag).
-  function poolGroup(grp, gi) {
-    var steps = majoritySteps(grp, commonSteps(grp.map(function (c) { return c.mean_track.map(function (r) { return r[0]; }); })));
-    var mt = [], prevLon = null;
-    for (var s = 0; s < steps.length; s++) {
-      var pts = [], n = 0;
-      for (var g = 0; g < grp.length; g++) {
-        var row = null, t = grp[g].mean_track;
-        for (var k = 0; k < t.length; k++) if (t[k][0] === steps[s]) { row = t[k]; break; }
-        if (row) { pts.push([row[1], wrap180(row[2])]); n += row[3] || 0; }
-      }
-      if (!pts.length) continue;
-      var mm = sphMean(pts), lon = mm[1];
-      if (prevLon !== null) lon += 360 * Math.round((prevLon - lon) / 360);   // display unwrap
-      prevLon = lon;
-      // [step, lat, lon, n members, n models] (the viewer reads the first three)
-      mt.push([steps[s], Math.round(mm[0] * 100) / 100, Math.round(lon * 100) / 100, n, pts.length]);
-    }
-    var env = [], R = Math.PI / 180;
-    var inMaj = {}; for (var si = 0; si < steps.length; si++) inMaj[steps[si]] = 1;
-    var envSteps = commonSteps(grp.map(function (c) { return c.envelope.map(function (e) { return e.step; }); }))
-      .filter(function (st) { return inMaj[st]; });
-    for (var es = 0; es < envSteps.length; es++) {
-      var parts = [], ne = 0;
-      for (var g2 = 0; g2 < grp.length; g2++) {
-        var ev = grp[g2].envelope;
-        for (var k2 = 0; k2 < ev.length; k2++) {
-          if (ev[k2].step === envSteps[es] && ev[k2].mean_lat != null && ev[k2].cov_km) { parts.push(ev[k2]); ne += ev[k2].n || 0; break; }
-        }
-      }
-      if (!parts.length) continue;
-      var ref = sphMean(parts.map(function (e) { return [e.mean_lat, wrap180(e.mean_lon)]; }));
-      var d = parts.map(function (e) { return localXYkm(e.mean_lat, wrap180(e.mean_lon), ref[0], ref[1]); });
-      var mx = 0, my = 0, M = parts.length, i2;
-      for (i2 = 0; i2 < M; i2++) { mx += d[i2][0] / M; my += d[i2][1] / M; }
-      var cxx = 0, cxy = 0, cyy = 0;
-      for (i2 = 0; i2 < M; i2++) {
-        var dx = d[i2][0] - mx, dy = d[i2][1] - my, cv = parts[i2].cov_km;
-        cxx += (cv[0][0] + dx * dx) / M; cxy += (cv[0][1] + dx * dy) / M; cyy += (cv[1][1] + dy * dy) / M;
-      }
-      var mlat = ref[0] + (my / EARTH_R_KM) / R;
-      var mlon = ref[1] + (mx / (EARTH_R_KM * Math.cos(ref[0] * R))) / R;
-      env.push({ step: envSteps[es], n: ne, mean_lat: mlat, mean_lon: wrap180(mlon),
-                 cov_km: [[cxx, cxy], [cxy, cyy]], n_models: M });
-    }
-    var members = [], mc = 0, pop = 0;
-    for (var g3 = 0; g3 < grp.length; g3++) { members = members.concat(grp[g3].members); mc += grp[g3].member_count; pop += grp[g3].population; }
-    return {
-      id: 'pool' + gi, models: grp.map(function (c) { return c.model; }), n_models: grp.length,
-      members: members, member_count: mc, population: pop,
-      low_confidence: grp.every(function (c) { return c.low_confidence; }),
-      genesis: mt.length ? { lat: mt[0][1], lon: mt[0][2], step: mt[0][0] } : null,
-      mean_track: mt, envelope: env,
-      plume: { vmax: poolPlume(grp.map(function (c) { return c.plume.vmax; }), steps),
-               mslp: poolPlume(grp.map(function (c) { return c.plume.mslp; }), steps) }
-    };
-  }
-
-  // Pool the sibling tracks JSON of the contributing models. tdocs: {slug: tracksDoc}
-  // (a model with no tracks file is simply absent; tracks_models says which went in).
-  function poolTracks(tdocs, res) {
-    var members = [], clusters = [], nMem = 0, used = [];
-    for (var u = 0; u < res.used.length; u++) {
-      var use = res.used[u], t = tdocs[use.slug]; if (!t) continue;
-      var lag = use.lagH || 0, tag = modelTag(use.slug), tm = t.members || [];
-      used.push(use.slug); nMem += t.n_members || tm.length;
-      for (var i = 0; i < tm.length; i++) {
-        var trs = [];
-        for (var k = 0; k < (tm[i].tracks || []).length; k++) {
-          var tr = tm[i].tracks[k].filter(function (r) { return r[0] - lag >= 0; })
-            .map(function (r) { return [r[0] - lag, r[1], r[2], r[3], r[4]]; });
-          if (tr.length) trs.push(tr);
-        }
-        members.push({ id: tag + ' ' + tm[i].id, model: use.slug, tracks: trs });
-      }
-      var cl = t.clusters || [];
-      for (var c = 0; c < cl.length; c++) {
-        if ((cl[c].member_count || 0) < MEAN_MIN_MEMBERS) continue;
-        clusters.push(shiftCluster(cl[c], lag, use.slug));
-      }
-    }
-    var groups = matchClusters(clusters), pooled = [];
-    for (var g = 0; g < groups.length; g++) pooled.push(poolGroup(groups[g], g));
-    return { schema_version: 1, model: 'pooled', init_cycle: res.cycle, source_kind: 'pooled',
-             method_version: POOL_METHOD_VERSION, tracks_models: used,
-             n_members: nMem, members: members, clusters: pooled };
-  }
-
   // ========================================================================
   function EnsCentersViewer(root) {
     this.root = root;
@@ -678,7 +243,6 @@
       mapframe: el('enscenters-mapframe'),
       canvas: el('enscenters-canvas'),
       status: el('enscenters-status'),
-      suites: el('enscenters-suites'),   // optional: absent -> legacy flat model row
       models: el('enscenters-models'),
       play: el('enscenters-play'),
       stepB: el('enscenters-step-back'),
@@ -716,8 +280,6 @@
 
     this.manifest = null;
     this.model = null;
-    this.suite = null;         // active suite key (suite switcher); null in legacy flat mode
-    this._rowSig = null;       // signature of the rendered suite/model rows (poll rebuild guard)
     this.data = null;
     this.steps = [];
     this.frames = [];          // per step: [[lat, lon, mslp, vmax], ...] (all)
@@ -812,11 +374,18 @@
       .then(function (r) { if (!r.ok) throw new Error('manifest HTTP ' + r.status); return r.json(); });
   };
 
+  // Models this viewer offers. The shared R2 manifest can carry entries for
+  // models published elsewhere (a retired or out-of-scope slug); those stay off
+  // this page rather than appearing as an unexplained extra button.
+  var SHOWN_MODELS = ['ecens', 'ecaie', 'gefs', 'fnv3', 'genc'];
+
   EnsCentersViewer.prototype._onManifest = function (m) {
+    if (m && m.models) m.models = m.models.filter(function (x) { return SHOWN_MODELS.indexOf(x.slug) >= 0; });
     this.manifest = m;
     var models = (m && m.models) || [];
     if (!models.length) { this._status(''); this._showEmpty(true); return; }
     this._showEmpty(false);
+    var defs = models.map(function (x) { return { slug: x.slug, label: x.label }; });
     // Open on the FRESHEST model, not the hard default. ECMWF ENS (ecens)
     // disseminates ~1h after the AI models, so for a ~1-2h window each 00/12Z
     // cycle the default_model is legitimately one cycle behind its peers -
@@ -825,138 +394,9 @@
     // (default_model first). _onManifest runs ONCE on load; the poll never
     // re-selects the model, so a user's later click is never overridden.
     var active = this._freshestModel(models);
-    this.model = active;
-    this.suite = this.dom.suites ? this._suiteOf(active) : null;
-    this._renderSelector();
+    this._buildToggle(this.dom.models, defs, active, this._selectModel.bind(this));
     this._selectModel(active);
     this._schedulePoll();
-  };
-
-  // ---- suite switcher (data-driven grouping) ----
-  // suite of a real model: the manifest entry's `suite` (registry-emitted), else
-  // the fallback map for an older manifest, else 'other'. Super ensembles carry
-  // their own suite.
-  EnsCentersViewer.prototype._suiteOf = function (slug) {
-    if (SUPERS[slug]) return SUPERS[slug].suite;
-    var e = this._realEntry(slug);
-    return (e && e.suite) || SUITE_OF[slug] || 'other';
-  };
-
-  // Real (published) models with their resolved suite, in manifest order.
-  EnsCentersViewer.prototype._realModels = function () {
-    var self = this, models = (this.manifest && this.manifest.models) || [];
-    return models.map(function (x) {
-      return { slug: x.slug, label: x.label || x.slug, suite: x.suite || SUITE_OF[x.slug] || 'other',
-               cycles: x.cycles || [], latest: x.latest };
-    }).filter(function (x) { return !!x.slug; });
-  };
-
-  // Model-row defs for one suite: its published models, registry models that have
-  // not published yet (disabled), and the suite's super-ensemble option when at
-  // least two of its models share a poolable cycle.
-  EnsCentersViewer.prototype._suiteDefs = function (key) {
-    var real = this._realModels(), defs = [], seen = {}, i;
-    if (key !== 'all') {
-      for (i = 0; i < real.length; i++) {
-        if (real[i].suite !== key) continue;
-        defs.push({ slug: real[i].slug, label: real[i].label, disabled: !real[i].latest,
-                    title: real[i].latest ? '' : 'No published run yet' });
-        seen[real[i].slug] = 1;
-      }
-      for (i = 0; i < KNOWN_MODELS.length; i++) {
-        var k = KNOWN_MODELS[i];
-        if (k.suite === key && !seen[k.slug]) defs.push({ slug: k.slug, label: k.label, disabled: true, title: 'No published run yet' });
-      }
-    }
-    for (var s in SUPERS) {
-      if (!SUPERS.hasOwnProperty(s) || SUPERS[s].suite !== key) continue;
-      var se = this._superEntry(s);
-      if (se) defs.push({ slug: s, label: SUPERS[s].label, title: 'Derived: pooled ' + se.pool.map(modelName).join(', ') + ', equal weight per model' });
-    }
-    // registry order within the suite (known models first, in KNOWN_MODELS order)
-    var rank = {}; for (i = 0; i < KNOWN_MODELS.length; i++) rank[KNOWN_MODELS[i].slug] = i;
-    defs.sort(function (a, b) {
-      var ra = SUPERS[a.slug] ? 1000 : (rank[a.slug] != null ? rank[a.slug] : 500);
-      var rb = SUPERS[b.slug] ? 1000 : (rank[b.slug] != null ? rank[b.slug] : 500);
-      return ra - rb;
-    });
-    return defs;
-  };
-
-  // Suites that have at least one selectable entry (a published model or a super).
-  EnsCentersViewer.prototype._suiteList = function () {
-    var real = this._realModels(), out = [], keys = SUITES.slice(), i;
-    for (i = 0; i < real.length; i++) {
-      var known = keys.some(function (s) { return s.key === real[i].suite; });
-      if (!known) keys.splice(keys.length - 1, 0, { key: real[i].suite, label: real[i].suite.charAt(0).toUpperCase() + real[i].suite.slice(1) });
-    }
-    for (i = 0; i < keys.length; i++) {
-      var defs = this._suiteDefs(keys[i].key);
-      if (defs.some(function (d) { return !d.disabled; })) out.push(keys[i]);
-    }
-    return out;
-  };
-
-  // Build the selector rows. Suite mode: suite row + that suite's model row.
-  // Legacy (no #enscenters-suites element): one flat row of published models.
-  // ifChanged: only rebuild the buttons when the rows' content changed (poll).
-  EnsCentersViewer.prototype._renderSelector = function (ifChanged) {
-    var self = this, sig;
-    if (!this.dom.suites) {
-      var flat = this._realModels().map(function (x) { return { slug: x.slug, label: x.label }; });
-      sig = JSON.stringify(flat);
-      if (ifChanged && sig === this._rowSig) { this._highlight(this.dom.models, this.model); return; }
-      this._buildToggle(this.dom.models, flat, this.model, this._selectModel.bind(this));
-      this._rowSig = sig;
-      return;
-    }
-    var suites = this._suiteList();
-    if (!suites.some(function (s) { return s.key === self.suite; }) && suites.length) this.suite = suites[0].key;
-    var defs = this._suiteDefs(this.suite);
-    sig = JSON.stringify([suites, defs, this.suite]);
-    if (ifChanged && sig === this._rowSig) { this._highlight(this.dom.models, this.model); return; }
-    this._buildToggle(this.dom.suites, suites.map(function (s) { return { slug: s.key, label: s.label }; }),
-      this.suite, this._selectSuite.bind(this));
-    this._buildToggle(this.dom.models, defs, this.model, this._selectModel.bind(this));
-    this._rowSig = sig;
-  };
-
-  // Switch suite: show its models; keep the current model if it belongs to the
-  // suite, else open the suite's freshest published model (or its super ensemble
-  // when the suite has no single model, i.e. "All models").
-  EnsCentersViewer.prototype._selectSuite = function (key) {
-    if (key === this.suite) return;
-    this.suite = key;
-    var defs = this._suiteDefs(key);
-    var inSuite = defs.some(function (d) { return d.slug === this.model && !d.disabled; }, this);
-    var target = this.model;
-    if (!inSuite) {
-      var real = this._realModels().filter(function (x) { return x.suite === key && x.latest; });
-      if (real.length) target = this._freshestModel(real);
-      else { var en = defs.filter(function (d) { return !d.disabled; }); target = en.length ? en[0].slug : null; }
-    }
-    this._renderSelector();
-    if (target && target !== this.model) this._selectModel(target);
-    else this._highlight(this.dom.models, this.model);
-  };
-
-  EnsCentersViewer.prototype._realEntry = function (slug) {
-    var models = (this.manifest && this.manifest.models) || [];
-    for (var i = 0; i < models.length; i++) if (models[i].slug === slug) return models[i];
-    return null;
-  };
-
-  // A super ensemble's VIRTUAL manifest entry: its constituent published models
-  // and the pooled run list (cycles where >= POOL_MIN_MODELS models contribute).
-  // null when it cannot be formed (fewer than two constituents / no shared run).
-  EnsCentersViewer.prototype._superEntry = function (slug) {
-    var def = SUPERS[slug]; if (!def) return null;
-    var cons = this._realModels().filter(function (x) { return x.latest && def.accepts(x); });
-    if (cons.length < POOL_MIN_MODELS) return null;
-    var cycles = poolCycles(cons, POOL_MIN_MODELS, POOL_MAX_LAG_H);
-    if (!cycles.length) return null;
-    return { slug: slug, label: def.label, cycles: cycles, latest: cycles[0], virtual: true,
-             pool: cons.map(function (x) { return x.slug; }), constituents: cons };
   };
 
   // The slug to open on: the model whose ``latest`` cycle is newest (cycle ids
@@ -981,8 +421,9 @@
   };
 
   EnsCentersViewer.prototype._modelEntry = function (slug) {
-    if (SUPERS[slug]) return this._superEntry(slug);
-    return this._realEntry(slug);
+    var models = (this.manifest && this.manifest.models) || [];
+    for (var i = 0; i < models.length; i++) if (models[i].slug === slug) return models[i];
+    return null;
   };
 
   EnsCentersViewer.prototype._selectModel = function (slug) {
@@ -990,10 +431,6 @@
     if (!entry || !entry.latest) return;
     this.model = slug;
     this.followLatest = true;            // a new model starts on its latest run
-    if (this.dom.suites && this._suiteOf(slug) !== this.suite) {
-      this.suite = this._suiteOf(slug);
-      this._renderSelector();
-    }
     this._highlight(this.dom.models, slug);
     this._buildRunSelect(entry, entry.latest);
     this._loadCycle(slug, entry.latest);
@@ -1033,7 +470,6 @@
     this.tracks = null; this.tracksModel = null; this.tracksCycle = null;
     this.tracksRegion = null; this._tracksFailedKey = null;
     if (this.dom.run) this.dom.run.value = cycle;   // keep the Run selector in sync
-    if (SUPERS[slug]) { this._loadPooled(slug, cycle); return; }
     this._status('Loading ' + slug.toUpperCase() + ' ' + cycle + '…');
     // Cache-bust on the cycle's CONTENT version (not the stable cycle string), so
     // a backfill/overwrite of this cycle's JSON busts the browser + CDN cache; an
@@ -1045,35 +481,6 @@
       .then(function (r) { if (!r.ok) throw new Error('cycle HTTP ' + r.status); return r.json(); })
       .then(function (d) { self._onData(d); })
       .catch(function (e) { console.warn('enscenters: cycle load failed', e); self._status('Could not load cycle.'); });
-  };
-
-  // Super ensemble: fetch each contributing model's (version-keyed, cached) cycle
-  // JSON, pool them client-side (poolCenters) and hand the pooled document to the
-  // normal _onData path. A constituent whose fetch fails is dropped and disclosed.
-  EnsCentersViewer.prototype._loadPooled = function (slug, cycle) {
-    var self = this, entry = this._superEntry(slug);
-    if (!entry) { this._status('Super ensemble unavailable for this run.'); return; }
-    this._poolRes = null;                        // never let a previous pool answer for this one
-    var res = resolvePool(entry.constituents, cycle, POOL_MAX_LAG_H);
-    this._status('Pooling ' + res.used.map(function (u) { return modelTag(u.slug); }).join(' + ') + ' ' + cycle + '…');
-    var docs = {};
-    Promise.all(res.used.map(function (u) {
-      var ver = (window.TATRegions && TATRegions.cycleVersion)
-        ? TATRegions.cycleVersion(self.manifest, u.slug, u.cycle) : u.cycle;
-      return fetch(DATA_BASE + u.slug + '/' + u.cycle + '.json?v=' + ver, { cache: 'force-cache' })
-        .then(function (r) { if (!r.ok) throw new Error('cycle HTTP ' + r.status); return r.json(); })
-        .then(function (d) { docs[u.slug] = d; })
-        .catch(function (e) { console.warn('enscenters: pooled member load failed', u.slug, e); });
-    })).then(function () {
-      if (self.model !== slug || self.loadedCycle !== cycle) return;      // user moved on
-      var ok = res.used.filter(function (u) { return docs[u.slug]; });
-      var failed = res.used.filter(function (u) { return !docs[u.slug]; });
-      var r2 = { slug: slug, cycle: cycle, used: ok,
-                 dropped: res.dropped.concat(failed.map(function (u) { return { slug: u.slug, label: u.label, reason: 'could not load' }; })) };
-      if (!ok.length) { self._status('Could not load cycle.'); return; }
-      self._poolRes = r2;
-      self._onData(poolCenters(docs, r2, SUPERS[slug]));
-    });
   };
 
   EnsCentersViewer.prototype._onData = function (d) {
@@ -1088,8 +495,7 @@
       var cs = members[i].centers || [];
       for (var k = 0; k < cs.length; k++) {
         var c = cs[k], arr = byStep[c[0]];
-        // a pooled member carries its model tag (hover shows provenance)
-        if (arr) arr.push(members[i].tag ? [c[1], c[2], c[3], c[4], members[i].tag] : [c[1], c[2], c[3], c[4]]);
+        if (arr) arr.push([c[1], c[2], c[3], c[4]]);
       }
     }
     this.frames = this.steps.map(function (st) { return byStep[st] || []; });
@@ -1171,8 +577,7 @@
         if (r && !TATRegions.inRegion(c[2], c[1], r)) continue;
         if (best === null || c[3] < best.mslp) best = { mslp: c[3], vmax: c[4], lat: c[1], lon: c[2], step: c[0] };
       }
-      if (best) rows.push({ id: members[m].id, model: members[m].model || null,
-        mslp: best.mslp, vmax: best.vmax, lat: best.lat, lon: best.lon, step: best.step });
+      if (best) rows.push({ id: members[m].id, mslp: best.mslp, vmax: best.vmax, lat: best.lat, lon: best.lon, step: best.step });
     }
     rows.sort(function (a, b) { return a.mslp - b.mslp; });
     this.peaks = rows;
@@ -1185,17 +590,6 @@
   // tracks_versions in the manifest is the cache-bust token AND the availability
   // signal; absent -> the model has no tracks file (toggles hide).
   EnsCentersViewer.prototype._tracksVersion = function (slug, cycle) {
-    if (SUPERS[slug]) {
-      // pooled: available when ANY contributing model has a tracks file for the
-      // run it contributed; the token joins theirs (cache key for the pooled set).
-      var pr = this._poolRes; if (!pr || pr.slug !== slug || pr.cycle !== cycle) return null;
-      var toks = [];
-      for (var i = 0; i < pr.used.length; i++) {
-        var tv0 = this._tracksVersion(pr.used[i].slug, pr.used[i].cycle);
-        if (tv0) toks.push(pr.used[i].slug + ':' + tv0);
-      }
-      return toks.length ? toks.join('|') : null;
-    }
     var e = this._modelEntry(slug);
     var tv = e && e.tracks_versions;
     return (tv && tv[cycle]) ? tv[cycle] : null;
@@ -1225,31 +619,12 @@
     this._loadTracks(this.model, this.loadedCycle);
   };
 
-  // Pooled tracks: fetch the sibling tracks JSON of every contributing model that
-  // has one, then pool members + clusters (poolTracks, equal weight per model).
-  // Resolves to the pooled tracks doc; rejects only when NO constituent loaded.
-  EnsCentersViewer.prototype._fetchPooledTracks = function (cycle) {
-    var self = this, pr = this._poolRes, tdocs = {}, n = 0;
-    var jobs = pr.used.filter(function (u) { return self._tracksVersion(u.slug, u.cycle); }).map(function (u) {
-      var ver = self._tracksVersion(u.slug, u.cycle);
-      return fetch(DATA_BASE + u.slug + '/' + u.cycle + '.tracks.json?v=' + ver, { cache: 'force-cache' })
-        .then(function (r) { if (!r.ok) throw new Error('tracks HTTP ' + r.status); return r.json(); })
-        .then(function (d) { tdocs[u.slug] = d; n++; })
-        .catch(function (e) { console.warn('enscenters: pooled tracks load failed', u.slug, e); });
-    });
-    return Promise.all(jobs).then(function () {
-      if (!n) throw new Error('no pooled tracks');
-      return poolTracks(tdocs, pr);
-    });
-  };
-
   EnsCentersViewer.prototype._loadTracks = function (slug, cycle) {
     var self = this, ver = this._tracksVersion(slug, cycle) || cycle;
     this.tracksLoading = true;
-    var p = SUPERS[slug] ? this._fetchPooledTracks(cycle)
-      : fetch(DATA_BASE + slug + '/' + cycle + '.tracks.json?v=' + ver, { cache: 'force-cache' })
-        .then(function (r) { if (!r.ok) throw new Error('tracks HTTP ' + r.status); return r.json(); });
-    p.then(function (d) {
+    fetch(DATA_BASE + slug + '/' + cycle + '.tracks.json?v=' + ver, { cache: 'force-cache' })
+      .then(function (r) { if (!r.ok) throw new Error('tracks HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
         self.tracksLoading = false;
         if (slug !== self.model || cycle !== self.loadedCycle) return;   // user moved on
         self.tracks = d; self.tracksModel = slug; self.tracksCycle = cycle;
@@ -1550,10 +925,7 @@
     // mismatch against the header's total ensemble count (51).
     var nTot = (this.tracks && this.tracks.n_members) || 0;
     g.fillStyle = C.muted; g.font = '600 9px ' + FONT;
-    // pooled system: name how many models agree on it (the bands are equal-weight
-    // per model mixtures, disclosed in the burned-in header)
-    g.fillText(dom.member_count + ' of ' + nTot + ' members' +
-      (dom.n_models ? '  ·  ' + dom.n_models + (dom.n_models === 1 ? ' model' : ' models') : ''), x + 8, y + 16);
+    g.fillText(dom.member_count + ' of ' + nTot + ' members', x + 8, y + 16);
     // plot area; right gutter reserved for the Max/Median/Min labels
     var cx = x + 8, cy = y + 28, gutter = 36, cw = w - 16 - gutter, ch = h - 38;
     var lmin = leads[0], lmax = leads[leads.length - 1], lspan = Math.max(1, lmax - lmin);
@@ -1991,9 +1363,7 @@
     this._lastAvailW = availW;
     var figW = Math.max(availW, MIN_FIG_W);
     var displayW = availW;
-    // a pooled (derived) figure carries a third burned-in line naming the pooled
-    // models + weighting, so its header band is taller
-    var pad = 14, gap = 14, headerH = (this.data && this.data.pool) ? 66 : 50;
+    var pad = 14, gap = 14, headerH = 50;
     var tableW = (figW < 620) ? Math.round(figW * 0.3) : 212;
     var mapBoxW = figW - 2 * pad - tableW - gap;
     // ONE fixed box aspect for every region/model. The extent is pre-framed to
@@ -2061,14 +1431,9 @@
     g.fillStyle = C.fg; g.font = '700 12px ' + FONT; g.textBaseline = 'top';
     g.fillText('Peak  ·  ' + (r ? r.label : ''), t.x + 9, t.y + 8);
     // 2-column body
-    var nAll = rows.length, colW = (t.w - 12) / 2;
+    var n = rows.length, perCol = Math.ceil(n / 2);
+    var colW = (t.w - 12) / 2;
     var headerY = t.y + 32, bodyTop = t.y + 42, bodyH = t.h - 50;
-    // Large (pooled) ensembles cannot list every member: keep the deepest rows
-    // that fit at the minimum row height and note how many more there are.
-    var maxRows = Math.max(2, 2 * Math.floor(bodyH / 11));
-    var more = 0;
-    if (nAll > maxRows) { more = nAll - (maxRows - 1); rows = rows.slice(0, maxRows - 1); }
-    var n = rows.length, perCol = Math.ceil((n + (more ? 1 : 0)) / 2);
     var rowH = Math.max(11, Math.min(bodyH / perCol, 18));
     var fs = Math.max(8.5, Math.min(rowH * 0.66, 11));
     // ONE compact header per column, label x-positions matched to the data
@@ -2104,22 +1469,14 @@
         g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.stroke();
         g.fillStyle = '#ffffff'; g.fillText(row.id, chX + 4, midY);
       } else {
-        // pooled member: id text in its model's provenance color (key = the
-        // burned-in "Derived: pooled ..." header line)
-        g.fillStyle = row.model ? modelColor(row.model) : C.fg; g.fillText(row.id, cx + 13, midY);
+        g.fillStyle = C.fg; g.fillText(row.id, cx + 13, midY);
       }
       g.textAlign = 'right';
       g.fillStyle = ctl ? '#ffffff' : C.fg;
-      g.fillText(row.mslp == null ? '-' : row.mslp.toFixed(0), cx + colW - 26, midY);
+      g.fillText(row.mslp.toFixed(0), cx + colW - 26, midY);
       g.fillStyle = ctl ? '#ffffff' : C.muted;
-      g.fillText(row.vmax == null ? '-' : row.vmax.toFixed(0), cx + colW - 4, midY);
+      g.fillText(row.vmax.toFixed(0), cx + colW - 4, midY);
       g.textAlign = 'left'; g.textBaseline = 'top';
-    }
-    if (more) {
-      var mi = n, mcol = (mi < perCol) ? 0 : 1, mrow = (mi < perCol) ? mi : mi - perCol;
-      g.fillStyle = C.muted; g.font = '600 ' + fs.toFixed(1) + 'px ' + FONT;
-      g.textBaseline = 'middle'; g.textAlign = 'left';
-      g.fillText('+' + more + ' more', t.x + 6 + mcol * colW + 13, bodyTop + mrow * rowH + rowH / 2);
     }
     g.restore();
   };
@@ -2143,24 +1500,6 @@
       '  ·  valid ' + validLabel(this.initMs, stepH) +
       '  ·  ' + (d.n_members || 0) + ' members  ·  ' + fmtInt(acc) + ' centers',
       this.headerXY.x, this.headerXY.y + 35);
-    // DERIVED disclosure (mandatory, burned in so it travels with every still and
-    // GIF frame): which models were pooled (each in its provenance color, with the
-    // run used when it is not this cycle) and how they are weighted.
-    if (d.pool) this._drawPoolLine(g, d.pool, this.headerXY.x, this.headerXY.y + 52);
-    g.restore();
-  };
-
-  EnsCentersViewer.prototype._drawPoolLine = function (g, pool, x, y) {
-    g.save(); g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.font = '600 11.5px ' + FONT;
-    function put(txt, col) { g.fillStyle = col; g.fillText(txt, x, y); x += g.measureText(txt).width; }
-    put('Derived: pooled ', C.muted);
-    for (var i = 0; i < pool.models.length; i++) {
-      var m = pool.models[i];
-      put(m.name || m.tag, modelColor(m.slug));
-      if (m.lagH) put(' (' + cycleLabel(String(m.cycle)).slice(-3) + ' run)', C.muted);
-      if (i < pool.models.length - 1) put(', ', C.muted);
-    }
-    put(', equal weight per model  ·  ' + pool.method_version, C.muted);
     g.restore();
   };
 
@@ -2351,9 +1690,7 @@
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'hafs-seg' + (def.slug === active ? ' active' : '');
       b.textContent = def.label; b.setAttribute('data-slug', def.slug);
-      if (def.title) b.title = def.title;
-      if (def.disabled) { b.disabled = true; b.classList.add('ens-seg-off'); }   // registry model with no run yet
-      else b.addEventListener('click', function () { onPick(def.slug); });
+      b.addEventListener('click', function () { onPick(def.slug); });
       container.appendChild(b);
     })(defs[i]);
     // Always show the model selector when there is at least one model (even a
@@ -2499,9 +1836,7 @@
     tip.style.display = 'block';
     tip.style.left = (ev.clientX - rect.left + 12) + 'px';
     tip.style.top = (ev.clientY - rect.top + 12) + 'px';
-    tip.innerHTML = (best[4] ? best[4] + '  ·  ' : '') +
-      (best[2] == null ? '-' : best[2].toFixed(0)) + ' hPa  ·  ' +
-      (best[3] == null ? '-' : best[3].toFixed(0)) + ' kt<br>' +
+    tip.innerHTML = best[2].toFixed(0) + ' hPa  ·  ' + best[3].toFixed(0) + ' kt<br>' +
       Math.abs(best[0]).toFixed(1) + (best[0] >= 0 ? 'N' : 'S') + '  ' +
       Math.abs(best[1]).toFixed(1) + (best[1] >= 0 ? 'E' : 'W');
   };
@@ -2720,9 +2055,6 @@
     if (this.encoding) { this._schedulePoll(); return; }   // don't reload mid-encode
     this._fetchManifest().then(function (m) {
       self.manifest = m;
-      // a newly published model (e.g. a registry model's first run) or a newly
-      // formable super ensemble appears without a reload; selection is untouched
-      self._renderSelector(true);
       var entry = self._modelEntry(self.model);
       if (!entry) return;
       // A pinned older run that has rolled off the retention window is gone from
@@ -2746,13 +2078,5 @@
       var r = el('enscenters-viewer'); if (r) new EnsCentersViewer(r);
     });
   }
-  // pure pooling helpers, exposed for the unit harness (tests/enscenters_pool_smoke.cjs)
-  EnsCentersViewer.Pool = {
-    METHOD_VERSION: POOL_METHOD_VERSION, MAX_LAG_H: POOL_MAX_LAG_H, MATCH_DEG: POOL_MATCH_DEG,
-    SUITES: SUITES, KNOWN_MODELS: KNOWN_MODELS, SUPERS: SUPERS,
-    resolvePool: resolvePool, poolCycles: poolCycles, commonSteps: commonSteps,
-    poolCenters: poolCenters, poolTracks: poolTracks, matchClusters: matchClusters,
-    poolGroup: poolGroup, mixQuantile: mixQuantile, sphMean: sphMean
-  };
   if (typeof window !== 'undefined') window.EnsCentersViewer = EnsCentersViewer;
 })();

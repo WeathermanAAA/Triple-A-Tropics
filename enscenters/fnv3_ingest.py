@@ -1,25 +1,22 @@
 """
-Google DeepMind Weather Lab ensemble TC-track ingest (FNV3, WeatherNext 3, GenCast).
+Google DeepMind Weather Lab ensemble TC-track ingest (FNV3 + GenCast).
 
 This is the shared "track_csv" backend for the Weather Lab native-TC products:
-FNV3 (download slug "FNV3"), WeatherNext 3 (slug "WNV3") and GenCast /
-"WeatherNext Gen" (slug "GENC"). They are IDENTICAL except the slug and the
-ensemble size - same endpoint, CSV schema, native Vmax, and no-detect/no-warmcore
-treatment - so the model is selected by ``spec.api_model``; there is ONE parser,
-not a fork per model.
+FNV3 (download slug "FNV3") and GenCast / "WeatherNext Gen" (slug "GENC"). They
+are IDENTICAL except the slug - same endpoint, CSV schema, native Vmax, and
+no-detect/no-warmcore treatment - so the model is selected by ``spec.api_model``;
+there is ONE parser, not a fork per model.
 
-These models emit tropical cyclones DIRECTLY (native TC objects), so there is NO self-
+FNV3/GenCast emit tropical cyclones DIRECTLY (native TC objects), so there is NO self-
 detection and NO warm-core filter (unlike the ECMWF/GEFS field models). We pull
 the per-cycle "cyclogenesis" CSV (every member's TC tracks, basin-wide) from the
 anonymous Weather Lab download endpoint and normalize to the model-agnostic
 per-cycle JSON. The model's NATIVE Vmax is used (it carries its own wind; NO
-Atkinson-Holliday). Members = every distinct ``sample`` in the CSV (FNV3 and
-GenCast 0..49, WN3 0..63); the count is read from the data, never hard-coded.
+Atkinson-Holliday). 50 members (sample 0..49).
 
-VERIFIED SCHEMA (live 2026-06-14 FNV3, 2026-10-06 WNV3; a leading '#' license
-preamble precedes the column header). Columns are mapped BY HEADER NAME (see
-``_rows``) because Weather Lab has inserted columns before:
-  sample                              -> member id (float, 0..N-1)
+VERIFIED SCHEMA (live 2026-06-14, cyclogenesis CSV; a leading '#' license
+preamble precedes the column header):
+  sample                              -> member id (float, 0..49)
   lead_time_hours                     -> step_h (int, strictly 6-hourly)
   valid_time                          -> = init + lead (the viewer DERIVES it from
                                          init + step_h, so it is not stored)
@@ -27,8 +24,9 @@ preamble precedes the column header). Columns are mapped BY HEADER NAME (see
   minimum_sea_level_pressure_hpa      -> mslp_hpa
   maximum_sustained_wind_speed_knots  -> vmax_kt (NATIVE; not an AH estimate)
 One CSV per cycle (atomic publish), so "complete" == the CSV is fetchable (404 =
-not yet published). FNV3_LARGE_ENSEMBLE (1000) is deliberately out of scope; the
-super ensembles are derived client-side in the viewer, not here.
+not yet published). GenCast is NOT exposed under this endpoint (404, all name
+variants, 2026-06-14); only FNV3 (50) is ingested here. FNV3_LARGE_ENSEMBLE (1000)
+and the super-ensemble are deliberately out of scope.
 
 ToU: Weather Lab data < 48 h old is under Google DeepMind's Real-Time
 Experimental Data ToU; attribution is required and the product is EXPERIMENTAL,
@@ -100,7 +98,7 @@ def fetch_cycle_csv(api_model: str, cycle: dt.datetime) -> Optional[str]:
             last = e
         except Exception as e:  # noqa: BLE001 - transient network
             last = e
-    raise RuntimeError(f"{api_model} fetch failed for {cycle:%Y%m%d%H}: {last}")
+    raise RuntimeError(f"FNV3 fetch failed for {cycle:%Y%m%d%H}: {last}")
 
 
 def cycle_complete(api_model: str, cycle: dt.datetime) -> bool:
@@ -122,37 +120,17 @@ def _f(v) -> Optional[float]:
         return None
 
 
-_REQUIRED_COLS = (_COL_SAMPLE, _COL_LEAD, _COL_LAT, _COL_LON, _COL_MSLP, _COL_VMAX)
-
-
-def _rows(text: str):
-    """Yield the CSV data rows as dicts keyed by NORMALIZED header name (stripped,
-    lower-cased). Columns are always mapped BY HEADER NAME, never by position:
-    Weather Lab has inserted columns before (radii, init_time), so position is not
-    stable. The leading '#' license preamble is skipped. A header missing any
-    required column fails LOUDLY (ValueError) instead of silently yielding an
-    empty cycle that would publish as "no storms"."""
-    lines = [ln for ln in text.splitlines() if not ln.startswith("#") and ln.strip()]
-    if not lines:
-        return
-    reader = csv.reader(io.StringIO("\n".join(lines)))
-    header = [h.strip().lower() for h in next(reader)]
-    missing = [c for c in _REQUIRED_COLS if c not in header]
-    if missing:
-        raise ValueError(f"Weather Lab CSV header missing required column(s) {missing}; "
-                         f"got {header}")
-    for vals in reader:
-        yield dict(zip(header, vals))
-
-
 def parse_csv(text: str) -> Tuple[list, int, List[int]]:
     """Parse the cyclogenesis CSV into (members_objs, total_centers, run_steps).
     Rows are grouped by ``sample`` (member); each member's centers are
     [step_h, lat, lon, mslp_hpa, vmax_kt] (CENTER_FIELDS order), sorted by step.
-    The member count comes from the DATA (every distinct ``sample``), never from
-    a hard-coded ensemble size (FNV3/GenCast 50, WN3 64)."""
+    The leading '#' license preamble is skipped."""
+    lines = [ln for ln in text.splitlines() if not ln.startswith("#")]
+    if not lines:
+        return [], 0, [0]
+    reader = csv.DictReader(io.StringIO("\n".join(lines)))
     by_member: dict = {}
-    for row in _rows(text):
+    for row in reader:
         lat, lon = _f(row.get(_COL_LAT)), _f(row.get(_COL_LON))
         lead = _f(row.get(_COL_LEAD))
         smp = _f(row.get(_COL_SAMPLE))
@@ -194,8 +172,12 @@ def member_tracks_from_csv(text: str):
     ...]}`` where each track is a step-sorted list of ``[step, lat, lon, mslp,
     vmax]``. This is the in-memory hand-off the lean centers JSON cannot carry (it
     drops track_id to stay a flat per-step list) - NO re-fetch, centers untouched."""
+    lines = [ln for ln in text.splitlines() if not ln.startswith("#")]
+    if not lines:
+        return {}
+    reader = csv.DictReader(io.StringIO("\n".join(lines)))
     by_key: dict = {}
-    for row in _rows(text):
+    for row in reader:
         lat, lon = _f(row.get(_COL_LAT)), _f(row.get(_COL_LON))
         lead = _f(row.get(_COL_LEAD))
         smp = _f(row.get(_COL_SAMPLE))

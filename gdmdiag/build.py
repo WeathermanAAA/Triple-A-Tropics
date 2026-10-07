@@ -1,4 +1,4 @@
-"""Google DeepMind Weather Lab ensemble diagnostics, per storm and per cycle, every basin.
+"""Google DeepMind Weather Lab ensemble diagnostics for the Situation Room, per storm and per cycle, every basin.
 
   python gdmdiag/build.py --out-dir gdm_out [--prior gdm_out/models/gdmdiag/index.json] [--cycle YYYYMMDDHH]
   -> gdm_out/models/gdmdiag/<cycle>/<TRACKID>.json   every diagnostic for one storm, one cycle, every suite

@@ -29,48 +29,19 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-07T03:14:00Z
+updated: 2026-10-07T03:44:00Z
 
 items:
-  - id: gdm-ensemble-diagnostics
-    title: "Google ensemble diagnostics on /models/ (all Google suites + super ensemble)"
-    area: models
-    status: shadow
+  - id: situation-room-google-ensembles
+    title: "Situation Room: Google ensembles, suite switching, super ensemble, diagnostics"
+    area: apps
+    status: active
     note: >-
-      Per storm and per cycle, every basin, from Weather Lab's paired CSVs (which carry
-      RMW and 34/50/64-kt quadrant radii). gdmdiag/build.py precomputes everything
-      (update-gdm-diag.yml hourly at :51, rolling 8 cycles on R2 models/gdmdiag/):
-      track spread and 50/90 % position ellipses, intensity and ACE fans, lifetime
-      peak and peak timing, RI odds (per lead and cumulative), 12/24-h change
-      histograms, category shares, RMW / R34 / nesting / 34-kt area / radii rose,
-      34/50/64-kt and 120-km strike probability grids from each member's own radii
-      with median 34-kt arrival, landfall odds, timing, intensity and areas (Natural
-      Earth 10 m), a suite comparison and run-to-run trends. The Google super ensemble
-      pools FNV3, WN3 and GenCast with equal weight per model (radii products from the
-      models that carry radii) and says so. Invest ids are not yet mapped to their
-      designated names.
-    links:
-      - label: Google ensemble diagnostics
-        url: /models/#google-ensembles
-  - id: enscenters-google-suites-super-ensembles
-    title: "Ensemble centers: WeatherNext 3 (64), suite switcher, Google and all-model super ensembles"
-    area: models
-    status: shadow
-    note: >-
-      Google DeepMind WeatherNext 3 joins /models/ as a sixth model on the shared
-      Weather Lab native-track ingest (own update-wnv3.yml at :39, same R2 prefix and
-      manifest reconcile; CSV columns mapped by header name, member count read from
-      the data). The flat model buttons become a suite row (ECMWF, NOAA, Google, All
-      models) over a model row, grouped by a suite field the registry now writes into
-      the manifest. Two derived super ensembles pool published members client-side:
-      Google (FNV3 + WN3 + GenCast) and all models. Same init cycle, else a run at most
-      6 h older aligned by valid time, else dropped, and the figure says which went in.
-      Mean track, Vmax plume and envelope give each model an equal share (method
-      pool-v1), labelled on the burned-in header. Merged 2026-10-07; update-wnv3.yml
-      dispatched to seed the first cycle.
-    links:
-      - label: Ensemble centers
-        url: /models/
+      Google DeepMind Weather Lab suites (FNV3, WeatherNext 3, GenCast, FNV3 1000) on the
+      Situation Room's Models tab and Ensembles chart, each on its own or pooled into a
+      Google super ensemble (equal weight per model, labelled as derived), plus a Google
+      diagnostics card. Data from gdmdiag/build.py (update-gdm-diag.yml, R2 models/gdmdiag/).
+      A first cut went onto /models/ by mistake on 2026-10-07 and was reverted.
   - id: meso-poller-renders-failing
     title: "Meso poller: every render fails while health reports healthy (no frames since Sep 22)"
     area: satellite
@@ -141,7 +112,7 @@ items:
     note: >-
       enscenters.pipeline.fetch_prior_manifest reads the CDN manifest with
       urllib and no User-Agent; Cloudflare answers 403, the code treats it as
-      manifest absent, and all six ensemble workflows re-ingest and re-PUT
+      manifest absent, and all five ensemble workflows re-ingest and re-PUT
       the three newest cycles on every run (about 21 minutes of Actions time
       and 7 redundant PUTs per run each). Set a User-Agent and treat a
       persistent 403 as an error, not as absence.

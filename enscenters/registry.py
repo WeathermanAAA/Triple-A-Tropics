@@ -7,11 +7,10 @@ This mirrors the house pattern in ``hafs_render/hafs_registry.py`` (frozen
 dataclasses + a ``{slug: spec}`` dict + accessors) and the "registry-as-data"
 discipline in ``CYCLOLAB_DESIGN.md``.
 
-Live models: ECMWF ENS, AIFS-ENS, GEFS, and the Google DeepMind Weather Lab
-native-track models (FNV3, WeatherNext 3, GenCast), all against the same schema
-and the same model-agnostic JSON (see ``ENSEMBLE_DESIGN.md``). Each spec carries
-a viewer ``suite`` (ECMWF / NOAA / Google). The super ensembles are derived
-client-side in the viewer, not registry entries.
+Stage 1 ships ECMWF ENS ("ecens") only. The other four planned models
+(AIFS-ENS, GEFS, GDM-FNV3, GDM-GenCast) plus the SUPER-ENSEMBLE are documented
+in ``ENSEMBLE_DESIGN.md`` and land as later registry entries against this same
+schema and the same model-agnostic JSON.
 """
 from __future__ import annotations
 
@@ -236,17 +235,11 @@ class EnsModelSpec:
     # it). 0.25 deg for the ECMWF open-data models, 0.5 deg for GEFS pgrb2ap5.
     grid_label: str = "0.25 deg"
     # Weather Lab download model slug for the track-CSV products (FNV3 -> "FNV3",
-    # WeatherNext 3 -> "WNV3", GenCast/WeatherNext Gen -> "GENC"). Only read by
-    # enscenters.fnv3_ingest;
+    # GenCast/WeatherNext Gen -> "GENC"). Only read by enscenters.fnv3_ingest;
     # None for the field models.
     api_model: Optional[str] = None
     # --- provenance ---
     attribution: str = "ECMWF open data (CC-BY-4.0)"
-    # Viewer SUITE (producer family) this model is grouped under in the /models/
-    # suite switcher: "ecmwf" | "noaa" | "google" (keys of SUITES below). Emitted
-    # into the manifest's model list (models_meta / merge_manifest_multi) so the
-    # grouping is data-driven; the viewer keeps a fallback map for old manifests.
-    suite: str = "ecmwf"
 
     def steps_for_cycle_hour(self, hour: int) -> List[int]:
         return list(self.steps_long) if hour in (0, 12) else list(self.steps_short)
@@ -336,7 +329,6 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         gh_levels=(300, 500),
         grid_label="0.5 deg",
         attribution="NOAA GEFS 0.5 deg open data (noaa-gefs-pds)",
-        suite="noaa",
         caption=("Self-detected closed MSLP lows from the GEFS 0.5 deg ensemble, "
                  "filtered to warm-core tropical systems by the same upper-level "
                  "thickness test as the ECMWF models. Peak winds are an "
@@ -349,7 +341,8 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
     # basin-wide tracks) via enscenters.fnv3_ingest and use the model's OWN Vmax
     # (not Atkinson-Holliday). Label carries the member count because FNV3-1000 is
     # a SEPARATE future entry. Caption carries the source + the required
-    # experimental disclaimer + Weather Lab attribution (ToU).
+    # experimental disclaimer + Weather Lab attribution (ToU). GenCast is not
+    # exposed under the anonymous endpoint (404, 2026-06-14), so it is not added.
     EnsModelSpec(
         slug="fnv3",
         label="Google FNV3 (50)",
@@ -361,37 +354,10 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         warm_core=False,                # native TC objects; no detect, no warmcore
         grid_label="native TC tracks",
         attribution="Google DeepMind Weather Lab (FNV3)",
-        suite="google",
         caption=("Native tropical-cyclone tracks from Google DeepMind's FNV3 "
                  "ensemble (50 members), Weather Lab. Peak winds are the model's "
                  "own maximum sustained wind (not an Atkinson-Holliday estimate). "
                  "Experimental model output, not for real-world use. "
-                 "Data: Google DeepMind Weather Lab."),
-    ),
-    # WeatherNext 3 (Google DeepMind, Weather Lab download slug WNV3): the SAME
-    # native TC-track path as FNV3/GenCast - identical endpoint pattern and CSV
-    # columns, native Vmax, no detect/warmcore - only the slug and the ensemble
-    # size differ. Verified live 2026-10-06: WNV3/ensemble/cyclogenesis/csv 200,
-    # columns identical to FNV3, samples 0..63 (64 members), 6-hourly leads to
-    # ~282-360 h. The member count is NOT hard-coded downstream: the ingest groups
-    # whatever samples the CSV carries (n_members comes from the data); n_perturbed
-    # here is informational (and drives --members N slicing).
-    EnsModelSpec(
-        slug="wnv3",
-        label="Google WN3 (64)",
-        source="gdm-weatherlab",
-        source_kind="track_csv",
-        api_model="WNV3",
-        n_perturbed=64,
-        control_stream=None,
-        warm_core=False,
-        grid_label="native TC tracks",
-        attribution="Google DeepMind Weather Lab (WeatherNext 3)",
-        suite="google",
-        caption=("Native tropical-cyclone tracks from Google DeepMind's WeatherNext 3 "
-                 "(WN3) ensemble (64 members), Weather Lab. Peak winds are the "
-                 "model's own maximum sustained wind (not an Atkinson-Holliday "
-                 "estimate). Experimental model output, not for real-world use. "
                  "Data: Google DeepMind Weather Lab."),
     ),
     # GenCast (Google DeepMind, rebranded "WeatherNext Gen", Weather Lab download
@@ -410,7 +376,6 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
         warm_core=False,
         grid_label="native TC tracks",
         attribution="Google DeepMind Weather Lab (GenCast / WeatherNext Gen)",
-        suite="google",
         caption=("Native tropical-cyclone tracks from Google DeepMind's GenCast "
                  "(WeatherNext Gen) ensemble, Weather Lab. Peak winds are the "
                  "model's own maximum sustained wind (not an Atkinson-Holliday "
@@ -418,18 +383,8 @@ _SPECS: Tuple[EnsModelSpec, ...] = (
                  "Data: Google DeepMind Weather Lab."),
     ),
     # Roadmap (later stages, ENSEMBLE_DESIGN.md): "fnv3-1000" (the experimental
-    # 1000-member view, needs clustering) and "WeatherNext Graph"/GraphCast, on the
-    # same Weather Lab download pattern. The SUPER ENSEMBLES are NOT registry
-    # entries: they are derived client-side in the viewer (models/enscenters.js,
-    # method_version "pool-v1") from the published per-model JSON - no pipeline.
-)
-
-# Viewer suites (producer families), in switcher order. Every EnsModelSpec.suite
-# is one of these keys; the viewer mirrors this list as its fallback.
-SUITES: Tuple[Tuple[str, str], ...] = (
-    ("ecmwf", "ECMWF"),
-    ("noaa", "NOAA"),
-    ("google", "Google"),
+    # 1000-member view, needs clustering), "WeatherNext Graph"/GraphCast, and a
+    # derived "super" entry - all on the same Weather Lab download pattern.
 )
 
 REGISTRY = {s.slug: s for s in _SPECS}
@@ -447,10 +402,5 @@ def model_slugs() -> List[str]:
 
 
 def models_meta() -> List[dict]:
-    """The manifest's model list (slug + label + suite), in registry order."""
-    return [{"slug": s.slug, "label": s.label, "suite": s.suite} for s in _SPECS]
-
-
-def suites_meta() -> List[dict]:
-    """The viewer suite list ({key, label}) in switcher order."""
-    return [{"key": k, "label": lbl} for k, lbl in SUITES]
+    """The manifest's model list (slug + label), in registry order."""
+    return [{"slug": s.slug, "label": s.label} for s in _SPECS]
