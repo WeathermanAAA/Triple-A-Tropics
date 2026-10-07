@@ -1,0 +1,94 @@
+name: Update WeatherNext 3 (Ensemble Cyclone Centers)
+
+# WeatherNext 3 ("WNV3", Google DeepMind, 64 members) on the Ensemble Cyclone
+# Centers platform. Like FNV3 and GenCast it does NOT self-detect closed lows: it
+# is a NATIVE TC-track product (Google DeepMind Weather Lab emits tropical
+# cyclones directly), so there is no GRIB pull, no field detection, no warm-core
+# filter. This is a LIGHT path - one cyclogenesis CSV per cycle (every member's
+# basin-wide tracks), parsed in pure Python by the SAME ingest as FNV3/GenCast
+# (enscenters.fnv3_ingest, selected by the registry's api_model "WNV3") and mapped
+# to the shared per-cycle JSON. Member peak winds are the model's OWN sustained
+# wind (not an Atkinson-Holliday estimate).
+#
+# Shares the SAME R2 prefix (models/enscenters/) and the SAME manifest as the
+# other models: the publish script reconciles against R2 reality and replaces
+# only the wnv3 entry, so the per-model workflows never clobber each other. The
+# data is EXPERIMENTAL (Weather Lab ToU, attribution required); the disclaimer +
+# attribution live in the registry caption shown in the viewer. Read-only: commits
+# NOTHING to main; per-cycle wnv3 JSON + the shared manifest sync to R2.
+#
+# Timing: Weather Lab posts each synoptic cycle (00/06/12/18Z) a few hours later,
+# so we fire across a generous window and let the never-miss completeness gate
+# (the cyclogenesis CSV is fetchable) decide when a cycle is ready. Staggered odd
+# minute that no other workflow uses (ecens :19/:49, ecaie :29/:59, gefs :41/:57,
+# fnv3 :47, genc :53 -> wnv3 :39).
+
+on:
+  schedule:
+    - cron: "39 4-9,10-15,16-21 * * *"   # 00Z->04-09, 06Z->10-15, 12Z->16-21
+    - cron: "39 0-3,22-23 * * *"         # 18Z (prev day) -> 22-03
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Force one cycle YYYYMMDDHH (blank = never-miss backfill)"
+        required: false
+      tracks_only:
+        description: "Build ONLY the sibling tracks JSON for --cycle (no field re-ingest)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-wnv3
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # Light: fetch + parse one CSV per cycle in pure Python. Generous cap covers a
+    # multi-cycle never-miss backfill of small files.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # numpy/scipy only - imported transitively by the shared detect/warmcore
+          # modules when the CLI loads. WN3 itself parses the CSV with the stdlib
+          # (csv + urllib); no GRIB stack, no requests, no pandas.
+          pip install numpy scipy scikit-learn
+          python -c "import numpy, scipy, sklearn; print('deps OK')"
+
+      - name: Build WN3 cyclone centers (never-miss backfill)
+        env:
+          ENS_CYCLE: ${{ github.event.inputs.cycle }}
+          ENS_TRACKS_ONLY: ${{ github.event.inputs.tracks_only }}
+        run: |
+          # --model wnv3 selects the native TC-track registry spec; the CLI routes
+          # it to the cyclogenesis-CSV ingest (enscenters.fnv3_ingest) + the shared
+          # currency/manifest path. No --source/--jobs (single CSV per cycle).
+          python generate_enscenters.py \
+            --model wnv3 \
+            --lookback 8 \
+            ${ENS_CYCLE:+--cycle "$ENS_CYCLE"} \
+            ${ENS_TRACKS_ONLY:+--tracks-only}
+
+      - name: Sync detection JSON + manifest to R2 (and prune old cycles)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          # Atomic, concurrency-safe shared-manifest publish: read live (authoritative
+          # R2) -> reconcile this run's build with it per model -> consistency gate ->
+          # CAS re-read -> write -> filtered prune. NEVER drops a sibling model, NEVER
+          # regresses a model's latest, survives concurrent sibling writes. The active
+          # slug for this workflow is `wnv3`.
+          scripts/enscenters_publish_manifest.sh wnv3

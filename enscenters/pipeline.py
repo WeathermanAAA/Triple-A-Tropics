@@ -444,8 +444,17 @@ def merge_manifest_multi(prior: Optional[dict], spec: EnsModelSpec, new_cycles, 
         del entry["tracks_versions"]
     by_slug[spec.slug] = entry
 
+    # viewer suite grouping (data-driven): stamp each registry model's suite onto
+    # its entry - including sibling entries carried from an older prior manifest
+    # that predates the field. Unknown slugs keep whatever they carried.
+    meta = models_meta()
+    suite_of = {m["slug"]: m["suite"] for m in meta}
+    for s, d in by_slug.items():
+        if s in suite_of:
+            d["suite"] = suite_of[s]
+
     # order by registry; include only models that have at least one cycle
-    order = [m["slug"] for m in models_meta()]
+    order = [m["slug"] for m in meta]
     for s in by_slug:
         if s not in order:
             order.append(s)

@@ -97,7 +97,37 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(spec.steps_for_cycle_hour(6)[-1], 144)
 
     def test_model_slugs_in_registry_order(self):
-        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs", "fnv3", "genc"])
+        self.assertEqual(reg.model_slugs(), ["ecens", "ecaie", "gefs", "fnv3", "wnv3", "genc"])
+
+    def test_models_meta_carries_suite(self):
+        # The manifest model list is data-driven for the viewer's suite switcher:
+        # every registry model carries a suite key that is one of SUITES.
+        meta = reg.models_meta()
+        self.assertEqual([m["slug"] for m in meta], reg.model_slugs())
+        suites = {m["slug"]: m["suite"] for m in meta}
+        self.assertEqual(suites, {"ecens": "ecmwf", "ecaie": "ecmwf", "gefs": "noaa",
+                                  "fnv3": "google", "wnv3": "google", "genc": "google"})
+        keys = [s["key"] for s in reg.suites_meta()]
+        self.assertEqual(keys, ["ecmwf", "noaa", "google"])
+        for m in meta:
+            self.assertIn(m["suite"], keys)
+            self.assertEqual(set(m), {"slug", "label", "suite"})
+
+    def test_merge_manifest_stamps_suite_on_every_entry(self):
+        # merge_manifest_multi writes the suite for the published model AND
+        # backfills it onto sibling entries carried from an older manifest.
+        from enscenters.pipeline import merge_manifest_multi
+        prior = {"models": [
+            {"slug": "ecens", "label": "ECMWF ENS", "cycles": ["2026100600"], "latest": "2026100600"},
+            {"slug": "gefs", "label": "GEFS", "cycles": ["2026100600"], "latest": "2026100600"}]}
+        m, _ = merge_manifest_multi(prior, reg.get_spec("wnv3"), ["2026100612"], retain=8)
+        by = {e["slug"]: e for e in m["models"]}
+        self.assertEqual(by["wnv3"]["suite"], "google")
+        self.assertEqual(by["wnv3"]["label"], "Google WN3 (64)")
+        self.assertEqual(by["ecens"]["suite"], "ecmwf")
+        self.assertEqual(by["gefs"]["suite"], "noaa")
+        # registry order: wnv3 sits between fnv3 and genc
+        self.assertEqual([e["slug"] for e in m["models"]], ["ecens", "gefs", "wnv3"])
 
     def test_aifs_ens_spec(self):
         # AIFS-ENS ("ecaie"): ECMWF ENS's AI twin - config only.
@@ -835,6 +865,68 @@ class TestFnv3Ingest(unittest.TestCase):
         self.assertEqual(fi._api_model(reg.get_spec("genc")), "GENC")
         self.assertEqual(fi._api_model(reg.get_spec("fnv3")), "FNV3")
 
+    def test_wnv3_spec_and_url(self):
+        # WeatherNext 3: same native-track path as FNV3/GenCast, own slug + 64 members.
+        import datetime as dt
+        from enscenters import fnv3_ingest as fi
+        s = reg.get_spec("wnv3")
+        self.assertEqual(s.label, "Google WN3 (64)")
+        self.assertEqual(s.source_kind, "track_csv")
+        self.assertEqual(s.source, "gdm-weatherlab")
+        self.assertEqual(s.api_model, "WNV3")
+        self.assertEqual(s.suite, "google")
+        self.assertFalse(s.warm_core)
+        self.assertIsNone(s.control_stream)
+        self.assertEqual(len(s.member_ids()), 64)                     # informational only
+        self.assertIn("not for real-world use", s.caption)
+        self.assertIn("Weather Lab", s.caption)
+        self.assertIn("64 members", s.caption)
+        self.assertNotIn("—", s.caption)                         # no em-dash on screen
+        self.assertEqual(fi._api_model(s), "WNV3")
+        self.assertEqual(
+            fi.cycle_url("WNV3", dt.datetime(2026, 10, 6, 12)),
+            "https://deepmind.google.com/science/weatherlab/download/cyclones/"
+            "WNV3/ensemble/cyclogenesis/csv/WNV3_2026_10_06T12_00_cyclogenesis.csv")
+
+    def test_member_count_comes_from_data_not_spec(self):
+        # 64 samples (WN3) parse to 64 members - no hard-coded 50 anywhere in the
+        # ingest; ids zero-pad to M00..M63.
+        from enscenters import fnv3_ingest as fi
+        hdr = ("init_time,track_id,sample,valid_time,lead_time,lead_time_hours,lat,lon,"
+               "minimum_sea_level_pressure_hpa,maximum_sustained_wind_speed_knots")
+        rows = [hdr] + [f"2026-10-06 12:00:00,AL92,{k}.0,x,0 days,0,15.0,-50.0,1005.0,30.0"
+                        for k in range(64)]
+        members, total, _ = fi.parse_csv("\n".join(rows))
+        self.assertEqual(len(members), 64)
+        self.assertEqual(members[0]["id"], "M00")
+        self.assertEqual(members[-1]["id"], "M63")
+        self.assertEqual(total, 64)
+        self.assertEqual(len(fi.member_tracks_from_csv("\n".join(rows))), 64)
+
+    def test_columns_mapped_by_header_name(self):
+        # Weather Lab has inserted columns before: a reordered / extended header
+        # (new leading column, radii, swapped lat/lon order, stray whitespace and
+        # case) parses identically because columns are mapped BY NAME.
+        from enscenters import fnv3_ingest as fi
+        base = fi.parse_csv(self.CSV)
+        shuffled = "\n".join([
+            "# license preamble",
+            " New_Col , LON,lat,maximum_sustained_wind_speed_knots,sample,track_id,"
+            "minimum_sea_level_pressure_hpa,lead_time_hours,radius_34_knot_winds_ne_km",
+            "z,137.53,9.7,22.5,0.0,12,1005.0,276,0",
+            "z,136.02,9.9,24.4,0.0,12,1004.2,282,0",
+            "z,140.0,15.0,88.0,0.0,5,975.0,126,0",
+            "z,-132.0,8.1,25.0,1.0,EP93,1007.0,0,0",
+            "z,-132.5,8.2,26.0,1.0,EP93,1006.0,7,0",
+        ])
+        self.assertEqual(fi.parse_csv(shuffled), base)
+        # a header that lost a required column fails LOUDLY (never an empty cycle)
+        broken = "sample,lead_time_hours,lat,lon,maximum_sustained_wind_speed_knots\n0,0,1,2,3"
+        with self.assertRaises(ValueError):
+            fi.parse_csv(broken)
+        with self.assertRaises(ValueError):
+            fi.member_tracks_from_csv(broken)
+
 
 class TestFiveModelReconcile(unittest.TestCase):
     """Step 4: the shared derive-from-R2 reconcile must scale to all models -
@@ -884,6 +976,34 @@ class TestFiveModelReconcile(unittest.TestCase):
         # genc advanced + unioned its prior live cycle (monotone history)
         self.assertEqual(by["genc"]["latest"], "2026061418")
         self.assertEqual(by["genc"]["cycles"], ["2026061418", "2026061412"])
+
+    def test_wnv3_first_publish_keeps_siblings_and_carries_suites(self):
+        # WN3's first publish (no live entry yet): all five siblings survive, WN3
+        # lands in canonical order between FNV3 and GenCast, and EVERY entry carries
+        # its viewer suite - including siblings whose live entry predates the field.
+        new = {"default_model": "wnv3", "models": [
+            {"slug": "wnv3", "label": "Google WN3 (64)", "suite": "google",
+             "cycles": ["2026100612"], "latest": "2026100612"}]}
+        live = {"default_model": "ecens", "models": [
+            {"slug": s, "cycles": ["2026100606"], "latest": "2026100606"}
+            for s in ("ecens", "ecaie", "gefs", "fnv3", "genc")]}
+        out = self._run(new, live)
+        self.assertEqual([m["slug"] for m in out["models"]],
+                         ["ecens", "ecaie", "gefs", "fnv3", "wnv3", "genc"])
+        self.assertEqual(out["default_model"], "ecens")
+        self.assertEqual({m["slug"]: m["suite"] for m in out["models"]},
+                         {"ecens": "ecmwf", "ecaie": "ecmwf", "gefs": "noaa",
+                          "fnv3": "google", "wnv3": "google", "genc": "google"})
+        self.assertEqual({m["slug"]: m["label"] for m in out["models"]}["wnv3"], "Google WN3 (64)")
+
+    def test_guard_tables_match_registry(self):
+        # the stdlib-only guard mirrors the registry (order, labels, suites)
+        g = self._guard()
+        self.assertEqual(g.ORDER, reg.model_slugs())
+        meta = {m["slug"]: m for m in reg.models_meta()}
+        for s in g.ORDER:
+            self.assertEqual(g.LABELS[s], meta[s]["label"])
+            self.assertEqual(g.SUITES[s], meta[s]["suite"])
 
 
 if __name__ == "__main__":
