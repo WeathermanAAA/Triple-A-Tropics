@@ -9,10 +9,11 @@ source's re-read interval), then compares each document to what was last publish
 and uploads only changed files. situation/live.json is a ~200-byte heartbeat the page polls every few seconds: it holds
 a content hash per document, so the browser re-downloads a 190 KB bundle only when something in it actually changed.
 """
-import argparse, hashlib, json, os, subprocess, sys, time
+import argparse, hashlib, json, os, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 import build_situation as BS
+import vis as VIS
 
 BUCKET = "s3://triple-a-tropics-media/situation/"
 HEARTBEAT_S = 120
@@ -24,9 +25,9 @@ def digest(path):
     return hashlib.sha1(json.dumps(d, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
 
 
-def put(path, key, cache, dry):
+def put(path, key, cache, dry, ctype="application/json"):
     if dry: print(f"  would upload {key}"); return True
-    r = subprocess.run(["aws", "s3", "cp", path, BUCKET + key, "--endpoint-url", os.environ["R2_ENDPOINT"], "--content-type", "application/json",
+    r = subprocess.run(["aws", "s3", "cp", path, BUCKET + key, "--endpoint-url", os.environ["R2_ENDPOINT"], "--content-type", ctype,
                         "--cache-control", cache, "--only-show-errors"], capture_output=True, text=True, timeout=60)
     if r.returncode: print(f"  upload {key} failed: {r.stderr.strip()[:200]}", flush=True)
     return r.returncode == 0
@@ -36,6 +37,20 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--minutes", type=float, default=175); ap.add_argument("--every", type=float, default=20)
     ap.add_argument("--out-dir", default="situation_live"); ap.add_argument("--dry-run", action="store_true"); a = ap.parse_args()
     end = time.time() + a.minutes * 60; od = os.path.join(a.out_dir, "situation"); sent, beat, n = {}, 0, 0
+    # visible imagery for open rooms runs beside the feed (a 60 MB file per frame must not stall the 20 s loop)
+    vw = VIS.VisWriter(lambda p, k, c, t: put(p, k, c, a.dry_run, t), a.out_dir, a.dry_run)
+    def vis_loop():
+        while time.time() < end:
+            try:
+                st = []
+                for f in os.listdir(od) if os.path.isdir(od) else []:
+                    if f.endswith(".json") and f not in ("index.json", "rooms.json", "live.json"):
+                        d = json.load(open(os.path.join(od, f)))
+                        if d.get("room_open") and d.get("nhc"): st.append({"sid": d["sid"], "lon": float(d["nhc"]["longitudeNumeric"]), "lat": float(d["nhc"]["latitudeNumeric"])})
+                vw.tick(st)
+            except Exception as ex: print(f"vis loop: {ex}", flush=True)
+            time.sleep(60)
+    threading.Thread(target=vis_loop, daemon=True).start()
     while time.time() < end:
         t0 = time.time(); n += 1
         try:

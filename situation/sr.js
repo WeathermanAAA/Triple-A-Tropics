@@ -308,7 +308,7 @@ async function initMap() {
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
   MAP.on("moveend", hashKick);
-  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw");
+  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw"); LIVELOOP.visBase = `${CDN}/situation/vis/${SID}/`;
   LIVESEC = Meso.coverLive(...pos()); if (LIVESEC) { SRC = "live"; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); }
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
   MAP.addSource("mw", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
@@ -739,8 +739,8 @@ SatX.P.subs.add((t, s) => {
 });
 
 /* 4-panel: four synced maps, each showing its own product (any band, the microwave pass, or track & cone) */
-const QPROD = { ir: "Infrared", vis: "Visible", geocolor: "GeoColor", airmass: "Air Mass", dust: "Dust", mw: "Microwave 89 GHz", track: "Track & cone" };
-const QUAD = { on: false, cells: [], prods: ["ir", "geocolor", "airmass", "mw"], wasSat: false };
+const QPROD = { ir: "Infrared", wv: "Water Vapor", vis: "Visible", geocolor: "GeoColor", airmass: "Air Mass", dust: "Dust", mw: "Microwave 89 GHz", track: "Track & cone" };
+const QUAD = { on: false, cells: [], prods: ["ir", "vis", "wv", "mw"], wasSat: false };
 function miniStyle() {
   return { version: 8, sources: {
       base: { type: "raster", tiles: [`${CDN}/situation/tiles/base/{z}/{x}/{y}.jpg`], tileSize: 256, maxzoom: 6 },
@@ -750,7 +750,7 @@ function miniStyle() {
 function quadToggle() {
   QUAD.on = !QUAD.on; $("stage").classList.toggle("quad", QUAD.on); $("quadBtn").classList.toggle("on", QUAD.on);
   if (QUAD.on) { QUAD.wasSat = ON.has("sat"); if (QUAD.wasSat) SATL().show(false); buildQuad(); }
-  else { QUAD.cells.forEach(c => c.loop.show(false)); if (QUAD.wasSat && ON.has("sat")) SATL().show(true); }
+  else { QUAD.cells.forEach(c => { c.gibs.show(false); c.live.show(false); }); if (QUAD.wasSat && ON.has("sat")) SATL().show(true); }
   loopBar(ON.has("sat"));
 }
 async function buildQuad() {
@@ -762,7 +762,11 @@ async function buildQuad() {
       const m = new maplibregl.Map({ container: el.querySelector(".qm"), style: miniStyle(), center: MAP.getCenter(), zoom: MAP.getZoom() - .5,
         attributionControl: false, fadeDuration: 0, dragRotate: false, pitchWithRotate: false, renderWorldCopies: false });
       m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-      const c = { el, map: m, prod: QUAD.prods[i], loop: new SatX.Loop(m, "qsat", "qlines", { maxPx: 1400 }) };
+      /* IR / WV / visible come straight from NOAA (true brightness temperature and reflectance) when the 5-minute sector
+         covers the storm, like the main loop; GIBS supplies the RGB products and everything outside CONUS/PACUS */
+      const c = { el, map: m, prod: QUAD.prods[i], gibs: new SatX.Loop(m, "qsat", "qlines", { maxPx: 1400 }), live: new Meso.Loop(m, "qlive", "qlines", { maxPx: 1400 }), useLive: false,
+        get loop() { return this.useLive ? this.live : this.gibs; } };
+      c.live.visBase = `${CDN}/situation/vis/${SID}/`;
       c.ready = new Promise(r => m.on("load", () => {
         m.addSource("mw", { type: "image", url: MAP.getSource("mw").url || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
         m.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": .95, "raster-fade-duration": 0 } });
@@ -775,7 +779,7 @@ async function buildQuad() {
       m.on("move", e => { if (!e.originalEvent) return; for (const o of QUAD.cells) if (o.map !== m) o.map.jumpTo({ center: m.getCenter(), zoom: m.getZoom() }); });
       el.querySelector("select").onchange = e => { c.prod = e.target.value; QUAD.prods[i] = c.prod; setProd(c); };
       c.stamp = () => { const s = el.querySelector(".qs"), f = c.loop.current;
-        if (c.loop.on && f) s.textContent = `${SatX.SATS[c.loop.sat].name} · ${hm(f.t)} ${TZ}`;
+        if (c.loop.on && f) s.textContent = `${c.useLive ? c.live.label : SatX.SATS[c.loop.sat].name} · ${hm(f.t)} ${TZ}`;
         else if (c.prod === "mw") { const o = mwPick(); s.textContent = o ? `${o.sensor} · ${hm(o.t)} ${TZ}` : "no pass"; }
         else if (c.prod === "track") s.textContent = `NHC advisory ${D.nhc.advisory}`; };
       return c;
@@ -791,8 +795,10 @@ function quadData(c) {
   c.now = new maplibregl.Marker({ element: wrap(el) }).setLngLat(pos()).addTo(m);
 }
 function setProd(c) {
-  const m = c.map, p = c.prod, sat = p in SatX.BANDS;
-  if (sat) { c.loop.band = p; c.loop.show(true); } else c.loop.show(false);
+  const m = c.map, p = c.prod, live = !!LIVESEC && p in Meso.LIVEBANDS, sat = live || p in SatX.BANDS;
+  c.gibs.show(false); c.live.show(false); c.useLive = live;
+  if (live) { c.live.sector = LIVESEC; c.live.center = pos(); c.live.band = p; c.live.show(true); }
+  else if (sat) { c.gibs.band = p; c.gibs.show(true); }
   m.setLayoutProperty("mw", "visibility", p === "mw" ? "visible" : "none");
   if (p === "mw") { const o = mwPick(); if (o) { const b = o.bounds, g = o.geo[MWPROD] || o.geo.color91 || o.geo.color37;
     m.getSource("mw").updateImage({ url: `${CDN}/microwave/${g}`, coordinates: [[b[0], b[3]], [b[2], b[3]], [b[2], b[1]], [b[0], b[1]]] }); } }

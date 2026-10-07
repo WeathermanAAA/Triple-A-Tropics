@@ -44,7 +44,8 @@ const Meso = (() => {
     }
     return best;
   }
-  const LIVEBANDS = { ir: BANDS.ir, wv: BANDS.wv };
+  /* visible in the 5-min source comes pre-cropped from the live writer (situation/vis.py): the band-2 file is ~60 MB */
+  const LIVEBANDS = { ir: BANDS.ir, wv: BANDS.wv, vis: { ch: "C02", t: "Visible", short: "VIS" } };
   const jday = d => Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5);
   const keyTime = k => { const m = k.match(/_s(\d{4})(\d{3})(\d{2})(\d{2})(\d{2})/); return m ? Date.UTC(+m[1], 0, +m[2], +m[3], +m[4], +m[5]) : 0; };
   async function list(sec, ch, from, to) {
@@ -160,6 +161,7 @@ const Meso = (() => {
     }
     async reload() {
       const gen = ++this.gen; if (!this.sector) return;
+      if (this.sector.kind === "C" && this.band === "vis") return this.reloadVis(gen);
       const P = SatX.P, live = this.sector.kind === "C", hours = Math.min(live ? 6 : 2, P.hours), step = live ? (hours > 1 ? 10 : 5) : this.band === "vis" || hours > 1 ? 2 : 1;
       const crop = live && this.center ? { lon: this.center[0], lat: this.center[1], dlon: 13, dlat: 9.5 } : null;
       this.ready = false; this.loading = { done: 0, total: 0 }; this.emit();
@@ -191,12 +193,33 @@ const Meso = (() => {
       m.setLayoutProperty(this.id, "visibility", this.on ? "visible" : "none");
       this.draw(SatX.P.t, true);
     }
+    /* published visible frames: a JPEG per 5-min scan, each with its own lon/lat box, drawn into one canvas over their union */
+    async reloadVis(gen) {
+      const P = SatX.P; this.ready = false; this.loading = { done: 0, total: 0 }; this.emit();
+      let ix; try { ix = await (await fetch(`${this.visBase}index.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { ix = null; }
+      if (gen !== this.gen) return;
+      const cut = Date.now() - Math.min(3.25, P.hours) * 36e5, list = (ix?.frames || []).filter(f => Date.parse(f.t) >= cut);
+      if (!list.length) { this.loading = null; this.frames = []; this.emit(); return; }
+      let w = Infinity, e = -Infinity, so = Infinity, n = -Infinity;
+      for (const f of list) { w = Math.min(w, f.coords[0][0]); e = Math.max(e, f.coords[1][0]); so = Math.min(so, f.coords[2][1]); n = Math.max(n, f.coords[0][1]); }
+      const X0 = mx(w), X1 = mx(e), Y0 = my(so), Y1 = my(n), W = Math.min(2400, Math.round(1400 * (e - w) / (list[0].coords[1][0] - list[0].coords[0][0]))), Hh = Math.round(W * (Y1 - Y0) / (X1 - X0));
+      const o = { X0, X1, Y0, Y1, W, H: Hh, coords: [[w, n], [e, n], [e, so], [w, so]] }; this.out = o;
+      const box = f => { const a = (mx(f.coords[0][0]) - X0) / (X1 - X0) * W, b = (Y1 - my(f.coords[0][1])) / (Y1 - Y0) * Hh;
+        return [a, b, (mx(f.coords[1][0]) - mx(f.coords[0][0])) / (X1 - X0) * W, (my(f.coords[0][1]) - my(f.coords[2][1])) / (Y1 - Y0) * Hh]; };
+      const load = f => new Promise(res => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = () => res(null); im.src = this.visBase + f.img; });
+      const fr = list.map(f => ({ t: Date.parse(f.t), img: null, box: box(f) })), newest = fr[fr.length - 1];
+      this.loading.total = fr.length; newest.img = await load(list[list.length - 1]); if (gen !== this.gen) return;
+      if (newest.img) { this.install(o, [newest]); this.loading.done = 1; this.emit(); }
+      await Promise.all(fr.slice(0, -1).map(async (f, i) => { f.img = await load(list[i]); this.loading.done++; this.emit(); }));
+      if (gen !== this.gen) return;
+      this.frames = fr.filter(f => f.img); this.loading = null; this.ready = true; this.key = null; this.emit();
+    }
     draw(t, force) {
       const F = this.frames; if (!F.length || !this.on) return;
       let f = F[0]; for (const x of F) { if (x.t <= t + 1) f = x; else break; }
       if (!this.ready) f = F[F.length - 1];
       if (!force && this.key === f.t) return; this.key = f.t;
-      const c = this.canvas, x = this.ctx; x.clearRect(0, 0, c.width, c.height); x.drawImage(f.img, 0, 0); this.cur = f;
+      const c = this.canvas, x = this.ctx; x.clearRect(0, 0, c.width, c.height); f.box ? x.drawImage(f.img, ...f.box) : x.drawImage(f.img, 0, 0); this.cur = f;
     }
     repaint() { if (!this.out || this.band === "vis") return; for (const f of this.frames) if (f.g?.v) f.img = paint(f, this.out, this.band, SatX.P.ramp); this.key = null; this.draw(SatX.P.t, true); }
     opacity(o) { if (this.map.getLayer(this.id)) this.map.setPaintProperty(this.id, "raster-opacity", o); }
