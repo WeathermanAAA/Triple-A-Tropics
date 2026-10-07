@@ -300,7 +300,7 @@ async function initMap() {
     style: { version: 8, glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
       sources: { omt: { type: "vector", url: "https://tiles.openfreemap.org/planet" },
         base: { type: "raster", tiles: [`${CDN}/situation/tiles/base/{z}/{x}/{y}.jpg`], tileSize: 256, maxzoom: 6 },
-        lines: { type: "raster", tiles: [`${CDN}/situation/tiles/lines/{z}/{x}/{y}.png`], tileSize: 256, maxzoom: 6 },
+        lines: { type: "raster", tiles: [`${CDN}/situation/tiles/lines/{z}/{x}/{y}.png?v=2`], tileSize: 256, maxzoom: 6 },
         roads: { type: "raster", tiles: [`${CDN}/situation/tiles/roads/{z}/{x}/{y}.png`], tileSize: 256, minzoom: 5, maxzoom: 6 } },
       layers: [{ id: "bg", type: "background", paint: { "background-color": "#2463a0" } }, { id: "base", type: "raster", source: "base", paint: { "raster-fade-duration": 0 } }] } });
   MAP.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
@@ -744,7 +744,7 @@ const QUAD = { on: false, cells: [], prods: ["ir", "geocolor", "airmass", "mw"],
 function miniStyle() {
   return { version: 8, sources: {
       base: { type: "raster", tiles: [`${CDN}/situation/tiles/base/{z}/{x}/{y}.jpg`], tileSize: 256, maxzoom: 6 },
-      lines: { type: "raster", tiles: [`${CDN}/situation/tiles/lines/{z}/{x}/{y}.png`], tileSize: 256, maxzoom: 6 } },
+      lines: { type: "raster", tiles: [`${CDN}/situation/tiles/lines/{z}/{x}/{y}.png?v=2`], tileSize: 256, maxzoom: 6 } },
     layers: [{ id: "bg", type: "background", paint: { "background-color": "#2463a0" } }, { id: "base", type: "raster", source: "base", paint: { "raster-fade-duration": 0 } }] };
 }
 function quadToggle() {
