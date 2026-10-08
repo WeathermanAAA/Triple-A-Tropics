@@ -43,14 +43,14 @@ def sector_for(lon, lat):
     return best[1] if best else None
 
 
-def recent_keys(sat):
-    """band-2 keys from the last KEEP_H hours, oldest first"""
+def recent_keys(sat, prod="CMIPC", ch="C02", keep=KEEP_H):
+    """keys of one ABI product/channel from the last `keep` hours, oldest first"""
     now = datetime.now(timezone.utc); keys = []
-    for t in [now - timedelta(hours=h) for h in range(int(KEEP_H) + 1, -1, -1)]:
-        pre = f"ABI-L2-CMIPC/{t:%Y}/{t.timetuple().tm_yday:03d}/{t:%H}/OR_ABI-L2-CMIPC-M6C02_"
+    for t in [now - timedelta(hours=h) for h in range(int(keep) + 1, -1, -1)]:
+        pre = f"ABI-L2-{prod}/{t:%Y}/{t.timetuple().tm_yday:03d}/{t:%H}/OR_ABI-L2-{prod}-M6{ch}_"
         x = urllib.request.urlopen(urllib.request.Request(f"{BUCKET[sat]}/?list-type=2&prefix={pre}", headers=UA), timeout=30).read().decode()
         keys += re.findall(r"<Key>([^<]+)</Key>", x)
-    cut = now - timedelta(hours=KEEP_H)
+    cut = now - timedelta(hours=keep)
     return sorted(k for k in set(keys) if key_time(k) >= cut)
 
 
@@ -59,18 +59,18 @@ def key_time(k):
     return datetime(int(m.group(1)), 1, 1, tzinfo=timezone.utc) + timedelta(days=int(m.group(2)) - 1, hours=int(m.group(3)), minutes=int(m.group(4)), seconds=int(m.group(5)))
 
 
-def render(path, clon, clat):
+def sample(path, clon, clat, hlon=HALF_LON, hlat=HALF_LAT, ow=OUT_W):
+    """physical values (reflectance or K) on a Web Mercator grid around (clon, clat), plus the valid mask and lon/lat box"""
     import h5py
-    from PIL import Image
     f = h5py.File(path, "r"); c = f["CMI"]; xv = f["x"]; yv = f["y"]
     at = lambda d, k: float(np.ravel(d.attrs[k])[0])
     x0 = xv[0] * at(xv, "scale_factor") + at(xv, "add_offset"); dx = at(xv, "scale_factor") * float(xv[1] - xv[0])
     y0 = yv[0] * at(yv, "scale_factor") + at(yv, "add_offset"); dy = at(yv, "scale_factor") * float(yv[1] - yv[0])
     lon0 = at(f["goes_imager_projection"], "longitude_of_projection_origin"); sf, ao, fill = at(c, "scale_factor"), at(c, "add_offset"), at(c, "_FillValue")
-    w, e, s, n = clon - HALF_LON, clon + HALF_LON, clat - HALF_LAT, clat + HALF_LAT
+    w, e, s, n = clon - hlon, clon + hlon, clat - hlat, clat + hlat
     my = lambda la: math.log(math.tan(math.pi / 4 + math.radians(la) / 2))
-    Hh = int(round(OUT_W * (my(n) - my(s)) / math.radians(e - w)))
-    lons = w + (np.arange(OUT_W) + .5) / OUT_W * (e - w)
+    Hh = int(round(ow * (my(n) - my(s)) / math.radians(e - w)))
+    lons = w + (np.arange(ow) + .5) / ow * (e - w)
     lats = np.degrees(2 * np.arctan(np.exp(my(n) - (np.arange(Hh) + .5) / Hh * (my(n) - my(s)))) - math.pi / 2)
     LO, LA = np.meshgrid(lons, lats)
     X, Y = to_xy(LO, LA, lon0)
@@ -80,14 +80,47 @@ def render(path, clon, clat):
     ok &= (I >= 0) & (I < c.shape[1]) & (J >= 0) & (J < c.shape[0])
     if not ok.any(): return None
     j0, j1, i0, i1 = J[ok].min(), J[ok].max() + 1, I[ok].min(), I[ok].max() + 1
-    sub = c[j0:j1, i0:i1]                                       # read only the window (row-chunked file, ~0.3 s)
+    sub = c[j0:j1, i0:i1]                                       # read only the window
     raw = sub[np.clip(J - j0, 0, j1 - j0 - 1), np.clip(I - i0, 0, i1 - i0 - 1)]
     ok &= raw != fill
-    refl = np.clip(raw * sf + ao, 0, 1.2)
-    g = np.clip(np.sqrt(refl / 1.0) * 255, 0, 255).astype(np.uint8)   # square-root stretch, as the meso VIS loop does
-    g = np.where(ok, g, 0).astype(np.uint8)
+    return raw * sf + ao, ok, [[w, n], [e, n], [e, s], [w, s]]
+
+
+def render(path, clon, clat):
+    """visible: grey JPEG, square-root stretch as the meso VIS loop does"""
+    from PIL import Image
+    r = sample(path, clon, clat)
+    if not r: return None
+    v, ok, coords = r
+    g = np.where(ok, np.clip(np.sqrt(np.clip(v, 0, 1.2) / 1.0) * 255, 0, 255), 0).astype(np.uint8)
     b = io.BytesIO(); Image.fromarray(g, "L").save(b, "JPEG", quality=84, optimize=True)   # grey JPEG: ~5x smaller than PNG for cloud texture
-    return b.getvalue(), [[w, n], [e, n], [e, s], [w, s]]
+    return b.getvalue(), coords
+
+
+# Brightness temperature frames for storms outside the 5-minute sectors (full disk, every 10 min). Lossless, so the
+# page colours them exactly: pixel v (1..251) = T of -100 + (v - 1) * 0.6 degC; 0 = no data.
+BT_HALF_LON, BT_HALF_LAT, BT_W, BT_KEEP_H = 13.0, 9.5, 1300, 6.25
+FD_LON0 = {"goes19": -75.2, "goes18": -137.0}
+
+
+def render_bt(path, clon, clat):
+    from PIL import Image
+    r = sample(path, clon, clat, BT_HALF_LON, BT_HALF_LAT, BT_W)
+    if not r: return None
+    v, ok, coords = r
+    q = np.clip(np.round((v - 273.15 + 100) / .6) + 1, 1, 251)
+    g = np.where(ok, q, 0).astype(np.uint8)
+    b = io.BytesIO(); Image.fromarray(g, "L").save(b, "WEBP", lossless=True, quality=100, method=4)
+    return b.getvalue(), coords
+
+
+def fd_sat(lon, lat):
+    """the GOES full disk that sees a point best (nearest sub-satellite longitude, well inside the disk)"""
+    best = None
+    for sat, l0 in FD_LON0.items():
+        d = abs(((lon - l0 + 540) % 360) - 180)
+        if d < 62 and abs(lat) < 58 and (best is None or d < best[0]): best = (d, sat)
+    return best[1] if best else None
 
 
 class VisWriter:
@@ -138,6 +171,62 @@ class VisWriter:
         """resume the rolling window from the published index after a restart"""
         try:
             return json.loads(urllib.request.urlopen(urllib.request.Request(f"https://cdn.triple-a-tropics.com/situation/vis/{sid}/index.json?t={int(time.time())}",
+                                                                          headers={**UA, "Origin": "https://triple-a-tropics.com"}), timeout=20).read())
+        except Exception:
+            return {"frames": []}
+
+
+class FDWriter:
+    """IR and water-vapour brightness temperature around each open-room storm that no 5-minute sector covers,
+    from the GOES full disk (every 10 min): situation/fd/<sid>/<band>/<YYYYMMDDTHHMMZ>.webp + index.json"""
+    BANDS = {"ir": "C13", "wv": "C08"}
+
+    def __init__(self, put, out_dir, dry=False):
+        self.put, self.dir, self.dry, self.idx = put, os.path.join(out_dir, "situation", "fd"), dry, {}
+
+    def tick(self, storms):
+        for st in storms:
+            sid = st["sid"]; lon, lat = st["lon"], st["lat"]
+            if sector_for(lon, lat): continue                      # the page reads the 5-minute sector itself
+            sat = fd_sat(lon, lat)
+            if not sat: continue
+            for band, ch in self.BANDS.items():
+                try:
+                    k = (sid, band); idx = self.idx.get(k) or self._prior(sid, band); self.idx[k] = idx
+                    have = {f["img"] for f in idx["frames"]}
+                    keys = recent_keys(sat, "CMIPF", ch, BT_KEEP_H)
+                    todo = [x for x in reversed(keys) if f"{key_time(x):%Y%m%dT%H%MZ}.webp" not in have][:3]
+                    for x in todo: self._one(sid, band, sat, x, lon, lat)
+                except Exception as ex:
+                    print(f"fd: {sid} {band} failed: {ex}", flush=True)
+
+    def _one(self, sid, band, sat, k, lon, lat):
+        tmp = tempfile.NamedTemporaryFile(suffix=".nc", delete=False); tmp.close()
+        with urllib.request.urlopen(urllib.request.Request(f"{BUCKET[sat]}/{k}", headers=UA), timeout=180) as r, open(tmp.name, "wb") as o:
+            while True:
+                b = r.read(1 << 20)
+                if not b: break
+                o.write(b)
+        try: res = render_bt(tmp.name, round(lon), round(lat))
+        finally: os.unlink(tmp.name)
+        if not res: return
+        img, coords = res; t = key_time(k); name = f"{t:%Y%m%dT%H%MZ}.webp"
+        d = os.path.join(self.dir, sid, band); os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, name); open(p, "wb").write(img)
+        if not self.put(p, f"fd/{sid}/{band}/{name}", "public, max-age=86400", "image/webp"): return
+        idx = self.idx[(sid, band)]
+        idx["frames"] = [f for f in idx["frames"] if f["img"] != name] + [{"t": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "img": name, "coords": coords}]
+        cut = (datetime.now(timezone.utc) - timedelta(hours=BT_KEEP_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        idx["frames"] = sorted([f for f in idx["frames"] if f["t"] >= cut], key=lambda f: f["t"])
+        idx.update(sat=sat, label=("GOES-19" if sat == "goes19" else "GOES-18") + " Full Disk", band=self.BANDS[band],
+                   enc={"t0": -100, "step": .6, "nodata": 0}, updated=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        ip = os.path.join(d, "index.json"); json.dump(idx, open(ip, "w"), separators=(",", ":"))
+        self.put(ip, f"fd/{sid}/{band}/index.json", "no-store, max-age=0", "application/json")
+        print(f"fd: {sid} {band} {name} ({len(img) // 1024} KB, {len(idx['frames'])} frames)", flush=True)
+
+    def _prior(self, sid, band):
+        try:
+            return json.loads(urllib.request.urlopen(urllib.request.Request(f"https://cdn.triple-a-tropics.com/situation/fd/{sid}/{band}/index.json?t={int(time.time())}",
                                                                           headers={**UA, "Origin": "https://triple-a-tropics.com"}), timeout=20).read())
         except Exception:
             return {"frames": []}

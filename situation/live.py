@@ -39,6 +39,7 @@ def main():
     end = time.time() + a.minutes * 60; od = os.path.join(a.out_dir, "situation"); sent, beat, n = {}, 0, 0
     # visible imagery for open rooms runs beside the feed (a 60 MB file per frame must not stall the 20 s loop)
     vw = VIS.VisWriter(lambda p, k, c, t: put(p, k, c, a.dry_run, t), a.out_dir, a.dry_run)
+    fw = VIS.FDWriter(lambda p, k, c, t: put(p, k, c, a.dry_run, t), a.out_dir, a.dry_run)   # IR/WV BT for storms outside the 5-min sectors
     def vis_loop():
         while time.time() < end:
             try:
@@ -47,7 +48,7 @@ def main():
                     if f.endswith(".json") and f not in ("index.json", "rooms.json", "live.json"):
                         d = json.load(open(os.path.join(od, f)))
                         if d.get("room_open") and d.get("nhc"): st.append({"sid": d["sid"], "lon": float(d["nhc"]["longitudeNumeric"]), "lat": float(d["nhc"]["latitudeNumeric"])})
-                vw.tick(st)
+                vw.tick(st); fw.tick(st)
             except Exception as ex: print(f"vis loop: {ex}", flush=True)
             time.sleep(60)
     threading.Thread(target=vis_loop, daemon=True).start()

@@ -324,8 +324,8 @@ async function initMap() {
   K = st.clientWidth / 1027; st.style.setProperty("--k", K);
   await new Promise(r => MAP.on("load", r));
   MAP.on("moveend", hashKick);
-  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw"); LIVELOOP.visBase = `${CDN}/situation/vis/${SID}/`;
-  LIVESEC = Meso.coverLive(...pos()); if (LIVESEC) { SRC = "live"; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); }
+  MAINLOOP = new SatX.Loop(MAP, "satloop", "mw"); MESOLOOP = new Meso.Loop(MAP, "mesoloop", "mw"); LIVELOOP = new Meso.Loop(MAP, "liveloop", "mw"); LIVELOOP.visBase = `${CDN}/situation/vis/${SID}/`; LIVELOOP.fdBase = `${CDN}/situation/fd/${SID}/`;
+  LIVESEC = Meso.coverLive(...pos()) || await fdCover(); if (LIVESEC) { SRC = "live"; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); }
   const E = { type: "FeatureCollection", features: [] }, gj = id => MAP.addSource(id, { type: "geojson", data: E, lineMetrics: true });
   MAP.addSource("mw", { type: "image", url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
   MAP.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 700 }, "raster-fade-duration": 0 } });
@@ -697,13 +697,17 @@ function fieldBar(on) {
 /* ---------------- satellite loop bar + 4-panel view ---------------- */
 let MAINLOOP = null, MESOLOOP = null, LIVELOOP = null, SRC = "fd", MESOSEC = null, LIVESEC = null;
 const SATL = () => SRC === "meso" ? MESOLOOP : SRC === "live" ? LIVELOOP : MAINLOOP;
-const BANDSET = () => SRC === "meso" ? Meso.BANDS : SRC === "live" ? Meso.LIVEBANDS : SatX.BANDS;
+const BANDSET = () => SRC === "meso" ? Meso.BANDS : SRC === "live" ? Meso.bandsFor(LIVESEC) : SatX.BANDS;
+/* outside both 5-minute sectors the live writer publishes full-disk brightness temperature around the storm (vis.py FDWriter) */
+async function fdCover() { const f = Meso.coverFD(...pos()); if (!f) return null;
+  try { const r = await fetch(`${CDN}/situation/fd/${SID}/ir/index.json?t=${Math.floor(Date.now() / 6e4)}`); return r.ok && (await r.json()).frames?.length ? f : null; } catch (e) { return null; } }
+const liveTag = () => LIVESEC?.kind === "F" ? "10-MIN" : "5-MIN";
 const SRCNAME = { fd: "Full disk", live: "5-min", meso: "Meso 1-min" };
 /* GIBS full disk (10 min, but 1.5-2.5 h behind), NOAA's 5-minute CONUS/PACUS sector (~10 min behind; the default when it
    covers the storm), or the 1-minute mesoscale sector that covers the storm */
 async function setSrc(s) {
   if (s === "meso") { MESOSEC = await Meso.cover(...pos()); if (!MESOSEC) return; MESOLOOP.sector = MESOSEC; if (!(MESOLOOP.band in Meso.BANDS)) MESOLOOP.band = "ir"; }
-  if (s === "live") { LIVESEC = Meso.coverLive(...pos()); if (!LIVESEC) return; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); if (!(LIVELOOP.band in Meso.LIVEBANDS)) LIVELOOP.band = "ir"; }
+  if (s === "live") { LIVESEC = Meso.coverLive(...pos()) || await fdCover(); if (!LIVESEC) return; LIVELOOP.sector = LIVESEC; LIVELOOP.center = pos(); if (!(LIVELOOP.band in Meso.bandsFor(LIVESEC))) LIVELOOP.band = "ir"; }
   const was = ON.has("sat"); if (was) SATL().show(false);
   SRC = s; if (s === "meso") SatX.P.hours = Math.min(SatX.P.hours, 1); else if (SatX.P.hours < 1) SatX.P.hours = 3; if (s === "live") SatX.P.hours = Math.min(SatX.P.hours, 6);
   if (was) SATL().show(true);
@@ -719,7 +723,7 @@ function buildLoopBar() {
     <button data-a="prev" aria-label="Previous frame">‹</button><button data-a="next" aria-label="Next frame">›</button>
     <div class="tl"><input type="range" min="0" max="1000" value="1000" aria-label="Loop position"><span class="lt" id="lcT">loading</span></div>
     ${(QUAD.on ? QUAD.cells.some(c => c.loop.on && c.loop.band === "ir") : L.band === "ir") ? `<div class="seg" title="IR colour ramp">${Object.entries(SatX.RAMPS).filter(([k]) => SRC === "fd" || k !== "native").map(([k, v]) => `<button data-r="${k}" class="${k === P.ramp ? "on" : ""}" title="${v}">${k === "tat" ? "TAT" : k === "bd" ? "BD" : k === "gray" ? "B/W" : "NASA"}</button>`).join("")}</div>` : ""}
-    ${!QUAD.on && (MESOSEC || LIVESEC) ? `<div class="seg" title="Imagery source"><button data-src="fd" class="${SRC === "fd" ? "on" : ""}" title="Full disk via NASA GIBS, every 10 minutes (runs 1.5-2.5 h behind)">FULL DISK</button>${LIVESEC ? `<button data-src="live" class="${SRC === "live" ? "on" : ""}" title="${esc(LIVESEC.label)}, every 5 minutes, straight from NOAA">5-MIN</button>` : ""}${MESOSEC ? `<button data-src="meso" class="${SRC === "meso" ? "on" : ""}" title="${esc(MESOSEC.label)}, every minute">MESO 1-MIN</button>` : ""}</div>` : ""}
+    ${!QUAD.on && (MESOSEC || LIVESEC) ? `<div class="seg" title="Imagery source"><button data-src="fd" class="${SRC === "fd" ? "on" : ""}" title="Full disk via NASA GIBS, every 10 minutes (runs 1.5-2.5 h behind)">FULL DISK</button>${LIVESEC ? `<button data-src="live" class="${SRC === "live" ? "on" : ""}" title="${esc(LIVESEC.label)}, every ${LIVESEC.kind === "F" ? 10 : 5} minutes, straight from NOAA">${liveTag()}</button>` : ""}${MESOSEC ? `<button data-src="meso" class="${SRC === "meso" ? "on" : ""}" title="${esc(MESOSEC.label)}, every minute">MESO 1-MIN</button>` : ""}</div>` : ""}
     ${QUAD.on ? "" : `<div class="seg" title="Band">${bands.map(b => `<button data-b="${b}" class="${b === L.band ? "on" : ""}" title="${esc(BANDSET()[b].t)}">${BANDSET()[b].short}</button>`).join("")}</div>`}
     <div class="seg" title="Loop length">${(SRC === "meso" && !QUAD.on ? [.5, 1, 2] : SRC === "live" && !QUAD.on ? [1, 2, 3, 6] : [1, 3, 6, 12]).map(h => `<button data-h="${h}" class="${h === P.hours ? "on" : ""}">${h < 1 ? "30M" : h + "H"}</button>`).join("")}</div>
     <div class="seg" title="Speed">${SatX.SPEEDS.map((s, i) => `<button data-s="${i}" class="${i === P.speed ? "on" : ""}" title="${s.k}">${s.k[0]}</button>`).join("")}</div>
@@ -748,7 +752,7 @@ SatX.P.subs.add((t, s) => {
   const lt = $("lcT"); if (lt && f) { const age = Math.round((Date.now() - s[1]) / 6e4); lt.innerHTML = `${hm(f.t)} ${TZ}${ld ? `<em>loading ${ld.done}/${ld.total}</em>` : `<em class="${age > 45 ? "old" : ""}">${age < 60 ? age + " min" : Math.floor(age / 60) + "h" + z2(age % 60)} old</em>`}`; }
   if (!QUAD.on && ON.has("sat") && f) {
     const back = Math.round((s[1] - f.t) / 6e4);
-    clock("sat", `${SRC === "meso" ? "MESO " : SRC === "live" ? "5-MIN " : ""}${BANDSET()[SATL().band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");
+    clock("sat", `${SRC === "meso" ? "MESO " : SRC === "live" ? liveTag() + " " : ""}${BANDSET()[SATL().band].short} LOOP`, hm(f.t), back ? `-${Math.floor(back / 60)}:${z2(back % 60)}` : "latest");
     if (TABS[TAB]?.id === "sat") { const e = $("frame").querySelector(".tTime"); if (e) e.textContent = `${hm(f.t)} ${TZ}`; else frame(...TABS[TAB].hdr()); }
   }
   for (const c of QUAD.cells) c.stamp?.();
@@ -782,7 +786,7 @@ async function buildQuad() {
          covers the storm, like the main loop; GIBS supplies the RGB products and everything outside CONUS/PACUS */
       const c = { el, map: m, prod: QUAD.prods[i], gibs: new SatX.Loop(m, "qsat", "qlines", { maxPx: 1400 }), live: new Meso.Loop(m, "qlive", "qlines", { maxPx: 1400 }), useLive: false,
         get loop() { return this.useLive ? this.live : this.gibs; } };
-      c.live.visBase = `${CDN}/situation/vis/${SID}/`;
+      c.live.visBase = `${CDN}/situation/vis/${SID}/`; c.live.fdBase = `${CDN}/situation/fd/${SID}/`;
       c.ready = new Promise(r => m.on("load", () => {
         m.addSource("mw", { type: "image", url: MAP.getSource("mw").url || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", coordinates: [[-1, 1], [1, 1], [1, -1], [-1, -1]] });
         m.addLayer({ id: "mw", type: "raster", source: "mw", layout: { visibility: "none" }, paint: { "raster-opacity": .95, "raster-fade-duration": 0 } });
@@ -811,7 +815,7 @@ function quadData(c) {
   c.now = new maplibregl.Marker({ element: wrap(el) }).setLngLat(pos()).addTo(m);
 }
 function setProd(c) {
-  const m = c.map, p = c.prod, live = !!LIVESEC && p in Meso.LIVEBANDS, sat = live || p in SatX.BANDS;
+  const m = c.map, p = c.prod, live = !!LIVESEC && p in Meso.bandsFor(LIVESEC), sat = live || p in SatX.BANDS;
   c.gibs.show(false); c.live.show(false); c.useLive = live;
   if (live) { c.live.sector = LIVESEC; c.live.center = pos(); c.live.band = p; c.live.show(true); }
   else if (sat) { c.gibs.band = p; c.gibs.show(true); }

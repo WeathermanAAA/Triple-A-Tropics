@@ -46,6 +46,17 @@ const Meso = (() => {
   }
   /* visible in the 5-min source comes pre-cropped from the live writer (situation/vis.py): the band-2 file is ~60 MB */
   const LIVEBANDS = { ir: BANDS.ir, wv: BANDS.wv, vis: { ch: "C02", t: "Visible", short: "VIS" } };
+  /* storms outside both 5-minute sectors: the live writer (situation/vis.py FDWriter) crops the 10-minute GOES full disk
+     around the storm and publishes lossless brightness-temperature frames, so the ramps stay exact there too */
+  const FDBANDS = { ir: BANDS.ir, wv: BANDS.wv };
+  const FD_LON0 = { goes19: -75.2, goes18: -137 };
+  function coverFD(lon, lat) {
+    let best = null;
+    for (const [sat, l0] of Object.entries(FD_LON0)) { const d = Math.abs(((lon - l0 + 540) % 360) - 180);
+      if (d < 62 && Math.abs(lat) < 58 && (!best || d < best.d)) best = { sat, kind: "F", label: `${sat === "goes18" ? "GOES-18" : "GOES-19"} Full Disk`, d }; }
+    return best;
+  }
+  const bandsFor = sec => sec?.kind === "F" ? FDBANDS : LIVEBANDS;
   const jday = d => Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5);
   const keyTime = k => { const m = k.match(/_s(\d{4})(\d{3})(\d{2})(\d{2})(\d{2})/); return m ? Date.UTC(+m[1], 0, +m[2], +m[3], +m[4], +m[5]) : 0; };
   async function list(sec, ch, from, to) {
@@ -144,6 +155,24 @@ const Meso = (() => {
     return cv;
   }
 
+  /* a canvas spanning the union of per-frame lon/lat boxes (frames re-centre as the storm moves), and each frame's box in it */
+  function union(list, px) {
+    let w = Infinity, e = -Infinity, so = Infinity, n = -Infinity;
+    for (const f of list) { w = Math.min(w, f.coords[0][0]); e = Math.max(e, f.coords[1][0]); so = Math.min(so, f.coords[2][1]); n = Math.max(n, f.coords[0][1]); }
+    const X0 = mx(w), X1 = mx(e), Y0 = my(so), Y1 = my(n), W = Math.min(2400, Math.round(px * (e - w) / (list[0].coords[1][0] - list[0].coords[0][0]))), Hh = Math.round(W * (Y1 - Y0) / (X1 - X0));
+    const o = { X0, X1, Y0, Y1, W, H: Hh, coords: [[w, n], [e, n], [e, so], [w, so]] };
+    const box = f => { const a = (mx(f.coords[0][0]) - X0) / (X1 - X0) * W, b = (Y1 - my(f.coords[0][1])) / (Y1 - Y0) * Hh;
+      return [a, b, (mx(f.coords[1][0]) - mx(f.coords[0][0])) / (X1 - X0) * W, (my(f.coords[0][1]) - my(f.coords[2][1])) / (Y1 - Y0) * Hh]; };
+    return { o, box };
+  }
+  function paintQ(fr, band, ramp) {
+    const tbl = SatX.rampTable(band === "wv" ? "wv" : (ramp === "native" ? "tat" : ramp)), lut = new Uint8Array(256 * 3);
+    for (let v = 1; v < 256; v++) { const k = Math.max(0, Math.min(300, Math.round(((v - 1) * .6) * 2))) * 3; lut[v * 3] = tbl[k]; lut[v * 3 + 1] = tbl[k + 1]; lut[v * 3 + 2] = tbl[k + 2]; }
+    const cv = fr.img instanceof HTMLCanvasElement ? fr.img : document.createElement("canvas"); cv.width = fr.w; cv.height = fr.h;
+    const x = cv.getContext("2d"), id = x.createImageData(fr.w, fr.h), d = id.data, q = fr.q;
+    for (let i = 0, p = 0; i < q.length; i++, p += 4) { const v = q[i]; if (!v) continue; d[p] = lut[v * 3]; d[p + 1] = lut[v * 3 + 1]; d[p + 2] = lut[v * 3 + 2]; d[p + 3] = 255; }
+    x.putImageData(id, 0, 0); return cv;
+  }
   class Loop {
     constructor(map, id, before, opt = {}) {
       Object.assign(this, { map, id, before, band: opt.band || "ir", frames: [], on: false, gen: 0, sector: null, center: null, ready: false, loading: null, maxPx: opt.maxPx || 1600 });
@@ -152,7 +181,7 @@ const Meso = (() => {
     get sat() { return this.sector?.sat === "goes18" ? "west" : "east"; }
     get layer() { return `${this.sector?.kind === "C" ? "live" : "meso"}-${this.sector?.sat}-m${this.sector?.m}-${this.band}`; }
     get current() { return this.cur || this.frames[this.frames.length - 1]; }
-    get label() { return !this.sector ? "Mesoscale" : this.sector.kind === "C" ? this.sector.label : `${this.sector.sat === "goes18" ? "GOES-18" : "GOES-19"} Meso ${this.sector.m}`; }
+    get label() { return !this.sector ? "Mesoscale" : this.sector.kind === "C" || this.sector.kind === "F" ? this.sector.label : `${this.sector.sat === "goes18" ? "GOES-18" : "GOES-19"} Meso ${this.sector.m}`; }
     setBand(b) { this.band = b; if (this.on) this.reload(); }
     show(on) {
       this.on = on;
@@ -162,6 +191,7 @@ const Meso = (() => {
     async reload() {
       const gen = ++this.gen; if (!this.sector) return;
       if (this.sector.kind === "C" && this.band === "vis") return this.reloadVis(gen);
+      if (this.sector.kind === "F") return this.reloadFD(gen);
       const P = SatX.P, live = this.sector.kind === "C", hours = Math.min(live ? 6 : 2, P.hours), step = live ? (hours > 1 ? 10 : 5) : this.band === "vis" || hours > 1 ? 2 : 1;
       const crop = live && this.center ? { lon: this.center[0], lat: this.center[1], dlon: 13, dlat: 9.5 } : null;
       this.ready = false; this.loading = { done: 0, total: 0 }; this.emit();
@@ -200,17 +230,32 @@ const Meso = (() => {
       if (gen !== this.gen) return;
       const cut = Date.now() - Math.min(3.25, P.hours) * 36e5, list = (ix?.frames || []).filter(f => Date.parse(f.t) >= cut);
       if (!list.length) { this.loading = null; this.frames = []; this.emit(); return; }
-      let w = Infinity, e = -Infinity, so = Infinity, n = -Infinity;
-      for (const f of list) { w = Math.min(w, f.coords[0][0]); e = Math.max(e, f.coords[1][0]); so = Math.min(so, f.coords[2][1]); n = Math.max(n, f.coords[0][1]); }
-      const X0 = mx(w), X1 = mx(e), Y0 = my(so), Y1 = my(n), W = Math.min(2400, Math.round(1400 * (e - w) / (list[0].coords[1][0] - list[0].coords[0][0]))), Hh = Math.round(W * (Y1 - Y0) / (X1 - X0));
-      const o = { X0, X1, Y0, Y1, W, H: Hh, coords: [[w, n], [e, n], [e, so], [w, so]] }; this.out = o;
-      const box = f => { const a = (mx(f.coords[0][0]) - X0) / (X1 - X0) * W, b = (Y1 - my(f.coords[0][1])) / (Y1 - Y0) * Hh;
-        return [a, b, (mx(f.coords[1][0]) - mx(f.coords[0][0])) / (X1 - X0) * W, (my(f.coords[0][1]) - my(f.coords[2][1])) / (Y1 - Y0) * Hh]; };
+      const { o, box } = union(list, 1400); this.out = o;
       const load = f => new Promise(res => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = () => res(null); im.src = this.visBase + f.img; });
       const fr = list.map(f => ({ t: Date.parse(f.t), img: null, box: box(f) })), newest = fr[fr.length - 1];
       this.loading.total = fr.length; newest.img = await load(list[list.length - 1]); if (gen !== this.gen) return;
       if (newest.img) { this.install(o, [newest]); this.loading.done = 1; this.emit(); }
       await Promise.all(fr.slice(0, -1).map(async (f, i) => { f.img = await load(list[i]); this.loading.done++; this.emit(); }));
+      if (gen !== this.gen) return;
+      this.frames = fr.filter(f => f.img); this.loading = null; this.ready = true; this.key = null; this.emit();
+    }
+    /* full-disk brightness temperature frames (see coverFD): pixel v -> T = -100 + (v - 1) * 0.6 degC, 0 = no data */
+    async reloadFD(gen) {
+      const P = SatX.P, base = `${this.fdBase}${this.band}/`; this.ready = false; this.loading = { done: 0, total: 0 }; this.emit();
+      let ix; try { ix = await (await fetch(`${base}index.json?t=${Date.now()}`, { cache: "no-store" })).json(); } catch (e) { ix = null; }
+      if (gen !== this.gen) return;
+      const cut = Date.now() - P.hours * 36e5 - 6e5, list = (ix?.frames || []).filter(f => Date.parse(f.t) >= cut);
+      if (!list.length) { this.loading = null; this.frames = []; this.emit(); return; }
+      const { o, box } = union(list, 1300); this.out = o;
+      const load = f => new Promise(res => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = () => res(null); im.src = base + f.img; });
+      const prep = (fr, im) => { if (!im) return; const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const x = c.getContext("2d", { willReadFrequently: true }); x.drawImage(im, 0, 0); const d = x.getImageData(0, 0, c.width, c.height).data, q = new Uint8Array(c.width * c.height);
+        for (let i = 0, p = 0; i < q.length; i++, p += 4) q[i] = d[p];
+        Object.assign(fr, { q, w: c.width, h: c.height }); fr.img = paintQ(fr, this.band, P.ramp); };
+      const fr = list.map(f => ({ t: Date.parse(f.t), img: null, box: box(f) })), newest = fr[fr.length - 1];
+      this.loading.total = fr.length; prep(newest, await load(list[list.length - 1])); if (gen !== this.gen) return;
+      if (newest.img) { this.install(o, [newest]); this.loading.done = 1; this.emit(); }
+      await Promise.all(fr.slice(0, -1).map(async (f, i) => { prep(f, await load(list[i])); this.loading.done++; this.emit(); }));
       if (gen !== this.gen) return;
       this.frames = fr.filter(f => f.img); this.loading = null; this.ready = true; this.key = null; this.emit();
     }
@@ -221,9 +266,9 @@ const Meso = (() => {
       if (!force && this.key === f.t) return; this.key = f.t;
       const c = this.canvas, x = this.ctx; x.clearRect(0, 0, c.width, c.height); f.box ? x.drawImage(f.img, ...f.box) : x.drawImage(f.img, 0, 0); this.cur = f;
     }
-    repaint() { if (!this.out || this.band === "vis") return; for (const f of this.frames) if (f.g?.v) f.img = paint(f, this.out, this.band, SatX.P.ramp); this.key = null; this.draw(SatX.P.t, true); }
+    repaint() { if (!this.out || this.band === "vis") return; for (const f of this.frames) { if (f.q) f.img = paintQ(f, this.band, SatX.P.ramp); else if (f.g?.v) f.img = paint(f, this.out, this.band, SatX.P.ramp); } this.key = null; this.draw(SatX.P.t, true); }
     opacity(o) { if (this.map.getLayer(this.id)) this.map.setPaintProperty(this.id, "raster-opacity", o); }
     emit() { for (const f of SatX.P.subs) f(SatX.P.t, SatX.span()); }
   }
-  return { Loop, cover, coverLive, BANDS, LIVEBANDS, h5, BUCKET, jday, keyTime };
+  return { Loop, cover, coverLive, coverFD, bandsFor, BANDS, LIVEBANDS, FDBANDS, h5, BUCKET, jday, keyTime };
 })();
