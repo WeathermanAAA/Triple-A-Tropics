@@ -29,9 +29,19 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-08T15:18Z
+updated: 2026-10-12T22:32Z
 
 items:
+  - id: tat-reborn
+    title: "TAT Reborn: full site refinement, relaunch June 1 2027"
+    area: infra
+    status: planned
+    note: >-
+      Clean up and refine the current look rather than rebuild: one design system from the
+      Situation Room, cleaner nav (Storms, Ocean), live-first home, freshness stamps everywhere,
+      consolidated hubs and duplicate pages, one plot style, phone and speed passes. Site goes
+      behind a tester login (Cloudflare Access) until relaunch. Audit + monthly plan in the
+      "TAT Reborn: audit and plan" doc.
   - id: situation-room-ships
     title: "Situation Room: SHIPS guidance view (intensity, RI matrix, environment, drivers)"
     area: apps
