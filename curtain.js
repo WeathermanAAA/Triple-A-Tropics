@@ -7,7 +7,7 @@
   "use strict";
   var OPEN = false;
   var SALT = "tat-reborn-2027:";
-  var HASH = "7a9c7a01646ad3c994901fa4662bef3215b719e67513f004a61c433a2be00b1a";
+  var HASH = "eb8cb9bbce402979086206160b0e3286ef9f2676214b7193609c23ea986e2a68";
   var STORE = "tat-reborn-key";
   if (OPEN) return;
   var d = document, de = d.documentElement;
