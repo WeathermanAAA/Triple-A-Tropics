@@ -1,0 +1,28 @@
+{
+  "name": "sandbox-b128-preview",
+  "main": "shadow-worker.mjs",
+  "compatibility_date": "2026-10-28",
+  "account_id": "33bb26c164250e1893f2ca61d293d44d",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "triple-a-tropics.com/sandbox-test",
+      "zone_name": "triple-a-tropics.com"
+    },
+    {
+      "pattern": "triple-a-tropics.com/sandbox-test/*",
+      "zone_name": "triple-a-tropics.com"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "vars": {
+    "PREVIEW_PASSWORD_SHA256": "9a670d75ba54e0981d049ca299673253775b170391bc8535e5de04903468a468"
+  }
+}

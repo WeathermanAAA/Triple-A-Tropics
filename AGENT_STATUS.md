@@ -1,5 +1,7 @@
 # Agent status — Triple-A-Tropics autonomous work log
 
+2026-10-29 — B1.2.8 tester shadow: a dedicated password-protected static Worker serves the preview separately from the production simulator. No production database binding; browser saves use a separate namespace. Runtime source and asset manifest are vendored under workers/sandbox-b128-preview. The test build is not a simulator release.
+
 Maintained by Claude while Andrew is away. Updated after each meaningful step;
 newest state first. Raw URL:
 `https://raw.githubusercontent.com/WeathermanAAA/Triple-A-Tropics/main/AGENT_STATUS.md`
