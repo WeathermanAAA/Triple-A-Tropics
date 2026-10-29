@@ -1,3 +1,5 @@
+2026-10-29 — B1.2.8 final tester candidate61f0995: all16 map runs, saves/reloads and current-season wiki pass on8080 and the isolated public Worker. Fresh16,000-season estimates cover all32 map/mode models. Whole-world Global zoom, custom terrain cache and Drifting ENSO are included. Public console retains only the main-site favicon404; app errors and production writes are zero. Global/inland WPac performance and track targets remain short. Production simulator and D1 unchanged.
+
 2026-10-29 — Tester display update: app f46cea15 passes all16 maps, six-hour runs, local saves/reloads and current-season wiki on8080 with zero console errors or production requests. Global uses a uniform viewport crop and a single totals row; existing basin navigation, AOI seven-day labels and forecast label/coastline fixes included. Forecast assets are app-local. Performance and climate tuning remain under review. Production simulator and D1 unchanged.
 
 # Agent status — Triple-A-Tropics autonomous work log
