@@ -1,7 +1,7 @@
 import build from './preview-manifest.json';
 const PREFIX='/sandbox-test';
 const allowed=new Set(Object.keys(build.files));
-const headers=()=>({'X-Robots-Tag':'noindex, nofollow, noarchive','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-TAT-Build':build.commit,'Content-Security-Policy':"connect-src https://triple-a-tropics.com/sandbox-test/ blob: data:; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'"});
+const headers=()=>({'X-Robots-Tag':'noindex, nofollow, noarchive','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-TAT-Build':build.commit,'Content-Security-Policy':"connect-src https://triple-a-tropics.com/sandbox-test/ https://cdn.triple-a-tropics.com/sandbox/warning-geography-v2.json blob: data:; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'"});
 async function authorized(request,env){
     try{
         const raw=request.headers.get('Authorization')||'';
@@ -36,7 +36,7 @@ export default{
             },async cancel(){if(reader)await reader.cancel();}});
             return new Response(stream,{headers:h});
         }
-        const assetURL=new URL('/'+name,url);
+        const assetURL=new URL('/'+(name==='_redirects'?'__host-meta/redirects.txt':name),url);
         const response=await env.ASSETS.fetch(new Request(assetURL,{method:request.method}));
         const h=new Headers(response.headers);for(const [key,value]of Object.entries(baseHeaders))h.set(key,value);
         h.set('Cache-Control',name.endsWith('.html')?'no-cache':'private, max-age=600, must-revalidate');
