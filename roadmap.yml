@@ -29,14 +29,14 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-29T02:51Z
+updated: 2026-10-29T03:45Z
 
 items:
   - id: sandbox-b128-tester-shadow
     title: "B1.2.8 isolated tester preview"
     area: apps
     status: shadow
-    note: "Password-protected test snapshot with browser-local saves, separate storage, noindex, and no production database connection."
+    note: "Password-protected test snapshot with browser-local saves, separate storage, noindex, and no production database connection. Current-season wiki opens within the tester build; automatic analytics injection is disabled for tester HTML."
   - id: tat-reborn
     title: "TAT Reborn: full site refinement, relaunch June 1 2027"
     area: infra

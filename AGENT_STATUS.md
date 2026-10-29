@@ -1,5 +1,7 @@
 # Agent status — Triple-A-Tropics autonomous work log
 
+2026-10-29 — Tester wiki hotfix: application90af017 verified on8080 across all16 maps, save/load and current-season wiki, with no console errors or production writes. The dedicated tester Worker now permits its own wiki frame and preserves exact HTML with no-transform. Live all16 wiki/save checks pass; the only remaining browser console entry is the unrelated main-site /favicon.ico404 on the Basic Auth challenge. Production simulator and D1 unchanged.
+
 2026-10-29 — B1.2.8 tester shadow: a dedicated password-protected static Worker serves the preview separately from the production simulator. No production database binding; browser saves use a separate namespace. Runtime source and asset manifest are vendored under workers/sandbox-b128-preview. The test build is not a simulator release.
 
 Maintained by Claude while Andrew is away. Updated after each meaningful step;
