@@ -1,7 +1,7 @@
 import build from './preview-manifest.json';
 const PREFIX='/sandbox-test';
 const allowed=new Set(Object.keys(build.files));
-const headers=()=>({'X-Robots-Tag':'noindex, nofollow, noarchive','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-TAT-Build':build.commit,'Content-Security-Policy':"connect-src https://triple-a-tropics.com/sandbox-test/ https://cdn.triple-a-tropics.com/sandbox/warning-geography-v2.json blob: data:; form-action 'none'; frame-src https://triple-a-tropics.com/sandbox-test/wiki-view.html; object-src 'none'; base-uri 'self'"});
+const headers=()=>({'X-Robots-Tag':'noindex, nofollow, noarchive','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-TAT-Build':build.commit,'Content-Security-Policy':"connect-src https://triple-a-tropics.com/sandbox-test/ blob: data:; form-action 'none'; frame-src https://triple-a-tropics.com/sandbox-test/wiki-view.html; object-src 'none'; base-uri 'self'"});
 async function authorized(request,env){
     try{
         const raw=request.headers.get('Authorization')||'';

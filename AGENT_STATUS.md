@@ -1,3 +1,5 @@
+2026-10-29 — Tester display update: app f46cea15 passes all16 maps, six-hour runs, local saves/reloads and current-season wiki on8080 with zero console errors or production requests. Global uses a uniform viewport crop and a single totals row; existing basin navigation, AOI seven-day labels and forecast label/coastline fixes included. Forecast assets are app-local. Performance and climate tuning remain under review. Production simulator and D1 unchanged.
+
 # Agent status — Triple-A-Tropics autonomous work log
 
 2026-10-29 — Tester wiki hotfix: application90af017 verified on8080 across all16 maps, save/load and current-season wiki, with no console errors or production writes. The dedicated tester Worker now permits its own wiki frame and preserves exact HTML with no-transform. Live all16 wiki/save checks pass; the only remaining browser console entry is the unrelated main-site /favicon.ico404 on the Basic Auth challenge. Production simulator and D1 unchanged.
