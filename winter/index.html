@@ -1,0 +1,846 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Winter Storm Center</title><meta name="robots" content="noindex,nofollow">
+<style>
+/* Layout: forecast-office workstation. Gray beveled chrome, square group boxes, a black map scope, white text-product windows. One deliberate look, no theme switching. */
+:root{
+  --chrome:#d5d5d1; --chrome-2:#e6e6e2; --chrome-3:#c4c4bf; --hi:#ffffff; --lo:#7d7d78; --ink:#111214; --muted:#4b4c4f; --dim:#77787b;
+  --scope:#000000; --scope-fill:#0d0d0d; --cty:#3a3a3a; --state:#a8a8a8;
+  --sel:#0b3d91; --text-bg:#ffffff; --tipbg:#ffffe1;
+  --w1:#5ad1ff; --w2:#2e7dff; --w3:#8f5bff; --w4:#e03cff; --w5:#ff3d8b; --sb:#ffffff;
+  --ui:-apple-system,"Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,Menlo,Consolas,"Courier New",monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{background:var(--chrome);color:var(--ink);font-family:var(--ui);font-size:13px;line-height:1.45;padding-inline:16px;padding-block:0 40px}
+.wrap{max-width:1320px;margin:0 auto}
+h1,h2,h3{margin:0;font-weight:700;text-wrap:balance}
+h2{font-size:17px}
+h3{font-size:13px}
+p{margin:0;max-width:78ch}
+a{color:var(--sel)}
+.eyebrow{font-size:11px;color:var(--muted)}
+.lede{color:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+button{font:inherit}
+input:focus-visible,select:focus-visible,button:focus-visible,summary:focus-visible,a:focus-visible{outline:1px dotted var(--ink);outline-offset:1px}
+section{padding-block:14px 0;display:grid;gap:10px}
+
+/* raised + sunken edges */
+.raised{border:1px solid;border-color:var(--hi) var(--lo) var(--lo) var(--hi)}
+.sunken{border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+
+/* menubar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--chrome);margin-inline:-16px;padding-inline:16px;border-bottom:1px solid var(--lo);box-shadow:0 1px 0 var(--hi)}
+.bar{max-width:1320px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding-block:5px}
+.brand{display:flex;align-items:center;gap:8px;margin-right:auto}
+.brand svg{width:20px;height:20px}
+.brand h1{font-size:14px;letter-spacing:0}
+.brand small{font-size:11px;color:var(--muted);font-weight:400;margin-left:6px}
+.brand div{display:flex;align-items:baseline;flex-wrap:wrap}
+.tabs{display:flex;gap:0}
+.tab{font-size:13px;color:var(--ink);background:var(--chrome);border:1px solid transparent;padding:3px 12px;cursor:pointer}
+.tab:hover{border-color:var(--hi) var(--lo) var(--lo) var(--hi)}
+.tab[aria-selected="true"]{border-color:var(--lo) var(--hi) var(--hi) var(--lo);background:var(--chrome-3)}
+.clock{font-family:var(--mono);font-size:12px;background:var(--scope);color:#7CFC7C;padding:2px 8px;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+
+/* status line */
+.headline{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;padding-block:12px 0}
+.headline h2{font-size:20px}
+.headline .status{font-size:12px;color:var(--muted)}
+.headline .status b{color:var(--ink)}
+.tiles{display:grid;grid-template-columns:1.4fr repeat(4,minmax(0,1fr));margin-top:8px;background:var(--chrome-2);border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+.tile{padding:7px 12px;display:grid;gap:1px;align-content:start;border-right:1px solid var(--chrome-3);min-width:0}
+.tile:last-child{border-right:0}
+.tile .eyebrow{font-size:11px}
+.tile .v{font-size:22px;font-weight:700;line-height:1.1;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.tile .s{font-size:11px;color:var(--muted)}
+.tile.tsig{grid-template-columns:auto 1fr;column-gap:10px;align-items:center}
+.tile.tsig svg{width:44px;height:44px;grid-row:span 3;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+.tile.tsig .v{color:var(--ink)!important}
+
+/* live grid + group boxes */
+.livegrid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;margin-top:12px;align-items:start}
+.rail{display:grid;gap:12px;min-width:0}
+.card{position:relative;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);box-shadow:inset 1px 1px 0 var(--hi),1px 1px 0 var(--hi);padding:16px 10px 10px;display:grid;gap:8px;min-width:0;margin-top:6px}
+.card>h3{position:absolute;top:-9px;left:8px;background:var(--chrome);padding:0 5px;font-size:12px;display:flex;gap:6px;align-items:baseline}
+.card>h3 small{font-weight:400;color:var(--muted);font-size:11px}
+.storms{display:grid;gap:0;background:var(--text-bg);border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);max-height:330px;overflow:auto}
+.storm{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:1px 8px;align-items:center;text-align:left;background:transparent;border:0;border-bottom:1px solid #e1e1dc;padding:5px 7px;color:var(--ink);cursor:pointer;min-width:0}
+.storm:last-child{border-bottom:0}
+.storm:hover,.storm:focus-visible{background:var(--sel);color:#fff}
+.storm:hover .sm,.storm:focus-visible .sm{color:#dfe6f3}
+.storm svg{width:26px;height:26px;grid-row:span 2}
+.storm .sn{font-weight:700;font-size:13px;overflow-wrap:anywhere}
+.storm .sn.un{font-weight:400}
+.sigtag{font-family:var(--mono);font-size:11px;font-weight:700;color:#000;border:1px solid #000;padding:0 5px;white-space:nowrap}
+.storm:hover .sigtag{border-color:#fff}
+.storm .sm .chip{margin-right:4px;font-size:10px}
+.comp .name{display:flex;align-items:center;gap:4px}
+.brand .logo{width:22px;height:22px}
+.storm .sm{font-size:11px;color:var(--muted);grid-column:2/4;overflow-wrap:anywhere}
+.empty{font-size:12px;color:var(--muted);padding:8px}
+.legend{display:grid;gap:1px;background:var(--text-bg);border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);padding:4px 6px}
+.lg{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;font-size:12px;padding:1px 0}
+.lg svg{width:20px;height:20px}
+.lg .n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.lg.zero{color:var(--dim)}
+#hist{display:block;width:100%;height:auto;background:var(--scope);border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+#hist text{font-family:var(--mono);font-size:9px;fill:#9a9a9a}
+#hist line{stroke:#333}
+
+/* map scope */
+.mapsec{display:grid;gap:6px;min-width:0}
+.mapbar{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between;align-items:center}
+.seg{display:flex;flex-wrap:wrap;gap:3px}
+.chipbtn,.btn,.brush{font-size:12px;color:var(--ink);background:var(--chrome);border:1px solid;border-color:var(--hi) var(--lo) var(--lo) var(--hi);box-shadow:1px 1px 0 #5f5f5b;padding:2px 9px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.chipbtn:active,.btn:active,.brush:active{border-color:var(--lo) var(--hi) var(--hi) var(--lo);box-shadow:none}
+.chipbtn[aria-pressed="true"],.brush[aria-checked="true"]{border-color:var(--lo) var(--hi) var(--hi) var(--lo);box-shadow:inset 1px 1px 0 #9a9a95;background:var(--chrome-3);font-weight:600}
+.mapwrap{position:relative;background:var(--scope);border:2px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+#map{display:block;width:100%;height:auto;max-height:74vh;touch-action:none;cursor:default}
+#map.paint{cursor:crosshair}
+#map path.nation{fill:var(--scope-fill);stroke:none}
+#map path.cty{stroke:var(--cty);stroke-width:.5;vector-effect:non-scaling-stroke}
+#map path.cty:hover{stroke:#fff;stroke-width:1.5}
+#map path.border{fill:none;stroke:var(--state);stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none}
+.tip{position:absolute;pointer-events:none;font-size:12px;color:#000;background:var(--tipbg);border:1px solid #000;padding:3px 6px;max-width:340px;z-index:2;box-shadow:2px 2px 0 rgba(0,0,0,.35)}
+.tip .tsub{color:#333;font-size:11px}
+.maploading{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:12px;color:#7CFC7C}
+.brushes{display:flex;flex-wrap:wrap;gap:3px}
+.brush{display:inline-flex;align-items:center;gap:6px}
+.brush svg{width:18px;height:18px}
+.tally{display:flex;flex-wrap:wrap;gap:3px}
+.tally span{font-family:var(--mono);font-size:11px;padding:1px 6px;color:#000;border:1px solid #000}
+
+/* text product windows */
+details.stmt{margin-top:12px;border:1px solid;border-color:var(--hi) var(--lo) var(--lo) var(--hi)}
+details.stmt summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:3px 6px;background:#3a4a63;color:#fff}
+details.stmt summary::-webkit-details-marker{display:none}
+details.stmt summary h3{font-size:12px}
+details.stmt summary h3::before{content:"+ ";font-family:var(--mono)}
+details.stmt[open] summary h3::before{content:"- "}
+details.stmt summary .btn{padding:0 8px}
+details.stmt pre{border:0;border-top:1px solid var(--lo)}
+pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.4;background:var(--text-bg);color:#000;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);padding:10px 12px;overflow-x:auto;white-space:pre;max-height:520px;overflow-y:auto}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.chip{display:inline-flex;align-items:center;font-family:var(--mono);font-weight:700;font-size:11px;padding:0 5px;color:#000;border:1px solid #000;white-space:nowrap}
+.chip.sb{background:var(--sb);box-shadow:inset 0 0 0 2px var(--w5)}
+
+/* desk */
+.calc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.panel{border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);box-shadow:inset 1px 1px 0 var(--hi),1px 1px 0 var(--hi);padding:12px;display:grid;gap:10px;min-width:0;align-content:start}
+.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.field{display:grid;gap:2px;min-width:0}
+.field.full{grid-column:1/-1}
+label{font-size:12px;color:var(--ink)}
+input,select{font:inherit;font-family:var(--mono);font-size:13px;color:#000;background:#fff;border:2px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);border-radius:0;padding:3px 5px;width:100%}
+.hint{font-size:11px;color:var(--muted)}
+.result{display:grid;grid-template-columns:auto 1fr;gap:0 12px;align-items:center}
+.result svg{width:64px;height:64px;grid-row:span 3;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+.result .sl{font-size:22px;font-weight:700;color:var(--ink)!important}
+.result .sw{font-size:13px;color:var(--muted)}
+.comps{display:grid;gap:4px}
+.comp{display:grid;grid-template-columns:70px minmax(0,1fr) 30px;align-items:center;gap:8px;font-size:12px}
+.comp .name{color:var(--ink)}
+.meter{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--scope);padding:2px;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+.meter i{height:9px;background:#222}
+.comp .lv{text-align:right;font-family:var(--mono)}
+.verdict{display:grid;gap:4px;padding:8px;background:var(--chrome-2);border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+.verdict .why{font-size:12px;color:var(--muted)}
+.headlines{display:flex;flex-wrap:wrap;gap:4px}
+.hl{font-family:var(--mono);font-size:11px;padding:1px 6px;background:#fff;border:1px solid var(--lo)}
+
+/* handbook */
+.tbl{overflow-x:auto;background:#fff;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo)}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{padding:4px 8px;text-align:left;border:1px solid #d8d8d3;vertical-align:top}
+th{background:var(--chrome-2);font-size:12px;font-weight:600}
+td.c{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.catcell{display:flex;align-items:center;gap:8px}
+.swatch{width:12px;height:12px;flex:0 0 auto;border:1px solid #000}
+.rule{font-size:12px;color:var(--muted);padding-left:10px;border-left:2px solid var(--lo)}
+.signals{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.sig{border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);background:var(--chrome-2);padding:10px;display:grid;gap:5px;align-content:start;min-width:0}
+.sig svg{width:48px;height:48px}
+.sig .t{font-size:15px;font-weight:700;color:var(--ink)!important}
+.sig .w{font-size:12px;font-weight:600}
+.sig p{font-size:12px;color:var(--muted)}
+.sig ul{margin:0;padding-left:16px;font-size:12px;display:grid;gap:1px}
+.matrix td.s{text-align:center;font-family:var(--mono);font-weight:700;color:#000}
+.toc{display:flex;flex-wrap:wrap;gap:3px;padding-top:12px}
+.names{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:start}
+.nlist{background:#fff;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);display:grid;min-width:0}
+.nlist header{display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap;background:var(--chrome-2);padding:3px 8px;border-bottom:1px solid #d8d8d3}
+.nlist.current header{background:#3a4a63;color:#fff}
+.nlist h3{font-size:12px}
+.nlist .tag{font-size:11px;color:var(--muted)}
+.nlist.current .tag{color:#dfe6f3}
+.nlist ol{list-style:none;margin:0;padding:3px 0;display:grid;font-family:var(--mono);font-size:12px}
+.nlist li{padding:0 8px;display:flex;gap:8px}
+.nlist li b{color:var(--dim);font-weight:400;width:1.1em}
+.nlist li.used{background:var(--sel);color:#fff}
+.nlist li.used b{color:#cfd8ea}
+.nlist li.next{outline:1px dotted #000;outline-offset:-1px}
+.rota{display:flex;flex-wrap:wrap;gap:3px}
+.rota span{font-family:var(--mono);font-size:11px;padding:1px 6px;border:1px solid var(--lo);background:var(--chrome-2)}
+.rota span.now{background:#3a4a63;color:#fff;border-color:#000}
+.retired{display:grid;gap:3px;padding:8px;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);background:var(--chrome-2)}
+.retired p{font-size:12px;color:var(--muted)}
+.retired b{color:var(--ink);text-decoration:line-through}
+
+@media (max-width:1000px){
+  .livegrid{grid-template-columns:1fr}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile{border-bottom:1px solid var(--chrome-3)}
+  .tile.tsig{grid-column:1/-1;border-right:0}
+  .tile:nth-child(odd):not(.tsig){border-right:0}
+  .calc{grid-template-columns:1fr}
+  .signals{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .names{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:560px){
+  .brand small{display:none}
+  .tab{padding:3px 8px}
+  .fields{grid-template-columns:1fr}
+  .signals{grid-template-columns:1fr}
+  .clock{display:none}
+}
+
+.leftcol{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0;align-content:start}
+.leftcol>div{min-width:0}
+.mapsec{grid-template-columns:minmax(0,1fr)}
+.scgrid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;margin-top:10px;align-items:start}
+.scgrid .leftcol{gap:6px}
+.gnote{font-size:11px;color:var(--muted)}
+.glegend{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--muted);padding:6px 2px}
+.gk{display:inline-flex;align-items:center;gap:4px}
+.gk i{width:14px;height:10px;border:1px solid #000;display:inline-block}
+table.mini{min-width:0;font-size:12px}
+table.mini td,table.mini th{padding:2px 6px}
+.gtable{display:grid;gap:4px;background:#fff;border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);padding:4px}
+.scres{display:grid;gap:4px}
+.scline{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.scitem{cursor:default;grid-template-columns:minmax(0,1fr) auto}
+.scitem .sm{grid-column:1}
+.scbtns{grid-row:1/3;grid-column:2;display:flex;gap:3px;align-items:center}
+.scbtns .btn{padding:0 6px}
+.textwin{margin-top:12px;border:1px solid;border-color:var(--hi) var(--lo) var(--lo) var(--hi)}
+.twbar{display:flex;gap:6px;align-items:center;padding:3px 6px;background:#3a4a63}
+.twbar select{flex:1;min-width:0;font-family:var(--ui);font-size:12px;border-width:1px;padding:1px 4px}
+.twbar .btn{padding:0 8px}
+.textwin pre{border:0;border-top:1px solid var(--lo);max-height:560px}
+.sigtag{font-family:var(--mono);font-size:10px;font-weight:700;color:#000;border:1px solid #000;padding:0 4px;white-space:nowrap}
+.storm .sm .sigtag{margin:0 1px}
+.storm.mon svg{background:none}
+.fields{margin:0}
+.gdefs{position:absolute;width:0;height:0;overflow:hidden}
+@media (max-width:1000px){ .scgrid{grid-template-columns:1fr} }
+</style>
+<svg class="gdefs" aria-hidden="true" focusable="false"><defs><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="#141414"/><line x1="0" y1="0" x2="0" y2="5" stroke="#8a8a8a" stroke-width="1.6"/></pattern><pattern id="hatchsm" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" fill="#141414"/><line x1="0" y1="0" x2="0" y2="14" stroke="#9a9a9a" stroke-width="5"/></pattern></defs></svg>
+<header class="top">
+  <div class="bar">
+    <div class="brand">
+      <img class="logo" src="" alt="" width="22" height="22" id="logo">
+      <div><h1>Winter Storm Center</h1><small>National operations workstation</small></div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button class="tab" role="tab" data-tab="live" aria-selected="true">Live</button>
+      <button class="tab" role="tab" data-tab="guidance" aria-selected="false">Guidance</button>
+      <button class="tab" role="tab" data-tab="scenario" aria-selected="false">Scenarios</button>
+      <button class="tab" role="tab" data-tab="handbook" aria-selected="false">Handbook</button>
+    </nav>
+    <div class="clock num" id="clock"></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- LIVE -->
+  <div id="tab-live" class="tabpane">
+    <div class="headline"><h2 id="hTitle">Loading the latest run</h2><div class="status" id="liveStatus"></div></div>
+    <div class="tiles">
+      <div class="tile tsig"><svg id="tSig" viewBox="0 0 100 100" aria-hidden="true"></svg><span class="eyebrow">Highest signal</span><span class="v" id="tSigV">-</span><span class="s" id="tSigS"></span></div>
+      <div class="tile"><span class="eyebrow">Named storms</span><span class="v num" id="tNamed">-</span><span class="s" id="tNamedS"></span></div>
+      <div class="tile"><span class="eyebrow">Counties under signals</span><span class="v num" id="tCty">-</span><span class="s" id="tCtyS"></span></div>
+      <div class="tile"><span class="eyebrow">People under signals</span><span class="v num" id="tPop">-</span><span class="s">next 72 h</span></div>
+      <div class="tile"><span class="eyebrow">Next run</span><span class="v num" id="tNext">-</span><span class="s" id="tNextS"></span></div>
+    </div>
+    <div class="livegrid">
+      <div class="leftcol"><div id="slotLive"></div><div id="slotTextLive"></div></div>
+      <aside class="rail">
+        <div class="card"><h3>Named storms <small id="namedCount"></small></h3><div class="storms" id="storms"></div></div>
+        <div class="card"><h3>Monitored areas <small>no signals</small></h3><div class="storms" id="monitored"></div></div>
+        <div class="card"><h3>Signals in effect</h3><div class="legend" id="legend"></div></div>
+        <div class="card"><h3>Last 7 days <small>counties under signals</small></h3><svg id="hist" viewBox="0 0 300 110" role="img" aria-label="Counties under signals per run"></svg></div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- GUIDANCE -->
+  <div id="tab-guidance" class="tabpane" hidden>
+    <div class="headline"><h2>Signal guidance</h2><div class="status">Snow it takes to reach each signal in every county, like flash flood guidance. Click a county to test a forecast.</div></div>
+    <div class="row" style="margin-top:8px">
+      <div class="seg" id="gLevels" role="group" aria-label="Signal level"></div>
+      <div class="gnote">Ice needs the same everywhere: 0.05 / 0.10 / 0.25 / 0.50 / 0.75 in for Signals 1 to 5.</div>
+    </div>
+    <div class="livegrid">
+      <div class="leftcol"><div id="slotGuide"></div><div class="glegend" id="gLegend"></div></div>
+      <aside class="rail">
+        <div class="card"><h3>County guidance <small id="gName">click a county</small></h3>
+          <div class="gtable" id="gTable"><div class="empty">Pick a county on the map.</div></div>
+        </div>
+        <div class="card"><h3>Test a forecast</h3>
+          <form class="fields" id="gForm" autocomplete="off">
+            <div class="field"><label for="gSnow">Storm-total snow (in)</label><input id="gSnow" type="number" step="0.1" min="0" value="6"></div>
+            <div class="field"><label for="gS24">Max 24-h snow (in)</label><input id="gS24" type="number" step="0.1" min="0" value="5"></div>
+            <div class="field"><label for="gIce">Ice (in)</label><input id="gIce" type="number" step="0.05" min="0" value="0"></div>
+            <div class="field"><label for="gGust">Peak gust (mph)</label><input id="gGust" type="number" step="1" min="0" value="30"></div>
+            <div class="field full"><label for="gChill">Min wind chill (°F)</label><input id="gChill" type="number" step="1" value="10"></div>
+          </form>
+          <div class="result"><svg id="gSig" viewBox="0 0 100 100" aria-hidden="true"></svg><div class="sl" id="gSigL">-</div><div class="sw" id="gSigW"></div><div class="hint" id="gWhy"></div></div>
+          <div class="comps" id="gComps"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- SCENARIOS -->
+  <div id="tab-scenario" class="tabpane" hidden>
+    <div class="headline"><h2>Scenarios</h2><div class="status">Paint your own forecast. The live engine rates it, names it, hoists signals and writes the advisories. Nothing here touches the live map.</div></div>
+    <div class="scgrid">
+      <div class="leftcol">
+        <div class="brushes" id="scBrushes" role="radiogroup" aria-label="Amount to paint"></div>
+        <div id="slotScen"></div>
+        <div id="slotTextScen"></div>
+      </div>
+      <aside class="rail">
+        <div class="card"><h3>Storm setup</h3>
+          <form class="fields" id="scForm" autocomplete="off">
+            <div class="field full"><label for="scName">Storm name</label><input id="scName" value="Practice"></div>
+            <div class="field"><label for="scOnset">Onset (hours from now)</label><input id="scOnset" type="number" min="0" max="72" value="18"></div>
+            <div class="field"><label for="scDur">Duration (hours)</label><input id="scDur" type="number" min="1" max="72" value="24"></div>
+            <div class="field"><label for="scGust">Peak gust (mph)</label><input id="scGust" type="number" min="0" value="35"></div>
+            <div class="field"><label for="scChill">Min wind chill (°F)</label><input id="scChill" type="number" value="5"></div>
+          </form>
+        </div>
+        <div class="card"><h3>Result</h3><div id="scResult" class="scres"><div class="empty">Paint snow or ice onto the map.</div></div></div>
+        <div class="card"><h3>Saved scenarios</h3>
+          <div class="row"><button class="btn" id="scSave" type="button">Save</button><button class="btn" id="scNew" type="button">New</button><button class="btn" id="scClear" type="button">Clear paint</button></div>
+          <div class="storms" id="scList"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- HANDBOOK -->
+  <div id="tab-handbook" class="tabpane" hidden>
+    <p class="hint" style="padding-top:12px">Icons: Weather Icons by Erik Flowers (SIL OFL 1.1) and Phosphor Icons (MIT). County snowfall records: NOAA NCEI. Population: US Census Bureau 2024 estimates. Forecast data: NOAA National Blend of Models (lower 48), each county rated from every 2.5 km grid cell inside it (75th percentile of snow, ice and gusts; 25th percentile of wind chill). Alaska and Hawaii: NWS gridded forecasts.</p>
+    <nav class="toc" aria-label="Handbook sections">
+      <a class="chipbtn" href="#hb-signals">Signals</a><a class="chipbtn" href="#hb-thresholds">Thresholds</a><a class="chipbtn" href="#hb-category">Storm category</a><a class="chipbtn" href="#hb-naming">Naming</a><a class="chipbtn" href="#hb-products">Advisories</a><a class="chipbtn" href="#superblizzard">Super Blizzard</a><a class="chipbtn" href="#names">Names</a>
+    </nav>
+    <section id="hb-signals">
+      <h2>Signals: what to expect in your county</h2>
+      <p class="lede">A signal is the impact level a named storm is expected to bring to one county, issued once the storm has a name. It does not change with lead time: Signal 3 three days out means the same as Signal 3 during the storm. Signals are issued only for counties inside a named storm's expected footprint.</p>
+      <div class="signals" id="sigCards"></div>
+    </section>
+    <section id="hb-thresholds">
+      <h2>Impact level thresholds</h2>
+      <p class="lede">Each hazard gets a level from 1 to 5. The county's impact level, issued as its signal inside a named storm, is the highest of snow, ice and wind. It goes up one step when two of those reach Level 3, or when wind chills reach Level 3 on top of snow or ice at Level 2 or higher. Cold never sets the signal on its own, and wind can rate at most one level above the snow. A Super Blizzard is always Signal 5.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Hazard</th><th>Level 1 Minor</th><th>Level 2 Moderate</th><th>Level 3 Major</th><th>Level 4 Severe</th><th>Level 5 Extreme</th></tr></thead>
+        <tbody>
+          <tr><td>Snow, share of the county's 24-h record</td><td class="c">15%</td><td class="c">30%</td><td class="c">50%</td><td class="c">75%</td><td class="c">100%</td></tr>
+          <tr><td>Snow, storm total (whichever is reached first)</td><td class="c">6 in</td><td class="c">12 in</td><td class="c">18 in</td><td class="c">24 in</td><td class="c">30 in</td></tr>
+          <tr><td>Ice, flat accretion</td><td class="c">0.05 in</td><td class="c">0.10 in</td><td class="c">0.25 in</td><td class="c">0.50 in</td><td class="c">0.75 in</td></tr>
+          <tr><td>Wind gust, while snowing (at most one level above snow)</td><td class="c">25 mph</td><td class="c">35 mph</td><td class="c">45 mph</td><td class="c">55 mph</td><td class="c">65 mph</td></tr>
+          <tr><td>Wind chill, raises the signal one step at Level 3+</td><td class="c">10 °F</td><td class="c">0 °F</td><td class="c">-10 °F</td><td class="c">-20 °F</td><td class="c">-30 °F</td></tr>
+        </tbody>
+      </table></div>
+      <p class="rule">The Guidance tab maps exactly how much snow each county needs for each signal.</p>
+    </section>
+    <section id="hb-category">
+      <h2>Storm category W1 to W5</h2>
+      <p class="lede">The category rates the whole storm from the impacts it is expected to cause. Every county in the footprint adds its impact level, weighted by people and land affected: weight × (0.6 × population ÷ 1 million + 0.4 × area ÷ 50,000 km²), with weights 1, 3, 9, 27, 81 for Levels 1 to 5. The total is the WSC Storm Index.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Category</th><th>Storm Index</th><th>What it means</th></tr></thead>
+        <tbody id="catRows"></tbody>
+      </table></div>
+      <p class="rule">Examples: 4 in of snow around Tulsa scores about 1 (W1) and is named, since Minor impacts cover about 1.4 million people. A 20 in Montana blizzard scores about 65 (W3). The NWS warnings in effect the evening before the 2011 Groundhog Day Blizzard score about 1,400 (W5). A 16 in Chicago blizzard with an ice band scores about 240 (W5).</p>
+    </section>
+    <section id="hb-naming">
+      <h2>Naming</h2>
+      <p class="lede">Every run rates the expected impact in every county, Level 1 Minor to Level 5 Extreme, whether or not a storm has a name. A storm is named when its forecast footprint, within 72 hours and touching the lower 48, meets all three: Storm Index 1 or more (W1), at least 250,000 people expecting impacts (Level 1 Minor or worse), and at least 10,000 km² (about four average counties) expecting impacts. One county alone can never trigger a name. Once a storm is named, the impact levels inside its footprint are issued as signals. It keeps its name from run to run as long as its footprint overlaps the previous one, and the name retires for the season when no impacts remain in its footprint. Impacted areas that do not qualify are shown as monitored areas, outlined on the map, with no signals. Alaska and Hawaii systems are monitored but not named.</p>
+    </section>
+    <section id="hb-products">
+      <h2>Advisories</h2>
+      <p class="lede">Every named storm gets advisories each run. Neighboring counties with the same signal and hazards share one segment, with what to expect, when (local time), impacts for each hazard and what to do. Headlines are added for Ice Storm (ice Level 3 or higher), Blizzard (gusts 35 mph or higher with snow Level 2 or higher) and Super Blizzard conditions.</p>
+    </section>
+  <section id="superblizzard">
+    <div style="display:grid;gap:6px">
+      <div class="eyebrow">Special designation</div>
+      <h2>Super Blizzard</h2>
+      <p class="lede">A storm that ties or breaks a county's 24-hour snowfall record. It is a designation, not a level of its own: any county where a Super Blizzard is forecast goes straight to Signal 5, and its advisory carries a Super Blizzard headline.</p>
+      <p class="lede">Nationwide, each county's threshold is the median of its own NOAA NCEI 1-day snowfall record and its neighbors' records, so one unusually low or high station record cannot swing a county by itself. The 12 counties with no record borrow the nearest county's. The house thresholds below override NOAA for these metros. NOAA lists Houston at 19 in (February 1895), so the 5 in house rule for Harris County is far stricter than the record.</p>
+    </div>
+    <div class="tbl"><table style="min-width:420px">
+      <thead><tr><th>House rule</th><th>Super Blizzard threshold (24 h)</th><th>Level 3 snow</th></tr></thead>
+      <tbody>
+        <tr><td>Tulsa (Tulsa Co.)</td><td class="c">14 in</td><td class="c">7.0 in</td></tr>
+        <tr><td>Dallas-Fort Worth (Dallas, Tarrant)</td><td class="c">12 in</td><td class="c">6.0 in</td></tr>
+        <tr><td>Houston (Harris Co.)</td><td class="c">5 in</td><td class="c">2.5 in</td></tr>
+        <tr><td>Amarillo (Potter, Randall)</td><td class="c">20 in</td><td class="c">10.0 in</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="names">
+    <div style="display:grid;gap:6px">
+      <div class="eyebrow">Naming</div>
+      <h2>Storm names</h2>
+      <p class="lede">Names come from three rotating lists. When a season uses every name on its list, naming continues on the Auxiliary list. Alaska and Hawaii systems are monitored but not named.</p>
+      <p class="lede">How counties are grouped into storms: each storm is built around a core of touching counties at Level 2 or higher whose peaks fall within 18 hours of each other. Level 1 counties attach to the nearest core. Two pieces join into one storm when they touch or sit one county apart and the counties along their shared edge peak within 18 hours of each other. A storm sweeping across the country stays one storm, while a separate system that only brushes against it, like the Pacific Northwest snow during Uri in February 2021, gets its own footprint.</p>
+    </div>
+    <div class="rota" id="rota"></div>
+    <div class="names" id="nameList"></div>
+    <div class="retired">
+      <span class="eyebrow">Retired</span>
+      <p><b>Gretchen</b>, retired after the 2022-23 season following extreme impacts in the Great Lakes region. Replaced by Gretel on List One.</p>
+    </div>
+  </section>
+
+  </div>
+
+  <div hidden>
+    <div class="mapsec" id="mapSec">
+      <div class="mapbar"><div class="seg" id="views" role="group" aria-label="Map view"></div></div>
+      <div class="mapwrap">
+        <svg id="map" role="img" aria-label="County map" viewBox="0 0 975 610"></svg>
+        <div class="maploading" id="mapLoading">LOADING 3142 COUNTIES...</div>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+    </div>
+    <div class="textwin" id="textSec">
+      <div class="twbar"><select id="segSel" aria-label="Advisory segment"></select><button class="btn" id="copyAdv" type="button">Copy text</button></div>
+      <pre id="advText">Select a county to read its advisory.</pre>
+    </div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const ICON={"s1": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTMuODkgMTcuNmMwLS45OS4zMS0xLjg4LjkzLTIuNjVzMS40MS0xLjI3IDIuMzgtMS40OWMuMjYtMS4xNy44NS0yLjE0IDEuNzgtMi44OGMuOTMtLjc1IDItMS4xMiAzLjIyLTEuMTJjMS4xOCAwIDIuMjQuMzYgMy4xNiAxLjA5Yy45My43MyAxLjUzIDEuNjYgMS44IDIuOGguMjdjMS4xOCAwIDIuMTguNDEgMy4wMSAxLjI0czEuMjUgMS44MyAxLjI1IDNjMCAxLjE4LS40MiAyLjE4LTEuMjUgMy4wMXMtMS44MyAxLjI1LTMuMDEgMS4yNUg4LjE2Yy0uNTggMC0xLjEzLS4xMS0xLjY1LS4zNHMtLjk5LS41MS0xLjM3LS44OXMtLjY4LS44NC0uOTEtMS4zNnMtLjM0LTEuMDktLjM0LTEuNjZtMS40NSAwYzAgLjc2LjI4IDEuNDIuODIgMS45NnMxLjIxLjgyIDEuOTkuODJoOS4yOGMuNzcgMCAxLjQ0LS4yNyAxLjk5LS44MnMuODMtMS4yLjgzLTEuOTZzLS4yNy0xLjQyLS44My0xLjk2Yy0uNTUtLjU0LTEuMjEtLjgyLTEuOTktLjgyaC0xLjM5cS0uMTUgMC0uMTUtLjE1bC0uMDctLjQ5Yy0uMS0uOTQtLjUtMS43My0xLjE5LTIuMzVzLTEuNTEtLjkzLTIuNDUtLjkzcy0xLjc2LjMxLTIuNDYuOTRjLS43LjYyLTEuMDkgMS40MS0xLjE4IDIuMzRsLS4wNy40MmMwIC4xLS4wNS4xNS0uMTYuMTVsLS40NS4wN2MtLjcyLjA2LTEuMzIuMzYtMS44MS44OWMtLjQ2LjUzLS43MSAxLjE2LS43MSAxLjg5bTguODUtOC43MmMtLjEuMDktLjA4LjE2LjA3LjIxYy40My4xOS43OS4zNyAxLjA4LjU1Yy4xMS4wMy4xOS4wMi4yMi0uMDNjLjYxLS41NyAxLjMxLS44NiAyLjEyLS44NnMxLjUuMjcgMi4xLjgxYy41OS41NC45MiAxLjIxLjk5IDJsLjA5LjY0aDEuNDJjLjY1IDAgMS4yMS4yMyAxLjY4LjdzLjcgMS4wMi43IDEuNjZjMCAuNi0uMjEgMS4xMi0uNjIgMS41N3MtLjkyLjctMS41My43N2MtLjEgMC0uMTUuMDUtLjE1LjE2djEuMTNjMCAuMTEuMDUuMTYuMTUuMTZjMS4wMS0uMDYgMS44Ni0uNDYgMi41NS0xLjE5czEuMDQtMS42IDEuMDQtMi42YzAtMS4wNi0uMzctMS45Ni0xLjEyLTIuN2MtLjc1LS43NS0xLjY1LTEuMTItMi43LTEuMTJoLS4xNWMtLjI2LTEtLjgxLTEuODItMS42NS0yLjQ3Yy0uODMtLjY1LTEuNzctLjk3LTIuOC0uOTdjLTEuNC0uMDEtMi41Ny41Mi0zLjQ5IDEuNTgiLz48L3N2Zz4=", "s2": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTQuNjQgMTYuOTVjMC0xLjE2LjM1LTIuMTggMS4wNi0zLjA4czEuNjItMS40OCAyLjc0LTEuNzZxLjQ2NS0yLjA0IDIuMS0zLjM2YzEuNjM1LTEuMzIgMi4zNC0xLjMxIDMuNzUtMS4zMWMxLjM4IDAgMi42LjQzIDMuNjggMS4yOHMxLjc4IDEuOTUgMi4xIDMuMjloLjMyYy44OSAwIDEuNzIuMjIgMi40OC42NnMxLjM3IDEuMDQgMS44MSAxLjhzLjY3IDEuNTkuNjcgMi40OGMwIDEuMzItLjQ2IDIuNDctMS4zOSAzLjQyYy0uOTIuOTYtMi4wNSAxLjQ2LTMuMzggMS41Yy0uMTMgMC0uMi0uMDYtLjItLjE3di0xLjMzYzAtLjEyLjA3LS4xOC4yLS4xOGMuODUtLjA0IDEuNTgtLjM4IDIuMTgtMS4wMnMuOS0xLjM4LjktMi4yM2MwLS44OS0uMzItMS42NS0uOTctMi4zcy0xLjQyLS45Ny0yLjMyLS45N2gtMS42MWMtLjEyIDAtLjE4LS4wNi0uMTgtLjE3bC0uMDgtLjU4Yy0uMTEtMS4wOC0uNTgtMS45OS0xLjM5LTIuNzJjLS44Mi0uNzMtMS43Ni0xLjEtMi44NS0xLjFjLTEuMSAwLTIuMDUuMzctMi44NiAxLjExcy0xLjI3IDEuNjUtMS4zNyAyLjc1bC0uMDYuNWMwIC4xMi0uMDcuMTktLjIuMTlsLS41My4wN2MtLjgzLjA3LTEuNTMuNDEtMi4xIDEuMDRzLS44NSAxLjM1LS44NSAyLjE5YzAgLjg1LjMgMS41OS45IDIuMjNzMS4zMy45NyAyLjE4IDEuMDJjLjExIDAgLjE3LjA2LjE3LjE4djEuMzNjMCAuMTEtLjA2LjE3LS4xNy4xN2MtMS4zNC0uMDQtMi40Ny0uNTQtMy40LTEuNWMtLjg3LS45Ni0xLjMzLTIuMTEtMS4zMy0zLjQzTTExIDIxLjAyYzAtLjIyLjA4LS40Mi4yNC0uNThzLjM1LS4yNC41OS0uMjRjLjIzIDAgLjQzLjA4LjU5LjI0cy4yNC4zNi4yNC41OHEwIC4zNi0uMjQuNmMtLjE2LjE3LS4zNS4yNS0uNTkuMjVjLS4yMyAwLS40My0uMDgtLjU5LS4yNWEuOC44IDAgMCAxLS4yNC0uNm0wIDMuNjNxMC0uMzYuMjQtLjZjLjE2LS4xNS4zNS0uMjMuNTgtLjIzcy40My4wOC41OS4yM2MuMTYuMTYuMjQuMzUuMjQuNTlzLS4wOC40My0uMjQuNTlzLS4zNS4yMy0uNTkuMjNhLjg0Ljg0IDAgMCAxLS41OS0uMjNhLjguOCAwIDAgMS0uMjMtLjU4bTMuMTktMS43YzAtLjIzLjA4LS40NC4yNS0uNjJxLjI0LS4yNC41Ny0uMjRjLjIzIDAgLjQzLjA5LjYuMjZzLjI2LjM3LjI2LjZzLS4wOC40My0uMjUuNnMtLjM3LjI1LS42MS4yNWMtLjIzIDAtLjQyLS4wOC0uNTgtLjI1cy0uMjQtLjM3LS4yNC0uNm0wLTMuNjJjMC0uMjMuMDgtLjQzLjI1LS42cS4yNy0uMjQuNTctLjI0Yy4yNCAwIC40NC4wOC42MS4yNWEuOC44IDAgMCAxIC4yNS42YzAgLjIzLS4wOC40My0uMjUuNTlzLS4zNy4yNC0uNjEuMjRjLS4yMyAwLS40Mi0uMDgtLjU4LS4yNGEuODUuODUgMCAwIDEtLjI0LS42bTAgNy4yOGMwLS4yMy4wOC0uNDMuMjUtLjYxcS4yNC0uMjQuNTctLjI0Yy4yNCAwIC40NC4wOC42MS4yNXMuMjUuMzcuMjUuNnMtLjA4LjQzLS4yNS41OXMtLjM3LjI0LS42MS4yNGEuODI0LjgyNCAwIDAgMS0uODItLjgzbTMuMjItNS41OWMwLS4yMi4wOC0uNDEuMjUtLjU4cy4zNy0uMjUuNi0uMjVzLjQzLjA4LjU5LjI0cy4yNC4zNi4yNC41OHEwIC4zNi0uMjQuNmMtLjE2LjE3LS4zNS4yNS0uNTkuMjVzLS40NC0uMDgtLjYtLjI1YS44Mi44MiAwIDAgMS0uMjUtLjU5bTAgMy42M2MwLS4yMi4wOC0uNDIuMjUtLjZjLjE2LS4xNS4zNi0uMjMuNi0uMjNzLjQzLjA4LjU5LjIzcy4yMy4zNS4yMy41OXMtLjA4LjQzLS4yMy41OWMtLjE2LjE2LS4zNS4yMy0uNTkuMjNxLS4zNiAwLS42LS4yNGEuNzYuNzYgMCAwIDEtLjI1LS41NyIvPjwvc3ZnPg==", "s3": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTcuNDYgMTQuNDFjMC0uMTkuMDctLjM2LjItLjVhLjYzLjYzIDAgMCAxIC40OC0uMjFjLjE5IDAgLjM2LjA3LjQ5LjIxcy4yLjMuMi41YzAgLjE5LS4wNy4zNS0uMi40OGEuNjczLjY3MyAwIDAgMS0uOTYgMGEuNjIuNjIgMCAwIDEtLjIxLS40OG0xLjk4IDBjMC0uMTkuMDctLjM2LjItLjVhLjYzLjYzIDAgMCAxIC40OC0uMjFoMy4yM2wtMi4yOC0yLjI4YS42LjYgMCAwIDEtLjIxLS40N2MwLS4xOS4wNy0uMzUuMjEtLjQ5cy4zLS4yMS40OS0uMjFzLjM1LjA3LjQ5LjIxbDIuMjcgMi4yN1Y5LjUyYzAtLjE5LjA3LS4zNi4yMS0uNXMuMy0uMjEuNS0uMjFxLjI4NSAwIC40OC4yMWMuMTMuMTQuMi4zLjIuNXYzLjIzbDIuMjktMi4zcS4yMS0uMjEuNDgtLjIxYy4xOCAwIC4zNS4wNy40OS4yMWMuMTIuMTQuMTguMy4xOC40OXMtLjA2LjM1LS4xOC40N2wtMi4yOCAyLjI4aDMuMjNjLjE4IDAgLjM0LjA3LjQ3LjIxcy4yLjMuMi41YzAgLjE4LS4wNy4zNC0uMi40N2EuNjUuNjUgMCAwIDEtLjQ3LjJoLTMuMjNsMi4yOSAyLjI5Yy4xMi4xMi4xOC4yOC4xOC40N3MtLjA2LjM1LS4xOC40OWMtLjE0LjE0LS4zMS4yMS0uNDkuMjFzLS4zNS0uMDctLjQ4LS4yMWwtMi4yOS0yLjN2My4yNGMwIC4xOS0uMDcuMzYtLjIuNDlzLS4yOS4yLS40OC4yYS43Mi43MiAwIDAgMS0uNS0uMmEuNjUuNjUgMCAwIDEtLjIxLS40OXYtMy4yMmwtMi4yNyAyLjI3Yy0uMTQuMTQtLjMuMjEtLjQ5LjIxcy0uMzUtLjA3LS40OS0uMjFzLS4yMS0uMy0uMjEtLjQ5cy4wNy0uMzQuMjEtLjQ3bDIuMy0yLjI5aC0zLjI0Yy0uMTkgMC0uMzUtLjA3LS40OC0uMmEuNTEuNTEgMCAwIDEtLjIyLS40NW0uMDEgNC44NGMwLS4xOC4wNy0uMzUuMjEtLjQ4Yy4xMi0uMTQuMjgtLjIxLjQ3LS4yMXMuMzUuMDcuNDkuMjFxLjIxLjIxLjIxLjQ4YzAgLjE4LS4wNy4zNS0uMjEuNDhjLS4xNC4xNC0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjMuNjMgMCAwIDEtLjIxLS40OG0wLTkuNzFjMC0uMTguMDctLjM1LjIxLS40OGMuMTItLjE0LjI4LS4yMS40Ny0uMjFzLjM1LjA3LjQ5LjIxcS4yMS4yMS4yMS40OGMwIC4yNy0uMDcuMzUtLjIxLjQ5cy0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjguNjggMCAwIDEtLjIxLS40OW00Ljg1IDExLjcxYzAtLjE4LjA3LS4zNC4yMS0uNDdzLjMtLjIuNS0uMmMuMTkgMCAuMzUuMDcuNDguMnMuMi4yOS4yLjQ3YzAgLjE5LS4wNy4zNi0uMi40OXMtLjI5LjItLjQ4LjJhLjcyLjcyIDAgMCAxLS41LS4yYS42NC42NCAwIDAgMS0uMjEtLjQ5bTAtMTMuNzFjMC0uMTkuMDctLjM2LjIxLS40OXMuMy0uMi41LS4yYy4xOSAwIC4zNS4wNy40OC4yYS42OC42OCAwIDAgMS0uNDggMS4xNmEuNzIuNzIgMCAwIDEtLjUtLjJhLjYyLjYyIDAgMCAxLS4yMS0uNDdtNC44NyAxMS43MWMwLS4xOC4wNy0uMzUuMjEtLjQ4Yy4xMi0uMTQuMjgtLjIxLjQ3LS4yMXMuMzUuMDcuNDkuMjFxLjIxLjIxLjIxLjQ4YzAgLjE4LS4wNy4zNS0uMjEuNDhjLS4xNC4xNC0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjMuNjMgMCAwIDEtLjIxLS40OG0wLTkuNzFjMC0uMTguMDctLjM1LjIxLS40OGMuMTItLjE0LjI4LS4yMS40Ny0uMjFzLjM1LjA3LjQ5LjIxcS4yMS4yMS4yMS40OGMwIC4yNy0uMDcuMzUtLjIxLjQ5cy0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjguNjggMCAwIDEtLjIxLS40OW0yIDQuODdjMC0uMTkuMDctLjM2LjItLjVzLjMtLjIxLjQ5LS4yMWMuMTggMCAuMzQuMDcuNDcuMjFzLjIuMy4yLjVjMCAuMTgtLjA3LjM0LS4yLjQ3YS42OC42OCAwIDAgMS0uOTYgMGEuNjUuNjUgMCAwIDEtLjItLjQ3Ii8+PC9zdmc+", "s4": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cGF0aCBmaWxsPSIjZmZmZmZmIiBkPSJNMjI0IDEyMHY5NmE4IDggMCAwIDEtOCA4aC01NmE4IDggMCAwIDEtOC04di01MmE0IDQgMCAwIDAtNC00aC00MGE0IDQgMCAwIDAtNCA0djUyYTggOCAwIDAgMS04IDhINDBhOCA4IDAgMCAxLTgtOHYtOTZhMTYgMTYgMCAwIDEgNC42OS0xMS4zMWw4MC04MGExNiAxNiAwIDAgMSAyMi42MiAwbDgwIDgwQTE2IDE2IDAgMCAxIDIyNCAxMjAiLz48L3N2Zz4=", "s5": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cGF0aCBmaWxsPSIjZmZmZmZmIiBkPSJNMTIwIDE2VjhhOCA4IDAgMCAxIDE2IDB2OGE4IDggMCAwIDEtMTYgMG04MCAzMmE4IDggMCAwIDAgNS42Ni0yLjM0bDgtOGE4IDggMCAwIDAtMTEuMzItMTEuMzJsLTggOEE4IDggMCAwIDAgMjAwIDQ4TTUwLjM0IDQ1LjY2YTggOCAwIDAgMCAxMS4zMi0xMS4zMmwtOC04YTggOCAwIDAgMC0xMS4zMiAxMS4zMlpNMjMyIDE3NnYyNGExNiAxNiAwIDAgMS0xNiAxNkg0MGExNiAxNiAwIDAgMS0xNi0xNnYtMjRhMTYgMTYgMCAwIDEgMTYtMTZ2LTMyYTg4IDg4IDAgMCAxIDg4LjY3LTg4YzQ4LjE1LjM2IDg3LjMzIDQwLjI5IDg3LjMzIDg5djMxYTE2IDE2IDAgMCAxIDE2IDE2bS05Ny4zMi04OC4xMUMxNTMuNjcgOTEuMDggMTY4IDEwOC4zMiAxNjggMTI4YTggOCAwIDAgMCAxNiAwYzAtMjcuNC0yMC4wNy01MS40My00Ni42OC01NS44OWE4IDggMCAxIDAtMi42NCAxNS43OE0yMTYgMjAwdi0yNEg0MHYyNHoiLz48L3N2Zz4=", "snow": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTcuNDYgMTQuNDFjMC0uMTkuMDctLjM2LjItLjVhLjYzLjYzIDAgMCAxIC40OC0uMjFjLjE5IDAgLjM2LjA3LjQ5LjIxcy4yLjMuMi41YzAgLjE5LS4wNy4zNS0uMi40OGEuNjczLjY3MyAwIDAgMS0uOTYgMGEuNjIuNjIgMCAwIDEtLjIxLS40OG0xLjk4IDBjMC0uMTkuMDctLjM2LjItLjVhLjYzLjYzIDAgMCAxIC40OC0uMjFoMy4yM2wtMi4yOC0yLjI4YS42LjYgMCAwIDEtLjIxLS40N2MwLS4xOS4wNy0uMzUuMjEtLjQ5cy4zLS4yMS40OS0uMjFzLjM1LjA3LjQ5LjIxbDIuMjcgMi4yN1Y5LjUyYzAtLjE5LjA3LS4zNi4yMS0uNXMuMy0uMjEuNS0uMjFxLjI4NSAwIC40OC4yMWMuMTMuMTQuMi4zLjIuNXYzLjIzbDIuMjktMi4zcS4yMS0uMjEuNDgtLjIxYy4xOCAwIC4zNS4wNy40OS4yMWMuMTIuMTQuMTguMy4xOC40OXMtLjA2LjM1LS4xOC40N2wtMi4yOCAyLjI4aDMuMjNjLjE4IDAgLjM0LjA3LjQ3LjIxcy4yLjMuMi41YzAgLjE4LS4wNy4zNC0uMi40N2EuNjUuNjUgMCAwIDEtLjQ3LjJoLTMuMjNsMi4yOSAyLjI5Yy4xMi4xMi4xOC4yOC4xOC40N3MtLjA2LjM1LS4xOC40OWMtLjE0LjE0LS4zMS4yMS0uNDkuMjFzLS4zNS0uMDctLjQ4LS4yMWwtMi4yOS0yLjN2My4yNGMwIC4xOS0uMDcuMzYtLjIuNDlzLS4yOS4yLS40OC4yYS43Mi43MiAwIDAgMS0uNS0uMmEuNjUuNjUgMCAwIDEtLjIxLS40OXYtMy4yMmwtMi4yNyAyLjI3Yy0uMTQuMTQtLjMuMjEtLjQ5LjIxcy0uMzUtLjA3LS40OS0uMjFzLS4yMS0uMy0uMjEtLjQ5cy4wNy0uMzQuMjEtLjQ3bDIuMy0yLjI5aC0zLjI0Yy0uMTkgMC0uMzUtLjA3LS40OC0uMmEuNTEuNTEgMCAwIDEtLjIyLS40NW0uMDEgNC44NGMwLS4xOC4wNy0uMzUuMjEtLjQ4Yy4xMi0uMTQuMjgtLjIxLjQ3LS4yMXMuMzUuMDcuNDkuMjFxLjIxLjIxLjIxLjQ4YzAgLjE4LS4wNy4zNS0uMjEuNDhjLS4xNC4xNC0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjMuNjMgMCAwIDEtLjIxLS40OG0wLTkuNzFjMC0uMTguMDctLjM1LjIxLS40OGMuMTItLjE0LjI4LS4yMS40Ny0uMjFzLjM1LjA3LjQ5LjIxcS4yMS4yMS4yMS40OGMwIC4yNy0uMDcuMzUtLjIxLjQ5cy0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjguNjggMCAwIDEtLjIxLS40OW00Ljg1IDExLjcxYzAtLjE4LjA3LS4zNC4yMS0uNDdzLjMtLjIuNS0uMmMuMTkgMCAuMzUuMDcuNDguMnMuMi4yOS4yLjQ3YzAgLjE5LS4wNy4zNi0uMi40OXMtLjI5LjItLjQ4LjJhLjcyLjcyIDAgMCAxLS41LS4yYS42NC42NCAwIDAgMS0uMjEtLjQ5bTAtMTMuNzFjMC0uMTkuMDctLjM2LjIxLS40OXMuMy0uMi41LS4yYy4xOSAwIC4zNS4wNy40OC4yYS42OC42OCAwIDAgMS0uNDggMS4xNmEuNzIuNzIgMCAwIDEtLjUtLjJhLjYyLjYyIDAgMCAxLS4yMS0uNDdtNC44NyAxMS43MWMwLS4xOC4wNy0uMzUuMjEtLjQ4Yy4xMi0uMTQuMjgtLjIxLjQ3LS4yMXMuMzUuMDcuNDkuMjFxLjIxLjIxLjIxLjQ4YzAgLjE4LS4wNy4zNS0uMjEuNDhjLS4xNC4xNC0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjMuNjMgMCAwIDEtLjIxLS40OG0wLTkuNzFjMC0uMTguMDctLjM1LjIxLS40OGMuMTItLjE0LjI4LS4yMS40Ny0uMjFzLjM1LjA3LjQ5LjIxcS4yMS4yMS4yMS40OGMwIC4yNy0uMDcuMzUtLjIxLjQ5cy0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjguNjggMCAwIDEtLjIxLS40OW0yIDQuODdjMC0uMTkuMDctLjM2LjItLjVzLjMtLjIxLjQ5LS4yMWMuMTggMCAuMzQuMDcuNDcuMjFzLjIuMy4yLjVjMCAuMTgtLjA3LjM0LS4yLjQ3YS42OC42OCAwIDAgMS0uOTYgMGEuNjUuNjUgMCAwIDEtLjItLjQ3Ii8+PC9zdmc+", "ice": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTQuMDkgMTYuOTVxMC0xLjc0IDEuMDgtMy4wOWMxLjA4LTEuMzUgMS42NC0xLjQ5IDIuNzQtMS43NGMuMzEtMS4zNyAxLjAxLTIuNDkgMi4xLTMuMzdzMi4zNS0xLjMyIDMuNzctMS4zMmMuODEgMCAxLjU1LjEzIDIuMi40YzAgLjAxIDAgLjAxLjAxLjAyYy44NC4zMiAxLjU4Ljg0IDIuMjEgMS41NWguMDNjLjY4LjczIDEuMTMgMS42IDEuMzcgMi42MmguMzFjMS4wOCAwIDIuMDIuMjkgMi44My44NnYtLjAxYy41My4zNi45OC44IDEuMzQgMS4zM3MuNiAxLjExLjczIDEuNzRjLjA0LjIxLjA2LjM4LjA4LjUydi4wNmMwIC4wMSAwIC4wNi4wMS4xN3MuMDEuMTkuMDEuMjR2LjAzYzAgLjg4LS4yMSAxLjctLjY0IDIuNDVjLS40Mi43NS0xIDEuMzYtMS43NCAxLjgxYy0uNzMuNDUtMS41NC42OS0yLjQyLjcyYy0uMTMgMC0uMi0uMDYtLjItLjE3di0xLjM0YzAtLjEzLjA3LS4xOS4yLS4xOWMuODYtLjA0IDEuNTgtLjM4IDIuMTgtMS4wMnMuOS0xLjM5LjktMi4yNmMwLS44OS0uMzItMS42NS0uOTctMi4yOWEzLjE1IDMuMTUgMCAwIDAtMi4zMS0uOTZIMTguM2MtLjEyIDAtLjE4LS4wNi0uMTgtLjE3bC0uMDgtLjU5Yy0uMS0xLS41Mi0xLjg2LTEuMjctMi41OWMtLjAxLS4wMS0uMDEtLjAyLS4wMi0uMDNzLS4wMi0uMDItLjAyLS4wM2MtLjAxLS4wMS0uMDItLjAyLS4wNC0uMDJjMC0uMDItLjAxLS4wMy0uMDItLjAzYTQuMjQgNC4yNCAwIDAgMC0yLjU2LTEuMTJjLS4wNy0uMDEtLjE4LS4wMS0uMzQtLjAxYy0xLjEgMC0yLjA1LjM3LTIuODYgMS4xcy0xLjI3IDEuNjQtMS4zNyAyLjcybC0uMDguNTljLS4wMy4wOS0uMTEuMTQtLjIyLjE0bC0uNDkuMDNjLS44NC4xLTEuNTUuNDYtMi4xMSAxLjA3cy0uODQgMS4zNC0uODQgMi4xOHYuMDRoLjAzcS4wMTUuNzIuMyAxLjM1Yy4yLjQzLjQ2Ljc5LjggMS4wOWMuMjEuMTguNDUuMzQuNzQuNDh2LjAxYy40LjE5LjguMyAxLjIxLjMyYy4xMSAwIC4xNy4wNi4xNy4xOHYxLjM0YzAgLjExLS4wNi4xNy0uMTcuMTdjLS41Mi0uMDMtMS4wMS0uMTMtMS40OC0uM3YuMDFjLS44My0uMjktMS41NC0uNzctMi4xMS0xLjQzcy0uOTUtMS40NC0xLjExLTIuMzF2LS4wM2MtLjAxLS4wMS0uMDEtLjAyLS4wMS0uMDRjLS4wNi0uMjYtLjA4LS41Ni0uMDgtLjg4bTUuNSA3LjE3YzAtLjAzLjAxLS4wNy4wMi0uMTNjLjAxLS4wNS4wMi0uMDkuMDItLjEybC4wOS0uNTljLjA3LS4yNC4yLS40MS40MS0uNTNzLjQzLS4xNC42OC0uMDhjLjIzLjA3LjM5LjIxLjUxLjQxYy4xMS4yMS4xMy40Mi4wNy42M2wtLjE0LjZjLS4xLjQ0LS4zNS42Ni0uNzYuNjZjLS4wMyAwLS4wOC0uMDEtLjE0LS4wMnMtLjEtLjAyLS4xNC0uMDJhLjc2Ljc2IDAgMCAxLS40Ni0uMzNhLjguOCAwIDAgMS0uMTYtLjQ4bS43NC0yLjk0YzAtLjI0LjA4LS40My4yMy0uNTlzLjM1LS4yMy41OS0uMjNzLjQzLjA4LjU5LjIzcy4yMy4zNS4yMy41OWMwIC4yMy0uMDguNDItLjIzLjU4cy0uMzUuMjMtLjU5LjIzcS0uMzQ1IDAtLjU3LS4yNGEuOC44IDAgMCAxLS4yNS0uNTdtMS42NCA1Ljk5YzAtLjA0LjAxLS4xMS4wNC0uMjNsLjEzLS41OWMuMDctLjIzLjIxLS40LjQxLS41MWMuMjEtLjEyLjQyLS4xNC42My0uMDdjLjIzLjA0LjQxLjE3LjUzLjM3cy4xNS40My4wOC42OGwtLjEzLjU5Yy0uMS40MS0uMzcuNjEtLjguNjFjLS4wNyAwLS4xNi0uMDEtLjI0LS4wM2EuODMuODMgMCAwIDEtLjQ5LS4zM2EuOS45IDAgMCAxLS4xNi0uNDltLjc5LTIuOTFhLjc4NC43ODQgMCAwIDEgLjgyLS44MWMuMjQgMCAuNDMuMDguNTkuMjNjLjE2LjE2LjIzLjM1LjIzLjU4YzAgLjI0LS4wOC40My0uMjMuNTljLS4xNi4xNi0uMzUuMjMtLjU5LjIzYy0uMjMgMC0uNDItLjA4LS41OC0uMjRhLjguOCAwIDAgMS0uMjQtLjU4bS42Mi0yLjI3cTAtLjE1LjAzLS4yN2wuMjMtLjljLjA3LS4yMy4yMS0uNDEuNDEtLjUzYy4yMS0uMTIuNDItLjE1LjY0LS4wOGMuMjQuMDcuNDEuMi41My40cy4xNC40MS4wNy42M2wtLjI2LjljLS4wOC4yOC0uMjIuNDYtLjQxLjU2cy0uNDEuMTItLjY0LjA2YS42Ni42NiAwIDAgMS0uNDUtLjNhLjcuNyAwIDAgMS0uMTUtLjQ3bTIuNzYgMi4xNGMwLS4wMyAwLS4wOC4wMS0uMTNzLjAxLS4wOS4wMS0uMTFsLjA5LS41OWMuMDctLjI0LjItLjQxLjQxLS41M3MuNDMtLjE0LjY4LS4wOGMuMjMuMDcuNC4yMS41MS40MWMuMTIuMjEuMTQuNDIuMDcuNjNsLS4xNC42Yy0uMS40NC0uMzUuNjYtLjc2LjY2Yy0uMDMgMC0uMDgtLjAxLS4xNC0uMDJzLS4xMS0uMDItLjE0LS4wMmEuNzcuNzcgMCAwIDEtLjQ1LS4zM2ExIDEgMCAwIDEtLjE1LS40OW0uNzQtMi45NGMwLS4yNC4wOC0uNDMuMjMtLjU5Yy4xNi0uMTYuMzUtLjIzLjU5LS4yM3MuNDMuMDguNTkuMjNjLjE2LjE2LjIzLjM1LjIzLjU5YS43ODMuNzgzIDAgMCAxLS44MS44MWMtLjI0IDAtLjQzLS4wOC0uNTgtLjI0YS43Ni43NiAwIDAgMS0uMjUtLjU3Ii8+PC9zdmc+", "wind": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTMuMSAxNi45N2MwIC4yNC4wOS40NS4yOC42MmMuMTYuMTkuMzcuMjguNjMuMjhIMTguN2MuMjkgMCAuNTMuMS43My4zcy4zLjQ1LjMuNzRxMCAuNDM1LS4zLjcyYy0uMi4xOS0uNDQuMjktLjc0LjI5Yy0uMjkgMC0uNTQtLjEtLjczLS4yOWEuNzYuNzYgMCAwIDAtLjYtLjI2Yy0uMjUgMC0uNDYuMDktLjY0LjI2cy0uMjcuMzgtLjI3LjYxYzAgLjI1LjA5LjQ2LjI4LjYzYy41Ni41NSAxLjIyLjgzIDEuOTYuODNxMS4xNyAwIDIuMDEtLjgxYy41Ni0uNTQuODMtMS4xOS44My0xLjk3cy0uMjgtMS40NC0uODQtMnMtMS4yMy0uODQtMi0uODRINC4wMWEuOS45IDAgMCAwLS42NC4yNnEtLjI3LjI1NS0uMjcuNjNtMC0zLjI4YzAgLjIzLjA5LjQzLjI4LjYxYy4xNy4xOC4zOC4yNi42My4yNmgyMC4wNGMuNzggMCAxLjQ1LS4yNyAyLjAxLS44MmMuNTYtLjU0Ljg0LTEuMi44NC0xLjk3cy0uMjgtMS40NC0uODQtMS45OXMtMS4yMy0uODMtMi4wMS0uODNjLS43NyAwLTEuNDIuMjctMS45NS44Yy0uMTguMTYtLjI3LjM4LS4yNy42N2MwIC4yNi4wOS40Ny4yNi42M3EuMjU1LjI0LjYzLjI0cS4zNiAwIC42My0uMjRjLjE5LS4yMS40Mi0uMzEuNy0uMzFjLjI5IDAgLjUzLjEuNzMuM3MuMy40NC4zLjczcTAgLjQzNS0uMy43MmMtLjIuMTktLjQ0LjI5LS43My4yOUg0LjAxYS45MS45MSAwIDAgMC0uOTEuOTEiLz48L3N2Zz4=", "cold": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTkuOTEgMTkuNTZhNS4xIDUuMSAwIDAgMSAyLjI0LTQuMjJWNS40MmMwLS44LjI3LTEuNDguODItMi4wM3MxLjIzLS44NCAyLjAzLS44NGMuODEgMCAxLjQ5LjI4IDIuMDQuODNjLjU1LjU2LjgzIDEuMjMuODMgMi4wM3Y5LjkyYy43MS40OSAxLjI1IDEuMTEgMS42NCAxLjg0cy41OCAxLjUzLjU4IDIuMzhjMCAuOTItLjIzIDEuNzgtLjY4IDIuNTZzLTEuMDcgMS40LTEuODUgMS44NXMtMS42My42OC0yLjU2LjY4Yy0uOTIgMC0xLjc3LS4yMy0yLjU1LS42OHMtMS40LTEuMDctMS44Ni0xLjg1cy0uNjgtMS42My0uNjgtMi41NW0xLjc2IDBjMCAuOTMuMzMgMS43My45OCAyLjM5czEuNDQuOTkgMi4zNi45OWMuOTMgMCAxLjczLS4zMyAyLjQtMXMxLjAxLTEuNDYgMS4wMS0yLjM3YzAtLjYyLS4xNi0xLjItLjQ4LTEuNzNxLS40OC0uNzk1LTEuMzItMS4yM2wtLjI4LS4xNGMtLjEtLjA0LS4xNS0uMTQtLjE1LS4yOVY1LjQyYzAtLjMyLS4xMS0uNTktLjM0LS44MWMtLjIzLS4yMS0uNTEtLjMyLS44NS0uMzJjLS4zMiAwLS42LjExLS44My4zMnMtLjM0LjQ4LS4zNC44MXYxMC43NGMwIC4xNS0uMDUuMjUtLjE0LjI5bC0uMjcuMTRxLS44MjUuNDM1LTEuMjkgMS4yM2MtLjMxLjUzLS40NiAxLjEtLjQ2IDEuNzQiLz48L3N2Zz4=", "clear": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTQuMzcgMTQuNjJjMC0uMjQuMDgtLjQ1LjI1LS42MmMuMTctLjE2LjM4LS4yNC42LS4yNGgyLjA0Yy4yMyAwIC40Mi4wOC41OC4yNWMuMTUuMTcuMjMuMzcuMjMuNjFzLS4wNy40NC0uMjIuNjFzLS4zNS4yNS0uNTguMjVINS4yM2MtLjIzIDAtLjQzLS4wOC0uNi0uMjVhLjgzLjgzIDAgMCAxLS4yNi0uNjFtMi44NiA2LjkzYzAtLjIzLjA4LS40My4yMy0uNjFsMS40Ny0xLjQzYy4xNS0uMTYuMzUtLjIzLjU5LS4yM3MuNDQuMDguNi4yM3MuMjQuMzQuMjQuNTdjMCAuMjQtLjA4LjQ2LS4yNC42NEw4LjcgMjIuMTRxLS42MTUuNDgtMS4yMyAwYS44LjggMCAwIDEtLjI0LS41OW0wLTEzLjg0YzAtLjIzLjA4LS40My4yMy0uNjFjLjItLjE3LjQxLS4yNS42NC0uMjVjLjIyIDAgLjQyLjA4LjU5LjI0bDEuNDMgMS40N2MuMTYuMTUuMjQuMzUuMjQuNTlxMCAuMzYtLjI0LjZjLS4yNC4yNC0uMzYuMjQtLjYuMjRzLS40NC0uMDgtLjU5LS4yNEw3LjQ3IDguMzJhLjg0Ljg0IDAgMCAxLS4yNC0uNjFtMi41NSA2LjkxYzAtLjkzLjIzLTEuOC43LTIuNnMxLjEtMS40NCAxLjkxLTEuOTFzMS42Ny0uNyAyLjYtLjdjLjcgMCAxLjM3LjE0IDIuMDIuNDJjLjY0LjI4IDEuMi42NSAxLjY2IDEuMTJjLjQ3LjQ3Ljg0IDEuMDIgMS4xMSAxLjY2cy40MSAxLjMyLjQxIDIuMDJjMCAuOTQtLjIzIDEuODEtLjcgMi42MXMtMS4xIDEuNDMtMS45IDEuOXMtMS42Ny43LTIuNjEuN3MtMS44MS0uMjMtMi42MS0uN3MtMS40My0xLjEtMS45LTEuOWMtLjQ1LS44MS0uNjktMS42OC0uNjktMi42Mm0xLjcgMGMwIC45OC4zNCAxLjgxIDEuMDMgMi41Yy42OC42OSAxLjUxIDEuMDQgMi40OSAxLjA0czEuODEtLjM1IDIuNS0xLjA0czEuMDQtMS41MiAxLjA0LTIuNWMwLS45Ni0uMzUtMS43OC0xLjA0LTIuNDdjLS42OS0uNjgtMS41Mi0xLjAyLTIuNS0xLjAyYy0uOTcgMC0xLjguMzQtMi40OCAxLjAyYy0uNy42OS0xLjA0IDEuNTEtMS4wNCAyLjQ3bTIuNjYgNy43OGMwLS4yNC4wOC0uNDQuMjUtLjZzLjM3LS4yNC42LS4yNGMuMjQgMCAuNDUuMDguNjEuMjRzLjI0LjM2LjI0LjZ2MS45OWMwIC4yNC0uMDguNDUtLjI1LjYycy0uMzcuMjUtLjYuMjVzLS40NC0uMDgtLjYtLjI1YS44NS44NSAwIDAgMS0uMjUtLjYyem0wLTE1LjVWNC44NmMwLS4yMy4wOC0uNDMuMjUtLjZTMTQuNzYgNCAxNSA0cy40My4wOC42LjI1cy4yNS4zNy4yNS42VjYuOWMwIC4yMy0uMDguNDItLjI1LjU4cy0uMzcuMjMtLjYuMjNzLS40NC0uMDgtLjYtLjIzcy0uMjYtLjM1LS4yNi0uNThtNS41MiAxMy4xOGMwLS4yMy4wOC0uNDIuMjMtLjU2Yy4xNS0uMTYuMzQtLjIzLjU2LS4yM2MuMjQgMCAuNDQuMDguNi4yM2wxLjQ2IDEuNDNjLjE2LjE3LjI0LjM4LjI0LjYxcy0uMDguNDMtLjI0LjU5cS0uNi40NjUtMS4yIDBsLTEuNDItMS40MmEuOTcuOTcgMCAwIDEtLjIzLS42NW0wLTEwLjkyYzAtLjI1LjA4LS40NS4yMy0uNTlsMS40Mi0xLjQ3YS44NC44NCAwIDAgMSAuNTktLjI0Yy4yNCAwIC40NC4wOC42LjI1Yy4xNy4xNy4yNS4zNy4yNS42YzAgLjI1LS4wOC40Ni0uMjQuNjJsLTEuNDYgMS40M3EtLjI3LjI0LS42LjI0Yy0uMjMgMC0uNDEtLjA4LS41Ni0uMjRzLS4yMy0uMzYtLjIzLS42bTIuMjYgNS40NmMwLS4yNC4wOC0uNDQuMjQtLjYycS4yNC0uMjQuNTctLjI0aDIuMDJjLjIzIDAgLjQzLjA5LjYuMjZzLjI2LjM3LjI2LjZzLS4wOS40My0uMjYuNnMtLjM3LjI1LS42LjI1aC0yLjAyYy0uMjMgMC0uNDMtLjA4LS41OC0uMjVzLS4yMy0uMzYtLjIzLS42Ii8+PC9zdmc+", "snow_dk": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iIzExMTIxNCIgZD0iTTcuNDYgMTQuNDFjMC0uMTkuMDctLjM2LjItLjVhLjYzLjYzIDAgMCAxIC40OC0uMjFjLjE5IDAgLjM2LjA3LjQ5LjIxcy4yLjMuMi41YzAgLjE5LS4wNy4zNS0uMi40OGEuNjczLjY3MyAwIDAgMS0uOTYgMGEuNjIuNjIgMCAwIDEtLjIxLS40OG0xLjk4IDBjMC0uMTkuMDctLjM2LjItLjVhLjYzLjYzIDAgMCAxIC40OC0uMjFoMy4yM2wtMi4yOC0yLjI4YS42LjYgMCAwIDEtLjIxLS40N2MwLS4xOS4wNy0uMzUuMjEtLjQ5cy4zLS4yMS40OS0uMjFzLjM1LjA3LjQ5LjIxbDIuMjcgMi4yN1Y5LjUyYzAtLjE5LjA3LS4zNi4yMS0uNXMuMy0uMjEuNS0uMjFxLjI4NSAwIC40OC4yMWMuMTMuMTQuMi4zLjIuNXYzLjIzbDIuMjktMi4zcS4yMS0uMjEuNDgtLjIxYy4xOCAwIC4zNS4wNy40OS4yMWMuMTIuMTQuMTguMy4xOC40OXMtLjA2LjM1LS4xOC40N2wtMi4yOCAyLjI4aDMuMjNjLjE4IDAgLjM0LjA3LjQ3LjIxcy4yLjMuMi41YzAgLjE4LS4wNy4zNC0uMi40N2EuNjUuNjUgMCAwIDEtLjQ3LjJoLTMuMjNsMi4yOSAyLjI5Yy4xMi4xMi4xOC4yOC4xOC40N3MtLjA2LjM1LS4xOC40OWMtLjE0LjE0LS4zMS4yMS0uNDkuMjFzLS4zNS0uMDctLjQ4LS4yMWwtMi4yOS0yLjN2My4yNGMwIC4xOS0uMDcuMzYtLjIuNDlzLS4yOS4yLS40OC4yYS43Mi43MiAwIDAgMS0uNS0uMmEuNjUuNjUgMCAwIDEtLjIxLS40OXYtMy4yMmwtMi4yNyAyLjI3Yy0uMTQuMTQtLjMuMjEtLjQ5LjIxcy0uMzUtLjA3LS40OS0uMjFzLS4yMS0uMy0uMjEtLjQ5cy4wNy0uMzQuMjEtLjQ3bDIuMy0yLjI5aC0zLjI0Yy0uMTkgMC0uMzUtLjA3LS40OC0uMmEuNTEuNTEgMCAwIDEtLjIyLS40NW0uMDEgNC44NGMwLS4xOC4wNy0uMzUuMjEtLjQ4Yy4xMi0uMTQuMjgtLjIxLjQ3LS4yMXMuMzUuMDcuNDkuMjFxLjIxLjIxLjIxLjQ4YzAgLjE4LS4wNy4zNS0uMjEuNDhjLS4xNC4xNC0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjMuNjMgMCAwIDEtLjIxLS40OG0wLTkuNzFjMC0uMTguMDctLjM1LjIxLS40OGMuMTItLjE0LjI4LS4yMS40Ny0uMjFzLjM1LjA3LjQ5LjIxcS4yMS4yMS4yMS40OGMwIC4yNy0uMDcuMzUtLjIxLjQ5cy0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjguNjggMCAwIDEtLjIxLS40OW00Ljg1IDExLjcxYzAtLjE4LjA3LS4zNC4yMS0uNDdzLjMtLjIuNS0uMmMuMTkgMCAuMzUuMDcuNDguMnMuMi4yOS4yLjQ3YzAgLjE5LS4wNy4zNi0uMi40OXMtLjI5LjItLjQ4LjJhLjcyLjcyIDAgMCAxLS41LS4yYS42NC42NCAwIDAgMS0uMjEtLjQ5bTAtMTMuNzFjMC0uMTkuMDctLjM2LjIxLS40OXMuMy0uMi41LS4yYy4xOSAwIC4zNS4wNy40OC4yYS42OC42OCAwIDAgMS0uNDggMS4xNmEuNzIuNzIgMCAwIDEtLjUtLjJhLjYyLjYyIDAgMCAxLS4yMS0uNDdtNC44NyAxMS43MWMwLS4xOC4wNy0uMzUuMjEtLjQ4Yy4xMi0uMTQuMjgtLjIxLjQ3LS4yMXMuMzUuMDcuNDkuMjFxLjIxLjIxLjIxLjQ4YzAgLjE4LS4wNy4zNS0uMjEuNDhjLS4xNC4xNC0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjMuNjMgMCAwIDEtLjIxLS40OG0wLTkuNzFjMC0uMTguMDctLjM1LjIxLS40OGMuMTItLjE0LjI4LS4yMS40Ny0uMjFzLjM1LjA3LjQ5LjIxcS4yMS4yMS4yMS40OGMwIC4yNy0uMDcuMzUtLjIxLjQ5cy0uMy4yMS0uNDkuMjFzLS4zNS0uMDctLjQ3LS4yMWEuNjguNjggMCAwIDEtLjIxLS40OW0yIDQuODdjMC0uMTkuMDctLjM2LjItLjVzLjMtLjIxLjQ5LS4yMWMuMTggMCAuMzQuMDcuNDcuMjFzLjIuMy4yLjVjMCAuMTgtLjA3LjM0LS4yLjQ3YS42OC42OCAwIDAgMS0uOTYgMGEuNjUuNjUgMCAwIDEtLjItLjQ3Ii8+PC9zdmc+", "ice_dk": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iIzExMTIxNCIgZD0iTTQuMDkgMTYuOTVxMC0xLjc0IDEuMDgtMy4wOWMxLjA4LTEuMzUgMS42NC0xLjQ5IDIuNzQtMS43NGMuMzEtMS4zNyAxLjAxLTIuNDkgMi4xLTMuMzdzMi4zNS0xLjMyIDMuNzctMS4zMmMuODEgMCAxLjU1LjEzIDIuMi40YzAgLjAxIDAgLjAxLjAxLjAyYy44NC4zMiAxLjU4Ljg0IDIuMjEgMS41NWguMDNjLjY4LjczIDEuMTMgMS42IDEuMzcgMi42MmguMzFjMS4wOCAwIDIuMDIuMjkgMi44My44NnYtLjAxYy41My4zNi45OC44IDEuMzQgMS4zM3MuNiAxLjExLjczIDEuNzRjLjA0LjIxLjA2LjM4LjA4LjUydi4wNmMwIC4wMSAwIC4wNi4wMS4xN3MuMDEuMTkuMDEuMjR2LjAzYzAgLjg4LS4yMSAxLjctLjY0IDIuNDVjLS40Mi43NS0xIDEuMzYtMS43NCAxLjgxYy0uNzMuNDUtMS41NC42OS0yLjQyLjcyYy0uMTMgMC0uMi0uMDYtLjItLjE3di0xLjM0YzAtLjEzLjA3LS4xOS4yLS4xOWMuODYtLjA0IDEuNTgtLjM4IDIuMTgtMS4wMnMuOS0xLjM5LjktMi4yNmMwLS44OS0uMzItMS42NS0uOTctMi4yOWEzLjE1IDMuMTUgMCAwIDAtMi4zMS0uOTZIMTguM2MtLjEyIDAtLjE4LS4wNi0uMTgtLjE3bC0uMDgtLjU5Yy0uMS0xLS41Mi0xLjg2LTEuMjctMi41OWMtLjAxLS4wMS0uMDEtLjAyLS4wMi0uMDNzLS4wMi0uMDItLjAyLS4wM2MtLjAxLS4wMS0uMDItLjAyLS4wNC0uMDJjMC0uMDItLjAxLS4wMy0uMDItLjAzYTQuMjQgNC4yNCAwIDAgMC0yLjU2LTEuMTJjLS4wNy0uMDEtLjE4LS4wMS0uMzQtLjAxYy0xLjEgMC0yLjA1LjM3LTIuODYgMS4xcy0xLjI3IDEuNjQtMS4zNyAyLjcybC0uMDguNTljLS4wMy4wOS0uMTEuMTQtLjIyLjE0bC0uNDkuMDNjLS44NC4xLTEuNTUuNDYtMi4xMSAxLjA3cy0uODQgMS4zNC0uODQgMi4xOHYuMDRoLjAzcS4wMTUuNzIuMyAxLjM1Yy4yLjQzLjQ2Ljc5LjggMS4wOWMuMjEuMTguNDUuMzQuNzQuNDh2LjAxYy40LjE5LjguMyAxLjIxLjMyYy4xMSAwIC4xNy4wNi4xNy4xOHYxLjM0YzAgLjExLS4wNi4xNy0uMTcuMTdjLS41Mi0uMDMtMS4wMS0uMTMtMS40OC0uM3YuMDFjLS44My0uMjktMS41NC0uNzctMi4xMS0xLjQzcy0uOTUtMS40NC0xLjExLTIuMzF2LS4wM2MtLjAxLS4wMS0uMDEtLjAyLS4wMS0uMDRjLS4wNi0uMjYtLjA4LS41Ni0uMDgtLjg4bTUuNSA3LjE3YzAtLjAzLjAxLS4wNy4wMi0uMTNjLjAxLS4wNS4wMi0uMDkuMDItLjEybC4wOS0uNTljLjA3LS4yNC4yLS40MS40MS0uNTNzLjQzLS4xNC42OC0uMDhjLjIzLjA3LjM5LjIxLjUxLjQxYy4xMS4yMS4xMy40Mi4wNy42M2wtLjE0LjZjLS4xLjQ0LS4zNS42Ni0uNzYuNjZjLS4wMyAwLS4wOC0uMDEtLjE0LS4wMnMtLjEtLjAyLS4xNC0uMDJhLjc2Ljc2IDAgMCAxLS40Ni0uMzNhLjguOCAwIDAgMS0uMTYtLjQ4bS43NC0yLjk0YzAtLjI0LjA4LS40My4yMy0uNTlzLjM1LS4yMy41OS0uMjNzLjQzLjA4LjU5LjIzcy4yMy4zNS4yMy41OWMwIC4yMy0uMDguNDItLjIzLjU4cy0uMzUuMjMtLjU5LjIzcS0uMzQ1IDAtLjU3LS4yNGEuOC44IDAgMCAxLS4yNS0uNTdtMS42NCA1Ljk5YzAtLjA0LjAxLS4xMS4wNC0uMjNsLjEzLS41OWMuMDctLjIzLjIxLS40LjQxLS41MWMuMjEtLjEyLjQyLS4xNC42My0uMDdjLjIzLjA0LjQxLjE3LjUzLjM3cy4xNS40My4wOC42OGwtLjEzLjU5Yy0uMS40MS0uMzcuNjEtLjguNjFjLS4wNyAwLS4xNi0uMDEtLjI0LS4wM2EuODMuODMgMCAwIDEtLjQ5LS4zM2EuOS45IDAgMCAxLS4xNi0uNDltLjc5LTIuOTFhLjc4NC43ODQgMCAwIDEgLjgyLS44MWMuMjQgMCAuNDMuMDguNTkuMjNjLjE2LjE2LjIzLjM1LjIzLjU4YzAgLjI0LS4wOC40My0uMjMuNTljLS4xNi4xNi0uMzUuMjMtLjU5LjIzYy0uMjMgMC0uNDItLjA4LS41OC0uMjRhLjguOCAwIDAgMS0uMjQtLjU4bS42Mi0yLjI3cTAtLjE1LjAzLS4yN2wuMjMtLjljLjA3LS4yMy4yMS0uNDEuNDEtLjUzYy4yMS0uMTIuNDItLjE1LjY0LS4wOGMuMjQuMDcuNDEuMi41My40cy4xNC40MS4wNy42M2wtLjI2LjljLS4wOC4yOC0uMjIuNDYtLjQxLjU2cy0uNDEuMTItLjY0LjA2YS42Ni42NiAwIDAgMS0uNDUtLjNhLjcuNyAwIDAgMS0uMTUtLjQ3bTIuNzYgMi4xNGMwLS4wMyAwLS4wOC4wMS0uMTNzLjAxLS4wOS4wMS0uMTFsLjA5LS41OWMuMDctLjI0LjItLjQxLjQxLS41M3MuNDMtLjE0LjY4LS4wOGMuMjMuMDcuNC4yMS41MS40MWMuMTIuMjEuMTQuNDIuMDcuNjNsLS4xNC42Yy0uMS40NC0uMzUuNjYtLjc2LjY2Yy0uMDMgMC0uMDgtLjAxLS4xNC0uMDJzLS4xMS0uMDItLjE0LS4wMmEuNzcuNzcgMCAwIDEtLjQ1LS4zM2ExIDEgMCAwIDEtLjE1LS40OW0uNzQtMi45NGMwLS4yNC4wOC0uNDMuMjMtLjU5Yy4xNi0uMTYuMzUtLjIzLjU5LS4yM3MuNDMuMDguNTkuMjNjLjE2LjE2LjIzLjM1LjIzLjU5YS43ODMuNzgzIDAgMCAxLS44MS44MWMtLjI0IDAtLjQzLS4wOC0uNTgtLjI0YS43Ni43NiAwIDAgMS0uMjUtLjU3Ii8+PC9zdmc+", "wind_dk": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iIzExMTIxNCIgZD0iTTMuMSAxNi45N2MwIC4yNC4wOS40NS4yOC42MmMuMTYuMTkuMzcuMjguNjMuMjhIMTguN2MuMjkgMCAuNTMuMS43My4zcy4zLjQ1LjMuNzRxMCAuNDM1LS4zLjcyYy0uMi4xOS0uNDQuMjktLjc0LjI5Yy0uMjkgMC0uNTQtLjEtLjczLS4yOWEuNzYuNzYgMCAwIDAtLjYtLjI2Yy0uMjUgMC0uNDYuMDktLjY0LjI2cy0uMjcuMzgtLjI3LjYxYzAgLjI1LjA5LjQ2LjI4LjYzYy41Ni41NSAxLjIyLjgzIDEuOTYuODNxMS4xNyAwIDIuMDEtLjgxYy41Ni0uNTQuODMtMS4xOS44My0xLjk3cy0uMjgtMS40NC0uODQtMnMtMS4yMy0uODQtMi0uODRINC4wMWEuOS45IDAgMCAwLS42NC4yNnEtLjI3LjI1NS0uMjcuNjNtMC0zLjI4YzAgLjIzLjA5LjQzLjI4LjYxYy4xNy4xOC4zOC4yNi42My4yNmgyMC4wNGMuNzggMCAxLjQ1LS4yNyAyLjAxLS44MmMuNTYtLjU0Ljg0LTEuMi44NC0xLjk3cy0uMjgtMS40NC0uODQtMS45OXMtMS4yMy0uODMtMi4wMS0uODNjLS43NyAwLTEuNDIuMjctMS45NS44Yy0uMTguMTYtLjI3LjM4LS4yNy42N2MwIC4yNi4wOS40Ny4yNi42M3EuMjU1LjI0LjYzLjI0cS4zNiAwIC42My0uMjRjLjE5LS4yMS40Mi0uMzEuNy0uMzFjLjI5IDAgLjUzLjEuNzMuM3MuMy40NC4zLjczcTAgLjQzNS0uMy43MmMtLjIuMTktLjQ0LjI5LS43My4yOUg0LjAxYS45MS45MSAwIDAgMC0uOTEuOTEiLz48L3N2Zz4=", "cold_dk": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMCAzMCI+PHBhdGggZmlsbD0iIzExMTIxNCIgZD0iTTkuOTEgMTkuNTZhNS4xIDUuMSAwIDAgMSAyLjI0LTQuMjJWNS40MmMwLS44LjI3LTEuNDguODItMi4wM3MxLjIzLS44NCAyLjAzLS44NGMuODEgMCAxLjQ5LjI4IDIuMDQuODNjLjU1LjU2LjgzIDEuMjMuODMgMi4wM3Y5LjkyYy43MS40OSAxLjI1IDEuMTEgMS42NCAxLjg0cy41OCAxLjUzLjU4IDIuMzhjMCAuOTItLjIzIDEuNzgtLjY4IDIuNTZzLTEuMDcgMS40LTEuODUgMS44NXMtMS42My42OC0yLjU2LjY4Yy0uOTIgMC0xLjc3LS4yMy0yLjU1LS42OHMtMS40LTEuMDctMS44Ni0xLjg1cy0uNjgtMS42My0uNjgtMi41NW0xLjc2IDBjMCAuOTMuMzMgMS43My45OCAyLjM5czEuNDQuOTkgMi4zNi45OWMuOTMgMCAxLjczLS4zMyAyLjQtMXMxLjAxLTEuNDYgMS4wMS0yLjM3YzAtLjYyLS4xNi0xLjItLjQ4LTEuNzNxLS40OC0uNzk1LTEuMzItMS4yM2wtLjI4LS4xNGMtLjEtLjA0LS4xNS0uMTQtLjE1LS4yOVY1LjQyYzAtLjMyLS4xMS0uNTktLjM0LS44MWMtLjIzLS4yMS0uNTEtLjMyLS44NS0uMzJjLS4zMiAwLS42LjExLS44My4zMnMtLjM0LjQ4LS4zNC44MXYxMC43NGMwIC4xNS0uMDUuMjUtLjE0LjI5bC0uMjcuMTRxLS44MjUuNDM1LTEuMjkgMS4yM2MtLjMxLjUzLS40NiAxLjEtLjQ2IDEuNzQiLz48L3N2Zz4="};
+const LISTS=[
+  {t:'List One',k:1,n:'Aiden Bella Chris Dennis Everett Frances Gretel Hayden Ira James Kamila Lane Mateo Noah Opal Pearl Quincy Ronan Solomon Thomas Uriel Vince Walden Xander Yardley Zane'},
+  {t:'List Two',k:2,n:'Asher Blanche Carson Diana Eli Fleur Gerald Holly Iver Jake Kendall Lawerence Melanie Nemo Onyx Penelope Quito Raven Simon Theresa Ulan Vera Wilson Xara Yolanda Zenette'},
+  {t:'List Three',k:3,n:'Amber Beau Chloe David Elara Finn Gaia Hadrian Inara Jaxxon Kiara Lysander Mira Nyx Orian Pandora Quillan Rhea Sylvie Thalia Ulric Vanessa Willow Xanthe Yale Zoe'},
+  {t:'Auxiliary',k:0,n:'Andrew Bernice Caroline Diego Eleanor Flynn Gloria Hunter Isabella Jacob Kassan Laura Maria Nicholas Odelia Preston Rachel Steven Tanya Victor Wanda'}
+].map(l=>({...l,n:l.n.split(' ')}));
+const CURRENT_LIST=2; // 2026-27
+const ROTA=[['2024-25',3],['2025-26',1],['2026-27',2],['2027-28',3],['2028-29',1],['2029-30',2]];
+function wrap(s,w){ const out=[];let cur=''; s.split(' ').forEach(t=>{ if((cur+' '+t).trim().length>w){out.push(cur);cur=t}else cur=(cur+' '+t).trim(); }); if(cur)out.push(cur); return out; }
+function stamp(d=new Date()){
+  const parts=new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',hour12:true,weekday:'short',month:'short',day:'numeric',year:'numeric',timeZoneName:'short'}).formatToParts(d);
+  const g=t=>(parts.find(p=>p.type===t)||{}).value||'';
+  return `${g('hour')}${g('minute')} ${g('dayPeriod')} ${g('timeZoneName')} ${g('weekday')} ${g('month')} ${g('day')} ${g('year')}`.toUpperCase();
+}
+function tick(){ $('clock').textContent=stamp(); }
+const FIPS={'01':'AL','02':'AK','04':'AZ','05':'AR','06':'CA','08':'CO','09':'CT','10':'DE','11':'DC','12':'FL','13':'GA','15':'HI','16':'ID','17':'IL','18':'IN','19':'IA','20':'KS','21':'KY','22':'LA','23':'ME','24':'MD','25':'MA','26':'MI','27':'MN','28':'MS','29':'MO','30':'MT','31':'NE','32':'NV','33':'NH','34':'NJ','35':'NM','36':'NY','37':'NC','38':'ND','39':'OH','40':'OK','41':'OR','42':'PA','44':'RI','45':'SC','46':'SD','47':'TN','48':'TX','49':'UT','50':'VT','51':'VA','53':'WA','54':'WV','55':'WI','56':'WY'};
+const ABBR2F=Object.fromEntries(Object.entries(FIPS).map(([k,v])=>[v,k]));
+const STNAME={AL:'ALABAMA',AK:'ALASKA',AZ:'ARIZONA',AR:'ARKANSAS',CA:'CALIFORNIA',CO:'COLORADO',CT:'CONNECTICUT',DE:'DELAWARE',DC:'DISTRICT OF COLUMBIA',FL:'FLORIDA',GA:'GEORGIA',HI:'HAWAII',ID:'IDAHO',IL:'ILLINOIS',IN:'INDIANA',IA:'IOWA',KS:'KANSAS',KY:'KENTUCKY',LA:'LOUISIANA',ME:'MAINE',MD:'MARYLAND',MA:'MASSACHUSETTS',MI:'MICHIGAN',MN:'MINNESOTA',MS:'MISSISSIPPI',MO:'MISSOURI',MT:'MONTANA',NE:'NEBRASKA',NV:'NEVADA',NH:'NEW HAMPSHIRE',NJ:'NEW JERSEY',NM:'NEW MEXICO',NY:'NEW YORK',NC:'NORTH CAROLINA',ND:'NORTH DAKOTA',OH:'OHIO',OK:'OKLAHOMA',OR:'OREGON',PA:'PENNSYLVANIA',RI:'RHODE ISLAND',SC:'SOUTH CAROLINA',SD:'SOUTH DAKOTA',TN:'TENNESSEE',TX:'TEXAS',UT:'UTAH',VT:'VERMONT',VA:'VIRGINIA',WA:'WASHINGTON',WV:'WEST VIRGINIA',WI:'WISCONSIN',WY:'WYOMING'};
+const VIEWS=[
+  ['US','National',null],
+  ['NE','Northeast','ME NH VT MA RI CT NY NJ PA DE MD'],
+  ['GL','Great Lakes','MN WI MI IL IN OH'],
+  ['PL','Plains','ND SD NE KS IA MO'],
+  ['SC','South Central','OK TX AR LA'],
+  ['SE','Southeast','KY TN VA WV NC SC GA AL MS FL'],
+  ['RK','Rockies','MT WY CO UT ID NM'],
+  ['WC','West Coast','WA OR CA NV AZ'],
+  ['AK','Alaska','AK'],
+  ['OK','Oklahoma','OK'],
+  ['TX','Texas','TX']
+];
+
+/* ================= scale ================= */
+const SIGS=[1,2,3,4,5];
+const SIGNALS={
+  1:{w:'Minor',c:'var(--w1)',p:'Slick spots and slow travel. Short, local disruptions.',a:['Allow extra travel time','Watch for icy bridges and overpasses','Check forecasts before heading out']},
+  2:{w:'Moderate',c:'var(--w2)',p:'Snow or ice covered roads for part of a day. Delays, closures and scattered outages.',a:['Finish errands before it starts','Keep a winter kit in your vehicle','Protect exposed pipes and bring pets inside']},
+  3:{w:'Major',c:'var(--w3)',p:'Travel difficult to impossible for a day or more. Widespread closures, outages likely with ice or wind.',a:['Avoid travel once it begins','Charge devices and ready a safe heat source','Stock several days of food, water and medicine']},
+  4:{w:'Severe',c:'var(--w4)',p:'Region shut down for days. Widespread outages, stranded motorists, tree and roof damage.',a:['Stay off the roads entirely','Prepare to shelter in place for days','Check on neighbors, especially older adults']},
+  5:{w:'Extreme',c:'var(--w5)',p:'Historic. Infrastructure failure, recovery a week or longer. Life-threatening for anyone exposed.',a:['Remain sheltered until officials give the all clear','Run generators outdoors only, away from windows','Call 911 only for life-threatening emergencies']}
+};
+const CAT={1:{n:'Notable',d:'Disruptive for the areas it hits. Named so impacts can be tracked.'},2:{n:'Significant',d:'Widespread disruption across a region or a major metro.'},3:{n:'High-impact',d:'Multi-day shutdowns over a large area or several metros.'},4:{n:'Crippling',d:'A region or megalopolis paralyzed for days.'},5:{n:'Historic',d:'A storm remembered for decades.'}};
+const CATGRAY={1:'#5c5c5a',2:'#828280',3:'#a9a9a6',4:'#d2d2ce',5:'#ffffff'};
+const SNOW_T=[0.15,0.30,0.50,0.75,1.0], SNOW_ABS=[6,12,18,24,30], ICE_T=[0.05,0.10,0.25,0.50,0.75], WIND_T=[25,35,45,55,65], COLD_T=[10,0,-10,-20,-30];
+const LEVEL_W={1:1,2:3,3:9,4:27,5:81}, POP_W=0.6, AREA_W=0.4, POP_REF=1e6, AREA_REF=50000, CAT_T=[1,6,25,80,200];
+function level(v,th,desc){ let l=0; th.forEach((t,i)=>{ if(desc? v<=t : v>=t) l=i+1; }); return l; }
+function countyLevel(snow,s24,ice,gust,chill,thr){
+  const L={snow:Math.max(level(snow/thr,SNOW_T),level(snow,SNOW_ABS)), ice:level(ice,ICE_T)};
+  L.wind= L.snow>=1? Math.min(level(gust,WIND_T),L.snow+1):0;
+  L.cold= (L.snow>=1||L.ice>=1)? level(chill,COLD_T,true):0;
+  const mx=Math.max(L.snow,L.ice,L.wind), strong=[L.snow,L.ice,L.wind].filter(x=>x>=3).length;
+  const bump= mx>0 && mx<5 && (strong>=2 || (L.cold>=3 && Math.max(L.snow,L.ice)>=2));
+  let lvl= bump? mx+1 : mx; const sb= s24>=thr && s24>0; if(sb) lvl=5;
+  return {lvl,sb,L,bumped:bump&&!sb,coldBump:bump&&strong<2};
+}
+function stormIndex(fs,lvlOf){ let t=0; fs.forEach(f=>{ const l=lvlOf(f); if(!l) return; const c=GRID[f]||{}; t+=LEVEL_W[l]*(POP_W*(c.pop||0)/POP_REF+AREA_W*(c.area||1500)/AREA_REF); }); return t; }
+const catOf=ix=>level(ix,CAT_T);
+const snowNeed=(thr,l)=>Math.min(thr*SNOW_T[l-1],SNOW_ABS[l-1]);
+
+/* ================= helpers ================= */
+const stOf=f=> FIPS[f.slice(0,2)]||'';
+const cname=f=> (GRID&&GRID[f]&&GRID[f].n) || (GEO&&GEO.byF[f]&&GEO.byF[f].n) || f;
+function fmtPop(n){ return n>=1e6? (n/1e6).toFixed(1)+'M' : n>=1e3? Math.round(n/1e3)+'K' : String(n||0); }
+function fmtT(d){ return d.toLocaleString('en-US',{weekday:'short',hour:'numeric',minute:'2-digit'}); }
+function glyph(n){ return `<rect width="100" height="100" fill="#000"/><image href="${ICON['s'+n]}" x="18" y="10" width="64" height="64"/><rect x="0" y="86" width="100" height="14" fill="${SIGNALS[n].c}"/>`; }
+function clearGlyph(){ return `<rect width="100" height="100" fill="#000"/><image href="${ICON.clear}" x="20" y="16" width="60" height="60"/>`; }
+function catChip(c){ return c? `<span class="chip" style="background:${CATGRAY[c]};color:${c<=2?'#fff':'#000'}">W${c} ${CAT[c].n}</span>` : '<span class="chip" style="background:#fff">Below W1</span>'; }
+function sigChip(s){ return `<span class="sigtag" style="background:${SIGNALS[s].c}">Signal ${s} ${SIGNALS[s].w}</span>`; }
+function sigBlock(svgId,labId,nameId,sig){
+  if(sig){ $(svgId).innerHTML=glyph(sig); $(labId).textContent=`Signal ${sig}`; $(nameId).textContent=SIGNALS[sig].w; }
+  else { $(svgId).innerHTML=clearGlyph(); $(labId).textContent='None'; $(nameId).textContent='No signals in effect'; }
+}
+function copyPre(pre,btn){
+  const t=$(pre).textContent, b=$(btn), label=b.textContent;
+  const done=()=>{ b.textContent='Copied'; setTimeout(()=>b.textContent=label,1500); };
+  const sel=()=>{ const r=document.createRange(); r.selectNodeContents($(pre)); const s=getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent='Selected, press Cmd+C'; setTimeout(()=>b.textContent=label,2500); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(sel); } else sel();
+}
+
+/* ================= advisory writer ================= */
+const IMPACT={
+  snow:{1:'Slippery roads, especially on bridges, overpasses and untreated surfaces.',2:'Snow-covered roads and hazardous travel. Expect slow commutes, delays and some closures.',3:'Travel will be very difficult to impossible. Widespread closures of schools, businesses and roads are likely.',4:'Roads impassable for an extended period. Communities may be isolated and roofs stressed by heavy snow.',5:'Historic snowfall. Travel impossible for days, with structural damage and long-term disruption.'},
+  ice:{1:'A light glaze on untreated surfaces. Walkways and roads will be slick.',2:'Icy roads and scattered tree limb damage. Isolated power outages possible.',3:'Power outages and tree damage are likely from ice on lines and branches. Travel will be extremely dangerous.',4:'Widespread, long-duration power outages. Many trees and power lines down.',5:'Catastrophic ice accumulation. Outages could last days to weeks.'},
+  wind:{1:'Areas of blowing snow.',2:'Blowing and drifting snow will reduce visibility at times.',3:'Blizzard conditions with near-zero visibility at times. Travel could become deadly.',4:'Whiteout conditions and deep drifts. Stranded motorists are likely.',5:'Extreme whiteout conditions with damaging winds.'},
+  cold:{1:'Cold wind chills behind the storm.',2:'Wind chills could cause frostbite on exposed skin in 30 minutes.',3:'Dangerous wind chills. Frostbite can occur in 10 to 20 minutes.',4:'Life-threatening wind chills. Frostbite can occur in 10 minutes or less.',5:'Extreme cold. Frostbite can occur within 5 minutes.'}
+};
+const HZ=['snow','ice','wind','cold'];
+function partOfDay(d,tz){
+  const h=+new Intl.DateTimeFormat('en-US',{hour:'numeric',hourCycle:'h23',timeZone:tz}).format(d);
+  const wd=new Intl.DateTimeFormat('en-US',{weekday:'long',timeZone:tz}).format(d);
+  if(h<5) return `late ${new Intl.DateTimeFormat('en-US',{weekday:'long',timeZone:tz}).format(new Date(d.getTime()-6*3600e3))} night`;
+  if(h<12) return `${wd} morning`; if(h<17) return `${wd} afternoon`; if(h<21) return `${wd} evening`; return `${wd} night`;
+}
+function stampTZ(d,tz){
+  const parts=new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',hour12:true,weekday:'short',month:'short',day:'numeric',year:'numeric',timeZoneName:'short',timeZone:tz}).formatToParts(d);
+  const g=t=>(parts.find(p=>p.type===t)||{}).value||'';
+  return `${g('hour')}${g('minute')} ${g('dayPeriod')} ${g('timeZoneName')} ${g('weekday')} ${g('month')} ${g('day')} ${g('year')}`.toUpperCase();
+}
+function rng(a,b,unit){ const r=x=>x<1? '1':String(Math.round(x)); if(Math.round(a)===Math.round(b)) return `around ${r(b)} ${unit}`; return `${r(a)} to ${r(b)} ${unit}`; }
+function tenths(x){ const t=Math.round(x*100)/100; return t<0.1? 'a light glaze' : `up to ${t.toFixed(2).replace(/^0/,'')} of an inch`; }
+// rows: f -> {lvl,onset,peak,end,snow,s24,ice,gust,chill,sb,L:[s,i,w,c]}
+function segmentsFor(storm,rows){
+  const groups={};
+  storm.counties.forEach(f=>{ const r=rows[f]; if(!r||!r.lvl) return;
+    const mask=HZ.map((h,i)=>r.L[i]>0?h[0]:'').join('')+(r.sb?'B':'');
+    const key=r.lvl+'|'+mask; (groups[key]=groups[key]||[]).push(f); });
+  return Object.entries(groups).map(([k,fs])=>({key:k,lvl:+k.split('|')[0],counties:fs})).sort((a,b)=>b.lvl-a.lvl||b.counties.length-a.counties.length);
+}
+function writeAdvisory(storm,seg,rows,runDate,opts={}){
+  const fs=seg.counties, R=fs.map(f=>rows[f]), lvl=seg.lvl, tz=(GRID[fs[0]]&&GRID[fs[0]].tz)||'America/Chicago';
+  const U=s=>s.toUpperCase(), mx=k=>Math.max(...R.map(r=>r[k]||0)), mn=k=>Math.min(...R.map(r=>r[k]??999));
+  const Lmax=i=>Math.max(...R.map(r=>r.L[i]));
+  const sb=R.some(r=>r.sb), ice3=Lmax(1)>=3, bliz=R.some(r=>r.gust>=35&&r.L[0]>=2);
+  const L=[];
+  L.push('WINTER STORM CENTER'+(opts.scenario?'  ***SCENARIO, NOT A REAL FORECAST***':''));
+  L.push(`WINTER STORM ${U(storm.name)} ADVISORY NUMBER ${storm.adv||1}`);
+  L.push(`ISSUED ${stampTZ(runDate,tz)}`,'');
+  L.push(`WINTER STORM ${U(storm.name)}: CATEGORY W${storm.cat} (${U(CAT[storm.cat]?CAT[storm.cat].n:'below W1')}), STORM INDEX ${(+storm.index).toFixed(1)}`,'');
+  L.push(`...SIGNAL ${lvl} (${U(SIGNALS[lvl].w)} IMPACTS) FOR...`);
+  const byS={}; fs.forEach(f=>{ (byS[stOf(f)]=byS[stOf(f)]||[]).push(U(cname(f))); });
+  Object.keys(byS).sort().forEach(st=>wrap(`${STNAME[st]||st}: ${byS[st].sort().join(', ')}.`,68).forEach(l=>L.push(l)));
+  L.push('');
+  if(sb) L.push('...SUPER BLIZZARD: LOCAL 24-HOUR SNOWFALL RECORDS IN JEOPARDY...');
+  if(ice3) L.push('...ICE STORM CONDITIONS EXPECTED...');
+  if(bliz) L.push('...BLIZZARD CONDITIONS POSSIBLE...');
+  if(sb||ice3||bliz) L.push('');
+  // WHAT
+  const what=[];
+  const sMax=mx('snow'), sMin=Math.min(...R.map(r=>r.snow||0)), iMax=mx('ice');
+  if(sMax>=0.5){ const heavy=Lmax(0)>=3; what.push(`${heavy?'Heavy snow':'Snow'} expected. Total snow accumulations of ${rng(Math.max(sMin,0.5),sMax,'inches')}, with up to ${Math.round(mx('s24'))||1} inches in 24 hours.`); }
+  if(iMax>0) what.push(`${iMax>=0.25?'Significant icing':'Freezing rain'} with ice accumulations of ${tenths(iMax)}.`);
+  if(Lmax(2)>0) what.push(`Winds gusting as high as ${Math.round(mx('gust'))} mph.`);
+  if(Lmax(3)>0){ const c=mn('chill'); what.push(`Wind chills as low as ${c<0? Math.abs(c)+' below zero':c+' above zero'}.`); }
+  wrap(`* WHAT...${what.join(' ')}`,68).forEach(l=>L.push(l)); L.push('');
+  // WHEN
+  const on=Math.min(...R.map(r=>r.onset??999)), pk=R.map(r=>r.peak).filter(x=>x!=null).sort((a,b)=>a-b)[Math.floor(R.length/2)], en=Math.max(...R.map(r=>r.end??0));
+  const at=h=>new Date(runDate.getTime()+h*3600e3);
+  let when;
+  if(on<=0) when=`Ongoing now. Heaviest ${pk!=null&&pk>0? partOfDay(at(pk),tz):'now'}, ending ${partOfDay(at(en),tz)}.`;
+  else when=`Begins ${partOfDay(at(on),tz)}, heaviest ${partOfDay(at(pk??on),tz)}, ending ${partOfDay(at(en),tz)}.`;
+  wrap(`* WHEN...${when}`,68).forEach(l=>L.push(l)); L.push('');
+  // IMPACTS
+  const imp=[]; HZ.forEach((h,i)=>{ const l=Lmax(i); if(l) imp.push(IMPACT[h][l]); });
+  wrap(`* IMPACTS...${imp.join(' ')}`,68).forEach(l=>L.push(l)); L.push('');
+  wrap(`* SIGNAL ${lvl} MEANS...${SIGNALS[lvl].p}`,68).forEach(l=>L.push(l)); L.push('');
+  L.push('PRECAUTIONARY/PREPAREDNESS ACTIONS...','');
+  const soon=on<=12;
+  const lead= on<=0? 'Conditions are under way.' : soon? `Conditions begin within 12 hours, ${partOfDay(at(on),tz)}.` : `There is still time to prepare before conditions begin ${partOfDay(at(on),tz)}.`;
+  wrap(lead+(soon? (lvl>=3?' Do not travel unless it is an emergency.':' Slow down and use extra caution.') : ''),68).forEach(l=>L.push(l));
+  SIGNALS[lvl].a.forEach(a=>L.push(`* ${a}.`));
+  L.push('','$$');
+  return L.join('\n');
+}
+
+/* ================= map ================= */
+let GEO=null, GRID=null, PATHS={}, TAB='live', LIVE=null, LIVE_ROWS={}, LIVE_SIG={}, LIVE_MON=new Set(), STORM_OF={};
+let SEGS=[], SEG_OF={}, gLevel=3, gCounty=null;
+let SC={snow:{},ice:{}}, scBrush={k:'snow',v:6}, painting=false, SC_RES=null;
+const map=$('map'), tip=$('tip');
+const SNOW_BINS=[[0,2],[2,4],[4,6],[6,8],[8,12],[12,18],[18,99]];
+const SNOW_COL=['#e9f1fb','#c6dbef','#9ecae1','#6baed6','#3f8fc8','#1f64a8','#0b3d78'];
+function binColor(v){ const i=SNOW_BINS.findIndex(b=>v>=b[0]&&v<b[1]); return SNOW_COL[i<0?SNOW_COL.length-1:i]; }
+function fillOf(f){
+  if(TAB==='live'){ const s=LIVE_SIG[f]; if(s) return SIGNALS[s].c; if(LIVE_MON.has(f)) return 'url(#hatch)'; return 'var(--scope-fill)'; }
+  if(TAB==='guidance'){ const g=GRID&&GRID[f]; return g? binColor(snowNeed(g.thr,gLevel)) : 'var(--scope-fill)'; }
+  if(TAB==='scenario'){ const s=SC_RES&&SC_RES.sig[f]; if(s) return SIGNALS[s].c; if(SC.snow[f]||SC.ice[f]) return '#3a3a3a'; return 'var(--scope-fill)'; }
+  return 'var(--scope-fill)';
+}
+function paintOne(f){ const p=PATHS[f]; if(p) p.style.fill=fillOf(f); }
+function paintAll(){ for(const f in PATHS) paintOne(f); }
+$('views').innerHTML=VIEWS.map(([k,l])=>`<button type="button" class="chipbtn" data-v="${k}">${l}</button>`).join('');
+function zoomTo(bb,key){
+  document.querySelectorAll('#views .chipbtn').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===key));
+  const padX=bb.w*0.04+6, padY=bb.h*0.04+6; let x=bb.x-padX,y=bb.y-padY,w=bb.w+2*padX,h=bb.h+2*padY;
+  const ar=975/610; if(w/h<ar){ const nw=h*ar; x-=(nw-w)/2; w=nw; } else { const nh=w/ar; y-=(nh-h)/2; h=nh; }
+  map.setAttribute('viewBox',`${x} ${y} ${w} ${h}`);
+}
+function setView(k){
+  const v=VIEWS.find(x=>x[0]===k)||VIEWS[0]; let bb={x:0,y:0,w:975,h:610};
+  if(v[2]&&GEO){ let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; v[2].split(' ').forEach(a=>{ const s=GEO.states[ABBR2F[a]]; if(!s) return; x0=Math.min(x0,s.b[0]);y0=Math.min(y0,s.b[1]);x1=Math.max(x1,s.b[2]);y1=Math.max(y1,s.b[3]); }); bb={x:x0,y:y0,w:x1-x0,h:y1-y0}; }
+  zoomTo(bb,v[0]); try{ localStorage.setItem('wsc-view-us',v[0]); }catch(e){}
+}
+function zoomCounties(fs){
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  fs.forEach(f=>{ const p=PATHS[f]; if(!p) return; const b=p.getBBox(); x0=Math.min(x0,b.x);y0=Math.min(y0,b.y);x1=Math.max(x1,b.x+b.width);y1=Math.max(y1,b.y+b.height); });
+  if(x1>x0){ const w=Math.max(x1-x0,90), h=Math.max(y1-y0,60); zoomTo({x:(x0+x1)/2-w/2,y:(y0+y1)/2-h/2,w,h},''); $('mapSec').scrollIntoView({behavior:'smooth',block:'nearest'}); }
+}
+$('views').addEventListener('click',e=>{ const b=e.target.closest('.chipbtn'); if(b) setView(b.dataset.v); });
+function tipLines(f){
+  const g=GRID&&GRID[f], L=[];
+  if(TAB==='live'){
+    const s=LIVE_SIG[f], r=LIVE_ROWS[f];
+    L.push(`${cname(f)}, ${stOf(f)} · ${s?`Signal ${s} ${SIGNALS[s].w}`: LIVE_MON.has(f)?'Monitored, no signal':'No signal'}`);
+    if(STORM_OF[f]) L.push(`Winter Storm ${STORM_OF[f]}`);
+    if(r) L.push(`snow ${r.snow} in (24 h ${r.s24}) · ice ${r.ice} in · gust ${r.gust} mph · chill ${r.chill??'-'} °F${r.sb?' · SUPER BLIZZARD':''}`);
+    if(s) L.push('Click for the advisory');
+  } else if(TAB==='guidance'&&g){
+    L.push(`${cname(f)}, ${stOf(f)} · Signal ${gLevel} at ${snowNeed(g.thr,gLevel).toFixed(1)} in of snow`);
+    L.push(`24-h record ${g.thr} in`+(g.src==='house'?' (house rule)':g.rec?` (${g.rec[1]||''})`:''));
+  } else if(TAB==='scenario'){
+    const s=SC_RES&&SC_RES.sig[f];
+    L.push(`${cname(f)}, ${stOf(f)} · ${s?`Signal ${s} ${SIGNALS[s].w}`:'No signal'}`);
+    if(SC.snow[f]||SC.ice[f]) L.push(`painted: snow ${SC.snow[f]||0} in · ice ${SC.ice[f]||0} in`);
+  }
+  if(g&&g.pop) L.push(`Population ${g.pop.toLocaleString('en-US')}`);
+  return L;
+}
+function setPaint(f){
+  if(scBrush.k==='erase'){ delete SC.snow[f]; delete SC.ice[f]; }
+  else if(scBrush.v) SC[scBrush.k][f]=scBrush.v; else delete SC[scBrush.k][f];
+  paintOne(f);
+}
+map.addEventListener('pointerdown',e=>{
+  const p=e.target.closest('path.cty'); if(!p) return; const f=p.dataset.f;
+  if(TAB==='scenario'){ painting=true; setPaint(f); e.preventDefault(); return; }
+  if(TAB==='live' && LIVE_SIG[f]){ showSegFor(f); }
+  if(TAB==='guidance'){ gCounty=f; renderGuideCounty(); }
+});
+window.addEventListener('pointerup',()=>{ if(painting){ painting=false; runScenario(); saveDraft(); } });
+map.addEventListener('pointermove',e=>{
+  const el=document.elementFromPoint(e.clientX,e.clientY); const p=el&&el.closest&&el.closest('path.cty');
+  if(painting&&p) setPaint(p.dataset.f);
+  if(p){ const r=map.parentNode.getBoundingClientRect(); tip.hidden=false; tip.innerHTML=tipLines(p.dataset.f).map((l,i)=>i?`<div class="tsub">${l}</div>`:`<div>${l}</div>`).join('');
+    const tw=tip.offsetWidth||220; let x=e.clientX-r.left+14,y=e.clientY-r.top+14; if(x>r.width-tw-8) x=Math.max(4,e.clientX-r.left-tw-14); if(y>r.height-tip.offsetHeight-8) y=Math.max(4,e.clientY-r.top-tip.offsetHeight-10); tip.style.left=x+'px'; tip.style.top=y+'px'; }
+  else tip.hidden=true;
+});
+map.addEventListener('pointerleave',()=>{ tip.hidden=true; });
+function buildMap(){
+  const ns='http://www.w3.org/2000/svg';
+  const nation=document.createElementNS(ns,'path'); nation.setAttribute('d',GEO.nation); nation.setAttribute('class','nation'); map.appendChild(nation);
+  const g=document.createElementNS(ns,'g');
+  GEO.counties.forEach(c=>{ const p=document.createElementNS(ns,'path'); p.setAttribute('d',c.d); p.setAttribute('class','cty'); p.dataset.f=c.f; g.appendChild(p); PATHS[c.f]=p; });
+  map.appendChild(g);
+  const b=document.createElementNS(ns,'path'); b.setAttribute('d',GEO.border); b.setAttribute('class','border'); map.appendChild(b);
+  $('mapLoading').remove();
+}
+
+/* ================= text window (advisories) ================= */
+let TEXT_SRC='live';
+function buildSegs(storms,rows,runDate,opts){
+  const out=[];
+  storms.forEach(s=>{ segmentsFor(s,rows).forEach(seg=>out.push({storm:s,seg,label:`${s.name} · Signal ${seg.lvl} ${SIGNALS[seg.lvl].w} · ${seg.counties.length} ${seg.counties.length===1?'county':'counties'} (${[...new Set(seg.counties.map(stOf))].join(', ')})`,text:()=>writeAdvisory(s,seg,rows,runDate,opts)})); });
+  return out;
+}
+function renderSegSel(){
+  SEG_OF={}; SEGS.forEach((s,i)=>s.seg.counties.forEach(f=>SEG_OF[f]=i));
+  $('segSel').innerHTML= SEGS.length? SEGS.map((s,i)=>`<option value="${i}">${s.label}</option>`).join('') : '<option>No advisories in effect</option>';
+  $('segSel').disabled=!SEGS.length;
+  $('advText').textContent= SEGS.length? SEGS[0].text() : (TEXT_SRC==='live'? 'WINTER STORM CENTER\n\nNO NAMED STORMS. NO SIGNALS ARE IN EFFECT.\n\n$$' : 'Paint snow or ice to generate scenario advisories.');
+}
+$('segSel').addEventListener('change',()=>{ const s=SEGS[+$('segSel').value]; if(s) $('advText').textContent=s.text(); });
+function showSegFor(f){ const i=SEG_OF[f]; if(i==null) return; $('segSel').value=i; $('advText').textContent=SEGS[i].text(); $('textSec').scrollIntoView({behavior:'smooth',block:'nearest'}); }
+$('copyAdv').addEventListener('click',()=>copyPre('advText','copyAdv'));
+
+/* ================= live ================= */
+function ingestLive(doc){
+  LIVE=doc; LIVE_ROWS={}; LIVE_SIG={}; LIVE_MON=new Set(); STORM_OF={};
+  if(!doc||doc.v!==3){ LIVE=null; return; }
+  Object.entries(doc.c||{}).forEach(([f,a])=>{ LIVE_ROWS[f]={lvl:a[0],onset:a[1],peak:a[2],end:a[3],snow:a[4],s24:a[5],ice:a[6],gust:a[7],chill:a[8],sb:!!a[9],L:a.slice(10,14)}; });
+  (doc.storms||[]).forEach(s=>{ s.counties.forEach(f=>{ if(s.name){ LIVE_SIG[f]=LIVE_ROWS[f]?LIVE_ROWS[f].lvl:0; STORM_OF[f]=s.name; } else LIVE_MON.add(f); }); });
+}
+function onsetText(h){ if(h==null) return 'unknown'; if(h<=0) return 'under way'; if(h<12) return 'within 12 h'; if(h<24) return 'in 12 to 24 h'; if(h<48) return 'in 24 to 48 h'; return 'in 48 to 72 h'; }
+function sysLabel(s){ const top=s.counties.slice().sort((a,b)=>((LIVE_ROWS[b]||{}).lvl||0)-((LIVE_ROWS[a]||{}).lvl||0))[0]; return `${cname(top)}, ${stOf(top)}${s.counties.length>1?` +${s.counties.length-1}`:''}`; }
+function renderLive(){
+  if(!LIVE){ $('hTitle').textContent='Waiting for the first run'; $('liveStatus').textContent='The scheduled run writes here every 6 hours.'; SEGS=[]; renderSegSel(); return; }
+  const t=new Date(LIVE.run), next=new Date(t.getTime()+6*3600e3), st=LIVE.state||{};
+  const named=(LIVE.storms||[]).filter(s=>s.name), mon=(LIVE.storms||[]).filter(s=>!s.name);
+  const sigs=Object.values(LIVE_SIG).filter(Boolean); const maxSig=sigs.length?Math.max(...sigs):0;
+  const pop=Object.keys(LIVE_SIG).reduce((a,f)=>a+((GRID&&GRID[f]&&GRID[f].pop)||0),0);
+  $('hTitle').textContent= named.length? named.map(s=>`Winter Storm ${s.name} (W${s.cat})`).join(' · ') : 'No named storms';
+  $('liveStatus').innerHTML=`NWS run <b>${fmtT(t)}</b> · ${st.season||''} season, List ${['','One','Two','Three'][st.list]||''}${st.used&&st.used.length?' · named so far: <b>'+st.used.join(', ')+'</b>':''}`;
+  sigBlock('tSig','tSigV','tSigS',maxSig);
+  $('tNamed').textContent=named.length; $('tNamedS').textContent= named.length? named.map(s=>s.name).join(', ') : `${mon.length} monitored area${mon.length===1?'':'s'}`;
+  $('tCty').textContent=sigs.length; $('tCtyS').textContent= sigs.length? `${new Set(Object.keys(LIVE_SIG).map(stOf)).size} states` : 'none';
+  $('tPop').textContent=fmtPop(pop);
+  $('tNext').textContent=next.toLocaleString('en-US',{hour:'numeric',minute:'2-digit'}); $('tNextS').textContent=next.toLocaleString('en-US',{weekday:'long'});
+  $('namedCount').textContent= named.length? `${named.length}`:'';
+  $('storms').innerHTML= named.length? named.map((s,i)=>`<button type="button" class="storm" data-i="${i}"><svg viewBox="0 0 100 100" aria-hidden="true">${glyph(s.maxLvl)}</svg><span class="sn">Winter Storm ${s.name}</span>${catChip(s.cat).replace(/ [A-Za-z-]+<\/span>$/,'</span>')}<span class="sm">Index ${s.index} · up to ${sigChip(s.maxLvl)} · ${s.n} counties, ${fmtPop(s.pop)} people · onset ${onsetText(s.onset)} · advisory ${s.adv}${s.sb?' · SUPER BLIZZARD':''}</span></button>`).join('') : '<div class="empty">None. Monitored areas are named once they meet the naming criteria.</div>';
+  $('storms').onclick=e=>{ const b=e.target.closest('.storm'); if(b){ const s=named[+b.dataset.i]; zoomCounties(s.counties); const i=SEGS.findIndex(x=>x.storm===s); if(i>=0){ $('segSel').value=i; $('advText').textContent=SEGS[i].text(); } } };
+  $('monitored').innerHTML= mon.length? mon.map((s,i)=>`<button type="button" class="storm mon" data-i="${i}"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" fill="url(#hatchsm)"/></svg><span class="sn un">${sysLabel(s)}</span><span class="chip" style="background:#fff">Index ${s.index}</span><span class="sm">Expected impacts up to Level ${s.maxLvl} ${SIGNALS[s.maxLvl].w} · ${s.n} ${s.n===1?'county':'counties'} · onset ${onsetText(s.onset)}${s.counties.every(f=>/^(02|15)/.test(f))?' · AK/HI, not named':''}</span></button>`).join('') : '<div class="empty">None.</div>';
+  $('monitored').onclick=e=>{ const b=e.target.closest('.storm'); if(b) zoomCounties(mon[+b.dataset.i].counties); };
+  const counts={}; sigs.forEach(v=>counts[v]=(counts[v]||0)+1);
+  $('legend').innerHTML=SIGS.slice().reverse().map(n=>`<div class="lg${counts[n]?'':' zero'}"><svg viewBox="0 0 100 100" aria-hidden="true">${glyph(n)}</svg><span>Signal ${n} · ${SIGNALS[n].w}</span><span class="n">${counts[n]||0}</span></div>`).join('')+`<div class="lg"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" fill="url(#hatchsm)"/></svg><span>Monitored, no signal</span><span class="n">${LIVE_MON.size}</span></div>`;
+  renderHist();
+  document.querySelectorAll('.nlist li').forEach(li=>{ const n=li.lastChild.textContent; li.classList.toggle('used',(st.used||[]).includes(n)); });
+  const Ln=LISTS.find(l=>l.k===st.list); const nxt=Ln&&Ln.n[st.idx||0];
+  document.querySelectorAll('.nlist li').forEach(li=>li.classList.toggle('next',!!nxt&&li.lastChild.textContent===nxt&&li.closest('.nlist').classList.contains('current')));
+  if(TAB==='live'){ SEGS=buildSegs(named,LIVE_ROWS,t,{}); TEXT_SRC='live'; renderSegSel(); }
+}
+function renderHist(){
+  const H=((LIVE&&LIVE.history)||[]).filter(h=>h.v===3).slice(-28);
+  const W=300, top=8, bot=92, left=28, n=28, bw=(W-left-4)/n;
+  const tot=H.map(h=>Object.values(h.counts||{}).reduce((a,b)=>a+b,0)); const nice=Math.ceil(Math.max(4,...tot)/4)*4; const y=v=>bot-(v/nice)*(bot-top);
+  let out=`<line x1="${left}" x2="${W}" y1="${bot}" y2="${bot}" stroke="#333"/><line x1="${left}" x2="${W}" y1="${top}" y2="${top}" stroke="#333" stroke-dasharray="2 3"/><text x="${left-4}" y="${top+3}" text-anchor="end">${nice}</text><text x="${left-4}" y="${bot+3}" text-anchor="end">0</text>`;
+  H.forEach((h,i)=>{ const x=left+(n-H.length+i)*bw+1; let acc=0;
+    SIGS.forEach(s=>{ const c=(h.counts||{})[s]||0; if(!c) return; const y0=y(acc),y1=y(acc+c); out+=`<rect x="${x.toFixed(1)}" y="${y1.toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${(y0-y1).toFixed(1)}" fill="${SIGNALS[s].c}"><title>${new Date(h.run).toLocaleString('en-US',{weekday:'short',hour:'numeric'})}: Signal ${s} · ${c}</title></rect>`; acc+=c; });
+    if(!acc) out+=`<rect x="${x.toFixed(1)}" y="${bot-1}" width="${(bw-2).toFixed(1)}" height="1" fill="#555"/>`; });
+  out+=`<text x="${W}" y="106" text-anchor="end">now</text>`;
+  if(H.length>=6) out+=`<text x="${left+(n-H.length)*bw}" y="106">${new Date(H[0].run).toLocaleString('en-US',{month:'short',day:'numeric'})}</text>`;
+  if(!tot.some(x=>x)) out+=`<text x="${(left+W)/2}" y="52" text-anchor="middle">No signals issued in this window</text>`;
+  $('hist').innerHTML=out;
+}
+
+/* ================= guidance ================= */
+$('gLevels').innerHTML=SIGS.map(n=>`<button type="button" class="chipbtn" data-l="${n}">Signal ${n} ${SIGNALS[n].w}</button>`).join('');
+$('gLevels').addEventListener('click',e=>{ const b=e.target.closest('.chipbtn'); if(!b) return; gLevel=+b.dataset.l; renderGuide(); paintAll(); });
+function renderGuide(){
+  document.querySelectorAll('#gLevels .chipbtn').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.l===gLevel));
+  $('gLegend').innerHTML=`<span>Snow needed for Signal ${gLevel}:</span>`+SNOW_BINS.map((b,i)=>`<span class="gk"><i style="background:${SNOW_COL[i]}"></i>${b[1]>=99? b[0]+'+': b[0]+' to '+b[1]} in</span>`).join('');
+}
+function renderGuideCounty(){
+  const f=gCounty, g=f&&GRID[f]; if(!g) return;
+  $('gName').textContent=`${g.n}, ${g.s}`;
+  $('gTable').innerHTML=`<table class="mini"><thead><tr><th>Signal</th><th>Snow</th><th>Ice</th></tr></thead><tbody>${SIGS.map(l=>`<tr><td>${l} ${SIGNALS[l].w}</td><td class="c">${snowNeed(g.thr,l).toFixed(1)} in</td><td class="c">${ICE_T[l-1].toFixed(2)} in</td></tr>`).join('')}</tbody></table><div class="hint">24-h record ${g.thr} in${g.src==='house'?' (house rule)':g.rec?`, ${g.rec[2]||''} ${g.rec[1]||''}`:' (nearest county)'}. Super Blizzard at ${g.thr} in in 24 h.</div>`;
+  calcGuide();
+}
+function calcGuide(){
+  const g=gCounty&&GRID[gCounty]; const thr=g? g.thr : 14;
+  const v=id=>{ const x=parseFloat($(id).value); return isNaN(x)?0:x; };
+  const r=countyLevel(v('gSnow'),v('gS24'),v('gIce'),v('gGust'),v('gChill'),thr);
+  sigBlock('gSig','gSigL','gSigW',r.lvl);
+  $('gWhy').textContent= !g? 'Pick a county first; using a 14 in record.' : r.sb? 'Super Blizzard: record 24-h snow reached.' : r.lvl? `Highest hazard level ${Math.max(r.L.snow,r.L.ice,r.L.wind)}${r.bumped?(r.coldBump?', raised one step for dangerous cold':', raised one step for two Level 3 hazards'):''}.` : 'Below Signal 1.';
+  $('gComps').innerHTML=[['Snow',r.L.snow,'snow'],['Ice',r.L.ice,'ice'],['Wind',r.L.wind,'wind'],['Cold',r.L.cold,'cold']].map(([n,l,k])=>`<div class="comp"><span class="name"><img src="${ICON[k+'_dk']}" alt="" width="16" height="16">${n}</span><span class="meter">${[1,2,3,4,5].map(i=>`<i style="${i<=l?`background:${SIGNALS[i].c}`:''}"></i>`).join('')}</span><span class="lv">${l}</span></div>`).join('');
+}
+$('gForm').addEventListener('input',calcGuide); $('gForm').addEventListener('submit',e=>e.preventDefault());
+
+/* ================= scenarios ================= */
+const SC_BRUSH=[['snow',1],['snow',2],['snow',4],['snow',6],['snow',8],['snow',12],['snow',18],['snow',24],['snow',36],['ice',0.1],['ice',0.25],['ice',0.5],['ice',0.75],['ice',1],['erase',0]];
+function renderScBrushes(){
+  $('scBrushes').innerHTML=SC_BRUSH.map(([k,v])=>`<button type="button" class="brush" role="radio" aria-checked="${scBrush.k===k&&scBrush.v===v}" data-k="${k}" data-v="${v}">${k==='erase'?'Erase':k==='snow'?`<img src="${ICON.snow_dk}" alt="" width="14" height="14">${v} in`:`<img src="${ICON.ice_dk}" alt="" width="14" height="14">${v} in ice`}</button>`).join('');
+}
+$('scBrushes').addEventListener('click',e=>{ const b=e.target.closest('.brush'); if(!b) return; scBrush={k:b.dataset.k,v:+b.dataset.v}; renderScBrushes(); });
+function scVals(){ const v=id=>{ const x=parseFloat($(id).value); return isNaN(x)?0:x; }; return {name:($('scName').value.trim()||'Practice'),onset:Math.max(0,v('scOnset')),dur:Math.max(1,v('scDur')),gust:v('scGust'),chill:v('scChill')}; }
+function runScenario(){
+  if(!GRID){ return; }
+  const p=scVals(); const fs=[...new Set([...Object.keys(SC.snow),...Object.keys(SC.ice)])];
+  const rows={};
+  fs.forEach(f=>{ const g=GRID[f]; if(!g) return; const snow=SC.snow[f]||0, ice=SC.ice[f]||0, s24=snow*Math.min(1,24/p.dur);
+    const r=countyLevel(snow,s24,ice,p.gust,p.chill,g.thr);
+    rows[f]={lvl:r.lvl,onset:p.onset,peak:p.onset+Math.round(p.dur/2),end:p.onset+p.dur,snow,s24:Math.round(s24*10)/10,ice,gust:p.gust,chill:p.chill,sb:r.sb,L:[r.L.snow,r.L.ice,r.L.wind,r.L.cold]}; });
+  const foot=fs.filter(f=>rows[f]&&rows[f].lvl>0);
+  const idx=stormIndex(foot,f=>rows[f].lvl), cat=catOf(idx);
+  const sig={}; foot.forEach(f=>sig[f]=rows[f].lvl);
+  const storm={name:p.name,adv:1,cat,index:idx.toFixed(1),counties:foot};
+  SC_RES={rows,sig,storm};
+  const lv={}; foot.forEach(f=>lv[rows[f].lvl]=(lv[rows[f].lvl]||0)+1);
+  const pop=foot.reduce((a,f)=>a+(GRID[f].pop||0),0);
+  $('scResult').innerHTML= foot.length? `<div class="scline"><b>Winter Storm ${p.name}</b> ${catChip(cat)}</div><div class="hint">Storm Index ${idx.toFixed(1)}${cat?'':' (below W1: in the live system this would be a monitored area, not a named storm)'} · ${foot.length} counties · ${fmtPop(pop)} people</div><div class="tally">${SIGS.slice().reverse().filter(n=>lv[n]).map(n=>`<span style="background:${SIGNALS[n].c}">Signal ${n} · ${lv[n]}</span>`).join('')}</div>` : '<div class="empty">Painted counties are all below Signal 1.</div>';
+  if(TAB==='scenario'){ SEGS=foot.length? buildSegs([storm],rows,new Date(),{scenario:true}) : []; TEXT_SRC='scenario'; renderSegSel(); paintAll(); }
+}
+$('scForm').addEventListener('input',()=>{ runScenario(); saveDraft(); }); $('scForm').addEventListener('submit',e=>e.preventDefault());
+function loadList(){ try{ return JSON.parse(localStorage.getItem('wsc-scenarios')||'[]'); }catch(e){ return []; } }
+function saveList(l){ try{ localStorage.setItem('wsc-scenarios',JSON.stringify(l)); }catch(e){} }
+function saveDraft(){ try{ localStorage.setItem('wsc-scenario-draft',JSON.stringify({p:scVals(),SC})); }catch(e){} }
+function loadScenario(o){ SC=o.SC||{snow:{},ice:{}}; const p=o.p||{}; $('scName').value=p.name||'Practice'; $('scOnset').value=p.onset??18; $('scDur').value=p.dur??24; $('scGust').value=p.gust??35; $('scChill').value=p.chill??5; runScenario(); paintAll(); }
+function renderScList(){
+  const l=loadList();
+  $('scList').innerHTML= l.length? l.map((o,i)=>`<div class="storm scitem"><span class="sn">${o.p.name}</span><span class="sm">${new Date(o.t).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})} · ${Object.keys(o.SC.snow||{}).length+Object.keys(o.SC.ice||{}).length} counties</span><span class="scbtns"><button class="btn" type="button" data-open="${i}">Open</button><button class="btn" type="button" data-del="${i}">Delete</button></span></div>`).join('') : '<div class="empty">No saved scenarios yet.</div>';
+}
+$('scList').addEventListener('click',e=>{ const o=e.target.closest('[data-open]'), d=e.target.closest('[data-del]'); const l=loadList();
+  if(o){ loadScenario(l[+o.dataset.open]); saveDraft(); }
+  if(d){ l.splice(+d.dataset.del,1); saveList(l); renderScList(); } });
+$('scSave').addEventListener('click',()=>{ const l=loadList(); const p=scVals(); const i=l.findIndex(o=>o.p.name===p.name); const o={p,SC:JSON.parse(JSON.stringify(SC)),t:Date.now()}; if(i>=0) l[i]=o; else l.unshift(o); saveList(l); renderScList(); $('scSave').textContent='Saved'; setTimeout(()=>$('scSave').textContent='Save',1500); });
+$('scNew').addEventListener('click',()=>{ loadScenario({p:{name:'Practice'},SC:{snow:{},ice:{}}}); saveDraft(); });
+$('scClear').addEventListener('click',()=>{ SC={snow:{},ice:{}}; runScenario(); paintAll(); saveDraft(); });
+
+/* ================= tabs ================= */
+function setTab(t){
+  TAB=['live','guidance','scenario','handbook'].includes(t)? t:'live';
+  document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===TAB));
+  document.querySelectorAll('.tabpane').forEach(p=>p.hidden=p.id!=='tab-'+TAB);
+  const slot={live:'slotLive',guidance:'slotGuide',scenario:'slotScen'}[TAB];
+  if(slot) $(slot).appendChild($('mapSec'));
+  if(TAB==='live'){ $('slotTextLive').appendChild($('textSec')); if(LIVE) renderLive(); else { SEGS=[]; TEXT_SRC='live'; renderSegSel(); } }
+  if(TAB==='scenario'){ $('slotTextScen').appendChild($('textSec')); TEXT_SRC='scenario'; runScenario(); if(!SC_RES||!SC_RES.storm.counties.length){ SEGS=[]; renderSegSel(); } }
+  if(TAB==='guidance'){ renderGuide(); calcGuide(); }
+  map.classList.toggle('paint',TAB==='scenario'); tip.hidden=true;
+  try{ localStorage.setItem('wsc-tab',TAB); }catch(e){}
+  if(GEO) paintAll();
+}
+document.querySelector('.tabs').addEventListener('click',e=>{ const b=e.target.closest('.tab'); if(b) setTab(b.dataset.tab); });
+document.querySelector('.toc').addEventListener('click',e=>{ const a=e.target.closest('a'); if(!a) return; e.preventDefault(); const el=document.querySelector(a.getAttribute('href')); if(el) el.scrollIntoView({behavior:'smooth'}); });
+
+/* ================= handbook statics ================= */
+$('sigCards').innerHTML=SIGS.map(n=>`<div class="sig"><svg viewBox="0 0 100 100" aria-hidden="true">${glyph(n)}</svg><div class="t">Signal ${n}</div><div class="w">${SIGNALS[n].w} impacts</div><p>${SIGNALS[n].p}</p><ul>${SIGNALS[n].a.map(a=>`<li>${a}</li>`).join('')}</ul></div>`).join('');
+$('catRows').innerHTML=[1,2,3,4,5].map(c=>`<tr><td><div class="catcell"><span class="swatch" style="background:${CATGRAY[c]}"></span><b class="c">W${c}</b>&nbsp;${CAT[c].n}</div></td><td class="c">${CAT_T[c-1]}${c<5?' to '+CAT_T[c]:'+'}</td><td>${CAT[c].d}</td></tr>`).join('');
+$('nameList').innerHTML=LISTS.map(l=>`<div class="nlist${l.k===CURRENT_LIST?' current':''}"><header><h3>${l.t}</h3><span class="tag">${l.k===CURRENT_LIST?'In use 2026-27':l.k===0?'Overflow':'Next '+ROTA.find(r=>r[1]===l.k&&r[0]>'2026-27')[0]}</span></header><ol>${l.n.map(n=>`<li><b>${n[0]}</b>${n}</li>`).join('')}</ol></div>`).join('');
+$('rota').innerHTML=ROTA.map(([s,k])=>`<span class="${s==='2026-27'?'now':''}">${s} · List ${['','One','Two','Three'][k]}</span>`).join('');
+
+/* ================= boot ================= */
+async function boot(){
+  $('logo').src=ICON.snow_dk; renderScBrushes(); renderScList(); renderHist(); renderGuide();
+  try{ const d=JSON.parse(localStorage.getItem('wsc-scenario-draft')||'null'); if(d){ SC=d.SC||SC; const p=d.p||{}; $('scName').value=p.name||'Practice'; $('scOnset').value=p.onset??18; $('scDur').value=p.dur??24; $('scGust').value=p.gust??35; $('scChill').value=p.chill??5; } }catch(e){}
+  let t0=(location.hash||'').slice(1); if(!t0){ try{ t0=localStorage.getItem('wsc-tab')||'live'; }catch(e){ t0='live'; } }
+  setTab(t0);
+  try{
+    const [g1,g2]=await Promise.all([fetch('auto/us_counties.json').then(r=>r.json()), fetch('auto/wsc_grid.json').then(r=>r.json())]);
+    GEO=g1; GEO.byF=Object.fromEntries(GEO.counties.map(c=>[c.f,c])); GRID=g2.counties;
+  }catch(e){ $('mapLoading').textContent='COULD NOT LOAD THE COUNTY MAP. RELOAD TO RETRY.'; return; }
+  buildMap();
+  let v0='US'; try{ v0=localStorage.getItem('wsc-view-us')||'US'; }catch(e){}
+  setView(v0); setTab(TAB);
+  if(!gCounty){ gCounty='40143'; renderGuideCounty(); }
+  const db=window.claude&&window.claude.use? await window.claude.use('db') : null;
+  if(!db){
+    const load=async()=>{ try{ const r=await fetch('auto/latest.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw 0;
+      ingestLive(await r.json()); renderLive(); if(TAB==='live') paintAll(); }catch(e){ $('liveStatus').textContent='Could not load the latest run. Reload to retry.'; } };
+    await load(); setInterval(load,15*60*1000); return; }
+  db.doc('wsc/latest').onSnapshot(snap=>{ ingestLive(snap.exists? snap.data():null); renderLive(); if(TAB==='live') paintAll(); },
+    ()=>{ $('liveStatus').textContent='Lost the live data connection. Reload to retry.'; });
+}
+tick(); setInterval(tick,30000);
+boot();
+
+</script>
+
+</body></html>
