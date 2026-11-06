@@ -1,0 +1,32 @@
+name: Update Winter Storm Center
+on:
+  schedule:
+    - cron: '57 */6 * * *'   # every 6 hours, same as the old scheduled task
+  workflow_dispatch:
+concurrency: { group: winter-update, cancel-in-progress: false }
+permissions: { contents: write }
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pygrib numpy
+      - name: Run model
+        run: |
+          cd winter/auto
+          for i in 1 2; do
+            python wsc_auto.py wsc_grid.json nbm_index.json latest.json > new.json && break
+            echo "retrying in 60s"; sleep 60
+          done
+          python -c "import json; json.load(open('new.json'))"
+          mv new.json latest.json
+      - name: Commit
+        run: |
+          git config user.name "winter-bot"; git config user.email "actions@users.noreply.github.com"
+          git add winter/auto/latest.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Winter Storm Center update"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 10; done
