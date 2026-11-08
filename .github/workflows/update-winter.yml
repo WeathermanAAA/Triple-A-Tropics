@@ -1,7 +1,7 @@
 name: Update Winter Storm Center
 on:
   schedule:
-    - cron: '57 */6 * * *'   # every 6 hours, same as the old scheduled task
+    - cron: '7,37 * * * *'   # check every 30 min; only runs the model when a new NBM cycle is out
   workflow_dispatch:
 concurrency: { group: winter-update, cancel-in-progress: false }
 permissions: { contents: write }
@@ -13,10 +13,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - run: pip install pygrib numpy
-      - name: Run model
+      - name: Check for a new NBM cycle
+        id: check
+        working-directory: winter/auto
         run: |
-          cd winter/auto
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, datetime as dt, wsc_auto
+          now = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
+          cyc = wsc_auto.nbm_cycle(now)
+          have = dt.datetime.fromisoformat(json.load(open('latest.json'))['run'])
+          print('new=' + ('true' if cyc.replace(tzinfo=dt.timezone.utc) > have else 'false'))
+          PY
+          cat "$GITHUB_OUTPUT"
+      - if: steps.check.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
+        run: pip install pygrib numpy
+      - name: Run model
+        if: steps.check.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: winter/auto
+        run: |
           for i in 1 2; do
             python wsc_auto.py wsc_grid.json nbm_index.json latest.json > new.json && break
             echo "retrying in 60s"; sleep 60
@@ -24,6 +38,7 @@ jobs:
           python -c "import json; json.load(open('new.json'))"
           mv new.json latest.json
       - name: Commit
+        if: steps.check.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "winter-bot"; git config user.email "actions@users.noreply.github.com"
           git add winter/auto/latest.json
