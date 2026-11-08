@@ -262,7 +262,7 @@ table.mini td,table.mini th{padding:2px 6px}
       <div class="tile"><span class="eyebrow">Named storms</span><span class="v num" id="tNamed">-</span><span class="s" id="tNamedS"></span></div>
       <div class="tile"><span class="eyebrow">Counties under signals</span><span class="v num" id="tCty">-</span><span class="s" id="tCtyS"></span></div>
       <div class="tile"><span class="eyebrow">People under signals</span><span class="v num" id="tPop">-</span><span class="s">next 72 h</span></div>
-      <div class="tile"><span class="eyebrow">Next run</span><span class="v num" id="tNext">-</span><span class="s" id="tNextS"></span></div>
+      <div class="tile"><span class="eyebrow">Next update</span><span class="v num" id="tNext">-</span><span class="s" id="tNextS"></span></div>
     </div>
     <div class="livegrid">
       <div class="leftcol"><div id="slotLive"></div><div id="slotTextLive"></div></div>
@@ -692,7 +692,7 @@ function onsetText(h){ if(h==null) return 'unknown'; if(h<=0) return 'under way'
 function sysLabel(s){ const top=s.counties.slice().sort((a,b)=>((LIVE_ROWS[b]||{}).lvl||0)-((LIVE_ROWS[a]||{}).lvl||0))[0]; return `${cname(top)}, ${stOf(top)}${s.counties.length>1?` +${s.counties.length-1}`:''}`; }
 function renderLive(){
   if(!LIVE){ $('hTitle').textContent='Waiting for the first run'; $('liveStatus').textContent='The scheduled run writes here every 6 hours.'; SEGS=[]; renderSegSel(); return; }
-  const t=new Date(LIVE.run), next=new Date(t.getTime()+6*3600e3), st=LIVE.state||{};
+  const t=new Date(LIVE.run), next=new Date(t.getTime()+8*3600e3), st=LIVE.state||{};
   const named=(LIVE.storms||[]).filter(s=>s.name), mon=(LIVE.storms||[]).filter(s=>!s.name);
   const sigs=Object.values(LIVE_SIG).filter(Boolean); const maxSig=sigs.length?Math.max(...sigs):0;
   const pop=Object.keys(LIVE_SIG).reduce((a,f)=>a+((GRID&&GRID[f]&&GRID[f].pop)||0),0);
@@ -702,7 +702,7 @@ function renderLive(){
   $('tNamed').textContent=named.length; $('tNamedS').textContent= named.length? named.map(s=>s.name).join(', ') : `${mon.length} monitored area${mon.length===1?'':'s'}`;
   $('tCty').textContent=sigs.length; $('tCtyS').textContent= sigs.length? `${new Set(Object.keys(LIVE_SIG).map(stOf)).size} states` : 'none';
   $('tPop').textContent=fmtPop(pop);
-  $('tNext').textContent=next.toLocaleString('en-US',{hour:'numeric',minute:'2-digit'}); $('tNextS').textContent=next.toLocaleString('en-US',{weekday:'long'});
+  $('tNext').textContent='~'+next.toLocaleString('en-US',{hour:'numeric',minute:'2-digit'}); $('tNextS').textContent=(Date.now()>next.getTime()+30*60e3?'Running late · ':'')+next.toLocaleString('en-US',{weekday:'long'});
   $('namedCount').textContent= named.length? `${named.length}`:'';
   $('storms').innerHTML= named.length? named.map((s,i)=>`<button type="button" class="storm" data-i="${i}"><svg viewBox="0 0 100 100" aria-hidden="true">${glyph(s.maxLvl)}</svg><span class="sn">Winter Storm ${s.name}</span>${catChip(s.cat).replace(/ [A-Za-z-]+<\/span>$/,'</span>')}<span class="sm">Index ${s.index} · up to ${sigChip(s.maxLvl)} · ${s.n} counties, ${fmtPop(s.pop)} people · onset ${onsetText(s.onset)} · advisory ${s.adv}${s.sb?' · SUPER BLIZZARD':''}</span></button>`).join('') : '<div class="empty">None. Monitored areas are named once they meet the naming criteria.</div>';
   $('storms').onclick=e=>{ const b=e.target.closest('.storm'); if(b){ const s=named[+b.dataset.i]; zoomCounties(s.counties); const i=SEGS.findIndex(x=>x.storm===s); if(i>=0){ $('segSel').value=i; $('advText').textContent=SEGS[i].text(); } } };
@@ -834,7 +834,7 @@ async function boot(){
   if(!db){
     const load=async()=>{ try{ const r=await fetch('auto/latest.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw 0;
       ingestLive(await r.json()); renderLive(); if(TAB==='live') paintAll(); }catch(e){ $('liveStatus').textContent='Could not load the latest run. Reload to retry.'; } };
-    await load(); setInterval(load,15*60*1000); return; }
+    await load(); setInterval(load,5*60*1000); document.addEventListener('visibilitychange',()=>{ if(!document.hidden) load(); }); return; }
   db.doc('wsc/latest').onSnapshot(snap=>{ ingestLive(snap.exists? snap.data():null); renderLive(); if(TAB==='live') paintAll(); },
     ()=>{ $('liveStatus').textContent='Lost the live data connection. Reload to retry.'; });
 }
