@@ -29,7 +29,7 @@
 # Run `python -m unittest tests.test_roadmap_board` (needs node) to check an
 # edit before committing.
 
-updated: 2026-10-29T20:03Z
+updated: 2026-11-13T19:30Z
 
 items:
   - id: sandbox-b128-tester-shadow
@@ -318,7 +318,7 @@ items:
       trip stops nothing. Arm only after this lands and the alert-only week
       shows no false positives.
   - id: hafs-r2-retention
-    title: models/hafs retention prune (14 d) — the only compounding cost line, applied
+    title: models/hafs retention prune (2 d, was 14 d) — the only compounding cost line, applied
     area: models
     status: shipped
     date_shipped: 2026-08-25
@@ -329,6 +329,9 @@ items:
       220,745 objects, 435.2 GB (0 errors) and R2 storage went 2,384 to
       1,953 GB within the hour. The prefix is now capped at 14 days by cycle
       time (never the newest 2, never a manifest-referenced cycle).
+      2026-11-13: TTL cut 14 d to 2 d. Cycles grew from ~7 GB to 10-20 GB
+      each, so the 14-day window held ~561 GB of the bucket's ~600 GB while
+      the viewer only reads the newest 2 cycles; 2 d keeps ~8.
   - id: hwfd-sweep-cadence
     title: hwfd browse lane sweeps at the product cadence (sleep 900 s, was 30 s)
     area: satellite

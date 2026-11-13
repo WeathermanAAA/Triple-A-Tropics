@@ -9,9 +9,12 @@ name: prune-hafs
 # cycles[] holds at most the two newest cycles, so anything older than a
 # couple of days is already unreachable from the site.
 #
-# scripts/hafs_r2_prune.py deletes cycles older than 14 days by CYCLE time
+# scripts/hafs_r2_prune.py deletes cycles older than 2 days by CYCLE time
 # (never the newest 2, never a cycle the live manifest references), walking
 # each condemned cycle (~10 LIST pages) and DeleteObjects-ing it (free).
+# TTL cut 14d -> 2d (cost audit 2026-11-13): cycles grew from ~7 GB to
+# ~10-20 GB each, so a 14-day window held ~560 GB that the site can never
+# show. 2 days keeps ~8 cycles, well past the 2 the manifest references.
 # Daily is enough: ~4 cycles age out per day. Dry-run by default from the
 # Actions tab (apply=false); the schedule applies.
 #
@@ -31,7 +34,7 @@ on:
         default: false
       days:
         description: "TTL in days by cycle time"
-        default: "14"
+        default: "2"
 
 permissions:
   contents: read
@@ -63,7 +66,7 @@ jobs:
           set -euo pipefail
           APPLY=""
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then APPLY="--apply"; fi
-          python scripts/hafs_r2_prune.py $APPLY --days "${{ inputs.days || '14' }}" --report prune_report.json
+          python scripts/hafs_r2_prune.py $APPLY --days "${{ inputs.days || '2' }}" --report prune_report.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
