@@ -279,6 +279,33 @@ def build(results, grid, prev, now, failed=()):
         if s['name']:
             for k, v in s['levels'].items():
                 counts[k] = counts.get(k, 0) + v
+    # ---- season archive: one record per named storm, kept all season for the timeline ----
+    if 'archive' not in st:   # first run with an archive: rebuild what the run history still remembers
+        arc = {}
+        for h in (prev.get('history') or []):
+            if h.get('v') != 3 or season_list(dt.datetime.fromisoformat(h['run']))[0] != season:
+                continue
+            for nm in h.get('storms') or []:
+                a = arc.setdefault(nm, {'name': nm, 'first': h['run'], 'last': h['run'], 'peakCat': 0, 'peakSig': 0, 'states': []})
+                a['last'] = h['run']
+                if len(h['storms']) == 1:
+                    a['peakCat'] = max(a['peakCat'], h.get('maxCat', 0))
+                    a['peakSig'] = max(a['peakSig'], max((int(k) for k in (h.get('counts') or {})), default=0))
+        st['archive'] = sorted(arc.values(), key=lambda a: a['first'])
+    arch = {a['name']: a for a in st['archive']}
+    for s in storms:
+        if not s['name']:
+            continue
+        a = arch.get(s['name'])
+        if not a:
+            a = {'name': s['name'], 'first': s['first'], 'last': now.isoformat(), 'peakCat': 0, 'peakSig': 0, 'states': []}
+            st['archive'].append(a); arch[s['name']] = a
+        a['last'] = now.isoformat()
+        a['peakCat'] = max(a['peakCat'], s['cat'])
+        a['peakSig'] = max(a['peakSig'], s['maxLvl'])
+        a['states'] = sorted(set(a['states']) | set(s['states']))
+        a['onsetEnd'] = [s['onset'], s['end']]   # latest forecast window, hours after this run
+
     hist = [h for h in (prev.get('history') or []) if h.get('v') == 3][-59:]
     hist.append({'v': 3, 'run': now.isoformat(), 'counts': counts,
                  'storms': [s['name'] for s in storms if s['name']],

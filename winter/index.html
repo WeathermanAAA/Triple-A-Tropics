@@ -206,6 +206,15 @@ td.c{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowra
   .clock{display:none}
 }
 
+/* season timeline: ported from Cyclone Sandbox style.css (.sv-*) */
+.sv-wrap{background:var(--scope);border:1px solid;border-color:var(--lo) var(--hi) var(--hi) var(--lo);padding:6px 6px 8px;overflow-x:auto}
+.sv-gantt{ display:block; margin-bottom:6px; width:100% !important; height:auto !important; min-width:620px; }
+.sv-axis-label{ fill:#7c8aa3; font-size:9.5px; font-family:system-ui,sans-serif; }
+.sv-bar-label{ font-size:10.5px; font-weight:600; letter-spacing:.01em; font-family:system-ui,sans-serif; }
+.sv-cat-legend{ display:flex; flex-wrap:wrap; gap:6px 16px; margin:10px 2px 0; font-size:11.5px; color:#aebdd2; }
+.sv-cat-item{ display:inline-flex; align-items:center; gap:6px; }
+.sv-cat-item i{ width:11px; height:11px; border-radius:2px; display:inline-block; }
+.sv-empty{ color:#7c8aa3; font-size:11.5px; padding:10px 4px; }
 .leftcol{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0;align-content:start}
 .leftcol>div{min-width:0}
 .mapsec{grid-template-columns:minmax(0,1fr)}
@@ -265,7 +274,7 @@ table.mini td,table.mini th{padding:2px 6px}
       <div class="tile"><span class="eyebrow">Next update</span><span class="v num" id="tNext">-</span><span class="s" id="tNextS"></span></div>
     </div>
     <div class="livegrid">
-      <div class="leftcol"><div id="slotLive"></div><div id="slotTextLive"></div></div>
+      <div class="leftcol"><div id="slotLive"></div><div id="slotTextLive"></div><div class="card" id="seasonCard"><h3>Season timeline <small id="seasonSub"></small></h3><div class="sv-wrap" id="seasonGantt"></div></div></div>
       <aside class="rail">
         <div class="card"><h3>Named storms <small id="namedCount"></small></h3><div class="storms" id="storms"></div></div>
         <div class="card"><h3>Monitored areas <small>no signals</small></h3><div class="storms" id="monitored"></div></div>
@@ -690,7 +699,140 @@ function ingestLive(doc){
 }
 function onsetText(h){ if(h==null) return 'unknown'; if(h<=0) return 'under way'; if(h<12) return 'within 12 h'; if(h<24) return 'in 12 to 24 h'; if(h<48) return 'in 24 to 48 h'; return 'in 48 to 72 h'; }
 function sysLabel(s){ const top=s.counties.slice().sort((a,b)=>((LIVE_ROWS[b]||{}).lvl||0)-((LIVE_ROWS[a]||{}).lvl||0))[0]; return `${cname(top)}, ${stOf(top)}${s.counties.length>1?` +${s.counties.length-1}`:''}`; }
+/* ================= season timeline =================
+   Ported from Cyclone Sandbox season-view.js (renderGantt + textOn). Changes from the
+   original: storms come from latest.json (state.archive, or rebuilt from history), bar
+   colours are the page's W palette by peak category instead of the Saffir-Simpson scale,
+   the axis is the fixed winter season Nov 1 to Apr 30, and the legend lists W1-W5 by
+   Storm Index instead of wind ranges. Layout, rows, blocks and labels are unchanged. */
+const SV_W={1:'#5ad1ff',2:'#2e7dff',3:'#8f5bff',4:'#e03cff',5:'#ff3d8b'};
+function svSeason(L){
+  // storms: one per named storm this season. Ticks are hours since the season start.
+  const st=(L&&L.state)||{}, run=L&&L.run? new Date(L.run): new Date();
+  const y=st.season? parseInt(st.season,10) : (run.getUTCMonth()>=6? run.getUTCFullYear(): run.getUTCFullYear()-1);
+  const t0ms=Date.UTC(y,10,1), t1ms=Date.UTC(y+1,4,1);
+  const H=ms=>(ms-t0ms)/3600e3;
+  let arc=st.archive;
+  if(!Array.isArray(arc)){              // older latest.json: rebuild from the run history
+    const m={};
+    for(const h of (L&&L.history)||[]){
+      const tr=new Date(h.run).getTime(); if(tr<t0ms||tr>=t1ms) continue;
+      for(const nm of h.storms||[]){
+        const a=m[nm]||(m[nm]={name:nm,first:h.run,last:h.run,peakCat:0});
+        a.last=h.run; if((h.storms||[]).length===1) a.peakCat=Math.max(a.peakCat,h.maxCat||0);
+      }
+    }
+    arc=Object.values(m);
+  }
+  const live=new Set(((L&&L.storms)||[]).filter(s=>s.name).map(s=>s.name));
+  const storms=arc.map(a=>{
+    let a0=new Date(a.first).getTime(), a1=new Date(a.last).getTime();
+    if(live.has(a.name)&&a.onsetEnd&&a.onsetEnd[1]!=null) a1+=a.onsetEnd[1]*3600e3;   // still in the latest run: run to its forecast end
+    return {shortName:a.name, peakCat:Math.max(1,a.peakCat||1), recs:[{tick:H(a0)},{tick:H(Math.max(a1,a0))}]};
+  });
+  const months=[]; for(let i=0;i<6;i++){ const ms=Date.UTC(y,10+i,1); months.push({tick:H(ms),label:new Date(ms).toLocaleString('en-US',{month:'short',timeZone:'UTC'})}); }
+  return {storms, season:`${y}-${String(y+1).slice(2)}`, span:{t0:0,t1:H(t1ms),months}};
+}
+function seasonSpan(d){ return d.span; }
+function colorFor(d,s){ return SV_W[s.peakCat]; }
+function catAbbrev(s){ return 'W'+s.peakCat; }
+function textOn(bg) {
+    const m = String(bg).match(/\d+(\.\d+)?/g);
+    let r, g, b;
+    if (m && m.length >= 3 && !/^#/.test(bg)) { [r, g, b] = m.slice(0, 3).map(Number); }
+    else if (/^#/.test(bg)) { const h = bg.slice(1); const s = h.length === 3 ? h.split('').map(c => c + c).join('') : h; r = parseInt(s.slice(0, 2), 16); g = parseInt(s.slice(2, 4), 16); b = parseInt(s.slice(4, 6), 16); }
+    else return '#0b1220';
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.45 ? '#0b1220' : '#f2f6fc';
+}
+function renderGantt(d, el) {
+    const span = seasonSpan(d);
+    const W = 940, rowH = 19, barH = 13, left = 10, right = 10, top = 8, axisH = 22;
+    const NS = 'http://www.w3.org/2000/svg';
+    const X = t => left + (t - span.t0) / (span.t1 - span.t0) * (W - left - right);
+    // ONE STORM PER LEVEL, split into two blocks at the storm-count midpoint: a
+    // 14-storm season is seven levels in the first block and seven in the second,
+    // with a visible break between the barsets. Bars stay positioned by date on the
+    // shared axis.
+    const CHAR_W = 6.4, blockGap = 14;
+    const storms = [...d.storms].sort((a, b) => a.recs[0].tick - b.recs[0].tick);
+    const perBlock = Math.ceil(storms.length / 2) || 1;
+    const bars = [];
+    storms.forEach((s, i) => {
+        const x0 = X(s.recs[0].tick), x1 = Math.max(x0 + 2, X(s.recs[s.recs.length - 1].tick));
+        const label = s.shortName + ' (' + catAbbrev(s) + ')';
+        const labelW = label.length * CHAR_W;
+        const inside = (x1 - x0) >= labelW + 8;
+        const block = Math.floor(i / perBlock);
+        const row = i % perBlock;
+        bars.push({ s, x0, x1, block, row, label, inside });
+    });
+    const nBlocks = Math.min(2, Math.ceil(storms.length / perBlock)) || 1;
+    const blockY = b => top + b * (perBlock * rowH + blockGap);
+    const H = blockY(nBlocks - 1) + perBlock * rowH + axisH;
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('width', W); svg.setAttribute('height', H);
+    svg.setAttribute('class', 'sv-gantt');   // SVGElement.className is a read-only SVGAnimatedString
+    // month dividers + names along the BOTTOM axis (names centered within each month)
+    for (let i = 0; i < span.months.length; i++) {
+        const m = span.months[i];
+        const x = X(m.tick);
+        const ln = document.createElementNS(NS, 'line');
+        ln.setAttribute('x1', x); ln.setAttribute('x2', x);
+        ln.setAttribute('y1', top); ln.setAttribute('y2', H - axisH + 4);
+        ln.setAttribute('stroke', 'rgba(255,255,255,0.14)'); ln.setAttribute('stroke-width', '1');
+        svg.appendChild(ln);
+        const nextX = i + 1 < span.months.length ? X(span.months[i + 1].tick) : W - right;
+        const tx = document.createElementNS(NS, 'text');
+        tx.setAttribute('x', (x + nextX) / 2); tx.setAttribute('y', H - 7);
+        tx.setAttribute('text-anchor', 'middle'); tx.setAttribute('class', 'sv-axis-label');
+        tx.textContent = m.label;
+        svg.appendChild(tx);
+    }
+    const endLn = document.createElementNS(NS, 'line');
+    endLn.setAttribute('x1', W - right); endLn.setAttribute('x2', W - right);
+    endLn.setAttribute('y1', top); endLn.setAttribute('y2', H - axisH + 4);
+    endLn.setAttribute('stroke', 'rgba(255,255,255,0.14)'); endLn.setAttribute('stroke-width', '1');
+    svg.appendChild(endLn);
+    for (const b of bars) {
+        const y = blockY(b.block) + b.row * rowH + (rowH - barH) / 2;
+        const fill = colorFor(d, b.s);
+        const r = document.createElementNS(NS, 'rect');
+        r.setAttribute('x', b.x0); r.setAttribute('y', y);
+        r.setAttribute('width', Math.max(2, b.x1 - b.x0)); r.setAttribute('height', barH);
+        r.setAttribute('rx', 1.5);
+        r.setAttribute('fill', fill);
+        svg.appendChild(r);
+        const tx = document.createElementNS(NS, 'text');
+        tx.setAttribute('y', y + barH - 3.5);
+        tx.setAttribute('class', 'sv-bar-label');
+        if (b.inside) { tx.setAttribute('x', b.x0 + 4); tx.setAttribute('fill', textOn(fill)); }
+        else { tx.setAttribute('x', b.x1 + 4); tx.setAttribute('fill', 'rgba(242,246,252,0.92)'); }
+        tx.textContent = b.label;
+        svg.appendChild(tx);
+    }
+    el.appendChild(svg);
+    // category legend: W1-W5 with their Storm Index ranges (the page's CAT_T thresholds)
+    const legend = document.createElement('div');
+    legend.className = 'sv-cat-legend';
+    for (let c = 1; c <= 5; c++) {
+        const item = document.createElement('span');
+        item.className = 'sv-cat-item';
+        const range = c < 5 ? 'index ' + CAT_T[c - 1] + '–' + CAT_T[c] : 'index ≥' + CAT_T[c - 1];
+        item.innerHTML = '<i style="background:' + SV_W[c] + '"></i>W' + c + ' ' + CAT[c].n + ' ' + range;
+        legend.appendChild(item);
+    }
+    el.appendChild(legend);
+}
+function renderSeasonTimeline(){
+  const el=$('seasonGantt'); if(!el) return;
+  const d=svSeason(LIVE); el.textContent='';
+  $('seasonSub').textContent=`${d.season} · ${d.storms.length} named storm${d.storms.length===1?'':'s'}`;
+  if(d.storms.length) renderGantt(d, el);
+  else { const e=document.createElement('div'); e.className='sv-empty'; e.textContent='No named storms yet this season.'; el.appendChild(e); }
+}
 function renderLive(){
+  try{ renderSeasonTimeline(); }catch(e){}
   if(!LIVE){ $('hTitle').textContent='Waiting for the first run'; $('liveStatus').textContent='The scheduled run writes here every 6 hours.'; SEGS=[]; renderSegSel(); return; }
   const t=new Date(LIVE.run), next=new Date(t.getTime()+8*3600e3), st=LIVE.state||{};
   const named=(LIVE.storms||[]).filter(s=>s.name), mon=(LIVE.storms||[]).filter(s=>!s.name);
