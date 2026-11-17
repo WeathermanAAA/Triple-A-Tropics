@@ -553,14 +553,16 @@ function segmentsFor(storm,rows){
   return Object.entries(groups).map(([k,fs])=>({key:k,lvl:+k.split('|')[0],counties:fs})).sort((a,b)=>b.lvl-a.lvl||b.counties.length-a.counties.length);
 }
 function writeAdvisory(storm,seg,rows,runDate,opts={}){
-  const fs=seg.counties, R=fs.map(f=>rows[f]), lvl=seg.lvl, tz=(GRID[fs[0]]&&GRID[fs[0]].tz)||'America/Chicago';
+  const fs=seg.counties, R=fs.map(f=>rows[f]), lvl=seg.lvl, tz='America/Chicago';   // every advisory in Central time (CST/CDT)
   const U=s=>s.toUpperCase(), mx=k=>Math.max(...R.map(r=>r[k]||0)), mn=k=>Math.min(...R.map(r=>r[k]??999));
   const Lmax=i=>Math.max(...R.map(r=>r.L[i]));
   const sb=R.some(r=>r.sb), ice3=Lmax(1)>=3, bliz=R.some(r=>r.gust>=35&&r.L[0]>=2);
   const L=[];
   L.push('WINTER STORM CENTER'+(opts.scenario?'  ***SCENARIO, NOT A REAL FORECAST***':''));
-  L.push(`WINTER STORM ${U(storm.name)} ADVISORY NUMBER ${storm.adv||1}`);
-  L.push(`ISSUED ${stampTZ(runDate,tz)}`,'');
+  // a special advisory reissues an already-used model run (rule change, correction) at the time it went out
+  L.push(`WINTER STORM ${U(storm.name)} ${opts.special?'SPECIAL ':''}ADVISORY NUMBER ${storm.adv||1}`);
+  L.push(`ISSUED ${stampTZ(opts.special&&opts.issued?opts.issued:runDate,tz)}`,'');
+  if(opts.special) L.push(`SPECIAL ADVISORY ISSUED TO UPDATE SIGNALS. BASED ON THE ${U(stampTZ(runDate,tz))} MODEL RUN.`,'');
   L.push(`WINTER STORM ${U(storm.name)}: CATEGORY W${storm.cat} (${U(CAT[storm.cat]?CAT[storm.cat].n:'below W1')}), STORM INDEX ${(+storm.index).toFixed(1)}`,'');
   L.push(`...SIGNAL ${lvl} (${U(SIGNALS[lvl].w)} IMPACTS) FOR...`);
   const byS={}; fs.forEach(f=>{ (byS[stOf(f)]=byS[stOf(f)]||[]).push(U(cname(f))); });
@@ -864,7 +866,7 @@ function renderLive(){
   document.querySelectorAll('.nlist li').forEach(li=>{ const n=li.lastChild.textContent; li.classList.toggle('used',(st.used||[]).includes(n)); });
   const Ln=LISTS.find(l=>l.k===st.list); const nxt=Ln&&Ln.n[st.idx||0];
   document.querySelectorAll('.nlist li').forEach(li=>li.classList.toggle('next',!!nxt&&li.lastChild.textContent===nxt&&li.closest('.nlist').classList.contains('current')));
-  if(TAB==='live'){ SEGS=buildSegs(named,LIVE_ROWS,t,{}); TEXT_SRC='live'; renderSegSel(); }
+  if(TAB==='live'){ SEGS=buildSegs(named,LIVE_ROWS,t,{special:!!LIVE.special,issued:LIVE.issued?new Date(LIVE.issued):null}); TEXT_SRC='live'; renderSegSel(); }
 }
 function renderHist(){
   const H=((LIVE&&LIVE.history)||[]).filter(h=>h.v===3).slice(-28);

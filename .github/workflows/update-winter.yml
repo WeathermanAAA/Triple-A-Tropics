@@ -31,8 +31,10 @@ jobs:
         if: steps.check.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
         working-directory: winter/auto
         run: |
+          # a manual run on a cycle that is already published is a special advisory
+          SPECIAL=""; [ "${{ steps.check.outputs.new }}" != "true" ] && SPECIAL="--special"
           for i in 1 2; do
-            python wsc_auto.py wsc_grid.json nbm_index.json latest.json > new.json && break
+            python wsc_auto.py wsc_grid.json nbm_index.json latest.json $SPECIAL > new.json && break
             echo "retrying in 60s"; sleep 60
           done
           python -c "import json; json.load(open('new.json'))"

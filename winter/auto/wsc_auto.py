@@ -461,6 +461,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('grid'); ap.add_argument('nbm_index'); ap.add_argument('prev', nargs='?')
     ap.add_argument('--cycle', help='NBM cycle YYYYMMDDHH (default: latest complete)')
+    ap.add_argument('--special', action='store_true',
+                    help='reissue of an already-published cycle: the page labels it a special advisory, stamped with the real issue time')
     a = ap.parse_args()
     grid = json.load(open(a.grid))['counties']
     prev = {}
@@ -490,6 +492,9 @@ def main():
                     failed.append(f)
     doc = build(results, grid, prev, cycle, failed)
     doc['source'] = f'National Blend of Models {cycle:%Y-%m-%d %H}Z, next 72 h (Alaska and Hawaii: NWS gridded forecast)'
+    if a.special:
+        doc['special'] = True
+        doc['issued'] = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     json.dump(doc, sys.stdout, separators=(',', ':'))
     storms = doc['storms']
     named = ', '.join(f"{s['name']} (W{s['cat']}, {'/'.join(s['states'])})" for s in storms if s['name']) or 'none'
