@@ -20,7 +20,7 @@ PEAK_LINK = 18      # h: neighboring counties belong to the same storm only if t
 
 # ---- county impact scale (must match the page) ----
 SNOW_T = [0.15, 0.30, 0.50, 0.75, 1.0]      # share of local 24-h record
-SNOW_ABS = [6, 12, 18, 24, 30]              # inches; snow level = higher of the two
+SNOW_ABS = [6, 12, 18, 24, 30]              # inches in the worst 24 h; at most one level above the record test
 ICE_T = [0.05, 0.10, 0.25, 0.50, 0.75]      # inches flat accretion
 WIND_T = [25, 35, 45, 55, 65]               # mph gust while snowing
 COLD_T = [10, 0, -10, -20, -30]             # F wind chill, only with snow or ice
@@ -48,8 +48,20 @@ def level(v, th, desc=False):
     return l
 
 
+def snow_level(snow, s24, thr):
+    """Hybrid snow level, judged against the county's own climate.
+    1. Record test: the storm total, or the worst 24 h, against the county's 24-h record
+       (15/30/50/75/100%), whichever rates higher.
+    2. Flat inches on the worst 24 h (6/12/18/24/30) can lift a county at most one level above its
+       record test, so 30 in in 24 h is Level 5 only where the record test already gives Level 4
+       (the storm reaches 75% of the record). In the Sierra three feet is not automatically a 5.
+    A Super Blizzard (24-h snow at or above the record) is handled in county_level: always Signal 5."""
+    rec = max(level(s24 / thr, SNOW_T), level(snow / thr, SNOW_T))
+    return max(rec, min(level(s24, SNOW_ABS), rec + 1))
+
+
 def county_level(snow, s24, ice, gust, chill, thr):
-    L = {'snow': max(level(snow / thr, SNOW_T), level(snow, SNOW_ABS)), 'ice': level(ice, ICE_T)}
+    L = {'snow': snow_level(snow, s24, thr), 'ice': level(ice, ICE_T)}
     # wind needs snow and rates at most one level above it; cold needs snow or ice
     L['wind'] = min(level(gust, WIND_T), L['snow'] + 1) if L['snow'] >= 1 else 0
     L['cold'] = level(chill, COLD_T, True) if (L['snow'] >= 1 or L['ice'] >= 1) else 0

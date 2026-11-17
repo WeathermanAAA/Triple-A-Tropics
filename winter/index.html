@@ -354,11 +354,12 @@ table.mini td,table.mini th{padding:2px 6px}
     <section id="hb-thresholds">
       <h2>Impact level thresholds</h2>
       <p class="lede">Each hazard gets a level from 1 to 5. The county's impact level, issued as its signal inside a named storm, is the highest of snow, ice and wind. It goes up one step when two of those reach Level 3, or when wind chills reach Level 3 on top of snow or ice at Level 2 or higher. Cold never sets the signal on its own, and wind can rate at most one level above the snow. A Super Blizzard is always Signal 5.</p>
+      <p class="lede">Snow is judged against the county's own climate. The storm total and the heaviest 24 hours are compared with the county's 24-hour snowfall record. Flat inches in 24 hours can lift a county at most one level above that record test, so 30 in in a day is Level 5 only where the storm already reaches three quarters of the record. In the Sierra or the Tug Hill a foot is routine and rates low; in the South a few inches rate high.</p>
       <div class="tbl"><table>
         <thead><tr><th>Hazard</th><th>Level 1 Minor</th><th>Level 2 Moderate</th><th>Level 3 Major</th><th>Level 4 Severe</th><th>Level 5 Extreme</th></tr></thead>
         <tbody>
-          <tr><td>Snow, share of the county's 24-h record</td><td class="c">15%</td><td class="c">30%</td><td class="c">50%</td><td class="c">75%</td><td class="c">100%</td></tr>
-          <tr><td>Snow, storm total (whichever is reached first)</td><td class="c">6 in</td><td class="c">12 in</td><td class="c">18 in</td><td class="c">24 in</td><td class="c">30 in</td></tr>
+          <tr><td>Snow, storm total or worst 24 h as a share of the county's 24-h record</td><td class="c">15%</td><td class="c">30%</td><td class="c">50%</td><td class="c">75%</td><td class="c">100%</td></tr>
+          <tr><td>Snow, worst 24 h in flat inches (lifts at most one level above the record test)</td><td class="c">6 in</td><td class="c">12 in</td><td class="c">18 in</td><td class="c">24 in</td><td class="c">30 in</td></tr>
           <tr><td>Ice, flat accretion</td><td class="c">0.05 in</td><td class="c">0.10 in</td><td class="c">0.25 in</td><td class="c">0.50 in</td><td class="c">0.75 in</td></tr>
           <tr><td>Wind gust, while snowing (at most one level above snow)</td><td class="c">25 mph</td><td class="c">35 mph</td><td class="c">45 mph</td><td class="c">55 mph</td><td class="c">65 mph</td></tr>
           <tr><td>Wind chill, raises the signal one step at Level 3+</td><td class="c">10 °F</td><td class="c">0 °F</td><td class="c">-10 °F</td><td class="c">-20 °F</td><td class="c">-30 °F</td></tr>
@@ -482,8 +483,14 @@ const CATGRAY={1:'#5c5c5a',2:'#828280',3:'#a9a9a6',4:'#d2d2ce',5:'#ffffff'};
 const SNOW_T=[0.15,0.30,0.50,0.75,1.0], SNOW_ABS=[6,12,18,24,30], ICE_T=[0.05,0.10,0.25,0.50,0.75], WIND_T=[25,35,45,55,65], COLD_T=[10,0,-10,-20,-30];
 const LEVEL_W={1:1,2:3,3:9,4:27,5:81}, POP_W=0.6, AREA_W=0.4, POP_REF=1e6, AREA_REF=50000, CAT_T=[1,6,25,80,200];
 function level(v,th,desc){ let l=0; th.forEach((t,i)=>{ if(desc? v<=t : v>=t) l=i+1; }); return l; }
+// hybrid snow level (must match wsc_auto.py snow_level): storm total or worst 24 h vs the 24-h record;
+// flat 24-h inches can lift at most one level above that record test
+function snowLevel(snow,s24,thr){
+  const rec=Math.max(level(s24/thr,SNOW_T), level(snow/thr,SNOW_T));
+  return Math.max(rec, Math.min(level(s24,SNOW_ABS), rec+1));
+}
 function countyLevel(snow,s24,ice,gust,chill,thr){
-  const L={snow:Math.max(level(snow/thr,SNOW_T),level(snow,SNOW_ABS)), ice:level(ice,ICE_T)};
+  const L={snow:snowLevel(snow,s24,thr), ice:level(ice,ICE_T)};
   L.wind= L.snow>=1? Math.min(level(gust,WIND_T),L.snow+1):0;
   L.cold= (L.snow>=1||L.ice>=1)? level(chill,COLD_T,true):0;
   const mx=Math.max(L.snow,L.ice,L.wind), strong=[L.snow,L.ice,L.wind].filter(x=>x>=3).length;
@@ -493,7 +500,8 @@ function countyLevel(snow,s24,ice,gust,chill,thr){
 }
 function stormIndex(fs,lvlOf){ let t=0; fs.forEach(f=>{ const l=lvlOf(f); if(!l) return; const c=GRID[f]||{}; t+=LEVEL_W[l]*(POP_W*(c.pop||0)/POP_REF+AREA_W*(c.area||1500)/AREA_REF); }); return t; }
 const catOf=ix=>level(ix,CAT_T);
-const snowNeed=(thr,l)=>Math.min(thr*SNOW_T[l-1],SNOW_ABS[l-1]);
+// snow falling within 24 h that reaches level l (reaching the record is a Super Blizzard, always 5)
+const snowNeed=(thr,l)=>{ for(let i=1;i<thr*10;i++){ const x=i/10; if(snowLevel(x,x,thr)>=l) return x; } return thr; };
 
 /* ================= helpers ================= */
 const stOf=f=> FIPS[f.slice(0,2)]||'';
