@@ -244,6 +244,21 @@ def build(results, grid, prev, now, failed=()):
         st = {'season': season, 'list': lst, 'idx': 0, 'used': []}
     names = LISTS[st['list']] + AUX
     prev_storms = [p for p in (prev.get('storms') or []) if p.get('name')]
+    # A named storm never spawns a new name from its own footprint: pieces that mostly sit on the same
+    # named storm's previous footprint (at least a fifth of their counties) are rejoined into one storm.
+    # On a first run there is no previous footprint, so separate systems still split by timing.
+    by_prev, rest = {}, []
+    for comp in clusters:
+        best, ov = None, 0
+        for p in prev_storms:
+            o = len(comp & set(p['counties']))
+            if o > ov:
+                best, ov = p['name'], o
+        if best and ov >= max(1, 0.2 * len(comp)):
+            by_prev.setdefault(best, set()).update(comp)
+        else:
+            rest.append(comp)
+    clusters = list(by_prev.values()) + rest
     claimed, storms = set(), []
     lvl_of = lambda f: results[f]['lvl']
     for comp in sorted(clusters, key=lambda c: storm_index(c, lvl_of, grid), reverse=True):

@@ -547,9 +547,9 @@ function tenths(x){ const t=Math.round(x*100)/100; return t<0.1? 'a light glaze'
 // rows: f -> {lvl,onset,peak,end,snow,s24,ice,gust,chill,sb,L:[s,i,w,c]}
 function segmentsFor(storm,rows){
   const groups={};
+  // one advisory per signal level, listing every county at that level (hazard headlines name their own counties)
   storm.counties.forEach(f=>{ const r=rows[f]; if(!r||!r.lvl) return;
-    const mask=HZ.map((h,i)=>r.L[i]>0?h[0]:'').join('')+(r.sb?'B':'');
-    const key=r.lvl+'|'+mask; (groups[key]=groups[key]||[]).push(f); });
+    const key=String(r.lvl); (groups[key]=groups[key]||[]).push(f); });
   return Object.entries(groups).map(([k,fs])=>({key:k,lvl:+k.split('|')[0],counties:fs})).sort((a,b)=>b.lvl-a.lvl||b.counties.length-a.counties.length);
 }
 function writeAdvisory(storm,seg,rows,runDate,opts={}){
@@ -568,9 +568,11 @@ function writeAdvisory(storm,seg,rows,runDate,opts={}){
   const byS={}; fs.forEach(f=>{ (byS[stOf(f)]=byS[stOf(f)]||[]).push(U(cname(f))); });
   Object.keys(byS).sort().forEach(st=>wrap(`${STNAME[st]||st}: ${byS[st].sort().join(', ')}.`,68).forEach(l=>L.push(l)));
   L.push('');
-  if(sb) L.push('...SUPER BLIZZARD: LOCAL 24-HOUR SNOWFALL RECORDS IN JEOPARDY...');
-  if(ice3) L.push('...ICE STORM CONDITIONS EXPECTED...');
-  if(bliz) L.push('...BLIZZARD CONDITIONS POSSIBLE...');
+  // hazard headlines name their counties when only part of this advisory's area is affected
+  const who=test=>{ const hit=fs.filter(f=>test(rows[f])); return hit.length===fs.length? '' : ' FOR '+hit.map(f=>U(cname(f))).sort().join(', '); };
+  if(sb) wrap(`...SUPER BLIZZARD${who(r=>r.sb)}: LOCAL 24-HOUR SNOWFALL RECORDS IN JEOPARDY...`,68).forEach(l=>L.push(l));
+  if(ice3) wrap(`...ICE STORM CONDITIONS EXPECTED${who(r=>r.L[1]>=3)}...`,68).forEach(l=>L.push(l));
+  if(bliz) wrap(`...BLIZZARD CONDITIONS POSSIBLE${who(r=>r.gust>=35&&r.L[0]>=2)}...`,68).forEach(l=>L.push(l));
   if(sb||ice3||bliz) L.push('');
   // WHAT
   const what=[];
