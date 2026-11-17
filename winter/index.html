@@ -215,6 +215,7 @@ td.c{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowra
 .sv-cat-item{ display:inline-flex; align-items:center; gap:6px; }
 .sv-cat-item i{ width:11px; height:11px; border-radius:2px; display:inline-block; }
 .sv-empty{ color:#7c8aa3; font-size:11.5px; padding:10px 4px; }
+.nw{white-space:nowrap}
 .leftcol{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0;align-content:start}
 .leftcol>div{min-width:0}
 .mapsec{grid-template-columns:minmax(0,1fr)}
@@ -858,7 +859,7 @@ function renderLive(){
   $('tPop').textContent=fmtPop(pop);
   $('tNext').textContent='~'+next.toLocaleString('en-US',{hour:'numeric',minute:'2-digit'}); $('tNextS').textContent=(Date.now()>next.getTime()+30*60e3?'Running late · ':'')+next.toLocaleString('en-US',{weekday:'long'});
   $('namedCount').textContent= named.length? `${named.length}`:'';
-  $('storms').innerHTML= named.length? named.map((s,i)=>`<button type="button" class="storm" data-i="${i}"><svg viewBox="0 0 100 100" aria-hidden="true">${glyph(s.maxLvl)}</svg><span class="sn">Winter Storm ${s.name}</span>${catChip(s.cat).replace(/ [A-Za-z-]+<\/span>$/,'</span>')}<span class="sm">Index ${s.index} · up to ${sigChip(s.maxLvl)} · ${s.n} counties, ${fmtPop(s.pop)} people · onset ${onsetText(s.onset)} · advisory ${s.adv}${s.sb?' · SUPER BLIZZARD':''}</span></button>`).join('') : '<div class="empty">None. Monitored areas are named once they meet the naming criteria.</div>';
+  $('storms').innerHTML= named.length? named.map((s,i)=>`<button type="button" class="storm" data-i="${i}"><svg viewBox="0 0 100 100" aria-hidden="true">${glyph(s.maxLvl)}</svg><span class="sn">Winter Storm ${s.name}</span>${catChip(s.cat).replace(/ [A-Za-z-]+<\/span>$/,'</span>')}<span class="sm">Storm Index ${Number(s.index).toFixed(1)} · up to ${sigChip(s.maxLvl)} · <span class="nw">${s.n} counties</span> · <span class="nw">${fmtPop(s.pop)} people</span> · onset ${onsetText(s.onset)} · <span class="nw">advisory ${s.adv}</span>${s.sb?' · SUPER BLIZZARD':''}</span></button>`).join('') : '<div class="empty">None. Monitored areas are named once they meet the naming criteria.</div>';
   $('storms').onclick=e=>{ const b=e.target.closest('.storm'); if(b){ const s=named[+b.dataset.i]; zoomCounties(s.counties); const i=SEGS.findIndex(x=>x.storm===s); if(i>=0){ $('segSel').value=i; $('advText').textContent=SEGS[i].text(); } } };
   $('monitored').innerHTML= mon.length? mon.map((s,i)=>`<button type="button" class="storm mon" data-i="${i}"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" fill="url(#hatchsm)"/></svg><span class="sn un">${sysLabel(s)}</span><span class="chip" style="background:#fff">Index ${s.index}</span><span class="sm">Expected impacts up to Level ${s.maxLvl} ${SIGNALS[s.maxLvl].w} · ${s.n} ${s.n===1?'county':'counties'} · onset ${onsetText(s.onset)}${s.counties.every(f=>/^(02|15)/.test(f))?' · AK/HI, not named':''}</span></button>`).join('') : '<div class="empty">None.</div>';
   $('monitored').onclick=e=>{ const b=e.target.closest('.storm'); if(b) zoomCounties(mon[+b.dataset.i].counties); };
