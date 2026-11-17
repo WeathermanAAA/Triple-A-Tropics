@@ -507,7 +507,7 @@ const snowNeed=(thr,l)=>{ for(let i=1;i<thr*10;i++){ const x=i/10; if(snowLevel(
 const stOf=f=> FIPS[f.slice(0,2)]||'';
 const cname=f=> (GRID&&GRID[f]&&GRID[f].n) || (GEO&&GEO.byF[f]&&GEO.byF[f].n) || f;
 function fmtPop(n){ return n>=1e6? (n/1e6).toFixed(1)+'M' : n>=1e3? Math.round(n/1e3)+'K' : String(n||0); }
-function fmtT(d){ return d.toLocaleString('en-US',{weekday:'short',hour:'numeric',minute:'2-digit'}); }
+function fmtT(d){ return d.toLocaleString('en-US',{weekday:'short',hour:'numeric',minute:'2-digit',timeZone:'America/Chicago',timeZoneName:'short'}); }
 function glyph(n){ return `<rect width="100" height="100" fill="#000"/><image href="${ICON['s'+n]}" x="18" y="10" width="64" height="64"/><rect x="0" y="86" width="100" height="14" fill="${SIGNALS[n].c}"/>`; }
 function clearGlyph(){ return `<rect width="100" height="100" fill="#000"/><image href="${ICON.clear}" x="20" y="16" width="60" height="60"/>`; }
 function catChip(c){ return c? `<span class="chip" style="background:${CATGRAY[c]};color:${c<=2?'#fff':'#000'}">W${c} ${CAT[c].n}</span>` : '<span class="chip" style="background:#fff">Below W1</span>'; }
@@ -849,7 +849,7 @@ function renderLive(){
   const sigs=Object.values(LIVE_SIG).filter(Boolean); const maxSig=sigs.length?Math.max(...sigs):0;
   const pop=Object.keys(LIVE_SIG).reduce((a,f)=>a+((GRID&&GRID[f]&&GRID[f].pop)||0),0);
   $('hTitle').textContent= named.length? named.map(s=>`Winter Storm ${s.name} (W${s.cat})`).join(' · ') : 'No named storms';
-  $('liveStatus').innerHTML=`NWS run <b>${fmtT(t)}</b> · ${st.season||''} season, List ${['','One','Two','Three'][st.list]||''}${st.used&&st.used.length?' · named so far: <b>'+st.used.join(', ')+'</b>':''}`;
+  $('liveStatus').innerHTML=`${LIVE.special&&LIVE.issued?`Special advisory issued <b>${fmtT(new Date(LIVE.issued))}</b>, from the`:'From the'} NBM run of <b>${fmtT(t)}</b> · ${st.season||''} season, List ${['','One','Two','Three'][st.list]||''}${st.used&&st.used.length?' · named so far: <b>'+st.used.join(', ')+'</b>':''}`;
   sigBlock('tSig','tSigV','tSigS',maxSig);
   $('tNamed').textContent=named.length; $('tNamedS').textContent= named.length? named.map(s=>s.name).join(', ') : `${mon.length} monitored area${mon.length===1?'':'s'}`;
   $('tCty').textContent=sigs.length; $('tCtyS').textContent= sigs.length? `${new Set(Object.keys(LIVE_SIG).map(stOf)).size} states` : 'none';
